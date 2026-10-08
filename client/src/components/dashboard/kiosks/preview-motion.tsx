@@ -22,6 +22,7 @@ import {
   EASE_POP_SETTLE,
   EASE_STRIP,
   STAGGER_MAX_CARDS,
+  engineEase,
   staggerDelayMs,
   swapSide,
   type CategorySwitchFx,
@@ -29,8 +30,51 @@ import {
   type SheetFx,
   type TransitionSpec,
 } from '@/lib/kioskConfig';
+import { motionActive, type ResolvedMotion, type ResolvedMotionEngine } from '@/lib/kioskMotionEngine';
 
-export type SwapFx = CategorySwitchFx | ScreenChangeFx;
+/** The swaps' effects: the configured ones, and the basket's own — rising from below ("rise") or dropping from above ("drop"). */
+export type SwapFx = CategorySwitchFx | ScreenChangeFx | 'rise' | 'drop';
+
+/** How a screen change plays (KioskSwap's fx / ms, the event's own curve, a forced side). */
+export interface ScreenSwapSpec {
+  fx: SwapFx;
+  ms: number;
+  ease?: string;
+  side?: 1 | -1;
+}
+
+/**
+ * "מנוע הנפשות": the screen change towards `target` — back to the attract screen by the engine's
+ * homeReturn (a fade back home, never a sharp reset), into the basket by its cartOpen (rising from
+ * below / dropping / from a side, with a fade), anything else by pageTransition (TransitionSpec).
+ * No engine: the transition spec's, exactly as before.
+ */
+export function screenSwap(t: TransitionSpec, engine: ResolvedMotionEngine | undefined, target: string): ScreenSwapSpec {
+  const base: ScreenSwapSpec = { fx: t.screenChange, ms: t.screenMs, ...(t.screenEase ? { ease: t.screenEase } : {}) };
+  const ev = !engine ? null : target === 'attract' ? engine.homeReturn : target === 'cart' ? engine.cartOpen : null;
+  if (!ev) return base;
+  if (!motionActive(ev)) return { fx: 'none', ms: 0 };
+  const ease = engineEase(ev);
+  const out = (fx: SwapFx, side?: 1 | -1): ScreenSwapSpec => ({ fx, ms: ev.durationMs, ...(ease ? { ease } : {}), ...(side ? { side } : {}) });
+  switch (ev.animationType) {
+    case 'fadeScale':
+      return out(ev.scaleFrom <= 0.93 ? 'zoom' : 'fade_scale');
+    case 'swipeTransition':
+      return out('push', sideOf(ev));
+    case 'slideIn':
+      // The basket by its direction: up — rises from below; down — drops from above; a side — from it.
+      if (ev.event === 'cartOpen' && (ev.direction === 'up' || ev.direction === 'down')) return out(ev.direction === 'up' ? 'rise' : 'drop');
+      return out('slide', sideOf(ev));
+    default:
+      // crossfade, fadeIn, a reduced fallback: a fade.
+      return out('fade');
+  }
+}
+
+/** A forced side for an explicit left / right: moving left, the new content comes from the physical right (+1). */
+function sideOf(ev: Pick<ResolvedMotion, 'direction'>): 1 | -1 | undefined {
+  return ev.direction === 'left' ? 1 : ev.direction === 'right' ? -1 : undefined;
+}
 
 /** The kiosk's screens in the order of an order: a later one comes the way the customer reads. */
 const SCREEN_ORDER = ['attract', 'service', 'catalog', 'product', 'confirm', 'cart', 'tip', 'details', 'pay', 'success'];
@@ -61,12 +105,15 @@ interface Leaving<K> {
 /**
  * The current `id`'s content, and while a change plays the previous one leaving over it.
  * `order` gives a key's place (the rail's order, the screens'): a later one comes from the end
- * side in reading order. `fx` "none" (or `ms` 0) swaps at once.
+ * side in reading order (`side` forces one: an event's explicit direction). `fx` "none" (or `ms`
+ * 0) swaps at once. `ease`: the event's own curve ("מנוע הנפשות"), else each kind's own.
  */
 export function KioskSwap<K extends string>({
   id,
   fx,
   ms,
+  ease,
+  side: forcedSide,
   order,
   render,
   rtl = true,
@@ -76,6 +123,8 @@ export function KioskSwap<K extends string>({
   id: K;
   fx: SwapFx;
   ms: number;
+  ease?: string;
+  side?: 1 | -1;
   order: (k: K) => number;
   render: (k: K) => ReactNode;
   rtl?: boolean;
@@ -89,7 +138,7 @@ export function KioskSwap<K extends string>({
   const animated = fx !== 'none' && ms > 0;
   if (id !== cur) {
     // A new key: the slot swaps in this very render (no frame of the old one as current).
-    const s = swapSide(order(id) >= order(cur), rtl);
+    const s = forcedSide ?? swapSide(order(id) >= order(cur), rtl);
     setCur(id);
     setSide(s);
     setN(n + 1);
@@ -111,7 +160,7 @@ export function KioskSwap<K extends string>({
             key={k}
             aria-hidden={out || undefined}
             className={cn(slotClassName, out && 'k-leave', animated && n > 0 && `k-anim k-${fx}-${out ? 'out' : 'in'}`)}
-            style={{ '--k-side': String(slotSide), '--k-ms': `${ms}ms` } as CSSProperties}
+            style={{ '--k-side': String(slotSide), '--k-ms': `${ms}ms`, ...(ease ? { '--k-ease': ease } : {}) } as CSSProperties}
           >
             <Frozen node={out ? null : render(k)} frozen={out} />
           </div>
@@ -127,18 +176,18 @@ export function itemEnter(t: TransitionSpec, index: number, enabled = true): { c
   if (!enabled || t.itemsEnter === 'none' || t.itemMs <= 0 || index >= STAGGER_MAX_CARDS * 2) return {};
   return {
     className: `k-item k-item-${t.itemsEnter}`,
-    style: { '--k-delay': `${staggerDelayMs(t, index)}ms`, '--k-item-ms': `${t.itemMs}ms` } as CSSProperties,
+    style: { '--k-delay': `${staggerDelayMs(t, index)}ms`, '--k-item-ms': `${t.itemMs}ms`, ...(t.itemEase ? { '--k-ease': t.itemEase } : {}) } as CSSProperties,
   };
 }
 
-/** A window's panel and its scrim, by "חלונות": their classes and timing. */
+/** A window's panel and its scrim, by "חלונות": their classes and timing (and the event's own curve). */
 export function sheetEnter(t: TransitionSpec): { panel: string; scrim: string; style: CSSProperties } {
   const fx: SheetFx = t.sheetMs > 0 ? t.sheet : 'none';
   if (fx === 'none') return { panel: '', scrim: '', style: {} };
   return {
     panel: `k-anim k-sheet-${fx}`,
     scrim: 'k-anim k-fade-in',
-    style: { '--k-ms': `${t.sheetMs}ms` } as CSSProperties,
+    style: { '--k-ms': `${t.sheetMs}ms`, ...(t.sheetEase ? { '--k-ease': t.sheetEase } : {}) } as CSSProperties,
   };
 }
 
@@ -149,12 +198,16 @@ export function sheetEnter(t: TransitionSpec): { panel: string; scrim: string; s
  * incoming one (`isolation` keeps its z-index inside the swap). The curves are the till's
  * KioskEase (lib/kioskConfig.ts EASE_*): arrivals decelerate, departures accelerate, a push moves
  * both screens on one curve as a strip; the durations come from transitionSpec (`--k-ms`).
+ * "מנוע הנפשות": an event's own curve (`--k-ease`, set on the animated element itself) replaces
+ * them; `--k-ease` never inherits, so a screen's curve never leaks into the category or window in it.
+ * The basket rises from below (`rise`) or drops from above (`drop`) over the menu fading back.
  */
 export const MOTION_CSS = `
-.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: ${EASE_ENTER}; animation-fill-mode: backwards; }
+@property --k-ease { syntax: '*'; inherits: false; }
+.k-anim { animation-duration: var(--k-ms, 220ms); animation-timing-function: var(--k-ease, ${EASE_ENTER}); animation-fill-mode: backwards; }
 .k-swap { isolation: isolate; }
 .k-leave { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; z-index: -1; }
-.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: ${EASE_EXIT}; }
+.k-leave.k-anim { animation-fill-mode: forwards; animation-timing-function: var(--k-ease, ${EASE_EXIT}); }
 @keyframes kSlideIn { from { opacity: 0; transform: translate3d(calc(var(--k-side) * 22%), 0, 0); } to { opacity: 1; transform: none; } }
 @keyframes kSlideOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translate3d(calc(var(--k-side) * -10%), 0, 0); } }
 @keyframes kPushIn { from { transform: translate3d(calc(var(--k-side) * 100%), 0, 0); } to { transform: none; } }
@@ -165,19 +218,23 @@ export const MOTION_CSS = `
 @keyframes kFadeScaleOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.02); } }
 @keyframes kZoomIn { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
 @keyframes kZoomOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.06); } }
+@keyframes kRiseIn { from { opacity: 0; transform: translate3d(0, 22%, 0); } to { opacity: 1; transform: none; } }
+@keyframes kDropIn { from { opacity: 0; transform: translate3d(0, -22%, 0); } to { opacity: 1; transform: none; } }
+@keyframes kRecedeOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(.98); } }
 .k-slide-in { animation-name: kSlideIn; } .k-slide-out { animation-name: kSlideOut; }
 .k-push-in { animation-name: kPushIn; } .k-push-out { animation-name: kPushOut; }
-.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: ${EASE_STRIP}; }
+.k-anim.k-push-in, .k-leave.k-anim.k-push-out { animation-timing-function: var(--k-ease, ${EASE_STRIP}); }
 .k-fade-in { animation-name: kFadeIn; } .k-fade-out { animation-name: kFadeOut; }
 .k-fade_scale-in { animation-name: kFadeScaleIn; } .k-fade_scale-out { animation-name: kFadeScaleOut; }
 .k-zoom-in { animation-name: kZoomIn; } .k-zoom-out { animation-name: kZoomOut; }
+.k-rise-in { animation-name: kRiseIn; } .k-drop-in { animation-name: kDropIn; } .k-rise-out, .k-drop-out { animation-name: kRecedeOut; }
 @keyframes kItemPop { 0% { opacity: 0; transform: scale(.85); animation-timing-function: ${EASE_POP_RISE}; } 60% { opacity: 1; transform: scale(1.03); animation-timing-function: ${EASE_POP_SETTLE}; } 100% { opacity: 1; transform: none; } }
 @keyframes kItemRise { from { opacity: 0; transform: translate3d(0, 24px, 0); } to { opacity: 1; transform: none; } }
 @keyframes kItemFlip { from { opacity: 0; transform: perspective(700px) rotateX(-75deg); } to { opacity: 1; transform: none; } }
 .k-item { animation-duration: var(--k-item-ms, 260ms); animation-delay: var(--k-delay, 0ms); animation-fill-mode: backwards; }
 .k-item-pop, .k-item-cascade { animation-name: kItemPop; }
-.k-item-rise { animation-name: kItemRise; animation-timing-function: ${EASE_ENTER}; }
-.k-item-flip { animation-name: kItemFlip; animation-timing-function: ${EASE_ENTER}; transform-origin: 50% 0; }
+.k-item-rise { animation-name: kItemRise; animation-timing-function: var(--k-ease, ${EASE_ENTER}); }
+.k-item-flip { animation-name: kItemFlip; animation-timing-function: var(--k-ease, ${EASE_ENTER}); transform-origin: 50% 0; }
 @keyframes kSheetUp { from { opacity: 0; transform: translate3d(0, 45%, 0); } to { opacity: 1; transform: none; } }
 @keyframes kSheetScale { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 .k-sheet-slide_up { animation-name: kSheetUp; }

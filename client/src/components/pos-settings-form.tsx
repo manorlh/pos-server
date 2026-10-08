@@ -18,6 +18,7 @@ import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
 import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/lib/availabilityReopen';
 import { TIP_PRESETS_MAX } from '@/lib/types';
+import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, parseIdleReturnInput } from '@/lib/desktopIdleReturn';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
@@ -633,6 +634,14 @@ export function PosSettingsForm({
         </div>
       </div>
 
+      {/* "חזרה אוטומטית לקיוסק" (R2M POS for Windows): on / off and the idle minutes, per layer. */}
+      <DesktopIdleReturnSection
+        own={value.desktopIdleReturnMinutes}
+        inherited={inherited?.desktopIdleReturnMinutes}
+        showOverrideHints={!!showOverrideHints}
+        onSet={(v) => set('desktopIdleReturnMinutes', v)}
+      />
+
       {/* "סוג אינטגרציית אשראי" and the fields of the type chosen (Nayax's address
           among them). The older `nayaxEnabled` switch is gone: choosing Nayax is the way
           now, though "אוטומטי" with it on still means Nayax. */}
@@ -700,6 +709,90 @@ export function PosSettingsForm({
           <p className="text-xs text-muted-foreground">{t('zScopeLegal')}</p>
           <p className="text-xs text-muted-foreground">{t('zScopeTenantWide')}</p>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * "חזרה אוטומטית לקיוסק": the switch saves 0 (off) or the minutes; the box edits the minutes;
+ * "חזרה לערך בירושה" sends `null`. What the device uses — this layer's, the one above's, or 10 —
+ * is lib/desktopIdleReturn.ts's rule, the Windows app's too.
+ */
+function DesktopIdleReturnSection({
+  own,
+  inherited,
+  showOverrideHints,
+  onSet,
+}: {
+  own: number | null | undefined;
+  inherited: number | undefined;
+  showOverrideHints: boolean;
+  onSet: (v: number | null) => void;
+}) {
+  const t = useTranslations('posSettings');
+  const view = idleReturnView(own, inherited);
+  const [text, setText] = useState<string | null>(null);
+  const shown = text ?? (view.on ? String(view.minutes) : '');
+  const invalid = text !== null && text.trim() !== '' && (parseIdleReturnInput(text) ?? 0) < 1;
+  const label = (minutes: number) => (minutes > 0 ? t('desktopIdleOn', { minutes }) : t('desktopIdleOff'));
+  return (
+    <div className="border-t pt-4 space-y-2">
+      <p className="text-sm font-medium">{t('desktopIdleTitle')}</p>
+      <p className="text-xs text-muted-foreground">{t('desktopIdleDesc')}</p>
+      <div className="flex items-center justify-between gap-4">
+        <Label>
+          {t('desktopIdleSwitch')}
+          {showOverrideHints && view.from === 'own' ? (
+            <Badge variant="secondary" className="text-xs ms-2">
+              {t('override')}
+            </Badge>
+          ) : null}
+        </Label>
+        <Switch
+          checked={view.on}
+          onCheckedChange={(c) => {
+            setText(null);
+            onSet(idleReturnSwitchValue(c, view));
+          }}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label>{t('desktopIdleMinutes')}</Label>
+        <Input
+          dir="ltr"
+          inputMode="numeric"
+          className="w-28 font-mono"
+          disabled={!view.on}
+          aria-invalid={invalid}
+          value={shown}
+          onChange={(e) => {
+            const next = e.target.value.replace(/\D/g, '').slice(0, 3);
+            setText(next);
+            const v = parseIdleReturnInput(next);
+            if (typeof v === 'number' && v >= 1) onSet(v);
+          }}
+        />
+        {invalid ? <p className="text-xs text-destructive">{t('desktopIdleInvalid')}</p> : null}
+      </div>
+      {view.from === 'inherited' && showOverrideHints ? (
+        <p className="text-xs text-muted-foreground">{t('desktopIdleInherited', { value: label(view.minutes) })}</p>
+      ) : view.from === 'default' ? (
+        <p className="text-xs text-muted-foreground">{t('desktopIdleDefault', { value: label(DESKTOP_IDLE_RETURN_DEFAULT) })}</p>
+      ) : null}
+      {view.from === 'own' && showOverrideHints ? (
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto px-0 text-xs"
+          onClick={() => {
+            setText(null);
+            onSet(null);
+          }}
+        >
+          {t('payResetToInherited')}
+        </Button>
       ) : null}
     </div>
   );

@@ -255,7 +255,7 @@ describe('the record — a till event out, and one back', () => {
 const noPrinter: Transport = { send: async () => undefined, status: async () => ({ health: 'ok', detail: null }), list: async () => [], dispose: () => undefined };
 const MACHINE = '549e903c-4aba-4528-bc4a-c61b4019a64e';
 
-function service(exitToDesktop = vi.fn(async () => ({ ok: true }))) {
+function service(exitToDesktop = vi.fn(async () => ({ ok: true })), opts: { users?: RosterUser[]; quit?: () => void } = {}) {
   const sent: Array<{ method: string; path: string; body: unknown }> = [];
   let answer = 201;
   const fetchFn: typeof fetch = async (input, init) => {
@@ -269,7 +269,7 @@ function service(exitToDesktop = vi.fn(async () => ({ ok: true }))) {
     deviceInfo: { model: 'Windows kiosk', manufacturer: 'test', platform: 'windows' },
     transport: noPrinter,
     fetch: fetchFn,
-    platform: { exitToDesktop },
+    platform: { exitToDesktop, ...(opts.quit ? { quit: opts.quit } : {}) },
     downloader: async () => {
       throw new Error('no media here');
     },
@@ -279,7 +279,7 @@ function service(exitToDesktop = vi.fn(async () => ({ ok: true }))) {
   svc.cloud.applyPosUsers({
     syncType: 'full',
     serverTime: '2026-10-08T10:00:00Z',
-    users: [manager, cashier].map((u) => ({ ...u, pinHash: u.pinHash, tillRoleKey: u.id === 'mgr' ? 'manager' : 'cashier' })),
+    users: (opts.users ?? [manager, cashier]).map((u) => ({ ...u, pinHash: u.pinHash, tillRoleKey: u.id === 'mgr' ? 'manager' : 'cashier' })),
   });
   return { svc, sent, exitToDesktop, refuseWith: (status: number) => (answer = status) };
 }
@@ -414,7 +414,7 @@ function fakeWindow() {
   return { win, calls, state };
 }
 
-function desktopOf(over: Partial<DesktopDoors> = {}, idleMinutes = 10) {
+function desktopOf(over: Partial<DesktopDoors> = {}, idleMinutes: number | (() => number) = 10) {
   const w = fakeWindow();
   const returned: string[] = [];
   const tray = { shown: false, onReturn: null as null | (() => void) };
@@ -528,5 +528,152 @@ describe('an update waits while the device is out on the desktop', () => {
     expect(autoInstallDecision({ offer, activity: { ...IDLE, desktop: true }, now: new Date() })).toEqual({ install: false, wait: 'ממתין לחזרה לקיוסק (המכשיר בשולחן העבודה)' });
     expect(autoInstallDecision({ offer, activity: { ...IDLE, desktop: false }, now: new Date() })).toEqual({ install: true });
     expect(manualInstallDecision({ ...IDLE, desktop: true })).toEqual({ install: true });
+  });
+});
+
+/* ------------------------------------------- the manager's menu, by role */
+
+/** The cloud's spec roles as the roster ships them (pos-server till_permissions.py defaults). */
+const ROLE_STATES = {
+  manager: { KIOSK_UNLOCK: 'allow', DESKTOP_EXIT: 'allow' },
+  supervisor: { KIOSK_UNLOCK: 'approval', DESKTOP_EXIT: 'deny' },
+  cashier: { KIOSK_UNLOCK: 'approval', DESKTOP_EXIT: 'deny' },
+} as const;
+
+const boss = user({ id: 'boss', firstName: 'רונית', lastName: 'מנהלת', pin: '7001', role: 'shop_manager', permissions: { ...ROLE_STATES.manager }, tillRoleName: 'מנהל' });
+const opener = user({ id: 'opener', firstName: 'אבי', lastName: 'מנהל משמרת', pin: '7002', role: 'shop_manager', permissions: { KIOSK_UNLOCK: 'allow', DESKTOP_EXIT: 'deny' }, tillRoleName: 'מנהל בלי יציאה' });
+const shiftLead = user({ id: 'sup', firstName: 'שרון', lastName: null, pin: '7003', role: 'cashier', permissions: { ...ROLE_STATES.supervisor }, tillRoleName: 'אחמ״ש' });
+const legacyMgr = user({ id: 'legacy', firstName: 'ותיק', lastName: null, pin: '7004', role: 'shop_manager', permissions: null });
+const legacyCash = user({ id: 'legacy-c', firstName: 'קופאית', lastName: null, pin: '7005', role: 'cashier', permissions: null });
+const ROSTER = [boss, opener, shiftLead, legacyMgr, legacyCash];
+
+describe('opening "ניהול הקיוסק" — the role (KIOSK_UNLOCK), not the old role string', () => {
+  it('a manager’s role opens it; a supervisor’s (approval only) does not; a server before roles: as before', async () => {
+    const { svc } = service(undefined, { users: ROSTER });
+    try {
+      expect(await svc.adminUnlock('7001')).toEqual({ ok: true, name: 'רונית מנהלת' });
+      expect(await svc.adminUnlock('7002')).toEqual({ ok: true, name: 'אבי מנהל משמרת' });
+      expect(await svc.adminUnlock('7003')).toEqual({ ok: false, error: 'קוד שגוי' });
+      expect(await svc.adminUnlock('7004')).toMatchObject({ ok: true }); // no permissions sent: the shop manager, as before
+      expect(await svc.adminUnlock('7005')).toEqual({ ok: false, error: 'קוד שגוי' });
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('the old "shop_manager" string alone opens nothing once the role says no', async () => {
+    const demoted = user({ id: 'demoted', pin: '7006', role: 'shop_manager', permissions: { KIOSK_UNLOCK: 'approval', DESKTOP_EXIT: 'deny' } });
+    const { svc } = service(undefined, { users: [demoted] });
+    try {
+      expect(await svc.adminUnlock('7006')).toEqual({ ok: false, error: 'אין בסניף מנהל עם הרשאת "יציאה מנעילת קופה (קיוסק)"' });
+    } finally {
+      svc.stop();
+    }
+  });
+});
+
+describe('leaving from the manager’s menu — the opener’s DESKTOP_EXIT, no second code', () => {
+  it('a manager with the permission: out to the desktop, recorded as from the admin', async () => {
+    const { svc, sent, exitToDesktop } = service(undefined, { users: ROSTER });
+    try {
+      await svc.adminUnlock('7001');
+      expect(svc.adminInfo().desktopExit).toEqual({ allowed: true, reason: null });
+      expect(await svc.adminAction({ type: 'desktopExit' })).toEqual({ ok: true, message: undefined });
+      expect(exitToDesktop).toHaveBeenCalledTimes(1);
+      expect(svc.desktopExitState()).toMatchObject({ userId: 'boss' });
+      await svc.sync.flush();
+      const ev = sent.find((s) => s.path === `sync/${MACHINE}/events`)!.body as { posUserId: string; details: Record<string, unknown> };
+      expect(ev).toMatchObject({ posUserId: 'boss', details: { action: 'exit', via: 'admin', permission: 'DESKTOP_EXIT' } });
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('a manager without it: neither the desktop nor "יציאה מהתוכנה" — the menu says why', async () => {
+    const quit = vi.fn();
+    const { svc, exitToDesktop } = service(undefined, { users: ROSTER, quit });
+    try {
+      await svc.adminUnlock('7002');
+      expect(svc.adminInfo().desktopExit).toEqual({ allowed: false, reason: 'אין לך הרשאה: יציאה לשולחן העבודה (Windows)' });
+      expect(await svc.adminAction({ type: 'desktopExit' })).toEqual({ ok: false, message: 'אין הרשאה: יציאה לשולחן העבודה (Windows)' });
+      expect(await svc.adminAction({ type: 'exitKiosk' })).toEqual({ ok: false, message: 'אין הרשאה: יציאה לשולחן העבודה (Windows)' });
+      expect(exitToDesktop).not.toHaveBeenCalled();
+      expect(quit).not.toHaveBeenCalled();
+      // Another manager's code on the pad still works.
+      expect(await svc.desktopExit('7001', IDLE)).toMatchObject({ ok: true, name: 'רונית מנהלת' });
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('"יציאה מהתוכנה" with the permission: recorded, then the app closes — never during an order', async () => {
+    const quit = vi.fn();
+    const { svc } = service(undefined, { users: ROSTER, quit });
+    try {
+      await svc.adminUnlock('7001');
+      svc.reportFlow({ flowState: 'catalog', screen: 'catalog', busy: false, idle: false });
+      expect(await svc.adminAction({ type: 'exitKiosk' })).toEqual({ ok: false, message: 'אי אפשר לצאת עכשיו — יש הזמנה פתוחה' });
+      expect(quit).not.toHaveBeenCalled();
+      svc.reportFlow({ flowState: 'attract', screen: 'attract', busy: false, idle: true });
+      expect(await svc.adminAction({ type: 'exitKiosk' })).toEqual({ ok: true });
+      expect(quit).toHaveBeenCalledTimes(1);
+      expect(svc.desktopExitLog().map((e) => [e.posUserId, e.details.action, e.details.via])).toEqual([['boss', 'quit', 'admin']]);
+      expect(svc.desktopExitState()).toBe(null); // a quit is not an exit waiting for its return
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('the permission is read again at the moment of leaving; a technician’s code carries no manager’s rights', async () => {
+    const { svc, exitToDesktop } = service(undefined, { users: ROSTER });
+    try {
+      await svc.adminUnlock('7001');
+      // The dashboard took DESKTOP_EXIT away; the next roster pull reached the kiosk.
+      svc.cloud.applyPosUsers({ syncType: 'delta', users: [{ ...boss, permissions: { ...ROLE_STATES.manager, DESKTOP_EXIT: 'deny' } }] });
+      expect(await svc.adminAction({ type: 'desktopExit' })).toMatchObject({ ok: false });
+      svc.cloud.applyPosUsers({ syncType: 'delta', users: [boss] });
+      expect(svc.technicianUnlock('1995').outcome).toBe('granted');
+      expect(svc.adminInfo().desktopExit?.allowed).toBe(false);
+      expect(await svc.adminAction({ type: 'desktopExit' })).toMatchObject({ ok: false });
+      expect(exitToDesktop).not.toHaveBeenCalled();
+    } finally {
+      svc.stop();
+    }
+  });
+});
+
+/* -------------------------------------- "חזרה אוטומטית לקיוסק" from the cloud */
+
+describe('the idle minutes — the cloud’s setting, kiosk.json only as a fallback', () => {
+  const withSettings = (svc: KioskService, settings: Record<string, unknown>) =>
+    svc.cloud.setSettings({ settings, businessInfo: null, settingsUpdatedAt: '2026-10-08T10:00:00Z', serverTime: null });
+
+  it('the cloud wins (0 = off), else kiosk.json, else ten', () => {
+    const { svc } = service();
+    try {
+      expect(svc.desktopIdleReturnMinutes(undefined)).toBe(10);
+      expect(svc.desktopIdleReturnMinutes(25)).toBe(25);
+      withSettings(svc, { desktopIdleReturnMinutes: 0 });
+      expect(svc.desktopIdleReturnMinutes(25)).toBe(0);
+      withSettings(svc, { desktopIdleReturnMinutes: 15 });
+      expect(svc.desktopIdleReturnMinutes(25)).toBe(15);
+      withSettings(svc, { desktopIdleReturnMinutes: 'nonsense' });
+      expect(svc.desktopIdleReturnMinutes(25)).toBe(25);
+    } finally {
+      svc.stop();
+    }
+  });
+
+  it('a change made on the dashboard while the device is out applies at once', async () => {
+    let minutes = 0;
+    const d = desktopOf({}, () => minutes);
+    await d.mode.exit();
+    d.advance(30 * 60_000);
+    d.setIdle(30 * 60);
+    d.mode.idleTick();
+    expect(d.mode.active).toBe(true); // off: never by itself
+    minutes = 20;
+    d.mode.idleTick();
+    expect(d.returned).toEqual(['idle']);
   });
 });

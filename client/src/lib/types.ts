@@ -347,6 +347,11 @@ export interface PosSettingsV1 {
    */
   forceTerminalNumber?: boolean;
   /**
+   * "חזרה אוטומטית לקיוסק" (R2M POS for Windows, lib/desktopIdleReturn.ts): back in full screen
+   * after this many idle minutes on the desktop; 0 = never; unset = 10.
+   */
+  desktopIdleReturnMinutes?: number;
+  /**
    * Tenant level only: how Z reports are produced. `shop` (default) = one Z per shop
    * over all its tills; `machine` = one till per Z. Not sent to tills.
    */
@@ -399,6 +404,7 @@ export type PosSettingsPatch = Partial<
     | 'tipPromptText'
     | 'payInstallmentsMax'
     | 'payOrder'
+    | 'desktopIdleReturnMinutes'
     | 'autoReopenAfterZ'
     | 'autoReopenIgnoreStock'
     | 'multiPaymentDevices'
@@ -436,6 +442,8 @@ export type PosSettingsPatch = Partial<
   tipPromptText?: string | null;
   /** `null` = unset this layer's most instalments and inherit the level above's again. */
   payInstallmentsMax?: number | null;
+  /** `null` = inherit "חזרה אוטומטית לקיוסק" (Windows) from the level above again. */
+  desktopIdleReturnMinutes?: number | null;
   // "סוג אינטגרציית אשראי": `null` = inherit the level above's again (`auto` too, for the type).
   paymentIntegration?: PosSettingsV1['paymentIntegration'] | null;
   zcreditTerminalNumber?: string | null;

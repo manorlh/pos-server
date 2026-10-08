@@ -68,7 +68,7 @@ function HeroCard({ m, p, width, inCart }: { m: PreviewModel; p: PProduct; width
       data-dish={p.id}
       disabled={p.soldOut}
       onClick={(e) => tap(p, false, e.currentTarget.querySelector('[data-pic]')?.getBoundingClientRect() ?? null)}
-      className="relative shrink-0 snap-start overflow-hidden text-start transition-transform duration-150 active:scale-[0.98]"
+      className="k-tap relative shrink-0 snap-start overflow-hidden text-start transition-transform duration-150 active:scale-[0.98]"
       style={{ ...cardStyle(m), width, aspectRatio: '16 / 9' }}
     >
       <div data-pic className="absolute inset-0">

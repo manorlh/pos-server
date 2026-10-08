@@ -285,6 +285,11 @@ def take_over_host(
     from app.services import till_parameters as TP
 
     out = MT.take_over(db, machine, body.pos_user_name)
+    if out.get("previous") is not None:
+        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
+        from app.services.till_messages import send_server_switch_notice
+
+        send_server_switch_notice(db, machine.shop_id, out.get("mainTill"), out.get("previous"), body.pos_user_name)
     tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
     db.commit()
     # Every till re-reads its parameters and printers, and pulls the tables' new host.

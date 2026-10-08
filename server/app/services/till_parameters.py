@@ -1467,6 +1467,18 @@ from app.services.remote_credits import REMOTE_CREDIT_PARAMETER_SPECS as _REMOTE
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_CREDIT_SPECS)
 
+# "התראת בון שלא הודפס" (pos-android domain/UnprintedBonAlert.kt): the owner, 08.10.2026 — off by
+# default; on shows the kiosk's "בון לא הודפס" pill and the till's kitchen-print banner.
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key="unprintedBonAlert",
+        label="התראת בון שלא הודפס",
+        value_type="boolean",
+        description="הצגת התראה כשבון לא הודפס (בקיוסק ובקופה). כבוי — לא מוצגת התראה; הבון נשאר בתור ויודפס כשהמדפסת תחזור.",
+        default_value=False,
+    ),
+)
+
 # "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): the card lock's terminal-number check off.
 from app.services.terminal_check_bypass import BYPASS_PARAMETER_SPECS as _BYPASS_SPECS  # noqa: E402
 

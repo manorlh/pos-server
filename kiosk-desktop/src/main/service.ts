@@ -24,7 +24,27 @@ import { DRAWER_KICK } from '../core/escpos';
 import { kitchenOptions, kitchenOptionText, MAX_LINE_QTY, optionCharged, saleDocumentType, saleTotals, tipToCharge, unitAgorot, vatRateOf, type SaleLine, type SaleOption } from '../core/sale';
 import { autoCloseMayRun, zModeOf } from '../core/tillZ';
 import { attempt as techAttempt, codeMatches, NO_LOCK, type TechLock } from '../core/technician';
-import { decideExit, displayName, exitEvent, NO_LOCK as NO_EXIT_LOCK, returnEvent, type DesktopExitEvent, type DesktopExitState, type ExitLock, type ReturnVia } from '../core/desktopExit';
+import {
+  decideExit,
+  displayName,
+  exitEvent,
+  exitGuard,
+  findByPin,
+  KIOSK_UNLOCK,
+  KIOSK_UNLOCK_LABEL,
+  NO_LOCK as NO_EXIT_LOCK,
+  PERMISSION_LABEL,
+  returnEvent,
+  TEXT as EXIT_TEXT,
+  userMayExit,
+  usersAllowed,
+  type DesktopExitEvent,
+  type DesktopExitState,
+  type ExitLock,
+  type ReturnVia,
+  type RosterUser,
+} from '../core/desktopExit';
+import { DESKTOP_IDLE_RETURN_KEY, idleReturnMinutesFor } from '@dash-lib/desktopIdleReturn';
 import { pickVariant, type MediaRefIn } from '../core/mediaPlan';
 import { paymentGuard, type Activity } from '../core/updatePolicy';
 import { TERMINAL_CHECK_BYPASS_KEY } from '../core/terminalCheckBypass';
@@ -2093,26 +2113,36 @@ export class KioskService extends EventEmitter {
     void this.sync.kioskSync();
   }
 
-  /** A shop manager's PIN (bcrypt, offline, from the synced POS users) opens the admin for 5 minutes. */
-  adminUnlock(pin: string): { ok: true; name: string } | { ok: false; error: string } {
-    const users = this.cloud.posUsers().filter((u) => u.isActive && u.role === 'shop_manager' && u.pinHash);
-    for (const u of users) {
-      try {
-        if (bcrypt.compareSync(pin, u.pinHash)) {
-          this.adminUntil = Date.now() + 5 * 60_000;
-          this.adminName = [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username;
-          this.adminUserId = u.id;
-          return { ok: true, name: this.adminName };
-        }
-      } catch {
-        /* a hash this build cannot read */
-      }
-    }
-    return { ok: false, error: users.length === 0 ? 'אין מנהלי סניף מסונכרנים לקיוסק' : 'קוד שגוי' };
+  /**
+   * "ניהול הקיוסק" opens for 5 minutes to an active user of this shop whose role allows
+   * `KIOSK_UNLOCK` ("יציאה מנעילת קופה (קיוסק)" — the Android kiosk's manager corner asks the same),
+   * checked offline against the synced roster (bcrypt). A roster from a server before roles answers
+   * by the legacy role: a shop manager, as before.
+   */
+  async adminUnlock(pin: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+    const candidates = usersAllowed(this.cloud.posUsers(), this.shopIdHere(), KIOSK_UNLOCK);
+    if (candidates.length === 0) return { ok: false, error: `אין בסניף מנהל עם הרשאת "${KIOSK_UNLOCK_LABEL}"` };
+    const u = await findByPin(candidates, typeof pin === 'string' ? pin : '', (p, h) => bcrypt.compare(p, h));
+    if (!u) return { ok: false, error: 'קוד שגוי' };
+    this.adminUntil = Date.now() + 5 * 60_000;
+    this.adminName = displayName(u);
+    this.adminUserId = u.id;
+    return { ok: true, name: this.adminName };
   }
 
   private adminOk(): boolean {
     return Date.now() < this.adminUntil;
+  }
+
+  /** The machine's shop (the roster's users must be of it). */
+  private shopIdHere(): string | null {
+    const me = this.cloud.machine()?.shopId;
+    return this.cloud.credentials()?.shopId ?? (typeof me === 'string' ? me : null);
+  }
+
+  /** Whoever opened the admin, if their role (read again now) allows leaving the kiosk (`DESKTOP_EXIT`). */
+  private adminExitUser() {
+    return userMayExit(this.cloud.posUsers(), this.shopIdHere(), this.adminUserId);
   }
 
   adminInfo(): AdminInfo {
@@ -2157,6 +2187,9 @@ export class KioskService extends EventEmitter {
       zOwed: this.tillZ.owed,
       zMode: this.cloud.heartbeat().zMode,
       offlineSince: this.offline.since,
+      desktopExit: this.adminExitUser()
+        ? { allowed: true, reason: null }
+        : { allowed: false, reason: this.adminUserId ? `אין לך הרשאה: ${PERMISSION_LABEL}` : `נדרש מנהל עם הרשאת "${PERMISSION_LABEL}"` },
     };
   }
 
@@ -2199,9 +2232,25 @@ export class KioskService extends EventEmitter {
         this.dirty();
         return { ok };
       }
-      case 'exitKiosk':
+      // "יציאה לשולחן העבודה" / "יציאה מהתוכנה" from the manager's menu: the manager who opened it
+      // must hold DESKTOP_EXIT (no second code), and never during an order or a payment.
+      case 'desktopExit': {
+        const user = this.adminExitUser();
+        if (!user) return { ok: false, message: `אין הרשאה: ${PERMISSION_LABEL}` };
+        const r = await this.exitAs(user, this.activity(), 'admin');
+        return { ok: r.ok, message: r.message ?? undefined };
+      }
+      case 'exitKiosk': {
+        const user = this.adminExitUser();
+        if (!user) return { ok: false, message: `אין הרשאה: ${PERMISSION_LABEL}` };
+        const activity = this.activity();
+        const guard = exitGuard(activity);
+        if (guard) return { ok: false, message: EXIT_TEXT.busy(guard) };
+        this.recordTillEvent(exitEvent({ ...this.exitEventBase(user, activity), action: 'quit', via: 'admin' }));
+        this.log(`app closed from the admin by ${displayName(user)} (${user.id})`);
         this.platform.quit();
         return { ok: true };
+      }
       case 'synqpayPair':
         return this.synqpayPair(a.serialNumber?.trim() || null);
       case 'synqpayCode':
@@ -2224,14 +2273,12 @@ export class KioskService extends EventEmitter {
    * (`platform.exitToDesktop`) and the exit is recorded — on the device and to the cloud.
    */
   async desktopExit(pin: string, activity: Activity = this.activity()): Promise<DesktopExitResult> {
-    const nowMs = Date.now();
-    const shopId = this.cloud.credentials()?.shopId ?? (typeof this.cloud.machine()?.shopId === 'string' ? (this.cloud.machine()!.shopId as string) : null);
     const d = await decideExit({
       users: this.cloud.posUsers(),
-      shopId,
+      shopId: this.shopIdHere(),
       pin: typeof pin === 'string' ? pin : '',
       lock: this.kv.getJson<ExitLock>(DESKTOP_LOCK) ?? NO_EXIT_LOCK,
-      nowMs,
+      nowMs: Date.now(),
       activity,
       // Asynchronous: bcrypt at the cloud's cost 12 takes a while in JS — the main process keeps going.
       compare: (p, h) => bcrypt.compare(p, h),
@@ -2241,22 +2288,43 @@ export class KioskService extends EventEmitter {
       if (d.outcome === 'locked_out') this.log('desktop exit: five wrong codes — the pad is locked for a minute');
       return { ok: false, outcome: d.outcome, message: d.message, triesLeft: d.triesLeft, lockedForMs: d.lockedForMs };
     }
+    return this.exitAs(d.user, activity);
+  }
+
+  /** `user` may leave (checked by the caller): out of full screen, then the exit recorded. */
+  private async exitAs(user: RosterUser, activity: Activity, via?: 'admin'): Promise<DesktopExitResult> {
+    const guard = exitGuard(activity);
+    if (guard) return { ok: false, outcome: 'busy', message: EXIT_TEXT.busy(guard) };
+    const nowMs = Date.now();
     const out = this.platform.exitToDesktop ? await this.platform.exitToDesktop().catch((e: unknown) => ({ ok: false, message: String(e) })) : { ok: false, message: 'לא נתמך במכשיר הזה' };
     if (!out.ok) return { ok: false, outcome: 'failed', message: out.message ?? 'היציאה לשולחן העבודה נכשלה' };
-    const event = exitEvent({
+    const event = exitEvent({ ...this.exitEventBase(user, activity), ...(via ? { via } : {}) });
+    const name = displayName(user);
+    this.kv.setJson(DESKTOP_STATE, { eventId: event.id, userId: user.id, userName: name, atMs: nowMs } satisfies DesktopExitState);
+    this.recordTillEvent(event);
+    this.log(`desktop exit by ${name} (${user.id})${via ? ` from the ${via}` : ''}`);
+    return { ok: true, outcome: 'granted', message: null, name };
+  }
+
+  private exitEventBase(user: RosterUser, activity: Activity) {
+    return {
       id: randomUUID(),
       atMs: Date.now(),
-      user: d.user,
+      user,
       shiftId: this.ledger.currentShift()?.id ?? null,
       screen: activity.screen || (activity.role ?? ''),
       deviceRole: activity.role ?? this.cloud.machine()?.deviceRole ?? null,
       appVersion: this.opts.appVersion,
-    });
-    const name = displayName(d.user);
-    this.kv.setJson(DESKTOP_STATE, { eventId: event.id, userId: d.user.id, userName: name, atMs: nowMs } satisfies DesktopExitState);
-    this.recordTillEvent(event);
-    this.log(`desktop exit by ${name} (${d.user.id})`);
-    return { ok: true, outcome: 'granted', message: null, name };
+    };
+  }
+
+  /**
+   * "חזרה אוטומטית לקיוסק": the idle minutes on the desktop before full screen comes back — the
+   * cloud's setting `desktopIdleReturnMinutes`, else the device's kiosk.json, else 10 (0 = never).
+   */
+  desktopIdleReturnMinutes(local?: unknown): number {
+    const settings = this.cloud.settings().settings ?? {};
+    return idleReturnMinutesFor({ cloud: (settings as Record<string, unknown>)[DESKTOP_IDLE_RETURN_KEY], local });
   }
 
   /** The exit in progress (null: in full screen). */
@@ -2296,7 +2364,12 @@ export class KioskService extends EventEmitter {
     this.kv.setJson(TECH_LOCK, r.lock);
     const audit = this.kv.getJson<Array<{ at: number; access: string }>>('technician.audit') ?? [];
     this.kv.setJson('technician.audit', [...audit, { at: Date.now(), access: r.outcome }].slice(-50));
-    if (r.outcome === 'granted') this.adminUntil = Date.now() + 5 * 60_000;
+    if (r.outcome === 'granted') {
+      this.adminUntil = Date.now() + 5 * 60_000;
+      // The technician's code is nobody's: no manager's name or rights carry over into this session.
+      this.adminUserId = null;
+      this.adminName = null;
+    }
     return { outcome: r.outcome, triesLeft: r.triesLeft, lockedForMs: Math.max(0, r.lock.lockedUntilMs - Date.now()) };
   }
 

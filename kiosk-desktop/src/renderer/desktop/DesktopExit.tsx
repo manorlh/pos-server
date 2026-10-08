@@ -39,13 +39,25 @@ export function DesktopExitButton({ onOpen, className = 'absolute', style }: { o
   );
 }
 
-/** The menus' button (the manager's admin, the technician's screens). */
-export function DesktopExitMenuButton({ onOpen, className, style }: { onOpen: () => void; className?: string; style?: CSSProperties }) {
+/** The menus' button (the manager's admin, the technician's screens): the pad, or `onOpen` as given. */
+export function DesktopExitMenuButton({
+  onOpen,
+  className,
+  style,
+  label = `${DESKTOP_EXIT_LABEL} (קוד מנהל)`,
+  disabled = false,
+}: {
+  onOpen: () => void;
+  className?: string;
+  style?: CSSProperties;
+  label?: string;
+  disabled?: boolean;
+}) {
   if (!shell.desktopExit) return null;
   return (
-    <button type="button" onClick={onOpen} className={className ?? 'flex items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 py-2 text-sm font-bold text-white'} style={style}>
+    <button type="button" onClick={onOpen} disabled={disabled} className={className ?? 'flex items-center justify-center gap-2 rounded-xl bg-neutral-900 px-4 py-2 text-sm font-bold text-white disabled:opacity-40'} style={style}>
       <MonitorUp className="h-4 w-4" aria-hidden />
-      {DESKTOP_EXIT_LABEL} (קוד מנהל)
+      {label}
     </button>
   );
 }

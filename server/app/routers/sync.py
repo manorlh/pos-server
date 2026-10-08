@@ -2209,6 +2209,10 @@ def get_settings_sync(
     # not list; `[]` when no level sets one — the till then keeps each screen's own
     # (today's) order. Always sent, so a reset to inherit reaches the till on any pull.
     effective[PAY_ORDER_KEY] = resolve_pay_order(all_settings) or []
+    # "חזרה אוטומטית לקיוסק" (Windows): resolved, default 10 — always sent, like the order.
+    from app.services import desktop_idle_return
+
+    effective[desktop_idle_return.KEY] = desktop_idle_return.resolve(all_settings)
     # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
     # and Z-Credit's password for a till that charges there — its only way out of the
     # server (app/services/payment_integration.py).

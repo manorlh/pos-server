@@ -929,7 +929,9 @@ class TestMigrations:
         line = {r.revision for r in script.walk_revisions("base", heads[0])}
         assert {self.TABLE, self.CHOICE} <= line
         assert script.get_revision(self.TABLE).down_revision == "a6d2f8c4e0b7"
-        assert script.get_revision(self.CHOICE).down_revision == self.TABLE
+        # After main's kiosk motion engine (b3e7c1a9d5f2), itself on 7d2e4b9f1a63: one line.
+        assert script.get_revision(self.CHOICE).down_revision == "b3e7c1a9d5f2"
+        assert script.get_revision("b3e7c1a9d5f2").down_revision == self.TABLE
 
     def test_idempotent_create(self):
         text = (VERSIONS / f"{self.TABLE}_payment_devices.py").read_text(encoding="utf-8")

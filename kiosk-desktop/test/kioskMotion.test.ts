@@ -13,7 +13,8 @@ describe('the transitions on the Windows kiosk', () => {
   it('a config with no motion (an older cloud) still animates as its style says', () => {
     for (const style of ['ios', 'wolt', 'classic', 'minimal_dark', 'tech'] as const) {
       const cfg = resolveKioskConfig({ theme: { uiStyle: style } });
-      expect(cfg.motion).toEqual({ ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto' });
+      // "מנוע הנפשות": Runner Standard, the speed by `speed`, no event of its own.
+      expect(cfg.motion).toEqual({ ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} });
       const t = transitionSpec(cfg.motion, cfg.general);
       expect(t.categoryMs).toBeGreaterThan(0);
       expect(['pop', 'cascade']).toContain(t.itemsEnter);

@@ -1138,3 +1138,83 @@ def acknowledge(
         receipt.acknowledged_by_pos_user_name = (pos_user_name or "").strip()[:200] or None
         db.flush()
     return receipt
+
+
+# ── "השרת הוחלף": the system's own notice ─────────────────────────────────────
+
+#: How long the notice waits for a till that is off (a till switched on later still gets it).
+SERVER_SWITCH_TTL = timedelta(days=3)
+
+SERVER_SWITCH_TITLE = "השרת הוחלף — יש לבדוק תקינות נתונים"
+
+
+def server_switch_body(new_till: Optional[Dict], old_till: Optional[Dict], by: Optional[str]) -> str:
+    """The notice's text (the owner: "שיקפוץ ללקוח הודעה שרת הוחלף, יש לבדוק תקינות נתונים")."""
+
+    def name(t: Optional[Dict]) -> Optional[str]:
+        if not t:
+            return None
+        label = (t.get("name") or "").strip()
+        number = (t.get("posNumber") or "").strip() if isinstance(t.get("posNumber"), str) else t.get("posNumber")
+        return f"{label} (#{number})" if label and number else (label or (f"#{number}" if number else None))
+
+    new_name, old_name = name(new_till), name(old_till)
+    who = f" על ידי {by.strip()}" if by and by.strip() else ""
+    moved = f"מ{old_name} ל{new_name}" if old_name and new_name else (f"ל{new_name}" if new_name else "")
+    head = f"הקופה הראשית (שרת הסניף) הוחלפה {moved}{who}.".replace("  ", " ")
+    return (
+        f"{head}\n"
+        "יש לבדוק תקינות נתונים: שולחנות והזמנות פתוחים, בונים שלא הודפסו, "
+        "ובדשבורד את שורת \"סנכרון רשת מקומית\" בכרטיס הקופה הראשית."
+    )
+
+
+def send_server_switch_notice(
+    db: Session,
+    shop_id,
+    new_till: Optional[Dict],
+    old_till: Optional[Dict],
+    by: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Optional[TillMessage]:
+    """
+    Every till of the shop shows "השרת הוחלף" full-screen until its employee taps "קראתי"
+    (the ordinary till message: its receipts, its "who acknowledged"). Sent by the system
+    (no sender), to the shop's active fiscal tills — not its kiosks (a customer stands
+    there) nor its kitchen / ready screens (no employee to acknowledge). None: no such till.
+    """
+    shop = db.get(Shop, _as_uuid(shop_id)) if shop_id is not None else None
+    if shop is None:
+        return None
+    now = now or _now()
+    tills = [
+        m for m in db.query(POSMachine).filter(
+            POSMachine.shop_id == shop.id,
+            POSMachine.is_active.is_(True),
+            POSMachine.is_fiscal.isnot(False),
+        ).all()
+        if not m.is_kiosk
+    ]
+    if not tills:
+        return None
+    message = TillMessage(
+        id=uuid.uuid4(),
+        tenant_id=shop.tenant_id,
+        created_by=None,
+        created_at=now,
+        title=SERVER_SWITCH_TITLE,
+        body=server_switch_body(new_till, old_till, by),
+        target_level="shop",
+        target_id=shop.id,
+        expires_at=now + SERVER_SWITCH_TTL,
+        schedule_kind="now",
+        sent_at=now,
+        timezone=tenant_timezone(db, shop.tenant_id),
+        display="fullscreen",
+    )
+    db.add(message)
+    db.flush()
+    for machine in tills:
+        db.add(TillMessageReceipt(id=uuid.uuid4(), message_id=message.id, machine_id=machine.id))
+    db.flush()
+    return message

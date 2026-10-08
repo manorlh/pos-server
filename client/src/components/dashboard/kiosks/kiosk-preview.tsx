@@ -28,14 +28,14 @@ import {
   kioskCatalogView,
   messagePlacement,
   addMs,
-  motionSpec,
+  engineMotionSpec,
+  engineTransitionSpec,
+  kioskMotionEngine,
   kioskRenderProfile,
-  profileMotion,
   pickupLabel,
   resolveThemeColors,
   stepMode,
   tickerBandPx,
-  transitionSpec,
   upsellStepModeKey,
   typeScaleFactor,
   typeWeights,
@@ -81,7 +81,8 @@ import {
 import { DetailsPreview, detailsFields } from './preview-entry';
 import { GuidedFrame, LayoutCatalog, LayoutProductSheet, ReachFrame, ReachSheets, ReachToggle } from '@/kiosk-shared/layouts';
 import { configuredText, defaultText, kioskTextOf, webTextIn } from '@/lib/kioskTexts';
-import { KioskSwap, screenOrder } from './preview-motion';
+import { KioskSwap, screenOrder, screenSwap } from './preview-motion';
+import { AddedToast } from './preview-feedback';
 import { PREVIEW_FOOTER_PX, TickerFrame } from './preview-ticker';
 import { useGoogleFonts } from './use-google-fonts';
 
@@ -397,9 +398,10 @@ export function KioskPreview({
   const side = config.theme.categoryLayout !== 'top';
   // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
   const profile = kioskRenderProfile(config.motion.effects);
-  const played = profileMotion(config.motion, profile);
-  const motion = motionSpec(config.theme, config.general, played);
-  const transitions = transitionSpec(played, config.general);
+  // "מנוע הנפשות": every event resolved once (the preset, the speed, the events' own values, the profile).
+  const engine = kioskMotionEngine(config.motion, config.general, profile);
+  const motion = engineMotionSpec(engine, config.theme);
+  const transitions = engineTransitionSpec(engine);
   const colors = resolveThemeColors(config.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
@@ -517,6 +519,7 @@ export function KioskPreview({
     setService,
     motion,
     transitions,
+    engine,
     justAddedId: justAdded,
     cartBump,
     setCartTarget,
@@ -743,8 +746,8 @@ export function KioskPreview({
               <ReachFrame m={model} screen={screen === 'product' ? 'catalog' : screen} dish={screen === 'product' ? product : null} category={activeCategory}>
               <KioskSwap
                 id={screen === 'product' ? 'catalog' : screen}
-                fx={transitions.screenChange}
-                ms={transitions.screenMs}
+                // "מנוע הנפשות": back home by homeReturn, into the basket by cartOpen, else pageTransition.
+                {...screenSwap(transitions, engine, screen === 'product' ? 'catalog' : screen)}
                 order={screenOrder}
                 className="h-full"
                 slotClassName="h-full"
@@ -850,6 +853,8 @@ export function KioskPreview({
                 onDone={removeFlight}
               />
             ))}
+            {/* "נוסף להזמנה" as the badge pops (the engine's toast). */}
+            {(screen === 'catalog' || screen === 'product' || screen === 'cart') && !confirming ? <AddedToast m={model} bottom={PREVIEW_FOOTER_PX + 72} /> : null}
           </div>
         </div>
       </div>

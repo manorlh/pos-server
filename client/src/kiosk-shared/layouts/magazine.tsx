@@ -72,6 +72,7 @@ export function MagazineCatalog({ m, activeCategory, onCategory }: { m: PreviewM
             id={current.id}
             fx={m.transitions.categorySwitch}
             ms={m.transitions.categoryMs}
+            ease={m.transitions.categoryEase}
             order={(id) => m.categories.findIndex((c) => c.id === id)}
             className="overflow-x-clip [overflow-clip-margin:12px]"
             render={(id) => {
@@ -97,7 +98,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
       tabIndex={0}
       data-dish={p.id}
       onClick={(e) => !p.soldOut && tap(p, false, pic(e.currentTarget))}
-      className={cn('flex snap-start flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.99]', p.soldOut && 'opacity-50')}
+      className={cn('k-tap relative flex snap-start flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.99]', p.soldOut && 'opacity-50')}
       style={{ ...cardStyle(m), height }}
     >
       <div data-pic className="relative min-h-0 flex-1">
@@ -135,7 +136,7 @@ function StoryPage({ m, p, label, height, inCart }: { m: PreviewModel; p: PProdu
                 e.stopPropagation();
                 tap(p, true, pic(e.currentTarget));
               }}
-              className="flex shrink-0 items-center gap-1.5 px-5 kt-15 font-bold shadow-md transition-transform duration-150 active:scale-95"
+              className="k-tap k-tap-solid relative flex shrink-0 items-center gap-1.5 px-5 kt-15 font-bold shadow-md transition-transform duration-150 active:scale-95"
               style={{ minHeight: 48 * u, borderRadius: m.btnRadius, background: added ? m.c.accent : m.c.button, color: m.c.buttonText, ...textSize(m, 'buttons', 15) }}
               data-text-key="quickAdd"
             >

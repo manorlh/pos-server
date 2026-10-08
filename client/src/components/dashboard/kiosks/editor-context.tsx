@@ -61,6 +61,10 @@ export interface KioskEditorValue {
   showScreen: (screen: PreviewScreen) => void;
   /** "הצג" of "הנפשות ומעברים": play that transition in the live preview. */
   playMotion: (demo: MotionDemo) => void;
+  /** The draft differs from what this level has saved. */
+  dirty: boolean;
+  /** "שדר לקיוסקים": open this level's review-and-save flow (as the save bar's button). */
+  openReview: () => void;
 }
 
 export const KioskEditorContext = createContext<KioskEditorValue | null>(null);

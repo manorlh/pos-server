@@ -1,8 +1,12 @@
 """Payment devices: the till's mode / group replace the device's tills; Z-Credit pinpad = PinPad only
 
 Revision ID: 3b8f6d2a9c41
-Revises: 7d2e4b9f1a63
+Revises: b3e7c1a9d5f2
 Create Date: 2026-10-08
+
+Chained after main's b3e7c1a9d5f2 (the kiosk motion engine, already run), which came from the
+same parent 7d2e4b9f1a63 (the payment devices table): one line, 7d2e4b9f1a63 → b3e7c1a9d5f2 →
+3b8f6d2a9c41 → 5e1c9b7d3a80 → 8c4a2f6e1b93.
 
 The owner's decisions on "מכשירי תשלום" (app/services/payment_devices.py):
 
@@ -31,7 +35,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = '3b8f6d2a9c41'
-down_revision: Union[str, Sequence[str], None] = '7d2e4b9f1a63'
+down_revision: Union[str, Sequence[str], None] = 'b3e7c1a9d5f2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

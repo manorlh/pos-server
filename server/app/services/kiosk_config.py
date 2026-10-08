@@ -45,6 +45,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from sqlalchemy.orm import Session
 
 from app.services import kiosk_layout as layouts
+from app.services import kiosk_motion as motion_engine
 
 # ── The KDS hook ──────────────────────────────────────────────────────────────
 
@@ -196,6 +197,10 @@ MOTION_SPEEDS = ("fast", "normal", "relaxed")
 #: "full" — every effect, "light" — the cheaper variant of each (no shadows, no cascade of cards,
 #: fades at the fast pace, none of the tech style's glow and scan line). Not a style's choice.
 MOTION_EFFECTS = ("auto", "full", "light")
+#: The Motion Engine ("מנוע הנפשות", kiosk_motion.py): a preset of every event's timings, a global
+#: speed (null: the older `speed` above), and each event's own values as overrides.
+MOTION_PRESETS = motion_engine.PRESETS
+MOTION_GLOBAL_SPEEDS = motion_engine.GLOBAL_SPEEDS
 #: "כיתוב רץ" (config `ticker`): a slim strip whose texts scroll without end on the chosen screens,
 #: under the header ("top") or above the basket / action bar ("bottom"). The dashboard's
 #: src/lib/kioskConfig.ts TICKER_* and the till's domain/KioskTicker.kt mirror this.
@@ -471,6 +476,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "sheet": "scale", "addToCart": "fly", "speed": "normal",
         # "אפקטים": the device decides (MOTION_EFFECTS); no style sets it.
         "effects": "auto",
+        # "מנוע הנפשות" (kiosk_motion.py): Runner Standard for a new kiosk (a kiosk from before the
+        # engine is stamped "legacy" by migration b3e7c1a9d5f2); the global speed follows `speed`
+        # until a level sets one; no event of its own.
+        "preset": motion_engine.DEFAULT_PRESET,
+        "globalSpeed": None,
+        "speedMultiplier": 1.0,
+        "events": {},
     },
     # "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly (readable),
     # in the theme's button colours (null), medium text; a finger on it does not stop it.
@@ -995,6 +1007,74 @@ class Map(Node):
         return self._walk(value, path, errors, layer=True)
 
 
+class Num(Node):
+    """A number (int or float, never a bool) in [lo, hi]; kept as a float."""
+
+    def __init__(self, lo: float, hi: float, nullable: bool = False):
+        self.lo, self.hi, self.nullable = lo, hi, nullable
+
+    def check(self, value, path, errors):
+        if value is None and self.nullable:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return _fail(errors, path, "invalid_type", "must be a number")
+        if not self.lo <= value <= self.hi:
+            return _fail(errors, path, "out_of_range", f"must be between {self.lo} and {self.hi}")
+        return float(value)
+
+
+class PrunedObj(Obj):
+    """An object whose layer drops a child object it leaves empty (`{"events": {"addToCart": {}}}` sets nothing)."""
+
+    def check_layer(self, value, path, errors):
+        out = super().check_layer(value, path, errors)
+        if isinstance(out, dict):
+            out = {k: v for k, v in out.items() if not (isinstance(v, dict) and v == {} and isinstance(self.fields.get(k), Obj))}
+        return out
+
+
+class PartialObj(PrunedObj):
+    """An object every key of which is optional, also when complete (an event's own values: only what is set)."""
+
+    def check(self, value, path, errors):
+        if not isinstance(value, dict):
+            return _fail(errors, path, "invalid_type", "must be an object")
+        before = len(errors)
+        out: Dict[str, Any] = {}
+        for key, raw in value.items():
+            node = self.fields.get(key)
+            if node is None:
+                _fail(errors, _join(path, str(key)), "unknown_key", "unknown key")
+                continue
+            if raw is None:
+                continue
+            cleaned = node.check(raw, _join(path, key), errors)
+            if cleaned is not _INVALID:
+                out[key] = cleaned
+        if len(errors) > before:
+            return _INVALID
+        return out
+
+
+def _motion_event_node(event: str) -> PartialObj:
+    """`motion.events.<event>`: the parameters of kiosk_motion.PARAMS, its own kinds, its own ranges."""
+    fields: Dict[str, Node] = {}
+    narrow = motion_engine.EVENT_PARAM_RANGES.get(event, {})
+    for name, (kind, lo, hi) in motion_engine.PARAMS.items():
+        lo, hi = narrow.get(name, (lo, hi))
+        if kind == "bool":
+            fields[name] = Bool()
+        elif kind == "type":
+            fields[name] = Enum(motion_engine.EVENT_TYPES[event])
+        elif kind == "enum":
+            fields[name] = Enum(lo)
+        elif kind == "int":
+            fields[name] = Int(lo, hi)
+        else:
+            fields[name] = Num(lo, hi)
+    return PartialObj(fields)
+
+
 ID = Str(ID_MAX, min_len=1)
 PRINTER_ID = Str(36, min_len=36, pattern=_UUID, pattern_message="must be a printer id (UUID)", nullable=True)
 
@@ -1208,7 +1288,7 @@ SCHEMA = Obj({
         "message": Str(SUCCESS_MESSAGE_MAX),
         "image": Media(("image",), nullable=True),
     }),
-    "motion": Obj({
+    "motion": PrunedObj({
         "categorySwitch": Enum(MOTION_CATEGORY_SWITCH),
         "itemsEnter": Enum(MOTION_ITEMS_ENTER),
         "screenChange": Enum(MOTION_SCREEN_CHANGE),
@@ -1216,6 +1296,16 @@ SCHEMA = Obj({
         "addToCart": Enum(MOTION_ADD_TO_CART),
         "speed": Enum(MOTION_SPEEDS),
         "effects": Enum(MOTION_EFFECTS),
+        # "מנוע הנפשות" (kiosk_motion.py). A config stored before it has none of these (filled).
+        "preset": Enum(MOTION_PRESETS),
+        "globalSpeed": Enum(MOTION_GLOBAL_SPEEDS, nullable=True),
+        "speedMultiplier": Num(motion_engine.MULTIPLIER_MIN, motion_engine.MULTIPLIER_MAX),
+        "events": PrunedObj(
+            {e: _motion_event_node(e) for e in motion_engine.EVENTS},
+            fill={e: {} for e in motion_engine.EVENTS},
+        ),
+    }, fill={
+        "preset": motion_engine.DEFAULT_PRESET, "globalSpeed": None, "speedMultiplier": 1.0, "events": {},
     }),
     "ticker": Obj({
         "enabled": Bool(),
@@ -1390,7 +1480,24 @@ def limits() -> Dict[str, Any]:
             "motionAddToCart": list(MOTION_ADD_TO_CART),
             "motionSpeed": list(MOTION_SPEEDS),
             "motionEffects": list(MOTION_EFFECTS),
+            "motionPreset": list(MOTION_PRESETS),
+            "motionGlobalSpeed": list(MOTION_GLOBAL_SPEEDS),
             "fonts": [f.id for f in FONT_CATALOG],
+        },
+        # "מנוע הנפשות": the events, the kinds each can play, every parameter's range (kiosk_motion.py).
+        "motionEngine": {
+            "events": list(motion_engine.EVENTS),
+            "eventTypes": {e: list(t) for e, t in motion_engine.EVENT_TYPES.items()},
+            "directions": list(motion_engine.DIRECTIONS),
+            "easings": list(motion_engine.EASINGS),
+            "fallbacks": list(motion_engine.FALLBACKS),
+            "speedFactors": dict(motion_engine.SPEED_FACTORS),
+            "speedMultiplier": {"min": motion_engine.MULTIPLIER_MIN, "max": motion_engine.MULTIPLIER_MAX},
+            "params": {
+                name: {"min": lo, "max": hi}
+                for name, (kind, lo, hi) in motion_engine.PARAMS.items() if kind in ("int", "num")
+            },
+            "eventParams": {e: {n: {"min": lo, "max": hi} for n, (lo, hi) in r.items()} for e, r in motion_engine.EVENT_PARAM_RANGES.items()},
         },
         "textKeys": list(TEXT_KEYS),
         # "מבנה הקיוסק": the vocabulary, the templates, which ones the clients draw, "ברוכים הבאים".
@@ -1716,6 +1823,10 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
             route["tills"] = "main"
     # "מבנה הקיוסק": its cross-field rules, and theme.categoryLayout / cartStyle for an older kiosk.
     layouts.repair_layout(cfg)
+    # …and the engine's own add-to-cart kind: reach low never flies a copy across the display half.
+    add = ((cfg.get("motion") or {}).get("events") or {}).get("addToCart")
+    if (cfg.get("layout") or {}).get("reach") == "low" and isinstance(add, dict) and add.get("animationType") == "flyToCart":
+        add["animationType"] = "bounce"
     return cfg
 
 
