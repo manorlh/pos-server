@@ -306,16 +306,12 @@ def test_self_and_lookups_stay_open_to_a_user_without_sections(w):
 # ── The default: "מנהל ארגון" ──────────────────────────────────────────────────
 
 
-#: The owner's 07.10 default (reports, products, Z) plus the cockpit's quick actions (09.10 integration).
-ORG_MANAGER_DEFAULT = {"products": "edit", "quick_actions": "edit", "reports": "view", "z": "view"}
-
-
-def test_the_default_opens_reports_products_z_and_quick_actions_only(w):
+def test_the_default_opens_reports_products_and_z_only(w):
     manager = _user(w.db, "org", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
     DA.create_default_profile(w.db, manager)
     w.db.commit()
     access = DA.effective_access(w.db, manager)
-    assert access.restricted and access.sections == ORG_MANAGER_DEFAULT
+    assert access.restricted and access.sections == {"products": "edit", "reports": "view", "z": "view"}
 
     headers = _headers(manager, w.tenant)
     allowed = [
@@ -344,10 +340,10 @@ def test_me_says_what_the_user_may_open(w):
     w.db.commit()
     me = w.client.get("/api/v1/users/me", headers=_headers(manager)).json()
     assert me["dashboardAccess"]["restricted"] is True
-    assert me["dashboardAccess"]["sections"] == ORG_MANAGER_DEFAULT
+    assert me["dashboardAccess"]["sections"] == {"products": "edit", "reports": "view", "z": "view"}
     assert me["dashboardAccess"]["orgWide"] is True
     mine = w.client.get("/api/v1/dashboard-access/me", headers=_headers(manager)).json()
-    assert [s["label"] for s in mine["sectionList"]] == ["מוצרים וקטלוג", "פעולות מהירות", "דוחות", "זדים ומשמרות"]
+    assert [s["label"] for s in mine["sectionList"]] == ["מוצרים וקטלוג", "דוחות", "זדים ומשמרות"]
     assert [o["name"] for o in mine["organizations"]] == ["Royal"]
 
 
@@ -363,7 +359,7 @@ def test_a_user_created_from_the_users_page_starts_as_org_manager(w):
     created = w.db.get(User, uuid.UUID(response.json()["id"]))
     profile = w.db.get(DashboardAccessProfile, created.id)
     assert profile.full_access is False and profile.builtin_template == "org_manager"
-    assert DS.clean_sections(profile.sections) == ORG_MANAGER_DEFAULT
+    assert DS.clean_sections(profile.sections) == {"products": "edit", "reports": "view", "z": "view"}
     # A manager with full access may give full access — what they hold themselves.
     response = w.client.post(
         "/api/v1/users", headers=_headers(legacy, w.tenant),

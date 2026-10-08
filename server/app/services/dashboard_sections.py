@@ -151,11 +151,11 @@ SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
 
 #: "מנהל ארגון" — what a new dashboard user gets until the super admin opens more (the owner,
-#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"; 09.10.2026 integration: plus the
-#: cockpit's "פעולות מהירות" at edit — the routes still check the role as well).
+#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"). Quick actions come with the
+#: "מנהל סניף / אירוע" template (`BRANCH_MANAGER_SECTIONS`), not with this default.
 ORG_MANAGER_TEMPLATE = "org_manager"
 ORG_MANAGER_LABEL = "מנהל ארגון"
-ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": VIEW, "quick_actions": EDIT}
+ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": VIEW}
 
 #: "גישה מלאה לפי תפקיד" — the role decides, as before profiles existed.
 FULL_TEMPLATE = "full"

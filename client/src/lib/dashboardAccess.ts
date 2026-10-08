@@ -116,7 +116,6 @@ export const ORG_MANAGER_SECTIONS: Partial<Record<SectionId, AccessLevel>> = {
   reports: 'view',
   products: 'edit',
   z: 'view',
-  quick_actions: 'edit',
 };
 
 /** `GET /users/me` → `dashboardAccess`. `restricted` false = everything the role allows. */

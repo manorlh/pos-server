@@ -458,8 +458,7 @@ def _audit(db: Session, *, actor, action: str, user_id=None, template_id=None, b
 def create_default_profile(db: Session, user: User, *, actor=None, org_wide: bool = False,
                            company_ids: Iterable = (), shop_ids: Iterable = ()) -> DashboardAccessProfile:
     """
-    A new dashboard user: "מנהל ארגון" — reports (view), products (edit), Z (view), quick
-    actions (edit). Made by
+    A new dashboard user: "מנהל ארגון" — reports (view), products (edit), Z (view). Made by
     someone other than the super admin, capped to what the maker holds (never more).
     """
     sections = dict(DS.ORG_MANAGER_SECTIONS)
