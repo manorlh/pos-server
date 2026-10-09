@@ -1,0 +1,435 @@
+{
+  "comment": "The KDS and ready-board rules as a scenario corpus (web-till spec v2 §6.8; work plan S0-11): client/src/lib/kdsBoard.ts (buttons, timer, what is on screen, the optimistic overlay, settling, refusals), kdsScreenEngine.ts (delivery of an action, backoff, limits) and pickupBoard.ts (the board's numbers). Checked against the TS in client/src/lib/kdsBoardGolden.test.ts; the APK passes the same bytes in P6-9 (PARITY.md §2.3 lists ~27 rules where it differs today — `parityNotes`). Both sides pin the LF-normalised SHA-256. Orders and tasks are written as overrides of `defaults.order` / `defaults.task` / `defaults.change`; an order's tasks get its `id` as `orderId`. Times are ISO; `now` is an ISO time. In `expect`, a `pending` key compares truthiness; every other key compares exactly.",
+  "version": 1,
+  "parityNotes": [
+    "start required: Android shows 'הכול מוכן' and the cloud refuses (start_required); here 'התחל הכול' / 'התחל (n)' — orderButtons",
+    "'נמסר' only when the order tracks handover — orderButtons",
+    "handed-over (and bumped) orders leave the cards for the Expo's 'recent' strip with 'החזר' — screenOf, recallButton",
+    "the timer counts from the oldest OPEN item's release (a later round restarts it), on the cloud's clock — orderTimer",
+    "cancelled items stay on the card struck through; a station card whose items were all cancelled leaves once the cancellation was seen — screenOf",
+    "cards are re-sorted: urgent first, then the oldest; on a station, cards with nothing left to do go last — sortOrders",
+    "the outbox retries 5xx / 408 / 429 up to 6 times with backoff and drops 401 (Android: 401 and 5xx forever, drops 408 / 429) — deliveryOf, backoffMs",
+    "expectedVersion only for an item action sent at once from a live board (version_conflict)",
+    "a delivered action stays drawn until the board shows it, at most 15 s — isSettled",
+    "undo_pickup turns handed over -> ready as well as ready -> waiting — applyPending",
+    "the outbox is capped at 2000 waiting actions — constants.OUTBOX_MAX"
+  ],
+  "defaults": {
+    "task": {
+      "id": "t1", "orderId": "o1", "roundNo": 1, "stationId": "grill", "stationName": "גריל", "targetKind": "prep", "required": true,
+      "lineKey": "l1", "name": "המבורגר", "mods": [], "removals": [], "notes": null, "allergies": [], "important": false,
+      "seat": null, "course": null, "mealName": null, "orderedQty": 1, "cancelledQty": 0, "preparedQty": 0, "activeQty": 1,
+      "release": "released", "state": "queued", "version": 1, "releasedAt": "2026-10-09T12:00:00Z", "startedAt": null, "readyAt": null
+    },
+    "order": {
+      "id": "o1", "source": "till", "displayRef": "A12", "tableRef": null, "zoneName": null, "serviceType": "take_away", "guests": null,
+      "waiterName": null, "pickupName": null, "orderNote": null, "pickupNumber": 41, "workflowMode": "order", "paid": true,
+      "status": "open", "priority": 0, "groupState": "waiting", "readyAt": null, "allReady": false, "requireExpo": false,
+      "requireStart": false, "trackHandover": false, "viewOnly": false, "firstReleasedAt": "2026-10-09T12:00:00Z",
+      "createdAt": "2026-10-09T11:59:00Z", "version": 1, "tasks": [], "changes": []
+    },
+    "change": { "id": "c1", "taskId": "t1", "stationId": "grill", "kind": "cancel", "qty": 1, "text": null, "requiresAck": true, "acked": false, "createdAt": "2026-10-09T12:05:00Z" }
+  },
+  "constants": {
+    "DEFAULT_WARN_MIN": 10, "DEFAULT_LATE_MIN": 20, "READY_TTL_MS": 900000, "SETTLE_MAX_MS": 15000,
+    "SERVER_ERROR_TRIES": 6, "OUTBOX_MAX": 2000, "OFFLINE_AFTER_MS": 12000, "ERROR_SHOW_MS": 20000,
+    "QUEUED_TEXT": "אין חיבור — הפעולה נשמרה ותישלח כשהחיבור יחזור"
+  },
+  "texts": {
+    "TIMER_TEXT": { "normal": "בזמן", "warn": "מתעכב", "late": "באיחור", "done": "מוכן" },
+    "ACTION_TEXT": { "start": "התחל", "item_ready": "מוכן", "undo_ready": "בטל מוכן", "station_ready": "הכול מוכן", "ack_change": "ראיתי", "ready_for_pickup": "מוכן לאיסוף", "undo_pickup": "החזר", "handover": "נמסר", "priority": "עדיפות", "resolve_fallback": "התאמת הדפסת גיבוי" },
+    "REASON_PRESETS": { "override": ["הלקוח ממתין", "פריט חסר יוגש בהמשך", "אושר ע״י מנהל"], "priority": ["לקוח ממתין", "תלונת לקוח", "אושר ע״י מנהל", "טופל"] },
+    "refusals": {
+      "start_required": "יש להתחיל הכנה לפני סימון מוכן",
+      "not_all_ready": "לא כל התחנות סיימו",
+      "task_cancelled": "הפריט בוטל",
+      "task_held": "המנה עדיין בהמתנה (טרם הוצאה)",
+      "reason_required": "נדרשת סיבה",
+      "not_order_process": "במכירה במקום אין שלב מוכן לאיסוף",
+      "version_conflict": "המצב השתנה במסך אחר — המסך עודכן",
+      "task_of_another_station": "הפריט שייך לתחנה אחרת",
+      "expo_or_manager_only": "רק מסך Expo או מנהל מטבח יכול לבצע פעולה זו",
+      "group_handed_over": "ההזמנה כבר נמסרה",
+      "group_cancelled": "ההזמנה בוטלה",
+      "task_not_found": "הפריט כבר לא קיים",
+      "order_not_found": "ההזמנה כבר לא קיימת",
+      "change_not_found": "השינוי כבר לא קיים",
+      "not_a_kds_device": "המכשיר אינו מוגדר כמסך מטבח בענן",
+      "pickup_screen_is_read_only": "מסך איסוף — לצפייה בלבד",
+      "task_required": "חסר פריט לפעולה",
+      "order_required": "חסרה הזמנה לפעולה",
+      "change_required": "חסר שינוי לאישור",
+      "unknown_action": "פעולה לא מוכרת בענן",
+      "invalid_request": "הענן דחה את הבקשה (נתונים לא תקינים)",
+      "unauthorized": "המכשיר אינו מורשה בענן",
+      "something_new": "הפעולה לא בוצעה (something_new)"
+    }
+  },
+
+  "screenRole": [[null, "station"], [{ "role": "station" }, "station"], [{ "role": "expo" }, "expo"], [{ "role": "manager" }, "manager"], [{ "role": "pickup" }, "station"]],
+  "roleTitle": [
+    [null, "תחנה"],
+    [{ "id": "d", "name": "x", "role": "expo", "stations": [] }, "Expo — הוצאה"],
+    [{ "id": "d", "name": "x", "role": "manager", "stations": [] }, "מנהל מטבח"],
+    [{ "id": "d", "name": "x", "role": "station", "stations": [{ "id": "grill", "name": "גריל" }, { "id": "bar", "name": "בר" }] }, "גריל · בר"],
+    [{ "id": "d", "name": "x", "role": "station", "stations": [] }, "תחנה"]
+  ],
+  "qtyText": [[1, "1"], [2, "2"], [1.5, "1.5"], [2.25, "2.25"], [0.333333, "0.33"], [2.0000001, "2"], [0, "0"]],
+  "epochMs": [["2026-10-09T12:00:00Z", 1791547200000], ["2026-10-09T12:00:00", 1791547200000], ["2026-10-09T15:00:00+03:00", 1791547200000], ["2026-10-09T12:00:00.500+00:00", 1791547200500], ["not a time", null], [null, null]],
+  "orderTitle": [
+    [{ "tableRef": "12", "displayRef": "שולחן 12 · ערב" }, "שולחן 12 · ערב"],
+    [{ "tableRef": "5", "displayRef": "A12" }, "שולחן 5"],
+    [{ "pickupNumber": 41 }, "#41"],
+    [{ "pickupNumber": null, "displayRef": "A12" }, "A12"],
+    [{ "id": "abcdef123456", "pickupNumber": null, "displayRef": null }, "abcdef"]
+  ],
+  "texts2": {
+    "sourceText": [["table", "שולחן"], ["kiosk", "קיוסק"], ["external", "חיצוני"], ["till", "הזמנה מהירה"]],
+    "serviceText": [["eat_in", "לשבת"], ["take_away", "לקחת"], [null, null]],
+    "groupText": [
+      [{ "groupState": "ready_for_pickup" }, "מוכן לאיסוף"],
+      [{ "groupState": "handed_over" }, "נמסר"],
+      [{ "groupState": "cancelled" }, "בוטל"],
+      [{ "groupState": "waiting", "status": "cancelled" }, "בוטל"],
+      [{ "groupState": "waiting" }, null]
+    ]
+  },
+  "changeText": [
+    { "change": { "kind": "cancel", "qty": 2, "text": null }, "order": { "tasks": [{}] }, "expect": "בוטל: 2 × המבורגר" },
+    { "change": { "kind": "cancel", "qty": 1.5, "text": "צ'יפס" }, "order": { "tasks": [{}] }, "expect": "בוטל: 1.5 × צ'יפס" },
+    { "change": { "kind": "note", "text": "בלי בצל" }, "order": { "tasks": [{}] }, "expect": "שינוי הערה — המבורגר: בלי בצל" },
+    { "change": { "kind": "note", "text": null }, "order": { "tasks": [{}] }, "expect": "ההערה הוסרה — המבורגר" },
+    { "change": { "kind": "note", "taskId": null, "text": "חדש" }, "order": { "tasks": [{}] }, "expect": "שינוי הערה: חדש" },
+    { "change": { "kind": "remake", "text": "נשרף" }, "order": { "tasks": [{}] }, "expect": "הכנה מחדש — המבורגר: נשרף" },
+    { "change": { "kind": "info", "text": null }, "order": { "tasks": [{}] }, "expect": "info" }
+  ],
+  "allReady": [
+    { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "ready", "preparedQty": 1 }], "expect": true },
+    { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "preparing" }], "expect": false },
+    { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "preparing", "required": false }], "expect": true },
+    { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "queued", "activeQty": 0, "cancelledQty": 1 }], "expect": true },
+    { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "queued", "release": "hold" }], "expect": true },
+    { "tasks": [{ "state": "queued", "required": false }], "expect": false },
+    { "tasks": [], "expect": false }
+  ],
+  "waitingFor": [
+    { "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "stationName": "בר" }, { "id": "t3", "stationName": "גריל" }, { "id": "t4", "stationId": null, "stationName": null }, { "id": "t5", "stationName": "קינוחים", "state": "ready", "preparedQty": 1 }, { "id": "t6", "stationName": "סלטים", "required": false }] }, "expect": ["גריל", "בר", "ללא תחנה"] }
+  ],
+
+  "taskButton": [
+    { "name": "held: no button", "order": {}, "task": { "release": "hold" }, "expect": null },
+    { "name": "cancelled: no button", "order": {}, "task": { "activeQty": 0, "cancelledQty": 1 }, "expect": null },
+    { "name": "a finished order: no button", "order": { "groupState": "handed_over", "status": "handed_over" }, "task": {}, "expect": null },
+    { "name": "a bumped (closed) order: no button", "order": { "status": "closed" }, "task": {}, "expect": null },
+    { "name": "a fallback round to reconcile: no button", "order": {}, "task": { "fallbackPrinted": true, "fallbackResolved": false }, "expect": null },
+    { "name": "ready: undo", "order": {}, "task": { "state": "ready", "preparedQty": 1 }, "expect": { "key": "task:t1", "label": "בטל מוכן", "tone": "undo", "actions": [{ "type": "undo_ready", "taskId": "t1" }] } },
+    { "name": "queued, start required: start", "order": { "requireStart": true }, "task": {}, "expect": { "key": "task:t1", "label": "התחל", "tone": "start", "actions": [{ "type": "start", "taskId": "t1" }] } },
+    { "name": "queued, no start required: ready", "order": {}, "task": {}, "expect": { "key": "task:t1", "label": "מוכן", "tone": "ready", "actions": [{ "type": "item_ready", "taskId": "t1" }] } },
+    { "name": "preparing, start required: ready", "order": { "requireStart": true }, "task": { "state": "preparing" }, "expect": { "key": "task:t1", "label": "מוכן", "tone": "ready", "actions": [{ "type": "item_ready", "taskId": "t1" }] } }
+  ],
+  "fallbackButtons": [
+    { "task": { "fallbackPrinted": true, "fallbackResolved": false }, "expect": [
+      { "key": "fb:t1", "label": "כבר הוכן", "tone": "ready", "actions": [{ "type": "resolve_fallback", "taskId": "t1", "resolution": "prepared" }] },
+      { "key": "fb:t1", "label": "להכין", "tone": "neutral", "actions": [{ "type": "resolve_fallback", "taskId": "t1", "resolution": "prepare" }] }
+    ] },
+    { "task": { "fallbackPrinted": true, "fallbackResolved": true }, "expect": [] },
+    { "task": { "fallbackPrinted": true, "activeQty": 0, "cancelledQty": 1 }, "expect": [] },
+    { "task": {}, "expect": [] }
+  ],
+  "orderButtons": [
+    { "name": "station, start required, all queued: start all", "role": "station", "order": { "requireStart": true, "tasks": [{}, { "id": "t2" }] }, "expect": [
+      { "key": "card:o1", "label": "התחל הכול", "tone": "start", "actions": [{ "type": "start", "taskId": "t1" }, { "type": "start", "taskId": "t2" }], "primary": true }
+    ] },
+    { "name": "station, start required, some queued: start (n)", "role": "station", "order": { "requireStart": true, "tasks": [{ "state": "preparing" }, { "id": "t2" }] }, "expect": [
+      { "key": "card:o1", "label": "התחל (1)", "tone": "start", "actions": [{ "type": "start", "taskId": "t2" }], "primary": true }
+    ] },
+    { "name": "station, no start required: all ready", "role": "station", "order": { "tasks": [{}] }, "expect": [
+      { "key": "card:o1", "label": "הכול מוכן", "tone": "ready", "actions": [{ "type": "station_ready", "orderId": "o1" }], "primary": true }
+    ] },
+    { "name": "station, nothing open: nothing", "role": "station", "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [] },
+    { "name": "station, only a fallback round to reconcile: nothing", "role": "station", "order": { "tasks": [{ "fallbackPrinted": true }] }, "expect": [] },
+    { "name": "a finished order: nothing", "role": "manager", "order": { "groupState": "handed_over", "status": "handed_over", "tasks": [{}] }, "expect": [] },
+    { "name": "expo, waiting, not all ready: the bump and ready-for-pickup with a reason", "role": "expo", "order": { "tasks": [{ "state": "preparing" }] }, "expect": [
+      { "key": "card:o1", "label": "הכול מוכן", "tone": "ready", "actions": [{ "type": "station_ready", "orderId": "o1" }], "primary": true },
+      { "key": "pickup:o1", "label": "מוכן לאיסוף…", "tone": "neutral", "actions": [{ "type": "ready_for_pickup", "orderId": "o1", "override": true }], "reason": "override" }
+    ] },
+    { "name": "expo, start required: start all and ready-for-pickup with a reason", "role": "expo", "order": { "requireStart": true, "tasks": [{}] }, "expect": [
+      { "key": "card:o1", "label": "התחל הכול", "tone": "start", "actions": [{ "type": "start", "taskId": "t1" }], "primary": true },
+      { "key": "pickup:o1", "label": "מוכן לאיסוף…", "tone": "neutral", "actions": [{ "type": "ready_for_pickup", "orderId": "o1", "override": true }], "reason": "override" }
+    ] },
+    { "name": "expo, waiting, all ready: ready for pickup", "role": "expo", "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "pickup:o1", "label": "מוכן לאיסוף", "tone": "pickup", "actions": [{ "type": "ready_for_pickup", "orderId": "o1" }], "primary": true }
+    ] },
+    { "name": "expo, no group state yet counts as waiting", "role": "expo", "order": { "groupState": null, "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "pickup:o1", "label": "מוכן לאיסוף", "tone": "pickup", "actions": [{ "type": "ready_for_pickup", "orderId": "o1" }], "primary": true }
+    ] },
+    { "name": "expo, ready for pickup, tracks handover: handed over and back to preparation", "role": "expo", "order": { "groupState": "ready_for_pickup", "status": "ready", "trackHandover": true, "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "handover:o1", "label": "נמסר", "tone": "handover", "actions": [{ "type": "handover", "orderId": "o1" }], "primary": true },
+      { "key": "undo:o1", "label": "החזר להכנה", "tone": "undo", "actions": [{ "type": "undo_pickup", "orderId": "o1" }] }
+    ] },
+    { "name": "expo, ready for pickup, no handover tracking: back to preparation only", "role": "expo", "order": { "groupState": "ready_for_pickup", "status": "ready", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "undo:o1", "label": "החזר להכנה", "tone": "undo", "actions": [{ "type": "undo_pickup", "orderId": "o1" }] }
+    ] },
+    { "name": "expo, ready for pickup by override with work still open: no bump", "role": "expo", "order": { "groupState": "ready_for_pickup", "status": "ready", "groupOverride": "הלקוח ממתין", "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "preparing" }] }, "expect": [
+      { "key": "undo:o1", "label": "החזר להכנה", "tone": "undo", "actions": [{ "type": "undo_pickup", "orderId": "o1" }] }
+    ] },
+    { "name": "manager: urgent", "role": "manager", "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "pickup:o1", "label": "מוכן לאיסוף", "tone": "pickup", "actions": [{ "type": "ready_for_pickup", "orderId": "o1" }], "primary": true },
+      { "key": "prio:o1", "label": "דחוף", "tone": "urgent", "actions": [{ "type": "priority", "orderId": "o1", "priority": 1 }], "reason": "priority" }
+    ] },
+    { "name": "manager: not urgent any more", "role": "manager", "order": { "priority": 2, "groupState": "ready_for_pickup", "status": "ready", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": [
+      { "key": "undo:o1", "label": "החזר להכנה", "tone": "undo", "actions": [{ "type": "undo_pickup", "orderId": "o1" }] },
+      { "key": "prio:o1", "label": "בטל דחיפות", "tone": "neutral", "actions": [{ "type": "priority", "orderId": "o1", "priority": 0 }], "reason": "priority" }
+    ] },
+    { "name": "expo, a view-only order: the bump only", "role": "expo", "order": { "viewOnly": true, "groupState": "ready_for_pickup", "tasks": [{ "state": "preparing" }] }, "expect": [
+      { "key": "card:o1", "label": "הכול מוכן", "tone": "ready", "actions": [{ "type": "station_ready", "orderId": "o1" }], "primary": true }
+    ] }
+  ],
+  "recallButton": [
+    { "order": { "groupState": "handed_over", "status": "handed_over", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "expect": { "key": "undo:o1", "label": "החזר", "tone": "undo", "actions": [{ "type": "undo_pickup", "orderId": "o1" }] } },
+    { "order": { "viewOnly": true, "status": "closed", "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "state": "ready", "preparedQty": 1 }, { "id": "t3", "state": "ready", "activeQty": 0, "cancelledQty": 1 }] }, "expect": { "key": "undo:o1", "label": "החזר", "tone": "undo", "actions": [{ "type": "undo_ready", "taskId": "t1" }, { "type": "undo_ready", "taskId": "t2" }] } },
+    { "order": { "viewOnly": true, "status": "closed", "tasks": [{ "state": "preparing" }] }, "expect": null },
+    { "order": { "groupState": "cancelled", "status": "cancelled", "tasks": [{}] }, "expect": null },
+    { "order": { "tasks": [{}] }, "expect": null }
+  ],
+  "checkAction": [
+    [{ "type": "start" }, "חסר פריט לפעולה"],
+    [{ "type": "item_ready" }, "חסר פריט לפעולה"],
+    [{ "type": "station_ready" }, "חסרה הזמנה לפעולה"],
+    [{ "type": "handover" }, "חסרה הזמנה לפעולה"],
+    [{ "type": "ack_change" }, "חסר שינוי לאישור"],
+    [{ "type": "ack_change", "taskId": "t1" }, null],
+    [{ "type": "resolve_fallback", "taskId": "t1" }, "חסרה בחירה: כבר הוכן / להכין"],
+    [{ "type": "resolve_fallback", "taskId": "t1", "resolution": "prepare" }, null],
+    [{ "type": "priority", "orderId": "o1", "priority": 1 }, "נדרשת סיבה"],
+    [{ "type": "priority", "orderId": "o1", "priority": 10, "reason": "לקוח ממתין" }, "עדיפות לא תקינה"],
+    [{ "type": "priority", "orderId": "o1", "priority": 1, "reason": "לקוח ממתין" }, null],
+    [{ "type": "ready_for_pickup", "orderId": "o1", "override": true }, "נדרשת סיבה"],
+    [{ "type": "ready_for_pickup", "orderId": "o1", "override": true, "reason": "   " }, "נדרשת סיבה"],
+    [{ "type": "ready_for_pickup", "orderId": "o1" }, null],
+    [{ "type": "start", "taskId": "t1" }, null]
+  ],
+
+  "orderTimer": [
+    { "name": "from the release, on the cloud's defaults (10 / 20)", "order": { "tasks": [{ "state": "preparing" }] }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 15, "level": "warn" } },
+    { "name": "late", "order": { "tasks": [{ "state": "preparing" }] }, "now": "2026-10-09T12:25:00Z", "expect": { "minutes": 25, "level": "late" } },
+    { "name": "in time", "order": { "tasks": [{}] }, "now": "2026-10-09T12:05:59Z", "expect": { "minutes": 5, "level": "normal" } },
+    { "name": "a later round restarts the count", "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }, { "id": "t2", "roundNo": 2, "releasedAt": "2026-10-09T12:10:00Z" }] }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 5, "level": "normal" } },
+    { "name": "nothing left to prepare: done, counted from the first release", "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 15, "level": "done" } },
+    { "name": "ready for pickup with work open: done", "order": { "groupState": "ready_for_pickup", "status": "ready", "tasks": [{ "state": "preparing" }] }, "now": "2026-10-09T12:30:00Z", "expect": { "minutes": 30, "level": "done" } },
+    { "name": "the strictest station's thresholds", "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "stationName": "בר" }] }, "settings": { "grill": { "targetKind": "prep", "warnMinutes": 5, "lateMinutes": 8 }, "bar": { "targetKind": "prep", "warnMinutes": 15, "lateMinutes": 30 } }, "now": "2026-10-09T12:06:00Z", "expect": { "minutes": 6, "level": "warn" } },
+    { "name": "the strictest station's late", "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "stationName": "בר" }] }, "settings": { "grill": { "targetKind": "prep", "warnMinutes": 5, "lateMinutes": 8 }, "bar": { "targetKind": "prep", "warnMinutes": 15, "lateMinutes": 30 } }, "now": "2026-10-09T12:08:00Z", "expect": { "minutes": 8, "level": "late" } },
+    { "name": "a cancelled item's station does not count", "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "activeQty": 0, "cancelledQty": 1 }] }, "settings": { "bar": { "targetKind": "prep", "warnMinutes": 1, "lateMinutes": 2 } }, "now": "2026-10-09T12:05:00Z", "expect": { "minutes": 5, "level": "normal" } },
+    { "name": "a threshold of 0 is not one", "order": { "tasks": [{ "state": "preparing" }] }, "settings": { "grill": { "targetKind": "prep", "warnMinutes": 0, "lateMinutes": 0 } }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 15, "level": "warn" } },
+    { "name": "colours off: the minutes only", "order": { "tasks": [{ "state": "preparing" }] }, "look": { "ageColors": false }, "now": "2026-10-09T12:25:00Z", "expect": { "minutes": 25, "level": "normal" } },
+    { "name": "the screen's own thresholds", "order": { "tasks": [{ "state": "preparing" }] }, "look": { "thresholds": { "warn": 30, "late": 40 } }, "now": "2026-10-09T12:35:00Z", "expect": { "minutes": 35, "level": "warn" } },
+    { "name": "a naive time is UTC", "order": { "firstReleasedAt": "2026-10-09T12:00:00", "tasks": [{ "state": "preparing", "releasedAt": "2026-10-09T12:00:00" }] }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 15, "level": "warn" } },
+    { "name": "a clock a little ahead never counts below 0", "order": { "tasks": [{ "state": "preparing", "releasedAt": "2026-10-09T12:20:00Z" }] }, "now": "2026-10-09T12:15:00Z", "expect": { "minutes": 0, "level": "normal" } },
+    { "name": "an open item without a release time counts from the order's", "order": { "tasks": [{ "state": "preparing", "releasedAt": null }] }, "now": "2026-10-09T12:12:00Z", "expect": { "minutes": 12, "level": "warn" } },
+    { "name": "no first release: from the creation", "order": { "firstReleasedAt": null, "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "now": "2026-10-09T12:15:30Z", "expect": { "minutes": 16, "level": "done" } }
+  ],
+
+  "screenOf": [
+    { "name": "station: an all-cancelled card stays until the cancellation is seen", "role": "station", "now": "2026-10-09T12:30:00Z",
+      "orders": [
+        { "id": "o1", "firstReleasedAt": "2026-10-09T12:05:00Z", "tasks": [{ "activeQty": 0, "cancelledQty": 1 }], "changes": [{}] },
+        { "id": "o2", "tasks": [{ "activeQty": 0, "cancelledQty": 1 }], "changes": [{ "acked": true }] },
+        { "id": "o3", "firstReleasedAt": "2026-10-09T12:00:00Z", "tasks": [{}] }
+      ],
+      "expect": { "cards": ["o3", "o1"], "recent": [] } },
+    { "name": "station: cards with nothing left to do go last, urgent first among the rest", "role": "station", "now": "2026-10-09T12:30:00Z",
+      "orders": [
+        { "id": "o1", "firstReleasedAt": "2026-10-09T12:00:00Z", "tasks": [{}] },
+        { "id": "o2", "firstReleasedAt": "2026-10-09T12:05:00Z", "priority": 1, "tasks": [{}] },
+        { "id": "o3", "firstReleasedAt": "2026-10-09T11:00:00Z", "priority": 5, "tasks": [{ "state": "ready", "preparedQty": 1 }] },
+        { "id": "o4", "firstReleasedAt": "2026-10-09T11:50:00Z", "tasks": [{ "fallbackPrinted": true }] }
+      ],
+      "expect": { "cards": ["o2", "o4", "o1", "o3"], "recent": [] } },
+    { "name": "expo: handed over to the recent strip, cancelled and seen gone, urgent first", "role": "expo", "now": "2026-10-09T12:30:00Z",
+      "orders": [
+        { "id": "o1", "groupState": "handed_over", "status": "handed_over", "tasks": [{ "state": "ready", "preparedQty": 1 }] },
+        { "id": "o2", "groupState": "cancelled", "status": "cancelled", "tasks": [{ "activeQty": 0, "cancelledQty": 1 }], "changes": [{ "acked": true }] },
+        { "id": "o3", "groupState": "handed_over", "status": "handed_over", "firstReleasedAt": "2026-10-09T12:01:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }], "changes": [{ "kind": "note", "text": "בלי בצל" }] },
+        { "id": "o4", "firstReleasedAt": "2026-10-09T12:02:00Z", "tasks": [{}] },
+        { "id": "o5", "firstReleasedAt": "2026-10-09T12:05:00Z", "priority": 1, "tasks": [{}] }
+      ],
+      "expect": { "cards": ["o5", "o3", "o4"], "recent": ["o1"] } },
+    { "name": "expo: the recent strip is newest first", "role": "manager", "now": "2026-10-09T12:30:00Z",
+      "orders": [
+        { "id": "o1", "groupState": "handed_over", "status": "handed_over", "firstReleasedAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] },
+        { "id": "o6", "groupState": "handed_over", "status": "handed_over", "firstReleasedAt": "2026-10-09T12:03:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] },
+        { "id": "o7", "viewOnly": true, "status": "closed", "firstReleasedAt": "2026-10-09T12:01:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] },
+        { "id": "o8", "viewOnly": true, "status": "closed", "tasks": [{ "state": "preparing" }] }
+      ],
+      "expect": { "cards": [], "recent": ["o6", "o7", "o1"] } },
+    { "name": "expo: a ready order without handover tracking leaves after 15 minutes", "role": "expo", "now": "2026-10-09T12:15:00.001Z",
+      "orders": [{ "groupState": "ready_for_pickup", "status": "ready", "readyAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] }],
+      "expect": { "cards": [], "recent": [] } },
+    { "name": "expo: at exactly 15 minutes it is still there", "role": "expo", "now": "2026-10-09T12:15:00Z",
+      "orders": [{ "groupState": "ready_for_pickup", "status": "ready", "readyAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] }],
+      "expect": { "cards": ["o1"], "recent": [] } },
+    { "name": "expo: a ready order tracking handover stays", "role": "expo", "now": "2026-10-09T13:00:00Z",
+      "orders": [{ "groupState": "ready_for_pickup", "status": "ready", "trackHandover": true, "readyAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] }],
+      "expect": { "cards": ["o1"], "recent": [] } },
+    { "name": "expo: a ready order with an action of this screen in flight stays", "role": "expo", "now": "2026-10-09T13:00:00Z",
+      "orders": [{ "groupState": "ready_for_pickup", "status": "ready", "pending": true, "readyAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }] }],
+      "expect": { "cards": ["o1"], "recent": [] } },
+    { "name": "expo: a ready order with a change to see stays", "role": "expo", "now": "2026-10-09T13:00:00Z",
+      "orders": [{ "groupState": "ready_for_pickup", "status": "ready", "readyAt": "2026-10-09T12:00:00Z", "tasks": [{ "state": "ready", "preparedQty": 1 }], "changes": [{}] }],
+      "expect": { "cards": ["o1"], "recent": [] } }
+  ],
+  "newArrivals": [
+    { "prev": null, "orders": ["o1", "o2"], "expect": [] },
+    { "prev": ["o1"], "orders": ["o1", "o2", "o3"], "expect": ["o2", "o3"] },
+    { "prev": ["o1", "o2"], "orders": ["o2"], "expect": [] }
+  ],
+  "openItemCount": [
+    { "orders": [{ "tasks": [{}, { "id": "t2", "state": "ready", "preparedQty": 1 }, { "id": "t3", "release": "hold" }] }, { "id": "o2", "tasks": [{ "state": "preparing" }, { "id": "t4", "activeQty": 0, "cancelledQty": 1 }] }], "expect": 2 }
+  ],
+
+  "applyPending": [
+    { "name": "start: queued -> preparing, marked pending while unsent", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "requireStart": true, "tasks": [{}] }, "actions": [{ "type": "start", "taskId": "t1", "unsent": true }],
+      "expect": { "pending": true, "allReady": false, "tasks": { "t1": { "state": "preparing", "pending": true } } } },
+    { "name": "start on an item already preparing changes nothing", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{ "state": "preparing" }] }, "actions": [{ "type": "start", "taskId": "t1", "unsent": true }],
+      "expect": { "pending": false, "tasks": { "t1": { "state": "preparing", "pending": false } } } },
+    { "name": "ready before a required start changes nothing", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "requireStart": true, "tasks": [{}] }, "actions": [{ "type": "item_ready", "taskId": "t1" }],
+      "expect": { "tasks": { "t1": { "state": "queued", "preparedQty": 0 } } } },
+    { "name": "ready prepares the whole active quantity; the Expo sees it ready for pickup", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "preparing", "orderedQty": 2, "activeQty": 2 }] }, "actions": [{ "type": "item_ready", "taskId": "t1" }],
+      "expect": { "pending": false, "allReady": true, "groupState": "ready_for_pickup", "status": "ready", "tasks": { "t1": { "state": "ready", "preparedQty": 2, "pending": false } } } },
+    { "name": "Expo required: all ready but still waiting for the Expo", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "requireExpo": true, "tasks": [{ "state": "preparing" }] }, "actions": [{ "type": "item_ready", "taskId": "t1" }],
+      "expect": { "allReady": true, "groupState": "waiting", "status": "open" } },
+    { "name": "a station never moves the order's group", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{ "state": "preparing" }] }, "actions": [{ "type": "item_ready", "taskId": "t1" }],
+      "expect": { "allReady": true, "groupState": "waiting", "status": "open" } },
+    { "name": "a cancelled quantity is never revived", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "activeQty": 0, "cancelledQty": 1 }] }, "actions": [{ "type": "item_ready", "taskId": "t1" }, { "type": "station_ready", "orderId": "o1" }],
+      "expect": { "allReady": false, "groupState": "waiting", "tasks": { "t1": { "state": "queued", "preparedQty": 0 } } } },
+    { "name": "undo ready: back to preparing; a ready-for-pickup order goes back to waiting", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "ready_for_pickup", "status": "ready", "readyAt": "2026-10-09T12:10:00Z", "allReady": true, "tasks": [{ "state": "ready", "preparedQty": 1, "readyAt": "2026-10-09T12:10:00Z" }] }, "actions": [{ "type": "undo_ready", "taskId": "t1" }],
+      "expect": { "allReady": false, "groupState": "waiting", "status": "open", "readyAt": null, "tasks": { "t1": { "state": "preparing", "preparedQty": 0, "readyAt": null } } } },
+    { "name": "undo ready under an override keeps the order ready for pickup", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "ready_for_pickup", "status": "ready", "groupOverride": "הלקוח ממתין", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "undo_ready", "taskId": "t1" }],
+      "expect": { "allReady": false, "groupState": "ready_for_pickup", "status": "ready", "tasks": { "t1": { "state": "preparing", "preparedQty": 0 } } } },
+    { "name": "a station's 'all ready' covers its own stations only", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "stationName": "בר", "state": "preparing" }] }, "actions": [{ "type": "station_ready", "orderId": "o1" }],
+      "expect": { "allReady": false, "tasks": { "t1": { "state": "ready", "preparedQty": 1 }, "t2": { "state": "preparing", "preparedQty": 0 } } } },
+    { "name": "'all ready' for a named station", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar", "stationName": "בר", "state": "preparing" }] }, "actions": [{ "type": "station_ready", "orderId": "o1", "stationId": "bar" }],
+      "expect": { "tasks": { "t1": { "state": "preparing" }, "t2": { "state": "ready", "preparedQty": 1 } } } },
+    { "name": "'all ready' skips held items and items waiting for a required start", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "requireStart": true, "tasks": [{ "state": "preparing" }, { "id": "t2", "stationId": "bar" }, { "id": "t3", "state": "preparing", "release": "hold" }] }, "actions": [{ "type": "station_ready", "orderId": "o1" }],
+      "expect": { "allReady": false, "groupState": "waiting", "tasks": { "t1": { "state": "ready", "preparedQty": 1 }, "t2": { "state": "queued", "preparedQty": 0 }, "t3": { "state": "preparing", "preparedQty": 0 } } } },
+    { "name": "ready for pickup before everything is ready, with a reason", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "preparing" }] }, "actions": [{ "type": "ready_for_pickup", "orderId": "o1", "override": true, "reason": " הלקוח ממתין ", "unsent": true }],
+      "expect": { "pending": true, "groupState": "ready_for_pickup", "status": "ready", "groupOverride": "הלקוח ממתין" } },
+    { "name": "ready for pickup before everything is ready, without the override: nothing", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "preparing" }] }, "actions": [{ "type": "ready_for_pickup", "orderId": "o1" }],
+      "expect": { "pending": false, "groupState": "waiting", "status": "open" } },
+    { "name": "ready for pickup when all is ready: no override recorded", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "ready_for_pickup", "orderId": "o1", "override": true, "reason": "x" }],
+      "expect": { "groupState": "ready_for_pickup", "groupOverride": null } },
+    { "name": "back from handed over to ready for pickup", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "handed_over", "status": "handed_over", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "undo_pickup", "orderId": "o1" }],
+      "expect": { "groupState": "ready_for_pickup", "status": "ready" } },
+    { "name": "back from ready for pickup to waiting, the override cleared", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "ready_for_pickup", "status": "ready", "readyAt": "2026-10-09T12:10:00Z", "groupOverride": "x", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "undo_pickup", "orderId": "o1" }],
+      "expect": { "groupState": "waiting", "status": "open", "readyAt": null, "groupOverride": null } },
+    { "name": "handed over", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "ready_for_pickup", "status": "ready", "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "handover", "orderId": "o1" }],
+      "expect": { "groupState": "handed_over", "status": "handed_over" } },
+    { "name": "a cancelled order is never handed over", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "groupState": "cancelled", "status": "cancelled", "tasks": [{}] }, "actions": [{ "type": "handover", "orderId": "o1" }],
+      "expect": { "groupState": "cancelled", "status": "cancelled", "pending": false } },
+    { "name": "urgent, with its reason", "ctx": { "role": "manager", "stationIds": [] },
+      "order": { "tasks": [{}] }, "actions": [{ "type": "priority", "orderId": "o1", "priority": 1, "reason": "לקוח ממתין" }],
+      "expect": { "priority": 1, "priorityReason": "לקוח ממתין" } },
+    { "name": "seen: one change by its id", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{}, { "id": "t2" }], "changes": [{ "id": "c1" }, { "id": "c2", "kind": "note", "text": "a" }, { "id": "c3", "taskId": "t2" }] }, "actions": [{ "type": "ack_change", "changeId": "c1" }],
+      "expect": { "changes": { "c1": { "acked": true }, "c2": { "acked": false }, "c3": { "acked": false } } } },
+    { "name": "seen: every change of an item", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{}, { "id": "t2" }], "changes": [{ "id": "c1" }, { "id": "c2", "kind": "note", "text": "a" }, { "id": "c3", "taskId": "t2" }] }, "actions": [{ "type": "ack_change", "taskId": "t1" }],
+      "expect": { "changes": { "c1": { "acked": true }, "c2": { "acked": true }, "c3": { "acked": false } } } },
+    { "name": "a view-only order is never made ready for pickup", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "viewOnly": true, "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "ready_for_pickup", "orderId": "o1" }],
+      "expect": { "groupState": "waiting", "pending": false } },
+    { "name": "fallback round: 'already prepared'", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{ "state": "preparing", "fallbackPrinted": true, "fallbackResolved": false }] }, "actions": [{ "type": "resolve_fallback", "taskId": "t1", "resolution": "prepared" }],
+      "expect": { "tasks": { "t1": { "fallbackResolved": true, "state": "ready", "preparedQty": 1 } } } },
+    { "name": "fallback round: 'prepare it'", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "tasks": [{ "state": "preparing", "fallbackPrinted": true, "fallbackResolved": false }] }, "actions": [{ "type": "resolve_fallback", "taskId": "t1", "resolution": "prepare" }],
+      "expect": { "tasks": { "t1": { "fallbackResolved": true, "state": "preparing", "preparedQty": 0 } } } },
+    { "name": "actions apply in order: start, then ready", "ctx": { "role": "station", "stationIds": ["grill"] },
+      "order": { "requireStart": true, "tasks": [{}] }, "actions": [{ "type": "start", "taskId": "t1" }, { "type": "item_ready", "taskId": "t1", "unsent": true }],
+      "expect": { "pending": true, "tasks": { "t1": { "state": "ready", "preparedQty": 1, "pending": true } } } },
+    { "name": "another order's action changes nothing", "ctx": { "role": "expo", "stationIds": [] },
+      "order": { "tasks": [{ "state": "ready", "preparedQty": 1 }] }, "actions": [{ "type": "ready_for_pickup", "orderId": "o9" }, { "type": "item_ready", "taskId": "t9" }],
+      "expect": { "groupState": "waiting", "pending": false } }
+  ],
+
+  "deliveryOf": [
+    [{ "kind": "offline", "reason": "TimeoutError" }, { "kind": "retry", "serverError": false, "why": "TimeoutError" }],
+    [{ "kind": "refused", "status": 500, "body": null }, { "kind": "retry", "serverError": true, "why": "HTTP 500" }],
+    [{ "kind": "refused", "status": 408, "body": null }, { "kind": "retry", "serverError": true, "why": "HTTP 408" }],
+    [{ "kind": "refused", "status": 429, "body": null }, { "kind": "retry", "serverError": true, "why": "HTTP 429" }],
+    [{ "kind": "refused", "status": 401, "body": null }, { "kind": "refused", "code": "unauthorized" }],
+    [{ "kind": "refused", "status": 409, "body": { "detail": { "code": "version_conflict", "message": "x" } } }, { "kind": "refused", "code": "version_conflict" }],
+    [{ "kind": "refused", "status": 400, "body": { "detail": "start_required" } }, { "kind": "refused", "code": "start_required" }],
+    [{ "kind": "refused", "status": 422, "body": { "detail": [{ "loc": ["body", "type"] }] } }, { "kind": "refused", "code": "invalid_request" }],
+    [{ "kind": "refused", "status": 404, "body": {} }, { "kind": "refused", "code": "HTTP 404" }],
+    [{ "kind": "ok", "status": 200, "body": { "outcome": "rejected", "reason": "task_cancelled" } }, { "kind": "refused", "code": "task_cancelled" }],
+    [{ "kind": "ok", "status": 200, "body": { "outcome": "rejected" } }, { "kind": "refused", "code": "rejected" }],
+    [{ "kind": "ok", "status": 200, "body": { "outcome": "noop" } }, { "kind": "done", "outcome": "noop", "orderVersion": null }],
+    [{ "kind": "ok", "status": 200, "body": { "outcome": "applied", "order": { "version": 7 } } }, { "kind": "done", "outcome": "applied", "orderVersion": 7 }],
+    [{ "kind": "ok", "status": 200, "body": null }, { "kind": "done", "outcome": "applied", "orderVersion": null }]
+  ],
+  "backoffMs": [[0, 2000], [1, 2000], [2, 4000], [3, 8000], [4, 16000], [5, 32000], [6, 60000], [9, 60000]],
+  "isSettled": [
+    { "name": "waited long enough", "settling": { "action": { "type": "start", "taskId": "t1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 5, "orders": [] }, "nowMs": 15001, "expect": true },
+    { "name": "the same board: not yet", "settling": { "action": { "type": "start", "taskId": "t1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 5, "orders": [] }, "nowMs": 15000, "expect": false },
+    { "name": "the item's order caught up", "settling": { "action": { "type": "start", "taskId": "t1" }, "boardVersion": 5, "orderVersion": 4, "at": 0 }, "board": { "version": 6, "orders": [{ "version": 4, "tasks": [{}] }] }, "nowMs": 1000, "expect": true },
+    { "name": "the item's order behind", "settling": { "action": { "type": "start", "taskId": "t1" }, "boardVersion": 5, "orderVersion": 4, "at": 0 }, "board": { "version": 6, "orders": [{ "version": 3, "tasks": [{}] }] }, "nowMs": 1000, "expect": false },
+    { "name": "the order gone", "settling": { "action": { "type": "handover", "orderId": "o1" }, "boardVersion": 5, "orderVersion": 9, "at": 0 }, "board": { "version": 6, "orders": [] }, "nowMs": 1000, "expect": true },
+    { "name": "the order behind its answer", "settling": { "action": { "type": "handover", "orderId": "o1" }, "boardVersion": 5, "orderVersion": 9, "at": 0 }, "board": { "version": 6, "orders": [{ "version": 8 }] }, "nowMs": 1000, "expect": false },
+    { "name": "a change not seen yet", "settling": { "action": { "type": "ack_change", "changeId": "c1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 6, "orders": [{ "tasks": [{}], "changes": [{}] }] }, "nowMs": 1000, "expect": false },
+    { "name": "a change seen", "settling": { "action": { "type": "ack_change", "changeId": "c1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 6, "orders": [{ "tasks": [{}], "changes": [{ "acked": true }] }] }, "nowMs": 1000, "expect": true },
+    { "name": "a change gone", "settling": { "action": { "type": "ack_change", "changeId": "c1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 6, "orders": [] }, "nowMs": 1000, "expect": true },
+    { "name": "a newer board, nothing else to check", "settling": { "action": { "type": "start", "taskId": "t1" }, "boardVersion": 5, "orderVersion": null, "at": 0 }, "board": { "version": 6, "orders": [] }, "nowMs": 1000, "expect": true }
+  ],
+
+  "board": {
+    "boardOf": [
+      {
+        "pickup": {
+          "preparing": [{ "number": 41, "since": "2026-10-09T12:00:00Z" }, { "number": "42" }, { "number": "41" }, { "number": " " }, { "number": "1234567890123" }, "x", null, { "number": " 43 ", "since": 5 }],
+          "ready": [{ "number": "42", "since": "2026-10-09T12:05:00Z" }, { "number": "42" }, 7]
+        },
+        "expect": {
+          "preparing": [{ "number": "41", "since": "2026-10-09T12:00:00Z" }, { "number": "43", "since": null }],
+          "ready": [{ "number": "42", "since": "2026-10-09T12:05:00Z" }]
+        }
+      },
+      { "pickup": null, "expect": { "preparing": [], "ready": [] } },
+      { "pickup": { "preparing": "x" }, "expect": { "preparing": [], "ready": [] } }
+    ],
+    "newlyReady": [
+      { "prev": null, "next": ["41", "42"], "expect": [] },
+      { "prev": ["41"], "next": ["41", "42", "43"], "expect": ["42", "43"] },
+      { "prev": ["41", "42"], "next": ["42"], "expect": [] }
+    ],
+    "columnFit": [[0, { "cols": 2, "size": "xl" }], [6, { "cols": 2, "size": "xl" }], [7, { "cols": 3, "size": "lg" }], [12, { "cols": 3, "size": "lg" }], [13, { "cols": 4, "size": "md" }], [40, { "cols": 4, "size": "md" }]],
+    "readyWithin": [
+      { "list": [{ "number": "1", "since": "2026-10-09T12:00:00Z" }, { "number": "2", "since": "2026-10-09T12:10:00Z" }, { "number": "3", "since": null }], "minutes": 5, "now": "2026-10-09T12:12:00Z", "expect": ["2", "3"] },
+      { "list": [{ "number": "1", "since": "2026-10-09T12:00:00Z" }], "minutes": null, "now": "2026-10-09T13:00:00Z", "expect": ["1"] },
+      { "list": [{ "number": "1", "since": "2026-10-09T12:00:00Z" }], "minutes": 0, "now": "2026-10-09T13:00:00Z", "expect": ["1"] },
+      { "list": [{ "number": "1", "since": "2026-10-09T12:00:00Z" }], "minutes": 5, "now": "2026-10-09T12:05:00Z", "expect": ["1"] }
+    ],
+    "newestFirst": [
+      { "list": [{ "number": "1", "since": "2026-10-09T12:00:00Z" }, { "number": "2", "since": "2026-10-09T12:10:00Z" }, { "number": "3", "since": null }], "expect": ["2", "1", "3"] }
+    ]
+  }
+}
