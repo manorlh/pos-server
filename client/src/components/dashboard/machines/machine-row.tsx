@@ -100,6 +100,7 @@ import { MachineHealthPanel } from '@/components/dashboard/machine-health';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 
 /**
  * The six columns — status, till, shift, alerts, last seen, actions — shared with the
@@ -950,9 +951,11 @@ export function MachineRow({
           </div>
         </div>
 
-        <div className="min-w-0 max-md:order-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1 max-md:order-5">
           {/* A screen has no shifts: nothing to show here. */}
           {isDisplayDevice(m) ? null : <MachineShiftChip m={m} />}
+          {/* "פקודה נשלחה: … · ממתין" — the last command sent to this device (nothing when none). */}
+          <DeviceCommandChip machineId={m.id} />
         </div>
 
         <div className="min-w-0 max-md:order-6">

@@ -9,16 +9,17 @@
  * the same administrative close from the cloud (AdministrativeCloseDialog), never sent by itself.
  * Which one, for which shift, is lib/shiftsPage.ts (shiftCloseOffer, planBulkClose).
  *
- * The bulk close sends one remote close per device, in parallel, and follows each request
- * (`GET /shift-close-requests/{id}`) on its own row: נשלח / ממתין לסגירה בקופה / נסגר / נדחה
- * with why. Dead tills are listed apart, each with its own "סגירה מנהלית".
+ * The bulk close sends one remote close per device, in parallel, and hands each request to
+ * "פקודות שנשלחו" (lib/deviceCommandsStore.ts — followed in the background, a chip on each
+ * till's row); the dialog closes at once unless a send was refused (shown on its row, with why)
+ * or dead tills remain, listed apart, each with its own "סגירה מנהלית".
  */
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Power } from 'lucide-react';
-import { fetchShiftCloseRequest, fetchShifts, requestShiftClose, type ShiftListParams } from '@/lib/api';
+import { fetchShifts, requestShiftClose, type ShiftListParams } from '@/lib/api';
 import { findBySameId } from '@/lib/entityLookup';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatDateTimeInZone } from '@/lib/format';
@@ -38,7 +39,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AdministrativeCloseDialog } from '@/components/dashboard/dead-till-recovery';
-import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
+import { RemoteShiftCloseDialog, trackShiftClose } from '@/components/dashboard/machines/remote-shift-close';
 import { useNowMs } from '@/components/dashboard/device-health/health-ui';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 
@@ -152,8 +153,6 @@ export function ShiftCloseAction({
 
 type Sent = { request?: ShiftCloseRequest; error?: string };
 
-const ENDED: ReadonlySet<string> = new Set(['completed', 'failed', 'expired', 'cancelled']);
-
 function outcomeVariant(o: BulkCloseOutcome): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (o === 'closed') return 'default';
   if (o === 'refused') return 'destructive';
@@ -202,22 +201,9 @@ export function BulkCloseOpenShifts({
     [shiftsQuery.data, machines, nowMs],
   );
 
-  // Each request sent is followed on its row until it ends.
-  const requestIds = sent ? Object.values(sent).flatMap((s) => (s.request ? [s.request.id] : [])) : [];
-  const polled = useQueries({
-    queries: requestIds.map((id) => ({
-      queryKey: ['shift-close-request', id],
-      queryFn: () => fetchShiftCloseRequest(id),
-      enabled: open,
-      refetchInterval: (q: { state: { data?: ShiftCloseRequest } }) =>
-        q.state.data && ENDED.has(q.state.data.status) ? false : 2000,
-    })),
-  });
-  const latest = (s: Sent | undefined): ShiftCloseRequest | undefined => {
-    if (!s?.request) return undefined;
-    const i = requestIds.indexOf(s.request.id);
-    return (i >= 0 ? polled[i]?.data : undefined) ?? s.request;
-  };
+  // Each request sent is followed in the background ("פקודות שנשלחו", the till's chip) — the
+  // dialog shows only what the send itself answered and never waits for the tills.
+  const latest = (s: Sent | undefined): ShiftCloseRequest | undefined => s?.request;
 
   const refresh = () => {
     for (const key of ['machines', 'machine', 'shifts', 'z-candidates', 'z-reports', 'dashboard-stats']) {
@@ -230,6 +216,7 @@ export function BulkCloseOpenShifts({
     setSending(true);
     setSentItems(plan.remote);
     setSent({});
+    let failed = 0;
     // One request per device, all at once; each row answers for itself.
     await Promise.all(
       plan.remote.map(async (item) => {
@@ -237,8 +224,10 @@ export function BulkCloseOpenShifts({
         try {
           const request = await requestShiftClose(item.shift.machineId);
           qc.setQueryData(['shift-close-request', request.id], request);
+          trackShiftClose(request, item.shift.machineName ?? item.device?.name ?? null);
           result = { request };
         } catch (e) {
+          failed += 1;
           result = { error: errors.forError(e) };
         }
         setSent((prev) => ({ ...(prev ?? {}), [item.shift.machineId]: result }));
@@ -246,6 +235,13 @@ export function BulkCloseOpenShifts({
     );
     setSending(false);
     qc.invalidateQueries({ queryKey: ['machines'] });
+    // Nothing left to read or do here (no refusal to show, no dead till to close by hand): close.
+    if (failed === 0 && plan.administrative.length === 0) {
+      setOpen(false);
+      refresh();
+      setSent(null);
+      setSentItems(null);
+    }
   };
 
   const close = (next: boolean) => {
@@ -290,7 +286,11 @@ export function BulkCloseOpenShifts({
           </DialogHeader>
 
           <div className="max-h-[60vh] space-y-4 overflow-y-auto text-sm">
-            {!sent ? <p className="text-muted-foreground text-xs">{t('bulkExplain')}</p> : null}
+            {!sent ? (
+              <p className="text-muted-foreground text-xs">{t('bulkExplain')}</p>
+            ) : !sending ? (
+              <p className="text-muted-foreground text-xs">{t('bulkSentHint')}</p>
+            ) : null}
             {shiftsQuery.isLoading ? (
               <div className="space-y-2">
                 <p className="text-muted-foreground text-xs">{t('bulkLoading')}</p>

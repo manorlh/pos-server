@@ -6,11 +6,14 @@
  * reopened by hand, HH:MM today, N minutes, or the next automatic opening) and the kiosk's
  * daily automatic opening, with an optional closing time and the automatic Z after it. The
  * schedule is written to the kiosk's own settings level, so the settings editor shows it too.
+ *
+ * Sending never waits for the kiosk: `busy` is only this button's own POST on its way (a
+ * spinner on it for that call); the answer is followed in "פקודות שנשלחו".
  */
 
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { CalendarClock, Lock, Play } from 'lucide-react';
+import { CalendarClock, Loader2, Lock, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
@@ -64,7 +67,7 @@ export function KioskLockControls({
         </div>
         {canWrite ? (
           <Button size="sm" disabled={busy} onClick={() => send({ action: 'resume' })}>
-            <Play /> {t('reopen')}
+            {busy ? <Loader2 className="animate-spin" /> : <Play />} {t('reopen')}
           </Button>
         ) : null}
       </div>
@@ -122,7 +125,7 @@ export function KioskLockControls({
           })
         }
       >
-        <Lock /> {t('lock')}
+        {busy ? <Loader2 className="animate-spin" /> : <Lock />} {t('lock')}
       </Button>
     </div>
   );
@@ -222,6 +225,7 @@ export function KioskScheduleControls({
           disabled={busy || issues.length > 0 || (form.enabled && !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(form.open))}
           onClick={() => send({ action: 'schedule', schedule: { ...effective, autoCloseAt: form.autoCloseAt ?? null } })}
         >
+          {busy ? <Loader2 className="animate-spin" /> : null}
           {t('save')}
         </Button>
       ) : null}

@@ -1305,8 +1305,16 @@ export async function fetchTillMessages(params: { limit?: number; offset?: numbe
   return data;
 }
 
-export async function sendTillMessage(body: TillMessageCreate): Promise<TillMessage> {
-  const { data } = await api.post<TillMessage>('/till-messages', body);
+/**
+ * With `idempotencyKey` (one per compose) the POST carries an `Idempotency-Key`: a retry of the
+ * same submit after a network error returns the first message instead of sending a second one.
+ */
+export async function sendTillMessage(body: TillMessageCreate, idempotencyKey?: string): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>(
+    '/till-messages',
+    body,
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  );
   return data;
 }
 

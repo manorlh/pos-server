@@ -87,6 +87,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -279,6 +280,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </Badge>
             ) : null}
             <ClockSkewChip machine={machine} />
+            {/* The last command sent to this device and its status ("פקודות שנשלחו"). */}
+            <DeviceCommandChip machineId={machine.id} />
           </div>
           {shop ? (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">

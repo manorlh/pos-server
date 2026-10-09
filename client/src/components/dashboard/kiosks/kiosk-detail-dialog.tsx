@@ -5,10 +5,15 @@
  * ("סגירת משמרת" in the shop Z, "הפקת Z" with its own — kiosk-z-actions.tsx), its name /
  * on-off / controlling tills, today's orders and the recent commands. Bon states are shown
  * as reported: "sent" is never shown as "printed".
+ *
+ * Commands are fire-and-forget ("פקודות שנשלחו", lib/deviceCommandsStore.ts): the POST answers
+ * at once, the answer is followed in the background (the tray, the kiosk's chip), and nothing
+ * here waits for the kiosk — only the clicked button is busy during its own HTTP call, so
+ * more commands can be sent meanwhile.
  */
 
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { Loader2, Settings2, Undo2 } from 'lucide-react';
@@ -20,6 +25,9 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
+import { phaseOfKiosk } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { cn } from '@/lib/utils';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
@@ -32,6 +40,7 @@ import {
   sendKioskCommand,
   updateKiosk,
   type KioskBonStatus,
+  type KioskCommandAction,
   type KioskCommandIn,
   type KioskCommandOut,
   type KioskSummary,
@@ -54,6 +63,46 @@ const BON_TONE: Record<KioskBonStatus, string> = {
 function timeIn(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
   return formatTime(iso, { timeZone });
+}
+
+/** A command on its way: what was sent, and to which kiosk (fixed at the click). */
+interface KioskSend {
+  body: KioskCommandIn;
+  target: { machineId: string; name: string };
+}
+
+const KIOSK_COMMAND_KEY = ['kiosk-command'] as const;
+
+/** "פקודות שנשלחו" names for the actions the shared label table does not know. */
+const TRACK_LABEL: Partial<Record<KioskCommandAction, string>> = { schedule: 'פתיחה אוטומטית' };
+
+/**
+ * Follow a command the server took — applied at once ("בוצע"), or requested from the kiosk (a
+ * close / Z it runs; the tray reads its outcome in the background). `machineId` is the kiosk's
+ * machine id, the one in /kiosks/{id}/commands that the tray reads.
+ */
+function followKioskCommand(res: KioskCommandOut, { body, target }: KioskSend) {
+  const action = res.action ?? body.action;
+  const p = phaseOfKiosk(res.status, res.detail);
+  trackCommand({
+    kind: 'kiosk',
+    id: res.id,
+    action,
+    label: TRACK_LABEL[action],
+    machineId: target.machineId,
+    machineName: target.name,
+    phase: p.phase,
+    detail: p.detail,
+  });
+}
+
+/** The actions of this kiosk whose POST is still on its way — the HTTP call only, never the kiosk. */
+function useSendingActions(machineId: string): KioskCommandAction[] {
+  const sends = useMutationState({
+    filters: { mutationKey: KIOSK_COMMAND_KEY, status: 'pending' },
+    select: (m) => m.state.variables as KioskSend | undefined,
+  });
+  return sends.filter((s): s is KioskSend => !!s && s.target.machineId === machineId).map((s) => s.body.action);
 }
 
 function DetailsForm({
@@ -182,19 +231,24 @@ export function KioskDetailDialog({
     [kiosk, shops, machines, kioskIds],
   );
 
+  // Fire-and-forget: each click is its own mutation (several may be on their way at once); the
+  // answer is tracked in "פקודות שנשלחו" (which pops its own small notice), a refusal or a failed
+  // call is an error toast. Nothing waits for the kiosk.
   const command = useMutation({
-    mutationFn: (body: KioskCommandIn) => sendKioskCommand(machineId, body),
-    onSuccess: (res: KioskCommandOut) => {
+    mutationKey: KIOSK_COMMAND_KEY,
+    mutationFn: ({ body, target }: KioskSend) => sendKioskCommand(target.machineId, body),
+    onSuccess: (res: KioskCommandOut, sent) => {
       if (res.status === 'refused') toast.error(res.detail || tcmd('status.refused'));
-      else toast.success(res.status === 'applied' ? t('applied') : t('sent'));
+      else followKioskCommand(res, sent);
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
-      void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
+      void qc.invalidateQueries({ queryKey: ['kiosk-commands', sent.target.machineId] });
     },
-    onError: (err) => {
+    onError: (err, sent) => {
       toast.error(zErrors.forError(err));
-      void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
+      void qc.invalidateQueries({ queryKey: ['kiosk-commands', sent.target.machineId] });
     },
   });
+  const sending = useSendingActions(machineId);
 
   const revert = useMutation({
     mutationFn: () => deleteKiosk(machineId),
@@ -209,7 +263,9 @@ export function KioskDetailDialog({
 
   if (!kiosk) return null;
   const connection = kioskConnection(kiosk, nowMs);
-  const busy = command.isPending;
+  const send = (body: KioskCommandIn) => command.mutate({ body, target: { machineId: kiosk.machineId, name: kiosk.name } });
+  /** Only the button whose own POST is on its way is busy; every other action stays available. */
+  const busy = (...actions: KioskCommandAction[]) => actions.some((a) => sending.includes(a));
   const list = orders.data ?? [];
 
   return (
@@ -224,9 +280,11 @@ export function KioskDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <ConnectionBadge k={kiosk} nowMs={nowMs} />
           <StateBadges k={kiosk} />
+          {/* The last command sent to this kiosk and where it stands ("פקודות שנשלחו"). */}
+          <DeviceCommandChip machineId={kiosk.machineId} />
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -254,13 +312,13 @@ export function KioskDetailDialog({
           {connection !== 'online' && canWrite ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('offlineNote')}</p> : null}
 
           {/* "נעילה למכירה" and "פתיחה אוטומטית" (docs/SPEC_KIOSK.md §15) */}
-          <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
-          <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+          <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy('pause', 'resume')} send={send} />
+          <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy('schedule')} send={send} />
 
           {/* The shift / Z by the kiosk's Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its
               own, never both — and its own "Z עצמאי" switch (kiosk-z-actions.tsx). */}
           <div className="grid gap-3 sm:grid-cols-2">
-            <KioskZActions kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+            <KioskZActions kiosk={kiosk} canWrite={canWrite} busy={busy('close_shift', 'till_z')} send={send} />
             <KioskZModeSwitch kiosk={kiosk} />
           </div>
         </section>

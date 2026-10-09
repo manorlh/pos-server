@@ -64,11 +64,11 @@ reason `printers_updated`); a new job wakes its printing till (Ably `print-job`)
 from __future__ import annotations
 
 import uuid
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -222,18 +222,49 @@ def test_printer(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
-    """`409 printer_has_no_till` when no till would print it (no host / no till in scope)."""
+    """
+    `409 printer_has_no_till` when no till would print it (no host / no till in scope).
+    Fire-and-forget: the jobs are queued and the tills print them on their wake-up
+    (`GET /printers/{id}/test-jobs` reads their status). `Idempotency-Key`: a retry never
+    prints a second test page.
+    """
+    from app.services import command_idempotency as idem
+
     printer, shop = _printer_and_shop(db, printer_id, current_user, active_tenant_id)
-    jobs = K.create_test_jobs(db, current_user, printer)
-    targets = K.job_targets(db, jobs)
-    machines = {m.id: m for m in db.query(POSMachine).filter(
-        POSMachine.id.in_([j.target_machine_id for j in jobs])
-    ).all()}
-    out = [K.job_out(j, machines) for j in jobs]
-    db.commit()
-    background_tasks.add_task(K.publish_job_notify, targets)
-    return {"jobs": out}
+    made: dict = {}
+
+    def run():
+        jobs = K.create_test_jobs(db, current_user, printer)
+        made["targets"] = K.job_targets(db, jobs)
+        machines = {m.id: m for m in db.query(POSMachine).filter(
+            POSMachine.id.in_([j.target_machine_id for j in jobs])
+        ).all()}
+        return {"jobs": [K.job_out(j, machines) for j in jobs]}
+
+    out, replayed = idem.once(
+        db, tenant_id=active_tenant_id, kind="printer_test", key=idempotency_key, user=current_user,
+        request={"printerId": str(printer_id)}, run=run,
+        after_commit=lambda _out: background_tasks.add_task(K.publish_job_notify, made["targets"]),
+        refresh=lambda first: _reread_jobs(db, first),
+    )
+    if replayed and response is not None:
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return out
+
+
+def _reread_jobs(db: Session, first: dict) -> dict:
+    """A replayed printer test: the same jobs, re-read by id (their status now)."""
+    from app.models.printers import KitchenPrintJob
+
+    ids = [uuid.UUID(str(j["id"])) for j in (first or {}).get("jobs", [])]
+    jobs = db.query(KitchenPrintJob).filter(KitchenPrintJob.id.in_(ids)).all() if ids else []
+    targets = [j.target_machine_id for j in jobs if j.target_machine_id is not None]
+    machines = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(targets)).all()} if targets else {}
+    order = {i: n for n, i in enumerate(ids)}
+    return {"jobs": [K.job_out(j, machines) for j in sorted(jobs, key=lambda j: order.get(j.id, 0))]}
 
 
 @router.get("/printers/{printer_id}/test-jobs")

@@ -83,7 +83,11 @@ function jobText(t: ReturnType<typeof useTranslations>, job: KioskJob): string {
   return t.has(`state.${job.state}`) ? t(`state.${job.state}`) : (job.message ?? job.state);
 }
 
-/** The one shift / Z action of the kiosk, by its mode, in the kiosk's detail. */
+/**
+ * The one shift / Z action of the kiosk, by its mode, in the kiosk's detail. Sending never waits
+ * for the kiosk: `busy` is only this button's own POST on its way; the close / Z is followed in
+ * "פקודות שנשלחו" and on the job line below (the server's own "in progress" block stays).
+ */
 export function KioskZActions({
   kiosk,
   canWrite,
@@ -120,7 +124,7 @@ export function KioskZActions({
                 setForce(false);
               }}
             >
-              {isClose ? <LogOut /> : <FilePlus2 />} {t(isClose ? 'closeShift' : 'tillZ')}
+              {busy ? <Loader2 className="animate-spin" /> : isClose ? <LogOut /> : <FilePlus2 />} {t(isClose ? 'closeShift' : 'tillZ')}
             </Button>
             {offer.block && offer.block !== 'no_write' ? (
               <span className="text-xs text-muted-foreground">{t(`block.${offer.block}`)}</span>

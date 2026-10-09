@@ -17,12 +17,15 @@
  * The server: pos-server app/services/card_attempt_commands.py.
  */
 
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { actionLabelOf, isKeyReused, keyRing, phaseOfCard } from '@/lib/deviceCommands';
+import { idempotencyHeaders, trackCommand } from '@/lib/deviceCommandsStore';
 import { useAuth } from '@/lib/auth';
 import { canAccess } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
@@ -64,8 +67,30 @@ export function CardCommandPanel({ a, compact = false }: { a: FailedPaymentAttem
   const refresh = () => qc.invalidateQueries({ queryKey: ['failed-payments'] });
   const verdictText = (v: CheckVerdict) => t(`cardCommand.verdict.${v}`);
 
-  const post = (action: CardCommandAction, confirmMismatch: boolean) =>
-    api.post(`/failed-payments/${a.id}/card-commands`, { action, confirmMismatch }).then((r) => r.data);
+  // Fire-and-forget: the till answers later, in the background ("פקודות שנשלחו" reads it and
+  // refreshes this row). One Idempotency-Key per user action (lib/deviceCommands.ts `keyRing`):
+  // the same request retried (a network error, a second click) keeps its key — the server answers
+  // with the first command, never makes a second; the confirmed decision after a mismatch is
+  // another request (another key); once answered, the next action is new. Every safety rule stays
+  // the server's (one pending command, the mismatch confirmation, who may act).
+  const [keys] = useState(() => keyRing());
+  const post = (action: CardCommandAction, confirmMismatch: boolean) => {
+    const request = { attemptId: a.id, action, confirmMismatch };
+    return api
+      .post<{ id?: string; action?: string; status?: string; deliveredAt?: string | null }>(
+        `/failed-payments/${a.id}/card-commands`,
+        { action, confirmMismatch },
+        idempotencyHeaders(keys.keyFor(request)),
+      )
+      .then((r) => {
+        keys.forget();
+        return r.data;
+      })
+      .catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+  };
 
   const send = useMutation({
     mutationFn: async ({ action, confirmMismatch }: { action: CardCommandAction; confirmMismatch: boolean }) => {
@@ -86,9 +111,23 @@ export function CardCommandPanel({ a, compact = false }: { a: FailedPaymentAttem
         throw err;
       }
     },
-    onSuccess: (out) => {
+    onSuccess: (out, { action }) => {
       if (out === null) return;
-      toast.success(t('cardCommand.sentOk'));
+      // The feedback is the small centred popup ("נשלחה פקודה: בדיקה במסוף → קופה 1"), live.
+      if (!out?.id) toast.success(t('cardCommand.sentOk'));
+      if (out?.id) {
+        const p = phaseOfCard({ status: out.status ?? 'pending', deliveredAt: out.deliveredAt ?? null });
+        trackCommand({
+          kind: 'card',
+          id: out.id,
+          action,
+          label: t.has(`cardCommand.action.${action}`) ? t(`cardCommand.action.${action}`) : actionLabelOf(action),
+          machineId: a.machineId,
+          machineName: a.machineName ?? null,
+          phase: p.phase,
+          ref: { attemptId: a.id },
+        });
+      }
       void refresh();
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),

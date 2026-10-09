@@ -129,6 +129,7 @@ POST /device-commands -> device_control:edit
 POST /device-commands/close -> device_control:edit
 GET /device-commands/devices -> device_control:view
 GET /device-commands/features -> device_control:view
+GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
 POST /device-management/provisioning-qr -> devices:edit
@@ -154,6 +155,7 @@ PUT /exceptions/rules -> till_settings:edit
 GET /exceptions/summary -> reports:view
 PATCH /exceptions/{exception_id} -> reports:edit
 GET /failed-payments -> reports|z|cockpit:view
+GET /failed-payments/card-commands/status -> reports|z:view
 POST /failed-payments/card-commands/{command_id}/cancel -> reports:edit
 GET /failed-payments/{attempt_id}/card-commands -> reports|z:view
 POST /failed-payments/{attempt_id}/card-commands -> reports:edit

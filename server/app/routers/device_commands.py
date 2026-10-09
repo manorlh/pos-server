@@ -5,6 +5,8 @@ Dashboard (section `device_control`; the machine admins' scope, app/services/kio
 
 GET  /device-commands/devices   ?companyId=&shopId=&machineIds= → the panel's rows (online, lock, commands)
 POST /device-commands           {action, message?, machineIds? | shopId? | groupId?} → [Command]
+                                (fire-and-forget; header Idempotency-Key: a retry never sends twice)
+GET  /device-commands/status    ?ids= → {items: [Command]} — the background status read
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
 POST /device-commands/{id}/cancel
 
@@ -17,9 +19,9 @@ POST /sync/{machine_id}/device-commands/unlocked       {posUserId?, posUserName?
 from __future__ import annotations
 
 import uuid
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -29,6 +31,7 @@ from app.models.device_command import DEVICE_ACTIONS, DeviceCommand
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
+from app.services import command_idempotency as idem
 from app.services import device_commands as svc
 from app.services import device_groups
 from app.services import kiosk_control
@@ -207,16 +210,92 @@ def create_commands(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias=idem.KEY_HEADER)] = None,
 ):
+    """
+    Fire-and-forget: queues one command per device and returns at once (status `pending`,
+    "נשלח"); the device answers later (`GET /device-commands/status`). `Idempotency-Key`: a retry
+    gets the same commands back, never a second one (app/services/command_idempotency.py).
+    """
     machines = _devices(
         db, current_user, active_tenant_id, machine_ids=body.machine_ids, shop_id=body.shop_id, group_id=body.group_id,
     )
     if not machines:
         raise HTTPException(status_code=422, detail={"code": "no_devices", "message": "לא נמצאו מכשירים"})
-    rows = svc.create(db, machines, body.action, message=body.message, user=current_user)
-    db.commit()
-    svc.wake(machines)
-    return [svc.command_out(r) for r in rows]
+    out, replayed = idem.once(
+        db, tenant_id=active_tenant_id, kind="device_command", key=idempotency_key, user=current_user,
+        request=body.model_dump(mode="json", by_alias=True),
+        run=lambda: [svc.command_out(r) for r in svc.create(db, machines, body.action, message=body.message, user=current_user)],
+        after_commit=lambda _out: svc.wake(machines),
+        refresh=lambda first: _reread(db, first),
+    )
+    if replayed and response is not None:
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return out
+
+
+@router.get("/status")
+def get_commands_status(
+    ids: List[uuid.UUID] = Query(..., max_length=100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The background status read of "פקודות שנשלחו": these commands as they are now (pending →
+    delivered → done / refused / failed / expired / cancelled). Only the user's own scope: a
+    command on a device they may not control is left out (never a 403 that names it).
+    """
+    kiosk_control.require_kiosk_role(current_user)
+    now = svc.utc_now()
+    rows = (
+        db.query(DeviceCommand)
+        .filter(DeviceCommand.id.in_(list(ids)), DeviceCommand.tenant_id == active_tenant_id)
+        .all()
+    )
+    narrow = _narrowing(db, current_user)
+    machines = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_({r.machine_id for r in rows})).all()} if rows else {}
+    items = []
+    for row in rows:
+        machine = machines.get(row.machine_id)
+        if machine is None:
+            continue
+        try:
+            kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
+            _check_covered(db, narrow, machine)
+        except HTTPException:
+            continue
+        items.append(_as_of(row, now))
+    # Read only: nothing is written (a poll never races a device's answer).
+    return {"items": items}
+
+
+def _as_of(row: DeviceCommand, now) -> dict:
+    """
+    The command as it stands at [now], computed without writing: one past its end reads
+    `expired` (`not_answered` when delivered), as `svc.expire_old` would make it.
+    """
+    out = svc.command_out(row)
+    if row.status == "pending" and row.expires_at is not None and svc._aware(row.expires_at) <= now:
+        out["status"] = "expired"
+    elif (
+        row.status == "delivered" and row.delivered_at is not None
+        and svc._aware(row.delivered_at) + svc.answer_window(row.action) <= now
+    ):
+        out["status"] = "expired"
+        out["detail"] = out["detail"] or "not_answered"
+    return out
+
+
+def _reread(db: Session, first: list) -> list:
+    """A replayed answer: the same commands, re-read by id (their status now)."""
+    now = svc.utc_now()
+    out = []
+    for item in first or []:
+        row = db.get(DeviceCommand, uuid.UUID(str(item["id"])))
+        out.append(_as_of(row, now) if row is not None else item)
+    return out
 
 
 @router.get("")

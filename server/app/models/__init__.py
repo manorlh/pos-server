@@ -173,6 +173,8 @@ from app.models import voucher_distribution as _voucher_distribution  # noqa: F4
 from app.models.sold_out import SoldOutMark
 from app.models.kiosk_live import KioskQuickHide
 from app.models.device_command import DeviceCommand, DeviceRemoteState
+# "פקודות שנשלחו": the dashboard's Idempotency-Key per command request (app/services/command_idempotency.py).
+from app.models.command_request_key import CommandRequestKey
 # Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
@@ -265,7 +267,7 @@ __all__ = [
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
-    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
 ]

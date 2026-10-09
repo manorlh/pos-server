@@ -22,7 +22,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { DEVICE_ACTIONS, actionLabel, commandStatusLabel, commandTone, type DeviceAction, type DeviceRow } from '@/lib/liveControl';
-import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose, sendDeviceCommand } from '@/lib/liveControlApi';
+import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose } from '@/lib/liveControlApi';
+import { sendDeviceCommand, trackRemoteClose } from '@/lib/deviceCommandsStore';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
 
@@ -55,8 +57,10 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
   const p: RemoteClosePreview | undefined = preview.data;
   const send = useMutation({
     mutationFn: () => requestRemoteClose(machineId, p!.totalsKey),
-    onSuccess: () => {
+    onSuccess: (out) => {
       toast.success('נשלח לקופה — ייסגר כשאין בה מכירה או תשלום פתוחים');
+      // "פקודות שנשלחו": followed in the background (the tray, the device's chip); the dialog closes.
+      trackRemoteClose(out, machineId, p?.name ?? null);
       qc.invalidateQueries({ queryKey: ['device-commands'] });
       onClose();
     },
@@ -171,16 +175,20 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
       return next;
     });
 
-  const send = useMutation({
-    mutationFn: (action: DeviceAction) =>
-      sendDeviceCommand({ action, machineIds: chosen, message: action === 'lock' ? lockMessage : undefined }),
-    onSuccess: (rows, action) => {
-      toast.success(`${actionLabel(action)} — נשלח ל-${rows.length} ${rows.length === 1 ? 'מכשיר' : 'מכשירים'}`);
-      setConfirming(null);
-      qc.invalidateQueries({ queryKey: ['device-commands'] });
-    },
-    onError: (e) => toast.error(axiosErrorToToastMessage(e, 'השליחה נכשלה')),
-  });
+  // Fire-and-forget (lib/deviceCommandsStore.ts): the confirm closes at once, the status follows in
+  // the background (the row's chip, "פקודות שנשלחו"); more commands can be sent meanwhile.
+  const send = (action: DeviceAction) => {
+    const names = Object.fromEntries(tills.map((d) => [d.machineId, d.name]));
+    sendDeviceCommand({
+      action,
+      machineIds: chosen,
+      message: action === 'lock' ? lockMessage : undefined,
+      names,
+      onSent: () => qc.invalidateQueries({ queryKey: ['device-commands'] }),
+    });
+    // The feedback is the small centred popup (components/dashboard/device-commands/command-popup.tsx).
+    setConfirming(null);
+  };
 
   if (devices.isPending) {
     return (
@@ -234,6 +242,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
                     {d.state.locked ? (
                       <Badge variant="destructive" className="gap-1"><Lock className="size-3" aria-hidden />נעולה</Badge>
                     ) : null}
+                    <DeviceCommandChip machineId={d.machineId} />
                   </div>
                   {d.state.locked && d.state.message ? <p className="text-sm">“{d.state.message}”</p> : null}
                   {d.open.length > 0 ? (
@@ -274,7 +283,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
             key={a.action}
             variant={a.danger ? 'outline' : 'secondary'}
             className={cn('min-h-12 whitespace-normal', a.danger && 'border-destructive/40 text-destructive')}
-            disabled={chosen.length === 0 || send.isPending}
+            disabled={chosen.length === 0}
             onClick={() => setConfirming(a.action)}
             title={a.hint}
           >
@@ -302,8 +311,8 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
           ) : null}
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setConfirming(null)} className="min-h-11">ביטול</Button>
-            <Button onClick={() => confirming && send.mutate(confirming)} disabled={send.isPending} className="min-h-11">
-              {send.isPending ? 'שולח…' : 'שלח'}
+            <Button onClick={() => confirming && send(confirming)} className="min-h-11">
+              שלח
             </Button>
           </DialogFooter>
         </DialogContent>

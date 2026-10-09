@@ -24,7 +24,8 @@ import { useAuth } from '@/lib/auth';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { LIVE_CONTROL_GATES, gateAllows, remoteControlTabs } from '@/lib/cockpitGates';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
-import { clearBlock, extendBlock, sendDeviceCommand } from '@/lib/liveControlApi';
+import { clearBlock, extendBlock } from '@/lib/liveControlApi';
+import { sendDeviceCommand } from '@/lib/deviceCommandsStore';
 import type { DeviceAction } from '@/lib/liveControl';
 import type { StockNode } from '@/lib/stockLive';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -135,7 +136,8 @@ export function useLiveControlAttentionItems(scope: CockpitScope): { items: Atte
   const { mutate } = run;
 
   const items = useMemo(() => {
-    const toCockpit = (a: { labelKey: string; actionId: string; context: Record<string, string | number | null> }): AttentionAction | null => {
+    const refreshDevices = () => void qc.invalidateQueries({ queryKey: ['device-commands'] });
+    const toCockpit =(a: { labelKey: string; actionId: string; context: Record<string, string | number | null> }): AttentionAction | null => {
       const c = a.context;
       const base = { labelKey: labelOf(a.labelKey), actionId: `live.${a.actionId}` };
       switch (a.actionId) {
@@ -158,15 +160,16 @@ export function useLiveControlAttentionItems(scope: CockpitScope): { items: Atte
                 ),
               }
             : null;
+        // Fire-and-forget ("פקודות שנשלחו", lib/deviceCommandsStore.ts): followed in the background.
         case 'device.unlock':
           return act.devices && str(c.machineId)
-            ? { ...base, run: () => mutate(() => sendDeviceCommand({ action: 'unlock', machineIds: [c.machineId as string] })) }
+            ? { ...base, run: () => void sendDeviceCommand({ action: 'unlock', machineIds: [c.machineId as string], onSent: refreshDevices }) }
             : null;
         case 'device.retry':
           return act.devices && str(c.machineId) && str(c.action)
             ? {
                 ...base,
-                run: () => mutate(() => sendDeviceCommand({ action: c.action as DeviceAction, machineIds: [c.machineId as string] })),
+                run: () => void sendDeviceCommand({ action: c.action as DeviceAction, machineIds: [c.machineId as string], onSent: refreshDevices }),
               }
             : null;
         case 'stock.update': {
@@ -205,7 +208,7 @@ export function useLiveControlAttentionItems(scope: CockpitScope): { items: Atte
       }),
     );
     // `act` is rebuilt every render from the same grants: its fields are the dependencies.
-  }, [live.items, act.blocks, act.devices, act.stock, mutate, scope]);
+  }, [live.items, act.blocks, act.devices, act.stock, mutate, scope, qc]);
   return { items, loading: live.isLoading };
 }
 
