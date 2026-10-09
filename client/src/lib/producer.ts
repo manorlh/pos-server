@@ -62,13 +62,37 @@ export interface ProducerVouchers {
   byHour: { hour: string; redemptions: number }[];
 }
 
+export type BillingBasis = 'redemption' | 'delivery';
+
+export interface ProducerSettlementRow extends ProducerVoucherBatch {
+  /** How this batch is charged: its production's basis, or an agreement written for the event. */
+  basis: BillingBasis;
+  origin: 'production' | 'agreement';
+  agreementName: string | null;
+  /** The vouchers the production is charged for (by redemption or by delivery). */
+  chargeable: number;
+  delivered: number;
+  productionPrice: number | null;
+  amount: number | null;
+}
+
 export interface ProducerSettlement {
   event: ProducerEventCard;
-  basis: 'redemption';
-  rows: (ProducerVoucherBatch & { productionPrice: number | null; amount: number | null })[];
+  basis: BillingBasis | 'mixed';
+  /** The settlement service's words for the basis (null when the batches differ). */
+  basisText: string | null;
+  rows: ProducerSettlementRow[];
   totalAmount: number;
   missingPrices: boolean;
+  chargeableVouchers: number;
   redeemedVouchers: number;
+}
+
+/** The column the settlement counts in, by its basis: delivered or redeemed vouchers. */
+export function chargedLabelKey(basis: ProducerSettlement['basis']): 'chargedDelivered' | 'chargedRedeemed' | 'charged' {
+  if (basis === 'delivery') return 'chargedDelivered';
+  if (basis === 'redemption') return 'chargedRedeemed';
+  return 'charged';
 }
 
 // ── The owner's tab ──────────────────────────────────────────────────────────

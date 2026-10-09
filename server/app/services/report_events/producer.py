@@ -14,8 +14,9 @@ the grant row; a producer left with no event is deactivated.
 * `vouchers` — the prepaid vouchers of their production (production.py: the linked batches)
   redeemed on the event's tills during the event, reversed ones skipped — counts and units,
   never codes or staff;
-* `settlement` — only when the owner switched it on for the event: per batch, the vouchers
-  redeemed × the production price.
+* `settlement` — only when the owner switched it on for the event: per batch, the vouchers the
+  production is charged for — by its `billing_basis` (redemption or delivery), as the production
+  vouchers' settlement service counts them (prepaid_voucher_settlement) — at the production price.
 
 **Nothing else.** app/services/dashboard_access.py lets a PRODUCER_VIEW user reach only the
 `/producer/*` routes and a few GETs about themselves; every producer route goes through
@@ -433,22 +434,6 @@ def _redemptions(db: Session, event: ReportEvent, batch_ids: List[Any]):
     )
 
 
-def _redeemed_serials(db: Session, event: ReportEvent, batches: List[PrepaidVoucherBatch]) -> Dict[str, List[Optional[int]]]:
-    """Per batch id: one serial for each voucher redeemed on the event (as `vouchers` counts them)."""
-    rows = _redemptions(db, event, [b.id for b in batches])
-    first: Dict[Any, PrepaidVoucherRedemption] = {}
-    for r in rows:
-        first.setdefault((r.batch_id, r.voucher_id), r)
-    voucher_ids = list({vid for _bid, vid in first if vid is not None})
-    known = dict(
-        db.query(PrepaidVoucher.id, PrepaidVoucher.serial).filter(PrepaidVoucher.id.in_(voucher_ids)).all()
-    ) if voucher_ids else {}
-    out: Dict[str, List[Optional[int]]] = defaultdict(list)
-    for (bid, vid), r in first.items():
-        out[str(bid)].append(known.get(vid, getattr(r, "serial", None)))
-    return out
-
-
 def vouchers(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
     from .report import zone
 
@@ -497,29 +482,145 @@ def vouchers(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
     }
 
 
+def _local_day(moment: datetime, tz):
+    return utc(moment).astimezone(tz).date()
+
+
+def settlement_groups(db: Session, event: ReportEvent) -> List[Tuple[Any, List[PrepaidVoucherBatch], Dict[str, Any]]]:
+    """
+    The event's batches (test batches left out), each under the terms it is charged by — read
+    through the production vouchers' settlement service (prepaid_voucher_settlement), never
+    computed here:
+
+    * an active settlement agreement written for this event (`report_event_id`) — its basis,
+      period and policies, for the batches it covers;
+    * else the batch's production's `billing_basis` ("redemption" — the default, also with no
+      production — or "delivery"), with the agreements' default policies, over the event: by
+      redemption, vouchers first redeemed on the event's days; by delivery, vouchers delivered
+      (chargeable) up to the event's last day.
+
+    Returns (terms, batches, meta) per group.
+    """
+    from types import SimpleNamespace
+
+    from app.models.prepaid_voucher import PrepaidProduction
+    from app.models.prepaid_voucher_extras import PrepaidSettlementAgreement
+    from app.services import prepaid_voucher_settlement as PVS
+    from app.services.prepaid_voucher_controls import test_batch_ids
+
+    from .report import zone
+
+    tests = test_batch_ids(db, event.tenant_id)
+    batches = [b for b in PROD.event_batches(db, event) if str(b.id) not in tests]
+    if not batches:
+        return []
+    groups: List[Tuple[Any, List[PrepaidVoucherBatch], Dict[str, Any]]] = []
+    taken: set = set()
+    agreements = (
+        db.query(PrepaidSettlementAgreement)
+        .filter(
+            PrepaidSettlementAgreement.tenant_id == event.tenant_id,
+            PrepaidSettlementAgreement.report_event_id == event.id,
+            PrepaidSettlementAgreement.status == "active",
+        )
+        .order_by(PrepaidSettlementAgreement.created_at)
+        .all()
+    )
+    for a in agreements:
+        covered = {b.id for b in PVS.agreement_batches(db, a)}
+        mine = [b for b in batches if b.id in covered and b.id not in taken]
+        if mine:
+            taken |= {b.id for b in mine}
+            groups.append((a, mine, {"origin": "agreement", "agreementName": a.name}))
+    rest = [b for b in batches if b.id not in taken]
+    if rest:
+        tz = zone(event.timezone)
+        first_day = _local_day(event.starts_at, tz)
+        last_day = _local_day(utc(event.ends_at) - timedelta(microseconds=1), tz)
+        production_ids = {getattr(b, "production_id", None) for b in rest} - {None}
+        productions = {
+            p.id: p for p in db.query(PrepaidProduction).filter(PrepaidProduction.id.in_(list(production_ids))).all()
+        } if production_ids else {}
+        by_basis: Dict[str, List[PrepaidVoucherBatch]] = defaultdict(list)
+        for b in rest:
+            p = productions.get(getattr(b, "production_id", None))
+            by_basis[(p.billing_basis if p is not None else None) or "redemption"].append(b)
+        for basis in sorted(by_basis):
+            terms = SimpleNamespace(
+                id=None, tenant_id=event.tenant_id, company_id=event.company_id, billing_basis=basis,
+                period_from=first_day if basis == "redemption" else None, period_to=last_day,
+                cancelled_policy="exclude", replacement_policy="free",
+            )
+            groups.append((terms, by_basis[basis], {"origin": "production", "agreementName": None}))
+    return groups
+
+
 def settlement(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
+    """
+    At production price, as the production vouchers' settlement charges the production
+    (settlement_groups): per batch, the vouchers chargeable under its basis — by redemption or by
+    delivery — at the production price. The price: one typed on the event for the batch, else each
+    voucher at the price it was issued at, but only while the owner who opened the settlement holds
+    `prepaid_voucher_prices` (else none: prices missing).
+    """
+    from app.services import prepaid_voucher_settlement as PVS
+
     if not PROD.settings_of(event)["settlementEnabled"]:
         raise ProducerError("settlement_closed", 403, "ההתחשבנות לא נפתחה לצפייה באירוע הזה")
     figures = vouchers(db, event, now)
-    batches = {str(b.id): b for b in PROD.event_batches(db, event)}
-    serials = _redeemed_serials(db, event, list(batches.values()))
-    # A batch's own production price only while the owner who opened the settlement sees it.
+    counts = {row["batchId"]: row for row in figures["batches"]}
     own = enabler_sees_prices(db, event)
-    rows, total, missing = [], ZERO, False
-    for row in figures["batches"]:
-        # Each redeemed voucher at its production price (by serial once "ערוך סדרה" changed it).
-        price, amount = PROD.settle(event, batches[row["batchId"]], serials.get(row["batchId"], []), include_own=own)
-        if amount is None:
-            missing = True
-        else:
-            total += amount
-        rows.append({**row, "productionPrice": money(price) if price is not None else None,
-                     "amount": money(amount) if amount is not None else None})
+    rows, total, missing, bases = [], ZERO, False, set()
+    for terms, batches, meta in settlement_groups(db, event):
+        basis = terms.billing_basis or "redemption"
+        for f in PVS.batch_figures(db, terms, batches):
+            b = f.batch
+            typed = PROD.typed_price(event, b)
+            if typed is not None:
+                price, amount = typed, typed * f.chargeable
+            elif own:
+                agorot = PVS._sum_prices(f.items)
+                one = PVS._one_price(f.items, b.production_price)
+                price = (Decimal(one) / 100).quantize(Decimal("0.01")) if one is not None else None
+                amount = (Decimal(agorot) / 100).quantize(Decimal("0.01")) if agorot is not None else None
+            else:
+                price, amount = None, None
+            if amount is None and f.chargeable:
+                missing = True
+            elif amount is None:
+                amount = Decimal("0.00")  # nothing chargeable: nothing owed, whatever the price
+            if amount is not None:
+                total += amount
+            bases.add(basis)
+            base_row = counts.get(str(b.id), {})
+            rows.append({
+                "batchId": str(b.id),
+                "name": b.name,
+                "eventName": b.event_name,
+                "issued": base_row.get("issued", f.issued),
+                "redeemedVouchers": base_row.get("redeemedVouchers", 0),
+                "redemptions": base_row.get("redemptions", 0),
+                "units": base_row.get("units", 0.0),
+                "lastRedeemedAt": base_row.get("lastRedeemedAt"),
+                "basis": basis,
+                "origin": meta["origin"],
+                "agreementName": meta["agreementName"],
+                "chargeable": f.chargeable,
+                "delivered": f.delivered,
+                "redeemedInPeriod": f.redeemed,
+                "cancelledCharged": f.cancelled_charged,
+                "replacementsCharged": f.replacements_charged,
+                "productionPrice": money(price) if price is not None else None,
+                "amount": money(amount) if amount is not None else None,
+            })
+    basis = next(iter(bases)) if len(bases) == 1 else ("mixed" if bases else "redemption")
     return {
         "event": figures["event"],
-        "basis": "redemption",
+        "basis": basis,
+        "basisText": PVS.BASIS_TEXT.get(basis),
         "rows": rows,
         "totalAmount": money(total),
         "missingPrices": missing,
+        "chargeableVouchers": sum(r["chargeable"] for r in rows),
         "redeemedVouchers": figures["totals"]["redeemedVouchers"],
     }

@@ -17,10 +17,11 @@ it: `production_price_history`, read through `prepaid_voucher_edit.production_pr
 * **Which batches the owner may pick**: the event's company's batches valid at the event's
   shop (`shop_ids` empty = every shop of the company).
 * **The price** (`production_price`, ₪ per voucher): the price typed on the event for that
-  batch (`productionPrices`, ₪), else the batch's own — the core's agorot, ÷ 100 — at the
-  voucher's serial when the settlement knows it (`settle`), else none: the settlement then
-  shows quantities without money. The batch's own price is the `prepaid_voucher_prices`
-  section's (the core's rule): the owner's tab shows it only to whoever has that section, and
+  batch (`productionPrices`, ₪), else the batch's own — the core's agorot, ÷ 100. The
+  producer's settlement (producer.py `settlement`) counts and prices through the production
+  vouchers' settlement service: each chargeable voucher at the price it was issued at
+  (`prepaid_voucher_settlement.price_at_issue`, by serial once "ערוך סדרה" changed it).
+  The batch's own price is the `prepaid_voucher_prices` section's (the core's rule): the owner's tab shows it only to whoever has that section, and
   the producer's settlement uses it only while the owner who switched the settlement on
   (`settlementEnabledBy`) has that section — switching it on takes the section (producer.py
   `save_settings`): the producer never sees a production price that owner cannot.
@@ -32,7 +33,7 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -155,55 +156,12 @@ def _shekels(agorot: Any) -> Optional[Decimal]:
     return (Decimal(agorot) / 100).quantize(Decimal("0.01"))
 
 
-def own_price(batch: PrepaidVoucherBatch, serial: Optional[int] = None) -> Optional[Decimal]:
-    """
-    ₪ per voucher: the batch's own production price — the core's agorot, ÷ 100. With [serial],
-    the price that voucher was issued at ("ערוך סדרה": the history by serial, the core's own
-    `production_price_of`); without one, the batch's current price — unless the price was changed
-    along the series, when a voucher of unknown serial has no known price.
-    """
-    history = getattr(batch, "production_price_history", None) or []
-    if serial is None:
-        return None if history else _shekels(getattr(batch, "production_price", None))
-    from app.services.prepaid_voucher_edit import production_price_of
-
-    try:
-        return _shekels(production_price_of(batch, int(serial)))
-    except (TypeError, ValueError, AttributeError):
-        logger.warning("production price of batch %s at serial %r unreadable", getattr(batch, "id", None), serial)
-        return None
-
-
 def production_price(event: ReportEvent, batch: PrepaidVoucherBatch, *, include_own: bool = True) -> Optional[Decimal]:
     """₪ per voucher: the event's typed price, else (with [include_own]) the batch's current own price."""
     typed = typed_price(event, batch)
     if typed is not None or not include_own:
         return typed
     return _shekels(getattr(batch, "production_price", None))
-
-
-def settle(event: ReportEvent, batch: PrepaidVoucherBatch, serials: Sequence[Optional[int]], *,
-           include_own: bool = True) -> Tuple[Optional[Decimal], Optional[Decimal]]:
-    """
-    (₪ per voucher, ₪ amount) for [batch]'s redeemed vouchers, one serial each: the event's typed
-    price × their number; else (with [include_own]) each voucher at the batch's own price for its
-    serial. The price is None when it differs between the vouchers (the amount stands) or is
-    unknown; the amount None when any voucher's price is unknown (the settlement says prices are
-    missing).
-    """
-    typed = typed_price(event, batch)
-    if typed is not None:
-        return typed, typed * len(serials)
-    if not include_own:
-        return None, None
-    if not serials:
-        price = production_price(event, batch)
-        return price, (Decimal("0.00") if price is not None else None)
-    prices = [own_price(batch, s) for s in serials]
-    if any(p is None for p in prices):
-        return None, None
-    distinct = set(prices)
-    return (prices[0] if len(distinct) == 1 else None), sum(prices, Decimal("0.00"))
 
 
 def clean_settings(event: ReportEvent, db: Session, body: Dict[str, Any]) -> Dict[str, Any]:

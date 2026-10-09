@@ -358,11 +358,16 @@ def test_the_vouchers_of_their_production_only(w):
     suggested = {b["name"]: b for b in owner["batches"]}
     assert suggested["שנה שעברה"]["suggested"] is True and suggested["שנה שעברה"]["linked"] is False
 
+    # The settlement is what the production is charged for (prepaid_voucher_settlement, by
+    # redemption — the default basis): every voucher of its batches first redeemed on the event's
+    # days, wherever — not only the event's tills (the voucher tab above is the event's own view).
     settle = _get(w, w.producer, w.event.id, "/settlement").json()
     by = {r["name"]: r for r in settle["rows"]}
-    assert by["צוות במה"]["productionPrice"] == 28 and by["צוות במה"]["amount"] == 28
-    assert by["VIP"]["productionPrice"] is None and settle["missingPrices"] is True
-    assert settle["totalAmount"] == 28
+    assert settle["basis"] == "redemption" and settle["basisText"].startswith("לפי מימוש")
+    assert by["צוות במה"]["chargeable"] == 3                         # v, the other shop's, the earlier one
+    assert by["צוות במה"]["productionPrice"] == 28 and by["צוות במה"]["amount"] == 84
+    assert by["VIP"]["chargeable"] == 2 and by["VIP"]["productionPrice"] is None and settle["missingPrices"] is True
+    assert settle["totalAmount"] == 84 and settle["chargeableVouchers"] == 5
 
 
 # ── The owner's side ─────────────────────────────────────────────────────────
@@ -447,32 +452,6 @@ def test_production_batches_and_prices():
     assert PROD.production_price(event, SimpleNamespace(id="b1", production_price=1200), include_own=False) == Decimal("30.00")
     assert PROD.settings_of(SimpleNamespace(producer_settings=None)) == {
         "settlementEnabled": False, "batchIds": [], "productionPrices": {}, "settlementEnabledBy": None}
-
-
-def test_the_settlement_prices_each_voucher_by_its_serial():
-    """The core's "ערוך סדרה": serials 1-10 issued at ₪20, from 11 at ₪25 (agorot in the batch)."""
-    history = [{"fromSerial": 1, "priceAgorot": 2000}, {"fromSerial": 11, "priceAgorot": 2500}]
-    b = SimpleNamespace(id="b1", production_price=2500, production_price_history=history)
-    none = SimpleNamespace(producer_settings=None)
-    assert PROD.own_price(b, 3) == Decimal("20.00") and PROD.own_price(b, 11) == Decimal("25.00")
-    assert PROD.own_price(b) is None                                    # changed along the series: serial needed
-    assert PROD.production_price(none, b) == Decimal("25.00")           # the current price (the owner's tab)
-    assert PROD.settle(none, b, [3, 4]) == (Decimal("20.00"), Decimal("40.00"))
-    assert PROD.settle(none, b, [3, 12]) == (None, Decimal("45.00"))    # two prices: the amount stands
-    assert PROD.settle(none, b, [3, None]) == (None, None)              # a voucher of unknown price
-    assert PROD.settle(none, b, []) == (Decimal("25.00"), Decimal("0.00"))
-    typed = SimpleNamespace(producer_settings={"productionPrices": {"b1": "30"}})
-    assert PROD.settle(typed, b, [3, 12]) == (Decimal("30.00"), Decimal("60.00"))  # the event's price wins
-    flat = SimpleNamespace(id="b2", production_price=1250)
-    assert PROD.own_price(flat) == Decimal("12.50")
-    assert PROD.settle(none, flat, [7, 8]) == (Decimal("12.50"), Decimal("25.00"))
-    assert PROD.settle(none, SimpleNamespace(id="b3"), [1]) == (None, None)
-    # Without the batch's own price (its opener cannot see it): only a price typed on the event.
-    assert PROD.settle(none, flat, [7, 8], include_own=False) == (None, None)
-    assert PROD.settle(none, flat, [], include_own=False) == (None, None)
-    assert PROD.settle(SimpleNamespace(producer_settings={"productionPrices": {"b2": "30"}}), flat, [7, 8],
-                       include_own=False) == (Decimal("30.00"), Decimal("60.00"))
-    assert PROD.settle(none, SimpleNamespace(id="b3"), []) == (None, None)
 
 
 def test_the_producer_settles_at_the_core_price_in_agorot(w):
@@ -590,3 +569,122 @@ def test_switching_the_settlement_on_takes_the_production_prices_section(w):
     w.event.producer_settings = {"batchIds": [str(crew.id)], "settlementEnabled": True}
     w.db.commit()
     assert crew_row() == (None, None, True)
+
+
+# ── The settlement follows the production's billing basis (feat/event-followups) ──────────────
+
+
+def _production(w, name, basis):
+    from app.models.prepaid_voucher import PrepaidProduction
+
+    p = PrepaidProduction(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name=name, billing_basis=basis)
+    w.db.add(p)
+    w.db.flush()
+    return p
+
+
+def _vouchers(w, batch, serials):
+    out = []
+    for s in serials:
+        v = PrepaidVoucher(id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=batch.id, serial=s,
+                           code=uuid.uuid4().hex[:12].upper(), remaining=[])
+        w.db.add(v)
+        out.append(v)
+    w.db.flush()
+    return out
+
+
+def _deliver(w, batch, first, last, *, days_before=2, chargeable=True):
+    from app.models.prepaid_voucher_extras import PrepaidVoucherDelivery
+
+    w.db.add(PrepaidVoucherDelivery(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=batch.id, serial_from=first, serial_to=last,
+        count=last - first + 1, chargeable=chargeable, delivered_at=START - timedelta(days=days_before),
+    ))
+    w.db.flush()
+
+
+def _open_settlement(w, batches, **extra):
+    w.event.producer_settings = {"batchIds": [str(b.id) for b in batches], "settlementEnabled": True,
+                                 "settlementEnabledBy": str(w.manager.id), **extra}
+    w.db.commit()
+
+
+def test_a_production_billed_by_delivery_is_charged_for_what_was_handed_over(w):
+    crew = _batch(w, "צוות במה", production_price=2000, production_id=_production(w, "הפקות אלון", "delivery").id,
+                  customer_name="הפקות אלון")
+    vs = _vouchers(w, crew, range(1, 11))
+    _deliver(w, crew, 1, 6)                                  # six handed over before the event
+    _deliver(w, crew, 7, 8, chargeable=False)                # two given free: never charged
+    _redeem(w, crew, w.t1, 30, voucher=vs[0])
+    _redeem(w, crew, w.t1, 40, voucher=vs[8])                # redeemed, but never delivered: not by delivery
+    _open_settlement(w, [crew])
+    body = _get(w, w.producer, w.event.id, "/settlement").json()
+    row = body["rows"][0]
+    assert body["basis"] == "delivery" and body["basisText"].startswith("לפי מסירה")
+    assert (row["basis"], row["origin"], row["chargeable"], row["delivered"]) == ("delivery", "production", 6, 6)
+    assert row["productionPrice"] == 20 and row["amount"] == 120 and body["totalAmount"] == 120
+    assert row["redeemedVouchers"] == 2                      # the voucher tab's own figure, beside it
+
+
+def test_a_production_billed_by_redemption_is_charged_for_what_was_redeemed(w):
+    crew = _batch(w, "צוות במה", production_price=2000, production_id=_production(w, "הפקות אלון", "redemption").id)
+    vs = _vouchers(w, crew, range(1, 11))
+    _deliver(w, crew, 1, 10)
+    for minutes, v in ((30, vs[0]), (40, vs[1]), (50, vs[1])):  # the same voucher twice: once
+        _redeem(w, crew, w.t1, minutes, voucher=v)
+    _redeem(w, crew, w.t1, 60, voucher=vs[2], reversed_=True)   # reversed: nowhere
+    _open_settlement(w, [crew])
+    row = _get(w, w.producer, w.event.id, "/settlement").json()["rows"][0]
+    assert (row["basis"], row["chargeable"], row["amount"]) == ("redemption", 2, 40)
+
+
+def test_two_productions_two_bases_and_an_agreement_for_the_event_wins(w):
+    from app.models.prepaid_voucher_extras import PrepaidSettlementAgreement
+
+    by_delivery = _batch(w, "VIP", production_price=1000, production_id=_production(w, "VIP בע״מ", "delivery").id)
+    by_redemption = _batch(w, "צוות", production_price=1500, production_id=_production(w, "צוות בע״מ", "redemption").id)
+    a = _vouchers(w, by_delivery, range(1, 5))
+    b = _vouchers(w, by_redemption, range(1, 5))
+    _deliver(w, by_delivery, 1, 3)
+    _deliver(w, by_redemption, 1, 4)
+    _redeem(w, by_redemption, w.t1, 20, voucher=b[0])
+    _redeem(w, by_delivery, w.t1, 25, voucher=a[0])
+    _open_settlement(w, [by_delivery, by_redemption])
+    body = _get(w, w.producer, w.event.id, "/settlement").json()
+    rows = {r["name"]: r for r in body["rows"]}
+    assert body["basis"] == "mixed" and body["basisText"] is None
+    assert (rows["VIP"]["basis"], rows["VIP"]["chargeable"], rows["VIP"]["amount"]) == ("delivery", 3, 30)
+    assert (rows["צוות"]["basis"], rows["צוות"]["chargeable"], rows["צוות"]["amount"]) == ("redemption", 1, 15)
+    assert body["totalAmount"] == 45
+
+    # The owner wrote an agreement for this event, by delivery, for the crew batch: its terms win.
+    w.db.add(PrepaidSettlementAgreement(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name="הסכם האירוע",
+        report_event_id=w.event.id, batch_ids=[str(by_redemption.id)], billing_basis="delivery", status="active",
+    ))
+    w.db.commit()
+    rows = {r["name"]: r for r in _get(w, w.producer, w.event.id, "/settlement").json()["rows"]}
+    assert (rows["צוות"]["origin"], rows["צוות"]["agreementName"], rows["צוות"]["basis"]) == ("agreement", "הסכם האירוע", "delivery")
+    assert (rows["צוות"]["chargeable"], rows["צוות"]["amount"]) == (4, 60)
+
+
+def test_the_basis_never_shows_a_price_the_opener_cannot_see_and_test_batches_never_count(w):
+    from app.models.prepaid_voucher_extras import PrepaidVoucherTestBatch
+
+    crew = _batch(w, "צוות במה", production_price=2000, production_id=_production(w, "הפקות אלון", "delivery").id)
+    trial = _batch(w, "שובר בדיקה", production_price=2000)
+    _vouchers(w, crew, range(1, 4))
+    _deliver(w, crew, 1, 3)
+    w.db.add(PrepaidVoucherTestBatch(batch_id=trial.id, tenant_id=w.tenant.id))
+    _open_settlement(w, [crew, trial])
+    w.event.producer_settings = {**w.event.producer_settings, "settlementEnabledBy": None}   # nobody on record
+    w.db.commit()
+    body = _get(w, w.producer, w.event.id, "/settlement").json()
+    assert [r["name"] for r in body["rows"]] == ["צוות במה"]           # the test batch never counts
+    row = body["rows"][0]
+    assert (row["chargeable"], row["productionPrice"], row["amount"], body["missingPrices"]) == (3, None, None, True)
+    w.event.producer_settings = {**w.event.producer_settings, "productionPrices": {str(crew.id): 25}}
+    w.db.commit()
+    row = _get(w, w.producer, w.event.id, "/settlement").json()["rows"][0]
+    assert (row["productionPrice"], row["amount"]) == (25, 75)          # a price typed on the event: shown
