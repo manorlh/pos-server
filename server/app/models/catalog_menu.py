@@ -12,8 +12,8 @@ active, on the tills and kiosks it is assigned to.
   of its products or only the ones listed in `catalog_menu_products`.
 * `catalog_menu_products` — products in the menu's order, with an optional price that
   applies only while the menu is active (VAT follows the product).
-* `catalog_menu_assignments` — which menus a company, shop, point of sale (area) or till
-  gets, several per level, with a priority among menus of the same level.
+* `catalog_menu_assignments` — which menus a company, shop, point of sale (area), device
+  group or till gets, several per level, with a priority among menus of the same level.
 * `catalog_menu_fallbacks` — what a till sells when no menu is active: the full catalog
   (the default) or nothing. Per level; the most specific level that says wins.
 * `catalog_menu_sync_state` — when the organization's menus last changed (deletes
@@ -45,8 +45,11 @@ from app.database import Base
 
 #: Where a menu is offered: the tills' sell screen, the self-order kiosk, or both.
 MENU_CHANNELS = ("pos", "kiosk", "both")
-#: Assignment levels, widest first — the till parameters' levels.
-ASSIGNMENT_LEVELS = ("company", "shop", "area", "machine")
+#: Assignment levels, widest first — the till parameters' levels, and a device group ("קבוצת
+#: מכשירים", app/models/machine_group.py) between the point of sale and the till.
+ASSIGNMENT_LEVELS = ("company", "shop", "area", "group", "machine")
+#: The levels' SQL check (catalog_menu_assignments, catalog_menu_fallbacks).
+LEVELS_CHECK = "level IN ('company', 'shop', 'area', 'group', 'machine')"
 #: What a till sells when no menu is active.
 FALLBACK_CATALOG = "catalog"
 FALLBACK_NONE = "none"
@@ -122,7 +125,7 @@ class CatalogMenuAssignment(Base):
     __tablename__ = "catalog_menu_assignments"
     __table_args__ = (
         CheckConstraint(
-            "level IN ('company', 'shop', 'area', 'machine')", name="ck_catalog_menu_assignments_level",
+            LEVELS_CHECK, name="ck_catalog_menu_assignments_level",
         ),
         UniqueConstraint("menu_id", "level", "target_id", name="uq_catalog_menu_assignments"),
         Index("ix_catalog_menu_assignments_target", "tenant_id", "level", "target_id"),
@@ -132,7 +135,7 @@ class CatalogMenuAssignment(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     menu_id = Column(UUID(as_uuid=True), ForeignKey("catalog_menus.id", ondelete="CASCADE"), nullable=False)
     level = Column(String(16), nullable=False)
-    #: The company, shop, area or till (by `level`). Not a key: polymorphic.
+    #: The company, shop, area, device group or till (by `level`). Not a key: polymorphic.
     target_id = Column(UUID(as_uuid=True), nullable=False)
     #: Among menus of the same level active at the same moment, the higher wins.
     priority = Column(Integer, nullable=False, default=0, server_default="0")
@@ -145,7 +148,7 @@ class CatalogMenuFallback(Base):
     __tablename__ = "catalog_menu_fallbacks"
     __table_args__ = (
         CheckConstraint(
-            "level IN ('company', 'shop', 'area', 'machine')", name="ck_catalog_menu_fallbacks_level",
+            LEVELS_CHECK, name="ck_catalog_menu_fallbacks_level",
         ),
         CheckConstraint("mode IN ('catalog', 'none')", name="ck_catalog_menu_fallbacks_mode"),
         UniqueConstraint("level", "target_id", name="uq_catalog_menu_fallbacks"),

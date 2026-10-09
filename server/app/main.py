@@ -330,6 +330,10 @@ app.include_router(kiosk_web_router.till_router, prefix=_prefix)
 from app.routers import catalog_menus as catalog_menus_router  # noqa: E402
 
 app.include_router(catalog_menus_router.router, prefix=_prefix)
+# "קבוצות מכשירים": named groups of tills, a menu assignment level of their own.
+from app.routers import machine_groups as machine_groups_router  # noqa: E402
+
+app.include_router(machine_groups_router.router, prefix=_prefix)
 # The report center (docs/SPEC_REPORTS.md): the consolidated Z table, "דוח שמכיל הכל", the
 # reconciliation (transactions ↔ Zs ↔ transmissions) and the transmissions across tills.
 from app.routers import report_center as report_center_router  # noqa: E402

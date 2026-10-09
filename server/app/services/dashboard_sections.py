@@ -335,6 +335,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/availability/reopens", S("products", "item_blocks")),
     (_ALL, "/catalog-import/*", S("products")),
     (_ALL, "/catalog-menus*", S("products")),
+    # "קבוצות מכשירים": edited beside the tills, assigned menus beside the catalog.
+    (_ALL, "/machine-groups*", S("devices", "products")),
     (_ALL, "/catalog/*", S("products")),
     (_ALL, "/categories*", S("products")),
     (_ALL, "/demo-menu/*", S("products")),
