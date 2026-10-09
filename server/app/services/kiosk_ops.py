@@ -370,10 +370,13 @@ def reconcile(
     _expire_help(db, open_rows.values(), lambda _r: cfg, now)
     open_rows = {k: r for k, r in open_rows.items() if r.cleared_at is None}
     keys = {a["key"] for a in reported}
+    cleared: List[KioskAlert] = []
+    raised: List[KioskAlert] = []
     for key, row in open_rows.items():
         if key not in keys:
             row.cleared_at = now
             row.clear_reason = "reset" if row.kind == "help" else "recovered"
+            cleared.append(row)
     to_wake: Dict[str, List[POSMachine]] = {}
     for a in reported:
         row = open_rows.get(a["key"])
@@ -403,6 +406,7 @@ def reconcile(
                 ping_count=a["pings"], pinged_at=now if a["kind"] == "help" else None,
             )
             db.add(row)
+            raised.append(row)
             if a["reason"] not in QUIET_REASONS:
                 to_wake[a["kind"]] = targets(db, kiosk, cfg, a["kind"])
             continue
@@ -410,6 +414,7 @@ def reconcile(
         if row.reason != a["reason"] or row.text != text or row.detail != a["detail"]:
             changed_reason = row.reason != a["reason"]
             row.reason, row.text, row.detail = a["reason"], text, a["detail"]
+            raised.append(row)
             if changed_reason and a["reason"] not in QUIET_REASONS:
                 to_wake[a["kind"]] = targets(db, kiosk, cfg, a["kind"])
         if a["kind"] == "help" and a["pings"] > (row.ping_count or 0):
@@ -418,6 +423,13 @@ def reconcile(
             row.pinged_at = now
             to_wake["help"] = targets(db, kiosk, cfg, "help")
     db.flush()
+    # "בון לא הודפס" of a kiosk on the dashboard's alerts too (app/services/bon_alerts.py).
+    from app.services import bon_alerts
+
+    for row in raised:
+        bon_alerts.kiosk_alert_raised(db, kiosk, row, now=now)
+    for row in cleared:
+        bon_alerts.kiosk_alert_cleared(db, row, now=now)
     for tills in to_wake.values():
         _wake(tills)
 

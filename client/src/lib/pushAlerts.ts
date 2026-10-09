@@ -9,7 +9,15 @@
 
 import { canAccess, type DashboardAccess } from './dashboardAccess';
 
-export type AlertCategory = 'till_offline' | 'card_terminal' | 'large_void' | 'drawer_no_sale' | 'till_low_sales' | 'target_reached';
+export type AlertCategory =
+  | 'till_offline'
+  | 'card_terminal'
+  | 'large_void'
+  | 'drawer_no_sale'
+  | 'till_low_sales'
+  | 'target_reached'
+  // "בון לא הודפס" — a kitchen / bar ticket of any till or kiosk that did not print (pos-server app/services/bon_alerts.py).
+  | 'bon_unprinted';
 
 export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_offline',
@@ -18,6 +26,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'drawer_no_sale',
   'till_low_sales',
   'target_reached',
+  'bon_unprinted',
 ];
 
 export interface PushConfig {

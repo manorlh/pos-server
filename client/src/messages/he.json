@@ -16549,7 +16549,8 @@
       "large_void": "ביטול / זיכוי גדול",
       "drawer_no_sale": "מגירה נפתחה ללא מכירה",
       "till_low_sales": "קופה כמעט לא מוכרת",
-      "target_reached": "יעד הושג"
+      "target_reached": "יעד הושג",
+      "bon_unprinted": "בון לא הודפס"
     },
     "minAmount": "מסכום",
     "where": "סניפים ואירועים",
