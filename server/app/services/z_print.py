@@ -674,6 +674,65 @@ def _footer_notes(z: ZReport, tzinfo=None) -> List[str]:
     return footer
 
 
+# ── "דו״ח Z — גרסה 2": the owner's layout (app/services/z_sections.py) ──────────────
+#
+# A Z that froze its presentation sections (`reportSections`) prints in the owner's order:
+# the period, sales (incl. VAT, without tip), the VAT summary, the payments for the sales,
+# the tips taken at the till, the receipts from sales and tips, the cash drawer reconciliation
+# — then the card transmission, "כמה נמכר", the order types, the card brands and (with
+# `zShowPerEmployee`) each employee. The till prints the same lines (TillZRenderer.kt /
+# ReportRenderer.kt) and the dashboard shows them (z-report-sections.tsx): one computation,
+# pinned by the shared golden fixture. A Z built before them prints as it always did.
+
+#: The period block's title in the owner's layout ("פרטי התקופה").
+PERIOD_TITLE_V2 = "פרטי התקופה"
+
+
+def report_sections_of(z: Any) -> Optional[dict]:
+    """The sections a Z prints in the owner's layout: as frozen, else its tills' merged; None before them."""
+    from app.services import z_sections
+
+    header = getattr(z, "header", None) or {}
+    stored = header.get("reportSections")
+    if isinstance(stored, dict):
+        return stored
+    parts = [s.get("reportSections") for s in _sections_of(z)]
+    if parts and all(isinstance(p, dict) for p in parts):
+        return z_sections.merge(parts)
+    return None
+
+
+def _v2_blocks(sections: dict, dealer_type: Optional[str], tzinfo) -> List[dict]:
+    """The sections' lines (z_sections.lines) as print-document sections, money as the paper writes it."""
+    from app.services import z_sections
+
+    blocks = z_sections.lines(
+        sections,
+        exempt=dealer_type == "exempt",
+        fmt=money,
+        stamp=lambda iso: short_stamp(_parse_iso(iso), tzinfo),
+    )
+    return [section(title, [row(label, value, emphasis=bold) for label, value, bold in rows]) for title, rows in blocks]
+
+
+def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]]) -> List[dict]:
+    """The owner's layout: the period, the v2 blocks — the production vouchers' section after the payments."""
+    from app.services import z_sections
+
+    out: List[dict] = [section(PERIOD_TITLE_V2, period_rows)]
+    payments_title = z_sections.LABELS_HE["payments"]
+    for block in _v2_blocks(sections, (getattr(z, "header", None) or {}).get("dealerType"), tzinfo):
+        out.append(block)
+        if block["title"] == payments_title:
+            out += _voucher_sections(z)
+    return out
+
+
+def _acquirer_section(z: Any) -> List[dict]:
+    """"אשראי לפי חברת סליקה" (the card legs per acquirer) — kept beside the v2 brand section."""
+    return [s for s in _card_brand_sections(z) if s["title"] == "אשראי לפי חברת סליקה"]
+
+
 def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None) -> Dict[str, Any]:
     """The Z as an 80 mm print document (the module docstring has the shape)."""
     header = z.header or {}
@@ -681,7 +740,38 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
     shop_name = header.get("shopName") or (shop.name if shop is not None else None)
     subtitle = _subtitle(z, tzinfo)
 
-    sections: List[dict] = [
+    v2 = report_sections_of(z)
+    if v2 is not None:
+        sections: List[dict] = _v2_body(z, v2, tzinfo, [
+            row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
+            row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
+            row("משמרות", _count(z.shift_count)),
+            row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
+        ])
+        sections += _acquirer_section(z)
+        offline = _offline_section(z)
+        if offline is not None:
+            sections.append(offline)
+        for late in (z.header or {}).get("lateFromEarlier") or []:
+            sections.append(_late_section(late))
+        waiters = _waiters_section(z)
+        if waiters is not None:
+            sections.append(waiters)
+        for s in _sections_of(z):
+            sections.append(_till_section(s))
+        footer = _footer_notes(z, tzinfo)
+        footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
+        footer.append(f"סוף {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
+        return {
+            "title": TITLE,
+            "number": z.z_number,
+            "businessName": header.get("businessName") or shop_name or DASH,
+            "subtitle": subtitle,
+            "sections": sections,
+            "footer": footer,
+        }
+
+    sections = [
         section(
             "תקופה",
             [
@@ -785,27 +875,29 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     The shop Z's summary: the shop's totals and one compact line per till (number,
     shifts, net, documents) — no till's detail. `tills` lists them for printing apart.
     """
-    sections: List[dict] = [
-        section(
-            "תקופה",
-            [
-                row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
-                row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
-                row("משמרות", _count(z.shift_count)),
-                row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
-            ],
-        ),
-        section("מכירות", _sales_rows(z)),
-        section("מע״מ", _vat_rows(z)),
-        section("אמצעי תשלום", _payment_rows(z)),
-        *_voucher_sections(z),
-        section("תשר", _tips_rows(z)),
-        section("קופה", _cash_rows(z)),
+    period_rows = [
+        row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
+        row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
+        row("משמרות", _count(z.shift_count)),
+        row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
     ]
-    sections += _card_brand_sections(z)
-    transmission = _transmission_section(z, tzinfo)
-    if transmission is not None:
-        sections.append(transmission)
+    v2 = report_sections_of(z)
+    if v2 is not None:
+        sections: List[dict] = _v2_body(z, v2, tzinfo, period_rows) + _acquirer_section(z)
+    else:
+        sections = [
+            section("תקופה", period_rows),
+            section("מכירות", _sales_rows(z)),
+            section("מע״מ", _vat_rows(z)),
+            section("אמצעי תשלום", _payment_rows(z)),
+            *_voucher_sections(z),
+            section("תשר", _tips_rows(z)),
+            section("קופה", _cash_rows(z)),
+        ]
+        sections += _card_brand_sections(z)
+        transmission = _transmission_section(z, tzinfo)
+        if transmission is not None:
+            sections.append(transmission)
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
@@ -879,19 +971,26 @@ def build_till_document(
     shifts = _count(s.get("shiftCount"))
     if _shifts_label(s):
         shifts = f"{shifts} ({_shifts_label(s)})"
-    sections: List[dict] = [
-        section("משמרות", [row("משמרות", shifts), *_document_rows(s)]),
-        section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
-        section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
-        section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
-        *_voucher_sections(view),  # type: ignore[arg-type]
-        section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
-        section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
-    ]
-    sections += _card_brand_sections(view)  # type: ignore[arg-type]
-    transmission = _transmission_section(view, tzinfo)  # type: ignore[arg-type]
-    if transmission is not None:
-        sections.append(transmission)
+    if isinstance(s.get("reportSections"), dict):
+        # The till's own sections, in the owner's layout ("דו״ח Z — גרסה 2").
+        view.header["dealerType"] = (z.header or {}).get("dealerType")
+        sections: List[dict] = [section("משמרות", [row("משמרות", shifts), *_document_rows(s)])]
+        sections += _v2_body(view, s["reportSections"], tzinfo, [])[1:]
+        sections += _acquirer_section(view)
+    else:
+        sections = [
+            section("משמרות", [row("משמרות", shifts), *_document_rows(s)]),
+            section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
+            section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
+            section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
+            *_voucher_sections(view),  # type: ignore[arg-type]
+            section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
+            section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
+        ]
+        sections += _card_brand_sections(view)  # type: ignore[arg-type]
+        transmission = _transmission_section(view, tzinfo)  # type: ignore[arg-type]
+        if transmission is not None:
+            sections.append(transmission)
     offline = _offline_section(view)  # type: ignore[arg-type]
     if offline is not None:
         sections.append(offline)

@@ -54,6 +54,7 @@ import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document
 import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
 import { WaiterSummaryCard } from '@/components/dashboard/z-report/waiter-summary';
+import { ZReportSectionsCards } from '@/components/dashboard/z-report/z-report-sections';
 import {
   printTillReceipts,
   zPrintTitle,
@@ -567,6 +568,13 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             </CardContent>
           </Card>
         </div>
+
+        {/* "דו״ח Z — גרסה 2": the owner's sections, the lines the till and the cloud print. */}
+        <ZReportSectionsCards
+          sections={z.reportSections}
+          source={z.reportSectionsSource}
+          exempt={z.business?.dealerType === 'exempt'}
+        />
 
         <CardBrandSummaryCard rows={z.cardBrands} source={z.cardBrandsSource} />
 

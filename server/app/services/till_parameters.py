@@ -550,6 +550,21 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "מכירה הפרמטר לא משפיע."
         ),
     ),
+    # "דו״ח Z — גרסה 2" (app/services/z_sections.py): read by the cloud when it builds a Z and
+    # by the till for its X and an offline Z; presentation only.
+    BuiltinParameter(
+        key="zShowPerEmployee",
+        label="Z ו-X — פירוט לפי עובד",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, דו״ח ה-Z (ודו״ח ה-X בקופה) מציג גם סעיף \"לפי עובד\": לכל מלצר / קופאי — מכירות "
+            "באשראי, מכירות במזומן (ואמצעי תשלום אחרים כשיש), טיפ באשראי, טיפ במזומן והסיכומים. מסמך של "
+            "שולחן שייך למלצר של השולחן, כל מסמך אחר לקופאי שהפיק אותו. הסכומים לכל העובדים מתאימים "
+            "לסה״כ התשלומים והטיפים בדו״ח. תצוגה בלבד — הנתונים הפיסקליים לא משתנים. ב-Z סניפי הסעיף "
+            "מוצג כשהפרמטר מופעל באחת הקופות הכלולות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
     # Read by the till, not the cloud; built in because the dashboard edits it with an
     # image picker (`IMAGE_PARAMETER_KEYS`). No default: a till with no value at any
     # level keeps printing the branding receipt logo, as before.

@@ -207,6 +207,13 @@ class ZReportDetailOut(ZReportOut):
     #: it was stored, read now from its documents; null — none (a till-issued Z).
     by_waiter: List[Dict[str, Any]] = Field(default_factory=list, alias="byWaiter")
     by_waiter_source: Optional[str] = Field(None, alias="byWaiterSource")
+    #: "דו״ח Z — גרסה 2" (app/services/z_sections.py): the owner's sections — sales, VAT,
+    #: payments, tips, receipts, the drawer, the card transmission, "כמה נמכר", the order types,
+    #: the card brands and (with `zShowPerEmployee`) per employee. "stored" — frozen at build
+    #: (or, on a Z stored as printed, its tills' printed sections summed); "documents" — a Z
+    #: built before them, read now from its documents; null — none.
+    report_sections: Optional[Dict[str, Any]] = Field(None, alias="reportSections")
+    report_sections_source: Optional[str] = Field(None, alias="reportSectionsSource")
 
 
 class ZReportWindow(BaseModel):

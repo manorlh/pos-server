@@ -2247,6 +2247,13 @@ export interface ZReportDetail extends ZReport {
   /** Per waiter ("פירוט לפי מלצר"): a table's sales by its waiter, any other by its cashier. */
   byWaiter?: ZWaiterRow[];
   byWaiterSource?: 'stored' | 'documents' | null;
+  /**
+   * "דו״ח Z — גרסה 2" (pos-server app/services/z_sections.py): the owner's sections, as the
+   * till and the cloud print them (lib/zReportSections.ts). stored — frozen at build (or as a
+   * local shop Z was printed); documents — read now, for a Z built before them.
+   */
+  reportSections?: import('./zReportSections').ZReportSections | null;
+  reportSectionsSource?: 'stored' | 'documents' | null;
 }
 
 /** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */
