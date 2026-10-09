@@ -62,6 +62,11 @@ class DashboardAccessProfile(Base):
     company_ids = Column(JSONB, nullable=True)
     #: Shop ids (strings) — only these shops, inside the companies above. Null/empty = all of them.
     shop_ids = Column(JSONB, nullable=True)
+    #: Point-of-sale ids (strings) — narrower still: only these areas of the shops above. Read by
+    #: the stock and block screens ("מנהל נקודת מכירה", app/services/stock_scope.py). Null/empty = whole shops.
+    area_ids = Column(JSONB, nullable=True)
+    #: Till / kiosk ids (strings) — narrowest: only these devices. Same readers. Null/empty = no narrowing.
+    machine_ids = Column(JSONB, nullable=True)
     #: The template last applied ("מנהל ארגון" is built in and has no row: `builtin_template`).
     template_id = Column(UUID(as_uuid=True), ForeignKey("dashboard_access_templates.id", ondelete="SET NULL"), nullable=True)
     builtin_template = Column(String(40), nullable=True)

@@ -10,7 +10,9 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { LayoutList, MonitorSmartphone, Palette, Plus, RefreshCw } from 'lucide-react';
+import { Gamepad2, LayoutList, MonitorSmartphone, Palette, Plus, RefreshCw } from 'lucide-react';
+// "שליטה מרחוק" (components/dashboard/live-control): pause, banner, quick hides — live.
+import { KioskControlPanel } from '@/components/dashboard/live-control';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -23,7 +25,7 @@ import { KioskDetailDialog } from '@/components/dashboard/kiosks/kiosk-detail-di
 import { ConvertDialog } from '@/components/dashboard/kiosks/convert-dialog';
 import { KioskSettingsEditor, useNowMs } from '@/components/dashboard/kiosks/kiosk-settings-editor';
 
-type View = 'list' | 'settings';
+type View = 'list' | 'settings' | 'remote';
 
 /** The machine-admin roles: they act on kiosks (the server checks each one's scope). */
 const WRITE_ROLES = ['super_admin', 'distributor', 'company_manager', 'shop_manager'];
@@ -120,10 +122,26 @@ export default function KiosksPage() {
             {tab.icon} {t(`tabs.${tab.key}`)}
           </button>
         ))}
+        {canWrite ? (
+          <button
+            type="button"
+            onClick={() => setView('remote')}
+            className={cn(
+              'flex items-center gap-2 rounded-xl px-4 py-2 text-sm transition-all duration-200',
+              view === 'remote' ? 'bg-background font-semibold shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Gamepad2 className="h-4 w-4" /> שליטה מרחוק
+          </button>
+        ) : null}
       </div>
 
       <ScopeGate resolution={resolution}>
-        {view === 'list' ? (
+        {view === 'remote' ? (
+          <div className="max-w-2xl animate-in fade-in duration-300">
+            <KioskControlPanel scope={{ companyId: shopId ? null : companyId, shopId }} />
+          </div>
+        ) : view === 'list' ? (
           <div className="space-y-3 animate-in fade-in duration-300">
             <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5">

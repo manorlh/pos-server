@@ -8,9 +8,10 @@
  */
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { fetchShopAreas } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { toggleSection, type AccessLevel, type SectionId } from '@/lib/dashboardAccess';
 import {
@@ -96,6 +97,7 @@ function AccessEditor({
   const [mode, setMode] = useState<ScopeMode>(p.orgWide ? 'org' : p.companyIds.length ? 'companies' : 'role');
   const [companyIds, setCompanyIds] = useState<string[]>(p.companyIds);
   const [shopIds, setShopIds] = useState<string[]>(p.shopIds);
+  const [areaIds, setAreaIds] = useState<string[]>(p.areaIds ?? []);
   const [tenantIds, setTenantIds] = useState<string[]>(detail.organizations.map((o) => o.id));
   const [picked, setPicked] = useState<string>('');
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -125,6 +127,20 @@ function AccessEditor({
     return detail.shops.filter((s) => covered.has(s.companyId));
   }, [mode, companyIds, detail]);
 
+  // "מנהל נקודת מכירה": the points of sale of the shops chosen (or of a shop manager's own shop).
+  const areaShopIds = useMemo(() => {
+    const chosen = shopIds.filter((id) => shopsInScope.some((s) => s.id === id));
+    if (chosen.length) return chosen;
+    return detail.user.shopId ? [detail.user.shopId] : [];
+  }, [shopIds, shopsInScope, detail.user.shopId]);
+  const areaLists = useQueries({
+    queries: areaShopIds.map((id) => ({ queryKey: ['shop-areas', id, false], queryFn: () => fetchShopAreas(id), staleTime: 60_000 })),
+  });
+  const areaChoices = areaShopIds.flatMap((shopId, i) =>
+    (areaLists[i]?.data ?? []).map((a) => ({ id: a.id, name: a.name, shop: detail.shops.find((s) => s.id === shopId)?.name ?? '' })),
+  );
+  const areasLoaded = areaLists.every((q) => q.isSuccess);
+
   const applyTemplate = (id: string) => {
     const chosen = catalog.templates.find((x) => x.id === id);
     if (!chosen) return;
@@ -142,6 +158,8 @@ function AccessEditor({
         orgWide: detail.orgScopeAllowed && mode === 'org',
         companyIds: detail.orgScopeAllowed && mode === 'companies' ? companyIds : [],
         shopIds: detail.orgScopeAllowed ? shopIds.filter((id) => shopsInScope.some((s) => s.id === id)) : [],
+        // Only once the choices are known: an area outside the shops chosen is dropped, not refused.
+        ...(areasLoaded ? { areaIds: areaIds.filter((id) => areaChoices.some((a) => a.id === id)) } : {}),
         tenantIds,
       }),
     onSuccess: (out) => {
@@ -249,6 +267,26 @@ function AccessEditor({
         ) : (
           <p className="text-xs text-muted-foreground">{t('orgScopeOnlyManagers')}</p>
         )}
+        {/* "מנהל נקודת מכירה": also for a shop's manager (their own shop's points of sale). */}
+        {areaChoices.length > 0 ? (
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">{t('areasLabel')}</Label>
+            <div className="flex flex-wrap gap-3 rounded-md border p-2">
+              {areaChoices.map((a) => (
+                <label key={a.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={areaIds.includes(a.id)}
+                    onChange={() => setAreaIds((ids) => flip(ids, a.id))}
+                  />
+                  {areaShopIds.length > 1 ? `${a.shop} · ${a.name}` : a.name}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">{t('areasHint')}</p>
+          </div>
+        ) : null}
       </section>
 
       {/* ── Sections ── */}

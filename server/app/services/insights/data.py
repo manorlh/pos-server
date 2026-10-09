@@ -441,10 +441,15 @@ class StockRow:
 def load_stock(db: Session, shops: Sequence[Shop]) -> List[StockRow]:
     if not shops:
         return []
+    # A shop's stock is every location of it (the shop, its points of sale, its devices) together.
     rows = (
-        db.query(StockLevel.shop_id, StockLevel.product_id, StockLevel.quantity, StockLevel.reorder_min, StockLevel.reorder_max)
+        db.query(
+            StockLevel.shop_id, StockLevel.product_id, func.sum(StockLevel.quantity).label("quantity"),
+            func.min(StockLevel.reorder_min).label("reorder_min"), func.max(StockLevel.reorder_max).label("reorder_max"),
+        )
         .join(Product, Product.id == StockLevel.product_id)
         .filter(StockLevel.shop_id.in_([s.id for s in shops]), Product.track_stock.is_(True))
+        .group_by(StockLevel.shop_id, StockLevel.product_id)
         .all()
     )
     return [

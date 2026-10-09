@@ -481,6 +481,9 @@ def profile_out(profile: Optional[DashboardAccessProfile]) -> dict:
         "orgWide": access.org_wide,
         "companyIds": [str(c) for c in access.company_ids],
         "shopIds": [str(s) for s in access.shop_ids],
+        # "מנהל נקודת מכירה" (app/services/stock_scope.py).
+        "areaIds": [str(a) for a in _uuids(getattr(profile, "area_ids", None))] if profile is not None else [],
+        "machineIds": [str(m) for m in _uuids(getattr(profile, "machine_ids", None))] if profile is not None else [],
         "templateId": str(profile.template_id) if profile is not None and profile.template_id else None,
         "builtinTemplate": profile.builtin_template if profile is not None else DS.ORG_MANAGER_TEMPLATE,
         "updatedAt": profile.updated_at.isoformat() if profile is not None and profile.updated_at else None,
@@ -538,6 +541,8 @@ def save_profile(
     shop_ids: Iterable,
     template_id=None,
     builtin_template: Optional[str] = None,
+    area_ids: Optional[Iterable] = None,
+    machine_ids: Optional[Iterable] = None,
 ) -> DashboardAccessProfile:
     """Create or replace `user`'s profile, recording the change. Validation is the caller's."""
     profile = db.get(DashboardAccessProfile, user.id)
@@ -550,6 +555,10 @@ def save_profile(
     profile.org_wide = bool(org_wide)
     profile.company_ids = [str(c) for c in _uuids(company_ids)] or None
     profile.shop_ids = [str(s) for s in _uuids(shop_ids)] or None
+    if area_ids is not None:
+        profile.area_ids = [str(a) for a in _uuids(area_ids)] or None
+    if machine_ids is not None:
+        profile.machine_ids = [str(m) for m in _uuids(machine_ids)] or None
     profile.template_id = template_id
     profile.builtin_template = builtin_template
     profile.updated_by_user_id = getattr(actor, "id", None)

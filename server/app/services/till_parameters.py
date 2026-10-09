@@ -1210,6 +1210,29 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "ההגדרות שלו (פעם אחת בהזמנה, עדיפות, ימים ושעות). בקיוסק המגבלה נקבעת בהגדרות הקיוסק."
         ),
     ),
+    # "יעדים ותחרות" (app/services/sales_targets.py): the till's small leaderboard, off by default.
+    BuiltinParameter(
+        key="leaderboardEnabled",
+        label="לוח מובילים ויעד בקופה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, בראש מסך המכירה מוצג שבב קטן עם התקדמות יעד הסניף להיום, ובלחיצה — לוח מובילים "
+            "של העובדים בסניף היום (לפי הפרמטר \"לוח מובילים — מדד\"). היעדים נקבעים בדשבורד, בדף \"יעדים\". "
+            "מתעדכן כל דקה כשיש חיבור לענן."
+        ),
+    ),
+    BuiltinParameter(
+        key="leaderboardMetric",
+        label="לוח מובילים — מדד",
+        value_type="enum",
+        enum_options=("מכירות", "פריטי אפסייל"),
+        default_value="מכירות",
+        description=(
+            "לפי מה מדורגים העובדים בלוח המובילים בקופה: «מכירות» — סך המכירות נטו של כל עובד היום; "
+            "«פריטי אפסייל» — כמה פריטים כל עובד הוסיף מהצעות \"הגדלת מכירה\" היום."
+        ),
+    ),
     BuiltinParameter(
         key="modifiersAutoOpen",
         label="תוספות — חלון קופץ אוטומטי",

@@ -473,6 +473,38 @@ def get_effective(
     return cfgsvc.effective_bundle(db, machine)
 
 
+#: Who may send which kiosk command (the route admits `kiosks` or `device_control`): remote control
+#: ("שליטה מרחוק") pauses and resumes only; a Z, closing a shift, the schedule and the bon desk stay
+#: with the kiosks section (a Z also with the Z section), as before remote control existed.
+KIOSK_ACTION_SECTIONS = {
+    "pause": ("kiosks", "device_control"),
+    "resume": ("kiosks", "device_control"),
+    "till_z": ("kiosks", "z"),
+    "close_shift": ("kiosks", "z"),
+    "schedule": ("kiosks",),
+    "bon_print": ("kiosks",),
+    "bon_handled": ("kiosks",),
+}
+
+
+def check_kiosk_action(db: Session, user, action: str) -> None:
+    """A user admitted through remote control alone gets its actions only (app/services/dashboard_access.py)."""
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+
+    access = DA.effective_access(db, user)
+    sections = KIOSK_ACTION_SECTIONS.get(action, ("kiosks",))
+    if any(access.allows(section, DS.EDIT) for section in sections):
+        return
+    # Admitted through remote control only: never past its own actions. (Neither section: the route's
+    # own check — the kiosks section — answers, as before remote control existed.)
+    if access.allows("device_control", DS.EDIT):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "section_forbidden", "section": sections[0], "level": DS.EDIT},
+        )
+
+
 @router.post("/{machine_id}/commands", status_code=status.HTTP_201_CREATED)
 def post_kiosk_command(
     machine_id: uuid.UUID,
@@ -483,7 +515,11 @@ def post_kiosk_command(
     db: Session = Depends(get_db),
 ):
     """pause / resume (applied at once), close_shift / till_z (the existing channels; refusals pass through)."""
-    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    check_kiosk_action(db, current_user, body.action)
+    # A manager of points of sale: one of their kiosks only (app/routers/kiosk_live.py).
+    from app.routers.kiosk_live import _kiosk_checked
+
+    machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     result = svc.run_command(
         db,
         kiosk_machine=machine,

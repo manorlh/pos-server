@@ -24,6 +24,9 @@ export interface AccessProfile {
   orgWide: boolean;
   companyIds: string[];
   shopIds: string[];
+  /** "מנהל נקודת מכירה": only these points of sale / devices (the stock and block screens). */
+  areaIds?: string[];
+  machineIds?: string[];
   templateId: string | null;
   builtinTemplate: string | null;
   updatedAt: string | null;
@@ -98,6 +101,8 @@ export interface ProfileBody {
   orgWide?: boolean;
   companyIds?: string[];
   shopIds?: string[];
+  /** Absent: the profile keeps the ones it has. */
+  areaIds?: string[];
   tenantIds?: string[];
 }
 

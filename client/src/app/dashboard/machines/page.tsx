@@ -21,7 +21,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import Link from 'next/link';
-import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send, Layers } from 'lucide-react';
+import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send, Layers, MonitorCog } from 'lucide-react';
 import { MachineGroupsPanel } from '@/components/dashboard/machines/machine-groups';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
@@ -34,6 +34,8 @@ import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { MachinesTable } from '@/components/dashboard/machines/machines-table';
+// "שליטה מרחוק בקופות" (components/dashboard/live-control).
+import { DeviceControlSheet } from '@/components/dashboard/live-control';
 import { DeviceSearchDialog } from '@/components/dashboard/machines/device-search';
 import { RemoteShiftCloseDialog } from '@/components/dashboard/machines/remote-shift-close';
 import { TransmitNowDialog } from '@/components/dashboard/machines/card-transmission';
@@ -99,6 +101,8 @@ export default function MachinesPage() {
   // shop, or one device. Its own "filter by shop" dropdown is gone; that was the
   // duplicate the shared scope replaces.
   const { scope, resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  // "שליטה מרחוק": undefined = closed, null = the scope's tills, an id = that till preselected.
+  const [remoteFor, setRemoteFor] = useState<string | null | undefined>(undefined);
   const [pairOpen, setPairOpen] = useState(false);
   const [pushOpen, setPushOpen] = useState(false);
   const [pushTarget, setPushTarget] = useState<'machine' | 'shop'>('machine');
@@ -605,6 +609,16 @@ export default function MachinesPage() {
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => setRemoteFor(null)}>
+            <MonitorCog className="h-4 w-4 ms-1" /> שליטה מרחוק
+          </Button>
+          {remoteFor !== undefined ? (
+            <DeviceControlSheet
+              scope={{ companyId: effective.companyId ?? null, shopId: effective.shopId ?? null }}
+              context={{ machineId: remoteFor }}
+              onDone={() => setRemoteFor(undefined)}
+            />
+          ) : null}
           <Button variant="outline" size="sm" onClick={() => setDeviceSearchOpen(true)}>
             <Search className="h-4 w-4 ms-1" /> {t('deviceSearchButton')}
           </Button>
@@ -860,6 +874,7 @@ export default function MachinesPage() {
               onTerminalNumber: (m) => setTerminalTarget({ level: 'machine', machine: m }),
               onRequestTillZ: setTillZTarget,
               onEditZMode: setZModeTarget,
+              onRemoteControl: (m) => setRemoteFor(m.id),
             }}
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}

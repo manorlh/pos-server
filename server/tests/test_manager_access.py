@@ -167,7 +167,7 @@ def test_the_new_sections_open_the_routes_the_cockpit_calls(method, path, sectio
     assert rule.kind == "section" and set(rule.sections) == sections
 
 
-def test_a_branch_manager_reaches_every_route_the_cockpit_calls():
+def test_a_branch_manager_reaches_every_route_the_cockpit_calls(monkeypatch):
     manager = DA.EffectiveAccess(
         restricted=True, sections=dict(DS.BRANCH_MANAGER_SECTIONS), has_profile=True, full_access=False,
     )
@@ -178,9 +178,28 @@ def test_a_branch_manager_reaches_every_route_the_cockpit_calls():
         ("PUT", "/products/{product_id}/availability/shops/{shop_id}"),
     ]:
         assert DA.check_rule(manager, DS.rule_for(method, path), method) is None, (method, path)
-    # …and still not the kiosk Z nor the device admin.
-    for method, path in [("POST", "/kiosks/{machine_id}/commands"), ("PUT", "/machines/{machine_id}")]:
-        assert DA.check_rule(manager, DS.rule_for(method, path), method).status_code == 403, (method, path)
+    # …and still not the device admin.
+    assert DA.check_rule(manager, DS.rule_for("PUT", "/machines/{machine_id}"), "PUT").status_code == 403
+    # Nor the kiosk Z: since feat/live-control the kiosk-command route admits remote control
+    # (kiosks|device_control, to pause / resume), and the action itself is checked
+    # (app/routers/kiosks.py KIOSK_ACTION_SECTIONS): a Z, a shift close and the schedule stay the
+    # kiosks section's (a Z also the Z's) — a branch manager holds kiosks at view only.
+    from app.routers import kiosks as kiosks_router
+
+    assert DA.check_rule(manager, DS.rule_for("POST", "/kiosks/{machine_id}/commands"), "POST") is None
+    monkeypatch.setattr(DA, "effective_access", lambda db, user: manager)
+    for action in ("pause", "resume"):
+        kiosks_router.check_kiosk_action(None, object(), action)
+    for action in ("schedule", "bon_print"):
+        with pytest.raises(HTTPException) as refused:
+            kiosks_router.check_kiosk_action(None, object(), action)
+        assert refused.value.status_code == 403, action
+    # A Z / shift close: the branch manager holds Z at view — refused too (Z at edit is not theirs).
+    for action in ("till_z", "close_shift"):
+        assert DS.BRANCH_MANAGER_SECTIONS.get("z") != DS.EDIT
+        with pytest.raises(HTTPException) as refused:
+            kiosks_router.check_kiosk_action(None, object(), action)
+        assert refused.value.status_code == 403, action
 
 
 class TestTillMoney:

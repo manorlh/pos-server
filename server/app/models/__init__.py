@@ -161,6 +161,14 @@ from app.models.kds import (
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
 # "הפצה בוואטסאפ": prepaid vouchers sent per recipient (app/services/voucher_distribution.py).
 from app.models import voucher_distribution as _voucher_distribution  # noqa: F401,E402
+# "שליטה חיה": blocks on items ("אזל" / "חסום"), the kiosks' quick hides, remote commands to devices.
+from app.models.sold_out import SoldOutMark
+from app.models.kiosk_live import KioskQuickHide
+from app.models.device_command import DeviceCommand, DeviceRemoteState
+# Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
+from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
+# "יעדים ותחרות" (app/services/sales_targets.py).
+from app.models.sales_target import SalesTarget, SalesTargetHit
 
 __all__ = [
     "User", "UserRole",
@@ -247,4 +255,7 @@ __all__ = [
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState",
+    "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
+    "SalesTarget", "SalesTargetHit",
 ]

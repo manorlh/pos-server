@@ -97,9 +97,17 @@ KINDS: Tuple[Kind, ...] = (
     Kind("training_dropped", "מסמכי הדרכה מקופה שלא במצב הדרכה", "high", "training"),
     Kind("terminal_check_bypass", "עקיפת בדיקת מספר מסוף הופעלה", "high", "till_parameter"),
     # "התראות לטלפון" (feat/event-live) — recorded through app/services/exception_alerts/external.py:
-    # a till far below its peers (the insights' anomaly rules report it), an event's target reached.
+    # a till far below its peers (the insights' anomaly rules report it).
     Kind("till_low_sales", "קופה כמעט לא מוכרת", "medium", "insight", link="none"),
-    Kind("target_reached", "יעד מכירות הושג", "low", "event", amount=True),
+    # Stock locations (app/services/stock_alerts.py): a product low or out at a location.
+    Kind("stock_low", "מלאי נמוך", "low", "stock_alert", link="none"),
+    Kind("stock_out", "אזל מהמלאי", "medium", "stock_alert", link="none"),
+    # "יעד מכירות הושג" — one kind, two detection points (the integration merge, 09.10.2026; which of
+    # them owns an event's target is the coordinator's open decision): "יעדים ותחרות"
+    # (app/services/sales_targets.py, source `sales_target`: once per target and period) and the live
+    # screen's typed event target (feat/event-live, external.py `report_target_reached`, source
+    # `event`: once per event and amount). `source` here is descriptive only (the catalogue's JSON).
+    Kind("target_reached", "יעד מכירות הושג", "low", "sales_target", amount=True),
 )
 
 # "מגירת מזומן" (the drawer spec §10–§11, app/services/cash_drawer_exceptions.py): opening after

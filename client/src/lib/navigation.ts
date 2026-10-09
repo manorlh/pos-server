@@ -83,6 +83,7 @@ import {
   HeartHandshake,
   HeartPulse,
   TabletSmartphone,
+  Target,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -313,6 +314,8 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: SlidersVertical,
         gate: 'settingsWrite',
       },
+      // "יעדים": daily / event sales targets per shop, point of sale or cashier, with the pace.
+      { href: '/dashboard/targets', labelKey: 'targets', icon: Target, gate: 'settingsWrite' },
       // "התראות SMS על חריגות": the alert rules per company / shop (dry run unless configured).
       {
         href: '/dashboard/exception-alerts',
