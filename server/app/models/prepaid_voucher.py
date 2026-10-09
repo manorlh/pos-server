@@ -250,6 +250,9 @@ class PrepaidVoucherBatch(Base):
     #: to a cashier; the dashboard shows it only with the `prepaid_voucher_prices` section).
     till_value = Column(Integer, nullable=True)
     production_price = Column(Integer, nullable=True)
+    #: "ערוך סדרה": the production price by serial once it was changed — `[{fromSerial,
+    #: priceAgorot, at, by}]`, the first the price the batch was issued at. Null: never changed.
+    production_price_history = Column(JSON, nullable=True)
     #: Every batch made before types: `cover` with no value and `zero` accounting (₪0 lines with
     #: the value shown) — editable on the batch; each redemption records the mode it used.
     pricing = Column(String(8), nullable=False, default="cover", server_default="cover")

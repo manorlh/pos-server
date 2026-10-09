@@ -11,11 +11,12 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption
 from app.models.product import CatalogLevel, Product
 from app.routers import prepaid_vouchers as R
 from app.schemas.prepaid_voucher import (
     PrepaidVoucherBatchCreate,
+    PrepaidVoucherBatchUpdate,
     PrepaidVoucherLookupIn,
     PrepaidVoucherRedeemIn,
     PrepaidVoucherTypeCreate,
@@ -121,3 +122,32 @@ class TestBatches:
         with pytest.raises(HTTPException) as e:
             R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
         assert e.value.detail == PV.UPDATE_REQUIRED
+
+
+class TestEdit:
+    """"ערוך סדרה" of a batch of groups: the groups reach the open vouchers by their keys."""
+
+    def test_new_groups_less_what_each_group_already_gave(self, w):
+        b = issue(w, meal_type(w)["id"])
+        food, drink = (g["key"] for g in b["groups"])
+        fresh, partly = sorted(w.db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == uuid.UUID(b["id"])),
+                               key=lambda v: v.serial)
+        # The meal taken (as confirm records it): the drink is still to come.
+        w.db.add(PrepaidVoucherRedemption(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, voucher_id=partly.id, batch_id=partly.batch_id, client_request_id="g-1",
+            items=[{"productId": str(w.hotdog.id), "quantity": 1}],
+            units=[{"productId": str(w.hotdog.id), "groupKey": food, "quantity": 1}]))
+        partly.remaining, partly.status = {f"g:{food}": 0, f"g:{drink}": 1, "total": 1}, "partially_used"
+        w.db.commit()
+        groups = [dict(g, maxQty=2) if g["key"] == drink else g for g in b["groups"]]
+        out = R.update_prepaid_voucher_batch(
+            b["id"], PrepaidVoucherBatchUpdate(groups=groups, totalQty=3, applyToPartial=True), **_ctx(w))
+        assert [g["maxQty"] for g in out["groups"]] == [1, 2] and out["totalQty"] == 3
+        w.db.refresh(fresh)
+        w.db.refresh(partly)
+        assert fresh.remaining == {f"g:{food}": 1, f"g:{drink}": 2, "total": 3}
+        assert (partly.remaining, partly.status) == ({f"g:{food}": 0, f"g:{drink}": 2, "total": 2}, "partially_used")
+        # The frozen catalog came along with the new groups: the till still lists the drinks.
+        drinks = next(g for g in look(w, codes(w, b)[0])["groups"] if g["name"] == "שתייה")
+        assert drinks["productIds"]
+

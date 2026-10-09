@@ -292,6 +292,7 @@ POST /prepaid-vouchers/batches -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:view
 PATCH /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/cancel -> prepaid_vouchers:edit
+POST /prepaid-vouchers/batches/{batch_id}/edit-preview -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/events -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/file -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/groups -> prepaid_vouchers:view

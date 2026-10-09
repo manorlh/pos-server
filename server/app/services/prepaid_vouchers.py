@@ -1018,51 +1018,27 @@ def assign_groups(db: Session, user: User, tenant_id, batch_id, group_size: int)
     return batch
 
 
-def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+def _locked_batch(db: Session, user: User, tenant_id, batch_id) -> PrepaidVoucherBatch:
     batch = get_batch(db, user, tenant_id, batch_id)
-    fields = body.model_dump(exclude_unset=True, by_alias=False)
-    if "name" in fields and not fields["name"]:
-        fields.pop("name")
-    # Print settings are never cleared by a null: they always have a value. Nor are the
-    # rules of use (a null daily limit clears it: no limit is a value of its own).
-    for key in ("show_code", "show_items", "show_credit", "print_till_value", "barcode_type", "stacking",
-                "promotion_policy", "max_uses_per_sale", "redemption_accounting", "show_validity", "offline_allowed"):
-        if key in fields and fields[key] is None:
-            fields.pop(key)
-    if not is_discount(batch):
-        # A goods voucher has no promotions to weigh and no uses: only its stacking.
-        for key in ("promotion_policy", "max_uses_per_sale", "max_uses_per_day"):
-            fields.pop(key, None)
-    else:
-        # A discount is a discount on the document: never a payment, nothing to override.
-        fields.pop("redemption_accounting", None)
-        fields.pop("discount_block_policy", None)
-    # The discount-block policy: its columns (auto / manager need their section).
-    if "discount_block_policy" in fields:
-        from app.services import prepaid_voucher_types as PVT
+    return db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().one()
 
-        fields.pop("discount_block_policy")
-        fields.update(PVT.policy_columns(db, user, tenant_id, body.discount_block_policy))
-    if fields.get("offline_allowed") is False and getattr(batch, "offline_allowed", False):
-        from app.services import prepaid_voucher_offline as PVO
 
-        PVO.refuse_if_assigned(db, batch)
-    if (fields.get("stacking") or batch.stacking) == "single":
-        # "שובר אחד בעסקה" has no "מספר שוברים מקסימלי בעסקה".
-        if fields.get("max_vouchers_per_sale") is not None or getattr(batch, "max_vouchers_per_sale", None) is not None:
-            fields["max_vouchers_per_sale"] = None
-    changed = sorted(k for k, v in fields.items() if getattr(batch, k) != v)
-    for key, value in fields.items():
-        setattr(batch, key, value)
-    if batch.valid_from and batch.valid_until and _utc(batch.valid_until) <= _utc(batch.valid_from):
-        raise _http(status.HTTP_400_BAD_REQUEST, "validUntil must be after validFrom")
-    if is_discount(batch) and int(batch.max_uses_per_sale or 1) > int(batch.uses_per_voucher or 1):
-        batch.max_uses_per_sale = int(batch.uses_per_voucher or 1)
-    batch.updated_at = _now()
-    if changed:
-        _event(db, batch, user, "update", details={"fields": changed})
+def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+    """"ערוך סדרה": planned, checked and written as a whole (app/services/prepaid_voucher_edit.py)."""
+    from app.services import prepaid_voucher_edit as PVE
+
+    batch = _locked_batch(db, user, tenant_id, batch_id)
+    PVE.apply_edit(db, user, tenant_id, batch, body)
     db.flush()
     return batch
+
+
+def preview_batch_edit(db: Session, user: User, tenant_id, batch_id, body) -> Dict[str, Any]:
+    """What an edit would change and touch — nothing written (the confirmation's list)."""
+    from app.services import prepaid_voucher_edit as PVE
+
+    batch = get_batch(db, user, tenant_id, batch_id)
+    return PVE.plan_out(PVE.plan_edit(db, user, tenant_id, batch, body))
 
 
 def _cancel_open(vouchers: Iterable[PrepaidVoucher], now: datetime) -> List[PrepaidVoucher]:
@@ -1254,7 +1230,13 @@ def batch_events(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]
         .limit(500)
         .all()
     )
-    return {"items": [_event_out(e) for e in rows]}
+    items = [_event_out(e) for e in rows]
+    if not _prices_visible(db, user):
+        from app.services.prepaid_voucher_edit import strip_secret
+
+        for e in items:
+            e["details"] = strip_secret(e["details"])
+    return {"items": items}
 
 
 def batch_out(
@@ -1305,6 +1287,13 @@ def batch_out(
         "typeName": getattr(batch, "type_name", None),
         "tillValue": _shekels_out(getattr(batch, "till_value", None)),
         "productionPrice": _shekels_out(getattr(batch, "production_price", None)) if _prices_visible(db, user) else None,
+        # "ערוך סדרה": the price by serial once it was changed (the settlement reads it) — prices only.
+        "productionPriceHistory": (
+            [{**h, "price": _shekels_out(h.get("priceAgorot"))} for h in (getattr(batch, "production_price_history", None) or [])]
+            if _prices_visible(db, user) else None
+        ),
+        # Issued so far (the next serial less one): "ערוך סדרה" never goes below it.
+        "issuedCount": int(batch.next_serial or 1) - 1,
         "pricesVisible": _prices_visible(db, user),
         "pricing": getattr(batch, "pricing", None) or "cover",
         "allowTopUp": getattr(batch, "allow_top_up", None) is not False,

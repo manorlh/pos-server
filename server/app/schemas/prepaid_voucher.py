@@ -709,7 +709,13 @@ class PrepaidVoucherBatchCreate(BaseModel):
 
 
 class PrepaidVoucherBatchUpdate(BaseModel):
-    """What may change after printing: the texts that are not on paper yet, and validity."""
+    """
+    "ערוך סדרה" (app/services/prepaid_voucher_edit.py): every setting of a batch after it was set
+    up but its codes and serials, its kind and its company. Absent fields stay; a null clears what
+    may be empty (a date, a text, a maximum) and never a setting that always has a value. The
+    goods are replaced as a whole when `items` is sent. `applyToPartial`: new contents reach the
+    partly redeemed vouchers too ("החל גם על שוברים במימוש חלקי").
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -747,6 +753,33 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
     #: Null clears the daily limit.
     max_uses_per_day: Optional[int] = Field(None, alias="maxUsesPerDay", ge=1, le=MAX_USES)
+    # ── "ערוך סדרה": where, how many, what it gives and its prices ──────────────────
+    #: Null or empty: every shop of the company.
+    shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
+    #: The vouchers in all: more issues the difference (the next serials); never below the issued.
+    count: Optional[int] = Field(None, ge=1)
+    #: Never changes (goods / a discount): sent only to be checked.
+    kind: Optional[str] = None
+    items: Optional[List[PrepaidVoucherItemIn]] = None
+    include_extras: Optional[bool] = Field(None, alias="includeExtras")
+    split_allowed: Optional[bool] = Field(None, alias="splitAllowed")
+    till_value: Optional[Decimal] = Field(None, alias="tillValue")
+    #: With the prices section only; applies to the vouchers issued from now on.
+    production_price: Optional[Decimal] = Field(None, alias="productionPrice")
+    pricing: Optional[str] = None
+    allow_top_up: Optional[bool] = Field(None, alias="allowTopUp")
+    discount_type: Optional[str] = Field(None, alias="discountType")
+    discount_value: Optional[Decimal] = Field(None, alias="discountValue")
+    min_purchase: Optional[Decimal] = Field(None, alias="minPurchase")
+    max_discount: Optional[Decimal] = Field(None, alias="maxDiscount")
+    targets: Optional[PrepaidVoucherTargetsIn] = None
+    max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
+    uses_per_voucher: Optional[int] = Field(None, alias="usesPerVoucher", ge=1, le=MAX_USES)
+    selection: Optional[str] = None
+    groups: Optional[List[PrepaidGroupIn]] = Field(None, max_length=MAX_GROUPS)
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    catalog_mode: Optional[str] = Field(None, alias="catalogMode")
+    apply_to_partial: bool = Field(False, alias="applyToPartial")
 
     @field_validator("stacking", mode="before")
     @classmethod
@@ -757,6 +790,26 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     @classmethod
     def _policy(cls, value):
         return _choice(value, PROMOTION_POLICIES, "promotionPolicy")
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _kind(cls, value):
+        return _choice(value, KINDS, "kind")
+
+    @field_validator("pricing", mode="before")
+    @classmethod
+    def _pricing(cls, value):
+        return _choice(value, PRICINGS, "pricing")
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _discount_type(cls, value):
+        return _choice(value, DISCOUNT_TYPES, "discountType")
+
+    @field_validator("discount_value", "min_purchase", "max_discount", "till_value", "production_price", mode="before")
+    @classmethod
+    def _money(cls, value, info):
+        return _shekels(value, info.field_name)
 
     @field_validator("name", "event_name", "customer_name", mode="before")
     @classmethod

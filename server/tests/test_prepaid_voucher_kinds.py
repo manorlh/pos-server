@@ -339,7 +339,7 @@ class TestBatches:
         assert refused(make, w, kind="item_discount", targets={"productIds": [alien.id]}).detail == \
             PV.product_refusal(PV.BLOCK_OTHER_COMPANY)
 
-    def test_the_rules_of_use_change_the_terms_do_not(self, w):
+    def test_the_rules_of_use_and_the_terms_change(self, w):
         b = make(w, usesPerVoucher=5)
         out = R.update_prepaid_voucher_batch(
             b["id"], PrepaidVoucherBatchUpdate(stacking="distinct_batches", promotionPolicy="best", maxUsesPerSale=9, maxUsesPerDay=2),
@@ -349,7 +349,9 @@ class TestBatches:
         assert (out["stacking"], out["promotionPolicy"], out["maxUsesPerSale"], out["maxUsesPerDay"]) == ("distinct_batches", "best", 5, 2)
         out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(maxUsesPerDay=None), **_ctx(w))
         assert out["maxUsesPerDay"] is None
-        assert "discount_value" not in PrepaidVoucherBatchUpdate.model_fields
+        # "ערוך סדרה" (the owner, 09.10): the terms change too now — as contents, onto the unredeemed vouchers.
+        out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(discountValue=40), **_ctx(w))
+        assert out["discountValue"] == 40.0
         events = [e.details for e in w.db.query(PrepaidVoucherEvent).filter(PrepaidVoucherEvent.action == "update")]
         assert any("stacking" in (d or {}).get("fields", []) for d in events)
 

@@ -426,6 +426,24 @@ def get_prepaid_voucher_batch(
     return PV.batch_out(db, PV.get_batch(db, current_user, active_tenant_id, batch_id), user=current_user)
 
 
+@router.post("/prepaid-vouchers/batches/{batch_id}/edit-preview")
+def preview_prepaid_voucher_batch_edit(
+    batch_id: str,
+    body: PrepaidVoucherBatchUpdate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "ערוך סדרה" before it is saved: each setting that changes (before → after, its category)
+    and what it touches (`effects`: open vouchers, unredeemed / partly redeemed, the vouchers to
+    issue, the serial a new production price starts at). Nothing is written.
+    """
+    out = PV.preview_batch_edit(db, current_user, active_tenant_id, batch_id, body)
+    db.rollback()
+    return out
+
+
 @router.patch("/prepaid-vouchers/batches/{batch_id}")
 def update_prepaid_voucher_batch(
     batch_id: str,
