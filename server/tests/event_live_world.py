@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Optional, Sequence
 
 from app.models.kds import KitchenOrder
-from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption, PrepaidVoucherType
 from app.models.report_event import ReportEvent, ReportEventMachine
 
 # 2026-09-27 is IDT (UTC+3): 18:00 local = 15:00 UTC.
@@ -52,9 +52,13 @@ def sale(w, till, minutes, total, *, credit_note=False, discount="0", tip="0", m
 
 
 def batch(w, name="שובר ארוחה", *, event_name=None, customer_name=None) -> PrepaidVoucherBatch:
+    """A batch of its own type (the vouchers core: every batch has one)."""
+    vtype = PrepaidVoucherType(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name=name)
+    w.db.add(vtype)
+    w.db.flush()
     b = PrepaidVoucherBatch(
         id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name=name,
-        event_name=event_name, customer_name=customer_name,
+        event_name=event_name, customer_name=customer_name, type_id=vtype.id, type_name=vtype.name,
     )
     w.db.add(b)
     w.db.flush()

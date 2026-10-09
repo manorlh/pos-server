@@ -248,6 +248,13 @@ def may_edit_batches(db: Session, user: Any) -> bool:
     return dashboard_access.effective_access(db, user).allows("prepaid_vouchers", "edit")
 
 
+def may_see_prices(db: Session, user: Any) -> bool:
+    """A batch's own production price: the vouchers core's `prepaid_voucher_prices` section (fails closed)."""
+    from app.services.prepaid_voucher_types import prices_visible
+
+    return prices_visible(db, user, "view")
+
+
 def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, Any]:
     """
     The event's "עמדת מפיק" tab: who is invited, the settings, and — for someone with the prepaid
@@ -266,9 +273,12 @@ def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, A
     auto = set(PROD.auto_batch_ids(db, event))
     suggested = set(PROD.suggested_batch_ids(db, event))
     linked = {b.id for b in PROD.event_batches(db, event)}
+    # The batch's own production price is the `prepaid_voucher_prices` section's (the vouchers
+    # core's rule); a price typed on the event is the event's.
+    own_prices = user is None or may_see_prices(db, user)
     batches = []
     for b in PROD.company_batches(db, event):
-        price = PROD.production_price(event, b)
+        price = PROD.production_price(event, b, include_own=own_prices)
         batches.append({
             "id": str(b.id),
             "name": b.name,
@@ -378,6 +388,22 @@ def _redemptions(db: Session, event: ReportEvent, batch_ids: List[Any]):
     )
 
 
+def _redeemed_serials(db: Session, event: ReportEvent, batches: List[PrepaidVoucherBatch]) -> Dict[str, List[Optional[int]]]:
+    """Per batch id: one serial for each voucher redeemed on the event (as `vouchers` counts them)."""
+    rows = _redemptions(db, event, [b.id for b in batches])
+    first: Dict[Any, PrepaidVoucherRedemption] = {}
+    for r in rows:
+        first.setdefault((r.batch_id, r.voucher_id), r)
+    voucher_ids = list({vid for _bid, vid in first if vid is not None})
+    known = dict(
+        db.query(PrepaidVoucher.id, PrepaidVoucher.serial).filter(PrepaidVoucher.id.in_(voucher_ids)).all()
+    ) if voucher_ids else {}
+    out: Dict[str, List[Optional[int]]] = defaultdict(list)
+    for (bid, vid), r in first.items():
+        out[str(bid)].append(known.get(vid, getattr(r, "serial", None)))
+    return out
+
+
 def vouchers(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]:
     from .report import zone
 
@@ -431,10 +457,11 @@ def settlement(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]
         raise ProducerError("settlement_closed", 403, "ההתחשבנות לא נפתחה לצפייה באירוע הזה")
     figures = vouchers(db, event, now)
     batches = {str(b.id): b for b in PROD.event_batches(db, event)}
+    serials = _redeemed_serials(db, event, list(batches.values()))
     rows, total, missing = [], ZERO, False
     for row in figures["batches"]:
-        price = PROD.production_price(event, batches[row["batchId"]])
-        amount = (price * row["redeemedVouchers"]) if price is not None else None
+        # Each redeemed voucher at its production price (by serial once "ערוך סדרה" changed it).
+        price, amount = PROD.settle(event, batches[row["batchId"]], serials.get(row["batchId"], []))
         if amount is None:
             missing = True
         else:

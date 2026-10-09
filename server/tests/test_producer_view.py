@@ -42,7 +42,7 @@ from app.middleware import auth as auth_mw
 from app.models.company import Company
 from app.models.dashboard_access import DashboardAccessProfile
 from app.models.pos_machine import PairingStatus, POSMachine
-from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption, PrepaidVoucherType
 from app.models.report_event import ProducerEventGrant, ReportEvent, ReportEventMachine
 from app.models.shop import Shop
 from app.models.tenant import Tenant
@@ -173,17 +173,23 @@ def _doc(w, till, minutes, total, *, refund=False, items=()):
     return tx
 
 
-def _batch(w, name, *, company=None, event_name=None):
-    b = PrepaidVoucherBatch(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=(company or w.company).id, name=name,
-                            event_name=event_name)
+def _batch(w, name, *, company=None, event_name=None, **cols):
+    """A batch of its own type (the vouchers core: every batch has one); [cols] e.g. production_price (agorot)."""
+    owner = (company or w.company).id
+    vtype = PrepaidVoucherType(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=owner, name=name)
+    w.db.add(vtype)
+    w.db.flush()
+    b = PrepaidVoucherBatch(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=owner, name=name,
+                            event_name=event_name, type_id=vtype.id, type_name=name, **cols)
     w.db.add(b)
     w.db.flush()
     return b
 
 
-def _redeem(w, batch, till, minutes, *, qty=1, reversed_=False, voucher=None):
+def _redeem(w, batch, till, minutes, *, qty=1, reversed_=False, voucher=None, serial=None):
     v = voucher or PrepaidVoucher(id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=batch.id,
-                                  serial=int(uuid.uuid4().int % 100000), code=uuid.uuid4().hex[:12].upper(), remaining=[])
+                                  serial=serial if serial is not None else int(uuid.uuid4().int % 100000),
+                                  code=uuid.uuid4().hex[:12].upper(), remaining=[])
     if voucher is None:
         w.db.add(v)
         w.db.flush()
@@ -429,7 +435,76 @@ def test_production_batches_and_prices():
     event = SimpleNamespace(producer_settings={"productionPrices": {"b1": "30"}})
     batch = SimpleNamespace(id="b1")
     assert PROD.production_price(event, batch) == Decimal("30.00")
-    assert PROD.production_price(SimpleNamespace(producer_settings=None), SimpleNamespace(id="b2", production_price=Decimal("12"))) == Decimal("12.00")
-    assert PROD.production_price(SimpleNamespace(producer_settings=None), SimpleNamespace(id="b3", production_price_agorot=2550)) == Decimal("25.50")
-    assert PROD.production_price(SimpleNamespace(producer_settings=None), SimpleNamespace(id="b4")) is None
+    none = SimpleNamespace(producer_settings=None)
+    # The vouchers core keeps a batch's production price in agorot.
+    assert PROD.production_price(none, SimpleNamespace(id="b2", production_price=1200)) == Decimal("12.00")
+    assert PROD.production_price(none, SimpleNamespace(id="b3", production_price=2550)) == Decimal("25.50")
+    assert PROD.production_price(none, SimpleNamespace(id="b4")) is None
+    assert PROD.production_price(none, SimpleNamespace(id="b5", production_price=-1)) is None
+    assert PROD.production_price(none, SimpleNamespace(id="b6", production_price=1200), include_own=False) is None
+    assert PROD.production_price(event, SimpleNamespace(id="b1", production_price=1200), include_own=False) == Decimal("30.00")
     assert PROD.settings_of(SimpleNamespace(producer_settings=None)) == {"settlementEnabled": False, "batchIds": [], "productionPrices": {}}
+
+
+def test_the_settlement_prices_each_voucher_by_its_serial():
+    """The core's "ערוך סדרה": serials 1-10 issued at ₪20, from 11 at ₪25 (agorot in the batch)."""
+    history = [{"fromSerial": 1, "priceAgorot": 2000}, {"fromSerial": 11, "priceAgorot": 2500}]
+    b = SimpleNamespace(id="b1", production_price=2500, production_price_history=history)
+    none = SimpleNamespace(producer_settings=None)
+    assert PROD.own_price(b, 3) == Decimal("20.00") and PROD.own_price(b, 11) == Decimal("25.00")
+    assert PROD.own_price(b) is None                                    # changed along the series: serial needed
+    assert PROD.production_price(none, b) == Decimal("25.00")           # the current price (the owner's tab)
+    assert PROD.settle(none, b, [3, 4]) == (Decimal("20.00"), Decimal("40.00"))
+    assert PROD.settle(none, b, [3, 12]) == (None, Decimal("45.00"))    # two prices: the amount stands
+    assert PROD.settle(none, b, [3, None]) == (None, None)              # a voucher of unknown price
+    assert PROD.settle(none, b, []) == (Decimal("25.00"), Decimal("0.00"))
+    typed = SimpleNamespace(producer_settings={"productionPrices": {"b1": "30"}})
+    assert PROD.settle(typed, b, [3, 12]) == (Decimal("30.00"), Decimal("60.00"))  # the event's price wins
+    flat = SimpleNamespace(id="b2", production_price=1250)
+    assert PROD.own_price(flat) == Decimal("12.50")
+    assert PROD.settle(none, flat, [7, 8]) == (Decimal("12.50"), Decimal("25.00"))
+    assert PROD.settle(none, SimpleNamespace(id="b3"), [1]) == (None, None)
+    assert PROD.settle(none, SimpleNamespace(id="b3"), []) == (None, None)
+
+
+def test_the_producer_settles_at_the_core_price_in_agorot(w):
+    """No price typed on the event: the batch's own (agorot), per voucher by serial — never x100."""
+    crew = _batch(w, "צוות במה", production_price=2500,
+                  production_price_history=[{"fromSerial": 1, "priceAgorot": 2000}, {"fromSerial": 11, "priceAgorot": 2500}])
+    flat = _batch(w, "VIP", production_price=1250)
+    w.event.producer_settings = {"batchIds": [str(crew.id), str(flat.id)], "settlementEnabled": True}
+    w.db.flush()
+    v = _redeem(w, crew, w.t1, 10, serial=3)
+    _redeem(w, crew, w.t1, 20, voucher=v)                           # the same voucher again: once
+    _redeem(w, crew, w.t1, 30, serial=12)
+    _redeem(w, flat, w.t1, 40, serial=1)
+    w.db.commit()
+    settle = _get(w, w.producer, w.event.id, "/settlement").json()
+    by = {r["name"]: r for r in settle["rows"]}
+    assert by["צוות במה"]["redeemedVouchers"] == 2
+    assert by["צוות במה"]["productionPrice"] is None and by["צוות במה"]["amount"] == 45       # 20 + 25
+    assert by["VIP"]["productionPrice"] == 12.5 and by["VIP"]["amount"] == 12.5
+    assert settle["totalAmount"] == 57.5 and settle["missingPrices"] is False
+
+
+def test_the_owner_sees_a_batch_price_only_with_the_prices_section(w):
+    """The batch's own production price is the vouchers core's `prepaid_voucher_prices` section."""
+    mine = _batch(w, "Stage crew", production_price=1800)
+    typed = _batch(w, "Typed crew", production_price=1800)
+    w.event.producer_settings = {"batchIds": [str(mine.id)], "productionPrices": {str(typed.id): 22}}
+    vouchers_only = _user(w.db, "vouchers_only", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
+    w.db.add(DashboardAccessProfile(user_id=vouchers_only.id, full_access=False,
+                                    sections={"reports": "edit", "prepaid_vouchers": "edit"}))
+    with_prices = _user(w.db, "with_prices", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
+    w.db.add(DashboardAccessProfile(user_id=with_prices.id, full_access=False,
+                                    sections={"reports": "edit", "prepaid_vouchers": "edit", "prepaid_voucher_prices": "view"}))
+    w.db.commit()
+
+    def prices(user):
+        view = w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=_headers(user, w.tenant))
+        assert view.status_code == 200, view.text
+        return {b["name"]: b["productionPrice"] for b in view.json()["batches"]}
+
+    assert prices(vouchers_only) == {"Stage crew": None, "Typed crew": 22}     # the event's typed price only
+    assert prices(with_prices) == {"Stage crew": 18, "Typed crew": 22}
+    assert prices(w.manager)["Stage crew"] == 18                               # full access

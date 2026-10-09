@@ -1,23 +1,26 @@
 """
 "עמדת מפיק" — which prepaid voucher batches are the event's production, and at what price
-they settle. The hook for the vouchers' Production entity (P:\\specs\\production-vouchers-api.md
-§13: a batch gains `report_event_id`; a `prepaid_productions` entity with the agreement and
-`productionPrice` on types / batches — being built on fix/voucher-print).
-
-Until that lands, from what exists now:
+they settle. On the vouchers core (P:\\specs\\production-vouchers-api.md §13): a batch names
+its event (`report_event_id`, the existing `report_events`) and its production
+(`production_id` → `prepaid_productions`, whose name the batch carries as `customer_name`), and
+holds its production price in agorot (`production_price`, by serial once "ערוך סדרה" changed
+it: `production_price_history`, read through `prepaid_voucher_edit.production_price_of`).
 
 * **The batches** (`event_batches`): the ones the owner linked on the event's "עמדת מפיק"
   (`report_events.producer_settings.batchIds`), plus — automatically — the batches whose
-  `report_event_id` is the event (once the column exists). A batch whose printed event name
-  (`event_name`) is the event's name is only *suggested* in the owner's tab (recurring events
-  share names: linking by name would show one production another's vouchers). A Production
-  module adds its own with `register_production_provider` (`(db, event) -> batch ids`).
+  `report_event_id` is the event. A production (`prepaid_productions`) names no event — a
+  production's batches may serve several events — so it links nothing by itself. A batch whose
+  printed event name (`event_name`) is the event's name is only *suggested* in the owner's tab
+  (recurring events share names: linking by name would show one production another's
+  vouchers). Another module may add its own with `register_production_provider`
+  (`(db, event) -> batch ids`).
 * **Which batches the owner may pick**: the event's company's batches valid at the event's
   shop (`shop_ids` empty = every shop of the company).
-* **The price** (`production_price`): the price typed on the event for that batch
-  (`productionPrices`), else the batch's own production price once the vouchers branch stores
-  one (`production_price` ₪, or `production_price_agorot`), else none — the settlement then
-  shows quantities without money.
+* **The price** (`production_price`, ₪ per voucher): the price typed on the event for that
+  batch (`productionPrices`, ₪), else the batch's own — the core's agorot, ÷ 100 — at the
+  voucher's serial when the settlement knows it (`settle`), else none: the settlement then
+  shows quantities without money. The batch's own price is the `prepaid_voucher_prices`
+  section's (the core's rule): the owner's tab shows it only to whoever has that section.
 
 Only batches of the event's tenant and company are ever returned, whatever a setting says.
 """
@@ -26,7 +29,7 @@ from __future__ import annotations
 import logging
 import uuid
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -132,18 +135,65 @@ def _money(value: Any) -> Optional[Decimal]:
     return amount.quantize(Decimal("0.01"))
 
 
-def production_price(event: ReportEvent, batch: PrepaidVoucherBatch) -> Optional[Decimal]:
-    """₪ per voucher: the event's typed price, else the batch's own (once the vouchers branch stores it)."""
-    typed = _money(settings_of(event)["productionPrices"].get(str(batch.id)))
-    if typed is not None:
+def typed_price(event: ReportEvent, batch: PrepaidVoucherBatch) -> Optional[Decimal]:
+    """₪ per voucher, as the owner typed it on the event for [batch]; None when not typed."""
+    return _money(settings_of(event)["productionPrices"].get(str(batch.id)))
+
+
+def _shekels(agorot: Any) -> Optional[Decimal]:
+    if isinstance(agorot, float) and agorot.is_integer():
+        agorot = int(agorot)  # a JSON history entry read back as 2000.0
+    if not isinstance(agorot, int) or isinstance(agorot, bool) or agorot < 0:
+        return None
+    return (Decimal(agorot) / 100).quantize(Decimal("0.01"))
+
+
+def own_price(batch: PrepaidVoucherBatch, serial: Optional[int] = None) -> Optional[Decimal]:
+    """
+    ₪ per voucher: the batch's own production price — the core's agorot, ÷ 100. With [serial],
+    the price that voucher was issued at ("ערוך סדרה": the history by serial, the core's own
+    `production_price_of`); without one, the batch's current price — unless the price was changed
+    along the series, when a voucher of unknown serial has no known price.
+    """
+    history = getattr(batch, "production_price_history", None) or []
+    if serial is None:
+        return None if history else _shekels(getattr(batch, "production_price", None))
+    from app.services.prepaid_voucher_edit import production_price_of
+
+    try:
+        return _shekels(production_price_of(batch, int(serial)))
+    except (TypeError, ValueError, AttributeError):
+        logger.warning("production price of batch %s at serial %r unreadable", getattr(batch, "id", None), serial)
+        return None
+
+
+def production_price(event: ReportEvent, batch: PrepaidVoucherBatch, *, include_own: bool = True) -> Optional[Decimal]:
+    """₪ per voucher: the event's typed price, else (with [include_own]) the batch's current own price."""
+    typed = typed_price(event, batch)
+    if typed is not None or not include_own:
         return typed
-    own = _money(getattr(batch, "production_price", None))
-    if own is not None:
-        return own
-    agorot = getattr(batch, "production_price_agorot", None)
-    if isinstance(agorot, int) and not isinstance(agorot, bool) and agorot >= 0:
-        return (Decimal(agorot) / 100).quantize(Decimal("0.01"))
-    return None
+    return _shekels(getattr(batch, "production_price", None))
+
+
+def settle(event: ReportEvent, batch: PrepaidVoucherBatch, serials: Sequence[Optional[int]]
+           ) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+    """
+    (₪ per voucher, ₪ amount) for [batch]'s redeemed vouchers, one serial each: the event's typed
+    price × their number; else each voucher at the batch's own price for its serial. The price
+    is None when it differs between the vouchers (the amount stands) or is unknown; the amount
+    None when any voucher's price is unknown (the settlement says prices are missing).
+    """
+    typed = typed_price(event, batch)
+    if typed is not None:
+        return typed, typed * len(serials)
+    if not serials:
+        price = production_price(event, batch)
+        return price, (Decimal("0.00") if price is not None else None)
+    prices = [own_price(batch, s) for s in serials]
+    if any(p is None for p in prices):
+        return None, None
+    distinct = set(prices)
+    return (prices[0] if len(distinct) == 1 else None), sum(prices, Decimal("0.00"))
 
 
 def clean_settings(event: ReportEvent, db: Session, body: Dict[str, Any]) -> Dict[str, Any]:
