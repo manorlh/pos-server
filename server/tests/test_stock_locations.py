@@ -203,6 +203,30 @@ class TestFlagOff:
         R._path(s.db, s.users.h_shop_manager, s.tid, "shop", s.h_shop.id)  # not narrowed while off
 
 
+class TestTheShopPagesOldEndpoints:
+    """The shop stock page's receipt / adjustment / stocktake go through the stock screens' write path."""
+
+    def test_they_write_where_the_shop_stock_is_managed_and_never_to_a_shop_row_that_holds_none(self, s, monkeypatch):
+        from app.routers import stock as OLD
+        from app.schemas.stock import AdjustmentRequest, GoodsReceiptRequest, StocktakeRequest
+
+        monkeypatch.setattr(OLD, "notify_machines_for_shop", lambda *a, **k: None)
+        kw = dict(current_user=s.users.admin, active_tenant_id=s.tid, db=s.db)
+        out = OLD.goods_receipt(str(s.h_shop.id), GoodsReceiptRequest(productId=s.P.id, quantity=5), **kw)
+        assert out.quantity == 5
+        assert OLD.adjustment(str(s.h_shop.id), AdjustmentRequest(productId=s.P.id, delta=-2), **kw).quantity == 3
+        assert OLD.stocktake(str(s.h_shop.id), StocktakeRequest(productId=s.P.id, quantity=8), **kw).quantity == 8
+        # Points of sale only: the shop row holds none of P's stock — refused, not written.
+        _levels(s, ["area"])
+        with pytest.raises(HTTPException) as refused:
+            OLD.goods_receipt(str(s.h_shop.id), GoodsReceiptRequest(productId=s.P.id, quantity=1), **kw)
+        assert refused.value.status_code == 422
+        # Another tenant's product: 404.
+        with pytest.raises(HTTPException) as missing:
+            OLD.goods_receipt(str(s.h_shop.id), GoodsReceiptRequest(productId=uuid.uuid4(), quantity=1), **kw)
+        assert missing.value.status_code == 404
+
+
 class TestRefunds:
     def test_a_refund_at_another_till_goes_back_where_the_sale_took_it(self, s):
         _levels(s, ["shop", "area"])
