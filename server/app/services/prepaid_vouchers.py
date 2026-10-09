@@ -874,7 +874,7 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         if getattr(body, "production_id", None) else None
     )
     report_event = (
-        PPR.event_for_batch(db, tenant_id, body.report_event_id, company.id)
+        PPR.event_for_batch(db, tenant_id, body.report_event_id, company.id, user)
         if getattr(body, "report_event_id", None) else None
     )
 

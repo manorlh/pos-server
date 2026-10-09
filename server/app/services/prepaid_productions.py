@@ -184,8 +184,8 @@ def production_for_batch(db: Session, tenant_id, production_id, company_id) -> P
     return p
 
 
-def event_for_batch(db: Session, tenant_id, event_id, company_id) -> ReportEvent:
-    """The event a batch of [company_id] names: the tenant's, of a shop of a related company."""
+def event_for_batch(db: Session, tenant_id, event_id, company_id, user: Optional[User] = None) -> ReportEvent:
+    """The event a batch of [company_id] names: the tenant's, of a shop of a related company (that [user] sees)."""
     PV = _pv()
     wanted = PV._as_uuid(event_id)
     ev = db.query(ReportEvent).filter(ReportEvent.id == wanted).first() if wanted else None
@@ -197,6 +197,10 @@ def event_for_batch(db: Session, tenant_id, event_id, company_id) -> ReportEvent
         shop_company is not None and str(shop_company) not in related
     ):
         raise PV._http(status.HTTP_400_BAD_REQUEST, EVENT_INVALID)
+    if user is not None and str(ev.shop_id) not in PV._visible_shop_ids(db, user, tenant_id) and not (
+        shop_company is not None and PV._covers_company(db, user, shop_company)
+    ):
+        raise PV._http(status.HTTP_400_BAD_REQUEST, EVENT_INVALID)  # one the user does not see is no event of theirs
     return ev
 
 

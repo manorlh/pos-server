@@ -300,7 +300,7 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
 
         cols["report_event_id"] = (
             None if body.report_event_id is None
-            else PPR.event_for_batch(db, tenant_id, body.report_event_id, batch.company_id).id
+            else PPR.event_for_batch(db, tenant_id, body.report_event_id, batch.company_id, user).id
         )
     vf, vu = cols.get("valid_from", batch.valid_from), cols.get("valid_until", batch.valid_until)
     if vf and vu and PV._utc(vu) <= PV._utc(vf):

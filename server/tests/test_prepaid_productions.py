@@ -99,8 +99,18 @@ class TestEvents:
         assert (b["eventName"], b["reportEvent"]["name"], b["reportEvent"]["id"]) == ("פסטיבל הקיץ", "פסטיבל הקיץ", str(ev.id))
         assert batch(w, reportEventId=ev.id, eventName="שם מודפס אחר")["eventName"] == "שם מודפס אחר"
         assert refused(batch, w, reportEventId=uuid.uuid4()).detail == PPR.EVENT_INVALID
-        (row,) = R.list_prepaid_voucher_events(company_id=None, **_ctx(w))["items"]
-        assert (row["id"], row["shopName"]) == (str(ev.id), w.shop.name)
+        # A shop manager names only an event of a shop they see.
+        north = ReportEvent(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=w.other_shop.id,
+                            name="צפון", starts_at=ev.starts_at, ends_at=ev.ends_at)
+        w.db.add(north)
+        w.db.commit()
+        body = PrepaidVoucherBatchCreate(name="x", companyId=w.company.id, count=1, redemptionAccounting="payment",
+                                         shopIds=[w.shop.id], items=[{"productId": w.hotdog.id, "quantity": 1}], reportEventId=north.id)
+        assert refused(R.create_prepaid_voucher_batch, body, **_ctx(w, w.manager)).detail == PPR.EVENT_INVALID
+        assert [e["name"] for e in R.list_prepaid_voucher_events(company_id=None, **_ctx(w, w.manager))["items"]] == ["פסטיבל הקיץ"]
+        # The admin sees both, newest first; each with its shop.
+        rows = {e["id"]: e["shopName"] for e in R.list_prepaid_voucher_events(company_id=None, **_ctx(w))["items"]}
+        assert rows == {str(ev.id): w.shop.name, str(north.id): w.other_shop.name}
 
 
 class TestFiltersAndEdit:
