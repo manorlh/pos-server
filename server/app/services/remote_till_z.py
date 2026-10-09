@@ -348,7 +348,7 @@ def source_of(db: Session, shop: Any, *, now: Optional[datetime] = None) -> Dict
         name = _till_ref(main) if main is not None else ""
         return {"kind": "main_till", "label": f"יופק בקופה הראשית: {name}" if name else "יופק בקופה הראשית",
                 "machineId": str(main.id) if main is not None else None, "available": False,
-                "whyNot": "ה-Z הסניפי מופק בקופה הראשית בלבד (פרמטר \"Z סניפי — מאיפה מפיקים\")"}
+                "whyNot": "לא זמין עדיין: ה-Z הסניפי מופק בקופה הראשית בלבד (פרמטר \"Z סניפי — מאיפה מפיקים\") — הפיקו ממנה"}
     return {"kind": "cloud", "label": "יופק בענן", "machineId": None, "available": True, "whyNot": None}
 
 

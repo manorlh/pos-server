@@ -189,8 +189,14 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
   const preview = useQuery({
     queryKey: key(shopId),
     queryFn: () => fetchShopClosePreview(shopId),
+    retry: (count, e) => ![403, 404].includes((e as { response?: { status?: number } })?.response?.status ?? 0) && count < 2,
     // Live while a run goes on; otherwise as the device rows.
-    refetchInterval: (q) => (runActive(q.state.data?.run?.status) ? 5_000 : 30_000),
+    refetchInterval: (q) =>
+      [403, 404].includes((q.state.error as { response?: { status?: number } } | null)?.response?.status ?? 0)
+        ? false
+        : runActive(q.state.data?.run?.status)
+          ? 5_000
+          : 30_000,
   });
   // A run that finished (or was cancelled) leaves the preview: its outcome stays shown until dismissed.
   const liveRunId = preview.data?.run?.id ?? null;
@@ -221,6 +227,9 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
   });
 
   if (preview.isPending) return <Skeleton className="h-20 w-full rounded-xl" />;
+  // Not this user's (no Z section, or some of the shop's points of sale only) or off: nothing shown.
+  const refusedStatus = (preview.error as { response?: { status?: number } } | null)?.response?.status;
+  if (refusedStatus === 403 || refusedStatus === 404) return null;
   if (preview.isError || !preview.data) {
     return <p className="text-sm text-destructive">{axiosErrorToToastMessage(preview.error, 'טעינת סגירת היום נכשלה')}</p>;
   }

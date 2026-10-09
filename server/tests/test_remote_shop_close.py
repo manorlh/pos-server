@@ -293,6 +293,7 @@ def test_shop_z_from_the_main_till_only_is_shown_and_not_offered(z):
     assert out["source"]["kind"] == "main_till" and out["source"]["label"] == "יופק בקופה הראשית: Till 1 (1)"
     assert out["source"]["machineId"] == str(z.t1.id)
     assert out["shopClose"]["available"] is False and out["shopClose"]["whyNot"] == out["source"]["whyNot"]
+    assert out["shopClose"]["whyNot"].startswith("לא זמין עדיין")
     with pytest.raises(HTTPException) as e:
         svc.shop_request(z.db, z.admin, z.tenant.id, z.shop, totals_key=out["totalsKey"], now=NOW)
     assert e.value.detail["code"] == "shop_close_unavailable"
