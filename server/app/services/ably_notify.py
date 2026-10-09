@@ -111,6 +111,8 @@ def publish_close_shift_notify(
     initiated_by: str,
     force: bool = False,
     wait_for_rest: bool = False,
+    keep_held_sales: bool = False,
+    cancel_held_sales: Optional[dict] = None,
 ) -> None:
     """
     Ask a till to close its open shift so a Z can include it (docs/SHIFTS_API.md §1.7).
@@ -128,6 +130,12 @@ def publish_close_shift_notify(
     if wait_for_rest:
         # Remote control: only once the till is at rest (no sale, no payment, no card).
         body["waitForRest"] = True
+    if keep_held_sales:
+        # "סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py).
+        body["keepHeldSales"] = True
+    if cancel_held_sales:
+        # "בטל מכירות מושהות וסגור": exactly these ids, the reason, who (held_sales_close.py).
+        body["cancelHeldSales"] = cancel_held_sales
     publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
@@ -156,6 +164,8 @@ def publish_till_z_notify(
     initiated_by: str,
     force: bool = False,
     wait_for_rest: bool = False,
+    keep_held_sales: bool = False,
+    cancel_held_sales: Optional[dict] = None,
 ) -> None:
     """
     Ask a till in `zMode = till` to produce its own Z now (docs/SHIFTS_API.md §5.3).
@@ -170,6 +180,10 @@ def publish_till_z_notify(
         body["force"] = True
     if wait_for_rest:
         body["waitForRest"] = True
+    if keep_held_sales:
+        body["keepHeldSales"] = True
+    if cancel_held_sales:
+        body["cancelHeldSales"] = cancel_held_sales
     publish_notify(tenant_id, machine_id, "till-z", body)
 
 

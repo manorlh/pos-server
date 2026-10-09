@@ -1098,7 +1098,12 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
     from app.services import after_commit
 
     args = (str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "")
-    kw = dict(force=bool(req.force_close), wait_for_rest=bool(getattr(req, "wait_for_rest", False)))
+    kw = dict(
+        force=bool(req.force_close),
+        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
+        keep_held_sales=bool(getattr(req, "keep_held_sales", False)),
+        cancel_held_sales=z_runs_cancel_command(req),
+    )
     # Only once the request is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(req), lambda: publish_till_z_notify(*args, **kw))
     req.sent_at = now
@@ -1223,7 +1228,17 @@ def take_pending(db: Session, machine: POSMachine, *, now: Optional[datetime] = 
     if getattr(req, "wait_for_rest", False):
         # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
         out["waitForRest"] = True
+    if getattr(req, "keep_held_sales", False):
+        out["keepHeldSales"] = True
+    if z_runs_cancel_command(req):
+        out["cancelHeldSales"] = z_runs_cancel_command(req)
     return out
+
+
+def z_runs_cancel_command(req) -> Optional[dict]:
+    from app.services.z_runs import _cancel_command
+
+    return _cancel_command(req)
 
 
 def pending_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:

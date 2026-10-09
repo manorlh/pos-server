@@ -424,6 +424,8 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
     kw = dict(
         force=bool(getattr(item.run, "force_close", False)),
         wait_for_rest=bool(getattr(item.run, "wait_for_rest", False)),
+        keep_held_sales=bool(getattr(item, "keep_held_sales", False)),
+        cancel_held_sales=_cancel_command(item),
     )
     # Only once the item is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(item), lambda: publish_close_shift_notify(*args, **kw))
@@ -1730,7 +1732,21 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
     if item.run is not None and getattr(item.run, "wait_for_rest", False):
         # "סגירת יום סניפית" from remote control: only at rest — never mid-sale.
         out["waitForRest"] = True
+    if getattr(item, "keep_held_sales", False):
+        # "סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py).
+        out["keepHeldSales"] = True
+    if _cancel_command(item):
+        # "בטל מכירות מושהות וסגור": exactly the confirmed ids.
+        out["cancelHeldSales"] = _cancel_command(item)
     return out
+
+
+def _cancel_command(target) -> Optional[dict]:
+    """The confirmed "בטל מכירות מושהות וסגור", as the till is handed it: {ids, reason, by}."""
+    raw = getattr(target, "cancel_held_sales", None)
+    if not isinstance(raw, dict) or not raw.get("ids"):
+        return None
+    return {"ids": list(raw["ids"]), "reason": raw.get("reason"), "by": raw.get("by")}
 
 
 def close_shift_pending_runs(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:

@@ -235,6 +235,8 @@ class ShiftCloseAckIn(BaseModel):
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     error_code: Optional[str] = Field(None, alias="errorCode", max_length=64)
     error_message: Optional[str] = Field(None, alias="errorMessage", max_length=2000)
+    #: Deferred with `held_sales`: the till's held sales (app/services/held_sales_close.py), cleaned there.
+    held_sales: Optional[Any] = Field(None, alias="heldSales")
 
 
 class ShiftCloseAckResponse(BaseModel):

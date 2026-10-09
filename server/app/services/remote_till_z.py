@@ -120,13 +120,20 @@ def _pending(db: Session, machine: POSMachine, kind: str) -> Optional[Dict[str, 
         from app.models.till_z_request import TillZRequest
 
         req = db.get(TillZRequest, rid)
-        return {"kind": kind, "id": str(req.id), "status": req.status, "errorCode": req.error_code,
-                "waitForRest": bool(req.wait_for_rest), "createdAt": _iso(req.created_at)}
-    req = close_requests.oldest_pending(db, machine)
-    if req is None:
-        return None
+    else:
+        req = close_requests.oldest_pending(db, machine)
+        if req is None:
+            return None
+    from app.services import held_sales_close
+
     return {"kind": kind, "id": str(req.id), "status": req.status, "errorCode": req.error_code,
-            "waitForRest": bool(req.wait_for_rest), "createdAt": _iso(req.created_at)}
+            "waitForRest": bool(req.wait_for_rest), "createdAt": _iso(req.created_at),
+            # "ממתין — מכירות מושהות (N)": the till's deferral, and whether it was let close keeping them.
+            "heldSales": held_sales_close.held_count(req.error_code, req.error_message),
+            "heldSalesList": getattr(req, "held_sales", None) or [],
+            "keepHeldSales": bool(getattr(req, "keep_held_sales", False)),
+            "cancelHeldSales": held_sales_close.cancel_offer(db, machine),
+            "heldSalesCancelled": held_sales_close.cancelled_events(db, [req.id]).get(str(req.id), [])}
 
 
 def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -460,8 +467,23 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
         creator = db.get(User, run.created_by_user_id)
         by = (creator.username or creator.email) if creator is not None else None
     commands = []
+    from app.services import held_sales_close
+
     for item in out["items"]:
-        item["words"] = item_words(item["status"], item["errorCode"], item.get("online"))
+        item["words"] = item_words(item["status"], item["errorCode"], item.get("online"), item.get("errorMessage"))
+        item["heldSales"] = held_sales_close.held_count(item["errorCode"], item.get("errorMessage"))
+        if item["heldSales"] is not None and item["status"] in ("waiting_close", "closing"):
+            # "סגור בכל זאת — המכירות המושהות יישמרו": allowed by the shop's parameter, or support with a reason.
+            # "בטל מכירות מושהות וסגור": the shop's `remoteCancelHeldSales` (on by default), a reason.
+            till = db.get(POSMachine, uuid.UUID(str(item["machineId"])))
+            item["keepHeldSales"] = held_sales_close.keep_offer(db, till, user) if till is not None else None
+            item["cancelHeldSales"] = held_sales_close.cancel_offer(db, till) if till is not None else None
+            row = next((i for i in run.items if str(i.id) == str(item["id"])), None)
+            item["heldSalesList"] = (row.held_sales or []) if row is not None else []
+    # The run's log: each held sale a till discarded on "בטל מכירות מושהות וסגור".
+    events = held_sales_close.cancelled_events(db, [i["id"] for i in out["items"]])
+    for item in out["items"]:
+        item["heldSalesCancelled"] = events.get(str(item["id"]), [])
         # One command per till, the run its batch: the shared chip / tray reads these.
         commands.append(as_command(
             id=item["id"], machine_id=item["machineId"], batch_id=run.id, action=ACTION_SHOP_CLOSE,
@@ -524,8 +546,13 @@ WAIT_WORDS = {
 }
 
 
-def item_words(status_value: str, error_code: Optional[str], online: Optional[bool]) -> str:
+def item_words(status_value: str, error_code: Optional[str], online: Optional[bool],
+               error_message: Optional[str] = None) -> str:
     if status_value in ("waiting_close", "closing"):
+        if error_code == "held_sales":
+            from app.services import held_sales_close
+
+            return held_sales_close.words(error_message)
         if error_code in WAIT_WORDS:
             return WAIT_WORDS[error_code]
         if online is False:
@@ -617,7 +644,8 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             row = by_machine.get(str(item["machineId"]))
             if row is not None:
                 row["runItem"] = {"status": item["status"], "errorCode": item["errorCode"],
-                                  "words": item_words(item["status"], item["errorCode"], item.get("online"))}
+                                  "words": item_words(item["status"], item["errorCode"], item.get("online"),
+                                                      item.get("errorMessage"))}
     why = None
     if not in_shop_z:
         why = "אין בסניף קופות ב-Z הסניפי (כל הקופות מפיקות Z משלהן)"

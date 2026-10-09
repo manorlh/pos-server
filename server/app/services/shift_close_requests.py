@@ -225,7 +225,11 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
         str(named_shift_id(req)) if named_shift_id(req) else None,
         z_runs._initiator(user),
     )
-    kw = dict(wait_for_rest=bool(getattr(req, "wait_for_rest", False)))
+    kw = dict(
+        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
+        keep_held_sales=bool(getattr(req, "keep_held_sales", False)),
+        cancel_held_sales=z_runs._cancel_command(req),
+    )
     # Only once the request is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(req), lambda: publish_close_shift_notify(*args, **kw))
     req.sent_at = now

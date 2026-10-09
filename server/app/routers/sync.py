@@ -1722,6 +1722,12 @@ def post_shift_close_ack(
         error_code=body.error_code,
         error_message=body.error_message,
     )
+    if body.error_code == "held_sales":
+        # The list the manager sees before confirming "בטל מכירות מושהות וסגור".
+        from app.services import held_sales_close
+
+        held_sales_close.note_reported(db, machine, body.request_id, body.held_sales)
+        db.commit()
     return ShiftCloseAckResponse(ok=True, item_status=item_status)
 
 
@@ -1991,6 +1997,10 @@ def post_till_z_ack(
         error_code=body.error_code,
         error_message=body.error_message,
     )
+    if body.error_code == "held_sales":
+        from app.services import held_sales_close
+
+        held_sales_close.note_reported(db, machine, body.request_id, body.held_sales)
     db.commit()
     return {"ok": True, "status": req.status}
 

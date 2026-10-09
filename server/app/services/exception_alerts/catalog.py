@@ -73,6 +73,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("local_shop_z_till_unsynced", "קופה לא השלימה סנכרון ל-Z סניפי", "medium", "audit_exception", link="z"),
     Kind("shop_z_producer_forced", "הפקת ה-Z הסניפי הועברה בכפייה", "high", "audit_exception"),
     Kind("z_forced_open_shifts", "Z סניפי הופק בכפייה בלי קופות שלא נסגרו", "high", "audit_exception", link="z"),
+    Kind("close_keep_held_sales", "סגירה מרחוק עם מכירות מושהות", "medium", "audit_exception"),
     Kind("support_z_produced", "Z הופק מהענן ע״י התמיכה", "high", "audit_exception", link="z"),
     Kind("till_reset", "איפוס נתוני קופה ע״י התמיכה", "high", "audit_exception"),
     Kind("card_decision_override", "הכרעת אשראי בניגוד לבדיקה במסוף", "high", "audit_exception", amount=True),

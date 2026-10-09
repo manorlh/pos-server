@@ -19,6 +19,8 @@ GET  /device-commands/shop-close/{run_id}             → its progress (builds t
 POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
 POST /device-commands/shop-close/{run_id}/cancel
 POST /device-commands/shop-close/{run_id}/force       {excludeMachineIds, reason} — a super admin only
+POST /device-commands/keep-held-sales                 {machineId, runId?, reason?} — "סגור בכל זאת — המכירות המושהות יישמרו"
+POST /device-commands/cancel-held-sales               {machineId, runId?, saleIds, reason} — "בטל מכירות מושהות וסגור"
 
 Till (`get_pos_machine_for_sync_path`):
 
@@ -396,6 +398,71 @@ def post_shop_close_cancel(
     db.commit()
     db.refresh(run)
     return remote_till_z.run_progress(db, run, user=current_user)
+
+
+class KeepHeldSalesIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: uuid.UUID = Field(..., alias="machineId")
+    #: The day close's run, when it is that run's till; else the till's own pending close / Z.
+    run_id: Optional[uuid.UUID] = Field(None, alias="runId")
+    #: Required from a super admin where the shop's `allowCloseWithHeldSales` is off.
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+@router.post("/keep-held-sales")
+def post_keep_held_sales(
+    body: KeepHeldSalesIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py): recorded."""
+    from app.services import held_sales_close
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    machine = _remote_z_machine(db, current_user, active_tenant_id, body.machine_id)
+    try:
+        out = held_sales_close.keep(db, current_user, machine, run_id=body.run_id, reason=body.reason)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    return out
+
+
+class CancelHeldSalesIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: uuid.UUID = Field(..., alias="machineId")
+    run_id: Optional[uuid.UUID] = Field(None, alias="runId")
+    #: Exactly the held sales the manager saw and confirmed (from the list the till reported).
+    sale_ids: List[str] = Field(default_factory=list, alias="saleIds", max_length=100)
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/cancel-held-sales")
+def post_cancel_held_sales(
+    body: CancelHeldSalesIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"בטל מכירות מושהות וסגור" (app/services/held_sales_close.py): the remote close's own permission, a reason."""
+    from app.services import held_sales_close
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    machine = _remote_z_machine(db, current_user, active_tenant_id, body.machine_id)
+    try:
+        out = held_sales_close.cancel(db, current_user, machine, run_id=body.run_id, sale_ids=body.sale_ids,
+                                      reason=body.reason)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    return out
 
 
 @router.get("/devices")

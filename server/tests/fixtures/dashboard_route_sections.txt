@@ -126,9 +126,11 @@ GET /demo-menu/status -> products:view
 GET /demo-menu/templates -> products:view
 GET /device-commands -> device_control:view
 POST /device-commands -> device_control:edit
+POST /device-commands/cancel-held-sales -> device_control:edit
 POST /device-commands/close -> device_control:edit
 GET /device-commands/devices -> device_control:view
 GET /device-commands/features -> device_control:view
+POST /device-commands/keep-held-sales -> device_control:edit
 POST /device-commands/shop-close -> device_control:edit
 GET /device-commands/shop-close-preview -> device_control:view
 GET /device-commands/shop-close/{run_id} -> device_control:view

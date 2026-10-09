@@ -115,6 +115,13 @@ class ZRunItem(Base):
     #: is filled in when the shift lands (`app.services.shifts.link_claimed_shift`).
     claimed_shift_id = Column(UUID(as_uuid=True), nullable=True)
     include_open_shift = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py): the till closes
+    #: keeping its held sales instead of deferring on them (`keepHeldSales`).
+    keep_held_sales = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: The held sales the till reported when it deferred (`held_sales`), and the cancel a manager
+    #: confirmed ("בטל מכירות מושהות וסגור": ids, reason, who, when) — app/services/held_sales_close.py.
+    held_sales = Column(JSONB, nullable=True)
+    cancel_held_sales = Column(JSONB, nullable=True)
     status = Column(String(16), nullable=False)
     error_code = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)

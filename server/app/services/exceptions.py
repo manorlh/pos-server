@@ -127,6 +127,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
     # closed (app/services/z_shift_guard.py). Always recorded — the tenant's rules never switch it off.
     RuleSpec("z_forced_open_shifts", True, (), "high", "z"),
+    # A remote close let the till close keeping its held sales ("סגור בכל זאת — המכירות המושהות
+    # יישמרו", app/services/held_sales_close.py). Always recorded.
+    RuleSpec("close_keep_held_sales", True, (), "medium", "z"),
     # A shop Z the main till printed in local mode that does not verify against the cloud's
     # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
     # §8.12): every document its tills' manifests name has arrived, and the same computation
@@ -199,7 +202,10 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
                     "desktop_exit",
                     # A product that needs a manager's code, sold on one (or by someone who holds
                     # SELL_RESTRICTED_ITEMS): recorded, feeds no rule.
-                    "restricted_item")
+                    "restricted_item",
+                    # A held sale ("מכירה מושהית") cancelled at a close: who, why, its items and total.
+                    # Not a document — the audit trail. Recorded, feeds no rule.
+                    "held_sale_cancelled")
 
 
 class RuleValueError(ValueError):
