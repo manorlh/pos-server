@@ -569,6 +569,18 @@ def apply_switch(
 # ── Opening stock ────────────────────────────────────────────────────────────
 
 
+def _reorder_min(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        n = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        raise _bad("invalid_reorder_min", "מינימום להתראה: מספר שלם, 0 ומעלה")
+    if not n.is_finite() or n < 0 or n != n.to_integral_value():
+        raise _bad("invalid_reorder_min", "מינימום להתראה: מספר שלם, 0 ומעלה")
+    return int(n)
+
+
 def set_opening(
     db: Session,
     user: Any,
@@ -576,12 +588,16 @@ def set_opening(
     loc: Location,
     items: Iterable[Dict[str, Any]],
 ) -> int:
-    """"מלאי פתיחה" per product at a location: opening quantity, daily reset on/off, its mode. The caller commits."""
+    """
+    "מלאי פתיחה" per product at a location: opening quantity, daily reset on/off, its mode, and the
+    reorder minimum the low-stock alert compares with (a whole number; null: none). The caller commits.
+    """
     from app.services import stock_reset
 
     path = stock_scope.check_location(db, user, loc, tenant_id)
     n = 0
     switched_on = False
+    reevaluate: List[StockLevel] = []
     for it in items:
         product = db.get(Product, uuid.UUID(str(it["productId"])))
         if product is None:
@@ -600,9 +616,25 @@ def set_opening(
             row.daily_reset = bool(it["dailyReset"])
         if it.get("resetMode") in stock_reset.MODES:
             row.reset_mode = it["resetMode"]
+        if "reorderMin" in it:
+            new_min = _reorder_min(it["reorderMin"])
+            if new_min != row.reorder_min:
+                row.reorder_min = new_min
+                reevaluate.append(row)
         row.updated_at = utc_now()
         n += 1
     db.flush()
     if switched_on:
         stock_reset.mark_started(db, loc, tenant_id)
+    # A new minimum raises or clears the low-stock alert now, not at the next sale.
+    if reevaluate and L.table_ready(db, "stock_alerts"):
+        from app.services import stock_alerts
+
+        for row in reevaluate:
+            if product_tracked(db, row.product_id):
+                stock_alerts.reevaluate(db, row)
     return n
+
+
+def product_tracked(db: Session, product_id: Any) -> bool:
+    return bool(db.query(Product.track_stock).filter(Product.id == product_id).scalar())

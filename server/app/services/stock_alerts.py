@@ -147,6 +147,27 @@ def on_change(db: Session, level: StockLevel, before: Decimal, after: Decimal, *
     db.flush()
 
 
+def reevaluate(db: Session, level: StockLevel, *, now: Optional[datetime] = None) -> None:
+    """The threshold changed (not the quantity): the open alert follows the level as it is now."""
+    now = now or utc_now()
+    qty = _dec(level.quantity)
+    threshold = threshold_of(level)
+    state = state_of(qty, threshold)
+    current = _open(db, level)
+    if state is None:
+        if current is not None:
+            current.cleared_at = now
+            current.updated_at = now
+        return
+    if current is not None and current.kind == state:
+        current.threshold = threshold
+        current.quantity = qty
+        current.updated_at = now
+        return
+    # Raised (or changed kind) now: as if it had just crossed from above the threshold.
+    on_change(db, level, threshold + 1, qty, now=now)
+
+
 def alert_out(db: Session, a: StockAlert, names: Dict[str, Optional[str]]) -> Dict[str, Any]:
     loc = Location(a.level, a.target_id)
     suggest = None

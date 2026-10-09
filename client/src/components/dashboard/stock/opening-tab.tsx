@@ -3,8 +3,9 @@
 /**
  * "מלאי פתיחה ואיפוס יומי" — per product at a location: the opening quantity, the daily reset on or
  * off, and its mode ("קבע למלאי פתיחה": set to the opening; "השלם ממחסן": top up from the location
- * above). In bulk for a category or everything shown; "בצע איפוס עכשיו" (an event) with a
- * confirmation; the resets that ran. The scheduled reset runs at the start of the business day.
+ * above), and the minimum the low-stock alert compares with. In bulk for a category or everything
+ * shown; "בצע איפוס עכשיו" (an event) with a confirmation; the resets that ran. The scheduled reset
+ * runs at the start of the business day.
  */
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -24,11 +25,19 @@ import { CategorySelect, useSettled } from './quick-stock-tab';
 type Mode = 'set' | 'top_up';
 interface Edit {
   opening?: string;
+  reorderMin?: string;
   dailyReset?: boolean;
   resetMode?: Mode;
 }
 
 const MODE_LABELS: Record<Mode, string> = { set: 'קבע למלאי פתיחה', top_up: 'השלם ממחסן' };
+
+/** A whole number, 0 and up, or null (nothing typed); undefined: not a valid minimum. */
+function parseMin(text: string): number | null | undefined {
+  const t = text.trim();
+  if (!t) return null;
+  return /^\d{1,6}$/.test(t) ? Number(t) : undefined;
+}
 
 function own(row: QuickRow, n: StockNode): StockLocation | null {
   return row.locations.find((l) => l.level === n.level && l.targetId === n.targetId && l.managed) ?? null;
@@ -70,7 +79,8 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
   const changed = Object.keys(edits).filter((id) => editable.some((r) => r.productId === id));
   const badQty = changed.some((id) => {
     const typed = edits[id].opening;
-    return typed !== undefined && typed.trim() !== '' && parseQty(typed) == null;
+    const min = edits[id].reorderMin;
+    return (typed !== undefined && typed.trim() !== '' && parseQty(typed) == null) || (min !== undefined && parseMin(min) === undefined);
   });
 
   const save = useMutation({
@@ -84,6 +94,7 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
             ...(e.opening !== undefined ? { openingQuantity: e.opening.trim() === '' ? null : parseQty(e.opening) } : {}),
             ...(e.dailyReset !== undefined ? { dailyReset: e.dailyReset } : {}),
             ...(e.resetMode !== undefined ? { resetMode: e.resetMode } : {}),
+            ...(e.reorderMin !== undefined ? { reorderMin: parseMin(e.reorderMin) ?? null } : {}),
           };
         }),
       ),
@@ -165,14 +176,18 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
               );
             }
             const opening = e.opening ?? (loc.openingQuantity != null ? formatQty(loc.openingQuantity).replace('−', '-') : '');
+            const min = e.reorderMin ?? (loc.reorderMin != null ? String(loc.reorderMin) : '');
             const on = e.dailyReset ?? loc.dailyReset;
             const mode = e.resetMode ?? loc.resetMode;
             const dirty = !!edits[r.productId];
             return (
-              <li key={r.productId} className={cn('grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center', dirty && 'bg-primary/5')}>
+              <li key={r.productId} className={cn('grid grid-cols-1 gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] sm:items-center', dirty && 'bg-primary/5')}>
                 <div className="min-w-0">
                   <p className="truncate font-medium">{r.productName}</p>
-                  <p className="text-xs text-muted-foreground">עכשיו {formatQty(loc.quantity)}</p>
+                  <p className={cn('text-xs text-muted-foreground', loc.low && 'font-medium text-amber-700 dark:text-amber-400')}>
+                    עכשיו {formatQty(loc.quantity)}
+                    {loc.low ? ' · נמוך' : ''}
+                  </p>
                 </div>
                 <Input
                   inputMode="decimal"
@@ -181,6 +196,15 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
                   placeholder="פתיחה"
                   className={cn('h-10 w-full sm:w-28', opening.trim() && parseQty(opening) == null && 'border-destructive')}
                   aria-label={`מלאי פתיחה ל${r.productName}`}
+                />
+                <Input
+                  inputMode="numeric"
+                  value={min}
+                  onChange={(ev) => patch(r.productId, { reorderMin: ev.target.value })}
+                  placeholder="מינ׳ להתראה"
+                  title="מלאי נמוך: התראה כשהכמות יורדת למינימום הזה או מתחתיו"
+                  className={cn('h-10 w-full sm:w-28', parseMin(min) === undefined && 'border-destructive')}
+                  aria-label={`מינימום להתראה ל${r.productName}`}
                 />
                 <label className="flex min-h-10 items-center gap-2 text-sm">
                   <input type="checkbox" className="size-4 accent-primary" checked={on} onChange={(ev) => patch(r.productId, { dailyReset: ev.target.checked })} />

@@ -113,7 +113,10 @@ export async function applySwitch(
   return (await api.post('/stock/settings/apply', body)).data;
 }
 
-export async function putOpening(n: StockNode, items: { productId: string; openingQuantity?: number | null; dailyReset?: boolean; resetMode?: 'set' | 'top_up' }[]) {
+export async function putOpening(
+  n: StockNode,
+  items: { productId: string; openingQuantity?: number | null; dailyReset?: boolean; resetMode?: 'set' | 'top_up'; reorderMin?: number | null }[],
+) {
   return (await api.put('/stock/opening', { ...n, items })).data as { updated: number };
 }
 

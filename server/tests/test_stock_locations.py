@@ -360,6 +360,27 @@ class TestAlerts:
         assert s.db.query(StockAlert).filter(StockAlert.cleared_at.is_(None)).count() == 0
 
 
+class TestReorderMinimum:
+    def test_a_minimum_set_on_the_opening_screen_raises_and_clears_the_alert_at_once(self, s):
+        _set(s, s.shop_loc, 5)
+        item = {"productId": str(s.P.id)}
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.shop_loc, [{**item, "reorderMin": 8}])
+        s.db.commit()
+        alert = s.db.query(StockAlert).filter(StockAlert.cleared_at.is_(None)).one()
+        assert (alert.kind, alert.threshold) == ("low", D(8))
+        view = stock_admin.quick_view(s.db, s.users.admin, s.tid, L.path_of(s.db, "shop", s.h_shop.id), product_id=s.P.id)
+        assert view["rows"][0]["low"] and view["rows"][0]["locations"][0]["reorderMin"] == 8
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.shop_loc, [{**item, "reorderMin": None}])
+        s.db.commit()
+        assert s.db.query(StockAlert).filter(StockAlert.cleared_at.is_(None)).count() == 0
+
+    @pytest.mark.parametrize("bad", [-1, 2.5, "x"])
+    def test_a_minimum_is_a_whole_number(self, s, bad):
+        with pytest.raises(HTTPException) as refused:
+            stock_admin.set_opening(s.db, s.users.admin, s.tid, s.shop_loc, [{"productId": str(s.P.id), "reorderMin": bad}])
+        assert refused.value.detail["code"] == "invalid_reorder_min"
+
+
 class TestDailyReset:
     def _opening(self, s, loc, opening, mode="set"):
         stock_admin.set_opening(s.db, s.users.admin, s.tid, loc, [{"productId": str(s.P.id), "openingQuantity": opening, "dailyReset": True, "resetMode": mode}])

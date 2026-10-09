@@ -16,7 +16,7 @@ GET  /stock/settings             ?scopeLevel=&scopeId=       the managed-level r
 POST /stock/settings/preview     {scopeLevel, scopeId, itemKind?, itemId?, levels}
 POST /stock/settings/apply       {... levels, openings[], transfers[], writeOff?, openingsConfirmed?}
 GET  /stock/alerts               ?companyId=&shopId=
-PUT  /stock/opening              {level, targetId, items:[{productId, openingQuantity?, dailyReset?, resetMode?}]}
+PUT  /stock/opening              {level, targetId, items:[{productId, openingQuantity?, dailyReset?, resetMode?, reorderMin?}]}
 POST /stock/reset                {level, targetId}            "בצע איפוס עכשיו"
 GET  /stock/resets               ?companyId=&shopId=
 GET  /stock/leftover             ?companyId=&shopId=&day=
