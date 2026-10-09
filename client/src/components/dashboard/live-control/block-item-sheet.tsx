@@ -62,7 +62,8 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
     () => new Set([context?.machineId ?? scope.machineId, scope.areaId].filter((x): x is string => !!x)),
   );
   const [eventId, setEventId] = useState<string | null>(scope.eventId ?? null);
-  const [duration, setDuration] = useState<DurationChoice>({ mode: 'none' });
+  // "עד סוף היום" by default: a forgotten "אזל" ends with the business day, not never.
+  const [duration, setDuration] = useState<DurationChoice>({ mode: 'end_of_day' });
 
   // A product named by the context comes with its id only: its name, for the sheet.
   const productName = useQuery({

@@ -146,6 +146,7 @@ describe('targets', () => {
     assert.equal(paceLine({ forecast: 900, period: 'event', elapsed: 0.5 }), 'בקצב הנוכחי: ₪900 עד סוף האירוע');
     assert.equal(paceLine({ forecast: null, period: 'day', elapsed: 0.01 }), 'מוקדם מדי לחזות');
     assert.equal(paceLine({ forecast: 10, period: 'day', elapsed: 1 }), 'היום הסתיים');
+    assert.equal(paceLine({ forecast: 10, period: 'event', elapsed: 1 }), 'האירוע הסתיים');
   });
   it('the bar and the tone', () => {
     assert.equal(barPercent({ actual: 50, amount: 200 }), 25);

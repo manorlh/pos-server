@@ -289,10 +289,10 @@ export function shekels(v: number | null | undefined): string {
   return `₪${Math.round(v).toLocaleString('en-US')}`;
 }
 
-/** "בקצב הנוכחי: ₪6,100 עד סוף היום" (an event: "עד סוף האירוע"), or "מוקדם לחזות". */
+/** "בקצב הנוכחי: ₪6,100 עד סוף היום" (an event: "עד סוף האירוע"), "מוקדם מדי לחזות", or that it is over. */
 export function paceLine(p: Pick<TargetProgress, 'forecast' | 'period' | 'elapsed'>): string {
   const end = p.period === 'event' ? 'עד סוף האירוע' : 'עד סוף היום';
-  if (p.elapsed >= 1) return 'היום הסתיים';
+  if (p.elapsed >= 1) return p.period === 'event' ? 'האירוע הסתיים' : 'היום הסתיים';
   if (p.forecast == null) return 'מוקדם מדי לחזות';
   return `בקצב הנוכחי: ${shekels(p.forecast)} ${end}`;
 }
