@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from app.config import get_settings
 from app.models.pos_machine import POSMachine
-from app.services.ably_notify import machine_channel_for
+from app.services.ably_notify import machine_channel_for, shop_channel_for
 
 settings = get_settings()
 
@@ -26,6 +26,9 @@ def machine_realtime_connection_info(
         "accessToken": access_token,
         "mqttClientId": machine.mqtt_client_id,
         "realtimeChannel": channel,
+        # The shop's coalesced "tables" signal (app/services/tables_state.py); a till that
+        # knows it subscribes to it beside its own channel.
+        "realtimeShopChannel": shop_channel_for(machine),
         "ablyAuthUrl": f"{prefix}/machines/me/ably-auth",
     }
 
@@ -41,4 +44,7 @@ def machine_realtime_refresh_info(
         channel = machine_channel_for(machine)
         if channel:
             info["realtimeChannel"] = channel
+        shop = shop_channel_for(machine)
+        if shop:
+            info["realtimeShopChannel"] = shop
     return info
