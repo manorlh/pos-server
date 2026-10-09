@@ -266,15 +266,37 @@ def _category_locks(db: Session, scope: _Scope) -> List[CategoryAvailabilityOver
     ).all()
 
 
-def _out_of_stock(db: Session, shop_id, product: Optional[Product]) -> bool:
-    """Tracks stock and has none in the shop — its stock locations together (no row is none)."""
+def _out_of_stock(db: Session, shop_id, product: Optional[Product], scope: Optional["_Scope"] = None) -> bool:
+    """
+    Tracks stock and has none where the scope sells from (no row is none): a point of sale or a till
+    — the location its sales take from; the shop — its managed locations together, with the
+    company's store when stock is held there too.
+    """
+    from sqlalchemy import and_, or_
+
+    from app.services import stock as stock_service
+    from app.services import stock_locations as L
+
     if product is None or not getattr(product, "track_stock", False):
         return False
-    qty = (
-        db.query(func.sum(StockLevel.quantity))
-        .filter(StockLevel.shop_id == shop_id, StockLevel.product_id == product.id)
-        .scalar()
-    )
+    try:
+        path = L.path_of(db, scope.level, scope.target_id) if scope is not None else L.path_of(db, SHOP, shop_id)
+    except LookupError:
+        path = None
+    if path is None:
+        qty = (
+            db.query(func.sum(StockLevel.quantity))
+            .filter(StockLevel.shop_id == shop_id, StockLevel.product_id == product.id)
+            .scalar()
+        )
+        return Decimal(str(qty if qty is not None else 0)) <= 0
+    managed = L.managed_for(db, path, product)
+    if path.node_level != SHOP:
+        return stock_service.quantity_at(db, L.sell_from(path, managed), product.id) <= 0
+    places = [and_(StockLevel.shop_id == path.shop_id, StockLevel.level.in_(list(managed)))]
+    if "company" in managed and path.company_id is not None:
+        places.append(and_(StockLevel.level == "company", StockLevel.target_id == path.company_id))
+    qty = db.query(func.sum(StockLevel.quantity)).filter(StockLevel.product_id == product.id, or_(*places)).scalar()
     return Decimal(str(qty if qty is not None else 0)) <= 0
 
 
@@ -329,7 +351,7 @@ def _apply(db: Session, z: ZReport, scope: _Scope, shop_id) -> Optional[Availabi
     }
     for row, product_id in products:
         product = by_id.get(str(product_id))
-        if not ignore_stock and _out_of_stock(db, shop_id, product):
+        if not ignore_stock and _out_of_stock(db, shop_id, product, scope):
             outcome = KEPT_STOCK
             kept += 1
         else:

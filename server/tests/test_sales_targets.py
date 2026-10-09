@@ -44,6 +44,16 @@ def test_the_trading_window_is_local_and_dst_safe():
     assert b - a == timedelta(hours=8), "a bar's night runs past midnight"
 
 
+def test_a_night_past_midnight_counts_to_its_end_and_is_still_that_trading_day():
+    z, day, utc = "Asia/Jerusalem", date(2026, 10, 9), timezone.utc
+    # 18:00–02:00: the money runs to 02:00 on the 10th (IDT, UTC+3); an ordinary day is the calendar day.
+    assert svc.trading_range(day, "18:00", "02:00", z) == (datetime(2026, 10, 8, 21, 0, tzinfo=utc), datetime(2026, 10, 9, 23, 0, tzinfo=utc))
+    assert svc.trading_range(day, "08:00", "23:00", z) == (datetime(2026, 10, 8, 21, 0, tzinfo=utc), datetime(2026, 10, 9, 21, 0, tzinfo=utc))
+    assert svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc))  # 01:30 local
+    assert not svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 23, 30, tzinfo=utc))  # 02:30
+    assert not svc.still_open_from(day, "08:00", "23:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc))
+
+
 def _target(w, amount, **kw):
     row = SalesTarget(
         id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=kw.pop("shop", w.shop).id,
@@ -112,6 +122,14 @@ class TestProgress:
         trading.db.commit()
         t = _target(trading, 100, scope="area", area_id=bar_id)
         assert svc.progress_of(trading.db, t, now=NOW, day=TODAY)["actual"] == 300.0
+
+    def test_at_one_in_the_morning_a_bar_is_still_on_last_nights_target(self, trading):
+        _target(trading, 1000, day_start="18:00", day_end="02:00")
+        rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=4))  # 01:00 local
+        shop = next(r for r in rows if r["scope"] == "shop")
+        assert shop["periodKey"] == TODAY.isoformat() and shop["actual"] == 410.0
+        rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=6))  # 03:00: a new day
+        assert next(r for r in rows if r["scope"] == "shop")["periodKey"] == (TODAY + timedelta(days=1)).isoformat()
 
     def test_a_cashier_counts_their_documents(self, trading):
         t = _target(trading, 100, scope="cashier", pos_user_id=trading.dana.id)

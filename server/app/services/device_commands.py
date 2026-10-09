@@ -97,7 +97,7 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
         "action": row.action,
         "message": row.message,
         "status": row.status,
-        "detail": row.detail,
+        "detail": row.detail if row.detail not in (WAS_LOCKED, WAS_UNLOCKED) else None,
         "source": row.source,
         "createdBy": row.created_by_name,
         "createdAt": _iso(row.created_at),
@@ -105,6 +105,10 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
         "doneAt": _iso(row.done_at),
         "expiresAt": _iso(row.expires_at),
     }
+
+
+#: A pending lock / unlock remembers the lock state before it (`detail`), for a cancel to restore it.
+WAS_LOCKED, WAS_UNLOCKED = "was_locked", "was_unlocked"
 
 
 def _set_lock(db: Session, machine: POSMachine, locked: bool, *, message: Optional[str], by: Optional[str], now: datetime) -> DeviceRemoteState:
@@ -162,7 +166,10 @@ def create(
     out: List[DeviceCommand] = []
     for machine in machines:
         # An earlier lock / unlock still waiting is overtaken by this one.
+        was: Optional[str] = None
         if action in ("lock", "unlock"):
+            prior = state_of(db, machine.id)
+            was = WAS_LOCKED if prior is not None and prior.locked else WAS_UNLOCKED
             for old in (
                 db.query(DeviceCommand)
                 .filter(
@@ -172,6 +179,9 @@ def create(
                 )
                 .all()
             ):
+                # The state before a chain of waiting commands is the first one's.
+                if old.status == "pending" and old.detail in (WAS_LOCKED, WAS_UNLOCKED):
+                    was = old.detail
                 old.status = "cancelled"
                 old.detail = "superseded"
                 old.updated_at = now
@@ -185,6 +195,7 @@ def create(
             action=action,
             message=((message or "").strip()[:300] or None) if action == "lock" else None,
             status="pending",
+            detail=was,
             source=source,
             created_by_user_id=getattr(user, "id", None),
             created_by_name=(who or None) and who[:200],
@@ -211,10 +222,18 @@ def expire_old(db: Session, *, machine_id: Any = None, now: Optional[datetime] =
 
 
 def cancel(db: Session, command: DeviceCommand, *, now: Optional[datetime] = None) -> DeviceCommand:
-    """Before the device took it only; 409 after."""
+    """
+    Before the device took it only; 409 after. A lock / unlock cancelled puts the lock back as it
+    was before it (the device never saw it).
+    """
     now = now or utc_now()
     if command.status != "pending":
         raise _bad("not_pending", "הפקודה כבר נמסרה לקופה", status.HTTP_409_CONFLICT)
+    if command.action in ("lock", "unlock") and command.detail in (WAS_LOCKED, WAS_UNLOCKED):
+        state = state_of(db, command.machine_id)
+        if state is not None:
+            state.locked = command.detail == WAS_LOCKED
+            state.updated_at = now
     command.status = "cancelled"
     command.updated_at = now
     return command

@@ -112,6 +112,19 @@ class TestCommands:
             R.cancel_command(uuid.UUID(cmd["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
         assert refused.value.status_code == 409
 
+    def test_cancelling_a_lock_the_till_never_saw_puts_the_lock_back(self, d):
+        cmd = _send(d, "lock", machineIds=[d.h1.id])[0]
+        assert cmd["detail"] is None  # what it remembers is not shown
+        R.cancel_command(uuid.UUID(cmd["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
+        assert svc.pull(d.db, d.h1)["state"]["locked"] is False
+        # Locked, then an unlock and a lock still waiting: cancelling the last restores "locked".
+        _send(d, "lock", machineIds=[d.h1.id])
+        svc.pull(d.db, d.h1)
+        _send(d, "unlock", machineIds=[d.h1.id])
+        last = _send(d, "lock", machineIds=[d.h1.id])[0]
+        R.cancel_command(uuid.UUID(last["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
+        assert svc.pull(d.db, d.h1)["state"]["locked"] is True
+
     def test_a_command_nobody_picked_up_expires(self, d):
         _send(d, "install_update", machineIds=[d.h1.id])
         later = datetime.now(timezone.utc) + svc.EXPIRES_AFTER + timedelta(minutes=1)

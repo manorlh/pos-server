@@ -302,6 +302,17 @@ class RuleBook:
         ]
         self.updated_at = max((r.updated_at for r in rows if r.updated_at is not None), default=None)
 
+    def with_rule(self, scope_level: str, scope_id: Any, item_kind: Optional[str], item_id: Any, levels: Sequence[str]) -> "RuleBook":
+        """The same rules with one of them set as a switch would leave it (the wizard's after-state)."""
+        import copy
+
+        key = rule_key(scope_level, scope_id, item_kind, item_id)
+        clone = copy.copy(self)
+        clone.rules = [r for r in self.rules if rule_key(r.scope_level, r.scope_id, r.item_kind, r.item_id) != key] + [
+            Rule(scope_level, str(scope_id), item_kind, str(item_id) if item_id else None, tuple(levels))
+        ]
+        return clone
+
     def managed(self, *, company_id: Any, shop_id: Any, product: Any) -> Tuple[str, ...]:
         return resolve_managed(
             self.rules,

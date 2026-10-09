@@ -110,20 +110,25 @@ def _shops_in_view(db: Session, user: User, tenant_id, *, company_id=None, shop_
 
 
 def _check_target(db: Session, user: User, target: svc.Target, tenant_id) -> None:
-    """The machine admins' scope rules: a company needs the company, anything else its shop."""
+    """
+    The machine admins' scope rules: a company needs the company, anything else its shop; a manager
+    of points of sale (app/services/stock_scope.py) only their areas and the devices in them — never
+    a whole shop, the shop's kiosks, an event or the company.
+    """
+    from app.services import stock_locations as SL
+    from app.services import stock_scope
+
+    narrowed = stock_scope.scope_of(db, user)
     if target.scope == "company":
         company = db.get(Company, target.scope_id)
         kiosk_control.check_company_scope(db, user, company, tenant_id)
+        if narrowed.narrowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
         return
     shop = db.get(Shop, target.shop_id) if target.shop_id is not None else None
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     kiosk_control.check_shop_scope(db, user, shop, tenant_id)
-    # A manager of points of sale (app/services/stock_scope.py): only their areas and the devices in them.
-    from app.services import stock_locations as SL
-    from app.services import stock_scope
-
-    narrowed = stock_scope.scope_of(db, user)
     if narrowed.narrowed:
         level = {"area": "area", "machine": "machine", "kiosk": "machine"}.get(target.scope)
         if level is None or not narrowed.covers_path(SL.path_of(db, level, target.scope_id)):

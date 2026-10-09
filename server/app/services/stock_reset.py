@@ -242,22 +242,27 @@ def run(
     reset.items = items
     db.flush()
     if trigger == "manual":
-        _end_day_blocks(db, loc, now)
+        reset_ids = [r[0] for r in db.query(StockResetItem.product_id).filter(StockResetItem.reset_id == reset.id).all()]
+        _end_day_blocks(db, loc, now, reset_ids)
     stock_service._wake_on_crossing(db, loc, None)
     return reset
 
 
-def _end_day_blocks(db: Session, loc: Location, now: datetime) -> None:
-    """A manual run ends the location's blocks set "עד סוף היום"."""
+def _end_day_blocks(db: Session, loc: Location, now: datetime, product_ids: Sequence[Any]) -> None:
+    """
+    A manual run ends, for the products it reset, the location's "אזל" set "עד סוף היום" (the day it
+    stood for is over for them); a "חסום" — a reason, not a count — stays until its own end.
+    """
     from app.models.sold_out import SoldOutMark
     from app.services import sold_out
 
-    if not sold_out.tables_ready(db):
+    if not product_ids or not sold_out.tables_ready(db):
         return
     rows = (
         db.query(SoldOutMark)
         .filter(
             SoldOutMark.scope == loc.level, SoldOutMark.scope_id == loc.target_id,
+            SoldOutMark.product_id.in_(list(product_ids)), SoldOutMark.kind == "sold_out",
             SoldOutMark.until_mode == "end_of_day", sold_out.in_force_filter(now),
         )
         .all()

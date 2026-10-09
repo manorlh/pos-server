@@ -125,8 +125,28 @@ def _shops_and_companies(db: Session, user: User, tenant_id, company_id=None, sh
         shops = [s for s in shops if str(s.id) in allowed]
     elif user.role == UserRole.SHOP_MANAGER:
         shops = [s for s in shops if str(s.id) == str(user.shop_id)]
+    # The company's own store (company-level stock) is the company's: not a shop's manager's, nor a
+    # manager of points of sale's.
+    if user.role == UserRole.SHOP_MANAGER or stock_scope.scope_of(db, user).narrowed:
+        return shops, set()
     companies = {s.company_id for s in shops if s.company_id}
     return shops, companies
+
+
+def _covered_rows(db: Session, user: User, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rows whose `location` a manager of points of sale covers (everything for anyone else)."""
+    scope = stock_scope.scope_of(db, user)
+    if not scope.narrowed:
+        return rows
+    out = []
+    for r in rows:
+        try:
+            path = L.location_path(db, Location(r["location"]["level"], uuid.UUID(str(r["location"]["targetId"]))))
+        except (LookupError, KeyError, ValueError):
+            continue
+        if scope.covers_path(path):
+            out.append(r)
+    return out
 
 
 @router.get("/tree")
@@ -339,7 +359,8 @@ def get_resets(
     db: Session = Depends(get_db),
 ):
     shops, companies = _shops_and_companies(db, current_user, active_tenant_id, company_id, shop_id)
-    return stock_reset.history(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [])
+    rows = stock_reset.history(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [])
+    return _covered_rows(db, current_user, rows)
 
 
 @router.get("/leftover")
@@ -352,4 +373,5 @@ def get_leftover(
     db: Session = Depends(get_db),
 ):
     shops, companies = _shops_and_companies(db, current_user, active_tenant_id, company_id, shop_id)
-    return stock_reset.leftover(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [], day=day)
+    rows = stock_reset.leftover(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [], day=day)
+    return _covered_rows(db, current_user, rows)

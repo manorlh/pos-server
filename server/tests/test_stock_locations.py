@@ -284,6 +284,36 @@ class TestPermissions:
         stock_admin.transfer(s.db, user, s.tid, product_id=s.P.id, source=s.shop_loc, target=s.bar_loc, quantity=D(3))
         with pytest.raises(HTTPException):
             stock_admin.transfer(s.db, user, s.tid, product_id=s.P.id, source=s.shop_loc, target=s.lobby_loc, quantity=D(1))
+        # Nor out of another point of sale into theirs.
+        _set(s, s.lobby_loc, 4)
+        with pytest.raises(HTTPException) as refused:
+            stock_admin.transfer(s.db, user, s.tid, product_id=s.P.id, source=s.lobby_loc, target=s.bar_loc, quantity=D(1))
+        assert refused.value.status_code == 403
+
+    def test_their_resets_and_leftovers_are_their_points_of_sale_only(self, s):
+        user = self._bar_manager(s)
+        rows = [{"location": {"level": "area", "targetId": str(t)}} for t in (s.bar.id, s.lobby.id)]
+        rows.append({"location": {"level": "shop", "targetId": str(s.h_shop.id)}})
+        assert [r["location"]["targetId"] for r in R._covered_rows(s.db, user, rows)] == [str(s.bar.id)]
+        assert R._shops_and_companies(s.db, user, s.tid)[1] == set(), "never the company's store"
+
+    def test_they_never_block_a_whole_shop_or_the_company(self, s):
+        from app.routers import item_blocks as IB
+        from app.services import sold_out
+
+        user = self._bar_manager(s)
+        for scope, scope_id in (("company", s.H.id), ("shop", s.h_shop.id)):
+            with pytest.raises(HTTPException) as refused:
+                IB._check_target(s.db, user, sold_out.Target(scope, scope_id, "", s.H.id, s.h_shop.id if scope == "shop" else None), s.tid)
+            assert refused.value.status_code == 403
+        IB._check_target(s.db, user, sold_out.Target("area", s.bar.id, "", s.H.id, s.h_shop.id, s.bar.id), s.tid)
+
+    def test_an_opening_for_another_tenants_product_is_refused(self, s):
+        with pytest.raises(HTTPException) as refused:
+            stock_admin.set_opening(s.db, s.users.admin, s.tid, s.shop_loc, [{"productId": str(uuid.uuid4()), "openingQuantity": 3}])
+        assert refused.value.status_code == 404
+        with pytest.raises(HTTPException):
+            stock_admin.set_opening(s.db, s.users.admin, s.tid, s.shop_loc, [{"productId": str(s.P.id), "openingQuantity": -2}])
 
     def test_their_quick_view_shows_their_locations_only(self, s):
         _levels(s, ["shop", "area"])
@@ -336,6 +366,43 @@ class TestSwitchWizard:
         )
         s.db.commit()
         assert (_qty(s, s.shop_loc), _qty(s, s.bar_loc)) == (0, 10)
+
+    def test_only_the_plans_own_rows_are_accepted(self, s):
+        _set(s, s.shop_loc, 10)
+        a_shop = {"level": "shop", "targetId": str(s.a_shop.id)}
+        h_shop = {"level": "shop", "targetId": str(s.h_shop.id)}
+        bar = {"level": "area", "targetId": str(s.bar.id)}
+        p = str(s.P.id)
+        cases = [
+            # An opening in another shop (outside the scope switched).
+            ({"openings": [{"productId": p, **a_shop, "quantity": 5}]}, "opening_outside_the_switch"),
+            # A negative opening.
+            ({"openings": [{"productId": p, **bar, "quantity": -3}]}, "invalid_quantity"),
+            # A transfer into another shop, and more than the store holds.
+            ({"transfers": [{"productId": p, "from": h_shop, "to": a_shop, "quantity": 1}]}, "transfer_outside_the_switch"),
+            ({"transfers": [{"productId": p, "from": h_shop, "to": bar, "quantity": 11}]}, "transfer_more_than_there_is"),
+            # A row with no location.
+            ({"openings": [{"productId": p, "quantity": 1}]}, "invalid_location"),
+        ]
+        for extra, code in cases:
+            with pytest.raises(HTTPException) as refused:
+                stock_admin.apply_switch(
+                    s.db, s.users.admin, s.tid, scope_level="shop", scope_id=s.h_shop.id, item_kind=None, item_id=None,
+                    levels=["area"], openings_confirmed=True, write_off=True, **extra,
+                )
+            assert refused.value.detail["code"] == code, code
+            s.db.rollback()
+        assert _qty(s, s.shop_loc) == 10
+
+    def test_a_more_specific_rule_that_still_wins_is_not_stranded(self, s):
+        # P has its own rule (shop only); switching the shop's general rule to areas leaves P alone.
+        _levels(s, ["shop"], item=("product", s.P.id))
+        _set(s, s.shop_loc, 7)
+        preview = stock_admin.preview_switch(s.db, scope_level="shop", scope_id=s.h_shop.id, item_kind=None, item_id=None, levels=["area"])
+        assert all(e["productId"] != str(s.P.id) for e in preview["stranded"] + preview["newlyManaged"])
+        stock_admin.apply_switch(s.db, s.users.admin, s.tid, scope_level="shop", scope_id=s.h_shop.id, item_kind=None, item_id=None, levels=["area"], write_off=True, openings_confirmed=True)
+        s.db.commit()
+        assert _qty(s, s.shop_loc) == 7, "never written off while it is still where P is held"
 
     def test_a_write_off_is_explicit_and_recorded(self, s):
         _set(s, s.shop_loc, 3)
@@ -450,16 +517,19 @@ class TestDailyReset:
         s.db.commit()
         assert s.db.query(SoldOutMark).filter(SoldOutMark.source == "auto", SoldOutMark.cleared_at.is_(None)).count() == 0
 
-    def test_a_manual_reset_ends_end_of_day_blocks_and_keeps_the_others(self, s):
+    def test_a_manual_reset_ends_end_of_day_sold_out_of_what_it_reset_only(self, s):
         target = sold_out.resolve_target(s.db, "shop", s.h_shop.id, s.tid)
-        day = sold_out.block(s.db, tenant_id=s.tid, product=s.P, target=target, kind="blocked",
-                             until=datetime.now(timezone.utc) + timedelta(hours=5), until_mode="end_of_day")
-        other = sold_out.block(s.db, tenant_id=s.tid, product=s.Q, target=target)
+        end = datetime.now(timezone.utc) + timedelta(hours=5)
+        day = sold_out.block(s.db, tenant_id=s.tid, product=s.P, target=target, until=end, until_mode="end_of_day")
+        reason = sold_out.block(s.db, tenant_id=s.tid, product=s.P, target=target, kind="blocked", until=end, until_mode="end_of_day")
+        not_reset = sold_out.block(s.db, tenant_id=s.tid, product=s.Q, target=target, until=end, until_mode="end_of_day")
         s.db.commit()
         self._opening(s, s.shop_loc, 5)
         stock_reset.run(s.db, s.shop_loc, tenant_id=s.tid, trigger="manual", user=s.users.admin)
         s.db.commit()
-        assert day.cleared_at is not None and other.cleared_at is None
+        assert day.cleared_at is not None, "P's day is over: its 'אזל' ends"
+        assert reason.cleared_at is None, "a 'חסום' has a reason, not a count"
+        assert not_reset.cleared_at is None, "Q was not reset"
 
     def test_the_till_counts_only_unsynced_sales_after_the_reset(self, s):
         self._opening(s, s.shop_loc, 8)

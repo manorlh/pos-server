@@ -15,6 +15,7 @@ Inventory: a movement ledger and materialized levels, per **stock location** alo
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -31,6 +32,21 @@ from app.models.stock_level import StockLevel
 from app.models.stock_movement import StockMovement, StockMovementReason
 from app.services import stock_locations as L
 from app.services.stock_locations import Location, Path
+
+logger = logging.getLogger(__name__)
+
+
+def _side_effect(db: Session, what: str, fn, default: Any = None) -> Any:
+    """
+    A stock side effect — a late sale into its day's leftover, the automatic "אזל", a low-stock
+    alert — in its own savepoint: it never fails the document (a sale, a refund) that moved the stock.
+    """
+    try:
+        with db.begin_nested():
+            return fn()
+    except Exception:  # noqa: BLE001 - logged; the movement itself stands
+        logger.exception("stock: %s failed", what)
+        return default
 
 
 def utc_now() -> datetime:
@@ -184,16 +200,16 @@ def apply_movement(
     if reason in (StockMovementReason.SALE, StockMovementReason.REFUND) and level.last_reset_at is not None:
         from app.services import stock_reset
 
-        if stock_reset.absorb_late(db, level, movement_id, _dec(delta), occurred_at):
+        if _side_effect(db, "late sale", lambda: stock_reset.absorb_late(db, level, movement_id, _dec(delta), occurred_at), False):
             return True
     tracked = db.query(Product.track_stock).filter(Product.id == global_pid).scalar()
     if tracked:
         if (before > 0) != (after > 0):
-            _on_crossing(db, tenant_id, loc, global_pid, ran_out=after <= 0)
+            _side_effect(db, "auto sold-out", lambda: _on_crossing(db, tenant_id, loc, global_pid, ran_out=after <= 0))
         from app.services import stock_alerts
 
         if L.table_ready(db, "stock_alerts"):
-            stock_alerts.on_change(db, level, before, after)
+            _side_effect(db, "low-stock alert", lambda: stock_alerts.on_change(db, level, before, after))
     return True
 
 

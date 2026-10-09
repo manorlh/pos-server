@@ -579,8 +579,11 @@ def clear_product(
 # ── Automatic: stock reached 0, or came back ─────────────────────────────────
 
 
-def auto_setting_on(db: Session, shop_id: Any, area_id: Any = None) -> bool:
-    """`autoSoldOutAtZero` for the shop (or its point of sale): on unless a layer turns it off."""
+def auto_setting_on(db: Session, shop_id: Any, area_id: Any = None, *, company_id: Any = None) -> bool:
+    """
+    `autoSoldOutAtZero` for the shop (or its point of sale), or — stock held at the company — for the
+    company itself: on unless a layer turns it off.
+    """
     from types import SimpleNamespace
 
     from app.models.tenant import Tenant
@@ -588,7 +591,11 @@ def auto_setting_on(db: Session, shop_id: Any, area_id: Any = None) -> bool:
 
     shop = db.get(Shop, shop_id) if shop_id is not None else None
     if shop is None:
-        return True
+        company = db.get(Company, company_id) if company_id is not None else None
+        if company is None:
+            return True
+        tenant = db.get(Tenant, company.tenant_id) if company.tenant_id else None
+        return rules.auto_on(merge_all_settings_layers(company, None, tenant).get(SETTING_AUTO))
     company = db.get(Company, shop.company_id) if shop.company_id else None
     tenant = db.get(Tenant, shop.tenant_id) if shop.tenant_id else None
     area = db.get(ShopArea, area_id) if area_id is not None else None
@@ -621,9 +628,10 @@ def on_stock_crossing(
     except HTTPException:
         return None
     if ran_out:
-        shop_for_setting = target.shop_id
-        area_for_setting = target.area_id if scope == "area" else None
-        if not auto_setting_on(db, shop_for_setting, area_for_setting):
+        # The layers down to the stock's own place: the company's for company stock, a point of
+        # sale's for its stock and its tills' own.
+        area_for_setting = getattr(target, "area_id", None) if scope in ("area", "machine", "kiosk") else None
+        if not auto_setting_on(db, target.shop_id, area_for_setting, company_id=target.company_id):
             return None
         existing = (
             db.query(SoldOutMark.id)

@@ -105,6 +105,22 @@ def calendar_day(day: date, zone_name: str) -> Tuple[datetime, datetime]:
     return a, b
 
 
+def trading_range(day: date, start: str, end: str, zone_name: str) -> Tuple[datetime, datetime]:
+    """
+    The money a day target counts: the local calendar day, stretched to the trading window's end when
+    the window runs past midnight (a bar open 18:00–02:00 counts its sales up to 02:00 on the next day).
+    """
+    a, b = calendar_day(day, zone_name)
+    return a, max(b, day_window(day, start, end, zone_name)[1])
+
+
+def still_open_from(day: date, start: str, end: str, zone_name: str, now: datetime) -> bool:
+    """`day`'s trading window runs past midnight and has not ended yet (it is still that trading day)."""
+    _a, b = calendar_day(day, zone_name)
+    window_end = day_window(day, start, end, zone_name)[1]
+    return window_end > b and now < window_end
+
+
 def local_today(zone_name: str, now: Optional[datetime] = None) -> date:
     return (now or utc_now()).astimezone(block_durations.zone_of(zone_name)).date()
 
@@ -224,8 +240,9 @@ def progress_of(db: Session, target: SalesTarget, *, now: Optional[datetime] = N
         period_key = str(event.id)
     else:
         day = day or local_today(zone, now)
-        start, end = calendar_day(day, zone)
-        window = day_window(day, target.day_start or DEFAULT_DAY_START, target.day_end or DEFAULT_DAY_END, zone)
+        d_start, d_end = target.day_start or DEFAULT_DAY_START, target.day_end or DEFAULT_DAY_END
+        start, end = trading_range(day, d_start, d_end, zone)
+        window = day_window(day, d_start, d_end, zone)
         period_key = day.isoformat()
     actual = actual_of(db, target, start, end, machine_ids)
     amount = _dec(target.amount)
@@ -284,14 +301,45 @@ def record_hit(db: Session, target: SalesTarget, period_key: str, actual: Decima
     return hit
 
 
-def progress(db: Session, shop_ids: Sequence[Any], *, day: Optional[date] = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+def current_targets(db: Session, shop_ids: Sequence[Any], *, now: Optional[datetime] = None) -> List[Tuple[SalesTarget, Optional[date]]]:
+    """
+    The targets in play now, each with its trading day: today's, except a day target whose
+    yesterday's window runs past midnight and is still open — that one is still yesterday's.
+    """
     now = now or utc_now()
     if not shop_ids:
         return []
     first = db.get(Shop, shop_ids[0])
     zone = _zone_for(db, first.tenant_id) if first is not None else block_durations.DEFAULT_ZONE
-    day = day or local_today(zone, now)
-    out = [progress_of(db, t, now=now, day=day) for t in targets_for(db, shop_ids, day, now=now)]
+    today = local_today(zone, now)
+    yesterday = today - timedelta(days=1)
+
+    def key(t: SalesTarget) -> Tuple[Any, str, Any, Any]:
+        return (t.shop_id, t.scope, t.area_id, t.pos_user_id)
+
+    picked: List[Tuple[SalesTarget, Optional[date]]] = []
+    still_yesterday = set()
+    for t in targets_for(db, shop_ids, yesterday, include_events=False, now=now):
+        if still_open_from(yesterday, t.day_start or DEFAULT_DAY_START, t.day_end or DEFAULT_DAY_END, zone, now):
+            picked.append((t, yesterday))
+            still_yesterday.add(key(t))
+    for t in targets_for(db, shop_ids, today, now=now):
+        if t.period == "day" and key(t) in still_yesterday:
+            continue
+        picked.append((t, today if t.period == "day" else None))
+    return picked
+
+
+def progress(db: Session, shop_ids: Sequence[Any], *, day: Optional[date] = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """Progress now (each target on its trading day), or on a given day."""
+    now = now or utc_now()
+    if not shop_ids:
+        return []
+    if day is not None:
+        pairs = [(t, day) for t in targets_for(db, shop_ids, day, now=now)]
+    else:
+        pairs = current_targets(db, shop_ids, now=now)
+    out = [progress_of(db, t, now=now, day=d) for t, d in pairs]
     order = {"shop": 0, "area": 1, "cashier": 2}
     out.sort(key=lambda r: (r["period"] != "event", order.get(r["scope"], 3), r["label"]))
     return out
@@ -388,8 +436,14 @@ def leaderboard(db: Session, machine: Any, *, metric: str = METRIC_SALES, now: O
     if machine.shop_id is None:
         return {"cashiers": [], "target": None, "metric": metric}
     zone = _zone_for(db, machine.tenant_id)
-    day = local_today(zone, now)
-    start, end = calendar_day(day, zone)
+    # The shop's day target sets the trading day and its range (a window past midnight included).
+    shop_day = next(((t, d) for t, d in current_targets(db, [machine.shop_id], now=now) if t.period == "day" and t.scope == "shop"), None)
+    if shop_day is not None:
+        target, day = shop_day
+        start, end = trading_range(day, target.day_start or DEFAULT_DAY_START, target.day_end or DEFAULT_DAY_END, zone)
+    else:
+        day = local_today(zone, now)
+        start, end = calendar_day(day, zone)
     q = _base_query(db, machine.tenant_id, machine.shop_id, start, end)
     if metric == METRIC_UPSELL:
         rows = (
@@ -408,5 +462,5 @@ def leaderboard(db: Session, machine: Any, *, metric: str = METRIC_SALES, now: O
         {"rank": i + 1, "cashierId": k, "name": _display_name(names.get(k)) or "עובד", "value": float(v)}
         for i, (k, v) in enumerate(ranked)
     ]
-    shop_target = next((p for p in progress(db, [machine.shop_id], day=day, now=now) if p["scope"] == "shop"), None)
+    shop_target = next((p for p in progress(db, [machine.shop_id], now=now) if p["scope"] == "shop" and p["period"] == "day"), None)
     return {"metric": metric, "day": day.isoformat(), "cashiers": cashiers, "target": shop_target}

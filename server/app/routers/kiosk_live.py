@@ -76,6 +76,11 @@ def live_panel(
     kiosks = kiosk_control.list_kiosks(db, current_user, active_tenant_id, company_id=company_id, shop_id=shop_id)
     shop_ids = {k["shopId"] for k in kiosks if k.get("shopId")}
     if shop_id is not None:
+        # A shop with no kiosk yet still shows its quick hides — once the user is known to reach it.
+        shop = db.get(Shop, shop_id)
+        if shop is None:
+            raise HTTPException(status_code=404, detail="Shop not found")
+        kiosk_control.check_shop_scope(db, current_user, shop, active_tenant_id)
         shop_ids.add(str(shop_id))
     hides = svc.active_hides(db, [uuid.UUID(s) for s in shop_ids])
     db.commit()

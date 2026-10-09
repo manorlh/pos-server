@@ -348,7 +348,11 @@ def transfer(
     quantity: Decimal,
     note: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Between two managed locations — up, down or across. The user must cover one side (theirs). The caller commits."""
+    """
+    Between two managed locations — up, down or across. The user must cover both sides; a user
+    scoped to points of sale may also move between theirs and the store directly above them (their
+    shop's or company's location). The caller commits.
+    """
     from app.services import sold_out
 
     product = sold_out.global_product(db, product_id, tenant_id)
@@ -357,11 +361,16 @@ def transfer(
     for loc, p in ((source, s_path), (target, t_path)):
         if loc.level not in L.managed_for(db, p, product):
             raise _bad("not_managed_here", f"ב{LEVEL_LABELS.get(loc.level, loc.level)} הזה לא מנוהל מלאי למוצר")
-    if not (stock_scope.may(db, user, s_path, tenant_id) or stock_scope.may(db, user, t_path, tenant_id)):
-        raise HTTPException(status_code=403, detail="outside_your_points_of_sale")
-    # Both sides in the user's org (a narrowed user may move between their area and the store above it).
+    # Both sides in the user's org first (a 404 / 403 on someone else's shop).
     for p in (s_path, t_path):
         _check_org(db, user, p, tenant_id)
+    s_ok = stock_scope.may(db, user, s_path, tenant_id)
+    t_ok = stock_scope.may(db, user, t_path, tenant_id)
+    if not (s_ok and t_ok):
+        # One side theirs, the other the store right above it: allowed; anything else is not.
+        covered, other = (s_path, target) if s_ok else (t_path, source) if t_ok else (None, None)
+        if covered is None or not _store_above(other, covered):
+            raise HTTPException(status_code=403, detail="outside_your_points_of_sale")
     try:
         transfer_id = stock_service.transfer(
             db, tenant_id=tenant_id, product_id=product.id, quantity=_dec(quantity), source=source, target=target,
@@ -374,6 +383,15 @@ def transfer(
         "from": {**source.out(), "quantity": float(stock_service.quantity_at(db, source, product.id))},
         "to": {**target.out(), "quantity": float(stock_service.quantity_at(db, target, product.id))},
     }
+
+
+def _store_above(loc: Location, path: Path) -> bool:
+    """`loc` is the shop or company location that contains the node at `path`."""
+    if loc.level == "shop":
+        return path.shop_id is not None and str(loc.target_id) == str(path.shop_id)
+    if loc.level == "company":
+        return path.company_id is not None and str(loc.target_id) == str(path.company_id)
+    return False
 
 
 def _check_org(db: Session, user: Any, path: Path, tenant_id: Any) -> None:
@@ -444,15 +462,25 @@ def preview_switch(
     """
     What switching to `levels` means, before anything moves: per product, the locations newly managed
     (they start at 0 unless an opening count or a transfer fills them), and the stock left in
-    locations no longer managed (it must be transferred, or written off explicitly).
+    locations no longer managed (it must be transferred, or written off explicitly). Each product is
+    judged by the rules as they will be — a more specific rule that still wins keeps its levels.
     """
+    return _switch_plan(db, scope_level=scope_level, scope_id=scope_id, item_kind=item_kind, item_id=item_id, levels=levels)["preview"]
+
+
+def _switch_plan(
+    db: Session, *, scope_level: str, scope_id: Any, item_kind: Optional[str], item_id: Any, levels: Sequence[str],
+) -> Dict[str, Any]:
     new_levels = L.normalize_levels(list(levels))
     shops, products = _affected(db, scope_level, scope_id, item_kind, item_id)
     book = L.RuleBook(db, company_ids={s.company_id for s in shops} | ({scope_id} if scope_level == "company" else set()), shop_ids=[s.id for s in shops])
+    after_book = book.with_rule(scope_level, scope_id, item_kind, item_id, new_levels)
     newly: List[Dict[str, Any]] = []
     stranded: List[Dict[str, Any]] = []
     names: Dict[str, Optional[str]] = {}
     seen: Set[Tuple[str, str, str]] = set()
+    #: (product, level, target) a transfer may go to: a location of the scope managed afterwards.
+    destinations: Set[Tuple[str, str, str]] = set()
 
     def note(target: List[Dict[str, Any]], p: Product, loc: Location, qty: Decimal) -> None:
         key = (str(p.id), loc.level, str(loc.target_id))
@@ -472,14 +500,41 @@ def preview_switch(
             locs = [Location("company", scope_id)] + locs
         for p in products:
             old = book.managed(company_id=shop.company_id, shop_id=shop.id, product=p)
+            new = after_book.managed(company_id=shop.company_id, shop_id=shop.id, product=p)
             for loc in locs:
-                row = stock_service.level_at(db, loc, p.id)
-                qty = _dec(row.quantity) if row is not None else Decimal("0")
-                if loc.level in new_levels and loc.level not in old:
-                    note(newly, p, loc, qty)
-                elif loc.level not in new_levels and qty != 0:
-                    note(stranded, p, loc, qty)
-    return {"levels": list(new_levels), "products": len(products), "newlyManaged": newly, "stranded": stranded}
+                if loc.level in new:
+                    destinations.add((str(p.id), loc.level, str(loc.target_id)))
+                if loc.level in new and loc.level not in old:
+                    row = stock_service.level_at(db, loc, p.id)
+                    note(newly, p, loc, _dec(row.quantity) if row is not None else Decimal("0"))
+                elif loc.level in old and loc.level not in new:
+                    row = stock_service.level_at(db, loc, p.id)
+                    qty = _dec(row.quantity) if row is not None else Decimal("0")
+                    if qty != 0:
+                        note(stranded, p, loc, qty)
+    return {
+        "preview": {"levels": list(new_levels), "products": len(products), "newlyManaged": newly, "stranded": stranded},
+        "destinations": destinations,
+    }
+
+
+def _wizard_qty(value: Any, *, positive: bool) -> Decimal:
+    try:
+        q = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        raise _bad("invalid_quantity", "כמות לא תקינה")
+    if not q.is_finite() or q < 0 or (positive and q == 0):
+        raise _bad("invalid_quantity", "כמות לא תקינה")
+    return q
+
+
+def _wizard_node(raw: Any) -> Tuple[str, str]:
+    if not isinstance(raw, dict) or raw.get("level") not in L.LEVELS:
+        raise _bad("invalid_location", "מיקום לא תקין")
+    try:
+        return raw["level"], str(uuid.UUID(str(raw.get("targetId"))))
+    except (TypeError, ValueError):
+        raise _bad("invalid_location", "מיקום לא תקין")
 
 
 def apply_switch(
@@ -502,28 +557,50 @@ def apply_switch(
     that nothing is left in a location no longer managed (409 `stock_left_outside` with the list,
     unless `write_off` — then an explicit adjustment to 0 per location). Newly managed locations
     without an opening or a transfer need `openings_confirmed` (they start at 0). Never moves
-    anything silently. The caller commits (a refusal rolls back).
+    anything silently. Only the plan's own rows are accepted: an opening for a newly managed location
+    of the scope, a transfer out of a location it strands (no more than is there) into one of the
+    scope's locations managed afterwards. The caller commits (a refusal rolls back).
     """
     new_levels = L.normalize_levels(list(levels))
     who = getattr(user, "id", None)
-    preview = preview_switch(db, scope_level=scope_level, scope_id=scope_id, item_kind=item_kind, item_id=item_id, levels=new_levels)
+    plan = _switch_plan(db, scope_level=scope_level, scope_id=scope_id, item_kind=item_kind, item_id=item_id, levels=new_levels)
+    preview = plan["preview"]
+    newly_keys = {(n["productId"], n["location"]["level"], n["location"]["targetId"]) for n in preview["newlyManaged"]}
+    left = {(n["productId"], n["location"]["level"], n["location"]["targetId"]): _dec(n["quantity"]) for n in preview["stranded"]}
     filled: Set[Tuple[str, str, str]] = set()
     for o in openings:
-        loc = Location(o["level"], uuid.UUID(str(o["targetId"])))
+        if not isinstance(o, dict):
+            raise _bad("invalid_opening", "שורת ספירה לא תקינה")
+        level, target = _wizard_node(o)
+        key = (str(o.get("productId")), level, target)
+        if key not in newly_keys:
+            raise _bad("opening_outside_the_switch", "ספירת פתיחה רק למיקומים החדשים של השינוי")
         stock_service.set_quantity(
-            db, tenant_id=tenant_id, shop_id=None, product_id=uuid.UUID(str(o["productId"])),
-            target_quantity=_dec(o["quantity"]), created_by_user_id=who, note="ספירת פתיחה — החלפת אופן ניהול מלאי",
-            location=loc,
+            db, tenant_id=tenant_id, shop_id=None, product_id=uuid.UUID(key[0]),
+            target_quantity=_wizard_qty(o.get("quantity"), positive=False), created_by_user_id=who,
+            note="ספירת פתיחה — החלפת אופן ניהול מלאי", location=Location(level, uuid.UUID(target)),
         )
-        filled.add((str(o["productId"]), loc.level, str(loc.target_id)))
+        filled.add(key)
     for t in transfers:
-        src = Location(t["from"]["level"], uuid.UUID(str(t["from"]["targetId"])))
-        dst = Location(t["to"]["level"], uuid.UUID(str(t["to"]["targetId"])))
+        if not isinstance(t, dict):
+            raise _bad("invalid_transfer", "שורת העברה לא תקינה")
+        product = str(t.get("productId"))
+        src = (product, *_wizard_node(t.get("from")))
+        dst = (product, *_wizard_node(t.get("to")))
+        qty = _wizard_qty(t.get("quantity"), positive=True)
+        if src not in left:
+            raise _bad("transfer_outside_the_switch", "העברה רק ממיקומים שהשינוי מוציא מניהול")
+        if dst not in plan["destinations"]:
+            raise _bad("transfer_outside_the_switch", "העברה רק למיקום מנוהל של אותו היקף")
+        if qty > left[src]:
+            raise _bad("transfer_more_than_there_is", "הועברה כמות גדולה ממה שיש במיקום")
+        left[src] -= qty
         stock_service.transfer(
-            db, tenant_id=tenant_id, product_id=uuid.UUID(str(t["productId"])), quantity=_dec(t["quantity"]),
-            source=src, target=dst, created_by_user_id=who, note="העברה — החלפת אופן ניהול מלאי",
+            db, tenant_id=tenant_id, product_id=uuid.UUID(product), quantity=qty,
+            source=Location(src[1], uuid.UUID(src[2])), target=Location(dst[1], uuid.UUID(dst[2])),
+            created_by_user_id=who, note="העברה — החלפת אופן ניהול מלאי",
         )
-        filled.add((str(t["productId"]), dst.level, str(dst.target_id)))
+        filled.add(dst)
     unfilled = [n for n in preview["newlyManaged"] if (n["productId"], n["location"]["level"], n["location"]["targetId"]) not in filled]
     if unfilled and not openings_confirmed:
         raise HTTPException(status_code=409, detail={
@@ -592,16 +669,17 @@ def set_opening(
     "מלאי פתיחה" per product at a location: opening quantity, daily reset on/off, its mode, and the
     reorder minimum the low-stock alert compares with (a whole number; null: none). The caller commits.
     """
-    from app.services import stock_reset
+    from app.services import sold_out, stock_reset
 
     path = stock_scope.check_location(db, user, loc, tenant_id)
     n = 0
     switched_on = False
     reevaluate: List[StockLevel] = []
     for it in items:
-        product = db.get(Product, uuid.UUID(str(it["productId"])))
-        if product is None:
-            continue
+        if not isinstance(it, dict):
+            raise _bad("invalid_item", "שורה לא תקינה")
+        # The tenant's own product (its catalog row), never another tenant's.
+        product = sold_out.global_product(db, it.get("productId"), tenant_id)
         row = stock_service.level_at(db, loc, product.id)
         if row is None:
             row = StockLevel(
@@ -610,7 +688,7 @@ def set_opening(
             )
             db.add(row)
         if "openingQuantity" in it:
-            row.opening_quantity = None if it["openingQuantity"] is None else _dec(it["openingQuantity"])
+            row.opening_quantity = None if it["openingQuantity"] is None else _wizard_qty(it["openingQuantity"], positive=False)
         if "dailyReset" in it and it["dailyReset"] is not None:
             switched_on = switched_on or (bool(it["dailyReset"]) and not row.daily_reset)
             row.daily_reset = bool(it["dailyReset"])
