@@ -344,7 +344,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/failed-payments", S("reports", "z", "cockpit", level=VIEW)),
     # "תשלום לא מוכרע": reading the commands is the list's; checking on the terminal and the cloud's
     # decision are edits of "דוחות" (the transactions page and its "עסקאות שלא הושלמו").
-    (_GET, "/failed-payments/*", S("reports", "z", "cockpit", level=VIEW)),
+    # A payment's decision commands are the transactions page's, not the cockpit's (it reads the list).
+    (_GET, "/failed-payments/*", S("reports", "z", level=VIEW)),
     (_ALL, "/failed-payments/*", S("reports")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
