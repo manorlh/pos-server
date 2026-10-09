@@ -26,6 +26,14 @@ Branch `feat/live-control` (pos-server + dashboard) and the till's `feat/live-co
       stock_location_defaults();`.
 - [ ] Turn the flag on per environment, then check: the levels wizard, transfers, opening stock and
       the reset worker, the leftover report and low-stock alerts appear and work.
+      Only the server's env changes (`STOCK_LOCATIONS_ENABLED=true`): the dashboard reads
+      `GET /stock/features`, the tills read each product's location (`level`, `targetId`) from their
+      stock sync. `STOCK_RESET_WORKER_ENABLED` stays at its default (on) on at least one instance; it
+      does nothing while the flag is off, and two instances never reset a location twice (#11).
+- [ ] Decide: the insights' stock (low stock, anomalies — `insights/data.py` `load_stock`) sums each
+      shop's locations (shop, points of sale, devices); a product managed only at the **company**
+      level (its rows have no shop) is not counted there. Fine for Saturday if no product is managed
+      at the company level only; otherwise count the company's rows for its shops.
 
 ## `REMOTE_TILL_Z_ENABLED` — remote shift close / Z (off)
 
@@ -33,6 +41,28 @@ Branch `feat/live-control` (pos-server + dashboard) and the till's `feat/live-co
   totals, `wait_for_rest`, never forced); migration `c6d2e8f4a1b7`.
 - Dashboard: "סגירה / Z" per till in "שליטה מרחוק", only while the server says it is on.
 - Till: honours `waitForRest` on `pendingTillZ` / `pendingCloseShift` and the pushes.
+
+### "סגירת יום סניפית" — by the shop's configuration
+
+Server `GET /device-commands/shop-close-preview`, `POST /device-commands/shop-close`,
+`GET|POST /device-commands/shop-close/{run}[/proceed|/cancel]`; migration `d7f3a1c9e5b2`
+(`z_runs.wait_for_rest`). Dashboard: an inline panel at the top of "שליטה מרחוק" (shop scope),
+non-blocking. Each till's request also reads as a device command (`commands`, the shape of
+`device_commands.command_out`). Tests: `tests/test_remote_shop_close.py`.
+
+| Configuration (as set in the system) | From remote control |
+| --- | --- |
+| Every till in the shop Z (`zMode = cloud`), the shop Z produced in the cloud | **Covered.** One action; the existing Z run through the wizard's own path; each till closes at rest; Z numbered strictly next |
+| Mixed (some tills `zMode = till`) | **Covered.** The run takes exactly the shop-Z tills; the others keep their own remote Z and number |
+| Every till with its own Z / independent tills | **Covered.** No shop close ("אין בסניף קופות ב-Z הסניפי"); per-till remote Z with its next number |
+| Kiosks in the shop Z / with their own Z / "close with the shop Z" | **Covered.** In the run when in the shop Z; their own Z otherwise, the setting shown; the run's kiosk hook unchanged |
+| `shopZFrom` = main till only, main till online (not local mode) | **לא זמין עדיין** — shown "יופק בקופה הראשית: …" with why (the dashboard may not start that shop's Z) |
+| `shopZFrom` = main only, main till offline | **Covered** — the existing rule: the dashboard may produce it, so may remote control |
+| Local mode (a main till on the LAN produces the shop Z) | **לא זמין עדיין** — the main till's LAN round closes the tills itself (it parks open baskets), so "never mid-sale" can't be promised from here yet; a till's own shift close in local mode likewise |
+| One till per Z for the business (`zScope = machine`) | **לא זמין עדיין** — the wizard does it till by till |
+| A till offline | Covered: the run waits for it, shown "לא מחובר — ממתין שיתחבר"; "הפק בלי" only where the existing `proceed_without` allows (not under "חובה לסגור את כל הקופות", never in local mode) |
+| A sale open / cancel mid-way | Covered: the till defers (`sale_open`, "ממתין למכירה פתוחה") and is asked again each beat; cancel ends the run, no Z, no number taken; closed shifts go to the next Z with the next number |
+| Shift modes | Shifts are per device; there is no per-cashier shift mode in the system |
 
 ## Saturday — decided at the Friday integration (09.10)
 
