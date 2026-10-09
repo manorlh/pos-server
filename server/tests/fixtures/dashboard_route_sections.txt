@@ -800,6 +800,8 @@ GET /workflow/config -> kds:view
 PUT /workflow/config -> kds:edit
 POST /workflow/config/preview -> kds:view
 GET /z-reports -> z:view
+GET /z-reports/by-date/month -> z:view
+GET /z-reports/by-date/summary -> z:view
 GET /z-reports/print-documents -> z:view
 GET /z-reports/{z_report_id} -> z:view
 GET /z-reports/{z_report_id}/print-document -> z:view
