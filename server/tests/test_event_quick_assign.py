@@ -262,11 +262,32 @@ def test_moving_needs_the_right_to_edit_the_other_event(w):
     with pytest.raises(HTTPException) as e:
         bulk(w, north, move=[t1], add=[w.other_till], by=north_manager)
     assert e.value.status_code == 403 and e.value.detail["code"] == "cannot_edit_other_event"
-    assert e.value.detail["eventName"] == "מרכז"
+    # The Center's event is in a shop the North manager cannot see: it is not named.
+    assert "eventName" not in e.value.detail and "eventId" not in e.value.detail
+    assert "מרכז" not in e.value.detail["message"]
     assert tills_of(w, center) == {t1.id} and tills_of(w, north) == set()
     # Someone who may edit both moves it.
     bulk(w, north, move=[t1], by=w.admin)
     assert tills_of(w, center) == set() and tills_of(w, north) == {t1.id}
+    # The history: the North manager sees the move but not the Center event's name; the admin does.
+    mine = R.get_report_event_till_changes(north.id, current_user=north_manager, active_tenant_id=w.tenant.id, db=w.db)
+    assert [(c["action"], c["otherEventName"], c["otherEventId"]) for c in mine["changes"]] == [("moved_in", None, None)]
+    theirs = R.get_report_event_till_changes(north.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert [(c["action"], c["otherEventName"]) for c in theirs["changes"]] == [("moved_in", "מרכז")]
+
+
+def test_the_history_never_shows_an_email(w):
+    t1, *_ = w.tills
+    # A login named by its email address: never shown.
+    mailer = User(id=uuid.uuid4(), role=UserRole.SUPER_ADMIN, tenant_id=w.tenant.id, email="secret@example.test",
+                  username="secret@example.test")
+    w.db.add(mailer)
+    w.db.commit()
+    event = create(w, "ערב", [t1], by=mailer)
+    bulk(w, event, remove=[t1])                                  # by the admin: shown by username
+    out = R.get_report_event_till_changes(event.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert sorted((c["action"], c["by"] or "") for c in out["changes"]) == [("added", ""), ("removed", "admin")]
+    assert "secret@example.test" not in repr(out) and "a@x" not in repr(out)
 
 
 def test_a_confirmed_event_takes_no_tills(w):
