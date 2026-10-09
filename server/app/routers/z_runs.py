@@ -403,6 +403,7 @@ def create_run_from_body(db: Session, current_user: User, active_tenant_id, body
             confirm_open_tills=body.confirm_open_tills,
             force=body.force,
             wait_for_rest=wait_for_rest,
+            force_reason=body.force_reason,
         )
         if body.confirm_cloud_data:
             _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)

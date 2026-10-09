@@ -150,6 +150,8 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None)
         why = LOCAL_MODE_SHIFT_TEXT
     elif too_old(machine):
         why = TOO_OLD_TEXT
+    elif kind == KIND_TILL_Z and _forced_pending(db, machine):
+        why = FORCED_PENDING_TEXT
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -260,6 +262,16 @@ def too_old(machine: POSMachine) -> bool:
 
     code = till_version_code(getattr(machine, "app_version", None))
     return code is None or code < min_version_code()
+
+
+#: A till Z someone asked "even mid-sale" is still pending: remote control never takes it over.
+FORCED_PENDING_TEXT = "לקופה כבר יש בקשת Z כפויה (גם באמצע מכירה) שממתינה — אי אפשר לבקש ממנה Z מרחוק"
+
+
+def _forced_pending(db: Session, machine: POSMachine) -> bool:
+    from app.services import till_z
+
+    return any(bool(r.force_close) for r in till_z._pending_query(db, machine.id).all())
 
 
 def who(user: Any) -> str:
@@ -539,6 +551,15 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
                 row["needsUpdate"] = True
             row["action"] = {"kind": KIND_CLOSE_SHIFT, "label": "סגירת משמרת", "available": why is None, "whyNot": why}
             in_shop_z.append(row)
+    # What the build takes besides (z_builder, document_filing.shop_leftovers): the shop-Z documents
+    # of tills that make their own Z now — a waiting bucket, late documents — in this shop Z.
+    from app.services.document_filing import shop_leftovers
+
+    leftovers = []
+    for m, extra in shop_leftovers(db, shop.id, exclude=[uuid.UUID(r["machineId"]) for r in in_shop_z]):
+        shop_shift_ids.extend(s.id for s in extra)
+        leftovers.append({"machineId": str(m.id), "name": m.name, "posNumber": m.pos_number, "shifts": len(extra),
+                          "net": _totals_out(compute_totals(db, [s.id for s in extra]))["net"]})
     totals = _totals_out(compute_totals(db, shop_shift_ids))
     live = current_run(db, shop.id)
     run = run_progress(db, live, now=now, user=user) if live is not None else None
@@ -565,6 +586,13 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         why = "סגירת יום של הסניף כבר בתהליך"
     elif not shop_shift_ids:
         why = "אין משמרות שעוד לא נכללו ב-Z הסניפי"
+    guard = _guard_out(db, shop, now=now)
+    unknown = [b for b in guard["blockers"] if b["status"] == "unknown"]
+    # A till the cloud cannot see holds the start (the run itself refuses it): a super admin may
+    # start anyway with a typed reason.
+    force_start = bool(why is None and unknown and _super_admin(user))
+    if why is None and unknown:
+        why = "ממתין לקופות במצב לא ידוע: " + ", ".join(b["name"] or "" for b in unknown)
     raw = "|".join([str(shop.id), ",".join(sorted(str(x) for x in shop_shift_ids)), str(totals["transactions"]),
                     f'{totals["totalSales"]:.2f}', f'{totals["totalRefunds"]:.2f}', str(totals["lastDocument"] or "")])
     return {
@@ -574,13 +602,14 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         "inShopZ": in_shop_z,
         "ownZ": own_z,
         "totals": totals,
+        "leftovers": leftovers,
         "lastShopZNumber": last_shop_z_number(db, shop.id),
         "nextShopZNumber": last_shop_z_number(db, shop.id) + 1,
         "run": run,
         # "חסימת Z כשיש משמרות פתוחות": on here? and which tills hold the Z now (the close waits
         # for every one of them; only a super admin forces past one that never comes back).
-        "shiftGuard": _guard_out(db, shop, now=now),
-        "shopClose": {"label": SHOP_CLOSE_LABEL, "available": why is None, "whyNot": why},
+        "shiftGuard": guard,
+        "shopClose": {"label": SHOP_CLOSE_LABEL, "available": why is None, "whyNot": why, "forceStartAllowed": force_start},
         "totalsKey": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20],
     }
 
@@ -601,6 +630,7 @@ def shop_request(
     totals_key: str,
     confirm_open_tills: bool = False,
     confirm_cloud_data: bool = False,
+    force_reason: Optional[str] = None,
     now: Optional[datetime] = None,
 ):
     """
@@ -613,8 +643,8 @@ def shop_request(
     from app.schemas.z_run import ZRunCreateIn, ZRunMachineIn
     from app.services import z_runs as ZR
 
-    current = shop_preview(db, shop, now=now)
-    if not current["shopClose"]["available"]:
+    current = shop_preview(db, shop, now=now, user=user)
+    if not current["shopClose"]["available"] and not (force_reason and current["shopClose"].get("forceStartAllowed")):
         raise HTTPException(status_code=409, detail={"code": "shop_close_unavailable",
                                                      "message": current["shopClose"]["whyNot"], "preview": current})
     if not totals_key or totals_key != current["totalsKey"]:
@@ -628,5 +658,6 @@ def shop_request(
         machines=[ZRunMachineIn(machineId=uuid.UUID(r["machineId"])) for r in current["inShopZ"]],
         confirmOpenTills=confirm_open_tills,
         confirmCloudData=confirm_cloud_data,
+        forceReason=force_reason,
     )
     return create_run_from_body(db, user, tenant_id, body, wait_for_rest=True)

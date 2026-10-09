@@ -178,7 +178,7 @@ def test_forced_the_z_says_who_and_why_and_the_tills_shifts_go_into_the_next_z(z
     assert left["id"] == str(z.t2.id) and left["forced"] is True and left["forcedReason"] == "המכשיר לא נדלק"
     assert left["confirmedBy"] == "admin (תמיכה)"
     # Audited: one exception with who, why and the tills.
-    (record,) = z.db.query(AuditException).filter(AuditException.exception_type == "shop_z_producer_forced").all()
+    (record,) = z.db.query(AuditException).filter(AuditException.exception_type == G.EXCEPTION_TYPE).all()
     assert record.details["kind"] == "forced_past_open_shifts" and record.details["reason"] == "המכשיר לא נדלק"
     assert record.details["forcedBy"] == "admin" and record.details["tills"][0]["machineId"] == str(z.t2.id)
     assert z.db.get(Shift, s2.id).z_report_id is None  # not lost: waiting

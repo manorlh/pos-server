@@ -241,6 +241,12 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     expire_overdue(db, now=now)
     if live_z_run_item(db, machine.id) is not None or _pending_query(db, machine.id).first() is not None:
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "z_in_progress"})
+    # Remote control's shift close still on its way (`wait_for_rest`, app/services/remote_till_z.py):
+    # the shift it closes was opened under the old mode — no switch until it is answered.
+    from app.services import shift_close_requests as close_requests
+
+    if close_requests._pending_query(db, machine.id).filter_by(wait_for_rest=True).first() is not None:
+        raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "remote_close_pending"})
     count = unreported_closed_count(db, machine.id)
     carried: List[Shift] = []
     if count and not (mode == Z_MODE_CLOUD and _has_reconstructed_unreported(db, machine.id)):

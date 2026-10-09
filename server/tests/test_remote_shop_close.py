@@ -136,7 +136,7 @@ def test_cloud_source_one_action_each_till_at_rest_and_the_next_number(z):
     assert out["totals"]["totalSales"] == 200.0 and out["totals"]["transactions"] == 3
     assert [r["net"] for r in out["inShopZ"]] == [140.0, 60.0]
     assert out["nextShopZNumber"] == before + 1
-    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None}
+    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None, "forceStartAllowed": False}
 
     run = start(z)
     assert run.wait_for_rest is True and run.force_close is False
@@ -440,6 +440,10 @@ def test_a_manager_of_some_points_of_sale_only_is_refused(z, monkeypatch):
 
 
 def test_the_routes_preview_start_and_read_progress(z):
+    from datetime import datetime, timezone
+
+    for t in z.tills:  # the routes read the wall clock: the tills heard just now
+        t.last_heartbeat_at = datetime.now(timezone.utc)
     s = selling(z, z.t1, 1, "10.00")
     out = R.get_shop_close_preview(shop_id=z.shop.id, **_ctx(z))
     run = R.post_shop_close(R.ShopCloseIn(shopId=z.shop.id, totalsKey=out["totalsKey"], confirmCloudData=True), **_ctx(z))

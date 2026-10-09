@@ -213,6 +213,8 @@ class ShopCloseIn(BaseModel):
     #: The wizard's own confirmations, passed on as they are (`shopZOpenTills`, cloud data).
     confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
     confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
+    #: A super admin starting past tills in "מצב לא ידוע" ("חסימת Z כשיש משמרות פתוחות").
+    force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
 
 
 class ShopCloseProceedIn(BaseModel):
@@ -295,6 +297,7 @@ def post_shop_close(
             totals_key=body.totals_key,
             confirm_open_tills=body.confirm_open_tills,
             confirm_cloud_data=body.confirm_cloud_data,
+            force_reason=body.force_reason,
         )
     except HTTPException:
         db.rollback()

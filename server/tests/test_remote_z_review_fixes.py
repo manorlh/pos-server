@@ -283,3 +283,106 @@ def test_cancel_withdraws_the_kiosks_close_with_the_shop_z(z, monkeypatch):
     assert req.state == "cancelled"
     # Never handed to the kiosk again.
     assert kiosk_ops.pending_close_for_kiosk(z.db, z.t2) is None
+
+
+# ── 9. The nits ────────────────────────────────────────────────────────────────
+
+
+def test_a_till_the_cloud_cannot_see_is_unknown_and_holds_the_start_unless_support_forces(z):
+    from app.models.audit_exception import AuditException
+
+    selling(z, z.t1, 1, "10.00")
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=5)  # off since, no shift the cloud knows of
+    z.db.flush()
+    p = svc.shop_preview(z.db, z.shop, now=NOW, user=z.admin)
+    (b,) = [b for b in p["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)]
+    assert b["status"] == "unknown" and b["words"] == "מצב לא ידוע — ייתכן שיש משמרת פתוחה"
+    assert p["shopClose"]["available"] is False and p["shopClose"]["forceStartAllowed"] is True
+    # A manager: no start, and no force.
+    mgr = User(id=uuid.uuid4(), role=UserRole.SHOP_MANAGER, tenant_id=z.tenant.id, email="m@x", username="mgr",
+               shop_id=z.shop.id)
+    z.db.add(mgr)
+    z.db.flush()
+    assert svc.shop_preview(z.db, z.shop, now=NOW, user=mgr)["shopClose"]["forceStartAllowed"] is False
+    with pytest.raises(HTTPException) as e:
+        svc.shop_request(z.db, mgr, z.tenant.id, z.shop, totals_key=p["totalsKey"], confirm_cloud_data=True,
+                         force_reason="לא נדלקת", now=NOW)
+    assert e.value.status_code == 409
+    # The wizard's start: the same rule, at the run itself.
+    with pytest.raises(HTTPException) as e:
+        z_runs_router.post_z_run(ZRunCreateIn(shopId=z.shop.id, machines=[{"machineId": str(z.t1.id)}],
+                                              confirmCloudData=True), **_ctx(z))
+    assert e.value.detail["code"] == G.REFUSED_CODE and e.value.detail["tills"][0]["status"] == "unknown"
+    # Support forces the start with a reason: started, and recorded on its own.
+    run = svc.shop_request(z.db, z.admin, z.tenant.id, z.shop, totals_key=p["totalsKey"], confirm_cloud_data=True,
+                           force_reason="הקופה מושבתת לתיקון", now=NOW)
+    assert isinstance(run, ZRun)
+    (rec,) = z.db.query(AuditException).filter(AuditException.exception_type == G.EXCEPTION_TYPE).all()
+    assert rec.details["kind"] == "forced_start_unknown_tills" and rec.details["reason"] == "הקופה מושבתת לתיקון"
+
+
+def test_the_forced_record_does_not_depend_on_the_tenants_rules(z):
+    from app.models.audit_exception import AuditException, ExceptionRuleValue
+
+    z.db.add(ExceptionRuleValue(id=uuid.uuid4(), tenant_id=z.tenant.id, scope_type="tenant", scope_id=z.tenant.id,
+                                exception_type=G.EXCEPTION_TYPE, enabled=False))
+    s1 = selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    run = start(z)
+    till_closes(z, z.t1, s1)
+    R.post_shop_close_force(run.id, R.ShopCloseForceIn(excludeMachineIds=[z.t2.id], reason="המכשיר לא נדלק"), **_ctx(z))
+    (rec,) = z.db.query(AuditException).filter(AuditException.exception_type == G.EXCEPTION_TYPE).all()
+    assert rec.details["kind"] == "forced_past_open_shifts"
+    from app.services.exception_alerts.catalog import kind_spec
+
+    assert kind_spec(G.EXCEPTION_TYPE).label == "Z סניפי הופק בכפייה בלי קופות שלא נסגרו"
+
+
+def test_one_till_per_z_the_rule_holds_for_the_zs_own_till(z):
+    z.tenant.settings = {**(z.tenant.settings or {}), "zScope": "machine"}
+    selling(z, z.t1, 1, "10.00")
+    z.db.flush()
+    with pytest.raises(HTTPException) as e:
+        z_runs_router.post_z_run(ZRunCreateIn(shopId=z.shop.id, machines=[
+            {"machineId": str(z.t1.id), "includeOpenShift": False}], confirmCloudData=True), **_ctx(z))
+    assert e.value.detail["code"] == "open_tills_block_z"
+
+
+def test_no_z_mode_switch_while_remote_controls_shift_close_is_pending(z):
+    from app.services import till_z
+
+    selling(z, z.t1, 1, "10.00")
+    p = svc.preview(z.db, z.t1, now=NOW)
+    svc.request(z.db, z.admin, z.t1, totals_key=p["totalsKey"], now=NOW)
+    with pytest.raises(till_z.TillZRefused) as e:
+        till_z.set_z_mode(z.db, z.t1, "till", now=NOW)
+    assert e.value.body["detail"] == "remote_close_pending"
+
+
+def test_a_forced_till_z_request_is_never_handed_to_remote_control(z):
+    from app.services import till_z
+
+    z.t1.z_mode = "till"
+    selling(z, z.t1, 1, "10.00")
+    z.db.flush()
+    monkeypatched = []
+    till_z.request_for_machine(z.db, z.admin, z.t1, force=True, now=NOW)
+    p = svc.preview(z.db, z.t1, now=NOW)
+    assert p["canRequest"] is False and p["whyNot"] == svc.FORCED_PENDING_TEXT
+    with pytest.raises(HTTPException):
+        svc.request(z.db, z.admin, z.t1, totals_key=p["totalsKey"], now=NOW)
+    assert monkeypatched == []
+
+
+def test_the_preview_counts_what_the_build_takes_besides(z, monkeypatch):
+    from app.services import document_filing
+
+    selling(z, z.t1, 1, "10.00")
+    other = selling(z, z.t2, 1, "25.00")
+    z.t2.z_mode = "till"
+    z.db.flush()
+    monkeypatch.setattr(document_filing, "shop_leftovers", lambda db, shop_id, exclude=(), lock=False: [(z.t2, [other])])
+    p = preview(z)
+    assert p["leftovers"] == [{"machineId": str(z.t2.id), "name": z.t2.name, "posNumber": z.t2.pos_number,
+                               "shifts": 1, "net": 25.0}]
+    assert p["totals"]["totalSales"] == 35.0

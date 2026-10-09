@@ -124,6 +124,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
     # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
     RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    # A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
+    # closed (app/services/z_shift_guard.py). Always recorded — the tenant's rules never switch it off.
+    RuleSpec("z_forced_open_shifts", True, (), "high", "z"),
     # A shop Z the main till printed in local mode that does not verify against the cloud's
     # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
     # §8.12): every document its tills' manifests name has arrived, and the same computation

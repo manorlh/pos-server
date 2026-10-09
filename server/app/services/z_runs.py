@@ -711,6 +711,7 @@ def create_z_run(
     strict_cloud_check: bool = False,
     force: bool = False,
     wait_for_rest: bool = False,
+    force_reason: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
@@ -831,7 +832,29 @@ def create_z_run(
     refuse_z_with_open_tables(db, shop, area.id if area is not None else None)
 
     by_id = {sel.machine_id: sel for sel in selections}
+    # "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): a till the cloud cannot see is
+    # never taken as closed — the start waits for it, or a super admin forces with a reason.
+    from app.services import z_shift_guard
+
+    guard_on = z_shift_guard.required(db, shop, area_id=area.id if area is not None else None)
+    unknown: List[dict] = []
+    forced_start = None
+    if guard_on:
+        scoped = [
+            m for m in tills.values()
+            if m.id not in own_z and is_seated_in(m, shop.id) and (area is None or str(m.area_id) == str(area.id))
+        ]
+        unknown = z_shift_guard.unknown_at_start(db, shop, scoped, now=now)
+        forced_start = z_shift_guard.refuse_or_force_start(db, shop, user, unknown, force_reason)
     left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
+    if guard_on and z_scope_of(tenant) == Z_SCOPE_MACHINE:
+        # One till per Z: the rule holds for the Z's own till — never started leaving its shift open.
+        mine = [t for t in left_out if t.machine.id in by_id]
+        if mine:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "open_tills_block_z", "tills": [t.to_json() for t in mine]},
+            )
     record_left_out = check_open_tills(
         db, tenant, shop, left_out, confirmed=confirm_open_tills, area_id=area.id if area is not None else None
     )
@@ -929,6 +952,8 @@ def create_z_run(
             kiosk_ops.on_cloud_z_run(db, run, now=now)
     except Exception:  # noqa: BLE001
         logger.exception("kiosk close with the shop Z failed for run %s", getattr(run, "id", None))
+    if forced_start:
+        z_shift_guard.record_forced_start(db, run, user, unknown, forced_start, now=now)
     finalise_if_ready(db, run, now=now)
     return run
 

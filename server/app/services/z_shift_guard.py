@@ -62,7 +62,10 @@ PARAMETER_SPECS = (
 #: A blocking till's status, in the owner's words.
 STATUS_OPEN = "open_shift"
 STATUS_PENDING = "pending_acceptance"
-STATUS_WORDS = {STATUS_OPEN: "משמרת פתוחה", STATUS_PENDING: "ממתין לקבלה"}
+#: Offline with no shift the cloud knows of: it may have opened one the cloud never saw.
+STATUS_UNKNOWN = "unknown"
+UNKNOWN_WORDS = "מצב לא ידוע — ייתכן שיש משמרת פתוחה"
+STATUS_WORDS = {STATUS_OPEN: "משמרת פתוחה", STATUS_PENDING: "ממתין לקבלה", STATUS_UNKNOWN: UNKNOWN_WORDS}
 OFFLINE_WORD = "מנותקת"
 
 REFUSED_CODE = "z_requires_all_shifts_closed"
@@ -154,10 +157,15 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
         state = STATUS_OPEN
     elif cand.closed and pending_docs:
         state = STATUS_PENDING
+    online = is_online(machine.last_heartbeat_at, now=now)
+    if state is None and seated and not online:
+        state = STATUS_UNKNOWN  # never "closed" for a till the cloud cannot see
     if state is None:
         return None
-    online = is_online(machine.last_heartbeat_at, now=now)
     words = STATUS_WORDS[state]
+    if state == STATUS_UNKNOWN:
+        return {"machineId": str(machine.id), "name": machine.name, "posNumber": machine.pos_number,
+                "status": state, "online": online, "words": words}
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -187,6 +195,62 @@ def shop_blockers(db: Session, shop: Any, *, area_id: Any = None, now: Optional[
     own = ZR.per_till_ids(db, tills, tenant, shop)
     scoped = [m for m in tills if m.id not in own and (area_id is None or str(m.area_id) == str(area_id))]
     return blockers(db, shop, scoped, now=now)
+
+
+def unknown_at_start(db: Session, shop: Any, tills: Iterable[POSMachine], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """The tills a Z start would take as "closed" that the cloud cannot see (STATUS_UNKNOWN)."""
+    out = []
+    for m in tills:
+        found = till_status(db, m, shop.id, now=now)
+        if found is not None and found["status"] == STATUS_UNKNOWN:
+            out.append(found)
+    return out
+
+
+def refuse_or_force_start(db: Session, shop: Any, user: Any, unknown: List[Dict[str, Any]], force_reason: Optional[str]) -> Optional[str]:
+    """
+    At a Z's start, with the rule on: a till in "מצב לא ידוע" holds it (409) — unless a super
+    admin forces with a typed reason (returned, to be recorded once the run exists).
+    """
+    if not unknown:
+        return None
+    if force_reason is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "code": REFUSED_CODE,
+            "message": (
+                f"בסניף מופעל \"{LABEL}\": מצב הקופות הבאות לא ידוע (לא מחוברות) וייתכן שיש בהן משמרת "
+                "פתוחה — חברו אותן, או פנו לתמיכה (סופר אדמין) לכפיית הפקה."
+            ),
+            "tills": unknown,
+            "canForce": True,
+        })
+    return check_force(user, force_reason)
+
+
+def record_forced_start(db: Session, run: Any, user: Any, unknown: List[Dict[str, Any]], reason: str,
+                        *, now: Optional[datetime] = None) -> None:
+    from app.services.exceptions import Detector, Found
+
+    now = now or datetime.now(timezone.utc)
+    who = getattr(user, "username", None) or getattr(user, "email", None) or str(getattr(user, "id", ""))
+    machine = db.get(POSMachine, uuid.UUID(unknown[0]["machineId"])) if unknown else None
+    if machine is None:
+        return
+    Detector(db)._record(machine, Found(
+        type=EXCEPTION_TYPE,
+        key=f"z_forced_open_shifts:start:{run.id}",
+        occurred_at=now,
+        details={
+            "kind": "forced_start_unknown_tills",
+            "runId": str(run.id),
+            "shopId": str(run.shop_id),
+            "tills": unknown,
+            "reason": reason,
+            "forcedBy": who,
+            "summary": f"Z סניפי הותחל בכפייה ע״י {who} בלי {len(unknown)} קופות במצב לא ידוע (\"{LABEL}\"): {reason}",
+        },
+    ))
+    logger.warning("shop Z run %s started past unknown tills by %s: %s", run.id, who, reason)
 
 
 # ── The super admin's force ───────────────────────────────────────────────────
@@ -242,8 +306,12 @@ def force_without(db: Session, run: Any, user: Any, exclude_machine_ids: Iterabl
     return run
 
 
+#: Its own record ("Z סניפי הופק בכפייה בלי קופות שלא נסגרו"), never switched off by a tenant's rules.
+EXCEPTION_TYPE = "z_forced_open_shifts"
+
+
 def _record(db: Session, run: Any, leaving: List[Any], who: str, reason: str, now: datetime) -> None:
-    from app.services.local_shop_z import FORCED_EXCEPTION, _record_safely
+    from app.services.exceptions import Detector, Found
 
     machine = next((i.machine for i in leaving if i.machine is not None), None)
     if machine is None:
@@ -253,9 +321,9 @@ def _record(db: Session, run: Any, leaving: List[Any], who: str, reason: str, no
          "posNumber": i.machine.pos_number if i.machine else None, "status": i.status, "errorCode": i.error_code}
         for i in leaving
     ]
-    _record_safely(
-        db, machine,
-        exception_type=FORCED_EXCEPTION,
+    detector = Detector(db)
+    detector._record(machine, Found(
+        type=EXCEPTION_TYPE,
         key=f"z_forced_open_shifts:{run.id}",
         occurred_at=now,
         details={
@@ -271,4 +339,4 @@ def _record(db: Session, run: Any, leaving: List[Any], who: str, reason: str, no
                 f"(\"{LABEL}\"): {reason}"
             ),
         },
-    )
+    ))
