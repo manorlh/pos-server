@@ -9,5 +9,4 @@ export { QuickPromoSheet, type PromoMode, type QuickPromoSheetProps } from './qu
 export { useAnomalyItems, useAnomalyFeed, type AttentionItem } from './use-anomaly-items';
 export { useActionSheets, type SheetKind } from './action-host';
 export { BoardInsightsBlock } from './board-block';
-export { BoardTabs, type BoardTab } from './board-tabs';
 export type { ActionContext, ActionScope, ActionSheetProps, AttentionAction } from '@/lib/insightsActions';

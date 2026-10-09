@@ -74,7 +74,8 @@ import { RecentActions } from '@/components/dashboard/insights-actions/recent-ac
 import { ProductQuickActions, ResultChip, useLatestActionByProduct } from '@/components/dashboard/insights-actions/quick-action-buttons';
 import { useCanAct } from '@/components/dashboard/insights-actions/sheet-parts';
 import { useActionSheets } from '@/components/dashboard/insights-actions/action-host';
-import { BoardTabs } from '@/components/dashboard/insights-actions/board-tabs';
+import { HomeTabs } from '@/components/dashboard/control-board/home-tabs';
+import { useHomeAccess } from '@/components/dashboard/control-board/use-home-access';
 
 const AUTO_REFRESH_MS = 5 * 60_000;
 const COST_EDITORS = new Set(['super_admin', 'distributor', 'company_manager']);
@@ -129,6 +130,8 @@ export default function InsightsPage() {
   const t = useTranslations('insights');
   const role = useAuth((s) => s.user?.role);
   const canEditCosts = !!role && COST_EDITORS.has(role);
+  // "לוח בקרה | השוואות | תובנות": the home page's control, its segments gated the same way.
+  const { compareAllowed, insightsAllowed } = useHomeAccess();
 
   const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
   const [range, setRange] = useState<Range>('28');
@@ -253,8 +256,8 @@ export default function InsightsPage() {
 
   return (
     <InsightsSurface>
-      {/* "לוח בקרה | השוואות | תובנות" */}
-      <BoardTabs active="insights" className="mb-4 max-w-md" />
+      {/* "לוח בקרה | השוואות | תובנות" — the same control as the home page's */}
+      <HomeTabs view="insights" canCompare={compareAllowed} canInsights={insightsAllowed} className="mb-4" />
       {/* Large title */}
       <div className="flex items-end justify-between gap-3 px-1">
         <div className="min-w-0">
