@@ -430,7 +430,7 @@ def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optiona
     """
     if voucher is None or not tables_ready(db):
         return []
-    now = now or _now()
+    now = _utc(now) or _now()  # a device's time may come without a zone: UTC, as the cloud stores it
     batch = voucher.batch
     if machine is not None and not isinstance(machine, POSMachine):
         machine = db.query(POSMachine).filter(POSMachine.id == ACC.as_uuid(machine)).first()
