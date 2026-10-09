@@ -9,17 +9,22 @@ and scrubbing twice changes nothing (idempotent).
 The rules, applied in this order over the whole text:
 
 1. **track2** — `;`? 13–19 digits, `=` or `D`, 4+ digits, an optional `F` pad and `?` → `***`.
-2. **Secrets** — the value of any key whose name contains `token`, `secret`, `password`,
-   `passwd`, `pin`, `cvv`, `authorization`, `api_key`, `apikey` or `terminal_password` (any
-   case; `key=v`, `key: v`, `"key":"v"`, `\\"key\\":\\"v\\"`, `key='v'`) → `***`, its quotes kept
-   (an unterminated quote runs to the end of the line). The key is the whole run of
-   `[A-Za-z0-9_.-]` before the separator. A bare value runs to whitespace or one of
-   `,;&"'(){}[]<>\\`; an auth scheme before it (`Bearer` / `Basic` / `Token` + spaces) is part
-   of the value.
+2. **Secrets** — `key=v`, `key: v`, `"key":"v"`, `\\"key\\":\\"v\\"`, `key='v'`: the value of a
+   secret key → `***`, its quotes kept (an unterminated quote runs to the end of the line). The
+   key is the whole run of `[A-Za-z0-9_.-]` before the separator. It is secret when, split into
+   tokens (at `_`, `-`, `.`, camelCase — `managerPin`, `APIKey` — and letter/digit boundaries —
+   `cvv2`), lower-cased, a token is one of `SECRET_TOKENS` or two tokens in a row are `api`,
+   `key`; or when the whole key (lower-cased) is one of `SECRET_FULL_NAMES`. By token, never by
+   substring: `pinpadHost`, `mapping`, `typing`, `shipping` stay visible. A key that is not secret
+   hides nothing, and the search goes on right after it (its value is read as text again). A bare
+   value runs to whitespace or one of `,;&"'(){}[]<>\\`; an auth scheme before it (`Bearer` /
+   `Basic` / `Token` + spaces) is part of the value.
 3. **Bearer** — `Bearer <token>` anywhere else → `Bearer ***`.
 4. **Card numbers** — a run of digit groups separated by single spaces or dashes; inside it, the
-   leftmost, then longest, window of whole groups with 13–19 digits that passes Luhn →
-   `************` + its last 4 digits (then on after that window).
+   leftmost, then longest, window of whole groups whose digits are a card → `************` + its
+   last 4 digits (then on after that window). A card (`pan_ok`): Luhn, and by length — 13 digits
+   starting with 4; 14 starting with 30, 36 or 38; 15 starting with 34 or 37; 16–19 any. (An
+   epoch in milliseconds — 13 digits starting with 1 — is never a card.)
 5. **Israeli mobiles** — `05X-XXXXXXX` (also `+972` / `00972` / `972`, spaces or dashes) →
    `05X-***-XX` + the last 2 digits.
 6. **Emails** — `a***@domain`: the first character of the local part, `***`, the domain.
@@ -42,19 +47,26 @@ CARD_MASK = "*" * 12
 
 _FLAGS = re.ASCII | re.IGNORECASE
 
-#: Any key containing one of these words (case-insensitive) has its value hidden.
-SECRET_KEY_WORDS = (
-    "token", "secret", "password", "passwd", "pin", "cvv", "authorization", "api_key", "apikey",
+#: A key with one of these tokens (lower-cased) is secret.
+SECRET_TOKENS = frozenset({
+    "pin", "pincode", "password", "passwd", "secret", "token", "cvv", "authorization", "apikey",
+})
+#: Two tokens in a row that make a key secret (`api_key`, `apiKey`, `x-api-key`).
+SECRET_TOKEN_PAIRS = frozenset({("api", "key")})
+#: A whole key (lower-cased) that is secret as written.
+SECRET_FULL_NAMES = frozenset({
+    "token", "secret", "password", "passwd", "pin", "pincode", "cvv", "authorization", "api_key", "apikey",
     "terminal_password",
-)
+})
 
 _TRACK2 = re.compile(r"(?<![0-9]);?[0-9]{13,19}[=D][0-9]{4,}F?\??", _FLAGS)
 
 _KEY = r"[A-Za-z0-9_.\-]"
-_WORDS = "|".join(re.escape(w) for w in SECRET_KEY_WORDS)
 _BARE = r"[^ \t\r\n\x0B\f,;&\"'(){}\[\]<>\\]"
+#: A key-value candidate. The lookahead only skips keys that cannot be secret (every secret key
+#: contains one of these letters); `is_secret_key` decides.
 _SECRET_KV = re.compile(
-    rf"(?<!{_KEY})(?={_KEY}*?(?:{_WORDS}))(?P<key>{_KEY}+)"
+    rf"(?<!{_KEY})(?={_KEY}*?(?:pin|passw|secret|token|cvv|authorization|api))(?P<key>{_KEY}+)"
     r"(?P<close>\\?[\"']?)"
     r"(?P<sep>[ \t]*[:=][ \t]*)"
     r"(?P<val>"
@@ -64,6 +76,16 @@ _SECRET_KV = re.compile(
     rf"|(?:(?:bearer|basic|token)[ \t]+)?{_BARE}+"  # v, with its auth scheme
     r")",
     _FLAGS,
+)
+#: Where a key splits into tokens: `_` `-` `.`, camelCase (`aB`, `1B`, the end of an acronym
+#: `ABc`), and letter/digit boundaries. Case-sensitive on purpose.
+_KEY_SPLIT = re.compile(
+    r"[_.\-]+"
+    r"|(?<=[a-z0-9])(?=[A-Z])"
+    r"|(?<=[A-Z])(?=[A-Z][a-z])"
+    r"|(?<=[A-Za-z])(?=[0-9])"
+    r"|(?<=[0-9])(?=[A-Za-z])",
+    re.ASCII,
 )
 _BEARER = re.compile(r"(?<![A-Za-z0-9_])(?P<word>bearer[ \t]+)[A-Za-z0-9\-._~+/]+=*", _FLAGS)
 
@@ -91,6 +113,35 @@ def luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
+def pan_ok(digits: str) -> bool:
+    """A card number: by length and prefix (13: 4; 14: 30/36/38; 15: 34/37; 16–19: any), and Luhn."""
+    n = len(digits)
+    if n == 13:
+        fits = digits.startswith("4")
+    elif n == 14:
+        fits = digits[:2] in ("30", "36", "38")
+    elif n == 15:
+        fits = digits[:2] in ("34", "37")
+    else:
+        fits = 16 <= n <= 19
+    return fits and luhn_ok(digits)
+
+
+def key_tokens(key: str) -> List[str]:
+    """`managerPin` → ["manager", "pin"]; `X-API-Key` → ["x", "api", "key"]; `cvv2` → ["cvv", "2"]."""
+    return [t.lower() for t in _KEY_SPLIT.split(key) if t]
+
+
+def is_secret_key(key: str) -> bool:
+    """Rule 2's test of a key name: by token (or the whole name), never by substring."""
+    if key.lower() in SECRET_FULL_NAMES:
+        return True
+    tokens = key_tokens(key)
+    if any(t in SECRET_TOKENS for t in tokens):
+        return True
+    return any(pair in SECRET_TOKEN_PAIRS for pair in zip(tokens, tokens[1:]))
+
+
 def _secret_value(m: "re.Match[str]") -> str:
     val = m.group("val")
     if val.startswith('\\"'):
@@ -100,6 +151,24 @@ def _secret_value(m: "re.Match[str]") -> str:
     else:
         hidden = MASK
     return m.group("key") + m.group("close") + m.group("sep") + hidden
+
+
+def mask_secrets(text: str) -> str:
+    """Rule 2 alone. A key that is not secret is passed over; the search goes on right after it."""
+    out: List[str] = []
+    last = pos = 0
+    while True:
+        m = _SECRET_KV.search(text, pos)
+        if m is None:
+            break
+        if is_secret_key(m.group("key")):
+            out.append(text[last:m.start()])
+            out.append(_secret_value(m))
+            last = pos = m.end()
+        else:
+            pos = m.end("key")
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _card_windows(groups: List[str]) -> List[Tuple[int, int]]:
@@ -115,7 +184,7 @@ def _card_windows(groups: List[str]) -> List[Tuple[int, int]]:
                 break
             if total >= 13:
                 ends.append(j)
-        found = next((j for j in reversed(ends) if luhn_ok("".join(groups[i:j + 1]))), None)
+        found = next((j for j in reversed(ends) if pan_ok("".join(groups[i:j + 1]))), None)
         if found is None:
             i += 1
         else:
@@ -155,7 +224,7 @@ def scrub(text: Optional[str]) -> Optional[str]:
     if text is None:
         return None
     out = _TRACK2.sub(MASK, text)
-    out = _SECRET_KV.sub(_secret_value, out)
+    out = mask_secrets(out)
     out = _BEARER.sub(lambda m: m.group("word") + MASK, out)
     out = mask_cards(out)
     out = _PHONE.sub(lambda m: "0" + m.group("pre") + "-" + MASK + "-XX" + m.group("last"), out)
@@ -163,4 +232,7 @@ def scrub(text: Optional[str]) -> Optional[str]:
     return out
 
 
-__all__ = ["scrub", "luhn_ok", "mask_cards", "MASK", "CARD_MASK", "SECRET_KEY_WORDS"]
+__all__ = [
+    "scrub", "luhn_ok", "pan_ok", "key_tokens", "is_secret_key", "mask_secrets", "mask_cards",
+    "MASK", "CARD_MASK", "SECRET_TOKENS", "SECRET_TOKEN_PAIRS", "SECRET_FULL_NAMES",
+]

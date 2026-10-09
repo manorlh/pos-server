@@ -1,11 +1,11 @@
 {
   "description": "שליחת לוגים לענן §4 — golden cases of the scrubber. pos-server app/services/log_scrub.py and pos-android mirror it; this file is the same bytes in both repos. For every case: scrub(input) == expected and scrub(expected) == expected.",
-  "version": 1,
+  "version": 2,
   "rules": [
     "1 track2: ;? 13-19 digits, = or D, 4+ digits, optional F and ? -> ***",
-    "2 secrets: the value of a key (the whole run of [A-Za-z0-9_.-] before [ \\t]*[:=][ \\t]*) containing token|secret|password|passwd|pin|cvv|authorization|api_key|apikey|terminal_password (ASCII case-insensitive) -> *** (quotes kept; an unterminated quote runs to the end of the line; a bare value runs to whitespace or one of ,;&\"'(){}[]<>\\ and includes a Bearer/Basic/Token scheme)",
+    "2 secrets: the value of a key (the whole run of [A-Za-z0-9_.-] before [ \\t]*[:=][ \\t]*) -> *** (quotes kept; an unterminated quote runs to the end of the line; a bare value runs to whitespace or one of ,;&\"'(){}[]<>\\ and includes a Bearer/Basic/Token scheme) when the key is secret: split at _ - . and camelCase (aB, 1B, the end of an acronym ABc) and letter/digit boundaries, lower-cased, a token is one of pin|pincode|password|passwd|secret|token|cvv|authorization|apikey, or two tokens in a row are api,key; or the whole key lower-cased is one of token|secret|password|passwd|pin|pincode|cvv|authorization|api_key|apikey|terminal_password. By token, never by substring (pinpadHost, mapping stay). A key that is not secret hides nothing and the search goes on right after it",
     "3 Bearer <token> -> Bearer ***",
-    "4 cards: digit groups separated by single spaces or dashes; the leftmost, then longest, window of whole groups with 13-19 digits passing Luhn -> ************ + last 4",
+    "4 cards: digit groups separated by single spaces or dashes; the leftmost, then longest, window of whole groups that is a card -> ************ + last 4. A card: Luhn, and 13 digits starting with 4; 14 starting with 30|36|38; 15 starting with 34|37; 16-19 any",
     "5 Israeli mobiles: (+972|00972|972|0)[ -]?5X[ -]?XXX[ -]?XX[ -]?XX -> 05X-***-XX + last 2",
     "6 emails: first character + *** + @domain"
   ],
@@ -86,9 +86,34 @@
       "expected": "ts=1760000000000"
     },
     {
-      "name": "epoch_ms_luhn_passes_masked",
+      "name": "epoch_ms_luhn_valid_kept",
       "input": "ts=1760000000008",
-      "expected": "ts=************0008"
+      "expected": "ts=1760000000008"
+    },
+    {
+      "name": "epoch_ms_kept",
+      "input": "from_ms 1760000000000 to_ms 1760003600000",
+      "expected": "from_ms 1760000000000 to_ms 1760003600000"
+    },
+    {
+      "name": "card_13_not_starting_with_4_kept",
+      "input": "ref 5123456789010",
+      "expected": "ref 5123456789010"
+    },
+    {
+      "name": "card_14_diners_masked",
+      "input": "diners 3056 930902 5904",
+      "expected": "diners ************5904"
+    },
+    {
+      "name": "card_14_other_prefix_kept",
+      "input": "ref 12345678901237",
+      "expected": "ref 12345678901237"
+    },
+    {
+      "name": "card_15_not_amex_prefix_kept",
+      "input": "ref 412345678901233",
+      "expected": "ref 412345678901233"
     },
     {
       "name": "track2_sentinels",
@@ -166,9 +191,44 @@
       "expected": "passwd=*** APIKEY=*** access_token=***"
     },
     {
-      "name": "kv_pin_substring_is_a_key_word",
-      "input": "pinpadHost=10.0.0.5 mapping=ok",
-      "expected": "pinpadHost=*** mapping=***"
+      "name": "kv_pinpad_host_stays",
+      "input": "pinpadHost=192.168.0.10",
+      "expected": "pinpadHost=192.168.0.10"
+    },
+    {
+      "name": "kv_mapping_stays",
+      "input": "mapping=x",
+      "expected": "mapping=x"
+    },
+    {
+      "name": "kv_typing_shipping_spinner_stay",
+      "input": "typing=fast shipping: 2 days spinner=on",
+      "expected": "typing=fast shipping: 2 days spinner=on"
+    },
+    {
+      "name": "kv_manager_pin",
+      "input": "managerPin=1234",
+      "expected": "managerPin=***"
+    },
+    {
+      "name": "kv_pin_variants",
+      "input": "pin=11 userPin=22 pin_code=33 PIN=44 pincode=55 PINCode=66 pin-code: 77",
+      "expected": "pin=*** userPin=*** pin_code=*** PIN=*** pincode=*** PINCode=*** pin-code: ***"
+    },
+    {
+      "name": "kv_api_key_variants",
+      "input": "x-api-key: k1 X-API-Key=k2 apiKey=k3 api.key=k4 APIKEY=k5",
+      "expected": "x-api-key: *** X-API-Key=*** apiKey=*** api.key=*** APIKEY=***"
+    },
+    {
+      "name": "kv_token_is_a_whole_token",
+      "input": "access_token=t1 refreshToken=t2 tokenizer=bpe",
+      "expected": "access_token=*** refreshToken=*** tokenizer=bpe"
+    },
+    {
+      "name": "kv_secret_inside_a_plain_keys_value",
+      "input": "mapping=token=abc",
+      "expected": "mapping=token=***"
     },
     {
       "name": "kv_unterminated_quote",
