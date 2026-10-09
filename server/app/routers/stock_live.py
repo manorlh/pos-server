@@ -378,7 +378,7 @@ def post_reset(
     stock_scope.check_location(db, current_user, loc, active_tenant_id)
     reset = stock_reset.run(db, loc, tenant_id=active_tenant_id, trigger="manual", user=current_user)
     if reset is None:
-        raise HTTPException(status_code=409, detail={"code": "already_running", "message": "איפוס כבר רץ עכשיו"})
+        raise HTTPException(status_code=409, detail={"code": "already_reset_today", "message": "כבר בוצע איפוס ליום העסקים הזה"})
     db.commit()
     return {"id": str(reset.id), "items": reset.items, "businessDay": reset.business_day.isoformat()}
 

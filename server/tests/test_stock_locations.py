@@ -598,6 +598,23 @@ class TestDailyReset:
         assert stock_reset.run_due(s.db) == 0, "today counts as done"
         assert _qty(s, s.shop_loc) == 3
 
+    def test_one_reset_per_business_day_scheduled_or_manual(self, s):
+        _set(s, s.shop_loc, 3)
+        self._opening(s, s.shop_loc, 20)  # today marked done: the schedule starts tomorrow
+        first = stock_reset.run(s.db, s.shop_loc, tenant_id=s.tid, trigger="manual", user=s.users.admin)
+        s.db.commit()
+        assert first is not None, "a manual run replaces the switched-on marker"
+        _sell(s, s.h1, "5")
+        # A second run the same business day — a double click, or the schedule — would wipe the
+        # leftover: it never happens.
+        assert stock_reset.run(s.db, s.shop_loc, tenant_id=s.tid, trigger="manual", user=s.users.admin) is None
+        assert stock_reset.run(s.db, s.shop_loc, tenant_id=s.tid, trigger="schedule") is None
+        s.db.commit()
+        assert _qty(s, s.shop_loc) == 15
+        with pytest.raises(HTTPException) as again:
+            R.post_reset(R.NodeIn(level="shop", targetId=s.h_shop.id), current_user=s.users.admin, active_tenant_id=s.tid, db=s.db)
+        assert again.value.status_code == 409 and again.value.detail["code"] == "already_reset_today"
+
     def test_set_mode_and_the_leftover_report(self, s):
         _set(s, s.shop_loc, 3)
         self._opening(s, s.shop_loc, 20)

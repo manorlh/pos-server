@@ -107,8 +107,9 @@ def clock_for(db: Session, loc: Location) -> Clock:
 
 
 def run_key(loc: Location, day: date, manual_at: Optional[datetime] = None) -> str:
-    base = f"{loc.level}:{loc.target_id}:{day.isoformat()}"
-    return f"{base}:manual:{_aware(manual_at).isoformat()}" if manual_at is not None else base
+    """One reset per location per business day — the scheduled one or "בצע איפוס עכשיו", never both
+    (a second would wipe the first's leftover). `manual_at` is ignored (kept for old callers)."""
+    return f"{loc.level}:{loc.target_id}:{day.isoformat()}"
 
 
 # ── The run ──────────────────────────────────────────────────────────────────
@@ -174,7 +175,11 @@ def run(
     now = now or utc_now()
     clock = clock_for(db, loc)
     day, _start = business_day(now, clock)
-    key = run_key(loc, day, now if trigger == "manual" else None)
+    key = run_key(loc, day)
+    if trigger == "manual":
+        # Switching the daily reset on marks today as done (it starts tomorrow): a manual run the
+        # same day replaces that marker, never a real run.
+        db.query(StockReset).filter(StockReset.run_key == key, StockReset.trigger == "enabled").delete(synchronize_session=False)
     path = _safe_path(db, loc)
     reset = StockReset(
         id=uuid.uuid4(), tenant_id=tenant_id, company_id=path.company_id, shop_id=path.shop_id,
