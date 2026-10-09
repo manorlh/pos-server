@@ -182,6 +182,9 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
         machine = main_till_of_shop(db, shop) if shop else None
         if machine is None:
             raise PV._http(status.HTTP_409_CONFLICT, NO_MAIN_TILL)
+    from app.services.prepaid_voucher_controls import offline_assign_check  # §18 hook (helper): test / paused
+
+    offline_assign_check(db, batch, machine)
     current = active_of(db, batch.id)
     if current is not None:
         if current.status == "active" and current.machine_id == machine.id and current.target == target:
@@ -295,6 +298,9 @@ def _snapshot(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, vouc
             for i in view.get("items", [])
         ],
     })
+    from app.services.prepaid_voucher_controls import offline_snapshot_fields  # §18 hook (helper)
+
+    out.update(offline_snapshot_fields(db, batch))  # isTest, paused, quota
     return out
 
 
@@ -483,6 +489,9 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         approval = e.approval
         if approval is not None and not PV.approval_valid(db, machine, approval):
             flags.append("approval_invalid")
+        from app.services.prepaid_voucher_controls import redemption_flags as controls_flags  # §18 hook (helper)
+
+        flags += controls_flags(db, machine, voucher, now, at=e.redeemed_at or now) if reversed_at is None else []
         r = PrepaidVoucherRedemption(
             id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id, machine_id=machine.id,
             shop_id=machine.shop_id, pos_user_id=(str(e.pos_user_id) if e.pos_user_id is not None else None),

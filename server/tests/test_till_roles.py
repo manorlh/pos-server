@@ -209,6 +209,8 @@ class TestLegacy:
         "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
         # New with production vouchers (no older behaviour to keep): a senior approves an override.
         "VOUCHER_DISCOUNT_OVERRIDE",
+        # Staff test vouchers (helper, §18.5): a senior redeems one, or approves it.
+        "VOUCHER_TEST_REDEEM",
     }
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):

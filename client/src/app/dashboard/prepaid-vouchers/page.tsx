@@ -75,6 +75,11 @@ import { fetchAllPages } from '@/lib/fetchAllPages';
 import { STATE_STYLE, VoucherRowsTable, voucherSheet } from '@/components/dashboard/prepaid-vouchers/all-vouchers';
 import { MultiPicker, VoucherFilterBar, useVoucherFacets, useVoucherPageState } from '@/components/dashboard/prepaid-vouchers/voucher-filters';
 import { TillsReport } from '@/components/dashboard/prepaid-vouchers/tills-report';
+import { SettlementView } from '@/components/dashboard/prepaid-vouchers/settlement/settlement-view';
+import { ExtraReports } from '@/components/dashboard/prepaid-vouchers/extras/extra-reports';
+import { ExtrasView } from '@/components/dashboard/prepaid-vouchers/extras/extras-view';
+import { canAccess } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { VoucherSearch, type SearchPick } from '@/components/dashboard/prepaid-vouchers/voucher-search';
 import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
@@ -1660,7 +1665,11 @@ export default function PrepaidVouchersPage() {
   // The view, the sort and every filter live in the URL (lib/prepaidVoucherFilters.ts): a filtered
   // view is a link, and the views share one set of filters.
   const [page, setPage] = useVoucherPageState();
-  const { view, sort, filters } = page;
+  // "התחשבנות" only with its section; "בקרה ובדיקות" always (its simulator is for everyone, its controls ask their own).
+  const access = useDashboardAccess();
+  const views = VOUCHER_VIEWS.filter((v) => v !== 'settlement' || canAccess(access, 'prepaid_voucher_settlement', 'view'));
+  const { view: urlView, sort, filters } = page;
+  const view: VoucherView = views.includes(urlView) ? urlView : 'batches';
   const setView = (v: VoucherView) => setPage({ ...page, view: v });
   const setFilters = (f: VoucherFilters) => setPage({ ...page, filters: f });
   const facets = useVoucherFacets();
@@ -1703,7 +1712,7 @@ export default function PrepaidVouchersPage() {
 
       {!selected ? (
         <div className="flex flex-wrap gap-1" role="tablist" aria-label={t('tabs.label')}>
-          {VOUCHER_VIEWS.map((v) => (
+          {views.map((v) => (
             <Button key={v} role="tab" aria-selected={view === v} size="sm" variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
               {t(`tabs.${v}`)}
             </Button>
@@ -1711,7 +1720,7 @@ export default function PrepaidVouchersPage() {
         </div>
       ) : null}
 
-      {!selected && view !== 'types' && view !== 'productions' ? (
+      {!selected && view !== 'types' && view !== 'productions' && view !== 'settlement' && view !== 'extras' ? (
         <VoucherFilterBar view={view} value={filters} onChange={setFilters} facets={facets.data} />
       ) : null}
 
@@ -1725,6 +1734,12 @@ export default function PrepaidVouchersPage() {
         <VoucherRowsTable filters={filters} onQuery={(q) => setFilters({ ...filters, q })} />
       ) : view === 'tills' ? (
         <TillsReport filters={filters} />
+      ) : view === 'settlement' ? (
+        <SettlementView />
+      ) : view === 'reports' ? (
+        <ExtraReports filters={filters} />
+      ) : view === 'extras' ? (
+        <ExtrasView />
       ) : batches.isPending ? (
         <div className="space-y-2">
           <Skeleton className="h-24 w-full rounded-xl" />

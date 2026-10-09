@@ -299,11 +299,17 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
     PV = _pv()
     batch = voucher.batch
     features = set(getattr(body, "features", None) or []) | {"reserve_goods"}
-    if PV.missing_features(db, batch, features):
-        raise _refuse(PV.UPDATE_REQUIRED, PV.UPDATE_REQUIRED_MESSAGE)
+    # The voucher's own state first ("השובר בוטל", a test voucher at a real till …), then what the till can do.
     reason = PV.refusal_reason(db, machine, voucher, now)
     if reason is not None:
         raise _refuse(reason, PV.refusal_message(db, voucher, reason))
+    from app.services.prepaid_voucher_controls import training_refusal  # §18 hook (helper): a real voucher in training
+
+    refusal = training_refusal(db, voucher, features)
+    if refusal is not None:
+        raise _refuse(*refusal)
+    if PV.missing_features(db, batch, features):
+        raise _refuse(PV.UPDATE_REQUIRED, PV.UPDATE_REQUIRED_MESSAGE)
     # Held by another sale (any till): in use until it is confirmed, released or expires.
     others = db.query(PrepaidVoucherReservation).filter(
         PrepaidVoucherReservation.voucher_id == voucher.id,
@@ -375,6 +381,7 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
 def reservation_out(db: Session, machine: POSMachine, voucher: PrepaidVoucher, r, *, replayed: bool) -> Dict[str, Any]:
     PV = _pv()
     goods = dict(r.goods or {})
+    view = PV.till_view(db, machine, voucher, exclude_reservation=r.id)
     return {
         "ok": True,
         "replayed": replayed,
@@ -385,7 +392,8 @@ def reservation_out(db: Session, machine: POSMachine, voucher: PrepaidVoucher, r
             "redemptionAccounting", "pricing", "units", "listValueAgorot", "coveredAgorot", "topUpAgorot", "tender",
             "deduction", "serial", "typeName", "productionName", "needsApproval", "note",
         )},
-        "voucher": PV.till_view(db, machine, voucher, exclude_reservation=r.id),
+        "voucher": view,
+        "isTest": bool(view.get("isTest")),  # §18 (helper): a staff test voucher
     }
 
 
@@ -442,6 +450,10 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
             raise _refuse(PV.RESERVATION_CONFLICT)
         redemption = db.query(PrepaidVoucherRedemption).filter(PrepaidVoucherRedemption.id == r.redemption_id).first()
         _document_says(db, voucher, redemption, document_amount)
+        from app.services.prepaid_voucher_controls import replay_flags  # §18 hook (helper): a real document
+
+        if redemption is not None:
+            PV._flag(db, voucher.batch, voucher, redemption, replay_flags(db, voucher, document_amount is not None))
         db.flush()
         return _confirm_out(r, redemption, replayed=True)
     goods = dict(r.goods or {})
@@ -471,6 +483,9 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
             remaining[pid] = Decimal(0)
     if over:
         flags.append("over_use")  # a fiscal fact by now: recorded and flagged, never refused
+    from app.services.prepaid_voucher_controls import redemption_flags as controls_flags  # §18 hook (helper)
+
+    flags += controls_flags(db, r.machine_id, voucher, now, from_document=document_amount is not None)
     voucher.remaining = {k: PV.qty_out(q) for k, q in remaining.items()}
     done = not any(q > 0 for k, q in remaining.items() if k != PG.TOTAL) or remaining.get(PG.TOTAL, Decimal(1)) <= 0
     if voucher.status == "cancelled":
