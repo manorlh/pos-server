@@ -67,12 +67,8 @@ def create_report_event(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    try:
+    with C.atomic(db):
         event = C.create_event(db, current_user, active_tenant_id, body)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
     db.refresh(event)
     return event_block(db, event)
 
@@ -126,13 +122,9 @@ def update_report_event(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
-    try:
+    with C.atomic(db):
+        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True, draft=True)
         event = C.update_event(db, current_user, active_tenant_id, event, body)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
     db.refresh(event)
     return event_block(db, event)
 
@@ -144,9 +136,9 @@ def delete_report_event(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
-    C.delete_event(db, event)
-    db.commit()
+    with C.atomic(db):
+        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True, draft=True)
+        C.delete_event(db, event)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -160,17 +152,15 @@ def change_report_event_tills(
 ):
     """
     "שיוך קופות מהיר לאירוע": add, remove and move tills in one transaction. Any refusal rolls
-    the whole request back — no till moves unless every till does.
+    the whole request back — no till moves unless every till does. Two requests racing on the
+    same events or tills run one after the other (row locks: events, then tills); a deadlock or a
+    duplicate the database still catches is a 409, never a 500.
     """
-    try:
-        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
+    with C.atomic(db):
+        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True, draft=True)
         changes = C.change_tills(
             db, current_user, active_tenant_id, event, add=body.add, remove=body.remove, move=body.move,
         )
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
     db.refresh(event)
     return {**event_block(db, event), "changes": changes}
 
@@ -183,7 +173,7 @@ def get_report_event_till_changes(
     db: Session = Depends(get_db),
 ):
     event = C.load_event(db, current_user, active_tenant_id, event_id)
-    return {"changes": C.till_changes(db, event)}
+    return {"changes": C.till_changes(db, event, user=current_user, tenant_id=active_tenant_id)}
 
 
 @router.get("/{event_id}/report")
@@ -238,7 +228,7 @@ def confirm_report_event(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
-    report = C.confirm_event(db, current_user, active_tenant_id, event, force=body.force, note=body.note)
-    db.commit()
+    with C.atomic(db):
+        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True, draft=True)
+        report = C.confirm_event(db, current_user, active_tenant_id, event, force=body.force, note=body.note)
     return report
