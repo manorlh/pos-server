@@ -27,7 +27,7 @@ DeviceModel = Literal[
 #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
 #: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
 #: and not accounting systems (app/services/display_devices.py).
-DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display"]
 
 #: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
 #: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).

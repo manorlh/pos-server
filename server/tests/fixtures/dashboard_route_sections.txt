@@ -102,6 +102,10 @@ PUT /companies/{company_id}/till-roles/matrix -> pos_users:edit
 GET /companies/{company_id}/till-roles/users -> pos_users:view
 DELETE /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
 PUT /companies/{company_id}/till-roles/{role_id} -> pos_users:edit
+GET /customer-display/displays -> till_settings|devices:view
+PUT /customer-display/displays/{machine_id}/till -> till_settings|devices:edit
+GET /customer-display/settings/{level}/{entity_id} -> till_settings|devices:view
+PUT /customer-display/settings/{level}/{entity_id} -> till_settings|devices:edit
 GET /customers -> customers:view
 POST /customers -> customers:edit
 DELETE /customers/{customer_id} -> customers:edit
@@ -631,6 +635,10 @@ PUT /sync/{machine_id}/categories/{category_id} -> till
 PUT /sync/{machine_id}/categories/{category_id}/availability -> till
 GET /sync/{machine_id}/categories/{category_id}/kitchen-printers -> till
 POST /sync/{machine_id}/close-day/ack -> till
+GET /sync/{machine_id}/customer-display -> till
+PUT /sync/{machine_id}/customer-display/lan -> till
+GET /sync/{machine_id}/customer-display/state -> till
+PUT /sync/{machine_id}/customer-display/state -> till
 GET /sync/{machine_id}/device-commands -> till
 POST /sync/{machine_id}/device-commands/unlocked -> till
 POST /sync/{machine_id}/device-commands/{command_id}/ack -> till
