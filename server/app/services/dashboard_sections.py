@@ -87,6 +87,11 @@ SECTIONS: Tuple[Section, ...] = (
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
+        "quick_actions", "פעולות מהירות",
+        "מלוח הבקרה ומהתובנות: הודעה מהירה לקופות, מבצע מהיר / מזדמן ו-Happy hour — בלי הרשאת מבצעים מלאה.",
+        (),
+    ),
+    Section(
         "exception_alerts", "התראות SMS על חריגות",
         "חוקי ההתראה על חריגות לפי חברה / סניף (מחזיקים מספרי טלפון של עובדים), הודעת בדיקה וההיסטוריה. "
         "יומן החריגות עצמו הוא דוח.",
@@ -252,6 +257,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/attendance/shifts/{}", S("attendance", "z", level=VIEW)),
     (_ALL, "/attendance/*", S("attendance")),
     # ── Catalog ──
+    # The product and category pickers of the promotions page and of the quick actions'
+    # sheets ("מבצע מזדמן", "Happy hour") read the catalog: a reader of those may list it.
+    (_GET, "/products", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/products/{}", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
     (_GET, "/availability/reopens", S("products")),
     (_ALL, "/catalog-import/*", S("products")),
     (_ALL, "/catalog-menus*", S("products")),
@@ -316,6 +326,15 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
+    # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
+    # and happy hour): their own section at edit — a manager may act without the full
+    # promotions or till-messages pages. Reading them is a report.
+    (_GET, "/insights/quick-actions", S("reports", "quick_actions", level=VIEW)),
+    (_GET, "/insights/quick-actions/promotions/suggestion", S("quick_actions", "reports", level=VIEW)),
+    (_ALL, "/insights/quick-actions/messages*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/promotions*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/happy-hours*", S("quick_actions", level=EDIT)),
+    ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
     (_ALL, "/report-events*", S("reports")),
     (_GET, "/reports/discounts", S("reports", "promotions")),

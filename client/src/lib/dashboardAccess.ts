@@ -22,6 +22,7 @@ export type SectionId =
   | 'customers'
   | 'notifications'
   | 'till_messages'
+  | 'quick_actions'
   | 'exception_alerts'
   | 'organization'
   | 'devices'
@@ -76,6 +77,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'customers', pages: ['/dashboard/club'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
+  // "פעולות מהירות": no page of its own — the quick message / promotion / happy hour sheets.
+  { id: 'quick_actions', pages: [] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },

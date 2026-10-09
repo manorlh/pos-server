@@ -88,6 +88,12 @@ class InsightScope:
     #: None (no filter), `AREA_NONE`, or an area id — as `parse_area_filter` returns.
     area_filter: Any = None
     machine_id: Optional[uuid_mod.UUID] = None
+    #: An event's scope (`eventId`, docs/SPEC_EVENTS.md): its tills and its window narrow
+    #: every document read; `event` is the `ReportEvent` itself.
+    machine_ids: Optional[Tuple[uuid_mod.UUID, ...]] = None
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
+    event: Any = field(default=None, repr=False)
     _machine: Any = field(default=None, repr=False)
 
     def machine(self, db: Session) -> Optional[POSMachine]:
@@ -99,11 +105,21 @@ class InsightScope:
         return self._machine or None
 
 
+def clamp_window(scope: InsightScope, start: datetime, end: datetime) -> Tuple[datetime, datetime]:
+    """[start, end) inside the scope's own window (an event's); an empty one ends where it starts."""
+    if scope.window_start is not None and start < scope.window_start:
+        start = scope.window_start
+    if scope.window_end is not None and end > scope.window_end:
+        end = scope.window_end
+    return start, max(start, end)
+
+
 def scoped_documents(db: Session, scope: InsightScope, clock: BusinessClock, start: datetime, end: datetime) -> Optional[Query]:
     """The reportable documents of the scope created in [start, end); None for no access."""
+    start, end = clamp_window(scope, start, end)
     window = ReportWindow(
         from_date=clock.business_date(start),
-        to_date=clock.business_date(end - timedelta(seconds=1)),
+        to_date=max(clock.business_date(start), clock.business_date(end - timedelta(seconds=1))),
         from_hour=None,
         to_hour=None,
         tz_name=clock.tz_name,
@@ -117,6 +133,8 @@ def scoped_documents(db: Session, scope: InsightScope, clock: BusinessClock, sta
     if query is not None and scope.company_id is not None:
         group = descendant_company_ids(db, scope.company_id)
         query = query.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
+    if query is not None and scope.machine_ids is not None:
+        query = query.filter(Transaction.machine_id.in_(list(scope.machine_ids)))
     return query
 
 
@@ -602,6 +620,7 @@ def load_cashiers(
         agg = out.setdefault(r.cashier_id or None, CashierAgg(cashier_id=r.cashier_id or None))
         agg.promotions += to_agorot(r.promo)
 
+    ev_start, ev_end = clamp_window(scope, start, end)
     events = db.query(
         TillEvent.pos_user_id,
         TillEvent.event_type,
@@ -609,8 +628,8 @@ def load_cashiers(
         func.coalesce(func.sum(TillEvent.amount), 0).label("amount"),
     ).filter(
         TillEvent.tenant_id == scope.tenant_id,
-        TillEvent.occurred_at >= start,
-        TillEvent.occurred_at < end,
+        TillEvent.occurred_at >= ev_start,
+        TillEvent.occurred_at < ev_end,
         TillEvent.event_type.in_(("line_void", "basket_cancel")),
     )
     events = scope_query_by_user(events, scope.user, db, shop_column=TillEvent.shop_id, machine_column=TillEvent.machine_id)
@@ -619,6 +638,8 @@ def load_cashiers(
             events = events.filter(TillEvent.shop_id == scope.shop_id)
         if scope.machine_id is not None:
             events = events.filter(TillEvent.machine_id == scope.machine_id)
+        if scope.machine_ids is not None:
+            events = events.filter(TillEvent.machine_id.in_(list(scope.machine_ids)))
         if scope.area_filter == AREA_NONE:
             events = events.filter(TillEvent.area_id.is_(None))
         elif scope.area_filter is not None:

@@ -39,6 +39,7 @@ import {
   fetchStockRisk,
   fetchTablesPeriod,
   fetchTrends,
+  type InsightCard,
   type InsightScopeParams,
   type KpiBlock,
 } from '@/lib/insightsApi';
@@ -63,6 +64,17 @@ import { CashiersSection } from '@/components/dashboard/insights/cashiers-sectio
 import { CustomersSection, TablesPeriodSection } from '@/components/dashboard/insights/tables-section';
 import { useInsightsExport } from '@/components/dashboard/insights/export-sheets';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+// Till anomalies, quick actions, happy hour (docs/SPEC_INSIGHTS.md §10).
+import { fetchEvents } from '@/lib/eventsApi';
+import { fetchHappyHourSuggestions, fetchTillAnomalies } from '@/lib/insightsActionsApi';
+import type { ActionScope } from '@/lib/insightsActions';
+import { AnomaliesSection, TillActions, type AnomalyWindow } from '@/components/dashboard/insights-actions/anomalies-section';
+import { HappyHourSection } from '@/components/dashboard/insights-actions/happy-hour-section';
+import { RecentActions } from '@/components/dashboard/insights-actions/recent-actions';
+import { ProductQuickActions, ResultChip, useLatestActionByProduct } from '@/components/dashboard/insights-actions/quick-action-buttons';
+import { useCanAct } from '@/components/dashboard/insights-actions/sheet-parts';
+import { useActionSheets } from '@/components/dashboard/insights-actions/action-host';
+import { BoardTabs } from '@/components/dashboard/insights-actions/board-tabs';
 
 const AUTO_REFRESH_MS = 5 * 60_000;
 const COST_EDITORS = new Set(['super_admin', 'distributor', 'company_manager']);
@@ -126,9 +138,16 @@ export default function InsightsPage() {
   const [deadDays, setDeadDays] = useState<DeadDays>('21');
   const [categoryId, setCategoryId] = useState('');
   const [byCategory, setByCategory] = useState(true);
+  // An event's scope: its tills, window and days (the period and the org scope give way).
+  const [eventId, setEventId] = useState('');
+  const [anomalyWindow, setAnomalyWindow] = useState<AnomalyWindow>('period');
+  const tA = useTranslations('insightsActions');
 
-  const params: InsightScopeParams =
-    range === 'custom' ? { ...scopeParams(scope), from: customFrom, to: customTo } : { ...scopeParams(scope), days: Number(range) };
+  const params: InsightScopeParams = eventId
+    ? { eventId }
+    : range === 'custom'
+      ? { ...scopeParams(scope), from: customFrom, to: customTo }
+      : { ...scopeParams(scope), days: Number(range) };
   const common = {
     refetchInterval: auto ? AUTO_REFRESH_MS : (false as const),
     placeholderData: keepPreviousData,
@@ -162,8 +181,46 @@ export default function InsightsPage() {
     ...common,
   });
   const customers = useQuery({ queryKey: ['insights-customers', params], queryFn: () => fetchCustomers(params), ...common });
+  const anomalies = useQuery({
+    queryKey: ['till-anomalies', anomalyWindow, params],
+    queryFn: () => fetchTillAnomalies({ ...params, window: anomalyWindow }),
+    ...common,
+  });
+  const happyHours = useQuery({
+    queryKey: ['happy-hour-suggestions', params],
+    queryFn: () => fetchHappyHourSuggestions(params),
+    enabled: !eventId,
+    ...common,
+  });
+  const events = useQuery({ queryKey: ['report-events', 'insights'], queryFn: () => fetchEvents({}), staleTime: 60_000, retry: false });
 
-  const all = [feed, forecast, trends, heatmap, menu, abc, slow, stock, baskets, cashiers, tables, customers];
+  // The sheets act on the page's scope (or its event).
+  const companyScope = scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined;
+  const actionScope: ActionScope = eventId
+    ? { eventId }
+    : { companyId: companyScope, shopId: scope.shopId || undefined, areaId: scope.areaId || undefined, machineId: scope.machineId || undefined };
+  const sheets = useActionSheets(actionScope);
+  const canAct = useCanAct();
+  const latestByProduct = useLatestActionByProduct();
+  const productActions = (row: { productId: string | null; name: string }, source: string) =>
+    row.productId ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <ProductQuickActions
+          onMessage={() => sheets.open('quickMessage', { productId: row.productId! }, { source })}
+          onPromo={() => sheets.open('quickPromo', { productId: row.productId! }, { source })}
+        />
+        {latestByProduct.get(row.productId) ? <ResultChip action={latestByProduct.get(row.productId)!} /> : null}
+      </div>
+    ) : null;
+  const openTillMessage = (machineId: string, text: string) => sheets.open('quickMessage', { machineId }, { initialText: text, source: 'anomaly' });
+  const cardActions = (card: InsightCard) => {
+    if (card.type.startsWith('till_')) return <TillActions card={card} onMessage={openTillMessage} canMessage={canAct} />;
+    const productId = typeof card.params.productId === 'string' ? card.params.productId : null;
+    const source = card.type === 'product_dead' ? 'dead' : card.type === 'product_declining' || card.type === 'product_falling' ? 'declining' : 'slow';
+    return productId ? productActions({ productId, name: String(card.params.name ?? '') }, source) : null;
+  };
+
+  const all = [feed, forecast, trends, heatmap, menu, abc, slow, stock, baskets, cashiers, tables, customers, anomalies, happyHours];
   const fetching = all.some((q) => q.isFetching);
   const updatedAt = Math.max(...all.map((q) => q.dataUpdatedAt || 0));
   const refetchAll = () => all.forEach((q) => void q.refetch());
@@ -196,6 +253,8 @@ export default function InsightsPage() {
 
   return (
     <InsightsSurface>
+      {/* "לוח בקרה | השוואות | תובנות" */}
+      <BoardTabs active="insights" className="mb-4 max-w-md" />
       {/* Large title */}
       <div className="flex items-end justify-between gap-3 px-1">
         <div className="min-w-0">
@@ -274,6 +333,25 @@ export default function InsightsPage() {
       <SectionHeader>{t('scope')}</SectionHeader>
       <Card className="space-y-3">
         <ScopePicker value={scope} onChange={setScope} allowAll />
+        {(events.data ?? []).length ? (
+          <label className="flex flex-wrap items-center justify-between gap-3 border-t border-[#3C3C4349] pt-3 dark:border-[#54545899]">
+            <span>
+              <span className="block text-[17px]">{tA('page.event')}</span>
+              <span className="block text-[13px] text-[#8E8E93]">{tA('page.eventHint')}</span>
+            </span>
+            <select
+              value={eventId}
+              onChange={(e) => setEventId(e.target.value)}
+              aria-label={tA('page.event')}
+              className="min-h-10 max-w-64 rounded-lg bg-transparent text-[15px] text-[#007AFF] dark:text-[#0A84FF]"
+            >
+              <option value="">{tA('page.eventNone')}</option>
+              {(events.data ?? []).map((ev) => (
+                <option key={ev.id} value={ev.id}>{ev.name}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <div className="flex items-center justify-between gap-3 border-t border-[#3C3C4349] pt-3 dark:border-[#54545899]">
           <div>
             <div className="text-[17px]">{t('autoRefresh')}</div>
@@ -337,7 +415,7 @@ export default function InsightsPage() {
           </Card>
         ) : (
           <div className={cn('transition-opacity', feed.isFetching && 'opacity-70')}>
-            <InsightFeed feed={feed.data} onOpen={open} />
+            <InsightFeed feed={feed.data} onOpen={open} renderActions={cardActions} />
           </div>
         )
       ) : feed.isError ? null : (
@@ -351,6 +429,34 @@ export default function InsightsPage() {
       {/* Open tables now (hidden when the scope has no tables) */}
       <OpenTablesWidget scope={scope} auto={auto} />
 
+      {/* Till anomalies: each till against its peers, with its actions */}
+      <Section id="anomalies" title={tA('page.anomalies')} query={anomalies}>
+        {(data) => (
+          <AnomaliesSection
+            data={data}
+            window={anomalyWindow}
+            onWindow={setAnomalyWindow}
+            onMessage={openTillMessage}
+            canMessage={canAct}
+            eventScope={!!eventId}
+          />
+        )}
+      </Section>
+
+      {/* What was done from here, and how it went */}
+      <SectionHeader
+        trailing={
+          canAct ? (
+            <button type="button" onClick={() => sheets.open('quickPromo')} className="text-[15px] text-[#007AFF] dark:text-[#0A84FF]">
+              {tA('page.adhoc')}
+            </button>
+          ) : undefined
+        }
+      >
+        {tA('page.recent')}
+      </SectionHeader>
+      <RecentActions />
+
       {/* "ביצועי קיוסקים" — its own page */}
       <KioskInsightsLinkCard />
 
@@ -363,6 +469,17 @@ export default function InsightsPage() {
       <Section id="heatmap" title={t('sections.heatmap')} query={heatmap}>
         {(data) => <HeatmapSection data={data} />}
       </Section>
+      {!eventId ? (
+        <Section id="happy-hour" title={tA('page.happyHour')} query={happyHours}>
+          {(data) => (
+            <HappyHourSection
+              data={data}
+              onApply={(s) => sheets.open('happyHour', undefined, { suggestion: s })}
+              onCustom={() => sheets.open('happyHour')}
+            />
+          )}
+        </Section>
+      ) : null}
       <Section id="menu" title={t('sections.menu')} query={menu} skeleton="h-96">
         {(data) => (
           <MenuSection
@@ -379,7 +496,9 @@ export default function InsightsPage() {
         {(data) => <AbcSection data={data} />}
       </Section>
       <Section id="slow" title={t('sections.slow')} query={slow}>
-        {(data) => <SlowSection data={data} deadDays={deadDays} onDeadDays={setDeadDays} />}
+        {(data) => (
+          <SlowSection data={data} deadDays={deadDays} onDeadDays={setDeadDays} renderActions={(row) => productActions(row, 'slow')} />
+        )}
       </Section>
       {availability?.hasStock ? (
         <Section id="stock" title={t('sections.stock')} query={stock}>
@@ -406,6 +525,7 @@ export default function InsightsPage() {
       <p className="mt-6 px-4 text-[12px] leading-relaxed text-[#8E8E93]">
         {t('footnote', { hour: String(feed.data?.dayStartHour ?? 4).padStart(2, '0'), tz: feed.data?.timezone ?? 'Asia/Jerusalem' })}
       </p>
+      {sheets.element}
     </InsightsSurface>
   );
 }
