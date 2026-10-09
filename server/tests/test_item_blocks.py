@@ -48,7 +48,7 @@ from test_product_availability import OLD, world  # noqa: F401
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "sold_out_golden.json"
 #: The LF-normalised bytes' SHA-256 — pos-android's SoldOutRulesTest pins the same value.
-GOLDEN_SHA256 = "f6afb7e161bba418c2396d98ba94a0b4e8fc875620ef99a94cfa60a6c1e95565"
+GOLDEN_SHA256 = "8374d04ae20b6bda9f142db0de7efc3886bbd3f2711b1b323dcd52c48ba3657b"
 
 NOW = datetime(2026, 10, 9, 9, 0, tzinfo=timezone.utc)  # 12:00 in Israel
 
@@ -72,6 +72,7 @@ def test_the_shared_rule_gives_each_golden_answer(case):
         company_id=t.get("companyId"), shop_id=t.get("shopId"), area_id=t.get("areaId"),
         machine_id=t.get("machineId"), is_kiosk=bool(t.get("isKiosk")),
         event_ids=tuple(t.get("eventIds") or ()), group_ids=tuple(t.get("groupIds") or ()),
+        channel=t.get("channel"),
     )
     item = case.get("item")
     got = rules.decide(
@@ -817,6 +818,8 @@ class TestQuickHidesAreBlocks:
         b.db.add(older)
         b.db.commit()
         b.db.execute(text(mig.BACKFILL_TARGET))
+        for statement in mig.BACKFILL_CHANNELS:
+            b.db.execute(text(statement))
         b.db.execute(text(mig.COPY_HIDES))
         b.db.execute(text(mig.COPY_HIDES))  # idempotent
         b.db.commit()
@@ -829,5 +832,99 @@ class TestQuickHidesAreBlocks:
         )
         assert (copied[cat.id].category_id, copied[cat.id].product_id) == (b.P.category_id, None)
         assert b.db.get(SoldOutMark, older.id).target == "kiosks", "the older kiosks scope backfilled"
+        assert b.db.get(SoldOutMark, older.id).channels == ["kiosk"] and p.channels == ["kiosk"]
         assert b.db.query(KioskQuickHide).count() == 4, "the old rows stay as they were"
         assert (_sells(b, b.h1), _sells(b, b.h2)) == (True, False)
+
+
+# ── Channels: pos / kiosk / online / menu, and "מופיע ב" (the owner, 10.10) ──
+
+
+class TestChannels:
+    def _create(self, w, **kw):
+        body = R.BlockIn(productId=w.P.id, targets=[R.TargetIn(scope="shop", scopeId=w.h_shop.id)], **kw)
+        return R.create_blocks(body, current_user=w.users.admin, active_tenant_id=w.tid, db=w.db)["blocks"][0]
+
+    def test_a_new_block_names_all_four_and_an_older_clients_target_keeps_its_meaning(self, b):
+        fresh = self._create(b)
+        assert (fresh["channels"], fresh["target"]) == (["pos", "kiosk", "online", "menu"], "all")
+        older = self._create(b, target="kiosks", kind="blocked")
+        assert (older["channels"], older["target"]) == (["kiosk"], "kiosks")
+
+    def test_online_or_menu_only_reaches_no_device(self, b):
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        mark = svc.block(b.db, tenant_id=b.tid, product=b.Q, target=target, kind="blocked", channels=["online", "menu"], user=b.users.admin)
+        b.db.commit()
+        assert (mark.target, mark.channels) == ("none", ["online", "menu"])
+        assert b.signals == [], "no device to wake"
+        assert _row(b, b.h1, product=b.Q)["blocks"] == [] and _row(b, b.h2, product=b.Q)["blocks"] == []
+        assert (_row(b, b.h1, product=b.Q)["isAvailable"], _row(b, b.h2, product=b.Q)["isAvailable"]) == (True, True)
+
+    def test_the_resolver_answers_online_and_the_menu(self, b):
+        from app.services import product_channels
+
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, kind="sold_out", channels=["online"], user=b.users.admin)
+        b.db.commit()
+        online = svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="online", product_ids=[b.P.id, b.Q.id])
+        assert (online[str(b.P.id)]["state"], online[str(b.Q.id)]["state"]) == ("sold_out", "available")
+        assert online[str(b.P.id)]["appears"] is False, "online starts off until published"
+        menu = svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="menu", product_ids=[b.P.id])
+        assert menu[str(b.P.id)]["state"] == "available"
+        product_channels.apply(b.P, appears=("pos", "kiosk", "online"))
+        b.db.commit()
+        assert svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="online", product_ids=[b.P.id])[str(b.P.id)]["appears"] is True
+        with pytest.raises(HTTPException):
+            svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="fax", product_ids=[b.P.id])
+
+    def test_the_list_filters_by_channel(self, b):
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, channels=["menu"], user=b.users.admin)
+        svc.block(b.db, tenant_id=b.tid, product=b.Q, target=target, channels=["pos"], user=b.users.admin)
+        b.db.commit()
+        menu = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], channel="menu")
+        assert [r["productId"] for r in menu] == [str(b.P.id)]
+        assert [r["productId"] for r in svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], target="none")] == [str(b.P.id)]
+
+    def test_no_channel_at_all_is_refused(self, b):
+        with pytest.raises(Exception):
+            R.BlockIn(productId=b.P.id, targets=[R.TargetIn(scope="shop", scopeId=b.h_shop.id)], channels=[])
+
+
+class TestAppearsIn:
+    def test_until_set_it_is_what_the_sales_channel_said(self, b):
+        from app.services import product_channels as PC
+
+        assert PC.appears_in(b.P) == ("pos", "kiosk")
+        b.P.sales_channel = "pos_only"
+        assert PC.appears_in(b.P) == ("pos",)
+        assert not PC.appears(b.P, "online") and not PC.appears(b.P, "menu")
+
+    def test_set_it_moves_the_sales_channel_and_a_product_in_neither_leaves_every_device(self, b):
+        from app.services import product_channels as PC
+
+        PC.apply(b.P, appears=PC.clean(["kiosk", "pos", "menu"]))
+        b.db.commit()
+        assert (b.P.appears_in, b.P.sales_channel) == (["pos", "kiosk", "menu"], "all")
+        till_row, kiosk_row = _row(b, b.h1), _row(b, b.h2)
+        assert till_row["appearsIn"] == ["pos", "kiosk", "menu"] and till_row["salesChannel"] == "all"
+        PC.apply(b.P, appears=("online",))
+        b.db.commit()
+        # Neither the tills nor the kiosk: each device kind is told the other one's only.
+        assert (_row(b, b.h1)["salesChannel"], _row(b, b.h2)["salesChannel"]) == ("kiosk_only", "pos_only")
+
+    def test_a_sales_channel_alone_keeps_online_and_the_menu(self, b):
+        from app.services import product_channels as PC
+
+        PC.apply(b.P, appears=("pos", "kiosk", "online", "menu"))
+        b.P.sales_channel = "pos_only"
+        PC.apply(b.P, sales_channel_changed=True)
+        assert b.P.appears_in == ["pos", "online", "menu"]
+        with pytest.raises(PC.ChannelsInvalid):
+            PC.clean(["pos", "fax"])
+
+    def test_the_response_resolves_it(self, b):
+        from app.schemas.product import ProductUpdate
+
+        update = ProductUpdate.model_validate({"appearsIn": ["menu", "pos"]})
+        assert update.appears_in == ["menu", "pos"] and "appears_in" not in update.model_dump(exclude_unset=True)

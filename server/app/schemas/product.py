@@ -203,6 +203,9 @@ class ProductBase(BaseModel):
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר" (app/services/sales_channel.py); omitted: קופות וקיוסק.
     sales_channel: channels.SalesChannel = Field(channels.ALL, alias="salesChannel")
+    # "מופיע ב" (app/services/product_channels.py): pos / kiosk / online / menu; omitted: as
+    # `salesChannel` says, not online, not in the digital menu. When given, `salesChannel` follows it.
+    appears_in: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, alias="appearsIn")
 
     @field_validator("name", "sku")
     @classmethod
@@ -285,6 +288,9 @@ class ProductUpdate(BaseModel):
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר": omitted (or null) — left as it is.
     sales_channel: Optional[channels.SalesChannel] = Field(None, alias="salesChannel")
+    # "מופיע ב" (app/services/product_channels.py): omitted (or null) — left as it is; given, it
+    # sets `salesChannel` too. Applied by the routers (excluded from `model_dump`).
+    appears_in: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, alias="appearsIn", exclude=True)
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -382,6 +388,8 @@ class ProductResponse(BaseModel):
     dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
     # "היכן הפריט נמכר": all / kiosk_only / pos_only.
     sales_channel: str = Field(channels.ALL, alias="salesChannel")
+    # "מופיע ב": the channels it appears in, resolved (app/services/product_channels.py).
+    appears_in: Optional[List[str]] = Field(None, alias="appearsIn")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
@@ -416,6 +424,16 @@ class ProductResponse(BaseModel):
     @classmethod
     def _channel_out(cls, v):
         return channels.out(v)
+
+    @model_validator(mode="after")
+    def _appears_in_out(self):
+        from app.services import product_channels
+
+        if self.appears_in is None:
+            self.appears_in = list(product_channels.from_sales_channel(self.sales_channel))
+        else:
+            self.appears_in = list(product_channels.clean([c for c in self.appears_in if c in product_channels.CHANNELS]) or ())
+        return self
 
     @field_validator("allergen_alert", "requires_manager_approval", mode="before")
     @classmethod

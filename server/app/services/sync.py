@@ -47,6 +47,7 @@ from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
 from app.services import dietary
+from app.services import product_channels
 from app.services import sales_channel
 from app.services import general_item
 from app.services import item_ticket
@@ -184,6 +185,7 @@ def _serialize_merged_product(
     area_override: Optional[AreaProductOverride] = None,
     area_changed_at: Optional[datetime] = None,
     blocks: Any = None,
+    is_kiosk: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
@@ -296,7 +298,10 @@ def _serialize_merged_product(
         "dietaryTags": dietary.tags_out(getattr(global_p, "dietary_tags", None)),
         # "היכן הפריט נמכר", from the global row like the rest of what the product is: the
         # till hides kiosk_only from its sell screen, the kiosk hides pos_only.
-        "salesChannel": sales_channel.out(getattr(global_p, "sales_channel", None)),
+        # As this device reads it: what "מופיע ב" means for its kind (app/services/product_channels.py).
+        "salesChannel": product_channels.device_sales_channel(global_p, is_kiosk),
+        # "מופיע ב": pos / kiosk / online / menu.
+        "appearsIn": list(product_channels.appears_in(global_p)),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
@@ -597,6 +602,11 @@ def _products_merged_for_shop_machine(
     catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
     area_changed_at = getattr(machine, "area_changed_at", None)
     product_blocks = sold_out.blocks_for_machine(db, machine, assigned_ids, since=since) if assigned_ids else {}
+    # A kiosk or a till: "מופיע ב" is sent as the `salesChannel` its kind reads.
+    try:
+        device_is_kiosk = sold_out.is_kiosk(db, machine) if assigned_ids else False
+    except Exception:  # noqa: BLE001 - a test world without the kiosk tables: a till
+        device_is_kiosk = False
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -613,6 +623,7 @@ def _products_merged_for_shop_machine(
             area_override=area_levels.get(str(g.id)),
             area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
             blocks=product_blocks.get(str(g.id)),
+            is_kiosk=device_is_kiosk,
         )
         if row is not None:
             out.append(row)

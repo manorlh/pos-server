@@ -103,6 +103,10 @@ class Product(Base):
     # all (קופות וקיוסק) / kiosk_only / pos_only. The till hides kiosk_only from its sell
     # screen and the kiosk hides pos_only; the cloud only carries the code.
     sales_channel = Column(String(16), default="all", nullable=False, server_default="all")
+    # "מופיע ב" (specs/item-blocks-targets.md, app/services/product_channels.py): the channels the
+    # product appears in — any of pos / kiosk / online / menu. NULL: as `sales_channel` says for
+    # the tills and the kiosk, and not online nor in the digital menu (until published there).
+    appears_in = Column(JSON, nullable=True)
 
     # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
     # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default

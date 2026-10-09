@@ -627,6 +627,12 @@ def machine_update_cloud_product(
         validate_open_price_update(product, master_fields)
         for field, value in master_fields.items():
             setattr(product, field, value)
+        # The till's dialog writes "היכן הפריט נמכר": a product with its own "מופיע ב" keeps its
+        # online / menu channels (app/services/product_channels.py).
+        if "sales_channel" in master_fields:
+            from app.services import product_channels
+
+            product_channels.apply(product, sales_channel_changed=True)
 
     if override_fields:
         override = _override_for(db, shop.id, product.id)
