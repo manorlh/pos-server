@@ -8,8 +8,10 @@ discount and a ₪40 deduction, ₪5 cash. Every surface must say discounts ₪5
 deduction left in, ₪0 / −₪35 the deduction taken out twice:
 
 * the cashier report and the report center (the core's `_sales_buckets` rows);
-* the cashier insights (`load_cashiers`, then `service.cashiers` takes the promotions out) — also
-  in an event's scope (its tills and window, from feat/event-live's insights hook);
+* the cashier insights (`load_cashiers`, then `service.cashiers` takes the promotions out) and
+  the insights' hour cells (`load_hour_cells`: the KPIs, discountPct, the `discounts_up` card; the
+  core's follow-up 0daf21c) — each also in an event's scope (its tills and window, from
+  feat/event-live's insights hook);
 * the events report (`make_doc`, through `load_docs`);
 * the exceptions' discount rule (the deduction is no cashier's discount).
 """
@@ -24,7 +26,7 @@ from app.routers import reports as reports_router
 from app.services import exceptions as EX
 from app.services.insights import data as D
 from app.services.shift_totals import production_deductions_of
-from shift_world import NOW
+from shift_world import NOW, TODAY
 from test_prepaid_voucher_kinds import _ctx, w  # noqa: F401 — `w` is the fixture
 from test_production_voucher_deductions import booked, report_args  # noqa: F401 — `booked` is a fixture
 
@@ -59,6 +61,11 @@ def test_the_cashier_insights_take_it_out_once_also_in_an_events_scope(booked):
         (agg,) = aggs.values()
         # In agorot: gross ₪10 (the ₪40 the voucher covered is no sale), the cashier's discount ₪5.
         assert (agg.gross, max(0, agg.document_discounts - agg.promotions)) == (1000, 500), name
+        # The hour cells (the KPIs): gross ₪10, discounts ₪5, the net ₪5 as collected.
+        cells = D.load_hour_cells(w.db, scope, clock, TODAY - timedelta(days=1), TODAY + timedelta(days=1))
+        totals = (sum(c.gross for c in cells.values()), sum(c.discounts for c in cells.values()),
+                  sum(c.net for c in cells.values()), sum(c.sales for c in cells.values()))
+        assert totals == (1000, 500, 500, 1), name
 
 
 def test_the_events_report_takes_it_out_once(booked):
