@@ -181,6 +181,18 @@ class TestFlagOff:
         assert mine[s.P.id].quantity == 4 and mine[s.P.id].reset_at is None
         assert s.db.query(StockAlert).count() == 0, "no low-stock alerts while off"
 
+    def test_a_refund_at_another_shop_stays_with_the_refunding_shop(self, s):
+        # The review's scenario: a sale at shop A refunded at shop B must not credit shop A.
+        sale_tx = uuid.uuid4()
+        stock_service.apply_movement(
+            s.db, movement_id=uuid.uuid4(), tenant_id=s.tid, shop_id=s.a_shop.id, product_id=s.P.id, delta=-D(1),
+            reason=StockMovementReason.SALE, occurred_at=datetime.now(timezone.utc), machine_id=s.a1.id,
+            transaction_id=sale_tx, location=stock_service.sale_location(s.db, s.a1, s.P.id),
+        )
+        s.db.commit()
+        assert stock_service.refund_location(s.db, sale_tx, s.P.id) is None
+        assert stock_service.sale_location(s.db, s.h1, s.P.id) == s.shop_loc
+
     def test_its_screens_say_off(self, s):
         user = s.users.admin
         for call in (
