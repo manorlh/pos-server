@@ -65,7 +65,12 @@ export function OfflineAssignmentPanel({ batch }: { batch: PrepaidVoucherBatch }
   });
   const release = useMutation({
     mutationFn: (force: boolean) => releasePrepaidOffline(batch.id, force ? { force: true, reason: reason.trim() } : {}),
-    onSuccess: () => { toast.success(t('released')); setForcing(false); setReason(''); refresh(); },
+    onSuccess: (out) => {
+      toast.success(out.assignment?.status === 'releasing' ? t('releaseRequested') : t('released'));
+      setForcing(false);
+      setReason('');
+      refresh();
+    },
     onError: (err) => {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
       if (detail === 'prepaid_voucher_offline_pending') setForcing(true);
@@ -95,6 +100,9 @@ export function OfflineAssignmentPanel({ batch }: { batch: PrepaidVoucherBatch }
             ].filter(Boolean).join(' · ')}
           </p>
           <p className="text-xs text-amber-700 dark:text-amber-400">{t('whileAssigned')}</p>
+          {assignment.status === 'releasing' ? (
+            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{t('releasing')}</p>
+          ) : null}
           {forcing ? (
             <div className="space-y-1.5 rounded-lg border border-amber-300 bg-amber-50 p-2 dark:border-amber-900 dark:bg-amber-950/30">
               <Label htmlFor={`pv-force-${batch.id}`} className="text-xs">{t('forceReason')}</Label>
@@ -109,10 +117,16 @@ export function OfflineAssignmentPanel({ batch }: { batch: PrepaidVoucherBatch }
               </div>
             </div>
           ) : (
-            <Button size="sm" variant="outline" disabled={release.isPending} onClick={() => release.mutate(false)}>
-              {release.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {t('release')}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {assignment.status !== 'releasing' ? (
+                <Button size="sm" variant="outline" disabled={release.isPending} onClick={() => release.mutate(false)}>
+                  {release.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {t('release')}
+                </Button>
+              ) : null}
+              {/* The device never acknowledges (lost, broken): release at once, with a reason. */}
+              <Button size="sm" variant="ghost" onClick={() => setForcing(true)}>{t('forceRelease')}</Button>
+            </div>
           )}
         </div>
       ) : (
@@ -139,11 +153,11 @@ export function OfflineAssignmentPanel({ batch }: { batch: PrepaidVoucherBatch }
           ) : null}
         </div>
       )}
-      {(state.data?.history ?? []).filter((a) => a.status !== 'active').length > 0 ? (
+      {(state.data?.history ?? []).filter((a) => a.status === 'released').length > 0 ? (
         <details className="text-xs text-muted-foreground">
           <summary className="cursor-pointer">{t('history')}</summary>
           <ul className="mt-1 space-y-0.5">
-            {(state.data?.history ?? []).filter((a) => a.status !== 'active').map((a) => (
+            {(state.data?.history ?? []).filter((a) => a.status === 'released').map((a) => (
               <li key={a.id}>
                 {describe(a)} · {when(a.assignedAt)} – {when(a.releasedAt)}
                 {a.forced ? ` · ${t('forced', { reason: a.releaseReason ?? '' })}` : ''}

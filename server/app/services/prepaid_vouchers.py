@@ -879,7 +879,7 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
     from app.services import prepaid_productions as PPR
 
     production = (
-        PPR.production_for_batch(db, tenant_id, body.production_id, company.id)
+        PPR.production_for_batch(db, tenant_id, body.production_id, company.id, user)
         if getattr(body, "production_id", None) else None
     )
     report_event = (
@@ -2576,6 +2576,10 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         if prior.voucher_id != voucher.id or prior.sale_ref != sale_ref:
             raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
         if prior.status == "confirmed":
+            if getattr(prior, "goods", None) is not None:
+                from app.services import production_voucher_reserve as PVRG
+
+                return PVRG.reservation_out(db, machine, voucher, prior, replayed=True)
             return _reservation_out(db, machine, voucher, prior, replayed=True)
         if prior.status == "released":
             raise _http(status.HTTP_409_CONFLICT, RESERVATION_RELEASED)

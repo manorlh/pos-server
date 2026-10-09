@@ -9,6 +9,8 @@ Create Date: 2026-10-09
   same id; the old `ux_prepaid_voucher_redemptions_client` is replaced.
 * `prepaid_voucher_offline_assignments`: at most one live assignment per batch — a partial unique
   index on `batch_id` where `status IN ('active', 'releasing')` (the release is two-step now).
+* Data: a discount-kind batch (and its type) printed before types was filed `redemption_accounting`
+  `zero`; a discount is always booked as a discount — `discount`.
 
 Idempotent (each index only when missing / still there); offline (`--sql`) the plain statements.
 `lock_timeout` keeps a busy table from holding the deploy (Postgres).
@@ -50,6 +52,11 @@ def upgrade() -> None:
     if LIVE not in _indexes(ASSIGNMENTS):
         op.create_index(LIVE, ASSIGNMENTS, ['batch_id'], unique=True,
                         postgresql_where=sa.text(LIVE_WHERE), sqlite_where=sa.text(LIVE_WHERE))
+    for table in ('prepaid_voucher_batches', 'prepaid_voucher_types'):
+        op.execute(sa.text(
+            f"UPDATE {table} SET redemption_accounting = 'discount' "
+            "WHERE kind <> 'items' AND redemption_accounting <> 'discount'"
+        ))
 
 
 def downgrade() -> None:

@@ -224,7 +224,8 @@ export interface PrepaidOfflineAssignment {
   machineId: string;
   machineName: string | null;
   shopId: string | null;
-  status: 'active' | 'released';
+  /** `releasing`: the release asked; it completes once the device acknowledges (two steps). */
+  status: 'active' | 'releasing' | 'released';
   version: number;
   assignedAt: string | null;
   lastDownloadAt: string | null;

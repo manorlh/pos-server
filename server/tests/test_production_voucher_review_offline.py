@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherEvent, PrepaidVoucherOfflineAssignment, PrepaidVoucherRedemption
 from app.routers import prepaid_vouchers as R
 from app.schemas.prepaid_voucher import PrepaidVoucherReserveIn
@@ -108,3 +110,62 @@ def test_14_undoing_an_over_use_gives_back_only_what_was_taken(w):
     assert row(w, v["id"]).remaining[str(w.hotdog.id)] == 0  # it took nothing: nothing comes back
     sync(w, w.tills[0], [red(a, v, "dev-1", w, reversed_at=now)])
     assert row(w, v["id"]).remaining[str(w.hotdog.id)] == 2
+
+
+def test_nit_a_device_sale_past_the_stacking_rule_is_flagged(w):
+    from app.schemas.prepaid_voucher import PrepaidVoucherBatchUpdate
+
+    b = batch(w)
+    R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(stacking="single"), **_ctx(w))
+    a = assign(w, b)
+    v1, v2 = vouchers(w, b)[:2]
+    first = red(a, v1, "dev-1", w, quantity=1)
+    second = red(a, v2, "dev-2", w, quantity=1)
+    first["saleRef"] = second["saleRef"] = "sale-7"
+    sync(w, w.tills[0], [first])
+    out = sync(w, w.tills[0], [second])
+    assert "stacking" in out["results"][0]["flags"]
+
+
+def test_nit_the_migration_indexes_and_legacy_discounts():
+    import importlib.util
+    import io
+    import pathlib
+
+    import sqlalchemy as sa
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    path = pathlib.Path(__file__).absolute().parents[1] / "alembic" / "versions" / "c5d2a8e4f913_prepaid_voucher_review_fixes.py"
+    spec = importlib.util.spec_from_file_location("migration_c5d2a8e4f913", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.down_revision == "a7d4e9c2b158"
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE prepaid_voucher_redemptions (id CHAR(32) PRIMARY KEY, tenant_id CHAR(32), "
+                             "machine_id CHAR(32), client_redemption_id VARCHAR(100))"))
+        conn.execute(sa.text("CREATE UNIQUE INDEX ux_prepaid_voucher_redemptions_client ON prepaid_voucher_redemptions "
+                             "(tenant_id, client_redemption_id)"))
+        conn.execute(sa.text("CREATE TABLE prepaid_voucher_offline_assignments (id CHAR(32) PRIMARY KEY, batch_id CHAR(32), status VARCHAR(16))"))
+        for table in ("prepaid_voucher_batches", "prepaid_voucher_types"):
+            conn.execute(sa.text(f"CREATE TABLE {table} (id CHAR(32) PRIMARY KEY, kind VARCHAR(16), redemption_accounting VARCHAR(16))"))
+            conn.execute(sa.text(f"INSERT INTO {table} VALUES ('a', 'items', 'zero'), ('b', 'order_discount', 'zero')"))
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+            module.upgrade()  # idempotent
+        names = {i["name"] for i in sa.inspect(conn).get_indexes("prepaid_voucher_redemptions")}
+        assert "ux_prepaid_voucher_redemptions_device_client" in names and "ux_prepaid_voucher_redemptions_client" not in names
+        conn.execute(sa.text("INSERT INTO prepaid_voucher_redemptions VALUES ('1', 't', 'm1', 'dev-1'), ('2', 't', 'm2', 'dev-1')"))
+        conn.execute(sa.text("INSERT INTO prepaid_voucher_offline_assignments VALUES ('1', 'b', 'released'), ('2', 'b', 'active')"))
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.execute(sa.text("INSERT INTO prepaid_voucher_offline_assignments VALUES ('3', 'b', 'releasing')"))
+        assert dict(conn.execute(sa.text("SELECT id, redemption_accounting FROM prepaid_voucher_batches")).all()) == {
+            "a": "zero", "b": "discount"}
+    buf = io.StringIO()
+    offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
+    with Operations.context(offline):
+        module.upgrade()
+    sql = buf.getvalue()
+    assert "SET LOCAL lock_timeout" in sql and "WHERE status IN ('active', 'releasing')" in sql
+

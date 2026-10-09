@@ -50,6 +50,7 @@ KIND_FIXED = "prepaid_voucher_kind_fixed"
 COUNT_BELOW_ISSUED = "prepaid_voucher_count_below_issued"
 COUNT_TOO_MANY = "prepaid_voucher_count_too_many"
 OFFLINE_SHOP = "prepaid_voucher_offline_shop"
+HOLDS_LIVE = "prepaid_voucher_holds_live"
 
 FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE = (
     "free", "validity", "where", "rules", "accounting", "contents", "quantity", "price",
@@ -292,7 +293,7 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         if body.production_id is None:
             cols["production_id"] = None
         else:
-            production = PPR.production_for_batch(db, tenant_id, body.production_id, batch.company_id)
+            production = PPR.production_for_batch(db, tenant_id, body.production_id, batch.company_id, user)
             cols["production_id"] = production.id
             cols["customer_name"] = production.name
     if "report_event_id" in given:
@@ -398,6 +399,15 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     changed = {c["category"] for c in changes}
     if batch.status == "cancelled" and changed - {FREE}:
         raise PV._http(status.HTTP_409_CONFLICT, PV.BATCH_CANCELLED)
+    if CONTENTS in changed:
+        from app.models.prepaid_voucher import PrepaidVoucherReservation
+
+        live = [r for r in db.query(PrepaidVoucherReservation).filter(
+            PrepaidVoucherReservation.batch_id == batch.id, PrepaidVoucherReservation.status == "held")
+            if PV._reservation_live(r, PV._now())]
+        if live:
+            # An open sale holds a voucher by the old contents: change them once it is done (review 09.10).
+            raise PV._http(status.HTTP_409_CONFLICT, HOLDS_LIVE)
 
     counts = _status_counts(db, batch.id)
     open_n = counts.get("active", 0) + counts.get("partially_used", 0)

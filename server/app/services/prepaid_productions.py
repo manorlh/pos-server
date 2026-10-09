@@ -170,12 +170,14 @@ def update_production(db: Session, user: User, tenant_id, production_id, body) -
     return p
 
 
-def production_for_batch(db: Session, tenant_id, production_id, company_id) -> PrepaidProduction:
-    """The production a batch of [company_id] names: the tenant's, of a related company, active."""
+def production_for_batch(db: Session, tenant_id, production_id, company_id, user: Optional[User] = None) -> PrepaidProduction:
+    """The production a batch of [company_id] names: the tenant's, of a related company, active — one [user] may read."""
     PV = _pv()
     wanted = PV._as_uuid(production_id)
     p = db.query(PrepaidProduction).filter(PrepaidProduction.id == wanted).first() if wanted else None
-    if p is None or str(p.tenant_id) != str(tenant_id):
+    if p is None or str(p.tenant_id) != str(tenant_id) or (
+        user is not None and not _pvt()._may_read(db, user, tenant_id, p.company_id)
+    ):
         raise PV._http(status.HTTP_404_NOT_FOUND, PRODUCTION_NOT_FOUND)
     if str(p.company_id) not in PV._related_companies(db, company_id):
         raise PV._http(status.HTTP_400_BAD_REQUEST, PRODUCTION_OTHER_COMPANY)

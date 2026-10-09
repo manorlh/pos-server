@@ -71,6 +71,7 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
   'voucher.prepaid_voucher_update_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_reserve_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
   'voucher.prepaid_voucher_kind_unsupported': 'זהו שובר הנחה — יש להציג אותו בקופה',
   'voucher.prepaid_voucher_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',
   'voucher.prepaid_voucher_other_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',

@@ -38,6 +38,10 @@ from app.models.prepaid_voucher import (
 from app.models.user import User
 from app.services import prepaid_voucher_rules as RULES
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 TYPE_NOT_FOUND = "prepaid_voucher_type_not_found"
 TYPE_INACTIVE = "prepaid_voucher_type_inactive"
 TYPE_CODE_TAKEN = "prepaid_voucher_type_code_taken"
@@ -93,8 +97,9 @@ def prices_visible(db: Session, user: User, level: str = "view") -> bool:
 
     try:
         return effective_access(db, user).allows(PRICES_SECTION, level)
-    except Exception:  # noqa: BLE001 — no access model here: the role decides, as everywhere
-        return True
+    except Exception:  # noqa: BLE001 — fail closed (review 09.10): an access check that cannot answer denies
+        logger.exception("prices_visible: the access check failed — denied")
+        return False
 
 
 def _require_prices(db: Session, user: User) -> None:
@@ -108,8 +113,9 @@ def override_editable(db: Session, user: User) -> bool:
 
     try:
         return effective_access(db, user).allows(OVERRIDE_SECTION, "edit")
-    except Exception:  # noqa: BLE001
-        return True
+    except Exception:  # noqa: BLE001 — fail closed (review 09.10)
+        logger.exception("override_editable: the access check failed — denied")
+        return False
 
 
 def policy_columns(db: Session, user: User, tenant_id, policy) -> Dict[str, Any]:

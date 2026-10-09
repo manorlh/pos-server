@@ -273,9 +273,13 @@ def _snapshot(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, vouc
     )
     out = {k: view.get(k) for k in keep if k in view}
     if out.get("groups"):
-        frozen = {g["key"]: g.get("frozenProductIds") or [] for g in (batch.groups or [])}
+        stored = {g["key"]: g for g in (batch.groups or [])}
         for g in out["groups"]:
-            g["frozenIds"] = frozen.get(g["key"], [])
+            s = stored.get(g["key"], {})
+            g["frozenIds"] = s.get("frozenProductIds") or []
+            # The selection itself, for a device that checks a product the catalog gained (`live`).
+            g.update({k: s.get(k) for k in ("allItems", "categoryIds", "includeSubcategories", "excludeProductIds",
+                                            "excludeCategoryIds")})
     out.update({
         "batchId": str(batch.id),
         "batchName": batch.name,
@@ -462,6 +466,17 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             # Synced already undone: nothing was taken, nothing comes back.
             for u in units:
                 u["takenQuantity"] = 0
+        if e.sale_ref and reversed_at is None:
+            others = (
+                db.query(PrepaidVoucherRedemption)
+                .filter(PrepaidVoucherRedemption.machine_id == machine.id, PrepaidVoucherRedemption.sale_ref == e.sale_ref,
+                        PrepaidVoucherRedemption.reversed_at.is_(None), PrepaidVoucherRedemption.voucher_id != voucher.id)
+                .all()
+            )
+            if others:
+                ins = [PV._in_sale(o.voucher) for o in others if o.voucher is not None]
+                if PV.RULES.stacking_refusal(ins, PV._in_sale(voucher)):
+                    flags.append("stacking")  # a fiscal fact by now: recorded, flagged
         if a.status == "released":
             flags.append("after_release")  # a fiscal fact made before the device learned: recorded, flagged
         approval = e.approval

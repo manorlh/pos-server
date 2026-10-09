@@ -333,3 +333,51 @@ class TestLegacyAndTerms:
         assert "top-up" in str(e.value)
         assert goods_type(w, code="Z2", redemptionAccounting="zero", pricing="cover", tillValue=30, allowTopUp=False)["id"]
 
+
+class TestNits:
+    def test_a_replayed_goods_reserve_answers_the_goods_shape(self, w):
+        b = issue(w, goods_type(w, tillValue=80, redemptionAccounting="payment")["id"])
+        code = codes(w, b)[0]
+        units = [unit(w.hotdog, 2500, "a"), unit(w.sandwich, 4000, "b")]
+        out = reserve(w, code, units, request_id="r-same")
+        confirm(w, out["reservationId"])
+        again = reserve(w, code, units, request_id="r-same")
+        assert (again["replayed"], again["status"], again["units"][0]["ref"]) == (True, "confirmed", "a")
+        assert again["coveredAgorot"] == out["coveredAgorot"]
+
+    def test_contents_never_change_under_a_live_hold(self, w):
+        from app.schemas.prepaid_voucher import PrepaidVoucherBatchUpdate
+
+        b = issue(w, goods_type(w, tillValue=80, redemptionAccounting="payment", splitAllowed=True)["id"])
+        reserve(w, codes(w, b)[0], [unit(w.hotdog, 2500, "a")])
+        with pytest.raises(HTTPException) as e:
+            R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(
+                items=[{"productId": w.hotdog.id, "quantity": 3}]), **_ctx(w))
+        assert e.value.detail == "prepaid_voucher_holds_live"
+        # A free change is fine meanwhile.
+        assert R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(name="שם חדש"), **_ctx(w))["name"] == "שם חדש"
+
+    def test_access_checks_fail_closed(self, w, monkeypatch):
+        from app.services import dashboard_access
+        from app.services import prepaid_voucher_types as PVT
+
+        def broken(db, user):
+            raise RuntimeError("no access model")
+
+        monkeypatch.setattr(dashboard_access, "effective_access", broken)
+        assert PVT.prices_visible(w.db, w.admin) is False and PVT.override_editable(w.db, w.admin) is False
+
+    def test_a_memo_document_is_no_sale_in_the_reports(self, w):
+        from app.services.reports import _sales_buckets
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        out = held_goods(w, "zero")
+        items = [{"id": str(uuid.uuid4()), "productName": "נקניקייה", "quantity": 1, "unitPrice": "0", "totalPrice": "0",
+                  "voucherMemoValueAgorot": 2500, "voucherReservationId": out["reservationId"]}]
+        upsert_transactions(w.db, till, [document(w, shift, total="0.00", items=items, memo=True),
+                                         document(w, shift, total="20.00", legs=[{"method": "cash", "amount": "20.00"}], number="9002")])
+        w.db.commit()
+        buckets = _sales_buckets(w.db.query(Transaction), Transaction.machine_id)
+        assert buckets[till.id]["sales_count"] == 1
+

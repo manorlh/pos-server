@@ -733,7 +733,8 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_discount)), 0).label("discounts"),
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_deduction)), 0).label("deductions"),
             func.coalesce(func.sum(case((refund_cond, Transaction.total_amount), else_=0)), 0).label("refunds"),
-            func.coalesce(func.sum(case((refund_cond, 0), else_=1)), 0).label("sales_count"),
+            # A memo document (production vouchers' ₪0 lines only) is no sale (§4.3, review 09.10).
+            func.coalesce(func.sum(case((refund_cond, 0), (Transaction.voucher_memo.is_(True), 0), else_=1)), 0).label("sales_count"),
             func.coalesce(func.sum(case((refund_cond, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
         )
