@@ -60,7 +60,8 @@ KIOSK_ROLES = frozenset({
 #: Who sees a customer's phone in full on the orders list.
 FULL_PHONE_ROLES = frozenset({UserRole.SUPER_ADMIN, UserRole.COMPANY_MANAGER})
 
-FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin", "setup", "no_payment")
+#: `till_mode`: the device works as a till today ("מצב עבודה: קופה", app/services/kiosk_till_mode.py).
+FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin", "setup", "no_payment", "till_mode")
 BON_PRINTER_STATES = ("ok", "warn", "error", "none")
 
 NOT_KIOSK_CONTROLLER = "not_kiosk_controller"
@@ -378,7 +379,7 @@ def _terminal_identity(machine: POSMachine, settings: Any, lock_of: Any) -> Dict
 
 def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """KioskSummary for each device (contract §2.2), batched."""
-    from app.services import till_z
+    from app.services import kiosk_till_mode, till_z
     from app.services.shifts import open_shifts_for_machines
 
     devices = list(devices)
@@ -488,6 +489,9 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             # "פתיחה אוטומטית": the kiosk's hours and automatic Z, for the controlling till's form.
             "schedule": _schedule_of(db, machine),
             "flowState": st.get("flowState"),
+            # "מצב עבודה: קיוסק / קופה": the owner's gate, the mode now, a switch waiting (kiosk_till_mode.py).
+            "tillMode": kiosk_till_mode.summary_part(db, machine, st),
+            "display": st.get("display"),
             "shiftOpen": bool(shift_open),
             "zMode": till_z.z_mode_of(machine),
             "printerStatus": machine.printer_status,
@@ -653,6 +657,15 @@ def clean_status(raw: Any) -> Dict[str, Any]:
     health = clean_health(raw.get("health"))
     if health:
         out["health"] = health
+    # "מצב עבודה: קופה" and the screen the kiosk lays itself out on (app/services/kiosk_till_mode.py).
+    from app.services import kiosk_till_mode
+
+    till_mode = kiosk_till_mode.clean_till_mode(raw.get("tillMode"))
+    if till_mode is not None:
+        out["tillMode"] = till_mode
+    display = kiosk_till_mode.clean_display(raw.get("display"))
+    if display is not None:
+        out["display"] = display
     return out
 
 
@@ -762,6 +775,8 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
         "alerts": ops["alerts"],
         "closeRequest": ops["closeRequest"],
         "bonCommands": ops["bonCommands"],
+        # "מצב עבודה" from the dashboard: {id, mode, by} or null (kiosk_till_mode.py).
+        "workMode": ops.get("workMode"),
     }
 
 
@@ -1139,6 +1154,30 @@ def run_command(
             db.rollback()
             return CommandResult(audit("refused", detail=refused.body["detail"]), refused)
         return CommandResult(audit("applied", detail=detail))
+    if action in ("enter_till", "return_kiosk"):
+        # "מצב עבודה: קיוסק / קופה" from the dashboard (kiosk_till_mode.py), both ways: only where the owner's
+        # gate is open; handed to the kiosk on its next kiosk/sync, carried out when no sale or customer holds it.
+        from app.services import kiosk_ops, kiosk_till_mode
+
+        try:
+            mode = kiosk_till_mode.check_work_mode(db, kiosk_machine, action)
+        except KioskCommandRefused as refused:
+            return CommandResult(audit("refused", detail=refused.body["detail"]), refused)
+        row = audit("requested", detail=f"mode={mode}")
+        kiosk_ops.wake_machine(kiosk_machine, "kiosk_work_mode")
+        return CommandResult(row)
+    if action in ("reprint_bon", "reprint_receipt"):
+        # "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" (the owner, 09.10.2026): the order's local id or
+        # "last" in the message; done by the kiosk on its next kiosk/sync and recorded there as "הדפסה חוזרת".
+        from app.services import kiosk_ops
+
+        message = message or "last"
+        if message != "last" and kiosk_ops.kiosk_order(db, kiosk_machine, message) is None:
+            error = KioskCommandRefused(status.HTTP_404_NOT_FOUND, "order_not_found", "ההזמנה לא נמצאה בקיוסק")
+            return CommandResult(audit("refused", detail="order_not_found"), error)
+        row = audit("requested", detail=f"order {message}")
+        kiosk_ops.wake_machine(kiosk_machine, "kiosk_bon")
+        return CommandResult(row)
     if action in ("bon_print", "bon_handled"):
         # "הדפס עכשיו" / "סמן כטופל" for an unprinted bon: handed to the kiosk on its next
         # kiosk/sync, which does it and says so (kiosk_ops.py); audited here.

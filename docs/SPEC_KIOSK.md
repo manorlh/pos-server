@@ -1670,3 +1670,35 @@ server). X / Z ושוברי פריט כבר נושאים סניף וקופה.
 - **לבדוק במכשיר:** קיוסק רויאל — פתק אחד (בלי בון) ב-USB; שוברי פריט ל"מים מינרליים" (לכל יחידה) אחרי
   הפתק; "הדפס חשבונית" יוצא ב-BIXOLON גם כשמדפסת החשבוניות של הסניף כבויה; שורת "סניף · קופה · שם" בקבלה;
   קופה שגובה הזמנת קיוסק מדפיסה את השוברים.
+
+## 30. קיוסק לרוחב 11"–32", התאמה אוטומטית ו"מצב עבודה: קיוסק / קופה" (09.10.2026)
+
+האפיון המלא: `P:/specs/kiosk-landscape-till-mode.md` (מיושר עם `P:/specs/web-till-spec-v2.md` §6.9–6.10).
+
+- **התאמה אוטומטית, אפס הגדרה.**
+  - עוזר אחד: `DisplayProfile` — אנדרואיד `domain/DisplayProfile.kt`, דשבורד / Web `client/src/lib/displayProfile.ts`.
+  - קובץ זהב משותף: `tests/fixtures/display_profiles_golden.json` (אותם בתים ב-pos-android).
+  - מה הוא קובע: כיוון, מחלקת גודל (11/13/15/21/27/32), גודל פיזי כשהוא אמין, קנה מידה רק למקרי קצה (4K ב-mdpi, FHD ב-hdpi ב-27"–32"), ו-dp אפקטיבי.
+  - לאורך — בדיוק כמו היום.
+- **קיוסק לרוחב:**
+  - סל צדדי מ-1300dp (340–480dp); מתחת — סרגל ומגירה.
+  - טור קטגוריות או לשוניות לפי הרוחב.
+  - רוחב תוכן מוגבל.
+  - טקסט ×1.04–×1.22 מ-15.6" עד 32".
+  - מגע לפחות 48dp.
+- **`kioskOrientation`:** `auto` (ברירת מחדל) / `portrait` / `landscape` — נעילה אופציונלית; המסכים מתאימים את עצמם בכל מקרה.
+- **מצב עבודה:**
+  - השער `kioskTillModeEnabled` — מנהל-על או מפיץ בלבד (`admin_only`, `PUT /kiosks/{id}/till-mode`).
+  - במכשיר — תמיד קוד מנהל עם `KIOSK_TILL_MODE`.
+  - מהדשבורד — `enter_till` / `return_kiosk`, לא חוסם.
+  - המצב נשמר אחרי הפעלה מחדש.
+  - מכירות מושהות לא חוסמות.
+  - `flowState: till_mode` + `tillMode` + `display` ב-`kiosk/sync`.
+  - חזרה אוטומטית: `kioskTillModeIdleReturnMinutes` (3).
+- **כלי מנהל:**
+  - "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" בניהול הקיוסק ובקופה השולטת (`reprint_bon` / `reprint_receipt`).
+  - היסטוריית עסקאות של שבוע עם חיפוש.
+- **קבצים:**
+  - ענן: `app/services/kiosk_till_mode.py`, מיגרציה `a6c2e8f4b0d7`.
+  - בדיקות: `tests/test_kiosk_till_mode.py`.
+  - דשבורד: `components/dashboard/kiosks/kiosk-work-mode.tsx`, `lib/displayProfile.ts`.

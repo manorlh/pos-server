@@ -238,6 +238,7 @@ POST /kiosks/{machine_id}/commands -> kiosks|device_control:edit
 GET /kiosks/{machine_id}/effective -> kiosks:view
 GET /kiosks/{machine_id}/health -> kiosks:view
 GET /kiosks/{machine_id}/orders -> kiosks:view
+PUT /kiosks/{machine_id}/till-mode -> kiosks:edit
 PUT /kitchen-station-targets -> printers|kds:edit
 GET /kitchen-stations -> printers|kds:view
 POST /kitchen-stations -> printers|kds:edit

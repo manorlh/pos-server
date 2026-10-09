@@ -44,6 +44,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.middleware.auth import (
@@ -484,6 +485,11 @@ KIOSK_ACTION_SECTIONS = {
     "schedule": ("kiosks",),
     "bon_print": ("kiosks",),
     "bon_handled": ("kiosks",),
+    # "מצב עבודה: קיוסק / קופה" — the business's own choice of the day, as the pause (kiosk_till_mode.py).
+    "enter_till": ("kiosks", "device_control"),
+    "return_kiosk": ("kiosks", "device_control"),
+    "reprint_bon": ("kiosks",),
+    "reprint_receipt": ("kiosks",),
 }
 
 
@@ -537,6 +543,34 @@ def post_kiosk_command(
         schedule=body.schedule,
     )
     return _command_answer(db, result, response)
+
+
+class TillModeGateIn(BaseModel):
+    """`kioskTillModeEnabled` at the kiosk's own level: on, off, or null — back to what it inherits."""
+
+    enabled: Optional[bool] = None
+
+
+@router.put("/{machine_id}/till-mode")
+def put_kiosk_till_mode_gate(
+    machine_id: uuid.UUID,
+    body: TillModeGateIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קיוסק — מצב קופה" for this kiosk (app/services/kiosk_till_mode.py): the owner's gate, a super
+    admin or a distributor only (403 `till_parameter_admin_only`). Recorded in the parameters' log;
+    the kiosk hears it on its next parameters pull (notified at once).
+    """
+    from app.services import kiosk_till_mode
+
+    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    db.commit()
+    svc.notify_device_lock(machine)
+    return svc.summary(db, device)
 
 
 @router.get("/{machine_id}/commands")

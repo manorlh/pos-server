@@ -60,6 +60,8 @@ PRINTER_REASONS = {
 }
 #: The command actions a kiosk carries out for an unprinted bon (docs/SPEC_KIOSK.md §16.8).
 BON_ACTIONS = ("bon_print", "bon_handled")
+#: "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" from a controlling till: carried out with the bon commands.
+REPRINT_ACTIONS = ("reprint_bon", "reprint_receipt")
 BON_COMMAND_TTL = timedelta(hours=24)
 TERMINAL_REASONS = {
     "unreachable": "אין תקשורת למסופון האשראי",
@@ -864,7 +866,7 @@ def pending_bon_commands(db: Session, kiosk: POSMachine, *, now: Optional[dateti
         db.query(KioskCommand)
         .filter(
             KioskCommand.kiosk_machine_id == kiosk.id,
-            KioskCommand.action.in_(BON_ACTIONS),
+            KioskCommand.action.in_(BON_ACTIONS + REPRINT_ACTIONS),
             KioskCommand.status == "requested",
         )
         .order_by(KioskCommand.created_at)
@@ -938,7 +940,7 @@ def on_kiosk_sync(
     fails the sync: errors are logged and the fields come back empty.
     """
     now = _now(now)
-    out: Dict[str, Any] = {"alerts": {"open": [], "help": None}, "closeRequest": None, "bonCommands": []}
+    out: Dict[str, Any] = {"alerts": {"open": [], "help": None}, "closeRequest": None, "bonCommands": [], "workMode": None}
     try:
         with db.begin_nested():
             if isinstance(raw_status, dict):
@@ -951,6 +953,10 @@ def on_kiosk_sync(
             out["alerts"] = kiosk_view(db, kiosk, now=now)
             out["closeRequest"] = pending_close_for_kiosk(db, kiosk, now=now)
             out["bonCommands"] = pending_bon_commands(db, kiosk, now=now)
+            # "מצב עבודה" from the dashboard (kiosk_till_mode.py): the latest switch still to carry out.
+            from app.services import kiosk_till_mode
+
+            out["workMode"] = kiosk_till_mode.pending_work_mode(db, kiosk, now=now)
     except Exception:  # noqa: BLE001 - an alert never fails the kiosk's sync
         logger.exception("kiosk alerts / close request failed for %s", kiosk.id)
     return out

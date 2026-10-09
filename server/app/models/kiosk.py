@@ -242,7 +242,8 @@ class KioskCommand(Base):
     __tablename__ = "kiosk_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('pause', 'resume', 'close_shift', 'till_z', 'schedule', 'bon_print', 'bon_handled', 'menu')",
+            "action IN ('pause', 'resume', 'close_shift', 'till_z', 'schedule', 'bon_print', 'bon_handled', 'menu', "
+            "'enter_till', 'return_kiosk', 'reprint_bon', 'reprint_receipt')",
             name="ck_kiosk_commands_action",
         ),
         CheckConstraint("source IN ('dashboard', 'till', 'schedule')", name="ck_kiosk_commands_source"),
