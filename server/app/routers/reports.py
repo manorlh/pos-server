@@ -615,6 +615,9 @@ def get_side_by_side_report(
     event_id: Optional[uuid.UUID] = Query(
         None, alias="eventId", description="Over this event (its window and tills) instead of from–to."
     ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId", description="Within this shop (the board's scope)."),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId", description="Within this till."),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -625,7 +628,9 @@ def get_side_by_side_report(
 
     Dashboard-only (Clerk/user JWT). A shop, area or till the caller cannot see is left
     out (not listed with someone else's figures); a cashier is named only from documents
-    the caller's scope reads. Three grouped queries whatever is compared.
+    the caller's scope reads. Three grouped queries whatever is compared. `shopId` / `areaId` /
+    `machineId` narrow it to the board's scope: cashiers compared on shop A count shop A's
+    sales only.
     """
     current, _ = _periods(
         db, current_user, active_tenant_id, from_date, to_date, None, None, event_id, None, tz,
@@ -635,6 +640,9 @@ def get_side_by_side_report(
         kind=kind,
         ids=ids if isinstance(ids, list) else [],
         company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
+        machine_id=machine_id if isinstance(machine_id, uuid.UUID) else None,
         granularity=granularity if isinstance(granularity, str) else None,
     )
 
@@ -696,6 +704,9 @@ def get_voucher_board_report(
 def get_event_options(
     q: Optional[str] = Query(None, max_length=120, description="Part of the event's name."),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    ids: Optional[List[uuid.UUID]] = Query(
+        None, description="Exactly these events (repeatable): a link to one older than the newest listed."
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -709,5 +720,6 @@ def get_event_options(
             db, current_user, active_tenant_id,
             q=q if isinstance(q, str) else None,
             shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+            ids=[i for i in ids if isinstance(i, uuid.UUID)] if isinstance(ids, list) else [],
         )
     )

@@ -219,7 +219,7 @@ class TestVoucherBoard:
         assert VB.voucher_display_name(b) == "פסטיבל"
 
     def test_open_to_reports_or_vouchers(self):
-        assert rule_for("GET", "/reports/prepaid-vouchers").describe("GET") == "reports|prepaid_vouchers:view"
+        assert rule_for("GET", "/reports/prepaid-vouchers").describe("GET") == "reports|prepaid_vouchers|cockpit:view"
 
 
 def test_the_card_follows_an_event(w, festival):
@@ -236,3 +236,56 @@ def test_the_card_follows_an_event(w, festival):
     w.db.commit()
     out = board(w, event_id=e.id)
     assert (out.totals.vouchers, out.totals.redemptions, out.totals.units) == (1, 1, 1.0)
+
+
+def test_while_the_day_runs_the_compared_day_is_cut_like_for_like(w, festival):
+    from app.services.reports import resolve_report_window
+
+    # Yesterday 23:00 local: after the point today has reached (21:00).
+    redemption(w, voucher(w, festival["staff"]), w.tills[0], items=[(HOTDOG, 4)], when=NOW - timedelta(hours=22))
+    w.db.commit()
+    today = resolve_report_window(w.db, w.tenant.id, from_date=TODAY, to_date=TODAY, tz="Asia/Jerusalem")
+    yesterday = resolve_report_window(w.db, w.tenant.id, from_date=YESTERDAY, to_date=YESTERDAY, tz="Asia/Jerusalem")
+    cut = VB.build_voucher_board(w.db, w.admin, w.tenant.id, today, yesterday, now=NOW)
+    assert (cut.previous.vouchers, cut.previous.units) == (1, 1.0)
+    whole = VB.build_voucher_board(w.db, w.admin, w.tenant.id, today, yesterday, now=NOW + timedelta(days=2))
+    assert (whole.previous.vouchers, whole.previous.units) == (2, 5.0)
+
+
+def test_the_postgres_sql_expands_the_items_in_the_database():
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    from app.models.prepaid_voucher import PrepaidVoucherRedemption as R
+
+    ids = select(R.id)
+    goods = str(VB.goods_statement(True, ids).compile(dialect=postgresql.dialect()))
+    assert "json_array_elements(CASE WHEN (json_typeof(" in goods
+    assert "->> " in goods and "GROUP BY prepaid_voucher_redemptions.batch_id" in goods
+    prices = str(VB.prices_statement(True, ids, []).compile(dialect=postgresql.dialect()))
+    # One query: the sales named by the redemptions, cast to the documents' id — never a list.
+    assert "CAST(prepaid_voucher_redemptions.transaction_id AS UUID)" in prices
+    assert "prepaid_voucher_redemptions.transaction_id ~" in prices
+
+
+def test_aggregated_in_a_fixed_number_of_queries(w, festival):
+    from sqlalchemy import event
+
+    def count():
+        seen = []
+        engine = w.db.get_bind()
+        listener = lambda *a, **k: seen.append(1)  # noqa: E731
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            board(w)
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        return len(seen)
+
+    count()
+    before = count()
+    for _ in range(20):
+        redemption(w, voucher(w, festival["staff"]), w.tills[0], items=[(HOTDOG, 1)])
+    w.db.commit()
+    count()  # warm again: the commit expired the user and tenant rows
+    assert count() == before

@@ -23,6 +23,14 @@ not listed; a period with nothing in it is zeros, never an error; and a change f
 An **event** ("אירוע", `report_events`, docs/SPEC_EVENTS.md) is a lens: its exact window
 (`starts_at` → `ends_at`) and its tills, read through `report_events.crud.load_event` (which
 refuses an event of a shop the caller cannot see). Nothing here writes to the events.
+
+**Like for like** (`like_for_like`): while the current period is still running (it ends after
+now), the compared period's figures are cut at the same point — its start plus the time the
+current one has run — so Monday at 10:00 is weighed against last Monday until 10:00, not all
+of last Monday. The compared curve stays whole (the chart shows where it went next).
+
+**Documents with no shop** are left out, as the overview leaves them out of its totals, so a
+comparison's total equals the overview's for the same scope and days.
 """
 from __future__ import annotations
 
@@ -217,11 +225,19 @@ def load_event_lens(db: Session, user: User, tenant_id, event_id) -> EventLens:
 
 
 def list_event_options(
-    db: Session, user: User, tenant_id, *, q: Optional[str] = None, shop_id: Optional[uuid_mod.UUID] = None,
+    db: Session,
+    user: User,
+    tenant_id,
+    *,
+    q: Optional[str] = None,
+    shop_id: Optional[uuid_mod.UUID] = None,
+    ids: Sequence[uuid_mod.UUID] = (),
 ) -> List[EventBrief]:
     """
     The events of the shops the caller sees (the shops list's rule — the same shops whose
     events `load_event` lets them open), newest first, with their tills: three queries.
+    `ids`: exactly these events (a link to one older than the list's newest) — still only of
+    the caller's shops.
     """
     shops_q = _visible_shops_query(db, user, tenant_id)
     if shops_q is None:
@@ -234,6 +250,8 @@ def list_event_options(
     events_q = db.query(ReportEvent).filter(
         ReportEvent.tenant_id == tenant_id, ReportEvent.shop_id.in_(list(shops)),
     )
+    if ids:
+        events_q = events_q.filter(ReportEvent.id.in_(list(ids)))
     text = (q or "").strip()
     if text:
         events_q = events_q.filter(ReportEvent.name.ilike(f"%{text}%"))
@@ -252,10 +270,15 @@ def list_event_options(
 
 @dataclass(frozen=True)
 class Period:
-    """Days (a report window) or an event (its lens; the window covers its days)."""
+    """
+    Days (a report window) or an event (its lens; the window covers its days) — and, for a
+    compared period cut like for like, the instant its figures stop (`cut`).
+    """
 
     window: ReportWindow
     lens: Optional[EventLens] = None
+    #: The last instant counted (inclusive, as "now" is for the period still running).
+    cut: Optional[datetime] = None
 
     @staticmethod
     def of_event(lens: EventLens) -> "Period":
@@ -266,8 +289,28 @@ class Period:
         return self.lens.start if self.lens is not None else self.window.start
 
     @property
-    def end(self) -> datetime:
+    def full_end(self) -> datetime:
         return self.lens.end if self.lens is not None else self.window.end
+
+    @property
+    def end(self) -> datetime:
+        return min(self.full_end, self.cut) if self.cut is not None else self.full_end
+
+    def uncut(self) -> "Period":
+        return Period(window=self.window, lens=self.lens)
+
+
+def like_for_like(current: Period, previous: Optional[Period], now: datetime) -> Optional[Period]:
+    """
+    `previous` cut at its start plus the time `current` has run — when `current` is still running
+    (it ends after now). A period wholly past, or one not begun, compares whole.
+    """
+    if previous is None:
+        return None
+    if not (current.start < now < current.full_end):
+        return previous
+    cut = previous.start + (now - current.start)
+    return Period(window=previous.window, lens=previous.lens, cut=cut) if cut < previous.full_end else previous
 
 
 def _apply_lens(tx_q: Query, lens: Optional[EventLens]) -> Query:
@@ -304,6 +347,10 @@ def _scoped_query(
         tx_q = tx_q.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     if tx_q is not None:
         tx_q = _apply_lens(tx_q, period.lens)
+        # As the overview's totals: a document with no shop is no shop's takings.
+        tx_q = tx_q.filter(Transaction.shop_id.isnot(None))
+        if period.cut is not None:
+            tx_q = tx_q.filter(Transaction.created_at <= period.cut)
     return tx_q
 
 
@@ -547,22 +594,28 @@ def build_period_compare(
     gran = _granularity_for(granularity, alignment, current_p, previous_p)
     want_items = max(0, min(int(items or 0), ITEMS_MAX))
 
-    def run(p: Period):
-        tx_q = _scoped_query(
+    def scoped(p: Period):
+        return _scoped_query(
             db, current_user, tenant_id, p,
             company_id=company_id, shop_id=shop_id, area_filter=area_filter, machine_id=machine_id,
         )
+
+    def run(p: Period, curve: Period):
+        """The figures (and products) over `p`; the curve over `curve` (the compared one whole)."""
+        tx_q = scoped(p)
         if tx_q is None:
             return _figures(_new_sales_bucket(), 0.0), {}, {}
         money = _money_by(tx_q)[None]
         units = _items_by(db, tx_q)[None]
         products = _products(db, tx_q) if want_items else {}
-        return _figures(money, units), _series_by(db, tx_q, p, gran, alignment), products
+        curve_q = tx_q if curve is p else scoped(curve)
+        return _figures(money, units), _series_by(db, curve_q, curve, gran, alignment), products
 
-    current, current_series, current_products = run(current_p)
+    current, current_series, current_products = run(current_p, current_p)
     previous, previous_series, previous_products = (None, {}, {})
-    if previous_p is not None:
-        previous, previous_series, previous_products = run(previous_p)
+    cut_p = like_for_like(current_p, previous_p, now)
+    if previous_p is not None and cut_p is not None:
+        previous, previous_series, previous_products = run(cut_p, previous_p)
 
     length = max(
         _bucket_count(current_p, gran, alignment),
@@ -612,6 +665,7 @@ def build_period_compare(
     return PeriodCompareResponse(
         window=current_p.window.to_schema(),
         compare_window=previous_p.window.to_schema() if previous_p is not None else None,
+        compare_cut_at=cut_p.cut if cut_p is not None else None,
         granularity=gran,
         alignment=alignment,
         generated_at=now,
@@ -667,6 +721,9 @@ def build_side_by_side(
     kind: str,
     ids: Sequence[str],
     company_id: Optional[uuid_mod.UUID] = None,
+    shop_id: Optional[uuid_mod.UUID] = None,
+    area_filter=None,
+    machine_id: Optional[uuid_mod.UUID] = None,
     granularity: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> SideBySideResponse:
@@ -727,7 +784,11 @@ def build_side_by_side(
     units: Dict[Optional[str], float] = {}
     series: Dict[Tuple[Optional[str], int], List[float]] = {}
     if listed:
-        tx_q = _scoped_query(db, current_user, tenant_id, period, company_id=company_id)
+        # Within the board's scope: cashiers compared on shop A count shop A's sales only.
+        tx_q = _scoped_query(
+            db, current_user, tenant_id, period,
+            company_id=company_id, shop_id=shop_id, area_filter=area_filter, machine_id=machine_id,
+        )
         if tx_q is not None:
             tx_q = tx_q.filter(narrow)
             money = _money_by(tx_q, key, joins)

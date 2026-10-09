@@ -31,12 +31,13 @@ import {
   type PeriodCompareReport,
 } from '@/lib/compareApi';
 import { fetchCardBrandsReport } from '@/lib/salesReportsApi';
-import { formatCurrency, formatShortDate } from '@/lib/format';
+import { formatCurrency, formatShortDate, formatShortDateTime } from '@/lib/format';
 import { useScope } from '@/lib/scope';
 import { shiftIsoDay, type BoardParams } from '@/lib/controlBoard';
 import {
   PERIOD_KINDS,
   comparedRange,
+  pollsLive,
   compareQuery,
   comparisonSheets,
   curvePoints,
@@ -134,6 +135,7 @@ export function CompareView({
   areaId,
   dark,
   canSeeVouchers,
+  canOpenVouchers,
   now,
   events,
   eventsLoading,
@@ -147,6 +149,8 @@ export function CompareView({
   areaId: string | null;
   dark: boolean;
   canSeeVouchers: boolean;
+  /** May open the vouchers module (the card's rows link there). */
+  canOpenVouchers: boolean;
   /** The page's clock (ms), for "is the event still running". */
   now: number;
   events: EventBrief[];
@@ -219,9 +223,8 @@ export function CompareView({
     ...(isEvent ? { eventId: params.event as string } : { from: rangeA?.from, to: rangeA?.to }),
     ...(vsEventId ? { cmpEventId: vsEventId } : rangeB ? { cmpFrom: rangeB.from, cmpTo: rangeB.to } : {}),
   };
-  const live = isEvent
-    ? !!event && new Date(event.endsAt).getTime() > now
-    : rangeA?.to === today;
+  // Polls a running period of up to 31 days; a longer one is refreshed by hand.
+  const live = pollsLive({ range: isEvent ? null : rangeA, event: isEvent ? event : null }, today, now);
   const periods = params.mode === 'periods';
   const compare = useQuery<PeriodCompareReport>({
     queryKey: ['period-compare', periodParams, TOP_ITEMS],
@@ -279,12 +282,14 @@ export function CompareView({
     enabled: days,
     placeholderData: keepPreviousData,
   });
-  const side = useSideBySide({ params, range: rangeA, eventId: params.event, companyId: scopeParams.companyId });
+  const side = useSideBySide({ params, range: rangeA, eventId: params.event, scope: scopeParams });
 
   const report = compare.data;
   const current: FiguresLike | null = report?.current ?? null;
   const previous: FiguresLike | null = report?.previous ?? null;
   const comparing = !!previous && !!labelB;
+  // While A runs, B's figures stop at the same point (the server's like for like).
+  const cutLabel = report?.compareCutAt ? t('cutAt', { at: formatShortDateTime(report.compareCutAt) }) : null;
   const points = useMemo(
     () => curvePoints(report?.series ?? [], report?.granularity === 'hour' && report?.alignment === 'clock'),
     [report],
@@ -613,6 +618,7 @@ export function CompareView({
           <p className="min-w-0 truncate text-sm text-cb-muted">
             {labelA}
             {comparing && periods ? ` · ${tBoard('compare.versus', { day: labelB as string })}` : ''}
+            {comparing && periods && cutLabel ? ` (${cutLabel})` : ''}
           </p>
           <div className="flex items-center gap-2">
             {isEvent && vsEventId ? (
@@ -692,7 +698,12 @@ export function CompareView({
               emptyText={t('itemsEmpty')}
             />
             {canSeeVouchers ? (
-              <BoardVouchers report={vouchers.data} loading={vouchers.isPending} labelB={comparing ? labelB : null} />
+              <BoardVouchers
+                report={vouchers.data}
+                loading={vouchers.isPending}
+                labelB={comparing ? labelB : null}
+                canOpen={canOpenVouchers}
+              />
             ) : null}
           </div>
 

@@ -621,3 +621,31 @@ export function toHourPoints(points: CurvePoint[]): HourPoint[] {
 export function tenderSharesOf(f: Pick<FiguresLike, 'card' | 'cash' | 'other'>): TenderShare[] {
   return tenderShares({ card: f.card, cash: f.cash, other: f.other });
 }
+
+// ── Live refresh, events by id ───────────────────────────────────────────────
+
+/** The comparisons poll only a period this short or shorter; a longer one is refreshed by hand. */
+export const LIVE_POLL_MAX_DAYS = 31;
+
+/**
+ * Whether a comparison polls: its period is still running (ends today, or an event not ended
+ * yet) and spans at most `LIVE_POLL_MAX_DAYS` days.
+ */
+export function pollsLive(
+  p: { range: DayRange | null; event?: { startDate: string; endDate: string; endsAt: string } | null },
+  today: string,
+  nowMs: number,
+): boolean {
+  if (p.event) {
+    const running = new Date(p.event.endsAt).getTime() > nowMs;
+    return running && rangeDays({ from: p.event.startDate, to: p.event.endDate }) <= LIVE_POLL_MAX_DAYS;
+  }
+  if (!p.range) return false;
+  return p.range.to === today && rangeDays(p.range) <= LIVE_POLL_MAX_DAYS;
+}
+
+/** A list with the extra entries it lacks (by id), the list's order first — an event fetched by its id. */
+export function withEntries<T extends { id: string }>(list: readonly T[], extra: readonly T[]): T[] {
+  const ids = new Set(list.map((x) => x.id));
+  return [...list, ...extra.filter((x) => !ids.has(x.id))];
+}

@@ -14,15 +14,21 @@
 import { useRoleAccess } from '@/lib/accessApi';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { canAccess, canSeeSales, navHrefAllowed } from '@/lib/dashboardAccess';
-import type { CompareParams } from '@/lib/periodCompare';
-import type { EventBrief } from '@/lib/compareApi';
+import { useQuery } from '@tanstack/react-query';
+import { withEntries, type CompareParams } from '@/lib/periodCompare';
+import { fetchEventOptions, type EventBrief } from '@/lib/compareApi';
 import { useEventOptions } from './event-picker';
 
 export interface HomeAccess {
+  /** The board's figures: "דוחות" or "הניהול שלי". */
   salesAllowed: boolean;
+  /** The reports pages themselves (live items, exceptions): "דוחות". */
+  reportsAllowed: boolean;
   compareAllowed: boolean;
   insightsAllowed: boolean;
   vouchersAllowed: boolean;
+  /** May open the vouchers module: the card's rows link to their batch. */
+  vouchersModule: boolean;
 }
 
 export function useHomeAccess(): HomeAccess {
@@ -32,9 +38,11 @@ export function useHomeAccess(): HomeAccess {
   const salesAllowed = canSeeSales(access) && !hidden.has('/dashboard');
   return {
     salesAllowed,
+    reportsAllowed: canAccess(access, 'reports', 'view') && !hidden.has('/dashboard'),
     compareAllowed: salesAllowed && page('/dashboard/compare'),
     insightsAllowed: page('/dashboard/insights'),
     vouchersAllowed: salesAllowed || canAccess(access, 'prepaid_vouchers', 'view'),
+    vouchersModule: page('/dashboard/prepaid-vouchers'),
   };
 }
 
@@ -53,14 +61,23 @@ export interface BoardEvent {
 /** The URL's event (`?event=`, `?vsEvent=`) and the list it is picked from. */
 export function useBoardEvent(enabled: boolean, params: Pick<CompareParams, 'event' | 'vs' | 'vsEvent'>): BoardEvent {
   const options = useEventOptions(enabled);
-  const list = options.data ?? [];
+  // A link to an event older than the newest listed: fetched by its id (still only the caller's).
+  const wanted = [params.event, params.vs === 'event' ? params.vsEvent : null].filter((id): id is string => !!id);
+  const missing = options.isSuccess ? wanted.filter((id) => !(options.data ?? []).some((e) => e.id === id)) : [];
+  const byId = useQuery({
+    queryKey: ['event-options', 'ids', missing],
+    queryFn: () => fetchEventOptions({ ids: missing }),
+    enabled: enabled && missing.length > 0,
+    staleTime: 60_000,
+  });
+  const list = withEntries(options.data ?? [], byId.data ?? []);
   const eventId = enabled ? params.event : null;
   const event = eventId ? (list.find((e) => e.id === eventId) ?? null) : null;
   const vsEventId = eventId && params.vs === 'event' ? params.vsEvent : null;
   const vsEvent = vsEventId ? (list.find((e) => e.id === vsEventId) ?? null) : null;
   return {
     options: list,
-    optionsLoading: options.isPending,
+    optionsLoading: options.isPending || (missing.length > 0 && byId.isPending),
     eventId,
     event,
     vsEventId,

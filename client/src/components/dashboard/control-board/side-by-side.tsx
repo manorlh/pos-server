@@ -48,22 +48,24 @@ export function useSideBySide({
   params,
   range,
   eventId,
-  companyId,
+  scope,
 }: {
   params: CompareParams;
   range: DayRange | null;
   eventId: string | null;
-  companyId?: string;
+  /** The board's scope: cashiers compared on shop A count shop A's sales only. */
+  scope: { companyId?: string; shopId?: string; areaId?: string; machineId?: string };
 }) {
-  const ready = sideReady(params.ids) && (!!range || !!eventId);
+  // Only in its own mode: the periods view never asks for it.
+  const ready = params.mode === 'side' && sideReady(params.ids) && (!!range || !!eventId);
   return useQuery<SideBySideReport>({
-    queryKey: ['side-by-side', params.side, params.ids, range, eventId, companyId],
+    queryKey: ['side-by-side', params.side, params.ids, range, eventId, scope],
     queryFn: () =>
       fetchSideBySide({
         kind: params.side,
         ids: params.ids,
         ...(eventId ? { eventId } : { from: range?.from, to: range?.to }),
-        companyId,
+        ...scope,
       }),
     enabled: ready,
     placeholderData: keepPreviousData,
