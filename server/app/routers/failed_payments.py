@@ -7,7 +7,9 @@ attempt (`POST /sync/{machine_id}/failed-payments`) and the dashboard's list
 
     GET  /failed-payments/{attemptId}/card-commands          the manager's commands, newest first
     POST /failed-payments/{attemptId}/card-commands          {action: check | mark_approved |
-                                                             mark_not_approved} → the command (201)
+                                                             mark_not_approved} → the command (201,
+                                                             fire-and-forget; Idempotency-Key)
+    GET  /failed-payments/card-commands/status?ids=          the background status read
     POST /failed-payments/card-commands/{commandId}/cancel   withdraw one not answered yet
     POST /sync/{machineId}/card-commands/{commandId}/result  the till's answer (machine token)
 
@@ -17,9 +19,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -38,6 +40,7 @@ from app.schemas.failed_payment import (
     FailedPaymentListResponse,
     FailedPaymentUpsertOut,
 )
+from app.services import command_idempotency as idem
 from app.services import failed_payments as svc
 
 # Display devices are not tills (app/services/display_devices.py).
@@ -160,6 +163,40 @@ def list_card_commands(
     return {"attemptId": str(attempt.id), "items": [CC.command_out(c) for c in CC.for_attempt(db, attempt.id)]}
 
 
+@router.get("/card-commands/status")
+def get_card_commands_status(
+    ids: List[uuid.UUID] = Query(..., max_length=100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The background status read of "פקודות שנשלחו" for card commands: these commands as they are
+    now, each only when its attempt is one the user sees (the list's own scope); others left out.
+    """
+    from app.models.card_attempt_command import CardAttemptCommand
+    from app.services import card_attempt_commands as CC
+
+    rows = db.query(CardAttemptCommand).filter(CardAttemptCommand.id.in_(list(ids))).all()
+    visible: dict = {}
+    mine = []
+    for cmd in rows:
+        if cmd.tenant_id is not None and cmd.tenant_id != active_tenant_id:
+            continue
+        attempt_id = cmd.failed_payment_attempt_id
+        if attempt_id is None:
+            continue
+        if attempt_id not in visible:
+            visible[attempt_id] = svc.attempt_for_user(db, active_tenant_id, current_user, attempt_id) is not None
+        if visible[attempt_id]:
+            mine.append(cmd)
+    for machine_id in {c.machine_id for c in mine}:
+        CC.expire_overdue(db, machine_id=machine_id)
+    items = [CC.command_out(c) for c in mine]
+    db.commit()  # expired on the way
+    return {"items": items}
+
+
 @router.post("/{attempt_id}/card-commands", status_code=status.HTTP_201_CREATED)
 def create_card_command(
     attempt_id: uuid.UUID,
@@ -167,6 +204,8 @@ def create_card_command(
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
     """
     "בדוק במסוף" (`check`) / "סמן כאושר" (`mark_approved`) / "סמן כלא אושר" (`mark_not_approved`)
@@ -183,11 +222,29 @@ def create_card_command(
     if machine is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     check_shift_admin_access(db, machine, current_user, active_tenant_id)
-    cmd = CC.create(db, attempt, machine, body.action, current_user, confirm_mismatch=body.confirm_mismatch)
-    db.commit()
-    CC.notify(machine, cmd)
-    db.commit()
-    return CC.command_out(cmd)
+    # Fire-and-forget (the till answers later — `GET /failed-payments/card-commands/status`).
+    # `Idempotency-Key`: a retry of this very request gets this command back — never a second
+    # command, and never a 409 for its own first try. Every rule of `CC.create` is unchanged.
+    made: dict = {}
+
+    def run():
+        made["cmd"] = CC.create(db, attempt, machine, body.action, current_user, confirm_mismatch=body.confirm_mismatch)
+        return CC.command_out(made["cmd"])
+
+    def wake(_out):
+        CC.notify(machine, made["cmd"])
+        db.commit()
+
+    out, replayed = idem.once(
+        db, tenant_id=active_tenant_id, kind="card_command", key=idempotency_key, user=current_user,
+        request={"attemptId": str(attempt_id), **body.model_dump(mode="json", by_alias=True)},
+        run=run, after_commit=wake,
+    )
+    if replayed:
+        if response is not None:
+            response.headers[idem.REPLAY_HEADER] = "true"
+        return out
+    return CC.command_out(made["cmd"])
 
 
 @router.post("/card-commands/{command_id}/cancel")
