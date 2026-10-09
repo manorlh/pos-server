@@ -67,6 +67,18 @@ export const TILL_DETAILS_ACTION = 'tillDetails';
  */
 const INSIGHT_ACTION_GATE: CockpitGate = { sections: ['quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES };
 
+/**
+ * `POST /till-messages` (server dashboard_sections: `till_messages|quick_actions:edit`, and
+ * `get_current_machine_admin`): "הודעות לקופות" or "פעולות מהירות" at edit, a machine-admin role.
+ */
+const TILL_MESSAGE_GATE: CockpitGate = { sections: ['till_messages', 'quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES };
+
+/**
+ * `GET /failed-payments` and `GET /failed-payments/*` (`reports|z|cockpit:view`, no role check): the
+ * feed and its review sheet, which only reads. Deciding one stays a reports edit, on its page.
+ */
+const FAILED_PAYMENTS_GATE: CockpitGate = { sections: ['reports', 'z', 'cockpit'], level: 'view' };
+
 /** The quick actions, in the bar's order. */
 export const QUICK_ACTIONS: CockpitAction[] = [
   // ── Built here ──
@@ -74,8 +86,7 @@ export const QUICK_ACTIONS: CockpitAction[] = [
     id: 'tillMessage',
     labelKey: 'tillMessage',
     icon: Megaphone,
-    // The till-messages routes: "הודעות לקופות" at edit, and the machine-admin roles.
-    gate: { sections: ['till_messages'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+    gate: TILL_MESSAGE_GATE,
     Sheet: TillMessageSheet,
     bar: true,
   },
@@ -83,7 +94,8 @@ export const QUICK_ACTIONS: CockpitAction[] = [
     id: 'failedPayments',
     labelKey: 'failedPayments',
     icon: CreditCard,
-    gate: { sections: ['reports', 'z'], level: 'view' },
+    // The feed item's "לבדיקה" opens it: the same gate as the feed, or the item loses its button.
+    gate: FAILED_PAYMENTS_GATE,
     Sheet: FailedPaymentsSheet,
     bar: false,
   },
@@ -120,7 +132,7 @@ export const QUICK_ACTIONS: CockpitAction[] = [
 export const ATTENTION_PROVIDERS: AttentionProvider[] = [
   // ── Built here ──
   { id: 'tillAlerts', gate: OPEN_GATE, useItems: useTillAlertItems },
-  { id: 'failedPayments', gate: { sections: ['reports', 'z'], level: 'view' }, useItems: useFailedPaymentItems },
+  { id: 'failedPayments', gate: FAILED_PAYMENTS_GATE, useItems: useFailedPaymentItems },
   /**
    * Insight anomalies (a till barely selling, an abnormal average or cash), then a few slow
    * products — feat/insights-actions (insights-slots.ts). The board's own "מה דורש תשומת לב"

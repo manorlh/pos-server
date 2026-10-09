@@ -4,7 +4,8 @@
  * "תשלומים לא מוכרעים" from the cockpit: the card payments in the scope that the till could not
  * settle and that may have been charged — amount, till, card, when — in place. Deciding one
  * (checking on the terminal, the cloud's decision) stays on the transactions page's full list,
- * linked at the bottom.
+ * linked at the bottom — for a user who may open that page ("דוחות"); a manager who reads the
+ * list through "זדים" or "הניהול שלי" sees the list without a link to a page they would be refused.
  */
 
 import Link from 'next/link';
@@ -13,13 +14,18 @@ import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { api } from '@/lib/api';
+import { navHrefAllowed } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { agorotToShekels, failedPaymentsParams, maskedCard, type FailedPaymentsResponse } from '@/lib/failedPayments';
 import { formatCurrency } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { CockpitActionProps } from '../types';
 
+const TRANSACTIONS_PAGE = '/dashboard/transactions';
+
 export function FailedPaymentsSheet({ scope, context }: CockpitActionProps) {
   const t = useTranslations('controlBoard.cockpit.failedPayments');
+  const canDecide = navHrefAllowed(useDashboardAccess(), TRANSACTIONS_PAGE);
   const params = failedPaymentsParams({
     shopId: scope.shopId ?? null,
     machineId: context?.machineId ?? scope.machineId ?? null,
@@ -57,9 +63,11 @@ export function FailedPaymentsSheet({ scope, context }: CockpitActionProps) {
           ))}
         </ul>
       )}
-      <Link href="/dashboard/transactions" className="inline-flex min-h-11 items-center text-sm font-medium text-cb-blue-ink hover:underline">
-        {t('decide')}
-      </Link>
+      {canDecide ? (
+        <Link href={TRANSACTIONS_PAGE} className="inline-flex min-h-11 items-center text-sm font-medium text-cb-blue-ink hover:underline">
+          {t('decide')}
+        </Link>
+      ) : null}
     </div>
   );
 }
