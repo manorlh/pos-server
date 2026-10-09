@@ -363,6 +363,22 @@ from app.routers import forecast_staffing as forecast_staffing_router  # noqa: E
 
 app.include_router(forecast_staffing_router.router, prefix=_prefix)
 
+# "הפצה בוואטסאפ" (app/routers/voucher_distribution.py): prepaid vouchers per recipient, their
+# public links, and the optional WhatsApp Cloud API (off unless WHATSAPP_CLOUD_API_ENABLED).
+from app.routers import voucher_distribution as voucher_distribution_router  # noqa: E402
+
+app.include_router(voucher_distribution_router.router, prefix=_prefix)
+app.include_router(voucher_distribution_router.public_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_whatsapp_distribution_worker():
+    """Cloud API retries; does nothing unless WHATSAPP_CLOUD_API_ENABLED (and WHATSAPP_WORKER_ENABLED)."""
+    from app.database import SessionLocal
+    from app.services.whatsapp_cloud import start_background_worker as start_whatsapp_worker
+
+    start_whatsapp_worker(SessionLocal)
+
 
 @app.on_event("startup")
 def seed_builtin_till_parameters():

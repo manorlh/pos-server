@@ -157,6 +157,8 @@ from app.models.kds import (
 )
 # "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
+# "הפצה בוואטסאפ": prepaid vouchers sent per recipient (app/services/voucher_distribution.py).
+from app.models import voucher_distribution as _voucher_distribution  # noqa: F401,E402
 
 __all__ = [
     "User", "UserRole",
