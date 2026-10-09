@@ -3,27 +3,31 @@
 /**
  * Create / edit an event ("אירוע"): a name, the shop (the one in scope), a start date +
  * hour and an end date + hour (all four required, in the tenant's timezone), the shop's
- * tills as checkboxes — a till already in an overlapping event is marked with that
- * event's name and cannot be ticked — the producer, notes, and the insight thresholds
- * behind "מתקדם". The server checks it all again (docs/SPEC_EVENTS.md §1).
+ * tills (the quick picker, ./event-till-picker.tsx — a till already in an overlapping event
+ * shows that event and moves only on "העבר לאירוע הזה"), the producer, notes, and the insight
+ * thresholds behind "מתקדם". The server checks it all again (docs/SPEC_EVENTS.md §1).
+ *
+ * `prefill` starts a new event with values ("אירוע חדש" from the devices page: now until the
+ * end of the day, the tills picked there).
  */
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { CalendarClock, ChevronDown, Lock, Settings2 } from 'lucide-react';
+import { CalendarClock, ChevronDown, Settings2 } from 'lucide-react';
 import {
   createEvent,
   eventErrorDetail,
   eventErrorMessage,
-  fetchEventTills,
+  fetchEventTillsView,
   updateEvent,
   type EventFormValues,
-  type EventTillOption,
+  type EventTillsView,
   type ReportEvent,
 } from '@/lib/eventsApi';
-import { DEFAULT_THRESHOLDS, clockLabel, durationText, formDurationMinutes, validateEventForm } from '@/lib/eventReport';
+import { movesToSend, tillConflicts, unresolvedConflicts } from '@/lib/eventTills';
+import { DEFAULT_THRESHOLDS, durationText, formDurationMinutes, validateEventForm } from '@/lib/eventReport';
 import { cn } from '@/lib/utils';
 import { useTenantTimeZone } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
@@ -32,12 +36,13 @@ import { businessToday } from '@/lib/format';
 import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { EventTillPicker } from './event-till-picker';
 
 function todayIso(): string {
   return businessToday();
 }
 
-function initialValues(event: ReportEvent | null): EventFormValues {
+function initialValues(event: ReportEvent | null, prefill?: Partial<EventFormValues>): EventFormValues {
   if (event) {
     return {
       name: event.name,
@@ -63,6 +68,7 @@ function initialValues(event: ReportEvent | null): EventFormValues {
     producerName: '',
     notes: '',
     thresholds: { ...DEFAULT_THRESHOLDS },
+    ...prefill,
   };
 }
 
@@ -72,6 +78,7 @@ export function EventFormDialog({
   shopId,
   shopName,
   event,
+  prefill,
   onSaved,
 }: {
   open: boolean;
@@ -79,6 +86,8 @@ export function EventFormDialog({
   shopId: string;
   shopName: string;
   event: ReportEvent | null;
+  /** A new event's starting values. */
+  prefill?: Partial<EventFormValues>;
   onSaved?: (event: ReportEvent) => void;
 }) {
   return (
@@ -90,6 +99,7 @@ export function EventFormDialog({
             shopId={shopId}
             shopName={shopName}
             event={event}
+            prefill={prefill}
             onClose={() => onOpenChange(false)}
             onSaved={onSaved}
           />
@@ -103,12 +113,14 @@ function EventForm({
   shopId,
   shopName,
   event,
+  prefill,
   onClose,
   onSaved,
 }: {
   shopId: string;
   shopName: string;
   event: ReportEvent | null;
+  prefill?: Partial<EventFormValues>;
   onClose: () => void;
   onSaved?: (event: ReportEvent) => void;
 }) {
@@ -117,7 +129,8 @@ function EventForm({
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const timeZone = useTenantTimeZone();
-  const [values, setValues] = useState<EventFormValues>(() => initialValues(event));
+  const [values, setValues] = useState<EventFormValues>(() => initialValues(event, prefill));
+  const [moveIds, setMoveIds] = useState<string[]>([]);
   const [tried, setTried] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const isNew = event === null;
@@ -128,18 +141,20 @@ function EventForm({
   const windowParams = windowComplete
     ? { startDate: values.startDate, startTime: values.startTime, endDate: values.endDate, endTime: values.endTime }
     : {};
-  const tills = useQuery<EventTillOption[]>({
+  const tills = useQuery<EventTillsView>({
     queryKey: ['event-tills', shopId, windowParams, event?.id ?? null],
-    queryFn: () => fetchEventTills({ shopId, ...windowParams, ...(event ? { excludeEventId: event.id } : {}) }),
+    queryFn: () => fetchEventTillsView({ shopId, ...windowParams, ...(event ? { excludeEventId: event.id } : {}) }),
     enabled: Boolean(shopId),
     retry: false,
   });
 
-  // A till that turns out busy in the chosen window counts as unticked (and says why).
-  const busyIds = useMemo(() => new Set((tills.data ?? []).filter((x) => x.busy).map((x) => x.id)), [tills.data]);
+  // A picked till busy in an overlapping event stays picked and blocks the save until it is
+  // marked "העבר לאירוע הזה" (or unpicked) — never dropped or moved silently.
+  const tillList = useMemo(() => tills.data?.tills ?? [], [tills.data]);
+  const unresolved = unresolvedConflicts(tillConflicts(values.machineIds, tillList, moveIds));
   const chosen = useMemo(
-    () => ({ ...values, machineIds: values.machineIds.filter((id) => !busyIds.has(id)) }),
-    [values, busyIds],
+    () => ({ ...values, moveMachineIds: movesToSend(values.machineIds, tillList, moveIds) }),
+    [values, tillList, moveIds],
   );
 
   const errors = validateEventForm(chosen);
@@ -164,12 +179,9 @@ function EventForm({
 
   const submit = () => {
     setTried(true);
-    if (errors.length === 0) save.mutate();
+    if (errors.length === 0 && unresolved.length === 0) save.mutate();
   };
 
-  const free = (tills.data ?? []).filter((x) => !x.busy);
-  const toggle = (id: string, on: boolean) =>
-    set('machineIds', on ? [...values.machineIds, id] : values.machineIds.filter((m) => m !== id));
   const th = values.thresholds;
   const setTh = (key: keyof typeof th, raw: string) =>
     set('thresholds', { ...th, [key]: raw === '' ? (key === 'highTipAmount' ? null : Number.NaN) : Number(raw) });
@@ -230,70 +242,20 @@ function EventForm({
       </p>
 
       <div className="grid gap-1.5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Label>{t('tills', { count: chosen.machineIds.length })}</Label>
-          <div className="flex gap-1">
-            <Button type="button" variant="ghost" size="sm" disabled={free.length === 0}
-              onClick={() => set('machineIds', free.map((x) => x.id))}>
-              {t('selectAll')}
-            </Button>
-            <Button type="button" variant="ghost" size="sm" disabled={chosen.machineIds.length === 0}
-              onClick={() => set('machineIds', [])}>
-              {t('selectNone')}
-            </Button>
-          </div>
-        </div>
-        {!windowComplete ? <p className="text-muted-foreground text-xs">{t('tillsWindowHint')}</p> : null}
-        <div className="grid max-h-64 gap-1.5 overflow-y-auto rounded-xl border p-2 sm:grid-cols-2">
-          {tills.isLoading ? (
-            <p className="text-muted-foreground p-2 text-sm">{tc('loading')}</p>
-          ) : tills.isError ? (
-            <p className="text-destructive p-2 text-sm">{eventErrorMessage(tills.error, tc('error'))}</p>
-          ) : (tills.data ?? []).length === 0 ? (
-            <p className="text-muted-foreground p-2 text-sm">{t('noTills')}</p>
-          ) : (
-            (tills.data ?? []).map((till) => {
-              const checked = chosen.machineIds.includes(till.id);
-              const busy = till.busy;
-              return (
-                <label
-                  key={till.id}
-                  className={cn(
-                    'flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors',
-                    checked && 'bg-[#007AFF]/10',
-                    busy && 'cursor-not-allowed opacity-60',
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-4 w-4 accent-[#007AFF]"
-                    checked={checked}
-                    disabled={Boolean(busy)}
-                    onChange={(e) => toggle(till.id, e.target.checked)}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium">
-                      {till.name}
-                      {till.posNumber ? <span className="text-muted-foreground font-normal"> · {t('register', { n: till.posNumber })}</span> : null}
-                    </span>
-                    {busy ? (
-                      <span className="flex items-center gap-1 text-xs text-[#C93400]">
-                        <Lock className="h-3 w-3" aria-hidden />
-                        {t('busy', {
-                          name: busy.eventName,
-                          from: clockLabel(busy.startsAt, timeZone, true),
-                          to: clockLabel(busy.endsAt, timeZone, true),
-                        })}
-                      </span>
-                    ) : till.areaName ? (
-                      <span className="text-muted-foreground block text-xs">{till.areaName}</span>
-                    ) : null}
-                  </span>
-                </label>
-              );
-            })
-          )}
-        </div>
+        <Label>{t('tills', { count: chosen.machineIds.length })}</Label>
+        <EventTillPicker
+          view={tills.data}
+          loading={tills.isLoading}
+          error={tills.isError ? tills.error : null}
+          selected={values.machineIds}
+          moveIds={moveIds}
+          onChange={(ids, moves) => {
+            set('machineIds', ids);
+            setMoveIds(moves);
+          }}
+          timeZone={timeZone}
+          hint={!windowComplete ? t('tillsWindowHint') : null}
+        />
         {show('tillsRequired') ? <p className="text-destructive text-xs">{t('errors.tillsRequired')}</p> : null}
       </div>
 

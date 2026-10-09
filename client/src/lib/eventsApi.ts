@@ -10,7 +10,9 @@ import type {
   EventListItem,
   EventReadiness,
   EventReport,
+  EventTillChangesResult,
   EventTillOption,
+  EventTillsView,
   ReportEvent,
 } from './eventTypes';
 
@@ -44,16 +46,41 @@ export async function fetchEvent(id: string): Promise<ReportEvent> {
   return data;
 }
 
-export async function fetchEventTills(params: {
+export type EventTillsParams = {
   shopId: string;
   startDate?: string;
   startTime?: string;
   endDate?: string;
   endTime?: string;
   excludeEventId?: string;
-}): Promise<EventTillOption[]> {
-  const { data } = await api.get<{ tills: EventTillOption[] }>('/report-events/tills', { params });
-  return data.tills;
+};
+
+export async function fetchEventTills(params: EventTillsParams): Promise<EventTillOption[]> {
+  return (await fetchEventTillsView(params)).tills;
+}
+
+/** The till list with its areas, device groups and the shop's latest events (the quick pickers). */
+export async function fetchEventTillsView(params: EventTillsParams): Promise<EventTillsView> {
+  const { data } = await api.get<EventTillsView>('/report-events/tills', { params });
+  return {
+    shopId: data.shopId,
+    tills: data.tills ?? [],
+    areas: data.areas ?? [],
+    groups: data.groups ?? [],
+    recentEvents: data.recentEvents ?? [],
+  };
+}
+
+/**
+ * "שיוך קופות מהיר לאירוע": add, remove and move ("העבר לאירוע הזה") tills in one request —
+ * all of it or none (a 409 names the busy till, a 403 an event the user may not edit).
+ */
+export async function changeEventTills(
+  id: string,
+  changes: { add: string[]; remove: string[]; move: string[] },
+): Promise<ReportEvent & { changes: EventTillChangesResult }> {
+  const { data } = await api.post<ReportEvent & { changes: EventTillChangesResult }>(`/report-events/${id}/tills`, changes);
+  return data;
 }
 
 function body(values: EventFormValues) {
@@ -64,6 +91,7 @@ function body(values: EventFormValues) {
     endDate: values.endDate,
     endTime: values.endTime,
     machineIds: values.machineIds,
+    moveMachineIds: (values.moveMachineIds ?? []).filter((id) => values.machineIds.includes(id)),
     producerName: values.producerName.trim() || null,
     notes: values.notes.trim() || null,
     thresholds: values.thresholds,

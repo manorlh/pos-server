@@ -33,6 +33,7 @@ import {
   Bell,
   Boxes,
   CreditCard,
+  ListChecks,
   Megaphone,
   MessageSquareText,
   MonitorCog,
@@ -42,6 +43,8 @@ import {
 import { QuickMessageSheet, QuickPromoSheet } from '@/components/dashboard/insights-actions';
 import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, type CockpitGate } from '@/lib/cockpitGates';
 import { ForecastSlotCard, LiveEventSlot, useAlertAttentionItems } from './event-live-slots';
+import { EventTillsQuickAction } from '@/components/dashboard/event-live';
+import { EVENT_TILLS_GATE } from '@/components/dashboard/events/event-tills-access';
 import { RemoteControlSheet, TargetsCard, useLiveControlAttentionItems } from './live-control-slots';
 import { BlockItemSheet, StockUpdateSheet } from '@/components/dashboard/live-control';
 import { useAnomalyAttentionItems } from './insights-slots';
@@ -138,6 +141,11 @@ export const QUICK_ACTIONS: CockpitAction[] = [
    * event, else the one live now), or the picker. The server: `live_event` at view for the screen.
    */
   { id: 'liveEvent', labelKey: 'liveEvent', icon: Radio, gate: { sections: ['live_event'], level: 'view' }, Sheet: LiveEventSlot, ownDialog: true, bar: true },
+  /**
+   * "הוסף/הסר קופות" — feat/event-quick-assign: the compact tills picker of the scope's event (else
+   * the draft events not over yet). The server: "דוחות" at edit and a managing role, as editing.
+   */
+  { id: 'eventTills', labelKey: 'eventTills', icon: ListChecks, gate: EVENT_TILLS_GATE, Sheet: EventTillsQuickAction, ownDialog: true, bar: true },
   /** "שוברים". */
   { id: 'vouchers', labelKey: 'vouchers', icon: TicketCheck, gate: { sections: ['prepaid_vouchers'], level: 'view' }, Sheet: null, bar: true },
   /**

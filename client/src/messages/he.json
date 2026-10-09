@@ -1125,7 +1125,8 @@
         "deviceControl": "שליטה בקופות וקיוסקים",
         "liveEvent": "מצב אירוע חי",
         "vouchers": "שוברים",
-        "stockUpdate": "עדכון מלאי"
+        "stockUpdate": "עדכון מלאי",
+        "eventTills": "קופות לאירוע"
       },
       "itemActions": {
         "openTill": "לקופה",
@@ -17000,6 +17001,67 @@
         "api_failed": "השליחה ב-API נכשלה",
         "api_status": "עדכון סטטוס מ-WhatsApp"
       }
+    }
+  },
+  "eventTills": {
+    "action": "הוסף/הסר קופות",
+    "search": "חיפוש קופה, מספר, אזור או קבוצה",
+    "pick": {
+      "all": "כל הסניף",
+      "tills": "רק קופות",
+      "kiosks": "רק קיוסקים",
+      "areas": "לפי נקודת מכירה / אזור",
+      "groups": "לפי קבוצת מכשירים",
+      "clear": "ניקוי",
+      "copy": "העתק קופות מאירוע קודם",
+      "copyNone": "אין אירועים קודמים עם קופות",
+      "copied": "הועתקו {count} קופות מ\"{name}\"",
+      "copiedMissing": "{count} מהקופות כבר לא בסניף",
+      "skippedBusy": "{count, plural, one {קופה אחת תפוסה באירוע חופף ולא נבחרה} other {# קופות תפוסות באירוע חופף ולא נבחרו}} — אפשר לסמן אותן ביד ולהעביר"
+    },
+    "count": "{selected} מתוך {total} נבחרו",
+    "noMatch": "אין קופות שמתאימות לחיפוש",
+    "kiosk": "קיוסק",
+    "conflict": "{till} משויכת לאירוע \"{event}\" ({from}–{to})",
+    "moveHere": "העבר לאירוע הזה",
+    "moveAll": "העבר את כולן ({count})",
+    "moving": "תועבר מ\"{event}\" בשמירה",
+    "undoMove": "ביטול",
+    "unresolved": "{count, plural, one {קופה אחת משויכת לאירוע חופף} other {# קופות משויכות לאירוע חופף}}: העבירו לאירוע הזה או הסירו מהבחירה",
+    "quick": {
+      "title": "קופות האירוע",
+      "intro": "{name} · {window}",
+      "save": "שמירה",
+      "saved": "הקופות עודכנו",
+      "savedMoved": "הקופות עודכנו — {count} הועברו מאירוע אחר",
+      "nothing": "אין שינוי",
+      "summary": "{add} יתווספו · {remove} יוסרו · {move} יועברו",
+      "confirmed": "האירוע אושר — הקופות שלו נעולות",
+      "loadError": "לא ניתן לטעון את האירוע",
+      "chooseEvent": "לאיזה אירוע?",
+      "noEvents": "אין אירוע טיוטה פתוח לסניף",
+      "toEvents": "לאירועים",
+      "pickShop": "בחרו סניף בסרגל ההיקף"
+    },
+    "assign": {
+      "button": "שייך לאירוע",
+      "selecting": "בחרו קופות לשיוך",
+      "selected": "{count, plural, one {קופה אחת נבחרה} other {# קופות נבחרו}}",
+      "cancel": "ביטול",
+      "selectShop": "כל קופות הסניף",
+      "title": "שיוך לאירוע",
+      "intro": "{count, plural, one {קופה אחת} other {# קופות}} של {shop}",
+      "existing": "אירוע קיים",
+      "new": "אירוע חדש",
+      "newHint": "{shop}, מעכשיו עד סוף היום, עם הקופות שנבחרו",
+      "noDrafts": "אין לסניף אירוע טיוטה שעוד לא הסתיים",
+      "mixedShops": "אפשר לשייך לאירוע רק קופות מסניף אחד — בחרו קופות של סניף אחד",
+      "noShop": "{count, plural, one {קופה אחת לא משויכת לסניף ולא תשויך} other {# קופות לא משויכות לסניף ולא ישויכו}}",
+      "screens": "{count, plural, one {מסך אחד (לא קופה) לא ישויך} other {# מסכים (לא קופות) לא ישויכו}}",
+      "already": "{count, plural, one {קופה אחת כבר באירוע} other {# קופות כבר באירוע}}",
+      "submit": "שייך",
+      "done": "{count, plural, one {קופה אחת שויכה} other {# קופות שויכו}} ל\"{name}\"",
+      "noRights": "אין הרשאה לנהל אירועים"
     }
   }
 }

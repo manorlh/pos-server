@@ -28,6 +28,7 @@ import {
   ArrowRight,
   ChefHat,
   Expand,
+  ListChecks,
   Minimize,
   Pencil,
   Radio,
@@ -57,6 +58,8 @@ import {
 import { fetchEventLive, fetchLivePush, saveLiveTarget } from '@/lib/eventLiveApi';
 import { formatTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { EventTillsQuickDialog } from '@/components/dashboard/events/event-tills-quick-dialog';
+import { useCanAssignEventTills } from '@/components/dashboard/events/event-tills-access';
 
 // ── Look ─────────────────────────────────────────────────────────────────────
 
@@ -568,9 +571,13 @@ function BackControl({ backHref, onClose, className, style, children, label }: {
 
 export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; backHref?: string; onClose?: () => void }) {
   const t = useTranslations('eventLive');
+  const tt = useTranslations('eventTills');
   const queryClient = useQueryClient();
   const [bucket, setBucket] = useState<LiveBucket>(5);
   const [editing, setEditing] = useState(false);
+  // "הוסף/הסר קופות" (feat/event-quick-assign): a draft event, for who may edit its tills.
+  const [tillsOpen, setTillsOpen] = useState(false);
+  const canAssignTills = useCanAssignEventTills();
   const [fullscreen, toggleFullscreen] = useFullscreen();
   useWakeLock();
   const refetchNow = useCallback(() => {
@@ -623,6 +630,19 @@ export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; ba
           <Radio className="size-4" aria-hidden />
           <span className="hidden md:inline">{pushConnected ? t('pushOn') : t('polling')}</span>
         </span>
+        {canAssignTills && live.event.status === 'draft' ? (
+          <button
+            type="button"
+            onClick={() => setTillsOpen(true)}
+            aria-label={tt('action')}
+            title={tt('action')}
+            className="flex min-h-11 items-center gap-2 rounded-full border px-3 text-sm"
+            style={{ borderColor: C.line }}
+          >
+            <ListChecks className="size-5" aria-hidden />
+            <span className="hidden lg:inline">{tt('action')}</span>
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -646,6 +666,7 @@ export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; ba
       </main>
 
       {editing ? <TargetEditor live={live} onClose={() => setEditing(false)} onSaved={refetchNow} /> : null}
+      {tillsOpen ? <EventTillsQuickDialog eventId={live.event.id} open onOpenChange={setTillsOpen} onSaved={refetchNow} /> : null}
     </div>
   );
 }
