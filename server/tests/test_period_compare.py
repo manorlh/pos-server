@@ -393,7 +393,8 @@ class TestHomePagePreference:
         assert len(heads) == 1
         assert {"6d818753b5ec", "3d29a3cb3cca"} <= {r.revision for r in script.walk_revisions("base", heads[0])}
         assert script.get_revision("6d818753b5ec").down_revision == "6b1e9d4f2a87"
-        assert script.get_revision("3d29a3cb3cca").down_revision == "6d818753b5ec"
+        # Written on 6d818753b5ec; re-chained after insights' e5b8d2c6a1f9 at the integration merge.
+        assert script.get_revision("3d29a3cb3cca").down_revision == "e5b8d2c6a1f9"
 
 
 # ── Events ("אירוע") ─────────────────────────────────────────────────────────

@@ -1,8 +1,12 @@
 """prepaid voucher redemptions: an index on (tenant_id, redeemed_at) for the board's vouchers card
 
 Revision ID: 3d29a3cb3cca
-Revises: 6d818753b5ec
+Revises: e5b8d2c6a1f9
 Create Date: 2026-10-09
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 6d818753b5ec,
+now after feat/insights-actions' e5b8d2c6a1f9, which already follows 6d818753b5ec there, so the
+chain stays linear. An index only; the upgrade itself is unchanged.
 
 The control board's "שוברים" card (`GET /reports/prepaid-vouchers`) reads a tenant's
 redemptions over a period — a day, or a range up to the reports' 366 days — every time the
@@ -18,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = '3d29a3cb3cca'
-down_revision: Union[str, Sequence[str], None] = '6d818753b5ec'
+down_revision: Union[str, Sequence[str], None] = 'e5b8d2c6a1f9'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
