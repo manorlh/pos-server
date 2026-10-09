@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
@@ -99,6 +100,32 @@ def _units_in(body) -> List[Dict[str, Any]]:
             "noDiscount": bool(u.no_discount),
         })
     return out
+
+
+def catalog_flags(db: Session, tenant_id, units: List[Dict[str, Any]]) -> None:
+    """
+    Each unit's "לא מקבל הנחות" and its categories (with their ancestors), from the catalog — never
+    what the till sent (review 09.10). [units]' product ids are the cloud's by now.
+    """
+    from app.models.category import Category
+    from app.models.product import Product
+
+    PV = _pv()
+    ids = [i for i in (PV._as_uuid(u.get("productId")) for u in units) if i is not None]
+    products = {str(p.id): p for p in db.query(Product).filter(Product.id.in_(ids), Product.tenant_id == tenant_id)} if ids else {}
+    parents = {str(c): (str(p) if p else None) for c, p in db.query(Category.id, Category.parent_id).filter(Category.tenant_id == tenant_id)}
+    for u in units:
+        p = products.get(str(u.get("productId")).lower()) or products.get(str(u.get("productId")))
+        if p is None:
+            u["noDiscount"], u["categoryIds"] = False, []
+            continue
+        chain, seen = [], set()
+        cid = str(p.category_id) if p.category_id else None
+        while cid and cid not in seen:
+            seen.add(cid)
+            chain.append(cid.lower())
+            cid = parents.get(cid)
+        u["noDiscount"], u["categoryIds"] = bool(p.no_discount), chain
 
 
 def _choose_items(db, machine, batch, voucher, units, forfeit_rest) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Decimal]:
@@ -299,7 +326,11 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
         units, units_left = _choose_groups(db, machine, batch, voucher, units, type_name)
     else:
         units, forfeited, units_left = _choose_items(db, machine, batch, voucher, units, bool(getattr(body, "forfeit_rest", False)))
+    # The flags the override weighs come from the catalog, not the till (review 09.10).
+    catalog_flags(db, batch.tenant_id, units)
     approval = getattr(body, "approval", None)
+    if approval is not None and not PV.approval_valid(db, machine, approval):
+        raise _refuse(PV.APPROVAL_INVALID, PV.APPROVAL_INVALID_MESSAGE, needsApproval=True)
     answer = value_units(db, batch, voucher, units, units_left, approved=approval is not None)
     answer.update({
         "forfeited": forfeited,
@@ -350,6 +381,36 @@ def reservation_out(db: Session, machine: POSMachine, voucher: PrepaidVoucher, r
     }
 
 
+def take_units(remaining: Dict[str, Decimal], units: List[Dict[str, Any]], grouped: bool) -> bool:
+    """
+    Take [units] off [remaining] (in place): per product, or per group and in all (pieces). Never
+    below 0 — a unit cut short (an over-use) records what it really took as `takenQuantity`, so a
+    reversal gives back only that. True when anything was cut short.
+    """
+    PV = _pv()
+    zero = Decimal(0)
+    over = False
+    for u in units:
+        q = PV.qty(u.get("quantity") or 1)
+        if grouped:
+            pieces = _pieces(q)
+            key = f"g:{u.get('groupKey')}"
+            room = min(max(zero, remaining.get(key, zero)), max(zero, remaining.get(PG.TOTAL, zero)))
+            took = min(pieces, room)
+            remaining[key] = remaining.get(key, zero) - took
+            remaining[PG.TOTAL] = remaining.get(PG.TOTAL, zero) - took
+            whole = pieces
+        else:
+            pid = str(u.get("productId"))
+            took = min(q, max(zero, remaining.get(pid, zero)))
+            remaining[pid] = remaining.get(pid, zero) - took
+            whole = q
+        if took < whole:
+            over = True
+            u["takenQuantity"] = PV.qty_out(took)
+    return over
+
+
 def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, transaction_id: str, units=None) -> Dict[str, Any]:
     """The sale was written (§3): take the units off the voucher and record the redemption. Idempotent."""
     PV = _pv()
@@ -374,34 +435,35 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
         flags.append("late")
     batch = voucher.batch
     remaining = {k: PV.qty(v) for k, v in (voucher.remaining or {}).items()}
-    if (getattr(batch, "selection", None) or "items") == "groups":
-        for u in taken:
-            key = f"g:{u.get('groupKey')}"
-            q = _pieces(PV.qty(u.get("quantity") or 1))
-            remaining[key] = remaining.get(key, Decimal(0)) - q
-            remaining[PG.TOTAL] = remaining.get(PG.TOTAL, Decimal(0)) - q
-    else:
-        for u in taken:
-            pid = str(u.get("productId"))
-            remaining[pid] = remaining.get(pid, Decimal(0)) - PV.qty(u.get("quantity") or 1)
+    taken = [dict(u) for u in taken]
+    over = take_units(remaining, taken, (getattr(batch, "selection", None) or "items") == "groups")
+    forfeited = []
+    if (getattr(batch, "selection", None) or "items") != "groups":
         for f in goods.get("forfeited") or []:
-            remaining[str(f.get("productId"))] = Decimal(0)
-    if any(q < 0 for q in remaining.values()):
+            # What was given up: only what is still there (a forfeit records what it really took).
+            pid = str(f.get("productId"))
+            have = max(Decimal(0), remaining.get(pid, Decimal(0)))
+            forfeited.append({**f, "takenQuantity": PV.qty_out(have)})
+            remaining[pid] = Decimal(0)
+    if over:
         flags.append("over_use")  # a fiscal fact by now: recorded and flagged, never refused
-    remaining = {k: max(Decimal(0), q) for k, q in remaining.items()}
     voucher.remaining = {k: PV.qty_out(q) for k, q in remaining.items()}
     done = not any(q > 0 for k, q in remaining.items() if k != PG.TOTAL) or remaining.get(PG.TOTAL, Decimal(1)) <= 0
-    voucher.status = "used" if done else "partially_used"
+    if voucher.status == "cancelled":
+        flags.append("cancelled")  # recorded (the sale was written); the voucher stays cancelled
+    else:
+        voucher.status = "used" if done else "partially_used"
     voucher.first_redeemed_at = voucher.first_redeemed_at or now
     voucher.last_redeemed_at = now
     voucher.updated_at = now
     approval = goods.get("approval") or {}
+    # The till that held the voucher (a document of another till may confirm it): its machine and shop.
     redemption = PrepaidVoucherRedemption(
-        id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id, machine_id=machine.id,
-        shop_id=machine.shop_id, pos_user_id=r.pos_user_id, pos_user_name=r.pos_user_name,
+        id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id, machine_id=r.machine_id,
+        shop_id=r.shop_id, pos_user_id=r.pos_user_id, pos_user_name=r.pos_user_name,
         client_request_id=f"reservation:{r.id}", transaction_id=transaction_id, sale_ref=r.sale_ref,
         items=[{"productId": u.get("productId"), "name": u.get("productName"), "quantity": u.get("quantity")} for u in taken],
-        forfeited=goods.get("forfeited") or None, redeemed_at=now, reservation_id=r.id, flags=flags or None,
+        forfeited=forfeited or None, redeemed_at=now, reservation_id=r.id, flags=flags or None,
         redemption_accounting=goods.get("redemptionAccounting"), pricing=goods.get("pricing"),
         value_agorot=sum(int(u.get("valueAgorot") or 0) for u in taken),
         covered_agorot=sum(int(u.get("coveredAgorot") or 0) for u in taken),
@@ -424,15 +486,32 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
             list_price_agorot=lp, value_agorot=int(u.get("valueAgorot") or 0), reduction_agorot=red,
             reduction_bp=(red * 10_000 // lp) if lp else 0, policy=getattr(batch, "discount_block_policy", None) or "honour",
             approved_by_pos_user_id=approval.get("posUserId"), approved_by_pos_user_name=approval.get("posUserName"),
-            machine_id=machine.id, pos_user_id=r.pos_user_id, pos_user_name=r.pos_user_name, created_at=now,
+            machine_id=r.machine_id, pos_user_id=r.pos_user_id, pos_user_name=r.pos_user_name, created_at=now,
         ))
     r.status = "confirmed"
     r.transaction_id = transaction_id
     r.redemption_id = redemption.id
     r.confirmed_at = now
     r.updated_at = now
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        # Another confirm of this hold wrote it first (a database without row locks): its answer.
+        return _replay_written(db, r)
     return _confirm_out(r, redemption, replayed=False)
+
+
+def _replay_written(db: Session, r) -> Dict[str, Any]:
+    """The redemption another confirm already wrote for [r] — the duplicate answers it, never a 500."""
+    done = (
+        db.query(PrepaidVoucherRedemption)
+        .filter(PrepaidVoucherRedemption.reservation_id == r.id)
+        .order_by(PrepaidVoucherRedemption.redeemed_at)
+        .first()
+    )
+    db.refresh(r)
+    return _confirm_out(r, done, replayed=True)
 
 
 def _confirm_out(r, redemption, *, replayed: bool) -> Dict[str, Any]:

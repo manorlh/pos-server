@@ -43,6 +43,23 @@ def issue(w, type_id, count=2, **extra):
         PrepaidVoucherBatchCreate(name="פסטיבל", companyId=w.company.id, typeId=type_id, count=count, **extra), **_ctx(w))
 
 
+def pos_user(w, role="shop_manager", shop=None, active=True):
+    """A till user of the till's shop (legacy roles: a shop manager allows VOUCHER_DISCOUNT_OVERRIDE)."""
+    from app.models.pos_user import PosUser
+
+    u = PosUser(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=shop.id if shop is not None else w.tills[0].shop_id,
+                username=f"u-{uuid.uuid4().hex[:6]}", first_name="רון", pin_hash="x", role=role, is_active=active)
+    w.db.add(u)
+    w.db.commit()
+    return u
+
+
+def no_discount(w, product):
+    """The catalog's "לא מקבל הנחות" — the cloud reads it itself (review 09.10)."""
+    product.no_discount = True
+    w.db.commit()
+
+
 def unit(product, price, ref=None, group=None, no_discount=False):
     return {"ref": ref, "productId": str(product.id), "productName": product.name, "groupKey": group, "quantity": 1,
             "listPriceAgorot": price, "listValueAgorot": price, "categoryIds": [str(product.category_id)],
@@ -126,11 +143,13 @@ class TestFixed:
 
 class TestOverride:
     def test_honour_refuses_a_reduction_on_a_no_discount_product(self, w):
+        no_discount(w, w.hotdog)
         b = issue(w, goods_type(w, tillValue=50)["id"])
         e = refused(reserve, w, codes(w, b)[0], [unit(w.hotdog, 2500, "a", no_discount=True), unit(w.sandwich, 4000, "b")])
         assert code_of(e) == PR.DISCOUNT_BLOCKED
 
     def test_auto_forces_it_and_the_audit_has_it(self, w):
+        no_discount(w, w.hotdog)
         b = issue(w, goods_type(w, tillValue=50, discountBlockPolicy={"mode": "auto"})["id"])
         out = reserve(w, codes(w, b)[0], [unit(w.hotdog, 2500, "a", no_discount=True), unit(w.sandwich, 4000, "b")])
         forced = next(u for u in out["units"] if u["ref"] == "a")
@@ -140,11 +159,13 @@ class TestOverride:
         assert (audit.policy, audit.list_price_agorot, audit.reduction_agorot) == ("auto", 2500, forced["reductionAgorot"])
 
     def test_manager_needs_an_approval_and_records_who(self, w):
+        no_discount(w, w.hotdog)
         b = issue(w, goods_type(w, tillValue=50, discountBlockPolicy={"mode": "manager"})["id"])
         units = [unit(w.hotdog, 2500, "a", no_discount=True), unit(w.sandwich, 4000, "b")]
         e = refused(reserve, w, codes(w, b)[0], units)
         assert (code_of(e), e.detail["needsApproval"]) == (PR.APPROVAL_NEEDED, True)
-        out = reserve(w, codes(w, b)[0], units, approval={"posUserId": "9", "posUserName": "רון", "method": "pin"})
+        manager = pos_user(w)
+        out = reserve(w, codes(w, b)[0], units, approval={"posUserId": str(manager.id), "posUserName": "רון", "method": "pin"})
         confirm(w, out["reservationId"])
         r = w.db.query(PrepaidVoucherRedemption).one()
         assert r.approved_by_pos_user_name == "רון"

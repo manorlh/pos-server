@@ -87,7 +87,10 @@ class TestAssign:
         other = look(w, code, w.tills[1])
         assert (other["redeemable"], other["reason"], other["message"]) == (
             False, PVO.ASSIGNED_OFFLINE, "השובר משויך לעבודה ללא אינטרנט בTill 1")
-        assert look(w, code, w.tills[0])["redeemable"] is True
+        # The device itself redeems the batch from its local copy only (review 09.10): never twice.
+        own = look(w, code, w.tills[0])
+        assert (own["redeemable"], own["reason"], own["message"]) == (
+            False, PVO.ASSIGNED_OFFLINE, PVO.ASSIGNED_HERE_TEXT)
 
     def test_the_switch_cannot_go_off_while_assigned(self, w):
         b = batch(w)
@@ -144,30 +147,44 @@ class TestDevice:
 
 
 class TestRelease:
-    def test_after_everything_synced_or_by_force_with_a_reason(self, w):
+    def test_by_force_with_a_reason(self, w):
         b = batch(w)
         assign(w, b)
         till = w.tills[0]
         R.download_prepaid_offline(str(till.id), machine=till, db=w.db)
         release = lambda **kw: R.release_prepaid_batch_offline(b["id"], PrepaidOfflineReleaseIn(**kw), **_ctx(w))  # noqa: E731
-        assert refused(release).detail == PVO.OFFLINE_PENDING
         sync(w, till, [], pending=3)
-        assert refused(release).detail == PVO.OFFLINE_PENDING
         assert refused(release, force=True).detail == PVO.REASON_REQUIRED
         out = release(force=True, reason="הקופה נגנבה")
         assert (out["assignment"]["status"], out["assignment"]["forced"]) == ("released", True)
         assert w.db.query(PrepaidVoucherEvent).filter(PrepaidVoucherEvent.action == "offline_force_release").count() == 1
 
-    def test_a_synced_device_releases_plainly(self, w):
+    def test_in_two_steps_the_device_acknowledges(self, w):
+        """Review 09.10: the release is requested; it completes when the device acknowledges with nothing pending."""
+        b = batch(w)
+        a = assign(w, b)
+        till = w.tills[0]
+        code = vouchers(w, b)[0]["code"]
+        R.download_prepaid_offline(str(till.id), machine=till, db=w.db)
+        out = R.release_prepaid_batch_offline(b["id"], PrepaidOfflineReleaseIn(), **_ctx(w))
+        assert out["assignment"]["status"] == "releasing"
+        # Meanwhile the batch is still the device's: refused everywhere else, and the device is told.
+        assert look(w, code, w.tills[1])["reason"] == PVO.ASSIGNED_OFFLINE
+        (d,) = R.download_prepaid_offline(str(till.id), machine=till, db=w.db)["assignments"]
+        assert d["status"] == "releasing"
+        answer = R.sync_prepaid_offline(str(till.id), PrepaidOfflineSyncIn(pending=2, releaseAck=[a["id"]]), machine=till, db=w.db)
+        assert answer["assignments"][0]["status"] == "releasing"  # something still pending: not yet
+        answer = R.sync_prepaid_offline(str(till.id), PrepaidOfflineSyncIn(pending=0, releaseAck=[a["id"]]), machine=till, db=w.db)
+        assert answer["assignments"] == []
+        history = R.get_prepaid_batch_offline(b["id"], **_ctx(w))
+        assert history["assignment"] is None and history["history"][0]["status"] == "released"
+        assert look(w, code, w.tills[1])["redeemable"] is True
+
+    def test_a_device_that_never_downloaded_is_released_at_once(self, w):
         b = batch(w)
         assign(w, b)
-        till = w.tills[0]
-        R.download_prepaid_offline(str(till.id), machine=till, db=w.db)
-        sync(w, till, [], pending=0)
         out = R.release_prepaid_batch_offline(b["id"], PrepaidOfflineReleaseIn(), **_ctx(w))
         assert (out["assignment"]["status"], out["assignment"]["forced"]) == ("released", False)
-        history = R.get_prepaid_batch_offline(b["id"], **_ctx(w))
-        assert history["assignment"] is None and len(history["history"]) == 1
 
 
 def test_the_migration():

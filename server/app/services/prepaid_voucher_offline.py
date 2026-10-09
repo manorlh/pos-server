@@ -31,6 +31,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherBatch,
     PrepaidVoucherOfflineAssignment,
     PrepaidVoucherRedemption,
+    PrepaidVoucherReservation,
 )
 from app.models.user import User
 
@@ -44,6 +45,12 @@ REASON_REQUIRED = "prepaid_voucher_offline_reason_required"
 WRONG_SHOP = "prepaid_voucher_offline_wrong_shop"
 TARGETS = ("machine", "lan_host")
 ASSIGNED_TEXT = "השובר משויך לעבודה ללא אינטרנט ב{device}"
+#: The device the batch is assigned to asks the cloud: it redeems the batch from its local copy only.
+ASSIGNED_HERE_TEXT = "השובר משויך לעבודה ללא אינטרנט בקופה זו — יש לממש אותו מהשיוך המקומי"
+#: A batch held by an open sale cannot be handed to a device meanwhile.
+HOLDS_LIVE = "prepaid_voucher_offline_holds_live"
+#: `active`, or `releasing` until the device acknowledges the release (two steps, review 09.10).
+LIVE = ("active", "releasing")
 
 
 def _pv():
@@ -60,7 +67,7 @@ def code_hash(code: str) -> str:
 def active_of(db: Session, batch_id) -> Optional[PrepaidVoucherOfflineAssignment]:
     return (
         db.query(PrepaidVoucherOfflineAssignment)
-        .filter(PrepaidVoucherOfflineAssignment.batch_id == batch_id, PrepaidVoucherOfflineAssignment.status == "active")
+        .filter(PrepaidVoucherOfflineAssignment.batch_id == batch_id, PrepaidVoucherOfflineAssignment.status.in_(LIVE))
         .first()
     )
 
@@ -72,13 +79,24 @@ def refuse_if_assigned(db: Session, batch: PrepaidVoucherBatch) -> None:
 
 
 def assigned_elsewhere(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch) -> Optional[str]:
-    """The device's name when [batch] is assigned to another machine than [machine]; None otherwise."""
+    """
+    While [batch] is assigned (active or releasing) the cloud redeems none of its vouchers — not for
+    another machine (the device's name), nor for the device itself, which redeems them from its local
+    copy only (review 09.10). None: not assigned.
+    """
     if not getattr(batch, "offline_allowed", False):
         return None
     a = active_of(db, batch.id)
-    if a is None or a.machine_id == machine.id:
+    if a is None:
         return None
+    if a.machine_id == machine.id:
+        return ""  # this very device: ASSIGNED_HERE_TEXT
     return db.query(POSMachine.name).filter(POSMachine.id == a.machine_id).scalar() or "קופה אחרת"
+
+
+def assigned_text(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch) -> str:
+    device = assigned_elsewhere(db, machine, batch)
+    return ASSIGNED_HERE_TEXT if device == "" else ASSIGNED_TEXT.format(device=device or "")
 
 
 def _out(db: Session, a: Optional[PrepaidVoucherOfflineAssignment]) -> Optional[Dict[str, Any]]:
@@ -139,6 +157,8 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
            shop_id: Optional[str] = None) -> Dict[str, Any]:
     PV = _pv()
     batch = PV.get_batch(db, user, tenant_id, batch_id)
+    # The batch's lock: two assigns at once never both pass the "one live assignment" check.
+    batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().one()
     if not getattr(batch, "offline_allowed", False):
         raise PV._http(status.HTTP_409_CONFLICT, OFFLINE_NOT_ALLOWED)
     if target not in TARGETS:
@@ -148,8 +168,8 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
         machine = db.query(POSMachine).filter(POSMachine.id == PV._as_uuid(machine_id)).first() if machine_id else None
         if machine is None or str(machine.tenant_id) != str(tenant_id):
             raise PV._http(status.HTTP_404_NOT_FOUND, "machine_not_found")
-        # Only a device of a shop the batch is valid in — and one the user sees.
-        if str(machine.shop_id) not in eligible:
+        # Only an active till of a shop the batch is valid in — and one the user sees; never a kiosk.
+        if str(machine.shop_id) not in eligible or not machine.is_active or getattr(machine, "is_kiosk", False):
             raise PV._http(status.HTTP_409_CONFLICT, WRONG_SHOP)
     else:
         if shop_id and str(PV._as_uuid(shop_id)) not in eligible:
@@ -157,6 +177,8 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
         from app.services.main_till import main_till_of_shop
 
         shop = PV._as_uuid(shop_id) or (PV._as_uuid(batch.shop_ids[0]) if batch.shop_ids and len(batch.shop_ids) == 1 else None)
+        if shop is not None and str(shop) not in eligible:
+            raise PV._http(status.HTTP_409_CONFLICT, WRONG_SHOP)
         machine = main_till_of_shop(db, shop) if shop else None
         if machine is None:
             raise PV._http(status.HTTP_409_CONFLICT, NO_MAIN_TILL)
@@ -165,6 +187,14 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
         if current.machine_id == machine.id and current.target == target:
             return _out(db, current)  # the same target again: the assignment as it is
         raise PV._http(status.HTTP_409_CONFLICT, OFFLINE_ASSIGNED)
+    # A voucher held by an open sale (any till): the device would not know of the hold.
+    live = [
+        r for r in db.query(PrepaidVoucherReservation).filter(
+            PrepaidVoucherReservation.batch_id == batch.id, PrepaidVoucherReservation.status == "held")
+        if PV._reservation_live(r, PV._now())
+    ]
+    if live:
+        raise PV._http(status.HTTP_409_CONFLICT, HOLDS_LIVE)
     a = PrepaidVoucherOfflineAssignment(
         id=uuid.uuid4(), tenant_id=batch.tenant_id, batch_id=batch.id, target=target, machine_id=machine.id,
         shop_id=machine.shop_id, status="active", version=1, assigned_by=getattr(user, "id", None), assigned_at=PV._now(),
@@ -176,29 +206,44 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
 
 
 def release(db: Session, user: User, tenant_id, batch_id, force: bool = False, reason: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Two steps (review 09.10): the release is requested (`releasing`) and completes when the device
+    acknowledges it on a sync with nothing pending (`releaseAck`). A device that never downloaded the
+    batch has nothing to give back: released at once. `force` with a reason releases at once (audited).
+    """
     PV = _pv()
     batch = PV.get_batch(db, user, tenant_id, batch_id)
     a = active_of(db, batch.id)
     if a is None:
         return {"assignment": None}
-    synced = (
-        a.last_download_at is None
-        or (a.last_sync_at is not None and a.last_sync_at >= a.last_download_at and int(a.last_sync_pending or 0) == 0)
-    )
-    if not synced and not force:
-        raise PV._http(status.HTTP_409_CONFLICT, OFFLINE_PENDING)
-    if force and not synced and not (reason or "").strip():
-        raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, REASON_REQUIRED)
-    now = PV._now()
+    if force:
+        if not (reason or "").strip():
+            raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, REASON_REQUIRED)
+        _complete(db, batch, a, user, forced=True, reason=reason)
+        return {"assignment": _out(db, a)}
+    if a.last_download_at is None:
+        _complete(db, batch, a, user, forced=False, reason=None)
+        return {"assignment": _out(db, a)}
+    if a.status != "releasing":
+        a.status = "releasing"
+        a.version = int(a.version or 1) + 1
+        a.released_by = getattr(user, "id", None)
+        PV._event(db, batch, user, "offline_release_requested", details={"assignmentId": str(a.id)})
+        db.flush()
+    return {"assignment": _out(db, a)}
+
+
+def _complete(db: Session, batch: PrepaidVoucherBatch, a: PrepaidVoucherOfflineAssignment, user, *, forced: bool,
+              reason: Optional[str]) -> None:
+    PV = _pv()
     a.status = "released"
-    a.released_at = now
-    a.released_by = getattr(user, "id", None)
-    a.forced = bool(force and not synced)
+    a.released_at = PV._now()
+    a.released_by = getattr(user, "id", None) or a.released_by
+    a.forced = bool(forced)
     a.release_reason = (reason or "").strip() or None
-    PV._event(db, batch, user, "offline_force_release" if a.forced else "offline_release",
+    PV._event(db, batch, user, "offline_force_release" if forced else "offline_release",
               reason=a.release_reason, details={"assignmentId": str(a.id), "pending": a.last_sync_pending})
     db.flush()
-    return {"assignment": _out(db, a)}
 
 
 def history(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
@@ -210,7 +255,7 @@ def history(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
         .order_by(PrepaidVoucherOfflineAssignment.assigned_at.desc())
         .all()
     )
-    active = next((r for r in rows if r.status == "active"), None)
+    active = next((r for r in rows if r.status in LIVE), None)
     return {"assignment": _out(db, active), "history": [_out(db, r) for r in rows]}
 
 
@@ -248,13 +293,64 @@ def _snapshot(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, vouc
     return out
 
 
+def still_valid(db: Session, machine: POSMachine, a: PrepaidVoucherOfflineAssignment,
+                batch: Optional[PrepaidVoucherBatch]) -> bool:
+    """
+    The assignment still fits its device: the same tenant, the shop it was made in, a shop the
+    batch is valid in, the device active. A device moved to another shop or tenant loses it
+    (released by the cloud, audited) — it never downloads vouchers it may not redeem.
+    """
+    if batch is None or str(batch.tenant_id) != str(machine.tenant_id) or str(a.tenant_id) != str(machine.tenant_id):
+        return False
+    if a.shop_id is not None and str(a.shop_id) != str(machine.shop_id):
+        return False
+    if not machine.is_active:
+        return False
+    if batch.shop_ids:
+        return str(machine.shop_id) in {str(s) for s in batch.shop_ids}
+    company = db.query(Shop.company_id).filter(Shop.id == machine.shop_id).scalar() if machine.shop_id else None
+    return company is not None and str(company) in _pv()._company_group(db, batch.company_id)
+
+
+def _drop_moved(db: Session, machine: POSMachine) -> None:
+    """[machine]'s live assignments that no longer fit it: released (`offline_auto_release`)."""
+    PV = _pv()
+    for a in db.query(PrepaidVoucherOfflineAssignment).filter(
+        PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status.in_(LIVE),
+    ):
+        batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == a.batch_id).first()
+        if still_valid(db, machine, a, batch):
+            continue
+        a.status, a.released_at, a.forced = "released", PV._now(), True
+        a.release_reason = "המכשיר עבר לסניף או לחשבון אחר"
+        if batch is not None:
+            PV._event(db, batch, None, "offline_force_release", reason=a.release_reason,
+                      details={"assignmentId": str(a.id), "auto": True})
+    db.flush()
+
+
+def released_on_machine_move(db: Session, machine: POSMachine) -> None:
+    """Called when a machine's shop or tenant changes: its assignments that no longer fit go."""
+    _drop_moved(db, machine)
+
+
+def assignments_out(db: Session, machine: POSMachine) -> List[Dict[str, Any]]:
+    """Every assignment of [machine] not released: what the sync answers (the release's first step)."""
+    return [
+        {"assignmentId": str(a.id), "batchId": str(a.batch_id), "status": a.status, "version": int(a.version or 1)}
+        for a in db.query(PrepaidVoucherOfflineAssignment).filter(
+            PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status.in_(LIVE))
+    ]
+
+
 def download(db: Session, machine: POSMachine) -> Dict[str, Any]:
     """What is assigned to [machine]: the batches' terms and their vouchers by code hash."""
     PV = _pv()
     now = PV._now()
+    _drop_moved(db, machine)
     out = []
     for a in db.query(PrepaidVoucherOfflineAssignment).filter(
-        PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status == "active",
+        PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status.in_(LIVE),
     ):
         batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == a.batch_id).first()
         if batch is None:
@@ -266,6 +362,8 @@ def download(db: Session, machine: POSMachine) -> Dict[str, Any]:
             "assignmentId": str(a.id),
             "batchId": str(batch.id),
             "target": a.target,
+            # `releasing`: stop redeeming, sync what is left, acknowledge (`releaseAck`).
+            "status": a.status,
             "version": int(a.version or 1),
             "snapshot": _snapshot(db, machine, batch, vouchers[0] if vouchers else None),
             "vouchers": [
@@ -304,16 +402,22 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     now = PV._now()
     results = []
     touched: Dict[str, PrepaidVoucherOfflineAssignment] = {}
+    _drop_moved(db, machine)
     for e in body.redemptions or []:
         rid = str(e.id).strip()
+        # The device's own id, of this device (another device may well use the same).
         existing = (
             db.query(PrepaidVoucherRedemption)
-            .filter(PrepaidVoucherRedemption.tenant_id == machine.tenant_id, PrepaidVoucherRedemption.client_redemption_id == rid)
+            .filter(
+                PrepaidVoucherRedemption.tenant_id == machine.tenant_id,
+                PrepaidVoucherRedemption.machine_id == machine.id,
+                PrepaidVoucherRedemption.client_redemption_id == rid,
+            )
             .first()
         )
         a = db.query(PrepaidVoucherOfflineAssignment).filter(
             PrepaidVoucherOfflineAssignment.id == PV._as_uuid(e.assignment_id)).first() if e.assignment_id else None
-        if a is None or a.machine_id != machine.id:
+        if a is None or a.machine_id != machine.id or str(a.tenant_id) != str(machine.tenant_id):
             results.append({"id": rid, "status": "rejected", "reason": "assignment_not_found"})
             continue
         touched[str(a.id)] = a
@@ -322,6 +426,10 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             results.append({"id": rid, "status": "rejected", "reason": "voucher_not_found"})
             continue
         if existing is not None:
+            if existing.voucher_id != voucher.id:
+                # The same id for another voucher: never the stored row's to change.
+                results.append({"id": rid, "status": "rejected", "reason": "id_conflict"})
+                continue
             if e.reversed_at is not None and existing.reversed_at is None:
                 _give_back(voucher, existing)
                 existing.reversed_at = e.reversed_at
@@ -331,30 +439,34 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             continue
         batch = voucher.batch
         units = [u.model_dump(by_alias=True) if hasattr(u, "model_dump") else dict(u) for u in (e.units or [])]
+        units = [{k: v for k, v in u.items() if k != "takenQuantity"} for u in units]  # the cloud's to say
         flags: List[str] = []
-        remaining = {k: PV.qty(v) for k, v in (voucher.remaining or {}).items()}
-        grouped = (getattr(batch, "selection", None) or "items") == "groups"
-        for u in units:
-            q = PV.qty(u.get("quantity") or 1)
-            if grouped:
-                pieces = q if q == q.to_integral_value() else Decimal(1)
-                key = f"g:{u.get('groupKey')}"
-                remaining[key] = remaining.get(key, Decimal(0)) - pieces
-                remaining["total"] = remaining.get("total", Decimal(0)) - pieces
-            else:
-                pid = str(u.get("productId"))
-                remaining[pid] = remaining.get(pid, Decimal(0)) - q
-        if any(v < 0 for v in remaining.values()) or voucher.status in ("used", "cancelled"):
-            flags.append("over_use")
         reversed_at = e.reversed_at
+        grouped = (getattr(batch, "selection", None) or "items") == "groups"
         if reversed_at is None:
-            remaining = {k: max(Decimal(0), v) for k, v in remaining.items()}
+            # What it really takes: never below 0; a unit cut short records it (`takenQuantity`).
+            from app.services.production_voucher_reserve import take_units
+
+            remaining = {k: PV.qty(v) for k, v in (voucher.remaining or {}).items()}
+            if take_units(remaining, units, grouped) or voucher.status in ("used", "cancelled"):
+                flags.append("over_use")
             voucher.remaining = {k: PV.qty_out(v) for k, v in remaining.items()}
             left = [v for k, v in remaining.items() if k != "total"]
-            voucher.status = "used" if (not any(v > 0 for v in left) or remaining.get("total", Decimal(1)) <= 0) else "partially_used"
+            if voucher.status == "cancelled":
+                flags.append("cancelled")  # recorded (a fiscal fact), the voucher stays cancelled
+            else:
+                voucher.status = "used" if (not any(v > 0 for v in left) or remaining.get("total", Decimal(1)) <= 0) else "partially_used"
             voucher.first_redeemed_at = voucher.first_redeemed_at or e.redeemed_at or now
             voucher.last_redeemed_at = e.redeemed_at or now
+        else:
+            # Synced already undone: nothing was taken, nothing comes back.
+            for u in units:
+                u["takenQuantity"] = 0
+        if a.status == "released":
+            flags.append("after_release")  # a fiscal fact made before the device learned: recorded, flagged
         approval = e.approval
+        if approval is not None and not PV.approval_valid(db, machine, approval):
+            flags.append("approval_invalid")
         r = PrepaidVoucherRedemption(
             id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id, machine_id=machine.id,
             shop_id=machine.shop_id, pos_user_id=(str(e.pos_user_id) if e.pos_user_id is not None else None),
@@ -372,35 +484,33 @@ def sync(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             approved_by_pos_user_id=(approval.pos_user_id if approval else None),
             approved_by_pos_user_name=(approval.pos_user_name if approval else None),
         )
+        r.flags = flags or None
         db.add(r)
         results.append({"id": rid, "status": "accepted", **({"flags": flags} if flags else {})})
     for a in touched.values():
         a.last_sync_at = now
         a.last_sync_pending = int(body.pending or 0)
-    if not touched:
-        for a in db.query(PrepaidVoucherOfflineAssignment).filter(
-            PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status == "active",
-        ):
-            a.last_sync_at = now
-            a.last_sync_pending = int(body.pending or 0)
+    for a in db.query(PrepaidVoucherOfflineAssignment).filter(
+        PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status.in_(LIVE),
+    ):
+        a.last_sync_at = now
+        a.last_sync_pending = int(body.pending or 0)
+    # The release's second step: the device acknowledges with nothing left to send.
+    acks = {str(x).strip() for x in (getattr(body, "release_ack", None) or [])}
+    for a in db.query(PrepaidVoucherOfflineAssignment).filter(
+        PrepaidVoucherOfflineAssignment.machine_id == machine.id, PrepaidVoucherOfflineAssignment.status == "releasing",
+    ):
+        if str(a.id) in acks and int(body.pending or 0) == 0:
+            batch = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == a.batch_id).first()
+            if batch is not None:
+                _complete(db, batch, a, None, forced=False, reason=None)
     db.flush()
-    return {"results": results, "pending": int(body.pending or 0)}
+    return {"results": results, "pending": int(body.pending or 0), "assignments": assignments_out(db, machine)}
 
 
 def _give_back(voucher: PrepaidVoucher, r: PrepaidVoucherRedemption) -> None:
+    """Only what [r] really took goes back (prepaid_vouchers.give_back); a cancelled voucher stays cancelled."""
     PV = _pv()
-    remaining = {k: PV.qty(v) for k, v in (voucher.remaining or {}).items()}
-    grouped = (getattr(voucher.batch, "selection", None) or "items") == "groups"
-    for u in r.units or []:
-        q = PV.qty(u.get("quantity") or 1)
-        if grouped:
-            pieces = q if q == q.to_integral_value() else Decimal(1)
-            key = f"g:{u.get('groupKey')}"
-            remaining[key] = remaining.get(key, Decimal(0)) + pieces
-            remaining["total"] = remaining.get("total", Decimal(0)) + pieces
-        else:
-            pid = str(u.get("productId"))
-            remaining[pid] = remaining.get(pid, Decimal(0)) + q
-    voucher.remaining = {k: PV.qty_out(v) for k, v in remaining.items()}
+    PV.give_back(voucher, r)
     if voucher.status == "used":
         voucher.status = "partially_used"

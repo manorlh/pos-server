@@ -1176,6 +1176,8 @@ class PrepaidOfflineSyncIn(BaseModel):
     #: What is left on the device after this call (release waits for 0).
     pending: int = Field(0, ge=0)
     redemptions: List[PrepaidOfflineRedemptionIn] = Field(default_factory=list, max_length=500)
+    #: The release's second step: the assignments (`releasing`) the device has dropped (§7).
+    release_ack: List[str] = Field(default_factory=list, alias="releaseAck", max_length=100)
 
 
 class PrepaidConfirmUnitIn(BaseModel):

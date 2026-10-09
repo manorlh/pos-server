@@ -41,7 +41,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from app.database import Base
 
@@ -306,7 +306,7 @@ class PrepaidVoucherBatch(Base):
     #: The production it was made for (`prepaid_productions`, the contract's §13); null: none named.
     production_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_productions.id"), nullable=True, index=True)
     #: The event (the existing `report_events`); `event_name` stays the printed text.
-    report_event_id = Column(UUID(as_uuid=True), ForeignKey("report_events.id"), nullable=True, index=True)
+    report_event_id = Column(UUID(as_uuid=True), ForeignKey("report_events.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # ── Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7) ──────────────────────
     #: `items` (goods, a tender — every batch before kinds), `order_discount` (off the
@@ -460,8 +460,8 @@ class PrepaidVoucherRedemption(Base):
         Index("ix_prepaid_voucher_redemptions_batch_time", "batch_id", "redeemed_at"),
         Index("ix_prepaid_voucher_redemptions_machine_time", "machine_id", "redeemed_at"),
         Index("ix_prepaid_voucher_redemptions_voucher", "voucher_id"),
-        # An offline redemption is synced once, by the device's own id (§7).
-        Index("ux_prepaid_voucher_redemptions_client", "tenant_id", "client_redemption_id", unique=True),
+        # An offline redemption is synced once, by the device's own id — per device (§7, review 09.10).
+        Index("ux_prepaid_voucher_redemptions_device_client", "tenant_id", "machine_id", "client_redemption_id", unique=True),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -683,6 +683,7 @@ PREPAID_EVENT_ACTIONS = (
     "use_flagged",     # a discount voucher's use confirmed against the rules (see `flags`)
     "offline_assign",          # assigned to a till / the shop's LAN host (§7)
     "offline_release",         # released after the device synced everything
+    "offline_release_requested",  # the release's first step: the device is told on its next sync
     "offline_force_release",   # released with redemptions still on the device (a reason given)
 )
 
@@ -699,6 +700,10 @@ class PrepaidVoucherOfflineAssignment(Base):
     __table_args__ = (
         Index("ix_prepaid_voucher_offline_assignments_batch", "batch_id", "status"),
         Index("ix_prepaid_voucher_offline_assignments_machine", "machine_id", "status"),
+        # At most one live assignment per batch (`active`, or `releasing` until the device acknowledges).
+        Index("ux_prepaid_voucher_offline_assignments_live", "batch_id", unique=True,
+              postgresql_where=text("status IN ('active', 'releasing')"),
+              sqlite_where=text("status IN ('active', 'releasing')")),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -762,7 +767,6 @@ class PrepaidProduction(Base):
 
     __tablename__ = "prepaid_productions"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "company_id", "name", name="ux_prepaid_productions_name"),
         CheckConstraint("billing_basis IN ('redemption', 'delivery')", name="ck_prepaid_productions_billing"),
     )
 
@@ -781,3 +785,7 @@ class PrepaidProduction(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
+
+#: One production name per company, whatever its case (the service compares lower(trim(name)) too).
+Index("ux_prepaid_productions_name", PrepaidProduction.tenant_id, PrepaidProduction.company_id,
+      func.lower(PrepaidProduction.name), unique=True)

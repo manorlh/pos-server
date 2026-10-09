@@ -477,17 +477,19 @@ class TestFeatures:
         assert (out["redeemable"], out["reason"], out["message"]) == (
             False, PV.UPDATE_REQUIRED, "יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה")
         assert refused(take, w, first_code(w, b)).detail == PV.UPDATE_REQUIRED
-        assert look(w, first_code(w, b), ["accounting"])["redeemable"] is True
-        assert take(w, first_code(w, b), ["accounting"])["replayed"] is False
+        # A fixed value is never the immediate redeem (review 09.10): reserve → confirm.
+        assert look(w, first_code(w, b), ["accounting"])["reason"] == PV.UPDATE_REQUIRED
+        assert look(w, first_code(w, b), ["accounting", "reserve_goods"])["redeemable"] is True
+        assert refused(take, w, first_code(w, b), ["accounting", "reserve_goods"]).detail == PV.RESERVE_REQUIRED
 
     @pytest.mark.parametrize("terms, need", [
         ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": None}, []),
-        ({"redemptionAccounting": "payment", "pricing": "fixed", "tillValue": 80}, ["accounting"]),
-        ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": 50}, ["accounting"]),
+        ({"redemptionAccounting": "payment", "pricing": "fixed", "tillValue": 80}, ["accounting", "reserve_goods"]),
+        ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": 50}, ["accounting", "reserve_goods"]),
         ({"redemptionAccounting": "discount", "pricing": "cover", "tillValue": None}, ["accounting"]),
         ({"redemptionAccounting": "zero", "pricing": "cover", "tillValue": None}, ["accounting"]),
         ({"redemptionAccounting": "payment", "pricing": "cover", "tillValue": None,
-          "discountBlockPolicy": {"mode": "auto"}}, ["override"]),
+          "discountBlockPolicy": {"mode": "auto"}}, ["override", "reserve_goods"]),
     ])
     def test_what_each_set_of_terms_needs(self, w, terms, need):
         t = make_type(w, productionPrice=None, **terms)

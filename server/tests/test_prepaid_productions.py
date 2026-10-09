@@ -67,10 +67,12 @@ class TestProductions:
         p = production(w, contactName="יעל", contactPhone="050-1234567", billingBasis="delivery")
         assert (p["name"], p["contactName"], p["billingBasis"], p["active"], p["batchCount"]) == (
             "הפקות כהן", "יעל", "delivery", True, 0)
-        assert refused(production, w, name="הפקות  כהן".replace("  ", " ").upper()).detail == PPR.PRODUCTION_NAME_TAKEN
+        assert refused(production, w, name="  הפקות כהן ").detail == PPR.PRODUCTION_NAME_TAKEN
+        assert production(w, name="Acme")["name"] == "Acme"
+        assert refused(production, w, name="ACME").detail == PPR.PRODUCTION_NAME_TAKEN
         batch(w, productionId=p["id"])
-        (row,) = R.list_prepaid_productions(company_id=None, include_inactive=False, **_ctx(w))["items"]
-        assert (row["id"], row["batchCount"]) == (p["id"], 1)
+        rows = {r["name"]: r for r in R.list_prepaid_productions(company_id=None, include_inactive=False, **_ctx(w))["items"]}
+        assert (rows["הפקות כהן"]["id"], rows["הפקות כהן"]["batchCount"], rows["Acme"]["batchCount"]) == (p["id"], 1, 0)
 
     def test_a_rename_reaches_its_batches_and_inactive_ones_take_no_new_batch(self, w):
         p = production(w)
@@ -155,21 +157,30 @@ def test_the_migration_moves_every_customer_name_into_a_production():
     with engine.begin() as conn:
         conn.execute(sa.text("CREATE TABLE prepaid_voucher_batches (id CHAR(32) PRIMARY KEY, tenant_id CHAR(32), "
                              "company_id CHAR(32), customer_name VARCHAR(200))"))
-        conn.execute(sa.text("INSERT INTO prepaid_voucher_batches VALUES ('b1', 't', 'c', 'כהן'), ('b2', 't', 'c', 'כהן'), "
-                             "('b3', 't', 'c', 'אלון'), ('b4', 't', 'c2', 'כהן'), ('b5', 't', 'c', NULL)"))
+        # Review 09.10: names that differ only in case or spaces are one production.
+        conn.execute(sa.text("INSERT INTO prepaid_voucher_batches VALUES ('b1', 't', 'c', 'כהן'), ('b2', 't', 'c', 'כהן '), "
+                             "('b3', 't', 'c', 'אלון'), ('b4', 't', 'c2', 'כהן'), ('b5', 't', 'c', NULL), "
+                             "('b6', 't', 'c', 'Acme'), ('b7', 't', 'c', 'ACME')"))
         with Operations.context(MigrationContext.configure(conn)):
             module.upgrade()
             module.upgrade()  # idempotent: nothing more
         rows = conn.execute(sa.text("SELECT company_id, name FROM prepaid_productions ORDER BY company_id, name")).all()
-        assert [tuple(r) for r in rows] == [("c", "אלון"), ("c", "כהן"), ("c2", "כהן")]
+        assert [tuple(r) for r in rows] == [("c", "Acme"), ("c", "אלון"), ("c", "כהן"), ("c2", "כהן")]
         linked = dict(conn.execute(sa.text(
             "SELECT b.id, p.name FROM prepaid_voucher_batches b LEFT JOIN prepaid_productions p ON p.id = b.production_id")).all())
-        assert linked == {"b1": "כהן", "b2": "כהן", "b3": "אלון", "b4": "כהן", "b5": None}
+        assert linked == {"b1": "כהן", "b2": "כהן", "b3": "אלון", "b4": "כהן", "b5": None, "b6": "Acme", "b7": "Acme"}
+        # The batches carry their production's name; the index refuses a name differing in case only.
+        assert conn.execute(sa.text("SELECT customer_name FROM prepaid_voucher_batches WHERE id = 'b7'")).scalar() == "Acme"
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.execute(sa.text("INSERT INTO prepaid_productions (id, tenant_id, company_id, name, billing_basis, active) "
+                                 "VALUES ('x', 't', 'c', 'acme', 'redemption', 1)"))
         assert "report_event_id" in {c["name"] for c in sa.inspect(conn).get_columns("prepaid_voucher_batches")}
     buf = io.StringIO()
     offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
     with Operations.context(offline):
         module.upgrade()
     sql = buf.getvalue()
-    assert "CREATE TABLE prepaid_productions" in sql and "ON CONFLICT (tenant_id, company_id, name) DO NOTHING" in sql
+    assert "CREATE TABLE prepaid_productions" in sql and "ON CONFLICT (tenant_id, company_id, lower(name)) DO NOTHING" in sql
+    assert "CREATE UNIQUE INDEX ux_prepaid_productions_name ON prepaid_productions (tenant_id, company_id, lower(name))" in sql
+    assert "ON DELETE SET NULL" in sql
     assert "ALTER TABLE prepaid_voucher_batches ADD COLUMN report_event_id UUID" in sql

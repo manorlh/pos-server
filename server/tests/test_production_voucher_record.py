@@ -31,10 +31,29 @@ class TestTheRecord:
         assert (hist["accounting"], hist["value"], hist["listValue"]) == ("payment", 49.0, 49.0)
         assert [u["productName"] for u in hist["units"]] == ["נקניקייה", "שתייה"]
 
-    def test_a_fixed_value_taken_in_part_and_the_names(self, w):
+    def test_a_fixed_value_is_held_then_confirmed_and_the_names(self, w):
+        import uuid as _uuid
+
+        import pytest
+        from fastapi import HTTPException
+
+        from app.schemas.prepaid_voucher import PrepaidVoucherConfirmIn, PrepaidVoucherReserveIn
+        from app.services import prepaid_vouchers as PV
+
         t = make_type(w, tillValue=80)  # hotdog ×1 + drink ×1, ₪80, a deduction
         b = batch_from(w, t["id"], customerName="קייטרינג אלון")
-        redeem(w, first_code(w, b), [(w.hotdog, 1), (w.drink, 1)], features=["accounting"])
+        # Never the immediate redeem: no cap, no top-up, no override there (review 09.10).
+        with pytest.raises(HTTPException) as e:
+            redeem(w, first_code(w, b), [(w.hotdog, 1), (w.drink, 1)], features=["accounting", "reserve_goods"])
+        assert e.value.detail == PV.RESERVE_REQUIRED
+        till = w.tills[0]
+        units = [{"productId": str(p.id), "productName": p.name, "quantity": 1, "listPriceAgorot": price}
+                 for p, price in ((w.hotdog, 2500), (w.drink, 1200))]
+        held = R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
+            code=first_code(w, b), clientRequestId=str(_uuid.uuid4()), saleRef="s1", units=units,
+            features=["accounting", "reserve_goods"]), machine=till, db=w.db)
+        R.confirm_prepaid_reservation(str(till.id), held["reservationId"], PrepaidVoucherConfirmIn(
+            transactionId="tx-1", amountAgorot=held["coveredAgorot"]), machine=till, db=w.db)
         r = w.db.query(PrepaidVoucherRedemption).one()
         assert (r.redemption_accounting, r.pricing, r.value_agorot, r.list_value_agorot) == ("discount", "fixed", 8000, 3700)
         assert (r.type_name, r.production_name) == ("שובר ארוחה", "קייטרינג אלון")

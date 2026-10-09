@@ -61,8 +61,24 @@ def codes(w, b):
 
 
 def take(w, code, *, till=None, when=None, items=None):
-    # A till that books every accounting mode (the contract's §2 `features`).
-    out = redeem(w, code, items or [(w.hotdog, 1)], till=till, features=["accounting", "override"])
+    # A till that books every accounting mode (the contract's §2 `features`). A batch with a value
+    # is never the immediate redeem (review 09.10): it is held, then confirmed.
+    from app.schemas.prepaid_voucher import PrepaidVoucherConfirmIn, PrepaidVoucherReserveIn
+    from app.services import prepaid_vouchers as PV
+
+    items = items or [(w.hotdog, 1)]
+    v = w.db.query(PrepaidVoucher).filter(PrepaidVoucher.code == code).one()
+    if PV.redeemable_immediately(v.batch):
+        out = redeem(w, code, items, till=till, features=["accounting", "override"])
+    else:
+        till = till or w.tills[0]
+        units = [{"productId": str(p.id), "productName": p.name, "quantity": q, "listPriceAgorot": int(p.price * 100)}
+                 for p, q in items]
+        held = R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
+            code=code, clientRequestId=str(uuid.uuid4()), saleRef=str(uuid.uuid4()), units=units, posUserId=7,
+            posUserName="דנה", features=["accounting", "override", "reserve_goods"]), machine=till, db=w.db)
+        out = R.confirm_prepaid_reservation(str(till.id), held["reservationId"], PrepaidVoucherConfirmIn(
+            transactionId=str(uuid.uuid4()), amountAgorot=held["coveredAgorot"]), machine=till, db=w.db)
     if when is not None:
         w.db.query(PrepaidVoucherRedemption).filter(PrepaidVoucherRedemption.id == uuid.UUID(out["redemptionId"])).update(
             {"redeemed_at": when})

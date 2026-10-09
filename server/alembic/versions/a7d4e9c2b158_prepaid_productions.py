@@ -6,12 +6,17 @@ Create Date: 2026-10-09
 
 * `prepaid_productions` — a company's production (the customer vouchers are made for): its name,
   contact, billing basis (`redemption` by default, or `delivery`), notes, active. One name per
-  company.
+  company, whatever its case: a unique index on `(tenant_id, company_id, lower(name))`.
 * `prepaid_voucher_batches.production_id` (FK, null) and `report_event_id` (FK to the existing
-  `report_events`, null); `customer_name` / `event_name` stay (the printed text, the legacy filter).
-* Data: every distinct `customer_name` of a company's batches becomes a production, and those
-  batches name it. A production's id is derived from (tenant, company, name), so a second run
-  adds nothing.
+  `report_events`, null, `ON DELETE SET NULL` — deleting an event never fails over a batch);
+  `customer_name` / `event_name` stay (the printed text, the legacy filter).
+* Data: every distinct customer name of a company's batches — compared as `lower(btrim(name))`, so
+  "הפקות כהן" and "הפקות כהן " and "HAFAKOT" / "hafakot" are one — becomes a production (named as
+  first written, trimmed), and those batches name it (their `customer_name` becomes its name). A
+  production's id is derived from (tenant, company, the lowered name), so a second run adds nothing.
+
+Fixed in place before it was applied anywhere (review 09.10): the case-insensitive grouping and
+index, and the event's `ON DELETE SET NULL`.
 
 Idempotent (the table, columns and indexes only when missing; the data by name); offline
 (`--sql`) the plain statements, the data as one INSERT … SELECT and one UPDATE (Postgres).
@@ -49,49 +54,64 @@ def _columns(table: str) -> set:
     return set() if _offline() else {c['name'] for c in sa.inspect(op.get_bind()).get_columns(table)}
 
 
+def _index_names(table: str) -> set:
+    """Every index of [table] by name — an expression index included (the inspector skips those on SQLite)."""
+    if _offline():
+        return set()
+    bind = op.get_bind()
+    if bind.dialect.name == 'sqlite':
+        rows = bind.execute(sa.text("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = :t"), {"t": table})
+    else:
+        rows = bind.execute(sa.text("SELECT indexname FROM pg_indexes WHERE tablename = :t"), {"t": table})
+    return {r[0] for r in rows}
+
+
 def _indexes(table: str) -> set:
     return set() if _offline() else {i['name'] for i in sa.inspect(op.get_bind()).get_indexes(table)}
 
 
 def _move_customers() -> None:
-    """Each distinct customer name of a company's batches → a production; the batches name it."""
+    """Each distinct customer name (by `lower(btrim(name))`) of a company's batches → a production; the batches name it."""
     if op.get_context().dialect.name == 'postgresql':
         op.execute(sa.text(f"""
             INSERT INTO {TABLE} (id, tenant_id, company_id, name, billing_basis, active, created_at, updated_at)
-            SELECT DISTINCT md5(b.tenant_id::text || ':' || b.company_id::text || ':' || b.customer_name)::uuid,
-                   b.tenant_id, b.company_id, b.customer_name, 'redemption', true, now(), now()
+            SELECT DISTINCT ON (b.tenant_id, b.company_id, lower(btrim(b.customer_name)))
+                   md5(b.tenant_id::text || ':' || b.company_id::text || ':' || lower(btrim(b.customer_name)))::uuid,
+                   b.tenant_id, b.company_id, btrim(b.customer_name), 'redemption', true, now(), now()
             FROM {BATCHES} b
             WHERE b.customer_name IS NOT NULL AND btrim(b.customer_name) <> ''
-            ON CONFLICT (tenant_id, company_id, name) DO NOTHING
+            ORDER BY b.tenant_id, b.company_id, lower(btrim(b.customer_name)), b.created_at
+            ON CONFLICT (tenant_id, company_id, lower(name)) DO NOTHING
         """))
         op.execute(sa.text(f"""
-            UPDATE {BATCHES} b SET production_id = p.id
+            UPDATE {BATCHES} b SET production_id = p.id, customer_name = p.name
             FROM {TABLE} p
             WHERE b.production_id IS NULL AND p.tenant_id = b.tenant_id AND p.company_id = b.company_id
-              AND p.name = b.customer_name
+              AND lower(p.name) = lower(btrim(b.customer_name))
         """))
         return
     bind = op.get_bind()
     rows = bind.execute(sa.text(
-        f"SELECT DISTINCT tenant_id, company_id, customer_name FROM {BATCHES} "
-        "WHERE customer_name IS NOT NULL AND trim(customer_name) <> '' AND production_id IS NULL"
+        f"SELECT id, tenant_id, company_id, customer_name FROM {BATCHES} "
+        "WHERE customer_name IS NOT NULL AND trim(customer_name) <> '' AND production_id IS NULL ORDER BY id"
     )).all()
-    for tenant_id, company_id, name in rows:
+    for batch_id, tenant_id, company_id, raw in rows:
+        name = raw.strip()
+        key = name.lower()
         found = bind.execute(sa.text(
-            f"SELECT id FROM {TABLE} WHERE tenant_id = :t AND company_id = :c AND name = :n"
-        ), {"t": tenant_id, "c": company_id, "n": name}).first()
+            f"SELECT id, name FROM {TABLE} WHERE tenant_id = :t AND company_id = :c AND lower(name) = :k"
+        ), {"t": tenant_id, "c": company_id, "k": key}).first()
         if found is None:
-            pid = uuid.uuid5(NAMESPACE, f"{tenant_id}:{company_id}:{name}").hex
+            pid = uuid.uuid5(NAMESPACE, f"{tenant_id}:{company_id}:{key}").hex
             bind.execute(sa.text(
                 f"INSERT INTO {TABLE} (id, tenant_id, company_id, name, billing_basis, active) "
                 "VALUES (:id, :t, :c, :n, 'redemption', 1)"
             ), {"id": pid, "t": tenant_id, "c": company_id, "n": name})
+            pname = name
         else:
-            pid = found[0]
-        bind.execute(sa.text(
-            f"UPDATE {BATCHES} SET production_id = :p WHERE tenant_id = :t AND company_id = :c "
-            "AND customer_name = :n AND production_id IS NULL"
-        ), {"p": pid, "t": tenant_id, "c": company_id, "n": name})
+            pid, pname = found[0], found[1]
+        bind.execute(sa.text(f"UPDATE {BATCHES} SET production_id = :p, customer_name = :n WHERE id = :b"),
+                     {"p": pid, "n": pname, "b": batch_id})
 
 
 def upgrade() -> None:
@@ -111,11 +131,13 @@ def upgrade() -> None:
             sa.Column('created_by', _uuid(), sa.ForeignKey('users.id'), nullable=True),
             sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.UniqueConstraint('tenant_id', 'company_id', 'name', name='ux_prepaid_productions_name'),
             sa.CheckConstraint("billing_basis IN ('redemption', 'delivery')", name='ck_prepaid_productions_billing'),
         )
         op.create_index('ix_prepaid_productions_tenant_id', TABLE, ['tenant_id'])
         op.create_index('ix_prepaid_productions_company_id', TABLE, ['company_id'])
+    if 'ux_prepaid_productions_name' not in _index_names(TABLE):
+        # One name per company whatever its case ("הפקות כהן" / "HAFAKOT" vs "hafakot").
+        op.create_index('ux_prepaid_productions_name', TABLE, ['tenant_id', 'company_id', sa.text('lower(name)')], unique=True)
     have = _columns(BATCHES)
     if 'production_id' not in have:
         op.add_column(BATCHES, sa.Column('production_id', _uuid(), nullable=True))
@@ -129,7 +151,9 @@ def upgrade() -> None:
             ('fk_prepaid_voucher_batches_report_event', 'report_event_id', 'report_events'),
         ):
             if name not in fks:
-                op.create_foreign_key(name, BATCHES, target, [column], ['id'])
+                # An event deleted: its batches lose the link (their printed event name stays).
+                op.create_foreign_key(name, BATCHES, target, [column], ['id'],
+                                      ondelete='SET NULL' if column == 'report_event_id' else None)
     indexes = _indexes(BATCHES)
     if 'ix_prepaid_voucher_batches_production_id' not in indexes:
         op.create_index('ix_prepaid_voucher_batches_production_id', BATCHES, ['production_id'])
