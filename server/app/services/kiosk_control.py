@@ -479,6 +479,8 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             "pausedBy": d.paused_by,
             "pausedUntil": _iso(d.paused_until) if d.paused else None,
             "pausedMode": (d.paused_mode or "manual") if d.paused else None,
+            # "הודעה על המסך" from the live panel (app/services/kiosk_live.py).
+            "banner": _banner_of(d, now),
             # "פתיחה אוטומטית": the kiosk's hours and automatic Z, for the controlling till's form.
             "schedule": _schedule_of(db, machine),
             "flowState": st.get("flowState"),
@@ -506,6 +508,12 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             **z_fields.get(d.machine_id, {}),
         })
     return out
+
+
+def _banner_of(device: KioskDevice, now: Optional[datetime]) -> Optional[Dict[str, Any]]:
+    from app.services import kiosk_live
+
+    return kiosk_live.banner_out(device, _now(now))
 
 
 def summary(db: Session, device: KioskDevice, *, now: Optional[datetime] = None) -> Dict[str, Any]:

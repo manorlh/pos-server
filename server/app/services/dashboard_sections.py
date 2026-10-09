@@ -63,7 +63,7 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
-            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports",
+            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
         ),
     ),
     Section(
@@ -80,6 +80,11 @@ SECTIONS: Tuple[Section, ...] = (
         ),
     ),
     Section("stock", "מלאי", "רמות מלאי, קבלת סחורה, ספירה ותיקונים.", ("/dashboard/stock",)),
+    Section(
+        "item_blocks", "חסימות ואזל",
+        "סימון פריט \"אזל\" או \"חסום\" לסניף, נקודת מכירה, קופה, קיוסקים או אירוע, עד שעה או עד ביטול.",
+        (),
+    ),
     Section("vouchers", "שוברים", "שוברי הנחה בקטלוג.", ("/dashboard/vouchers",)),
     Section("prepaid_vouchers", "שוברי הפקה", "שוברים לצוותי הפקה, מומשים בקופות ב-QR.", ("/dashboard/prepaid-vouchers",)),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
@@ -101,6 +106,11 @@ SECTIONS: Tuple[Section, ...] = (
         "devices", "מכשירים",
         "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
         ("/dashboard/machines",),
+    ),
+    Section(
+        "device_control", "שליטה מרחוק בקופות וקיוסקים",
+        "נעילת קופה, סנכרון, ניתוק משתמש, הפעלה מחדש והתקנת עדכון; עצירת קיוסק, הודעה על המסך והסתרה מהירה.",
+        (),
     ),
     Section("tables", "שולחנות", "אזורים, שולחנות, הזמנות ודוח שולחנות.", ("/dashboard/tables",)),
     Section("kiosks", "קיוסקים", "קיוסקים, הגדרותיהם ותקינות מכשירים.", ("/dashboard/kiosks", "/dashboard/kiosks/health")),
@@ -336,7 +346,17 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/workflow/*", S("kds")),
     (_ALL, "/kitchen-station*", S("printers", "kds")),
     (_ALL, "/printers/*", S("printers")),
+    # "שליטה מרחוק": the kiosks' live actions (pause / resume, the banner, quick hides) — the kiosks
+    # section as before, or remote control (app/routers/kiosk_live.py, app/routers/kiosks.py).
+    (_ALL, "/kiosks/live*", S("kiosks", "device_control")),
+    (_ALL, "/kiosks/{}/commands", S("kiosks", "device_control")),
+    (_ALL, "/kiosks/{}/banner", S("kiosks", "device_control")),
     (_ALL, "/kiosks*", S("kiosks")),
+    # Remote control of tills and kiosks (app/routers/device_commands.py).
+    (_ALL, "/device-commands*", S("device_control")),
+    # "חסימות ואזל" (app/routers/item_blocks.py).
+    ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
+    (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
     # ── Devices ──
     ("POST", "/device-management/*", S("devices")),
@@ -386,6 +406,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/training-mode*", S("till_settings")),
     (_ALL, "/shops/{}/shop-z-*", S("z")),
     (_ALL, "/shops/{}/stock*", S("stock")),
+    # Stock over the hierarchy (app/routers/stock_live.py): the switch preview only reads.
+    ("POST", "/stock/settings/preview", S("stock", level=VIEW)),
+    (_ALL, "/stock/*", S("stock")),
+    # "יעדים ותחרות" (app/routers/targets.py): seen on the board, set by whoever edits reports.
+    (_ALL, "/targets*", S("reports")),
     ("POST", "/shops/{}/till-z", S("z")),
     (_GET, "/shops/{}/tips/report", S("reports")),
     (_GET, "/shops/{}/work-types", S("products", "till_settings", level=VIEW)),

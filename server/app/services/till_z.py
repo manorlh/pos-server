@@ -990,7 +990,13 @@ def _check_requestable(machine: POSMachine) -> None:
 
 
 def request_for_machine(
-    db: Session, user: User, machine: POSMachine, *, force: bool = False, now: Optional[datetime] = None
+    db: Session,
+    user: User,
+    machine: POSMachine,
+    *,
+    force: bool = False,
+    wait_for_rest: bool = False,
+    now: Optional[datetime] = None,
 ) -> Tuple[TillZRequest, bool]:
     """
     Ask one till for its Z. Returns `(request, created)`: a till that already has a
@@ -1007,6 +1013,11 @@ def request_for_machine(
             existing.force_close = True
             db.flush()
             _send(machine, existing, now)
+        if wait_for_rest and not existing.wait_for_rest and not existing.force_close:
+            # Remote control asked too: the pending one waits for rest from now on.
+            existing.wait_for_rest = True
+            db.flush()
+            _send(machine, existing, now)
         return existing, False
     req = TillZRequest(
         id=uuid.uuid4(),
@@ -1017,6 +1028,7 @@ def request_for_machine(
         initiated_by=_initiator(user),
         status=S.WAITING,
         force_close=bool(force),
+        wait_for_rest=bool(wait_for_rest) and not force,
         expires_at=now + timedelta(hours=TILL_Z_REQUEST_TTL_HOURS),
         created_at=now,
         updated_at=now,
@@ -1078,6 +1090,7 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
     publish_till_z_notify(
         str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "",
         force=bool(req.force_close),
+        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
     )
     req.sent_at = now
 
@@ -1198,6 +1211,9 @@ def take_pending(db: Session, machine: POSMachine, *, now: Optional[datetime] = 
     if req.force_close:
         # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
         out["force"] = True
+    if getattr(req, "wait_for_rest", False):
+        # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
+        out["waitForRest"] = True
     return out
 
 

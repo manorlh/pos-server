@@ -54,6 +54,7 @@ from app.services import machine_catalog
 from app.services import product_alerts
 from app.services import product_availability as availability
 from app.services import category_availability
+from app.services import sold_out
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────
@@ -179,6 +180,7 @@ def _serialize_merged_product(
     catalog_item: Optional[MachineCatalogItem] = None,
     area_override: Optional[AreaProductOverride] = None,
     area_changed_at: Optional[datetime] = None,
+    blocks: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
@@ -198,8 +200,13 @@ def _serialize_merged_product(
     moved = _aware_utc(area_changed_at)
     if moved is not None and moved > eff_ts:
         eff_ts = moved
+    # "אזל" / "חסום" (app/services/sold_out.py): a block set, removed or ended moves the row too.
+    blocked_at = _aware_utc(getattr(blocks, "changed_at", None))
+    if blocked_at is not None and blocked_at > eff_ts:
+        eff_ts = blocked_at
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
+    active_blocks = list(getattr(blocks, "active", None) or [])
 
     row_id = local.id if local is not None else global_p.id
     price = float(override.price) if override and override.price is not None else float(global_p.price)
@@ -246,7 +253,16 @@ def _serialize_merged_product(
         "globalSku": global_p.global_sku,
         "imageUrl": image_url,
         "inStock": effective_in_stock,
-        "isAvailable": bool(is_avail),
+        # Not locked and not blocked: what a till or kiosk that reads only this field sells.
+        # A till that predates blocks reads only `isAvailable`: a block set by hand reaches it there;
+        # an automatic "אזל" (the stock ran out) only through `blocks`, which updated tills and kiosks
+        # read with their own stock policy (sold_out.manual_in_force).
+        "isAvailable": bool(is_avail) and not sold_out.manual_in_force(active_blocks),
+        # The catalog lock alone ("זמינות למכירה"), and the blocks in force that cover this device
+        # ("אזל" / "חסום", app/services/sold_out.py) — a current till decides between them with its
+        # own clock (app/services/sold_out_rules.py).
+        "lockAvailable": bool(is_avail),
+        "blocks": [sold_out.block_out(b) for b in active_blocks],
         "availabilityLock": lock,
         "stockQuantity": stock_qty,
         "barcode": global_p.barcode,
@@ -569,6 +585,7 @@ def _products_merged_for_shop_machine(
     machine_levels = availability.machine_overrides(db, mqid, assigned_ids)
     catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
     area_changed_at = getattr(machine, "area_changed_at", None)
+    product_blocks = sold_out.blocks_for_machine(db, machine, assigned_ids, since=since) if assigned_ids else {}
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -584,6 +601,7 @@ def _products_merged_for_shop_machine(
             catalog_item=catalog_rows.get(str(g.id)),
             area_override=area_levels.get(str(g.id)),
             area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
+            blocks=product_blocks.get(str(g.id)),
         )
         if row is not None:
             out.append(row)
@@ -1012,6 +1030,18 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
         category_availability_max = category_availability.last_change(db, machine)
         # The till's own list and mode: a change to either changes what it shows.
         machine_catalog_max = machine_catalog.last_change(db, machine)
+        # "אזל" / "חסום" anywhere in the shop or its company (app/services/sold_out.py).
+        from app.models.sold_out import SoldOutMark
+
+        blocks_max = (
+            db.query(func.max(SoldOutMark.updated_at))
+            .filter(
+                (SoldOutMark.shop_id == machine.shop_id)
+                | ((SoldOutMark.scope == "company") & (SoldOutMark.company_id == (shop.company_id if shop else None)))
+            )
+            .scalar()
+        ) if sold_out.tables_ready(db) else None
+        points.append(blocks_max)
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,

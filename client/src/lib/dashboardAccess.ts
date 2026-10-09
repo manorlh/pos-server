@@ -16,6 +16,7 @@ export type SectionId =
   | 'z'
   | 'products'
   | 'stock'
+  | 'item_blocks'
   | 'vouchers'
   | 'prepaid_vouchers'
   | 'promotions'
@@ -25,6 +26,7 @@ export type SectionId =
   | 'exception_alerts'
   | 'organization'
   | 'devices'
+  | 'device_control'
   | 'tables'
   | 'kiosks'
   | 'till_design'
@@ -58,7 +60,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/sales-by-payment', '/dashboard/card-brands', '/dashboard/promotions-report',
       '/dashboard/menu-reports', '/dashboard/hourly-sales', '/dashboard/department-sales',
       '/dashboard/document-sequence', '/dashboard/cash-variance', '/dashboard/exceptions',
-      '/dashboard/exceptions-log', '/dashboard/cash-drawer', '/dashboard/tax-reports',
+      '/dashboard/exceptions-log', '/dashboard/cash-drawer', '/dashboard/tax-reports', '/dashboard/targets',
     ],
   },
   { id: 'z', pages: ['/dashboard/shifts', '/dashboard/z-reports/new', '/dashboard/z-reports'], editPages: ['/dashboard/z-reports/new'] },
@@ -70,6 +72,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     ],
   },
   { id: 'stock', pages: ['/dashboard/stock'] },
+  // "חסימות ואזל": blocks are set from the stock, products and control-board screens.
+  { id: 'item_blocks', pages: [] },
   { id: 'vouchers', pages: ['/dashboard/vouchers'] },
   { id: 'prepaid_vouchers', pages: ['/dashboard/prepaid-vouchers'] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
@@ -79,6 +83,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },
+  // "שליטה מרחוק בקופות וקיוסקים": tabs of the machines and kiosks pages.
+  { id: 'device_control', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },

@@ -75,6 +75,9 @@ class PosSettingsV1Patch(BaseModel):
     auto_reopen_after_z: Optional[Literal["off", "day", "all"]] = Field(None, alias="autoReopenAfterZ")
     #: Reopen an item that tracks stock even while it has none. Unset = false.
     auto_reopen_ignore_stock: Optional[bool] = Field(None, alias="autoReopenIgnoreStock")
+    #: "אזל אוטומטי": a product that tracks stock is blocked "אזל" by itself when the stock its
+    #: devices sell from reaches 0 (app/services/sold_out.py). Unset = on.
+    auto_sold_out_at_zero: Optional[bool] = Field(None, alias="autoSoldOutAtZero")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).

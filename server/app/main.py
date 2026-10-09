@@ -143,6 +143,22 @@ app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
 app.include_router(customers.router, prefix=_prefix)
 app.include_router(stock.router, prefix=_prefix)
+# "שליטה חיה בסניף": blocks on items ("אזל" / "חסום"), remote control of tills and kiosks.
+from app.routers import item_blocks as item_blocks_router  # noqa: E402
+from app.routers import device_commands as device_commands_router  # noqa: E402
+
+app.include_router(item_blocks_router.router, prefix=_prefix)
+# Stock over the hierarchy: quick stock, transfers, managed levels, alerts, the daily reset.
+from app.routers import stock_live as stock_live_router  # noqa: E402
+
+app.include_router(stock_live_router.router, prefix=_prefix)
+# "יעדים ותחרות" (app/routers/targets.py): targets, progress, the till's leaderboard.
+from app.routers import targets as targets_router  # noqa: E402
+
+app.include_router(targets_router.router, prefix=_prefix)
+app.include_router(targets_router.till_router, prefix=_prefix)
+app.include_router(device_commands_router.router, prefix=_prefix)
+app.include_router(device_commands_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
 # After tax_reports: both mount under /reports, and the literal /reports/tax/...
@@ -280,6 +296,19 @@ app.include_router(exception_alerts_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")
+def start_stock_reset_worker():
+    """"איפוס יומי": each stock location at its business day's start (app/services/stock_reset.py)."""
+    import os
+
+    if os.environ.get("STOCK_RESET_WORKER_ENABLED", "true").lower() in ("0", "false", "no"):
+        return
+    from app.database import SessionLocal
+    from app.services.stock_reset import start_background_worker as start_reset_worker
+
+    start_reset_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_exception_alerts_worker():
     """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
     if not getattr(settings, "exception_alerts_worker_enabled", True):
@@ -301,6 +330,10 @@ from app.routers import kiosk_insights as kiosk_insights_router  # noqa: E402
 
 app.include_router(kiosk_insights_router.till_router, prefix=_prefix)
 app.include_router(kiosk_insights_router.router, prefix=_prefix)
+# "שליטה מרחוק בקיוסקים" (app/routers/kiosk_live.py): mounted before the kiosks' /{machine_id} routes.
+from app.routers import kiosk_live as kiosk_live_router  # noqa: E402
+
+app.include_router(kiosk_live_router.router, prefix=_prefix)
 app.include_router(kiosks_router.till_router, prefix=_prefix)
 app.include_router(kiosks_router.router, prefix=_prefix)
 # "עיצוב קופה" (app/routers/till_design.py, docs/SPEC_TILL_DESIGN.md): the till's design sync

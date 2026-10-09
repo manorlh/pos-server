@@ -142,12 +142,37 @@ def resolve_access(db: Session, target: User, body: AccessScopeIn, *, tenant_ids
             if any(shops[s].company_id not in own for s in body.shop_ids):
                 raise _error("shop_out_of_companies", "אחד הסניפים אינו בחברה של המשתמש.")
 
+    # "מנהל נקודת מכירה" (app/services/stock_scope.py): points of sale / devices of the user's own
+    # shop (a shop manager) or of the shops chosen above.
+    allowed_shops = set(body.shop_ids) if body.shop_ids else (
+        {target.shop_id} if target.role == UserRole.SHOP_MANAGER and target.shop_id else set(shops)
+    )
+    # Absent (an older dashboard): None, and the profile keeps the ones it has.
+    area_ids = None if getattr(body, "area_ids", None) is None else list(body.area_ids)
+    machine_ids = None if getattr(body, "machine_ids", None) is None else list(body.machine_ids)
+    if area_ids:
+        from app.models.shop_area import ShopArea
+
+        for area in db.query(ShopArea).filter(ShopArea.id.in_(area_ids)).all():
+            if area.shop_id not in allowed_shops:
+                raise _error("area_out_of_scope", "אחת מנקודות המכירה אינה בסניפים של המשתמש.")
+        if db.query(ShopArea).filter(ShopArea.id.in_(area_ids)).count() != len(set(area_ids)):
+            raise _error("area_out_of_scope", "אחת מנקודות המכירה לא נמצאה.")
+    if machine_ids:
+        from app.models.pos_machine import POSMachine
+
+        found = db.query(POSMachine).filter(POSMachine.id.in_(machine_ids)).all()
+        if len(found) != len(set(machine_ids)) or any(m.shop_id not in allowed_shops for m in found):
+            raise _error("machine_out_of_scope", "אחד המכשירים אינו בסניפים של המשתמש.")
+
     return {
         "full_access": bool(full_access),
         "sections": sections,
         "org_wide": bool(body.org_wide),
         "company_ids": list(body.company_ids),
         "shop_ids": list(body.shop_ids),
+        "area_ids": area_ids,
+        "machine_ids": machine_ids,
         "template_id": template_id,
         "builtin_template": builtin,
         "primary_company_id": primary,

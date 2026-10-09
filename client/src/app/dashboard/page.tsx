@@ -78,6 +78,8 @@ import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
 import { BoardAlerts, type BoardAlert } from '@/components/dashboard/control-board/board-alerts';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
+// ── live-control (feat/live-control): blocks in force + remote control, a separate block ──
+import { LiveControlBoardChips, LiveControlBoardStrip } from '@/components/dashboard/live-control';
 
 const REFRESH_MS = 30_000;
 /** A past day does not change by the second; it is read again after this. */
@@ -530,7 +532,13 @@ export default function DashboardPage() {
             shopId={effective.shopId ?? undefined}
             machineId={effective.machineId ?? undefined}
           />
+          {/* live-control: "חסימות פעילות", remote control of tills and kiosks (machine admins). */}
+          {canMessageTills ? (
+            <LiveControlBoardChips scope={{ companyId: effective.companyId, shopId: effective.shopId }} chipClass={chip} />
+          ) : null}
         </div>
+        {/* live-control: targets today and low stock — small cards, only when there are any. */}
+        {canMessageTills ? <LiveControlBoardStrip scope={{ companyId: effective.companyId, shopId: effective.shopId }} /> : null}
 
         <ScopeGate resolution={resolution}>
           {ovA.isError && !ovA.data ? (

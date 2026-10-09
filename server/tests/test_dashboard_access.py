@@ -600,6 +600,22 @@ def test_the_super_admin_sets_sections_scope_and_organizations_with_history(w):
     assert response.json()["profile"]["fullAccess"] is True
 
 
+def test_a_save_without_devices_keeps_the_ones_the_profile_has(w):
+    """An older dashboard sends no areaIds / machineIds: the narrowing stays; an empty list clears it."""
+    user = _user(w.db, "pos", UserRole.SHOP_MANAGER, w.tenant, company=w.a, shop=w.a_shop1)
+    w.db.commit()
+    url = f"/api/v1/dashboard-access/users/{user.id}"
+    till = str(w.machines["A1"].id)
+    headers = _headers(w.admin, w.tenant)
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "edit"}, "machineIds": [till]})
+    assert response.status_code == 200, response.text
+    assert response.json()["profile"]["machineIds"] == [till]
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "view"}})
+    assert response.json()["profile"]["machineIds"] == [till]
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "view"}, "machineIds": []})
+    assert response.json()["profile"]["machineIds"] == []
+
+
 @pytest.mark.parametrize(
     "body,code",
     [

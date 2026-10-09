@@ -59,7 +59,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX } from 'lucide-react';
+// "חסום / אזל" on a product (components/dashboard/live-control).
+import { BlockItemSheet } from '@/components/dashboard/live-control';
+import { useScope } from '@/lib/scope';
 import { useAuth } from '@/lib/auth';
 import { ProductPrintersSection } from '@/components/dashboard/kitchen-printers/product-printers-section';
 import { ProductMenuSection } from '@/components/dashboard/menu/menu-sections';
@@ -167,6 +170,9 @@ export default function ProductsPage() {
    * price, listing and availability live on the assortment page.
    */
   const { resolution } = usePageScope({ maxLevel: 'tenant' });
+  // "חסום / אזל": the product blocked for a shop, its points of sale or devices, for a while.
+  const scopeSel = useScope();
+  const [blockFor, setBlockFor] = useState<string | null>(null);
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
@@ -484,6 +490,9 @@ export default function ProductsPage() {
                         <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label={tc('edit')}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setBlockFor(p.id)} aria-label="חסום / אזל" title="חסום / אזל">
+                          <PackageX className="h-3.5 w-3.5" />
+                        </Button>
                         {/* The general item cannot be deleted: the till's calculator sells through it. */}
                         {p.isGeneral ? null : (
                           <Button variant="ghost" size="icon" onClick={() => remove.mutate(p.id)}
@@ -558,10 +567,20 @@ export default function ProductsPage() {
                   <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label={tc('edit')}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
+                  <Button variant="ghost" size="icon" onClick={() => setBlockFor(p.id)} aria-label="חסום / אזל" title="חסום / אזל">
+                    <PackageX className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
               </div>
             ))}
       </div>
+      {blockFor ? (
+        <BlockItemSheet
+          scope={{ companyId: scopeSel.companyId ?? null, shopId: scopeSel.shopId ?? null }}
+          context={{ productId: blockFor }}
+          onDone={() => setBlockFor(null)}
+        />
+      ) : null}
 
       {total > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">

@@ -19,25 +19,39 @@ class StockMovementReason(str, enum.Enum):
     ADJUSTMENT = "adjustment"
     STOCKTAKE = "stocktake"
     WASTAGE = "wastage"
+    #: One leg of a move between two stock locations: `transfer_id` ties the two legs
+    #: (app/services/stock.py `transfer`).
+    TRANSFER = "transfer"
+    #: "איפוס יומי": the location set to its opening quantity at the start of the business day
+    #: (app/services/stock_reset.py), or a late sale of the day before absorbed by it.
+    DAILY_RESET = "daily_reset"
 
 
 class StockMovement(Base):
-    """Append-only inventory ledger entry (idempotent by id)."""
+    """Append-only inventory ledger entry (idempotent by id), at one stock location."""
 
     __tablename__ = "stock_movements"
     __table_args__ = (
         Index("ix_stock_movements_shop_created", "shop_id", "created_at"),
+        Index("ix_stock_movements_location", "level", "target_id", "product_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client- or server-generated
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
-    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=False, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
+    #: The location's shop; NULL for a company warehouse.
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
+    #: The stock location (app/models/stock_level.py): company | shop | area | machine | group.
+    level = Column(String(16), nullable=False, default="shop", server_default="shop")
+    target_id = Column(UUID(as_uuid=True), nullable=False)
     product_id = Column(UUID(as_uuid=True), ForeignKey("products.id"), nullable=False, index=True)
     delta = Column(Numeric(12, 3), nullable=False)
     reason = Column(
         SQLEnum(StockMovementReason, values_callable=lambda x: [e.value for e in x]),
         nullable=False,
     )
+    #: The two legs of one transfer share it.
+    transfer_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     transaction_id = Column(UUID(as_uuid=True), ForeignKey("transactions.id"), nullable=True, index=True)
     transaction_item_id = Column(UUID(as_uuid=True), nullable=True)
     machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id"), nullable=True, index=True)

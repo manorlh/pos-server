@@ -51,7 +51,7 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services import document_filing as filing
-from app.services.stock import apply_movement
+from app.services.stock import apply_movement, refund_location, sale_location
 from app.services.promotions import replace_document_promotions
 from app.services import menu as _menu
 from app.services import product_alerts as _product_alerts
@@ -1269,6 +1269,9 @@ def upsert_transactions(
                 ])
 
             if tx.stock_movements and issuer.shop_id and issuer.tenant_id:
+                from app.services.stock import _resolve_global_product_id
+
+                planned = []
                 for i, sm in enumerate(tx.stock_movements):
                     if sm.product_id is None:
                         continue  # nothing named, nothing to move (as before)
@@ -1280,6 +1283,23 @@ def upsert_transactions(
                         )
                         continue
                     reason = StockMovementReason(sm.reason)
+                    # The stock location this till sells the product from ("אופן ניהול מלאי",
+                    # app/services/stock_locations.py): the shop's unless managed lower or higher;
+                    # a refund goes back where the original sale took it from.
+                    location = (
+                        refund_location(db, tx.refund_of_transaction_id, sm.product_id)
+                        if reason == StockMovementReason.REFUND else None
+                    ) or sale_location(db, issuer, sm.product_id)
+                    key_product = _resolve_global_product_id(db, sm.product_id) or sm.product_id
+                    planned.append((location, key_product, i, sm, reason))
+                # Applied in one order — by location, then product — the order the daily reset locks
+                # rows in too (stock_reset._rows): two writers never wait on each other's rows in
+                # opposite orders (no deadlock with the 04:00 reset, or between two documents).
+                planned.sort(key=lambda p: (
+                    p[0].level if p[0] is not None else "", str(p[0].target_id) if p[0] is not None else "",
+                    str(p[1]), p[2],
+                ))
+                for location, _key, _i, sm, reason in planned:
                     apply_movement(
                         db,
                         movement_id=sm.id,
@@ -1293,6 +1313,7 @@ def upsert_transactions(
                         transaction_item_id=sm.transaction_item_id,
                         machine_id=issuer.id,
                         note=sm.note,
+                        location=location,
                     )
 
             is_duplicate = previous is not None and (
