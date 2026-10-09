@@ -26,8 +26,11 @@ match. Test batches ("שוברי בדיקה") never count. A batch belongs to on
   redeemed), and the original keeps its own delivery / redemption.
 * A voucher redeemed and then cancelled stays charged (it was redeemed).
 
-**Amount** = Σ per batch, chargeable vouchers × the batch's production price as issued (agorot, ₪
-only). The redemptions' value at the till (`redemption_rows`) is shown beside it, never added to it.
+**Amount** = Σ per batch, each chargeable voucher at the production price it was issued at (agorot, ₪
+only): the batch's price, or — after "ערוך סדרה" changed it — the core's history by serial
+(`prepaid_voucher_edit.production_price_of`); a replacement and its original at the original's. Invoices
+take a batch's chargeable vouchers first in, first out (serial order), each line at their own prices.
+The redemptions' value at the till (`redemption_rows`) is shown beside it, never added to it.
 
 **Invoices** (`prepaid_settlement_invoices` + lines per batch): partial invoices and several per
 agreement; a line never takes more vouchers of a batch than are charged and not yet invoiced (every
@@ -282,6 +285,24 @@ class BatchFigures:
     invoiced: int = 0
     invoiced_amount: int = 0
     chargeable_ids: List[str] = field(default_factory=list)
+    #: The serial each chargeable voucher is priced by (a chain: its original's), then their prices in
+    #: serial order — what the invoices take, first in first out.
+    chargeable_serials: List[int] = field(default_factory=list)
+    prices: List[Optional[int]] = field(default_factory=list)
+
+    def amount(self, start: int = 0, count: Optional[int] = None) -> Optional[int]:
+        """Agorot of the chargeable vouchers [start, start + count) in serial order; None: one has no price."""
+        part = self.prices[start:] if count is None else self.prices[start:start + count]
+        if any(p is None for p in part):
+            return None
+        return sum(int(p) for p in part)
+
+    def uniform_price(self, start: int = 0, count: Optional[int] = None) -> Optional[int]:
+        part = self.prices[start:] if count is None else self.prices[start:start + count]
+        seen = {p for p in part}
+        if not part:
+            return self.batch.production_price
+        return next(iter(seen)) if len(seen) == 1 else None
 
 
 def _in(moment: Optional[datetime], start: Optional[datetime], end: Optional[datetime]) -> bool:
@@ -401,6 +422,7 @@ def batch_figures(
                 if hit:
                     f.chargeable += 1
                     f.chargeable_ids.append(root)
+                    f.chargeable_serials.append(members[0].serial)
                     if dead:
                         f.cancelled_charged += 1
                 continue
@@ -418,11 +440,14 @@ def batch_figures(
                 if hit:
                     f.chargeable += 1
                     f.chargeable_ids.append(m.id)
+                    f.chargeable_serials.append(m.serial)
                     if is_repl:
                         f.replacements_charged += 1
                     if m_dead:
                         f.cancelled_charged += 1
         f.invoiced, f.invoiced_amount = invoiced.get(str(b.id), (0, 0))
+        f.chargeable_serials.sort()
+        f.prices = [price_at_issue(b, s) for s in f.chargeable_serials]
         out.append(f)
 
     # The redemptions' value at the till and the units — the analytics' own rows, the same period.
@@ -437,15 +462,28 @@ def batch_figures(
     return out
 
 
+def price_at_issue(batch: PrepaidVoucherBatch, serial: int) -> Optional[int]:
+    """The production price (agorot) the voucher [serial] of [batch] was issued at — the core's history by
+    serial when the price was edited after issue ("ערוך סדרה"), else the batch's."""
+    try:
+        from app.services.prepaid_voucher_edit import production_price_of
+    except Exception:  # noqa: BLE001 — a core without price history: the batch's price
+        return batch.production_price
+    return production_price_of(batch, serial)
+
+
 def _qty(d: Decimal):
     return int(d) if d == d.to_integral_value() else float(d)
 
 
 def _batch_row(f: BatchFigures, prices: bool) -> Dict[str, Any]:
     b = f.batch
-    price = b.production_price if prices else None
-    amount = (f.chargeable * int(price)) if price is not None else None
+    # One price for every chargeable voucher, else null (`pricesMixed`): the amount is their sum, each at
+    # the price it was issued at.
+    price = f.uniform_price() if prices else None
+    amount = f.amount() if prices else None
     left = f.chargeable - f.invoiced
+    mixed = len({p for p in f.prices}) > 1
     return {
         "batchId": str(b.id),
         "batchName": b.name,
@@ -469,11 +507,13 @@ def _batch_row(f: BatchFigures, prices: bool) -> Dict[str, Any]:
         "tillValueAgorot": f.till_value,
         "productionPriceAgorot": price,
         "amountAgorot": amount,
-        "missingPrice": b.production_price is None,
+        "missingPrice": (any(p is None for p in f.prices) if f.prices else b.production_price is None),
+        "pricesMixed": mixed if prices else None,
         "invoiced": f.invoiced,
         "invoicedAmountAgorot": f.invoiced_amount if prices else None,
         "uninvoiced": left,
-        "uninvoicedAmountAgorot": (left * int(price)) if price is not None else None,
+        # First in, first out: the vouchers not yet invoiced are the later ones in serial order.
+        "uninvoicedAmountAgorot": (f.amount(max(0, f.invoiced), max(0, left)) if prices else None),
         "overInvoiced": max(0, -left),
     }
 
@@ -624,8 +664,9 @@ def _cap_by_other_invoices(db: Session, a, batches, figures: Sequence[BatchFigur
         r["invoicedElsewhere"] = elsewhere[key]
         if left != r["uninvoiced"]:
             r["uninvoiced"] = left
-            price = r["productionPriceAgorot"]
-            r["uninvoicedAmountAgorot"] = left * int(price) if price is not None else None
+            f = next(x for x in figures if str(x.batch.id) == key)
+            if r["uninvoicedAmountAgorot"] is not None or r["productionPriceAgorot"] is not None:
+                r["uninvoicedAmountAgorot"] = f.amount(len(f.prices) - left, left)
 
 
 def agreement_out(db: Session, user: User, a: PrepaidSettlementAgreement, *, full: bool = True) -> Dict[str, Any]:
@@ -947,10 +988,11 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
     db.add(inv)
     db.flush()
     for key, q in wanted.items():
-        price = batches[key].production_price
+        f = figures[key]
+        # The next q chargeable vouchers of the batch (serial order), each at the price it was issued at.
         db.add(PrepaidSettlementInvoiceLine(
             id=uuid.uuid4(), invoice_id=inv.id, batch_id=batches[key].id, quantity=q,
-            unit_price=price, amount=(q * int(price)) if price is not None else None,
+            unit_price=f.uniform_price(f.invoiced, q), amount=f.amount(f.invoiced, q),
         ))
     ACC.audit(db, tenant_id, "invoice_add", user, ref_id=inv.id, details={
         "agreementId": str(a.id), "number": number, "system": system, "amountAgorot": inv.amount,

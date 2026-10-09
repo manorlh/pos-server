@@ -70,8 +70,13 @@ export interface SettlementBatchRow extends SettlementCounts {
   productionName: string | null;
   kind: PrepaidVoucherKind | string;
   status: string;
+  /** Null when its vouchers were issued at different production prices (`pricesMixed`). */
   productionPriceAgorot: number | null;
   missingPrice: boolean;
+  /** Its price was changed after issue ("ערוך סדרה"): each voucher at the price it was issued at. */
+  pricesMixed?: boolean | null;
+  /** Vouchers of the batch on another agreement's live invoices (its balance here is capped by them). */
+  invoicedElsewhere?: number;
 }
 
 export interface SettlementTypeRow extends SettlementCounts {

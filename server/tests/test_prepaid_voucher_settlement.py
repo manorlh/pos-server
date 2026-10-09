@@ -139,6 +139,31 @@ class TestTheSpecsExample:
         assert a["totals"]["amountAgorot"] == 440_000
         assert len(a["types"]) == 2  # each batch made without a type has a type of its own
 
+    def test_each_voucher_at_the_price_it_was_issued_at(self, w):
+        """"ערוך סדרה" changed the production price for the vouchers issued after (the core's history by serial)."""
+        from app.models.prepaid_voucher import PrepaidVoucherBatch
+        from app.schemas.prepaid_voucher import PrepaidVoucherAddIn
+
+        b = meal_batch(w, count=3)  # serials 1–3 at ₪60
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(b["id"])).one()
+        row.production_price = 7000
+        row.production_price_history = [{"fromSerial": 1, "priceAgorot": 6000}, {"fromSerial": 4, "priceAgorot": 7000}]
+        w.db.commit()
+        R.add_prepaid_vouchers(b["id"], PrepaidVoucherAddIn(count=2), **_ctx(w))  # serials 4–5 at ₪70
+        for c in codes(w, b):
+            redeem_all(w, c)
+        a = agreement(w)
+        r = a["batches"][0]
+        assert (r["chargeable"], r["amountAgorot"], r["productionPriceAgorot"], r["pricesMixed"]) == (5, 32_000, None, True)
+        # Invoices take the vouchers in serial order, each at its own price: 4 = 3 × ₪60 + ₪70.
+        a = invoice(w, a, "INV-1", 250, [(b["id"], 4)])
+        line = a["invoices"][0]["lines"][0]
+        assert (line["amountAgorot"], line["unitPriceAgorot"]) == (25_000, None)
+        assert (a["totals"]["uninvoiced"], a["totals"]["uninvoicedAmountAgorot"]) == (1, 7_000)
+        a = invoice(w, a, "INV-2", 70, [(b["id"], 1)])
+        assert a["invoices"][1]["lines"][0] == {**a["invoices"][1]["lines"][0], "amountAgorot": 7_000, "unitPriceAgorot": 7_000}
+        assert a["totals"]["invoicedAmountAgorot"] == 32_000
+
     def test_a_redeemed_voucher_counts_in_the_period_of_its_first_redemption(self, w):
         b = meal_batch(w, count=3)
         out = [redeem_all(w, c) for c in codes(w, b)]

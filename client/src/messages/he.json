@@ -5754,6 +5754,8 @@
       "batch": "סדרה",
       "batchCancelled": "הסדרה בוטלה",
       "missingPrice": "אין מחיר הפקה",
+      "pricesMixed": "מחיר ההפקה שונה בין השוברים (לפי מועד ההנפקה) — כל שובר במחיר שבו הונפק",
+      "invoicedElsewhereN": "{n} כבר בחשבונית של הסכם אחר",
       "noBatches": "אין סדרות בהסכם",
       "replacements": "חלופיים",
       "productionPrice": "מחיר הפקה",

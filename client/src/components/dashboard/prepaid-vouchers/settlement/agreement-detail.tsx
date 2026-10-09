@@ -160,8 +160,11 @@ export function AgreementDetail({ id, onBack }: { id: string; onBack: () => void
           rows={a.batches.map((r) => ({
             key: r.batchId,
             name: r.batchName,
-            sub: [r.typeName, r.status === 'cancelled' ? t('batchCancelled') : null, r.missingPrice ? t('missingPrice') : null]
-              .filter(Boolean).join(' · '),
+            sub: [
+              r.typeName, r.status === 'cancelled' ? t('batchCancelled') : null, r.missingPrice ? t('missingPrice') : null,
+              r.pricesMixed ? t('pricesMixed') : null,
+              r.invoicedElsewhere ? t('invoicedElsewhereN', { n: r.invoicedElsewhere }) : null,
+            ].filter(Boolean).join(' · '),
             counts: r,
             price: r.productionPriceAgorot,
             action: (
