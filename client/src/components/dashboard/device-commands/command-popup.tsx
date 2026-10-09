@@ -9,12 +9,18 @@
  * popup itself takes pointer events, so the page stays fully usable and more commands can be sent
  * while it shows. It leaves on its own (3 s after "בוצע"; a command still waiting after 5 s
  * shrinks into "פקודות שנשלחו"), or by its ✕. The rules: lib/deviceCommands.ts (`inPopup`).
+ *
+ * Above an open dialog: the popup is portalled into <body> only while it has lines (z-60, over the
+ * dialogs' z-50), so a popup that appears while a dialog is open is a layer added after it — the
+ * dialog neither hides it nor treats a click on it as a click outside. A polite live region that
+ * stays mounted in the page says each line for screen readers.
  */
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { RotateCcw, X } from 'lucide-react';
 
 import { popupItems, popupLine, popupStatus } from '@/lib/deviceCommands';
-import { canRetry, closeCommandPopup, retryCommand, sweepCommandPopup, useDeviceCommandsStore } from '@/lib/deviceCommandsStore';
+import { canRetry, closeCommandPopup, retryCommand, sweepCommandPopup, useVisibleCommands } from '@/lib/deviceCommandsStore';
 import { cn } from '@/lib/utils';
 import { CommandPhaseIcon, commandToneClass } from './command-chip';
 
@@ -39,17 +45,27 @@ function usePopupClock(active: boolean): number {
 }
 
 export function DeviceCommandPopup() {
-  const commands = useDeviceCommandsStore((s) => s.commands);
+  const commands = useVisibleCommands();
   const now = usePopupClock(commands.some((c) => c.popupAt != null));
   const items = popupItems(commands, now);
   return (
+    <>
+      {/* Always mounted (empty when nothing shows), so screen readers hear each change politely. */}
+      <div role="status" aria-live="polite" aria-atomic="false" className="sr-only">
+        {items.map((c) => `${popupLine(c)} — ${popupStatus(c)}`).join('. ')}
+      </div>
+      {items.length > 0 && typeof document !== 'undefined' ? createPortal(<PopupCard items={items} />, document.body) : null}
+    </>
+  );
+}
+
+function PopupCard({ items }: { items: ReturnType<typeof popupItems> }) {
+  return (
     <div
-      className="pointer-events-none fixed inset-x-0 top-1/2 z-50 flex -translate-y-1/2 justify-center px-4 print:hidden"
+      className="pointer-events-none fixed inset-x-0 top-1/2 z-[60] flex -translate-y-1/2 justify-center px-4 print:hidden"
       dir="rtl"
     >
-      {/* Always mounted (empty when nothing shows), so screen readers hear each change politely. */}
-      <div role="status" aria-live="polite" aria-atomic="false" className="w-full max-w-[360px]">
-        {items.length > 0 ? (
+      <div className="w-full max-w-[360px]">
           <section
             aria-label="פקודה נשלחה"
             className="pointer-events-auto overflow-hidden rounded-xl border bg-popover/95 text-popover-foreground shadow-xl backdrop-blur-sm"
@@ -97,7 +113,6 @@ export function DeviceCommandPopup() {
               ))}
             </ul>
           </section>
-        ) : null}
       </div>
     </div>
   );

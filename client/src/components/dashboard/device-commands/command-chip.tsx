@@ -6,11 +6,11 @@
  * (lib/deviceCommandsStore.ts); renders nothing when the device has no recent command.
  * Never blocks anything: a click opens the "פקודות שנשלחו" tray.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { AlertTriangle, Check, Clock, Loader2, X } from 'lucide-react';
 
 import { chipText, latestForMachine, phaseTone, type TrackedCommand } from '@/lib/deviceCommands';
-import { useDeviceCommandsStore } from '@/lib/deviceCommandsStore';
+import { useDeviceCommandsStore, useVisibleCommands } from '@/lib/deviceCommandsStore';
 import { cn } from '@/lib/utils';
 
 const TONE: Record<'wait' | 'ok' | 'bad' | 'muted', string> = {
@@ -42,21 +42,62 @@ export function commandToneClass(c: Pick<TrackedCommand, 'phase' | 'sendError'>)
   return TONE[c.sendError ? 'bad' : phaseTone(c.phase)];
 }
 
-/** Re-render every few seconds so a finished command leaves the row on time. */
-export function useNow(everyMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), everyMs);
-    return () => clearInterval(t);
-  }, [everyMs]);
-  return now;
+// ── One shared clock per period (not one interval per chip) ─────────────────
+
+interface Ticker {
+  now: number;
+  subs: Set<() => void>;
+  timer: ReturnType<typeof setInterval> | null;
+}
+
+const tickers = new Map<number, Ticker>();
+
+function tickerOf(everyMs: number): Ticker {
+  let t = tickers.get(everyMs);
+  if (!t) {
+    t = { now: Date.now(), subs: new Set(), timer: null };
+    tickers.set(everyMs, t);
+  }
+  return t;
+}
+
+/**
+ * "now", re-read every [everyMs] by ONE interval shared by every component asking that period;
+ * [active] false: no subscription at all (a row with no command never re-renders on the clock).
+ */
+export function useNow(everyMs: number, active = true): number {
+  const subscribe = useCallback(
+    (onTick: () => void) => {
+      if (!active) return () => undefined;
+      const t = tickerOf(everyMs);
+      t.subs.add(onTick);
+      if (t.timer == null) {
+        t.now = Date.now();
+        t.timer = setInterval(() => {
+          t.now = Date.now();
+          for (const f of t.subs) f();
+        }, everyMs);
+      }
+      return () => {
+        t.subs.delete(onTick);
+        if (t.subs.size === 0 && t.timer != null) {
+          clearInterval(t.timer);
+          t.timer = null;
+        }
+      };
+    },
+    [everyMs, active],
+  );
+  const snapshot = useCallback(() => tickerOf(everyMs).now, [everyMs]);
+  return useSyncExternalStore(subscribe, snapshot, () => 0);
 }
 
 export function DeviceCommandChip({ machineId, className }: { machineId: string; className?: string }) {
-  const commands = useDeviceCommandsStore((s) => s.commands);
+  const commands = useVisibleCommands();
   const setTrayOpen = useDeviceCommandsStore((s) => s.setTrayOpen);
-  const now = useNow(5_000);
-  const c = latestForMachine(commands, machineId, now);
+  const mine = commands.some((x) => x.machineId === machineId);
+  const now = useNow(5_000, mine);
+  const c = mine ? latestForMachine(commands, machineId, now) : null;
   if (!c) return null;
   const text = chipText(c);
   return (

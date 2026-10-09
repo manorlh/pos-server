@@ -17,13 +17,14 @@
  * The server: pos-server app/services/card_attempt_commands.py.
  */
 
+import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { actionLabelOf, newKey, phaseOfCard } from '@/lib/deviceCommands';
+import { actionLabelOf, isKeyReused, keyRing, phaseOfCard } from '@/lib/deviceCommands';
 import { idempotencyHeaders, trackCommand } from '@/lib/deviceCommandsStore';
 import { useAuth } from '@/lib/auth';
 import { canAccess } from '@/lib/dashboardAccess';
@@ -67,17 +68,29 @@ export function CardCommandPanel({ a, compact = false }: { a: FailedPaymentAttem
   const verdictText = (v: CheckVerdict) => t(`cardCommand.verdict.${v}`);
 
   // Fire-and-forget: the till answers later, in the background ("פקודות שנשלחו" reads it and
-  // refreshes this row). Each request its own Idempotency-Key — a retry of the same request never
-  // makes a second command; the confirmed decision after a mismatch is another request (a new key).
-  // Every safety rule stays the server's (one pending command, the mismatch confirmation, who may act).
-  const post = (action: CardCommandAction, confirmMismatch: boolean) =>
-    api
+  // refreshes this row). One Idempotency-Key per user action (lib/deviceCommands.ts `keyRing`):
+  // the same request retried (a network error, a second click) keeps its key — the server answers
+  // with the first command, never makes a second; the confirmed decision after a mismatch is
+  // another request (another key); once answered, the next action is new. Every safety rule stays
+  // the server's (one pending command, the mismatch confirmation, who may act).
+  const [keys] = useState(() => keyRing());
+  const post = (action: CardCommandAction, confirmMismatch: boolean) => {
+    const request = { attemptId: a.id, action, confirmMismatch };
+    return api
       .post<{ id?: string; action?: string; status?: string; deliveredAt?: string | null }>(
         `/failed-payments/${a.id}/card-commands`,
         { action, confirmMismatch },
-        idempotencyHeaders(newKey()),
+        idempotencyHeaders(keys.keyFor(request)),
       )
-      .then((r) => r.data);
+      .then((r) => {
+        keys.forget();
+        return r.data;
+      })
+      .catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+  };
 
   const send = useMutation({
     mutationFn: async ({ action, confirmMismatch }: { action: CardCommandAction; confirmMismatch: boolean }) => {

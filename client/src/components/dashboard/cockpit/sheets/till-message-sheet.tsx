@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { Send } from 'lucide-react';
 import { sendTillMessage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { newKey } from '@/lib/deviceCommands';
+import { isKeyReused, keyRing } from '@/lib/deviceCommands';
 import { trackCommand } from '@/lib/deviceCommandsStore';
 import { useScope } from '@/lib/scope';
 import type { TillMessageLevel } from '@/lib/types';
@@ -34,8 +34,9 @@ export function TillMessageSheet({ scope, context, onDone }: CockpitActionProps)
   const s = useScope();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  // One key per message written (the sheet mounts per open): a retry of the same submit reuses it.
-  const [sendKey, setSendKey] = useState(() => newKey());
+  // One key per message as written (lib/deviceCommands.ts `keyRing`): a retry of the same submit
+  // reuses it; an edited body or a 422 idempotency_key_reused gets a new one.
+  const [keys] = useState(() => keyRing());
 
   const machineId = context?.machineId ?? scope.machineId;
   const target: { level: TillMessageLevel; id: string; name: string } | null = machineId
@@ -49,18 +50,20 @@ export function TillMessageSheet({ scope, context, onDone }: CockpitActionProps)
           : null;
 
   const send = useMutation({
-    mutationFn: () =>
-      sendTillMessage(
-        {
-          title: title.trim() || null,
-          body: body.trim(),
-          targetLevel: (target as { level: TillMessageLevel }).level,
-          targetId: (target as { id: string }).id,
-        },
-        sendKey,
-      ),
+    mutationFn: () => {
+      const request = {
+        title: title.trim() || null,
+        body: body.trim(),
+        targetLevel: (target as { level: TillMessageLevel }).level,
+        targetId: (target as { id: string }).id,
+      };
+      return sendTillMessage(request, keys.keyFor(request)).catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+    },
     onSuccess: (out) => {
-      setSendKey(newKey());
+      keys.forget();
       // Followed in the background ("פקודות שנשלחו" pops its own non-blocking notice — no toast).
       if (out.id) {
         const name = (out.targetName || target?.name || '').trim();

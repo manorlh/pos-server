@@ -16,11 +16,13 @@
  * Kept in sessionStorage (a reload keeps following); `persist` is hydrated after mount by the
  * tray, so the server render and the first client render agree.
  */
+import { useMemo } from 'react';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { toast } from 'sonner';
 
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import * as DC from '@/lib/deviceCommands';
 import type { CommandKind, CommandPhase, PhaseUpdate, TrackedCommand } from '@/lib/deviceCommands';
@@ -40,19 +42,62 @@ export const useDeviceCommandsStore = create<DeviceCommandsState>()(
       commands: [],
       trayOpen: false,
       setTrayOpen: (open) => set({ trayOpen: open }),
-      update: (fn) => set((s) => ({ commands: fn(s.commands) })),
+      // The same array back (nothing changed): no new state, no re-render.
+      update: (fn) =>
+        set((s) => {
+          const next = fn(s.commands);
+          return next === s.commands ? s : { commands: next };
+        }),
     }),
     {
       name: 'r2m-device-commands',
       storage: createJSONStorage(() => sessionStorage),
       partialize: (s) => ({ commands: s.commands }),
       skipHydration: true,
+      // After a reload: a send that never got its answer is offered again with its own key, and
+      // another user's commands (a shared PC) are dropped.
+      merge: (persisted, current) => {
+        const saved = ((persisted as { commands?: TrackedCommand[] } | undefined)?.commands ?? []).filter(Boolean);
+        const me = useAuth.getState().user?.id ?? null;
+        const mine = me ? saved.filter((c) => c.userId === me) : saved;
+        return { ...current, commands: DC.afterRehydrate(mine, Date.now()) };
+      },
     },
   ),
 );
 
 const update = (fn: (list: TrackedCommand[]) => TrackedCommand[]) => useDeviceCommandsStore.getState().update(fn);
 const find = (key: string) => useDeviceCommandsStore.getState().commands.find((c) => c.key === key) ?? null;
+
+/** Who is signed in, in which tenant (lib/auth.ts): every entry is stamped with it. */
+function owner(): { userId: string | null; tenantId: string | null } {
+  const s = useAuth.getState();
+  return { userId: s.user?.id ?? null, tenantId: s.activeTenantId ?? null };
+}
+
+/** The signed-in user's commands in the active tenant — what the tray, the popup, the chips and the poller see. */
+export function visibleCommands(list: readonly TrackedCommand[] = useDeviceCommandsStore.getState().commands): TrackedCommand[] {
+  const o = owner();
+  return DC.visibleTo(list, o.userId, o.tenantId);
+}
+
+// Sign-out (or another user signing in on this PC): nothing of the previous user's stays.
+if (typeof window !== 'undefined') {
+  useAuth.subscribe((s, prev) => {
+    const was = prev.user?.id ?? null;
+    const now = s.user?.id ?? null;
+    if (was && !now) {
+      useDeviceCommandsStore.setState({ commands: [], trayOpen: false });
+      try {
+        sessionStorage.removeItem('r2m-device-commands');
+      } catch {
+        // storage unavailable: the store is already empty
+      }
+    } else if (now && was !== now) {
+      update((list) => (list.some((c) => c.userId !== now) ? list.filter((c) => c.userId === now) : list));
+    }
+  });
+}
 
 /** The header that makes a send safe to retry. */
 export function idempotencyHeaders(key: string): { headers: Record<string, string> } {
@@ -62,6 +107,7 @@ export function idempotencyHeaders(key: string): { headers: Record<string, strin
 function entry(over: Partial<TrackedCommand> & Pick<TrackedCommand, 'key' | 'kind' | 'action'>): TrackedCommand {
   const now = Date.now();
   return {
+    ...owner(),
     id: null,
     machineId: null,
     machineName: null,
@@ -347,22 +393,31 @@ const READERS: Record<CommandKind, Reader> = {
     await each(open, async (c) => {
       if (!c.machineId) return;
       const { data } = await api.get<{ rebootRequest?: { id?: string; status: string; reason?: string | null } | null }>(`/machines/${c.machineId}`);
-      const req = data?.rebootRequest;
-      if (req && (!req.id || req.id === c.id)) out.set(c.id as string, DC.phaseOfReboot(req.status, req.reason));
+      // Another request in its place (ours replaced) or none any more: final.
+      out.set(c.id as string, DC.phaseOfRebootRead(c.id as string, data?.rebootRequest ?? null));
     });
     return out;
   },
   till_message: async (open) => {
     const out = new Map<string, PhaseUpdate>();
-    const { data } = await api.get<{ items?: { id: string; cancelledAt?: string | null; counts?: { total: number; delivered: number; acknowledged: number } }[] }>(
-      '/till-messages',
-      { params: { limit: 50 } },
-    );
-    const wanted = new Set(open.map((c) => c.id));
+    const { data } = await api.get<{
+      items?: {
+        id: string;
+        cancelledAt?: string | null;
+        expiresAt?: string | null;
+        status?: string | null;
+        counts?: { total: number; delivered: number; acknowledged: number };
+      }[];
+    }>('/till-messages', { params: { limit: 50 } });
+    const now = Date.now();
+    const seen = new Set<string>();
     for (const m of data?.items ?? []) {
-      if (!wanted.has(m.id) || !m.counts) continue;
-      out.set(m.id, DC.phaseOfTillMessage({ ...m.counts, cancelled: !!m.cancelledAt }));
+      seen.add(m.id);
+      if (!m.counts) continue;
+      out.set(m.id, DC.phaseOfTillMessage({ ...m.counts, cancelled: !!m.cancelledAt }, { expiresAt: m.expiresAt, status: m.status, now }));
     }
+    // Out of the latest 50 (many newer messages since): no way to follow it from here — final.
+    for (const c of open) if (c.id && !seen.has(c.id)) out.set(c.id, { phase: 'unknown', detail: null });
     return out;
   },
 };
@@ -382,7 +437,9 @@ async function requestReader(open: TrackedCommand[], path: (id: string) => strin
  * simply read again next time.
  */
 export async function pollDeviceCommands(): Promise<TrackedCommand[]> {
-  const list = useDeviceCommandsStore.getState().commands;
+  update((current) => DC.prune(current, Date.now()));
+  // Only the signed-in user's commands in the active tenant (another tenant's are not polled).
+  const list = visibleCommands();
   const kinds = [...new Set(list.filter(DC.isOpen).map((c) => c.kind))];
   const changed: TrackedCommand[] = [];
   await each(kinds, async (kind) => {
@@ -417,9 +474,17 @@ export const REFRESH_PREFIXES: Record<CommandKind, string[]> = {
 
 // ── The hook ─────────────────────────────────────────────────────────────────
 
+/** The signed-in user's commands in the active tenant (a new array only when one of them changes). */
+export function useVisibleCommands(): TrackedCommand[] {
+  const commands = useDeviceCommandsStore((s) => s.commands);
+  const userId = useAuth((s) => s.user?.id ?? null);
+  const tenantId = useAuth((s) => s.activeTenantId);
+  return useMemo(() => DC.visibleTo(commands, userId, tenantId), [commands, userId, tenantId]);
+}
+
 /** The shared hook: what was sent and its status, and the non-blocking actions. */
 export function useDeviceCommands() {
-  const commands = useDeviceCommandsStore((s) => s.commands);
+  const commands = useVisibleCommands();
   const trayOpen = useDeviceCommandsStore((s) => s.trayOpen);
   const setTrayOpen = useDeviceCommandsStore((s) => s.setTrayOpen);
   return {

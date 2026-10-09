@@ -73,9 +73,50 @@ test('every send carries an Idempotency-Key (a retry never sends twice)', () => 
   assert.match(store, /'Idempotency-Key': key/);
   assert.match(store, /\.post<DeviceCommandRow\[\]>\('\/device-commands', body, idempotencyHeaders\(key\)\)/);
   const card = src('components/dashboard/failed-payments/card-command-panel.tsx');
-  assert.match(card, /idempotencyHeaders\(newKey\(\)\)/);
+  // One key per user action (kept until answered), not one per POST.
+  assert.match(card, /idempotencyHeaders\(keys\.keyFor\(request\)\)/);
+  assert.match(card, /useState\(\(\) => keyRing\(\)\)/);
   // The money rules stay: the mismatch is still asked and confirmed by the manager.
   assert.match(card, /decisionMismatchOf\(err\)/);
   assert.match(card, /window\.confirm\(question\)/);
   assert.match(card, /trackCommand\(\{\s*kind: 'card'/);
+});
+
+test('review: the popup is a layer above open dialogs; one shared clock for the chips', () => {
+  const popup = src('components/dashboard/device-commands/command-popup.tsx');
+  assert.match(popup, /createPortal\(<PopupCard items=\{items\} \/>, document\.body\)/);
+  assert.match(popup, /z-\[60\]/);
+  const chip = src('components/dashboard/device-commands/command-chip.tsx');
+  assert.match(chip, /useSyncExternalStore\(/);
+  assert.doesNotMatch(chip, /setInterval\(\(\) => setNow/);
+});
+
+test('review: commands are the signed-in user’s in the active tenant, cleared on sign-out', () => {
+  const store = src('lib/deviceCommandsStore.ts');
+  assert.match(store, /useAuth\.subscribe\(/);
+  assert.match(store, /sessionStorage\.removeItem\('r2m-device-commands'\)/);
+  assert.match(store, /const list = visibleCommands\(\);/);
+  assert.match(store, /DC\.afterRehydrate\(/);
+  for (const file of ['components/dashboard/device-commands/command-chip.tsx', 'components/dashboard/device-commands/command-popup.tsx', 'components/dashboard/device-commands/commands-tray.tsx']) {
+    assert.match(src(file), /useVisibleCommands\(\)/, `${file} shows only the user's / tenant's commands`);
+  }
+});
+
+test('review: till messages and printer tests keep one key per user action', () => {
+  for (const file of ['app/dashboard/till-messages/page.tsx', 'components/dashboard/cockpit/sheets/till-message-sheet.tsx']) {
+    const s = src(file);
+    assert.match(s, /keys\.keyFor\(request\)/, `${file}: the key follows the message as written`);
+    assert.match(s, /isKeyReused\(err\)/, `${file}: a reused key is replaced`);
+  }
+  assert.match(src('app/dashboard/kitchen-printers/page.tsx'), /testKeys\.keyFor\(\{ printerId: printer\.id \}\)/);
+});
+
+test('review: the cloud-side and scan flows are left as they are, on purpose', () => {
+  for (const file of [
+    'components/dashboard/remote-credit/remote-credit-dialog.tsx',
+    'components/dashboard/cloud-card-refund/cloud-card-refund-dialog.tsx',
+    'components/dashboard/kitchen-printers/network-scan.tsx',
+  ]) {
+    assert.match(src(file), /Intentionally not in "פקודות שנשלחו"/, file);
+  }
 });

@@ -54,7 +54,7 @@ import {
   updateTillMessage,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { newKey } from '@/lib/deviceCommands';
+import { isKeyReused, keyRing } from '@/lib/deviceCommands';
 import { trackCommand } from '@/lib/deviceCommandsStore';
 import { formatDate, formatShortDateTime, isoDate } from '@/lib/format';
 import type {
@@ -888,29 +888,32 @@ export default function TillMessagesPage() {
     (when !== 'scheduled' || !!sendAt) &&
     (when !== 'recurring' || recurrenceValid(rec));
 
-  // One Idempotency-Key per message being written: a retry of the same submit (after a network
-  // error) reuses it — the server answers with the first message, never sends it twice; a
-  // successful send starts the next message with a new key.
-  const [sendKey, setSendKey] = useState(() => newKey());
+  // One Idempotency-Key per message as written (lib/deviceCommands.ts `keyRing`): a retry of the
+  // same submit (after a network error) reuses it — the server answers with the first message,
+  // never sends it twice; an edited message (another body, target, schedule…) gets a new key, as
+  // does a `422 idempotency_key_reused`; a successful send starts afresh.
+  const [keys] = useState(() => keyRing());
 
   const send = useMutation({
-    mutationFn: () =>
-      sendTillMessage(
-        {
-          title: title.trim() || null,
-          body: body.trim(),
-          targetLevel: target!.level as TillMessageLevel,
-          targetId: target!.id!,
-          expiresAt,
-          scheduleKind: when,
-          ...(when === 'scheduled' ? { sendAt } : {}),
-          ...(when === 'recurring' ? recurrenceBody(rec) : {}),
-          ...(banner ? { display, productId, color } : {}),
-        },
-        sendKey,
-      ),
+    mutationFn: () => {
+      const request = {
+        title: title.trim() || null,
+        body: body.trim(),
+        targetLevel: target!.level as TillMessageLevel,
+        targetId: target!.id!,
+        expiresAt,
+        scheduleKind: when,
+        ...(when === 'scheduled' ? { sendAt } : {}),
+        ...(when === 'recurring' ? recurrenceBody(rec) : {}),
+        ...(banner ? { display, productId, color } : {}),
+      };
+      return sendTillMessage(request, keys.keyFor(request)).catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+    },
     onSuccess: (out) => {
-      setSendKey(newKey());
+      keys.forget();
       if (when === 'now' && !banner && out.id) {
         // Sent now, full-screen: followed in the background ("פקודות שנשלחו": delivered → "קראתי"
         // by every till), which pops its own non-blocking notice — no toast here.

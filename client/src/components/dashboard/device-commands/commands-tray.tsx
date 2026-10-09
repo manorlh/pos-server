@@ -24,6 +24,8 @@ import {
   REFRESH_PREFIXES,
   retryCommand,
   useDeviceCommandsStore,
+  useVisibleCommands,
+  visibleCommands,
 } from '@/lib/deviceCommandsStore';
 import { cn } from '@/lib/utils';
 import { CommandPhaseIcon, commandToneClass, useNow } from './command-chip';
@@ -47,7 +49,8 @@ function useDeviceCommandsPoller() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
       if (stopped) return;
-      const delay = pollDelayMs(useDeviceCommandsStore.getState().commands, Date.now());
+      // Only the signed-in user's commands in the active tenant are polled.
+      const delay = pollDelayMs(visibleCommands(), Date.now());
       if (delay == null) {
         timer = setTimeout(schedule, IDLE_CHECK_MS); // nothing waits: no request at all
         return;
@@ -90,10 +93,10 @@ function useDeviceCommandsPoller() {
 
 export function DeviceCommandsTray() {
   useDeviceCommandsPoller();
-  const commands = useDeviceCommandsStore((s) => s.commands);
+  const commands = useVisibleCommands();
   const open = useDeviceCommandsStore((s) => s.trayOpen);
   const setOpen = useDeviceCommandsStore((s) => s.setTrayOpen);
-  const now = useNow(15_000);
+  const now = useNow(15_000, commands.length > 0);
 
   useEffect(() => {
     if (!open) return;

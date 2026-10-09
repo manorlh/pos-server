@@ -21,7 +21,8 @@ export type CommandKind =
   | 'reboot' //        POST /machines/{id}/reboot
   | 'till_message'; // POST /till-messages
 
-export type CommandPhase = 'sending' | 'sent' | 'received' | 'done' | 'failed' | 'expired' | 'cancelled';
+/** `unknown`: followed for hours with no answer — the tray gives up ("לא ידוע — בדוק במכשיר"). */
+export type CommandPhase = 'sending' | 'sent' | 'received' | 'done' | 'failed' | 'expired' | 'cancelled' | 'unknown';
 
 export interface TrackedCommand {
   /** The client's key: the send's Idempotency-Key, then one per device of its answer. */
@@ -48,6 +49,9 @@ export interface TrackedCommand {
   resend?: { path: string; body: unknown } | null;
   /** When it entered the small centred popup (null / absent: not in it, or closed by hand). */
   popupAt?: number | null;
+  /** Who sent it, in which tenant: a shared PC never shows (or polls) another user's / tenant's commands. */
+  userId?: string | null;
+  tenantId?: string | null;
 }
 
 export const PHASE_LABELS: Record<CommandPhase, string> = {
@@ -58,9 +62,10 @@ export const PHASE_LABELS: Record<CommandPhase, string> = {
   failed: 'נכשל',
   expired: 'פג תוקף',
   cancelled: 'בוטל',
+  unknown: 'לא ידוע — בדוק במכשיר',
 };
 
-const FINAL: ReadonlySet<CommandPhase> = new Set(['done', 'failed', 'expired', 'cancelled']);
+const FINAL: ReadonlySet<CommandPhase> = new Set(['done', 'failed', 'expired', 'cancelled', 'unknown']);
 
 export function isFinal(phase: CommandPhase): boolean {
   return FINAL.has(phase);
@@ -73,7 +78,7 @@ export function isOpen(c: TrackedCommand): boolean {
 export function phaseTone(phase: CommandPhase): 'wait' | 'ok' | 'bad' | 'muted' {
   if (phase === 'done') return 'ok';
   if (phase === 'failed' || phase === 'expired') return 'bad';
-  if (phase === 'cancelled') return 'muted';
+  if (phase === 'cancelled' || phase === 'unknown') return 'muted';
   return 'wait';
 }
 
@@ -214,10 +219,15 @@ export function phaseOfRequest(status: string, errorMessage?: string | null): Ph
   }
 }
 
-/** A kiosk command's answer: applied at once / requested (a close or Z the kiosk runs) / refused. */
+/**
+ * A kiosk command's answer: applied at once / refused / requested — a close or Z handed to the
+ * kiosk's own request channel. `requested` is final here: the cloud took it and the kiosk runs it
+ * when free (its Z / close follows on the kiosks' page); the tray does not keep polling it.
+ */
 export function phaseOfKiosk(status: string, detail?: string | null): PhaseUpdate {
   if (status === 'applied') return { phase: 'done', detail: null };
   if (status === 'refused') return { phase: 'failed', detail: reasonLabel(detail) };
+  if (status === 'requested') return { phase: 'done', detail: 'הועבר לקיוסק — יבוצע כשיתפנה' };
   return { phase: 'sent', detail: null };
 }
 
@@ -230,6 +240,16 @@ export function phaseOfPrintJobs(jobs: { status: string; error?: string | null }
   if (jobs.every((j) => j.status === 'done' || j.status === 'expired')) return { phase: 'expired', detail: null };
   if (jobs.some((j) => j.status === 'printing' || j.status === 'done')) return { phase: 'received', detail: null };
   return { phase: 'sent', detail: null };
+}
+
+/**
+ * A device reboot, read from the machine's `rebootRequest`: [current] is the machine's request
+ * now (null: none). Another request in its place means ours was replaced — final.
+ */
+export function phaseOfRebootRead(id: string, current: { id?: string | null; status: string; reason?: string | null } | null): PhaseUpdate {
+  if (current == null) return { phase: 'unknown', detail: null };
+  if (current.id && current.id !== id) return { phase: 'cancelled', detail: 'הוחלפה בבקשה חדשה' };
+  return phaseOfReboot(current.status, current.reason);
 }
 
 /** A device reboot request (lib/deviceManagement.ts `RebootRequest`). */
@@ -255,10 +275,20 @@ export function phaseOfReboot(status: string, reason?: string | null): PhaseUpda
   }
 }
 
-/** A till message: sent to N tills → delivered to some → acknowledged by all ("קראתי"). */
-export function phaseOfTillMessage(counts: { total: number; delivered: number; acknowledged: number; cancelled?: boolean }): PhaseUpdate {
+/**
+ * A till message: sent to N tills → delivered to some → acknowledged by all ("קראתי"); its end
+ * (`expiresAt`, or an expired status) ends it too.
+ */
+export function phaseOfTillMessage(
+  counts: { total: number; delivered: number; acknowledged: number; cancelled?: boolean },
+  end?: { expiresAt?: string | null; status?: string | null; now?: number },
+): PhaseUpdate {
   if (counts.cancelled) return { phase: 'cancelled', detail: null };
   if (counts.total > 0 && counts.acknowledged >= counts.total) return { phase: 'done', detail: null };
+  const endsAt = end?.expiresAt ? Date.parse(end.expiresAt) : Number.NaN;
+  if (end?.status === 'expired' || (Number.isFinite(endsAt) && end?.now != null && endsAt <= end.now)) {
+    return { phase: 'expired', detail: `${counts.acknowledged}/${counts.total} אישרו` };
+  }
   if (counts.delivered > 0 || counts.acknowledged > 0) {
     return { phase: 'received', detail: `${counts.acknowledged}/${counts.total} אישרו` };
   }
@@ -277,20 +307,75 @@ export function newKey(): string {
   return `k-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+/**
+ * One Idempotency-Key per user action: the same request retried (a network error, a second click)
+ * gets the same key — so the server answers with the first command, never a second one — while a
+ * changed request (an edited body, another action) gets a new key. `forget()` after a success (the
+ * next action is a new command) or on `idempotency_key_reused`.
+ */
+export interface KeyRing {
+  keyFor(request: unknown): string;
+  forget(request?: unknown): void;
+}
+
+export function keyRing(make: () => string = newKey): KeyRing {
+  const keys = new Map<string, string>();
+  const idOf = (request: unknown) => JSON.stringify(request ?? null);
+  return {
+    keyFor(request) {
+      const id = idOf(request);
+      let key = keys.get(id);
+      if (!key) {
+        key = make();
+        keys.set(id, key);
+      }
+      return key;
+    },
+    forget(request) {
+      if (request === undefined) keys.clear();
+      else keys.delete(idOf(request));
+    },
+  };
+}
+
+/** The server refused a key already used for another request (422 `idempotency_key_reused`). */
+export function isKeyReused(err: unknown): boolean {
+  const r = (err as { response?: { status?: number; data?: { detail?: { code?: string } } } })?.response;
+  return r?.status === 422 && r?.data?.detail?.code === 'idempotency_key_reused';
+}
+
+/**
+ * At most MAX_TRACKED: when trimming, the oldest FINISHED entries go first; an open one (still
+ * followed) only when there are more than MAX_TRACKED open ones.
+ */
+export function cap(list: readonly TrackedCommand[]): TrackedCommand[] {
+  if (list.length <= MAX_TRACKED) return list as TrackedCommand[];
+  let excess = list.length - MAX_TRACKED;
+  const drop = new Set<string>();
+  for (let i = list.length - 1; i >= 0 && excess > 0; i--) {
+    if (isFinal(list[i].phase) || list[i].sendError != null) {
+      drop.add(list[i].key);
+      excess--;
+    }
+  }
+  const kept = list.filter((c) => !drop.has(c.key));
+  return kept.slice(0, MAX_TRACKED);
+}
+
 /** Add (newest first), replacing an entry with the same key. */
 export function upsert(list: readonly TrackedCommand[], ...items: TrackedCommand[]): TrackedCommand[] {
   const keys = new Set(items.map((i) => i.key));
-  return [...items, ...list.filter((c) => !keys.has(c.key))].slice(0, MAX_TRACKED);
+  return cap([...items, ...list.filter((c) => !keys.has(c.key))]);
 }
 
 /** A send's answer replaces its "sending" entry with one entry per command the server made. */
 export function resolveSend(list: readonly TrackedCommand[], key: string, made: TrackedCommand[]): TrackedCommand[] {
   const at = list.findIndex((c) => c.key === key);
   const rest = list.filter((c) => c.key !== key && !made.some((m) => m.key === c.key));
-  if (at < 0) return [...made, ...rest].slice(0, MAX_TRACKED);
+  if (at < 0) return cap([...made, ...rest]);
   const out = [...rest];
   out.splice(Math.min(at, out.length), 0, ...made);
-  return out.slice(0, MAX_TRACKED);
+  return cap(out);
 }
 
 export function markSendFailed(list: readonly TrackedCommand[], key: string, error: string, now: number): TrackedCommand[] {
@@ -308,15 +393,18 @@ export function applyUpdates(
   now: number,
 ): { list: TrackedCommand[]; changed: TrackedCommand[] } {
   const changed: TrackedCommand[] = [];
+  let touched = false;
   const out = list.map((c) => {
     if (c.kind !== kind || c.id == null || isFinal(c.phase)) return c;
     const u = updates.get(c.id);
     if (!u || (u.phase === c.phase && u.detail === c.detail)) return c;
+    touched = true;
     const next = { ...c, phase: u.phase, detail: u.detail, updatedAt: now };
     if (u.phase !== c.phase) changed.push(next);
     return next;
   });
-  return { list: out, changed };
+  // Nothing moved: the same array (no re-render of every chip).
+  return { list: touched ? out : (list as TrackedCommand[]), changed };
 }
 
 /** The open ids of one kind — what the background read asks for. */
@@ -329,17 +417,50 @@ export function openIds(list: readonly TrackedCommand[], kind: CommandKind): str
  * after; null when nothing is open (no polling at all).
  */
 export function pollDelayMs(list: readonly TrackedCommand[], now: number): number | null {
-  const open = list.filter(isOpen);
+  const open = list.filter((c) => isOpen(c) && now - c.sentAt < GIVE_UP_MS);
   if (open.length === 0) return null;
   const youngest = Math.min(...open.map((c) => now - c.sentAt));
   if (youngest < 60_000) return 2_500;
   if (youngest < 10 * 60_000) return 8_000;
-  return 30_000;
+  if (youngest < 60 * 60_000) return 30_000;
+  return 2 * 60_000; // backed off to minutes before giving up
 }
 
-/** Drop finished entries older than an hour; keep at most MAX_TRACKED. */
+/** An open command followed this long with no final answer: the tray gives up ("לא ידוע — בדוק במכשיר"). */
+export const GIVE_UP_MS = 4 * 60 * 60 * 1000;
+
+/** Open commands past GIVE_UP_MS become `unknown` (final: no more polling). Same array when none. */
+export function giveUp(list: readonly TrackedCommand[], now: number): TrackedCommand[] {
+  if (!list.some((c) => isOpen(c) && now - c.sentAt >= GIVE_UP_MS)) return list as TrackedCommand[];
+  return list.map((c) => (isOpen(c) && now - c.sentAt >= GIVE_UP_MS ? { ...c, phase: 'unknown' as const, detail: null, updatedAt: now } : c));
+}
+
+/** Drop finished entries older than an hour, give up on very old open ones; at most MAX_TRACKED. Same array when nothing changes. */
 export function prune(list: readonly TrackedCommand[], now: number): TrackedCommand[] {
-  return list.filter((c) => !(isFinal(c.phase) && now - c.updatedAt > KEEP_FINAL_MS)).slice(0, MAX_TRACKED);
+  const given = giveUp(list, now);
+  const stale = given.some((c) => isFinal(c.phase) && now - c.updatedAt > KEEP_FINAL_MS);
+  const kept = stale ? given.filter((c) => !(isFinal(c.phase) && now - c.updatedAt > KEEP_FINAL_MS)) : given;
+  return cap(kept);
+}
+
+/**
+ * After a reload (sessionStorage): a send still "sending" never got its answer in this page — it
+ * is offered again with its own key ("נסה שוב": the server answers with the first command if it
+ * did arrive, never a second one).
+ */
+export function afterRehydrate(list: readonly TrackedCommand[], now: number): TrackedCommand[] {
+  if (!list.some((c) => c.phase === 'sending')) return list as TrackedCommand[];
+  return list.map((c) =>
+    c.phase === 'sending'
+      ? { ...c, phase: 'failed' as const, sendError: 'החיבור נקטע לפני שהתקבלה תשובה', updatedAt: now, popupAt: null }
+      : c,
+  );
+}
+
+/** Only the signed-in user's commands in the active tenant (a shared PC, a tenant switch). */
+export function visibleTo(list: readonly TrackedCommand[], userId: string | null | undefined, tenantId: string | null | undefined): TrackedCommand[] {
+  if (!userId || !tenantId) return [];
+  return list.filter((c) => c.userId === userId && c.tenantId === tenantId);
 }
 
 /** How long a finished command still shows on its device's row. */
@@ -415,6 +536,8 @@ export function popupStatus(c: Pick<TrackedCommand, 'phase' | 'detail' | 'sendEr
       return 'פג תוקף';
     case 'cancelled':
       return 'בוטל';
+    case 'unknown':
+      return PHASE_LABELS.unknown;
   }
 }
 

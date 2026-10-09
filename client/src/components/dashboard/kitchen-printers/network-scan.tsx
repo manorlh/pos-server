@@ -40,6 +40,7 @@ const POLL_MS = 2000;
 
 /** The scan's state for one shop, polled while a scan runs. */
 export function usePrinterScan(shopId: string, enabled = true) {
+  // Intentionally not in "פקודות שנשלחו" (lib/deviceCommandsStore.ts): a scan is a search whose results are this panel, not a device command.
   return useQuery({
     queryKey: ['printer-scan', shopId],
     queryFn: () => fetchPrinterScan(shopId),

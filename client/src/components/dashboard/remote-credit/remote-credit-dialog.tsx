@@ -498,6 +498,7 @@ export function RemoteCreditStatusView({
   const qc = useQueryClient();
   const refresh = useRefreshAfterRequest();
   const paymentLabel = usePaymentMethodLabel();
+  // Intentionally not in "פקודות שנשלחו" (lib/deviceCommandsStore.ts): a remote credit is a money flow with its own status view; left as is.
   const { data: req, isError, error, refetch } = useQuery<RemoteCreditRequest>({
     queryKey: ['remote-credit', requestId],
     queryFn: () => fetchRemoteCredit(requestId),

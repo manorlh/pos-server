@@ -36,7 +36,7 @@ import { ZoneRedirectsCard } from '@/components/dashboard/kitchen-printers/zone-
 import { PrintRedirectsCard } from '@/components/dashboard/kitchen-printers/print-redirects-card';
 import { TestDialog, TestResultsLink } from '@/components/dashboard/kitchen-printers/test-dialog';
 import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
-import { newKey } from '@/lib/deviceCommands';
+import { keyRing } from '@/lib/deviceCommands';
 import { trackCommand } from '@/lib/deviceCommandsStore';
 import { RoutingEditor } from '@/components/dashboard/kitchen-printers/routing-editor';
 import { OptionsCard } from '@/components/dashboard/kitchen-printers/options-card';
@@ -97,9 +97,13 @@ export default function KitchenPrintersPage() {
 
   // Fire-and-forget: the POST returns at once with its jobs; how they print is followed in the
   // background ("פקודות שנשלחו", the row's chip). Nothing waits and nothing blocks the page.
+  // One key per test asked (lib/deviceCommands.ts `keyRing`): a retry of a test whose answer never
+  // came (a network error) reuses it — never a second page; once answered, the next test is new.
+  const [testKeys] = useState(() => keyRing());
   const test = useMutation({
-    mutationFn: (printer: KitchenPrinter) => testKitchenPrinter(printer.id, newKey()),
+    mutationFn: (printer: KitchenPrinter) => testKitchenPrinter(printer.id, testKeys.keyFor({ printerId: printer.id })),
     onSuccess: (jobs, printer) => {
+      testKeys.forget({ printerId: printer.id });
       const jobIds = jobs.map((j) => j.id);
       if (jobIds.length === 0) {
         // No till to print it: the same message as the server's "printer_has_no_till".

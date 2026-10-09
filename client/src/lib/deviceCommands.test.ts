@@ -2,8 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  afterRehydrate,
   applyUpdates,
+  cap,
   chipText,
+  GIVE_UP_MS,
+  giveUp,
+  isFinal,
+  isKeyReused,
+  keyRing,
+  MAX_TRACKED,
+  phaseOfRebootRead,
+  visibleTo,
   closePopup,
   inPopup,
   isOpen,
@@ -91,7 +101,7 @@ test('requests, kiosks, printer tests and till messages map to the same phases',
   assert.equal(phaseOfRequest('completed').phase, 'done');
   assert.deepEqual(phaseOfRequest('failed', 'אין חיבור'), { phase: 'failed', detail: 'אין חיבור' });
   assert.equal(phaseOfKiosk('applied').phase, 'done');
-  assert.equal(phaseOfKiosk('requested').phase, 'sent');
+  assert.equal(phaseOfKiosk('requested').phase, 'done'); // handed to the kiosk's own request: final here
   assert.equal(phaseOfKiosk('refused').phase, 'failed');
   assert.equal(phaseOfPrintJobs([{ status: 'pending' }]).phase, 'sent');
   assert.equal(phaseOfPrintJobs([{ status: 'printing' }, { status: 'pending' }]).phase, 'received');
@@ -144,7 +154,7 @@ test('polling: fast right after a send, slower later, none when nothing waits', 
   assert.equal(pollDelayMs([cmd({ phase: 'done' })], NOW), null);
   assert.equal(pollDelayMs([cmd({ sentAt: NOW - 5_000 })], NOW), 2_500);
   assert.equal(pollDelayMs([cmd({ sentAt: NOW - 5 * 60_000 })], NOW), 8_000);
-  assert.equal(pollDelayMs([cmd({ sentAt: NOW - 60 * 60_000 })], NOW), 30_000);
+  assert.equal(pollDelayMs([cmd({ sentAt: NOW - 30 * 60_000 })], NOW), 30_000);
 });
 
 test('the device row chip: the newest open command, else one just finished', () => {
@@ -201,4 +211,91 @@ test('the tray keeps the recent ones only and counts the waiting', () => {
   assert.equal(openCount(list), 1);
   const many = Array.from({ length: 60 }, (_, i) => cmd({ key: `k${i}` }));
   assert.equal(upsert([], ...many).length, 40);
+});
+
+// ── The review's follow-ups ──────────────────────────────────────────────────
+
+test('a shared PC: only the signed-in user’s commands in the active tenant', () => {
+  const mine = cmd({ key: 'm', userId: 'u1', tenantId: 't1' });
+  const otherTenant = cmd({ key: 'o', userId: 'u1', tenantId: 't2' });
+  const otherUser = cmd({ key: 'x', userId: 'u2', tenantId: 't1' });
+  const unstamped = cmd({ key: 'n' });
+  const list = [mine, otherTenant, otherUser, unstamped];
+  assert.deepEqual(visibleTo(list, 'u1', 't1').map((c) => c.key), ['m']);
+  assert.deepEqual(visibleTo(list, 'u1', 't2').map((c) => c.key), ['o']);
+  assert.deepEqual(visibleTo(list, null, 't1'), []);
+  assert.deepEqual(visibleTo(list, 'u1', null), []);
+});
+
+test('the tray gives up after a few hours ("לא ידוע — בדוק במכשיר") and backs off to minutes before', () => {
+  const old = cmd({ sentAt: NOW - 2 * 60 * 60_000 });
+  assert.equal(pollDelayMs([old], NOW), 120_000);
+  const ancient = cmd({ key: 'a', sentAt: NOW - GIVE_UP_MS });
+  assert.equal(pollDelayMs([ancient], NOW), null);
+  const [given] = giveUp([ancient], NOW);
+  assert.equal(given.phase, 'unknown');
+  assert.equal(isFinal(given.phase), true);
+  assert.equal(chipText(given), 'פקודה נשלחה: סנכרון · לא ידוע — בדוק במכשיר');
+  assert.equal(popupStatus(given), 'לא ידוע — בדוק במכשיר');
+  // Nothing to give up on: the same array (no re-render).
+  const fresh = [cmd()];
+  assert.equal(giveUp(fresh, NOW), fresh);
+  assert.equal(prune(fresh, NOW), fresh);
+});
+
+test('a till message ends at its expiry, a kiosk "requested" and a replaced reboot are final', () => {
+  assert.equal(phaseOfTillMessage({ total: 3, delivered: 1, acknowledged: 1 }, { expiresAt: new Date(NOW - 1).toISOString(), now: NOW }).phase, 'expired');
+  assert.equal(phaseOfTillMessage({ total: 3, delivered: 1, acknowledged: 1 }, { status: 'expired', now: NOW }).phase, 'expired');
+  assert.equal(phaseOfTillMessage({ total: 3, delivered: 1, acknowledged: 1 }, { expiresAt: new Date(NOW + 60_000).toISOString(), now: NOW }).phase, 'received');
+  assert.equal(phaseOfTillMessage({ total: 3, delivered: 3, acknowledged: 3 }, { status: 'expired', now: NOW }).phase, 'done');
+  assert.equal(isFinal(phaseOfKiosk('requested').phase), true);
+  assert.deepEqual(phaseOfRebootRead('r1', { id: 'r2', status: 'pending' }), { phase: 'cancelled', detail: 'הוחלפה בבקשה חדשה' });
+  assert.equal(phaseOfRebootRead('r1', null).phase, 'unknown');
+  assert.equal(phaseOfRebootRead('r1', { id: 'r1', status: 'deferred', reason: 'busy_sale' }).phase, 'received');
+});
+
+test('after a reload a send still "sending" is offered again with its own key', () => {
+  const list = [cmd({ key: 'send-9', id: null, phase: 'sending', popupAt: NOW - 1_000 }), cmd({ key: 'ok' })];
+  const out = afterRehydrate(list, NOW);
+  assert.equal(out[0].key, 'send-9');
+  assert.equal(out[0].phase, 'failed');
+  assert.ok(out[0].sendError);
+  assert.equal(out[0].popupAt, null);
+  assert.equal(out[1], list[1]);
+  const none = [cmd()];
+  assert.equal(afterRehydrate(none, NOW), none);
+});
+
+test('trimming to the limit drops finished entries first', () => {
+  const open = Array.from({ length: MAX_TRACKED }, (_, i) => cmd({ key: `open${i}` }));
+  const done = cmd({ key: 'done-old', phase: 'done' });
+  const out = cap([...open, done]);
+  assert.equal(out.length, MAX_TRACKED);
+  assert.equal(out.some((c) => c.key === 'done-old'), false);
+  // A newer finished one still goes before an older open one.
+  const out2 = cap([cmd({ key: 'done-new', phase: 'done' }), ...open]);
+  assert.deepEqual(out2.map((c) => c.key), open.map((c) => c.key));
+});
+
+test('nothing moved: the same array (no re-render of every chip)', () => {
+  const list = [cmd({ id: 'c1' })];
+  const same = applyUpdates(list, 'device', new Map([['c1', { phase: 'sent', detail: null }]]), NOW);
+  assert.equal(same.list, list);
+  assert.deepEqual(same.changed, []);
+});
+
+test('one key per user action: the same request keeps its key, an edited one gets a new key', () => {
+  let n = 0;
+  const ring = keyRing(() => `key-${++n}`);
+  const a = { body: 'מבצע היום', targetId: 's1' };
+  assert.equal(ring.keyFor(a), 'key-1');
+  assert.equal(ring.keyFor({ ...a }), 'key-1');
+  assert.equal(ring.keyFor({ ...a, body: 'מבצע מחר' }), 'key-2');
+  ring.forget(a);
+  assert.equal(ring.keyFor(a), 'key-3');
+  ring.forget();
+  assert.equal(ring.keyFor(a), 'key-4');
+  assert.equal(isKeyReused({ response: { status: 422, data: { detail: { code: 'idempotency_key_reused' } } } }), true);
+  assert.equal(isKeyReused({ response: { status: 422, data: { detail: { code: 'other' } } } }), false);
+  assert.equal(isKeyReused(new Error('network')), false);
 });

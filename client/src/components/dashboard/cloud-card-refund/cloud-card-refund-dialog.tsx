@@ -439,6 +439,7 @@ export function CloudCardRefundStatusView({
   const t = useTranslations('cloudCardRefund');
   const qc = useQueryClient();
   const refresh = useRefreshAfterRefund();
+  // Intentionally not in "פקודות שנשלחו" (lib/deviceCommandsStore.ts): a cloud card refund runs cloud → Z-Credit, not a device command; its own money flow stays as is.
   const { data: r, isError, error } = useQuery<CloudCardRefund>({
     queryKey: ['cloud-card-refund', refundId],
     queryFn: () => fetchCloudCardRefund(refundId),
