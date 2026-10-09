@@ -89,20 +89,34 @@ REMOTE_TILL_Z_ENABLED is off nothing applies and the tills receive it as `false`
 
 `tests/test_remote_z_review_fixes.py` (the reviewer's probes, inverted). Before turning the flag on:
 
-- [ ] **Till version floor.** Remote close / Z / day close refuse tills below 0.1.334 (the merge
-      carrying `waitForRest`, c21f40d) or with no version reported: "הקופה צריכה עדכון גרסה לפני
-      סגירה מרחוק". Version codes are commit counts and differ per branch: set
-      `REMOTE_TILL_Z_MIN_TILL_VERSION` to the release build that carries `waitForRest`.
-- Offline tills block only when their state is unknown. Last report "no shift open", offline
-  since: never blocks — "לא מחובר — המשמרת האחרונה סגורה", a one-line warning on the run, recorded
-  on the Z (`openTillsLeftOut`, reason `offline_last_closed`); a shift it opened offline reaches the
-  next Z through the late-documents path. Never reported, or its last report had a shift open: "מצב
-  לא ידוע — ייתכן שיש משמרת פתוחה" (or "מנותקת · משמרת פתוחה"), blocks; only a super admin starts
-  anyway, with a typed reason (recorded as `z_forced_open_shifts`).
+- **Asked only by capability.** Remote close / Z / day close ask a till only when its heartbeat says
+  `capabilities: ["remote_close_v2"]` (the build with every remote-close safeguard) — not a version
+  count, which differs per branch. Otherwise: "הקופה צריכה עדכון גרסה לפני סגירה מרחוק". Kiosks are
+  exempt (their own Z path): a Windows kiosk in the shop Z never holds the day close.
+- [ ] Optional extra floor `REMOTE_TILL_Z_MIN_TILL_VERSION` (a till version code, e.g. the release
+      APK's versionCode) — a non-numeric value stops the server at startup.
+- Offline tills block only when their state is unknown. Last report "no shift open" with 0 documents
+  pending, said by the till after the last shift the cloud saw for it, offline since: never blocks —
+  "לא מחובר — המשמרת האחרונה סגורה", a one-line warning on the run, and — when the run does not take
+  the till — recorded on the Z on its own line "קופות לא מחוברות (משמרת אחרונה סגורה): …". A shift
+  it opened offline reaches the next Z the ordinary way: its open report or first document, then its
+  close. Never reported, its last report had a shift open or documents pending, or its "closed" is
+  older than its last shift on the cloud (an administrative close included — it no longer wipes the
+  till's claim): "מצב לא ידוע — ייתכן שיש משמרת פתוחה" (or "מנותקת · משמרת פתוחה"), blocks; only a
+  super admin starts anyway, with a typed reason (recorded as `z_forced_open_shifts`).
 - The main till always asks the cloud before its local shop Z, whatever its own parameter says;
-  the cloud's shop-level answer decides.
-- The force passes the open-shifts rule only; "חובה לסגור את כל הקופות" and local mode keep their
-  own rules and paths.
+  the cloud's shop-level answer decides — skipped when the till knows it is offline, short timeouts
+  otherwise; no answer: the LAN round decides.
+- The force passes the open-shifts rule only, and is offered only when that rule is what blocks;
+  "חובה לסגור את כל הקופות" and local mode keep their own rules and paths.
+- Realtime pushes to tills (close-shift, till Z) go only after the commit; a till never marks a
+  request done on a 404 (it retries).
+
+**Intentional improvements that apply with the flag off too** (the verification accepted them in the
+safe direction): one start of a shop's Z at a time (advisory lock); a cancel withdraws the kiosks asked
+to close with the shop Z and records who cancelled; the wizard's "build without" prints who approved
+it; the tills re-check "at rest" right before closing, drop stale realtime replays and stop retrying a
+cancelled request; the main till asks the cloud before its local shop Z; pushes after the commit.
 
 ## Saturday — decided at the Friday integration (09.10)
 
