@@ -218,6 +218,9 @@ const PRIMARY_DATES: Record<VoucherView, 'issued' | 'redeemed' | null> = {
   tills: 'redeemed',
   types: null,
   productions: null,
+  settlement: null,
+  reports: 'redeemed',
+  extras: null,
 };
 
 export function VoucherFilterBar({

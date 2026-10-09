@@ -314,6 +314,9 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         if not shop_ids and not PV._covers_company(db, user, batch.company_id):
             raise PV._http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)  # a shop manager: their own shops only
         cols["shop_ids"] = shop_ids
+    from app.services.prepaid_voucher_controls import edit_check  # §18 hook (helper): a test batch never offline
+
+    edit_check(db, batch, cols)
     assignment = PVO.active_of(db, batch.id)
     if assignment is not None:
         if cols.get("offline_allowed") is False:

@@ -5,7 +5,7 @@
  * set of filters. Pure, so `npm test` covers it (lib/prepaidVoucherFilters.test.ts).
  */
 
-export const VOUCHER_VIEWS = ['batches', 'vouchers', 'tills', 'types', 'productions'] as const;
+export const VOUCHER_VIEWS = ['batches', 'vouchers', 'tills', 'types', 'productions', 'settlement', 'reports', 'extras'] as const;
 export type VoucherView = (typeof VOUCHER_VIEWS)[number];
 
 export const BATCH_STATUSES = ['active', 'not_started', 'expired', 'cancelled', 'fully_redeemed', 'has_open'] as const;
