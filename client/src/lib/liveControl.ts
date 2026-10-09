@@ -176,6 +176,7 @@ const REFUSALS: Record<string, string> = {
   superseded: 'הוחלף בפקודה חדשה',
   manager_code: 'שוחרר בקוד מנהל בקופה',
   after_sale: 'יינעל בסוף המכירה',
+  not_answered: 'לא נענה',
 };
 
 /** "נשלח" / "נמסר לקופה" / "בוצע בקופה" / "נדחה: באמצע מכירה"… */
@@ -195,7 +196,7 @@ export function commandStatusLabel(status: string, detail?: string | null): stri
     case 'cancelled':
       return 'בוטל';
     case 'expired':
-      return 'לא נמסר (פג תוקף)';
+      return detail === 'not_answered' ? 'נמסר ולא נענה (פג תוקף)' : 'לא נמסר (פג תוקף)';
     default:
       return status;
   }

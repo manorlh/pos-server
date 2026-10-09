@@ -64,6 +64,7 @@ describe('commands', () => {
   it('says what the till did', () => {
     assert.equal(commandStatusLabel('pending'), 'נשלח');
     assert.equal(commandStatusLabel('done'), 'בוצע בקופה');
+    assert.equal(commandStatusLabel('expired', 'not_answered'), 'נמסר ולא נענה (פג תוקף)');
     assert.equal(commandStatusLabel('refused', 'sale_in_progress'), 'נדחה: באמצע מכירה');
     assert.equal(commandStatusLabel('refused', 'no_update'), 'נדחה: אין עדכון מוכן');
   });

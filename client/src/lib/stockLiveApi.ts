@@ -28,6 +28,11 @@ export const stockKeys = {
   progress: (s: { companyId?: string | null; shopId?: string | null }) => ['targets', 'progress', s.companyId ?? null, s.shopId ?? null] as const,
 };
 
+/** What of stock locations is on (the server's STOCK_LOCATIONS_ENABLED): the page hides the rest. */
+export async function fetchStockFeatures(): Promise<{ locations: boolean }> {
+  return (await api.get('/stock/features')).data;
+}
+
 export async function fetchTree(n: StockNode): Promise<StockTree> {
   return (await api.get('/stock/tree', { params: n })).data;
 }

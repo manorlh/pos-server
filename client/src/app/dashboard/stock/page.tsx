@@ -8,6 +8,7 @@
  * `?tab=` opens a tab (the board links to `?tab=blocks`).
  */
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { PackageX, SlidersHorizontal } from 'lucide-react';
@@ -16,6 +17,7 @@ import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import { nodeKey, type StockNode } from '@/lib/stockLive';
+import { fetchStockFeatures } from '@/lib/stockLiveApi';
 // "שליטה חיה" (components/dashboard/live-control): blocks, the stock sheet.
 import { ActiveBlocksList, BlockItemSheet, StockUpdateSheet } from '@/components/dashboard/live-control';
 import { QuickStockTab } from '@/components/dashboard/stock/quick-stock-tab';
@@ -34,6 +36,8 @@ const TABS = [
   { id: 'leftover', label: 'נשאר בסוף היום' },
 ] as const;
 type StockTab = (typeof TABS)[number]['id'];
+/** Tabs of stock locations: shown only while the server has them on (STOCK_LOCATIONS_ENABLED). */
+const LOCATION_TABS: StockTab[] = ['transfers', 'opening', 'levels', 'leftover'];
 
 function tabOf(raw: string | null): StockTab {
   if (raw === 'stock') return 'quick';
@@ -45,7 +49,12 @@ export default function ShopStockPage() {
   // A company, a shop or a till: the picker inside the tabs goes down to points of sale and tills.
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', minLevel: 'company' });
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<StockTab>(tabOf(searchParams.get('tab')));
+  const [picked, setTab] = useState<StockTab>(tabOf(searchParams.get('tab')));
+  // Off (the default until stock locations go live): shop stock and blocks only, as before.
+  const features = useQuery({ queryKey: ['stock-live', 'features'], queryFn: fetchStockFeatures, staleTime: 5 * 60_000 });
+  const locations = features.data?.locations === true;
+  const tabs = TABS.filter((t) => locations || !LOCATION_TABS.includes(t.id));
+  const tab: StockTab = tabs.some((t) => t.id === picked) ? picked : 'quick';
   const [blockFor, setBlockFor] = useState<string | null | undefined>(undefined);
   const [updateOpen, setUpdateOpen] = useState(false);
   const scope = { companyId: effective.companyId ?? null, shopId: effective.shopId ?? null };
@@ -76,7 +85,7 @@ export default function ShopStockPage() {
 
       <div className="-mx-1 overflow-x-auto px-1 print:hidden">
         <div className="flex w-max min-w-full gap-1 rounded-xl bg-muted p-1" role="tablist">
-          {TABS.map(({ id, label }) => (
+          {tabs.map(({ id, label }) => (
             <button
               key={id}
               type="button"
@@ -100,7 +109,13 @@ export default function ShopStockPage() {
         <ScopeGate resolution={resolution}>
           {root ? (
             <div key={key}>
-              {tab === 'quick' ? <QuickStockTab root={root} start={start} scope={scope} /> : null}
+              {tab === 'quick' ? (
+                <div className="space-y-6">
+                  <QuickStockTab root={root} start={start} scope={scope} />
+                  {/* Without stock locations the levels tab is hidden: the reopen setting lives here. */}
+                  {!locations ? <AvailabilityReopenCard companyId={effective.companyId} shopId={effective.shopId} /> : null}
+                </div>
+              ) : null}
               {tab === 'transfers' ? <TransfersTab scope={scope} /> : null}
               {tab === 'opening' ? <OpeningTab root={root} scope={scope} /> : null}
               {tab === 'levels' ? (

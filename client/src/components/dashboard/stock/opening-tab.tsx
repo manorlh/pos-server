@@ -123,7 +123,7 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
   return (
     <section className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        האיפוס היומי רץ בתחילת יום העסקים (ברירת מחדל 05:00, בהגדרות המערכת) ומחזיר כל מוצר מסומן למלאי הפתיחה. מה שנשאר נרשם ב&quot;נשאר בסוף היום&quot;. מכירות מקופות שלא היו מחוברות נספרות ליום שבו נמכרו.
+        האיפוס היומי רץ בתחילת יום העסקים (04:00 — אותו יום עסקים של החסימות והיעדים) ומחזיר כל מוצר מסומן למלאי הפתיחה. מה שנשאר נרשם ב&quot;נשאר בסוף היום&quot;. מכירות מקופות שלא היו מחוברות נספרות ליום שבו נמכרו.
       </p>
       <StockNodePicker root={root} value={node} onChange={(n) => { setNode(n); setEdits({}); }} />
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
