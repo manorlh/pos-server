@@ -11,6 +11,8 @@ cloud Z — the follow-up of 09.10 to the helper's controls:
   `test_real`) is no production voucher's: no production pays it and no settlement counts it. It leaves
   "קיזוז שוברי הפקה" and counts as an ordinary discount (the net is the same), shown apart on the Z
   ("שוברי בדיקה (כלולים)"); the till's X, which books every voucher alike, is compared without it;
+  the discounts report counts it with the discount vouchers (`vouchers.testDeductions`, the
+  integration's follow-up of 09.10);
 * a database without the controls' tables (the migration not run yet) reads as before.
 """
 from __future__ import annotations
@@ -22,6 +24,7 @@ from decimal import Decimal
 import pytest
 
 from app.models.shift import ShiftStatus
+from app.routers import promotions as promotions_router
 from app.routers import reports as reports_router
 from app.schemas.shift import ShiftCloseIn
 from app.schemas.transaction import TransactionIn
@@ -191,6 +194,27 @@ class TestZ:
             machine_id=None, area_id=None, **_ctx(booked),
         ).totals
         assert (out.gross, out.discounts, out.production_voucher_deductions, out.net) == (60.0, 40.0, 40.0, 20.0)
+
+    def test_the_discounts_report_counts_it_as_a_discount_too(self, booked):
+        """The discounts report follows the same rule (production_deduction_conditions): the real
+        voucher's ₪40 under "שוברי הפקה", the test voucher's ₪30 with the discount vouchers."""
+        out = promotions_router.get_discounts_report(
+            from_date=TODAY, to_date=TODAY, from_hour=None, to_hour=None, tz="Asia/Jerusalem", shop_id=None,
+            machine_id=None, **_ctx(booked),
+        )
+        assert out["productionVouchers"]["totals"] == {"count": 1, "uses": 1, "amount": 40.0, "documents": 1}
+        assert out["vouchers"]["totals"] == {"count": 1, "uses": 1, "amount": 30.0, "documents": 1}
+        assert out["vouchers"]["testDeductions"] == {"count": 1, "uses": 1, "amount": 30.0, "documents": 1}
+        assert [(b["name"], b["amount"]) for b in out["vouchers"]["byBatch"]] == [("סדרה", 30.0)]
+
+    def test_the_discounts_report_without_the_controls_tables_as_before(self, booked, monkeypatch):
+        monkeypatch.setattr(ST, "_test_batches_ready", lambda db: False)
+        out = promotions_router.get_discounts_report(
+            from_date=TODAY, to_date=TODAY, from_hour=None, to_hour=None, tz="Asia/Jerusalem", shop_id=None,
+            machine_id=None, **_ctx(booked),
+        )
+        assert out["productionVouchers"]["totals"]["amount"] == 70.0
+        assert out["vouchers"]["totals"]["amount"] == 0.0 and out["vouchers"]["testDeductions"]["count"] == 0
 
     def test_without_the_controls_tables_as_before(self, booked, monkeypatch):
         w = booked
