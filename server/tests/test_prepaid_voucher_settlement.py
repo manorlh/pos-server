@@ -577,6 +577,15 @@ class TestWho:
         assert (e.status_code, e.detail) == (403, "prepaid_settlement_forbidden")
         assert refused(get, w, a, cm).status_code == 403
 
+    def test_the_invoice_file_only_with_the_prices(self, w, festival):
+        a = agreement(w)
+        a = invoice(w, a, "INV-1", 600, [(festival["id"], 10)])
+        ST.put_invoice_file(w.db, w.admin, w.tenant.id, a["invoices"][0]["id"], "x.pdf", "application/pdf", b"%PDF")
+        w.db.commit()
+        cm = restricted(w, {"prepaid_vouchers": "edit", "prepaid_voucher_settlement": "edit"})
+        e = refused(X.get_settlement_invoice_file, a["invoices"][0]["id"], **_ctx(w, cm))
+        assert (e.status_code, e.detail) == (403, ST.PRICES_REQUIRED)
+
     def test_amounts_only_with_the_prices(self, w, festival):
         a = agreement(w)
         cm = restricted(w, {"prepaid_vouchers": "edit", "prepaid_voucher_settlement": "edit"})

@@ -9,8 +9,9 @@ A voucher lost, damaged or cancelled may be replaced by a manager, with a reason
   so it inherits every condition of the original: type and version, prices, validity, shops,
   stacking, accounting; and what the original had **left**: its remaining goods / uses, or an explicit
   part of them the manager names (a package partly taken is never made whole again by itself);
-* a fixed-value voucher already redeemed in part is not replaced (`…_partly_valued`): its value left is
-  counted from its own redemptions, so a new voucher would get the whole value again;
+* a voucher with a till value (fixed, or cover with a cap) already redeemed in part is not replaced
+  (`…_partly_valued`): its value left is counted from its own redemptions, so a new voucher would get the
+  whole value again;
 * nothing is replaced while a sale holds the original (`prepaid_voucher_in_use`), nor while a sale that
   held it never ended — an expired reservation neither confirmed nor released, whose document may still
   arrive (`…_replacement_held`; `force` after the sale was looked into, audited) — §16: "אין … להנפיק חלופה
@@ -49,8 +50,9 @@ BAD_REASON = "prepaid_voucher_replacement_bad_reason"
 BAD_ITEMS = "prepaid_voucher_replacement_bad_items"
 IN_USE = "prepaid_voucher_in_use"
 BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
-#: A fixed-value voucher already redeemed in part: what is left of its value is counted from its own
-#: redemptions (the core's `value_left`), so a new voucher would start from the whole value again.
+#: A voucher with a till value (fixed, or cover with a cap) already redeemed in part: what is left of its
+#: value is counted from its own redemptions (the core's `value_left`), so a new voucher would start from
+#: the whole value again.
 PARTLY_VALUED = "prepaid_voucher_replacement_partly_valued"
 #: A sale held the voucher and never ended (a reservation neither confirmed nor released, live or
 #: expired): its document may still reach the cloud and redeem the original. Cleared first, or `force`.
@@ -113,7 +115,9 @@ def replace_voucher(db: Session, user: User, tenant_id, voucher_id, body) -> Dic
         raise ACC.http(status.HTTP_409_CONFLICT, ALREADY_REPLACED)
     if not _what_left(original, batch):
         raise ACC.http(status.HTTP_409_CONFLICT, NOTHING_TO_REPLACE)
-    if (getattr(batch, "pricing", None) or "cover") == "fixed" and getattr(batch, "till_value", None) and db.query(
+    # Any value — fixed, or cover with a cap (review 09.10): what is left of it is counted from the
+    # voucher's own redemptions, so a new voucher would start from the whole value again.
+    if getattr(batch, "till_value", None) and db.query(
         PrepaidVoucherRedemption.id
     ).filter(PrepaidVoucherRedemption.voucher_id == original.id, PrepaidVoucherRedemption.reversed_at.is_(None)).first():
         raise ACC.http(status.HTTP_409_CONFLICT, PARTLY_VALUED)

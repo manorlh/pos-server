@@ -471,6 +471,9 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
             remaining[pid] = Decimal(0)
     if over:
         flags.append("over_use")  # a fiscal fact by now: recorded and flagged, never refused
+    from app.services.prepaid_voucher_controls import redemption_flags as controls_flags  # §18 hook (helper)
+
+    flags += controls_flags(db, r.machine_id, voucher, now)
     voucher.remaining = {k: PV.qty_out(q) for k, q in remaining.items()}
     done = not any(q > 0 for k, q in remaining.items() if k != PG.TOTAL) or remaining.get(PG.TOTAL, Decimal(1)) <= 0
     if voucher.status == "cancelled":

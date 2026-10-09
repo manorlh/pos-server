@@ -1114,7 +1114,10 @@ def put_invoice_file(db: Session, user: User, tenant_id, invoice_id, name: str, 
 
 
 def invoice_file(db: Session, user: User, tenant_id, invoice_id) -> Tuple[PrepaidSettlementInvoice, bytes]:
+    """The invoice's file — its amounts are the production's prices: the prices section too (review 09.10)."""
     _require(db, user, "view")
+    if not ACC.prices_visible(db, user):
+        raise ACC.http(status.HTTP_403_FORBIDDEN, PRICES_REQUIRED)
     inv = _invoice(db, user, tenant_id, invoice_id)
     row = db.get(PrepaidSettlementInvoiceFile, inv.id)
     if row is None:

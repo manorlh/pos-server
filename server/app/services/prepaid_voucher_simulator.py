@@ -46,6 +46,7 @@ from app.services import production_voucher_rules as PR
 NEED_TERMS = "prepaid_voucher_simulate_terms_required"
 NO_LINES = "prepaid_voucher_simulate_no_lines"
 PRODUCT_UNKNOWN = "prepaid_voucher_simulate_product_unknown"
+SHOP_INVALID = "prepaid_voucher_simulate_shop_invalid"
 
 UNIT_TEXT = {
     "assigned": "נכלל בשובר",
@@ -84,14 +85,29 @@ def _terms(db: Session, user: User, tenant_id, body):
     raise ACC.http(status.HTTP_400_BAD_REQUEST, NEED_TERMS)
 
 
-def _shop(db: Session, tenant_id, body) -> Optional[uuid.UUID]:
+def _shop(db: Session, user: User, tenant_id, body, terms) -> Optional[uuid.UUID]:
+    """
+    The shop whose prices count: the till's or the one named — a shop [user] sees, of the terms' company
+    group (review 09.10: never another company's prices). 400 `…_shop_invalid` otherwise.
+    """
+    PV = _pv()
+    shop_id = None
     if body.machine_id is not None:
         m = db.query(POSMachine).filter(POSMachine.id == body.machine_id, POSMachine.tenant_id == tenant_id).first()
-        return m.shop_id if m is not None else None
-    if body.shop_id is not None:
-        s = db.query(Shop.id).filter(Shop.id == body.shop_id, Shop.tenant_id == tenant_id).scalar()
-        return s
-    return None
+        if m is None:
+            raise ACC.http(status.HTTP_400_BAD_REQUEST, SHOP_INVALID)
+        shop_id = m.shop_id
+    elif body.shop_id is not None:
+        shop_id = db.query(Shop.id).filter(Shop.id == body.shop_id, Shop.tenant_id == tenant_id).scalar()
+        if shop_id is None:
+            raise ACC.http(status.HTTP_400_BAD_REQUEST, SHOP_INVALID)
+    if shop_id is None:
+        return None
+    company = db.query(Shop.company_id).filter(Shop.id == shop_id).scalar()
+    seen = str(shop_id) in PV._visible_shop_ids(db, user, tenant_id) or (company is not None and PV._covers_company(db, user, company))
+    if not seen or str(company) not in PV._company_group(db, terms.company_id):
+        raise ACC.http(status.HTTP_400_BAD_REQUEST, SHOP_INVALID)
+    return shop_id
 
 
 def _ancestors(db: Session, tenant_id, category_id) -> Tuple[str, ...]:
@@ -127,9 +143,14 @@ def simulate(db: Session, user: User, tenant_id, body) -> Dict[str, Any]:
     terms, is_batch = _terms(db, user, tenant_id, body)
     if not body.lines:
         raise ACC.http(status.HTTP_400_BAD_REQUEST, NO_LINES)
-    shop_id = _shop(db, tenant_id, body)
+    shop_id = _shop(db, user, tenant_id, body, terms)
     ids = [line.product_id for line in body.lines]
-    products = {str(p.id): p for p in db.query(Product).filter(Product.id.in_(ids), Product.tenant_id == tenant_id)}
+    # Only the catalog the terms' company may carry (its parents' and children's), never another company's.
+    related = PV._related_companies(db, terms.company_id)
+    products = {
+        str(p.id): p for p in db.query(Product).filter(Product.id.in_(ids), Product.tenant_id == tenant_id)
+        if p.company_id is None or str(p.company_id) in related
+    }
     if len({str(i) for i in ids} - set(products)):
         raise ACC.http(status.HTTP_400_BAD_REQUEST, PRODUCT_UNKNOWN)
     overrides = {

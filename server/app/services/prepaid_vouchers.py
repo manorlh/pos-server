@@ -1907,7 +1907,9 @@ def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
 
 def missing_features(db: Session, batch: PrepaidVoucherBatch, features: Optional[Iterable[str]]) -> List[str]:
     have = {str(f).strip().lower() for f in (features or ())}
-    return [f for f in required_features(db, batch) if f not in have]
+    from app.services.prepaid_voucher_controls import required_features as controls_features  # §18 hook (helper)
+
+    return [f for f in required_features(db, batch) + controls_features(db, batch) if f not in have]
 
 
 def till_view(
@@ -2786,6 +2788,9 @@ def confirm(
         flags.append("stacking")
     if document_lines is not None and _promotion_breaches(batch.promotion_policy or "exclude", document_lines):
         flags.append("promotion")
+    from app.services.prepaid_voucher_controls import redemption_flags as controls_flags  # §18 hook (helper)
+
+    flags += controls_flags(db, r.machine_id, voucher, now)
 
     redemption = PrepaidVoucherRedemption(
         id=uuid.uuid4(),

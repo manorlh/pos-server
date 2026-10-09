@@ -51,8 +51,8 @@ def allows(db: Session, user: Optional[User], section: str, level: str = "view")
 
     try:
         return effective_access(db, user).allows(section, level)
-    except Exception:  # noqa: BLE001 — no access model here (a stand-in session): the role decides
-        return True
+    except Exception:  # noqa: BLE001 — fail closed: an access model that cannot be read allows nothing
+        return False
 
 
 def require(db: Session, user: User, section: str, level: str, detail: str) -> None:

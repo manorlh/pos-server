@@ -53,7 +53,10 @@ from test_prepaid_voucher_types import make_type
 from test_prepaid_vouchers import _ctx, redeem, refused, vouchers, w  # noqa: F401 — `w` is the fixture
 
 ROOT = pathlib.Path(__file__).absolute().parents[1]
-FEATURES = ["accounting", "override"]
+#: A till that books every mode — and says it is in training (harmless for a real voucher; a test voucher
+#: needs it, review 09.10).
+FEATURES = ["accounting", "override", "training"]
+GOODS_FEATURES = ["accounting", "groups", "reserve_goods", "override", "training"]
 
 
 def batch(w, *, count=3, name="ארוחות", customer="קייטרינג אלון", event="פסטיבל הקיץ", **extra):
@@ -71,6 +74,37 @@ def codes(w, b):
 
 def take(w, code, till=None):
     return redeem(w, code, [(w.hotdog, 1)], till=till, features=FEATURES)
+
+
+def _unit(product, price, ref):
+    return {"ref": ref, "productId": str(product.id), "productName": product.name, "groupKey": None, "quantity": 1,
+            "listPriceAgorot": price, "listValueAgorot": price, "categoryIds": [str(product.category_id)],
+            "noDiscount": False}
+
+
+def hold(w, code, *, till=None, features=GOODS_FEATURES):
+    """A goods hold for one hot dog (reserve), the sale still open."""
+    from app.schemas.prepaid_voucher import PrepaidVoucherReserveIn
+
+    till = till or w.tills[0]
+    return R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
+        code=code, clientRequestId=str(uuid.uuid4()), saleRef=str(uuid.uuid4()), units=[_unit(w.hotdog, 2500, "a")],
+        features=features, posUserId=7, posUserName="דנה"), machine=till, db=w.db)
+
+
+def confirm_hold(w, held, *, till=None):
+    from app.schemas.prepaid_voucher import PrepaidVoucherConfirmIn
+
+    till = till or w.tills[0]
+    out = R.confirm_prepaid_reservation(str(till.id), held["reservationId"], PrepaidVoucherConfirmIn(
+        transactionId=str(uuid.uuid4()), amountAgorot=int(held.get("coveredAgorot") or 0)), machine=till, db=w.db)
+    w.db.commit()
+    return out
+
+
+def training(w, on=True, shop=None):
+    w.db.query(Shop).filter(Shop.id == (shop or w.shop).id).update({"training_mode": on})
+    w.db.commit()
 
 
 def look(w, code, till=None):
@@ -261,8 +295,8 @@ class TestScope:
         quota(w, "production", "קייטרינג אלון", 1)
         t = staff_batch(w)
         assert take(w, codes(w, t)[0])["ok"]
-        assert take(w, codes(w, real)[0])["ok"]
-        assert refused(take, w, codes(w, real)[1]).detail == CTL.QUOTA_REACHED
+        assert take(w, codes(w, real)[0], till=w.other_till)["ok"]  # a real voucher, at a real till
+        assert refused(take, w, codes(w, real)[1], w.other_till).detail == CTL.QUOTA_REACHED
 
     def test_the_audit_trail_of_what_one_manages(self, w):
         b = batch(w)
@@ -328,7 +362,7 @@ class TestTestVouchers:
         w.db.query(Shop).filter(Shop.id == w.shop.id).update({"training_mode": True})
         w.db.commit()
         take(w, codes(w, b)[0])
-        take(w, codes(w, real)[0])
+        take(w, codes(w, real)[0], till=w.other_till)
         a = X.create_settlement_agreement(SettlementAgreementIn(
             name="א", companyId=w.company.id, productionName="קייטרינג אלון"), **_ctx(w))
         assert [r["batchName"] for r in a["batches"]] == ["ארוחות"]
@@ -348,6 +382,116 @@ class TestTestVouchers:
         row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(fresh["id"])).one()
         assert row.name == "ריקה"
         assert X.prepaid_voucher_batch_controls(fresh["id"], **_ctx(w))["test"] is False
+
+
+class TestTrainingAndReal:
+    """Review 09.10: a test voucher never reaches real revenue; a real voucher is never spent in practice."""
+
+    def test_a_real_voucher_at_a_training_till_is_refused(self, w):
+        b = batch(w)
+        training(w)
+        out = look(w, codes(w, b)[0])
+        assert (out["reason"], out["message"]) == (CTL.TRAINING_REAL, "הקופה במצב הדרכה — ניתן לממש בה רק שוברי בדיקה")
+        assert refused(take, w, codes(w, b)[0]).detail == CTL.TRAINING_REAL
+        assert take(w, codes(w, b)[0], till=w.other_till)["ok"]
+
+    def test_a_test_voucher_needs_the_till_to_say_training(self, w):
+        t = staff_batch(w)
+        training(w)
+        till = w.tills[0]
+        out = R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=codes(w, t)[0], features=["accounting"]),
+                                       machine=till, db=w.db)
+        assert out["reason"] == "prepaid_voucher_update_required"
+        assert look(w, codes(w, t)[0])["redeemable"] is True
+
+    def test_a_test_batch_is_never_offline(self, w):
+        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn, PrepaidOfflineSyncIn
+
+        t = staff_batch(w, offlineAllowed=True)
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(t["id"])).one()
+        assert row.offline_allowed is False  # forced off
+        # Even switched on behind its back: never to a device of a shop not in training mode.
+        row.offline_allowed = True
+        w.db.commit()
+        e = refused(R.assign_prepaid_batch_offline, t["id"],
+                    PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, CTL.TEST_ONLY)
+        # A device of a training shop takes it; the shop leaves training; what it syncs is flagged, not counted.
+        training(w)
+        a = R.assign_prepaid_batch_offline(t["id"], PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)),
+                                           **_ctx(w))
+        w.db.commit()
+        training(w, False)
+        v = vouchers(w, t)[0]
+        unit = {"productId": str(w.hotdog.id), "productName": "נקניקייה", "quantity": 1, "valueAgorot": 2500,
+                "listValueAgorot": 2500, "coveredAgorot": 2500}
+        out = R.sync_prepaid_offline(str(w.tills[0].id), PrepaidOfflineSyncIn(pending=0, redemptions=[{
+            "id": "dev-1", "assignmentId": a["id"], "voucherId": v["id"], "redeemedAt": datetime.now(timezone.utc).isoformat(),
+            "saleRef": "s1", "transactionId": "tx-real", "units": [unit], "coveredAgorot": 2500,
+            "redemptionAccounting": "payment"}]), machine=w.tills[0], db=w.db)
+        w.db.commit()
+        assert out["results"][0]["status"] == "accepted" and CTL.FLAG_TEST_REAL in out["results"][0]["flags"]
+        a = X.create_settlement_agreement(SettlementAgreementIn(
+            name="א", companyId=w.company.id, productionName="קייטרינג אלון"), **_ctx(w))
+        assert a["totals"]["chargeable"] == 0
+        assert X.prepaid_voucher_exceptions_report(scope=PVA.Scope(), **_ctx(w))["counts"].get(CTL.FLAG_TEST_REAL) == 1
+
+    def test_never_marked_while_assigned_offline(self, w):
+        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn
+
+        b = batch(w, count=1, offlineAllowed=True)
+        R.assign_prepaid_batch_offline(b["id"], PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)),
+                                       **_ctx(w))
+        w.db.commit()
+        e = refused(X.mark_prepaid_voucher_test_batch, b["id"], StaffTestMarkIn(), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, CTL.TEST_OFFLINE)
+
+    def test_a_hold_is_history(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherReservation
+
+        b = batch(w, count=1)
+        w.db.add(PrepaidVoucherReservation(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, voucher_id=uuid.UUID(vouchers(w, b)[0]["id"]), batch_id=uuid.UUID(b["id"]),
+            machine_id=w.tills[0].id, client_request_id="r1", sale_ref="s1", uses=1, status="held",
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        ))
+        w.db.commit()
+        e = refused(X.mark_prepaid_voucher_test_batch, b["id"], StaffTestMarkIn(), **_ctx(w))
+        assert e.detail == CTL.TEST_HAS_HISTORY
+
+    def test_a_test_voucher_confirmed_on_the_real_path_is_flagged(self, w):
+        t = staff_batch(w)
+        training(w)
+        held = hold(w, codes(w, t)[0])
+        training(w, False)  # the shop left training before the sale was written
+        out = confirm_hold(w, held)
+        assert CTL.FLAG_TEST_REAL in out["flags"]
+
+
+class TestFlagsOnConfirm:
+    def test_a_hold_taken_before_the_pause(self, w):
+        b = batch(w, count=1)
+        held = hold(w, codes(w, b)[0])
+        pause(w, "batch", b["id"])
+        assert CTL.FLAG_PAUSED in confirm_hold(w, held)["flags"]
+
+    def test_over_the_quota_at_confirm(self, w):
+        b = batch(w, count=2)
+        held = hold(w, codes(w, b)[1])
+        take(w, codes(w, b)[0])
+        quota(w, "batch", b["id"], 1)
+        assert CTL.FLAG_OVER_QUOTA in confirm_hold(w, held)["flags"]
+
+    def test_an_expired_hold_never_ended_still_counts(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherReservation
+
+        b = batch(w, count=2)
+        held = hold(w, codes(w, b)[0])
+        w.db.query(PrepaidVoucherReservation).filter(PrepaidVoucherReservation.id == uuid.UUID(held["reservationId"])).update(
+            {"expires_at": datetime.now(timezone.utc) - timedelta(hours=1)})
+        w.db.commit()
+        quota(w, "batch", b["id"], 1)
+        assert refused(take, w, codes(w, b)[1]).detail == CTL.QUOTA_REACHED
 
 
 # ── Replacement (§16) ─────────────────────────────────────────────────────────
@@ -371,10 +515,12 @@ class TestReplacement:
         ev = R.prepaid_voucher_events(b["id"], **_ctx(w))["items"]
         assert any(e["action"] == "replace_voucher" and "ניזוק" in (e["reason"] or "") for e in ev)
 
-    def test_a_fixed_value_voucher_redeemed_in_part_is_not_replaced(self, w):
-        b = batch(w, count=1, tillValue=80, pricing="fixed")
+    @pytest.mark.parametrize("pricing", ["fixed", "cover"])
+    def test_a_valued_voucher_redeemed_in_part_is_not_replaced(self, w, pricing):
+        """Review: a voucher with a till value (fixed, or cover with a cap) used in part would get the whole value again."""
+        b = batch(w, count=1, tillValue=60, pricing=pricing)
         v = vouchers(w, b)[0]
-        take(w, v["code"])
+        confirm_hold(w, hold(w, v["code"]))
         e = refused(X.replace_prepaid_voucher, v["id"], ReplacementIn(reasonKind="damaged", reason="נקרע"), **_ctx(w))
         assert (e.status_code, e.detail) == (409, RPL.PARTLY_VALUED)
 
@@ -529,6 +675,28 @@ class TestSimulator:
         assert out["ok"] is False
         assert [u["status"] for u in out["units"]] == ["assigned", PR.UNIT_GROUP_FULL]
         assert out["refusal"]["code"] == PR.PACKAGE_INCOMPLETE
+
+    def test_only_the_users_shops_and_the_companys_catalog(self, w):
+        """Review: never another company's shop prices or products."""
+        from app.models.company import Company
+        from app.models.product import CatalogLevel, Product
+
+        t = make_type(w, code="sc")
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="Other", vat_number="514141414")
+        w.db.add(other)
+        w.db.flush()
+        far_shop = Shop(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, name="Far", settings={})
+        far_product = Product(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, category_id=w.hotdog.category_id,
+                              catalog_level=CatalogLevel.GLOBAL, name="זר", price=9, sku="far-1")
+        w.db.add_all([far_shop, far_product])
+        w.db.commit()
+        e = refused(X.simulate_prepaid_voucher, SimulateIn(typeId=t["id"], shopId=far_shop.id,
+                                                           lines=[{"productId": w.hotdog.id, "quantity": 1}]), **_ctx(w))
+        assert e.detail == SIM.SHOP_INVALID
+        e = refused(X.simulate_prepaid_voucher, SimulateIn(typeId=t["id"], lines=[{"productId": far_product.id, "quantity": 1}]),
+                    **_ctx(w))
+        assert e.detail == SIM.PRODUCT_UNKNOWN
+        assert sim(w, t, [(w.hotdog, 1), (w.drink, 1)], shopId=w.shop.id)["shopId"] == str(w.shop.id)
 
     def test_a_discount_voucher(self, w):
         b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
