@@ -107,20 +107,30 @@ def calendar_day(day: date, zone_name: str) -> Tuple[datetime, datetime]:
 
 def trading_range(day: date, start: str, end: str, zone_name: str) -> Tuple[datetime, datetime]:
     """
-    The money a day target counts: the local calendar day, stretched to the trading window's end when
-    the window runs past midnight (a bar open 18:00–02:00 counts its sales up to 02:00 on the next day)
-    — and starting where the previous day's window ended, so that night's sales after midnight are
-    counted once (in the day that began them), never again in this one:
-    [max(D 00:00, end of D−1's window), max(D+1 00:00, end of D's window)).
+    The money a day target counts: the business day (04:00 to 04:00, as blocks, the reset and
+    insights), stretched to the trading window's end when the window runs past 04:00, and starting
+    where the previous day's window ended — so a night's sales count once, in the day that began
+    them: [max(D 04:00, end of D−1's window), max(D+1 04:00, end of D's window)).
     """
-    a, b = calendar_day(day, zone_name)
+    a, b = business_day_range(day, zone_name)
     previous_end = day_window(day - timedelta(days=1), start, end, zone_name)[1]
     return max(a, previous_end), max(b, day_window(day, start, end, zone_name)[1])
 
 
+def business_day_range(day: date, zone_name: str) -> Tuple[datetime, datetime]:
+    """The business day `day`: from its 04:00 to the next day's 04:00 (local, DST-safe) — the day
+    boundary of targets, blocks, the reset and insights alike."""
+    zone = block_durations.zone_of(zone_name)
+    start = block_durations.parse_hhmm(block_durations.business_day_start())
+    return (
+        block_durations._local_at(day, start, zone),
+        block_durations._local_at(day + timedelta(days=1), start, zone),
+    )
+
+
 def still_open_from(day: date, start: str, end: str, zone_name: str, now: datetime) -> bool:
-    """`day`'s trading window runs past midnight and has not ended yet (it is still that trading day)."""
-    _a, b = calendar_day(day, zone_name)
+    """`day`'s trading window runs past the business day's end (04:00) and has not ended yet."""
+    _a, b = business_day_range(day, zone_name)
     window_end = day_window(day, start, end, zone_name)[1]
     return window_end > b and now < window_end
 
