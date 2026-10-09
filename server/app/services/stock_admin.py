@@ -54,7 +54,7 @@ def shops_under(db: Session, path: Path) -> List[Shop]:
 
 def tree(db: Session, user: Any, tenant_id: Any, path: Path) -> Dict[str, Any]:
     """The picker: the node's shops, their points of sale and devices, as far as the user reaches."""
-    scope = stock_scope.scope_of(db, user)
+    scope = stock_scope.stock_scope_of(db, user)
     shops = shops_under(db, path)
     out_shops = []
     for shop in shops:
@@ -176,7 +176,7 @@ def quick_view(
     from app.services import sold_out_rules as rules
 
     now = now or utc_now()
-    scope = stock_scope.scope_of(db, user)
+    scope = stock_scope.stock_scope_of(db, user)
     shops = shops_under(db, path)
     products = _products(db, shops, category_id=category_id, q=q, product_id=product_id)
     locations = [(loc, p) for loc, p in _locations_under(db, path, shops) if scope.covers_path(p)]

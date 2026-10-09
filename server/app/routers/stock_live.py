@@ -96,6 +96,15 @@ class OpeningIn(NodeIn):
     items: List[Dict[str, Any]] = Field(..., min_length=1, max_length=2000)
 
 
+def _require_locations() -> None:
+    """404 `stock_locations_off` for the features of stock locations while the flag is off."""
+    if not L.locations_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "stock_locations_off", "message": "ניהול מלאי לפי מיקומים עדיין לא פעיל"},
+        )
+
+
 def _path(db: Session, user: User, tenant_id, level: str, target_id) -> L.Path:
     try:
         path = L.path_of(db, level, target_id)
@@ -127,7 +136,7 @@ def _shops_and_companies(db: Session, user: User, tenant_id, company_id=None, sh
         shops = [s for s in shops if str(s.id) == str(user.shop_id)]
     # The company's own store (company-level stock) is the company's: not a shop's manager's, nor a
     # manager of points of sale's.
-    if user.role == UserRole.SHOP_MANAGER or stock_scope.scope_of(db, user).narrowed:
+    if user.role == UserRole.SHOP_MANAGER or stock_scope.stock_scope_of(db, user).narrowed:
         return shops, set()
     companies = {s.company_id for s in shops if s.company_id}
     return shops, companies
@@ -135,7 +144,7 @@ def _shops_and_companies(db: Session, user: User, tenant_id, company_id=None, sh
 
 def _covered_rows(db: Session, user: User, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Rows whose `location` a manager of points of sale covers (everything for anyone else)."""
-    scope = stock_scope.scope_of(db, user)
+    scope = stock_scope.stock_scope_of(db, user)
     if not scope.narrowed:
         return rows
     out = []
@@ -162,7 +171,18 @@ def get_tree(
     except LookupError:
         raise HTTPException(status_code=404, detail="location_not_found")
     svc._check_org(db, current_user, path, active_tenant_id)
-    return svc.tree(db, current_user, active_tenant_id, path)
+    out = svc.tree(db, current_user, active_tenant_id, path)
+    if not L.locations_enabled():
+        for shop in out["shops"]:
+            shop["areas"], shop["machines"] = [], []
+    out["locationsEnabled"] = L.locations_enabled()
+    return out
+
+
+@router.get("/features")
+def get_features(current_user: User = Depends(get_current_user)):
+    """What of stock locations is on (`STOCK_LOCATIONS_ENABLED`): the dashboard hides the rest."""
+    return {"locations": L.locations_enabled()}
 
 
 @router.get("/quick")
@@ -176,6 +196,8 @@ def get_quick(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    if level not in ("company", "shop"):
+        _require_locations()
     path = _path(db, current_user, active_tenant_id, level, target_id)
     return svc.quick_view(db, current_user, active_tenant_id, path, category_id=category_id, q=q, product_id=product_id)
 
@@ -204,6 +226,7 @@ def post_transfer(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     _require_writer(current_user)
     out = svc.transfer(
         db, current_user, active_tenant_id, product_id=body.product_id,
@@ -225,7 +248,7 @@ def get_movements(
 ):
     path = _path(db, current_user, active_tenant_id, level, target_id)
     shops = svc.shops_under(db, path)
-    scope = stock_scope.scope_of(db, current_user)
+    scope = stock_scope.stock_scope_of(db, current_user)
     locations = [loc for loc, p in svc._locations_under(db, path, shops) if scope.covers_path(p)]
     return stock_service.movements_for(db, product_id, locations=locations)
 
@@ -236,7 +259,7 @@ def _check_setting_scope(db: Session, user: User, tenant_id, scope_level: str, s
     except LookupError:  # an unknown company / shop: 404, never a 500
         raise HTTPException(status_code=404, detail="scope_not_found")
     svc._check_org(db, user, path, tenant_id)
-    if stock_scope.scope_of(db, user).narrowed:
+    if stock_scope.stock_scope_of(db, user).narrowed:
         raise HTTPException(status_code=403, detail="outside_your_points_of_sale")
 
 
@@ -253,6 +276,7 @@ def get_settings(
     except LookupError:
         raise HTTPException(status_code=404, detail="scope_not_found")
     out = svc.rules_view(db, scope_level, scope_id)
+    out["locationsEnabled"] = L.locations_enabled()
     if scope_level == "shop":
         shop = db.get(Shop, scope_id)
         out["inherited"] = svc.rules_view(db, "company", shop.company_id) if shop and shop.company_id else None
@@ -266,6 +290,7 @@ def post_settings_preview(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     _check_setting_scope(db, current_user, active_tenant_id, body.scope_level, body.scope_id)
     try:
         return svc.preview_switch(
@@ -283,6 +308,7 @@ def post_settings_apply(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     _require_writer(current_user)
     _check_setting_scope(db, current_user, active_tenant_id, body.scope_level, body.scope_id)
     try:
@@ -309,9 +335,11 @@ def get_alerts(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    if not L.locations_enabled():
+        return []
     shops, companies = _shops_and_companies(db, current_user, active_tenant_id, company_id, shop_id)
     rows = stock_alerts.open_alerts(db, active_tenant_id, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else None)
-    scope = stock_scope.scope_of(db, current_user)
+    scope = stock_scope.stock_scope_of(db, current_user)
     names: Dict[str, Any] = {}
     out = []
     for a in rows:
@@ -329,6 +357,7 @@ def put_opening(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     _require_writer(current_user)
     n = svc.set_opening(db, current_user, active_tenant_id, Location(body.level, body.target_id), body.items)
     db.commit()
@@ -343,6 +372,7 @@ def post_reset(
     db: Session = Depends(get_db),
 ):
     """"בצע איפוס עכשיו" (an event): the location's products to their opening stock, at once."""
+    _require_locations()
     _require_writer(current_user)
     loc = Location(body.level, body.target_id)
     stock_scope.check_location(db, current_user, loc, active_tenant_id)
@@ -361,6 +391,7 @@ def get_resets(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     shops, companies = _shops_and_companies(db, current_user, active_tenant_id, company_id, shop_id)
     rows = stock_reset.history(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [])
     return _covered_rows(db, current_user, rows)
@@ -375,6 +406,7 @@ def get_leftover(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    _require_locations()
     shops, companies = _shops_and_companies(db, current_user, active_tenant_id, company_id, shop_id)
     rows = stock_reset.leftover(db, shop_ids=[s.id for s in shops], company_ids=list(companies) if shop_id is None else [], day=day)
     return _covered_rows(db, current_user, rows)

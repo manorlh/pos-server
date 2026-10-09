@@ -102,6 +102,12 @@ def test_levels_are_normalised_top_down_and_unknown_ones_refused():
 # ── On a real session ────────────────────────────────────────────────────────
 
 
+@pytest.fixture(autouse=True)
+def _locations_on(monkeypatch):
+    """This module tests stock locations themselves: the flag on (TestFlagOff turns it off)."""
+    monkeypatch.setenv("STOCK_LOCATIONS_ENABLED", "true")
+
+
 @pytest.fixture
 def s(world, monkeypatch):  # noqa: F811
     """h_shop: points of sale Bar (h1) and Lobby (h2); P tracks stock."""
@@ -157,6 +163,44 @@ def _sell(w, machine, qty="1", when=None):
     )
     w.db.commit()
     return loc
+
+
+class TestFlagOff:
+    """`STOCK_LOCATIONS_ENABLED` off (the default until Saturday): shop stock exactly as before."""
+
+    @pytest.fixture(autouse=True)
+    def _off(self, monkeypatch):
+        monkeypatch.setenv("STOCK_LOCATIONS_ENABLED", "false")
+
+    def test_a_saved_area_rule_is_ignored_sales_and_tills_are_the_shops(self, s):
+        _levels(s, ["shop", "area"])
+        _set(s, s.shop_loc, 5)
+        assert _sell(s, s.h1) == s.shop_loc
+        assert _qty(s, s.shop_loc) == 4
+        mine = {l.product_id: l for l in stock_service.levels_for_machine(s.db, s.h1)}
+        assert mine[s.P.id].quantity == 4 and mine[s.P.id].reset_at is None
+        assert s.db.query(StockAlert).count() == 0, "no low-stock alerts while off"
+
+    def test_its_screens_say_off(self, s):
+        user = s.users.admin
+        for call in (
+            lambda: R.post_transfer(R.TransferIn(productId=s.P.id, **{"from": {"level": "shop", "targetId": s.h_shop.id}, "to": {"level": "area", "targetId": s.bar.id}}, quantity=1), current_user=user, active_tenant_id=s.tid, db=s.db),
+            lambda: R.post_reset(R.NodeIn(level="shop", targetId=s.h_shop.id), current_user=user, active_tenant_id=s.tid, db=s.db),
+            lambda: R.get_leftover(None, s.h_shop.id, None, current_user=user, active_tenant_id=s.tid, db=s.db),
+            lambda: R.get_quick("area", s.bar.id, None, None, None, current_user=user, active_tenant_id=s.tid, db=s.db),
+        ):
+            with pytest.raises(HTTPException) as off:
+                call()
+            assert off.value.status_code == 404 and off.value.detail["code"] == "stock_locations_off"
+        assert R.get_alerts(None, s.h_shop.id, current_user=user, active_tenant_id=s.tid, db=s.db) == []
+        tree = R.get_tree("shop", s.h_shop.id, current_user=user, active_tenant_id=s.tid, db=s.db)
+        assert tree["locationsEnabled"] is False and tree["shops"][0]["areas"] == [] and tree["shops"][0]["machines"] == []
+        assert R.get_features(current_user=user) == {"locations": False}
+
+    def test_a_points_of_sale_manager_keeps_their_shops_stock(self, s):
+        s.db.add(DashboardAccessProfile(user_id=s.users.h_shop_manager.id, full_access=True, sections={}, area_ids=[str(s.bar.id)]))
+        s.db.commit()
+        R._path(s.db, s.users.h_shop_manager, s.tid, "shop", s.h_shop.id)  # not narrowed while off
 
 
 class TestAtomicWrites:

@@ -372,13 +372,14 @@ def start_background_worker(session_factory: Callable[[], Session], *, interval:
 
     def loop() -> None:
         while not _stop.wait(interval):
-            db = session_factory()
-            try:
-                run_due(db)
-            except Exception:  # noqa: BLE001 - keep the loop alive
-                logger.exception("daily stock reset pass failed")
-            finally:
-                db.close()
+            if L.locations_enabled():
+                db = session_factory()
+                try:
+                    run_due(db)
+                except Exception:  # noqa: BLE001 - keep the loop alive
+                    logger.exception("daily stock reset pass failed")
+                finally:
+                    db.close()
             # The same minute's other live pass: "יעד הושג" even when nobody looks at the board.
             db = session_factory()
             try:

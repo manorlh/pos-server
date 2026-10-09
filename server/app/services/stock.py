@@ -239,7 +239,7 @@ def apply_movement(
             _side_effect(db, "auto sold-out", lambda: _on_crossing(db, tenant_id, loc, global_pid, ran_out=after <= 0))
         from app.services import stock_alerts
 
-        if L.table_ready(db, "stock_alerts"):
+        if L.locations_enabled() and L.table_ready(db, "stock_alerts"):
             _side_effect(db, "low-stock alert", lambda: stock_alerts.on_change(db, level, before, after))
     return True
 
@@ -478,7 +478,13 @@ def levels_for_machine(db: Session, machine: Any, since: Optional[datetime] = No
             reorder_max=row.reorder_max if row is not None else None,
             reorder_opt=row.reorder_opt if row is not None else None,
             updated_at=changed or utc_now(),
-            reset_at=_aware(row.last_reset_at) if row is not None else None,
+            # Only where a late sale is absorbed into the closed day (mode "set", as
+            # stock_reset.absorb_late): there the till stops counting its older unsynced sales.
+            reset_at=(
+                _aware(row.last_reset_at)
+                if row is not None and L.locations_enabled() and (row.reset_mode or "set") == "set"
+                else None
+            ),
         ))
     return out
 

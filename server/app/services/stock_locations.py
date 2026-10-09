@@ -23,6 +23,7 @@ from this base, so no device is in a group and no group can be chosen yet.
 """
 from __future__ import annotations
 
+import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -32,6 +33,16 @@ from sqlalchemy.orm import Session
 LEVELS: Tuple[str, ...] = ("company", "shop", "area", "group", "machine")
 DEFAULT_LEVELS: Tuple[str, ...] = ("shop",)
 LEVEL_LABELS = {"company": "חברה", "shop": "סניף", "area": "נקודת מכירה", "group": "קבוצת מכשירים", "machine": "קופה"}
+
+
+def locations_enabled() -> bool:
+    """
+    `STOCK_LOCATIONS_ENABLED` (env, default off): stock along the hierarchy. Off, every product is
+    managed at the shop only — sales, updates and the tills' stock exactly as before locations —
+    and the levels wizard, transfers, points-of-sale managers' stock, opening stock / the daily
+    reset, the leftover report and low-stock alerts are off.
+    """
+    return os.environ.get("STOCK_LOCATIONS_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 class NotManaged(Exception):
@@ -314,6 +325,8 @@ class RuleBook:
         return clone
 
     def managed(self, *, company_id: Any, shop_id: Any, product: Any) -> Tuple[str, ...]:
+        if not locations_enabled():
+            return DEFAULT_LEVELS  # the shop only, whatever rules were saved
         return resolve_managed(
             self.rules,
             company_id=str(company_id) if company_id else None,

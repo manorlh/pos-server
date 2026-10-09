@@ -75,6 +75,14 @@ def scope_of(db: Session, user: Any) -> UserStockScope:
     )
 
 
+def stock_scope_of(db: Session, user: Any) -> UserStockScope:
+    """The narrowing for the stock screens: none while stock locations are off (shop stock only —
+    a manager of points of sale keeps their role's shops, as before)."""
+    if not L.locations_enabled():
+        return UserStockScope()
+    return scope_of(db, user)
+
+
 def _forbidden(detail: str = "Access denied") -> HTTPException:
     return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
@@ -95,7 +103,7 @@ def check_path(db: Session, user: Any, path: Path, tenant_id: Any) -> None:
         if shop is None:
             raise HTTPException(status_code=404, detail="Shop not found")
         kiosk_control.check_shop_scope(db, user, shop, tenant_id)
-    if not scope_of(db, user).covers_path(path):
+    if not stock_scope_of(db, user).covers_path(path):
         raise _forbidden("outside_your_points_of_sale")
 
 
