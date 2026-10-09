@@ -109,6 +109,7 @@ def create_settlement_agreement(
 def settlement_candidates(
     company_id: str = Query(..., alias="companyId"),
     production_name: Optional[str] = Query(None, alias="productionName"),
+    production_id: Optional[str] = Query(None, alias="productionId"),
     event_name: Optional[str] = Query(None, alias="eventName"),
     report_event_id: Optional[str] = Query(None, alias="reportEventId"),
     batch_ids: Optional[List[str]] = Query(None, alias="batchId"),
@@ -118,7 +119,8 @@ def settlement_candidates(
 ):
     """The batches an agreement with these terms would cover (test batches never)."""
     return ST.candidates(db, current_user, active_tenant_id, company_id=company_id,
-                         production_name=_given(production_name), event_name=_given(event_name),
+                         production_name=_given(production_name), production_id=_given(production_id),
+                         event_name=_given(event_name),
                          report_event_id=_given(report_event_id), batch_ids=_given(batch_ids))
 
 

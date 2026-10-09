@@ -394,6 +394,42 @@ class TestAgreement:
         assert a2["billingBasis"] == "redemption"
         assert refused(agreement, w, name="?", productionName=None, productionId=str(uuid.uuid4())).detail == ST.BAD_VALUE
 
+    def test_keyed_by_the_production_and_the_event(self, w):
+        """The core's links decide (§13); a name only reaches a batch with no link of its own."""
+        from app.models.prepaid_voucher import PrepaidVoucherBatch
+        from app.models.report_event import ReportEvent
+        from app.schemas.prepaid_voucher import PrepaidProductionCreate
+
+        cohen = R.create_prepaid_production(PrepaidProductionCreate(companyId=w.company.id, name="הפקות כהן"), **_ctx(w))
+        levi = R.create_prepaid_production(PrepaidProductionCreate(companyId=w.company.id, name="הפקות לוי"), **_ctx(w))
+        now = datetime.now(timezone.utc)
+        ev = ReportEvent(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=w.shop.id,
+                         name="פסטיבל הקיץ", starts_at=now - timedelta(days=1), ends_at=now + timedelta(days=1))
+        other_ev = ReportEvent(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=w.other_shop.id,
+                               name="פסטיבל הקיץ", starts_at=now - timedelta(days=1), ends_at=now + timedelta(days=1))
+        w.db.add_all([ev, other_ev])
+        w.db.commit()
+
+        def mk(name, **kw):
+            return R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
+                name=name, companyId=w.company.id, count=1, tillValue=80, productionPrice=60, pricing="fixed",
+                redemptionAccounting="payment", items=[{"productId": w.hotdog.id, "quantity": 1}], **kw), **_ctx(w))
+
+        mk("של כהן", productionId=cohen["id"])
+        mk("ישנה, בשם", customerName="הפקות כהן")      # made before productions: its name only
+        mk("של לוי", productionId=levi["id"])
+        mk("באירוע", reportEventId=str(ev.id))
+        mk("באירוע אחר באותו שם", reportEventId=str(other_ev.id))
+        mk("אירוע כטקסט", eventName="פסטיבל הקיץ")
+        # The legacy batch: no production link even if the core filled the name.
+        w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.name == "ישנה, בשם").update({"production_id": None})
+        w.db.commit()
+
+        by_production = agreement(w, name="כהן", productionName=None, eventName=None, productionId=cohen["id"])
+        assert sorted(r["batchName"] for r in by_production["batches"]) == ["ישנה, בשם", "של כהן"]
+        by_event = agreement(w, name="אירוע", productionName=None, eventName=None, reportEventId=str(ev.id))
+        assert sorted(r["batchName"] for r in by_event["batches"]) == ["אירוע כטקסט", "באירוע"]
+
     def test_the_scope_is_required_and_the_period_checked(self, w):
         e = refused(agreement, w, productionName=None, eventName=None)
         assert e.detail == ST.SCOPE_REQUIRED

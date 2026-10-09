@@ -166,7 +166,12 @@ export interface SettlementAgreement extends SettlementAgreementSummary {
 export interface AgreementBody {
   name?: string;
   companyId?: string;
+  /** The core's production (`prepaid_productions`) — the batches it is linked to. */
+  productionId?: string | null;
+  /** A production by name: batches made before productions (and, created, a production of that name). */
   productionName?: string | null;
+  /** The event (`report_events`) — the batches linked to it. */
+  reportEventId?: string | null;
   eventName?: string | null;
   batchIds?: string[] | null;
   billingBasis?: BillingBasis;
@@ -220,12 +225,16 @@ export async function updateAgreement(id: string, body: AgreementBody): Promise<
 /** The batches an agreement with these terms would cover (the form's preview). */
 export async function fetchSettlementCandidates(opts: {
   companyId: string;
+  productionId?: string;
   productionName?: string;
+  reportEventId?: string;
   eventName?: string;
   batchIds?: string[];
 }): Promise<SettlementCandidate[]> {
   const p = new URLSearchParams({ companyId: opts.companyId });
+  if (opts.productionId) p.set('productionId', opts.productionId);
   if (opts.productionName?.trim()) p.set('productionName', opts.productionName.trim());
+  if (opts.reportEventId) p.set('reportEventId', opts.reportEventId);
   if (opts.eventName?.trim()) p.set('eventName', opts.eventName.trim());
   for (const id of opts.batchIds ?? []) p.append('batchId', id);
   const { data } = await api.get<{ items: SettlementCandidate[] }>(withQuery('/prepaid-vouchers/settlement/candidates', p));

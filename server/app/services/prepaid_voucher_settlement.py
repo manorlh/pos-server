@@ -186,6 +186,22 @@ def _event_name(db: Session, agreement) -> Optional[str]:
     return name
 
 
+def _linked(q, B, link_col, link_id, name_col, name: Optional[str]):
+    """[q] narrowed to the batches linked to [link_id] and, of those with no link of their own, named [name];
+    with no [link_id], to every batch named [name]."""
+    if link_id is None and not name:
+        return q
+    if link_col is None:  # a core without the link: the name alone
+        return q.filter(func.trim(name_col) == name) if name else q
+    if link_id is None:
+        # Named only (an event typed as text): every batch of that name, linked or not.
+        return q.filter(func.trim(name_col) == name.strip())
+    conds = [link_col == link_id]
+    if name:
+        conds.append((link_col.is_(None)) & (func.trim(name_col) == name.strip()))
+    return q.filter(or_(*conds))
+
+
 def matching_batches(
     db: Session, tenant_id, company_id, *, production_name=None, production_id=None, event_name=None,
     report_event_id=None, batch_ids=None, skip_tests: bool = True,
@@ -202,20 +218,11 @@ def matching_batches(
     else:
         if not (production_name or production_id or event_name or report_event_id):
             return []
-        if production_name or production_id:
-            conds = []
-            if production_name:
-                conds.append(B.customer_name == production_name)
-            if production_id is not None and hasattr(B, "production_id"):
-                conds.append(B.production_id == production_id)
-            q = q.filter(or_(*conds))
-        if event_name or report_event_id:
-            conds = []
-            if event_name:
-                conds.append(B.event_name == event_name)
-            if report_event_id is not None and hasattr(B, "report_event_id"):
-                conds.append(B.report_event_id == report_event_id)
-            q = q.filter(or_(*conds))
+        # Keyed by the core's links (§13): the batch's production (`production_id`) and event
+        # (`report_event_id`). A name matches only a batch that has no link of its own — one made before
+        # productions / events (its `customer_name` / `event_name` text).
+        q = _linked(q, B, getattr(B, "production_id", None), production_id, B.customer_name, production_name)
+        q = _linked(q, B, getattr(B, "report_event_id", None), report_event_id, B.event_name, event_name)
     batches = q.order_by(B.created_at).all()
     if skip_tests:
         tests = test_batch_ids(db, tenant_id)
@@ -785,11 +792,20 @@ def _validate(db: Session, user: User, a: PrepaidSettlementAgreement) -> None:
             or a.report_event_id):
         raise ACC.http(status.HTTP_400_BAD_REQUEST, SCOPE_REQUIRED)
     if a.report_event_id is not None:
-        from app.models.report_event import ReportEvent
+        # The core's own rule for a batch's event: the tenant's, of a shop of a related company the user sees.
+        try:
+            from app.services.prepaid_productions import event_for_batch
+        except Exception:  # noqa: BLE001 — a core without productions: the tenant's event
+            from app.models.report_event import ReportEvent
 
-        ev = db.query(ReportEvent).filter(ReportEvent.id == a.report_event_id, ReportEvent.tenant_id == a.tenant_id).first()
-        if ev is None:
-            raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_VALUE)
+            if db.query(ReportEvent.id).filter(ReportEvent.id == a.report_event_id,
+                                               ReportEvent.tenant_id == a.tenant_id).first() is None:
+                raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_VALUE)
+        else:
+            try:
+                event_for_batch(db, a.tenant_id, a.report_event_id, a.company_id, user)
+            except Exception:
+                raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_VALUE)
     if a.batch_ids:
         PV = _pv()
         clean = []
@@ -911,8 +927,8 @@ def update_agreement(db: Session, user: User, tenant_id, agreement_id, body) -> 
     return a
 
 
-def candidates(db: Session, user: User, tenant_id, *, company_id, production_name=None, event_name=None,
-               report_event_id=None, batch_ids=None) -> Dict[str, Any]:
+def candidates(db: Session, user: User, tenant_id, *, company_id, production_name=None, production_id=None,
+               event_name=None, report_event_id=None, batch_ids=None) -> Dict[str, Any]:
     """The batches an agreement with these terms would cover — the form's preview."""
     _require(db, user, "view")
     PV = _pv()
@@ -925,9 +941,12 @@ def candidates(db: Session, user: User, tenant_id, *, company_id, production_nam
         from app.models.report_event import ReportEvent
 
         ev_name = db.query(ReportEvent.name).filter(ReportEvent.id == rid, ReportEvent.tenant_id == tenant_id).scalar()
+    production = _production_of(db, tenant_id, cid, ACC.as_uuid(production_id), production_name)
     batches = matching_batches(
-        db, tenant_id, cid, production_name=(production_name or "").strip() or None, event_name=ev_name,
-        report_event_id=rid, batch_ids=batch_ids,
+        db, tenant_id, cid,
+        production_name=(production_name or "").strip() or (production.name if production is not None else None),
+        production_id=production.id if production is not None else None,
+        event_name=ev_name, report_event_id=rid, batch_ids=batch_ids,
     )
     prices = ACC.prices_visible(db, user)
     stats = PV._stats(db, [b.id for b in batches]) if batches else {}

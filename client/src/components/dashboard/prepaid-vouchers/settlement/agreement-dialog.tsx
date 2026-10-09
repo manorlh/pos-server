@@ -28,6 +28,7 @@ import {
 import { agreementFormProblems } from '@/lib/prepaidVoucherExtras';
 import { MultiPicker, useVoucherFacets } from '@/components/dashboard/prepaid-vouchers/voucher-filters';
 import { Button } from '@/components/ui/button';
+import { fetchPrepaidEventOptions, fetchPrepaidProductions } from '@/lib/prepaidVouchersApi';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -67,8 +68,10 @@ function AgreementForm({ initial, onDone }: {
   const companies = useQuery({ queryKey: ['companies'], queryFn: fetchCompanies, enabled: !initial });
   const [pickedCompany, setPickedCompany] = useState(initial?.companyId ?? '');
   const [name, setName] = useState(initial?.name ?? '');
-  const [productionName, setProductionName] = useState(initial?.productionName ?? '');
-  const [eventName, setEventName] = useState(initial?.eventName ?? '');
+  const [productionId, setProductionId] = useState(initial?.productionId ?? '');
+  const [productionName, setProductionName] = useState(initial?.productionId ? '' : (initial?.productionName ?? ''));
+  const [reportEventId, setReportEventId] = useState(initial?.reportEventId ?? '');
+  const [eventName, setEventName] = useState(initial?.reportEventId ? '' : (initial?.eventName ?? ''));
   const [batchIds, setBatchIds] = useState<string[]>(initial?.batchIds ?? []);
   const [basis, setBasis] = useState<BillingBasis>(initial?.billingBasis ?? 'redemption');
   const [periodFrom, setPeriodFrom] = useState(initial?.periodFrom ?? '');
@@ -80,24 +83,41 @@ function AgreementForm({ initial, onDone }: {
   const companyId = pickedCompany || (companies.data?.length === 1 ? companies.data[0].id : '');
 
   // The preview follows the scope as typed, a moment after typing stops.
+  const productions = useQuery({
+    queryKey: ['prepaid-productions', 'for-agreement', companyId],
+    queryFn: () => fetchPrepaidProductions({ companyId }),
+    enabled: !!companyId,
+  });
+  const events = useQuery({
+    queryKey: ['prepaid-event-options', companyId],
+    queryFn: () => fetchPrepaidEventOptions(companyId),
+    enabled: !!companyId,
+  });
   const [scope, setScope] = useState({ productionName, eventName });
   useEffect(() => {
     const id = window.setTimeout(() => setScope({ productionName, eventName }), 400);
     return () => window.clearTimeout(id);
   }, [productionName, eventName]);
-  const hasScope = !!(scope.productionName.trim() || scope.eventName.trim() || batchIds.length);
+  const hasScope = !!(productionId || reportEventId || scope.productionName.trim() || scope.eventName.trim() || batchIds.length);
   const candidates = useQuery({
-    queryKey: ['prepaid-settlement', 'candidates', companyId, scope.productionName, scope.eventName, batchIds],
-    queryFn: () => fetchSettlementCandidates({ companyId, ...scope, batchIds }),
+    queryKey: ['prepaid-settlement', 'candidates', companyId, productionId, reportEventId, scope.productionName, scope.eventName, batchIds],
+    queryFn: () => fetchSettlementCandidates({
+      companyId, productionId: productionId || undefined, reportEventId: reportEventId || undefined, ...scope, batchIds,
+    }),
     enabled: !!companyId && hasScope,
   });
 
-  const problems = agreementFormProblems({ name, companyId, productionName, eventName, batchIds, periodFrom, periodTo });
+  const problems = agreementFormProblems({
+    name, companyId, productionName: productionId ? '-' : productionName, eventName: reportEventId ? '-' : eventName,
+    batchIds, periodFrom, periodTo,
+  });
   const body = (): AgreementBody => ({
     name: name.trim(),
     ...(initial ? {} : { companyId }),
-    productionName: productionName.trim() || null,
-    eventName: eventName.trim() || null,
+    productionId: productionId || null,
+    productionName: productionId ? null : (productionName.trim() || null),
+    reportEventId: reportEventId || null,
+    eventName: reportEventId ? null : (eventName.trim() || null),
     batchIds: batchIds.length ? batchIds : null,
     billingBasis: basis,
     periodFrom: periodFrom || null,
@@ -149,16 +169,40 @@ function AgreementForm({ initial, onDone }: {
           <p className="text-xs text-muted-foreground">{t('form.scopeHint')}</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="pvs-production">{t('form.productionName')}</Label>
-              <Input id="pvs-production" list="pvs-productions" value={productionName} maxLength={200}
-                onChange={(e) => setProductionName(e.target.value)} />
+              <Label htmlFor="pvs-production-id">{t('form.production')}</Label>
+              <select id="pvs-production-id" className={SELECT_CLASS} value={productionId} disabled={!companyId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setProductionId(id);
+                  // A new agreement starts from how the production is billed.
+                  const p = (productions.data ?? []).find((x) => x.id === id);
+                  if (p && !initial) setBasis(p.billingBasis);
+                }}>
+                <option value="">{t('form.productionNone')}</option>
+                {(productions.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              {!productionId ? (
+                <Input id="pvs-production" list="pvs-productions" value={productionName} maxLength={200}
+                  placeholder={t('form.productionNamePlaceholder')} aria-label={t('form.productionName')}
+                  onChange={(e) => setProductionName(e.target.value)} />
+              ) : null}
               <datalist id="pvs-productions">
                 {(facets.data?.customers ?? []).map((c) => <option key={c.value} value={c.value} />)}
               </datalist>
             </div>
             <div className="space-y-1">
-              <Label htmlFor="pvs-event">{t('form.eventName')}</Label>
-              <Input id="pvs-event" list="pvs-events" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} />
+              <Label htmlFor="pvs-event-id">{t('form.event')}</Label>
+              <select id="pvs-event-id" className={SELECT_CLASS} value={reportEventId} disabled={!companyId}
+                onChange={(e) => setReportEventId(e.target.value)}>
+                <option value="">{t('form.eventNone')}</option>
+                {(events.data ?? []).map((ev) => (
+                  <option key={ev.id} value={ev.id}>{[ev.name, ev.shopName].filter(Boolean).join(' · ')}</option>
+                ))}
+              </select>
+              {!reportEventId ? (
+                <Input id="pvs-event" list="pvs-events" value={eventName} maxLength={200} placeholder={t('form.eventNamePlaceholder')}
+                  aria-label={t('form.eventName')} onChange={(e) => setEventName(e.target.value)} />
+              ) : null}
               <datalist id="pvs-events">
                 {(facets.data?.events ?? []).map((c) => <option key={c.value} value={c.value} />)}
               </datalist>
