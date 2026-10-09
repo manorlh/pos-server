@@ -112,6 +112,11 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "לא נכלל בהתחשבנות ובדוחות המכירה."),
     PermissionSpec("LINE_VOID", "ביטול שורה", "sale",
                    "הסרת שורה שכבר נוספה להזמנה (לפני תשלום / לפני שליחה למטבח). נרשם כאירוע קופה."),
+    # The owner (09.10.2026), held sales at a shift close or Z (app/services/held_sales_close.py):
+    # cancelling one at the till — with a reason, recorded as the till event `held_sale_cancelled`.
+    PermissionSpec("HELD_SALE_CANCEL", "ביטול מכירה מושהית", "sale",
+                   "ביטול מכירה מושהית בקופה (למשל בסגירת משמרת או Z), עם סיבה. אינה מסמך — נרשם "
+                   "כאירוע קופה: מי, מתי, הפריטים והסכום."),
     PermissionSpec("OTH", "על חשבון הבית (OTH)", "sale",
                    "מתן פריט על חשבון הבית, עם סיבה. כשהפרמטר \"OTH — באישור מנהל\" כבוי, \"דורש אישור\" "
                    "נחשב \"מותר\" (כמו היום)."),
@@ -265,6 +270,7 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "KIOSK_CONTROL", "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
     # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
     "SELL_RESTRICTED_ITEMS",
+    "HELD_SALE_CANCEL",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -289,6 +295,9 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     # Staff test vouchers (§18.5): a supervisor or a manager redeems one; others with their approval.
     "VOUCHER_TEST_REDEEM":               (P, P, A, A),
     "LINE_VOID":                         (A, A, A, A),
+    # A held sale cancelled at a close: a manager or a supervisor alone; a waiter or a cashier on
+    # a manager's code.
+    "HELD_SALE_CANCEL":                  (P, P, A, A),
     "OTH":                               (P, P, A, A),
     "REFUND":                            (D, P, A, A),
     "REPRINT":                           (P, P, A, A),

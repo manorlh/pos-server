@@ -354,6 +354,9 @@ class TestRemoteClose:
         assert r.status == ZRunStatus.WAITING
         assert item.status == ZRunItemStatus.WAITING_CLOSE
         assert item.close_shift_id == open_shift.id
+        # The push goes only once the run is committed: a till hearing it first would find nothing.
+        assert not w.sent
+        w.db.commit()
         assert w.sent and w.sent[0][2] == str(item.id) and w.sent[0][3] == str(open_shift.id)
         assert w.db.get(Shift, older.id).z_report_id is None
 

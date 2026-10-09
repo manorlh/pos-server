@@ -26,6 +26,8 @@ import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, request
 import { sendDeviceCommand, trackRemoteClose } from '@/lib/deviceCommandsStore';
 import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
+import { HeldSalesDialog } from './held-sales-dialog';
+import { ShopClosePanel } from './shop-close-panel';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
 
 const TONE: Record<string, string> = {
@@ -54,6 +56,7 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
   const qc = useQueryClient();
   const preview = useQuery({ queryKey: ['device-commands', 'close-preview', machineId], queryFn: () => fetchClosePreview(machineId) });
   const [checked, setChecked] = useState<string | null>(null);
+  const [held, setHeld] = useState(false);
   const p: RemoteClosePreview | undefined = preview.data;
   const send = useMutation({
     mutationFn: () => requestRemoteClose(machineId, p!.totalsKey),
@@ -117,7 +120,7 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
               ))}
               {p.kind === 'till_z' && p.nextZNumber != null ? (
                 <>
-                  <dt className="text-muted-foreground">Z הבא</dt>
+                  <dt className="text-muted-foreground">Z הבא (צפוי)</dt>
                   <dd className="tabular-nums">{p.nextZNumber}</dd>
                 </>
               ) : null}
@@ -125,7 +128,21 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
             {p.pending ? (
               <p className="text-amber-700 dark:text-amber-400">
                 כבר יש בקשה פתוחה לקופה: {requestStateLabel(p.pending.status, p.pending.errorCode)}
+                {p.pending.heldSales != null ? ` (${p.pending.heldSales})` : ''}
               </p>
+            ) : null}
+            {p.pending?.heldSales != null ? (
+              <Button type="button" size="sm" variant="outline" className="min-h-10" onClick={() => setHeld(true)}>
+                מכירות מושהות…
+              </Button>
+            ) : null}
+            {held && p.pending ? (
+              <HeldSalesDialog
+                machineId={p.machineId}
+                machineName={p.name}
+                state={{ ...p.pending, keepHeldSales: p.pending.keepOffer ?? null }}
+                onClose={() => setHeld(false)}
+              />
             ) : null}
             {!p.canRequest ? <p className="text-muted-foreground">{p.whyNot}</p> : (
               <label className="flex min-h-11 items-start gap-2">
@@ -200,6 +217,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
   }
   return (
     <div className="space-y-4">
+      {features.data?.remoteTillZ && scope.shopId ? <ShopClosePanel shopId={scope.shopId} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex min-h-11 items-center gap-2 text-sm">
           <input

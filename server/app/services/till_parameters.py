@@ -401,6 +401,12 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     from app.services.kiosk_technician import hash_for_machine
 
     hash_for_machine(machine, resolved.parameters)
+    # "חסימת Z כשיש משמרות פתוחות" ships with remote control's shop close (REMOTE_TILL_Z_ENABLED):
+    # until then the till reads it as off, whatever is set — its local shop Z exactly as today.
+    from app.services import z_shift_guard
+
+    if z_shift_guard.KEY in resolved.parameters and not z_shift_guard.flag_on():
+        resolved.parameters[z_shift_guard.KEY] = False
     return resolved
 
 
@@ -1522,6 +1528,17 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 from app.services.card_lock import CARD_LOCK_PARAMETER_SPECS as _CARD_LOCK_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CARD_LOCK_SPECS)
+
+# "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): no shop Z while a till's shift is open.
+from app.services.z_shift_guard import PARAMETER_SPECS as _Z_SHIFT_GUARD_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _Z_SHIFT_GUARD_SPECS)
+
+# Held sales at a close (app/services/held_sales_close.py): "סגירה עם מכירות מושהות" (off),
+# "ביטול מכירות מושהות מהענן בסגירה מרחוק" (on), "סגירה מרחוק גם עם עגלה פתוחה" (off).
+from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _HELD_SALES_SPECS)
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:

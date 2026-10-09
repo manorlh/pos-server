@@ -507,8 +507,11 @@ def open_shift_of(db: Session, machine: POSMachine) -> Optional[dict]:
     shift = find_open_shift(db, machine.id)
     if shift is not None:
         return {"id": str(shift.id), "openedAt": _utc(shift.opened_at), "sequenceNumber": shift.sequence_number}
+    from app.services.z_runs import _reported_open_is_live
+
+    # The till's claim only while it may still be open (not a shift the cloud holds closed).
     claimed = getattr(machine, "reported_open_shift_id", None)
-    if claimed is not None:
+    if claimed is not None and _reported_open_is_live(db, machine):
         return {
             "id": str(claimed),
             "openedAt": _utc(getattr(machine, "reported_open_shift_opened_at", None)),

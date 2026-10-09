@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -57,6 +57,13 @@ class TillZRequest(Base):
     #: Asked from remote control ("שליטה מרחוק", app/services/remote_till_z.py): the till waits until
     #: it is at rest — no sale, no payment, no card in flight — and never closes mid-sale.
     wait_for_rest = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py): the till closes
+    #: keeping its held sales instead of deferring on them (`keepHeldSales`).
+    keep_held_sales = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: The held sales the till reported when it deferred (`held_sales`), and the cancel a manager
+    #: confirmed ("בטל מכירות מושהות וסגור": ids, reason, who, when) — app/services/held_sales_close.py.
+    held_sales = Column(JSONB, nullable=True)
+    cancel_held_sales = Column(JSONB, nullable=True)
     #: The Z that answered it; NULL until then, and on one completed with nothing to report.
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

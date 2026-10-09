@@ -126,9 +126,19 @@ GET /demo-menu/status -> products:view
 GET /demo-menu/templates -> products:view
 GET /device-commands -> device_control:view
 POST /device-commands -> device_control:edit
+POST /device-commands/area-shift-close -> device_control:edit
+GET /device-commands/area-shift-close-preview -> device_control:view
+POST /device-commands/cancel-held-sales -> device_control:edit
 POST /device-commands/close -> device_control:edit
 GET /device-commands/devices -> device_control:view
 GET /device-commands/features -> device_control:view
+POST /device-commands/keep-held-sales -> device_control:edit
+POST /device-commands/shop-close -> device_control:edit
+GET /device-commands/shop-close-preview -> device_control:view
+GET /device-commands/shop-close/{run_id} -> device_control:view
+POST /device-commands/shop-close/{run_id}/cancel -> device_control:edit
+POST /device-commands/shop-close/{run_id}/force -> device_control:edit
+POST /device-commands/shop-close/{run_id}/proceed -> device_control:edit
 GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
@@ -685,6 +695,7 @@ POST /sync/{machine_id}/shop-z/remote-part -> till
 GET /sync/{machine_id}/shop-z/remote-parts -> till
 GET /sync/{machine_id}/shop-z/runs/{run_id} -> till
 POST /sync/{machine_id}/shop-z/runs/{run_id}/proceed -> till
+GET /sync/{machine_id}/shop-z/shift-guard -> till
 GET /sync/{machine_id}/stock -> till
 POST /sync/{machine_id}/synqpay/key-rejected -> till
 POST /sync/{machine_id}/synqpay/pairing -> till
@@ -794,4 +805,5 @@ GET /z-reports/{z_report_id}/print-document -> z:view
 POST /z-runs -> z:edit
 GET /z-runs/{run_id} -> z:view
 POST /z-runs/{run_id}/cancel -> z:edit
+POST /z-runs/{run_id}/force -> z:edit
 POST /z-runs/{run_id}/proceed -> z:edit

@@ -657,14 +657,20 @@ def _footer_notes(z: ZReport, tzinfo=None) -> List[str]:
     if z.per_machine is None and z.machine_id is not None:
         footer.append("דו״ח Z ישן שהופק בקופה")
     left_out = header.get("openTillsLeftOut") or {}
-    if left_out.get("tills"):
-        tills = ", ".join(
-            str(t.get("posNumber") or t.get("name") or t.get("id")) for t in left_out["tills"]
-        )
+    listed = [t for t in (left_out.get("tills") or []) if isinstance(t, dict)]
+    # Offline since a report of no shift open ("חסימת Z כשיש משמרות פתוחות"): nobody approved
+    # going without them — their own line, never "אושר ע״י".
+    offline = [t for t in listed if t.get("reason") == "offline_last_closed"]
+    confirmed = [t for t in listed if t.get("reason") != "offline_last_closed"]
+    if confirmed:
+        tills = ", ".join(str(t.get("posNumber") or t.get("name") or t.get("id")) for t in confirmed)
         line = f"הופק ללא קופות: {tills}"
         if left_out.get("confirmedByName"):
             line += f" — אושר ע״י {left_out['confirmedByName']}"
         footer.append(line)
+    if offline:
+        tills = ", ".join(str(t.get("posNumber") or t.get("name") or t.get("id")) for t in offline)
+        footer.append(f"קופות לא מחוברות (משמרת אחרונה סגורה): {tills}")
     return footer
 
 

@@ -7,9 +7,10 @@ company manager, shop manager, distributor, super admin), and access to the shop
 from __future__ import annotations
 
 import uuid
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -84,6 +85,10 @@ def _run_or_404(db: Session, run_id: uuid.UUID, user: User, tenant_id) -> "ZR.ZR
     _shop_for(db, run.shop_id, user, tenant_id)
     _check_tills(db, user, [i.machine for i in run.items if i.machine is not None], tenant_id)
     return run
+
+
+def _initiator_name(user: User) -> str:
+    return user.username or user.email or str(user.id)
 
 
 def _summary(shift):
@@ -266,6 +271,101 @@ def post_z_run(
     would leave tills with open (or un-Z'd) shifts behind and the shop's `shopZOpenTills`
     parameter forbids it, or wants `confirmOpenTills: true` first.
     """
+    out = create_run_from_body(db, current_user, active_tenant_id, body)
+    if isinstance(out, JSONResponse):
+        return out
+    run = out
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+@router.get("/z-runs/{run_id}", response_model=ZRunOut, response_model_by_alias=True)
+def get_z_run(
+    run_id: uuid.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Progress. Also sweeps expiry, and builds the Z if every item became ready."""
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    changed = ZR.expire_overdue_runs(db)
+    changed = ZR.finalise_if_ready(db, run) or changed
+    if changed:
+        db.commit()
+        db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+@router.post("/z-runs/{run_id}/proceed", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_proceed(
+    run_id: uuid.UUID,
+    body: ZRunProceedIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Build now without the listed tills; their shifts wait for the next Z."""
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    # Who decided to go without them, frozen on the Z with the tills (`openTillsLeftOut`).
+    ZR.proceed_without(db, run, body.exclude_machine_ids, deferred_by=_initiator_name(current_user))
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+class ZRunForceIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    exclude_machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeMachineIds", max_length=500)
+    #: Typed by the super admin: why the Z goes without these tills (on the Z and the record).
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/z-runs/{run_id}/force", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_force(
+    run_id: uuid.UUID,
+    body: ZRunForceIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force ("חסימת Z כשיש משמרות פתוחות", app/services/z_shift_guard.py): a super
+    admin builds the Z without the listed tills, with a typed reason — recorded on the Z and
+    as an exception; their shifts go into the next Z. 403 for anyone else, 422 without a reason.
+    """
+    from app.services import remote_till_z
+    from app.services import z_shift_guard
+
+    remote_till_z.require_enabled()  # off: no such route — everything exactly as before
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+@router.post("/z-runs/{run_id}/cancel", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_cancel(
+    run_id: uuid.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    ZR.cancel_run(db, run, cancelled_by=_initiator_name(current_user))
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+def create_run_from_body(db: Session, current_user: User, active_tenant_id, body: ZRunCreateIn, *, wait_for_rest: bool = False):
+    """
+    The one way a shop's cloud Z run starts — the dashboard's wizard and remote control's "סגירת
+    יום סניפית" alike (app/services/remote_till_z.py, `wait_for_rest`): the same refusals, the
+    same confirmations, the same run. Returns the run (not committed), or the refusal response.
+    """
     shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
     # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
     # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
@@ -302,6 +402,8 @@ def post_z_run(
             area_id=body.area_id,
             confirm_open_tills=body.confirm_open_tills,
             force=body.force,
+            wait_for_rest=wait_for_rest,
+            force_reason=body.force_reason,
         )
         if body.confirm_cloud_data:
             _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)
@@ -309,53 +411,4 @@ def post_z_run(
         # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)
-    db.commit()
-    db.refresh(run)
-    return ZR.run_to_out(db, run)
-
-
-@router.get("/z-runs/{run_id}", response_model=ZRunOut, response_model_by_alias=True)
-def get_z_run(
-    run_id: uuid.UUID,
-    current_user: User = Depends(get_current_machine_admin),
-    active_tenant_id=Depends(get_active_tenant_id),
-    db: Session = Depends(get_db),
-):
-    """Progress. Also sweeps expiry, and builds the Z if every item became ready."""
-    run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    changed = ZR.expire_overdue_runs(db)
-    changed = ZR.finalise_if_ready(db, run) or changed
-    if changed:
-        db.commit()
-        db.refresh(run)
-    return ZR.run_to_out(db, run)
-
-
-@router.post("/z-runs/{run_id}/proceed", response_model=ZRunOut, response_model_by_alias=True)
-def post_z_run_proceed(
-    run_id: uuid.UUID,
-    body: ZRunProceedIn,
-    current_user: User = Depends(get_current_machine_admin),
-    active_tenant_id=Depends(get_active_tenant_id),
-    db: Session = Depends(get_db),
-):
-    """Build now without the listed tills; their shifts wait for the next Z."""
-    run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.proceed_without(db, run, body.exclude_machine_ids)
-    db.commit()
-    db.refresh(run)
-    return ZR.run_to_out(db, run)
-
-
-@router.post("/z-runs/{run_id}/cancel", response_model=ZRunOut, response_model_by_alias=True)
-def post_z_run_cancel(
-    run_id: uuid.UUID,
-    current_user: User = Depends(get_current_machine_admin),
-    active_tenant_id=Depends(get_active_tenant_id),
-    db: Session = Depends(get_db),
-):
-    run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.cancel_run(db, run)
-    db.commit()
-    db.refresh(run)
-    return ZR.run_to_out(db, run)
+    return run

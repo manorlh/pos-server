@@ -28,7 +28,12 @@ export interface RemoteClosePreview {
   };
   lastZNumber: number | null;
   nextZNumber: number | null;
-  pending: { kind: string; id: string; status: string; errorCode: string | null; waitForRest: boolean; createdAt: string | null } | null;
+  pending:
+    | ({ kind: string; id: string; status: string; errorCode: string | null; waitForRest: boolean; createdAt: string | null } & Omit<
+        import('./heldSales').HeldSalesState,
+        'keepHeldSales'
+      > & { keepHeldSales?: boolean; keepOffer?: import('./heldSales').HeldSalesOffer | null })
+    | null;
   totalsKey: string;
   canRequest: boolean;
   whyNot: string | null;
@@ -55,14 +60,18 @@ export function money(v: number | null | undefined): string {
   return `₪${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** The confirm button's words: "הפק Z 18" / "סגור משמרת". */
-export function confirmLabel(p: Pick<RemoteClosePreview, 'kind' | 'nextZNumber'>): string {
-  if (p.kind === 'till_z') return p.nextZNumber != null ? `הפק Z ${p.nextZNumber}` : 'הפק Z';
+/**
+ * The confirm button's words: "הפק Z הבא" / "סגור משמרת". Never a predicted number: the Z is
+ * numbered when it is made (another Z may come first).
+ */
+export function confirmLabel(p: Pick<RemoteClosePreview, 'kind'>): string {
+  if (p.kind === 'till_z') return 'הפק Z הבא';
   return 'סגור משמרת';
 }
 
 const WAITS: Record<string, string> = {
   sale_open: 'ממתין לסיום המכירה בקופה',
+  held_sales: 'ממתין — מכירות מושהות',
   payment_in_progress: 'ממתין לסיום התשלום בקופה',
   card_in_flight: 'ממתין לעסקת אשראי שבדרך',
   printing: 'ממתין למדפסת',

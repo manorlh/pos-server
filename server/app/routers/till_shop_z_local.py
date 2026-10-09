@@ -16,6 +16,8 @@ POST /sync/{machine_id}/shop-z/local           → a shop Z the main till produc
                                                  renumbered; `conflictRecorded: true`),
                                                  `shift_not_closed` / `shift_unknown` (wait:
                                                  a till's close has not reached the cloud)
+GET  /sync/{machine_id}/shop-z/shift-guard     → "חסימת Z כשיש משמרות פתוחות": on? and the
+                                                 tills blocking the shop Z (app/services/z_shift_guard.py)
 
 A participant off the LAN, closed through the cloud (§8.14):
 POST /sync/{machine_id}/shop-z/remote-close     → the main till asks: `{roundId, requests:
@@ -63,6 +65,28 @@ def till_shop_z_history(
     out = LZ.history(db, machine, days=days)
     db.commit()
     return out
+
+
+@router.get("/sync/{machine_id}/shop-z/shift-guard")
+def till_shop_z_shift_guard(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py), asked by the main till before
+    its local shop Z: `{required, blockers: [{machineId, name, posNumber, status, online, words}]}`
+    — the shop's tills (not this one) with a shift open or closed and not yet accepted here. The
+    till refuses the Z while any; it can never force (only a super admin, in the cloud).
+    """
+    from app.models.shop import Shop
+    from app.services import z_shift_guard as G
+
+    machine = _machine(machine_id, machine)
+    shop = db.get(Shop, machine.shop_id)
+    required = G.required(db, shop)
+    blockers = [b for b in G.shop_blockers(db, shop) if b["machineId"] != str(machine.id)] if required else []
+    return {"required": required, "blockers": blockers}
 
 
 class LocalShopZAckIn(BaseModel):

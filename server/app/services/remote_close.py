@@ -32,6 +32,9 @@ def apply_close_shift_ack(
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> str:
+    # Expired requests and runs are swept first (as the till Z's ack does): an ack never revives one.
+    close_requests.expire_overdue(db)
+    z_runs.expire_overdue_runs(db)
     req = close_requests.apply_ack(
         db,
         machine,
@@ -97,6 +100,10 @@ def take_pending_close_shift(
     if getattr(req, "wait_for_rest", False):
         # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
         out["waitForRest"] = True
+    if getattr(req, "keep_held_sales", False):
+        out["keepHeldSales"] = True
+    if z_runs._cancel_command(req):
+        out["cancelHeldSales"] = z_runs._cancel_command(req)
     return out
 
 

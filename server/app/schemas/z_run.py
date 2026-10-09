@@ -34,6 +34,9 @@ class ZRunCreateIn(BaseModel):
     #: "כפה סגירה (גם באמצע מכירה)": each till parks an open basket and closes; only a
     #: card charge in flight is waited for (docs/SPEC_OFFLINE_TILL_Z.md §9).
     force: bool = False
+    #: "חסימת Z כשיש משמרות פתוחות": a super admin starts past tills in "מצב לא ידוע", with a typed
+    #: reason (app/services/z_shift_guard.py). Anyone else: 403.
+    force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
     #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים": required while a till the run takes
     #: shows a warning — open shifts it cannot close, not seen, unsent documents or Zs
     #: (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else `409 cloud_data_confirmation_required`.

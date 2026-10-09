@@ -241,6 +241,12 @@ def set_z_mode(db: Session, machine: POSMachine, mode: str, *, now: Optional[dat
     expire_overdue(db, now=now)
     if live_z_run_item(db, machine.id) is not None or _pending_query(db, machine.id).first() is not None:
         raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "z_in_progress"})
+    # Remote control's shift close still on its way (`wait_for_rest`, app/services/remote_till_z.py):
+    # the shift it closes was opened under the old mode — no switch until it is answered.
+    from app.services import shift_close_requests as close_requests
+
+    if close_requests._pending_query(db, machine.id).filter_by(wait_for_rest=True).first() is not None:
+        raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": "remote_close_pending"})
     count = unreported_closed_count(db, machine.id)
     carried: List[Shift] = []
     if count and not (mode == Z_MODE_CLOUD and _has_reconstructed_unreported(db, machine.id)):
@@ -1087,11 +1093,19 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the heartbeat hands it over on the next beat.
         return
-    publish_till_z_notify(
-        str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "",
+    from sqlalchemy.orm import object_session
+
+    from app.services import after_commit
+
+    args = (str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "")
+    kw = dict(
         force=bool(req.force_close),
         wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
+        keep_held_sales=bool(getattr(req, "keep_held_sales", False)),
+        cancel_held_sales=z_runs_cancel_command(req),
     )
+    # Only once the request is committed: a till hearing it first would find no such request.
+    after_commit.run(object_session(req), lambda: publish_till_z_notify(*args, **kw))
     req.sent_at = now
 
 
@@ -1214,7 +1228,17 @@ def take_pending(db: Session, machine: POSMachine, *, now: Optional[datetime] = 
     if getattr(req, "wait_for_rest", False):
         # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
         out["waitForRest"] = True
+    if getattr(req, "keep_held_sales", False):
+        out["keepHeldSales"] = True
+    if z_runs_cancel_command(req):
+        out["cancelHeldSales"] = z_runs_cancel_command(req)
     return out
+
+
+def z_runs_cancel_command(req) -> Optional[dict]:
+    from app.services.z_runs import _cancel_command
+
+    return _cancel_command(req)
 
 
 def pending_by_machine(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, uuid.UUID]:
