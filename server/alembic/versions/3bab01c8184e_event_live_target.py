@@ -1,8 +1,12 @@
 """events: the live screen's sales target ("מצב אירוע חי")
 
 Revision ID: 3bab01c8184e
-Revises: 6b1e9d4f2a87
+Revises: 3d29a3cb3cca
 Create Date: 2026-10-09
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 6b1e9d4f2a87, now
+after the integration head 3d29a3cb3cca (home-board, insights) so the chain stays linear. A column
+on report_events only; the upgrade itself is unchanged.
 
 `report_events.live_target` — the net sales target (₪) typed on the event's live screen, used
 when no targets module supplies one (app/services/report_events/targets.py). Not part of the
@@ -17,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "3bab01c8184e"
-down_revision: Union[str, Sequence[str], None] = "6b1e9d4f2a87"
+down_revision: Union[str, Sequence[str], None] = "3d29a3cb3cca"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
