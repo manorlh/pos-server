@@ -194,6 +194,9 @@ def load_hour_cells(
         return cells
     refund = _is_refund_condition()
     discount = func.coalesce(Transaction.document_discount, 0)
+    # A production voucher's deduction is in neither the gross nor the discounts (as the till's X): the
+    # net is the same, the discount KPIs never rise when vouchers are redeemed (review 09.10).
+    deduction = production_deduction_expr()
     keys, decode = _local_keys(db, clock, Transaction.created_at)
     rows = (
         query.with_entities(
@@ -201,8 +204,8 @@ def load_hour_cells(
             func.coalesce(func.sum(case((refund, -Transaction.total_amount), else_=Transaction.total_amount - discount)), 0).label("net"),
             func.count(Transaction.id).label("docs"),
             func.coalesce(func.sum(case((refund, 0), else_=1)), 0).label("sales"),
-            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount)), 0).label("gross"),
-            func.coalesce(func.sum(case((refund, 0), else_=discount)), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount - deduction)), 0).label("gross"),
+            func.coalesce(func.sum(case((refund, 0), else_=discount - deduction)), 0).label("discounts"),
             func.coalesce(func.sum(case((refund, Transaction.total_amount), else_=0)), 0).label("refunds"),
             func.coalesce(func.sum(case((refund, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),

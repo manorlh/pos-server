@@ -184,8 +184,9 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
             raise PV._http(status.HTTP_409_CONFLICT, NO_MAIN_TILL)
     current = active_of(db, batch.id)
     if current is not None:
-        if current.machine_id == machine.id and current.target == target:
+        if current.status == "active" and current.machine_id == machine.id and current.target == target:
             return _out(db, current)  # the same target again: the assignment as it is
+        # Another device's — or this one's on its way out (`releasing`): never handed back as new.
         raise PV._http(status.HTTP_409_CONFLICT, OFFLINE_ASSIGNED)
     # A voucher held by an open sale (any till): the device would not know of the hold.
     live = [

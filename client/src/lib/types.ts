@@ -2260,6 +2260,8 @@ export interface ZWaiterRow {
   net: string;
   cash: string;
   card: string;
+  /** "שוברי הפקה" — the production voucher tender (a Z frozen before it: absent, read as 0). */
+  productionVoucher?: string;
   other: string;
   tips: string;
   tables: number;

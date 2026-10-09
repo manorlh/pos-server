@@ -2109,7 +2109,7 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
     if (getattr(batch, "selection", None) or "items") == "groups":
         # Groups are redeemed through reserve → confirm (§3), never the immediate redeem.
-        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+        raise _http(status.HTTP_409_CONFLICT, RESERVE_REQUIRED)
     if not redeemable_immediately(batch):
         # A value (fixed or a cover cap), a top-up or a policy: only reserve → confirm applies them.
         raise _http(status.HTTP_409_CONFLICT, RESERVE_REQUIRED)
@@ -2559,6 +2559,9 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     """
     _lock_sale(db, machine, body.sale_ref)
     voucher = _locate(db, machine, body.code, lock=True)
+    # The batch, shared: an offline assign (which takes it exclusively) waits for this hold, and this
+    # hold sees an assign made meanwhile (review 09.10).
+    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == voucher.batch_id).with_for_update(read=True).first()
     batch = voucher.batch
     now = _now()
     request_id = body.client_request_id.strip()
@@ -2769,7 +2772,9 @@ def confirm(
         flags.append("over_sale")
     if batch.max_uses_per_day and _used_today(db, voucher, now) + take > int(batch.max_uses_per_day):
         flags.append("over_daily")
-    others = _vouchers_in_sale(db, machine, r.sale_ref, transaction_id=transaction_id, exclude_reservation=r.id)
+    # The sale is the till's that held the voucher (another till's document may confirm it).
+    holder = db.get(POSMachine, r.machine_id) if r.machine_id is not None and r.machine_id != machine.id else machine
+    others = _vouchers_in_sale(db, holder or machine, r.sale_ref, transaction_id=transaction_id, exclude_reservation=r.id)
     if RULES.stacking_refusal([o for o in others if o.voucher_id != str(voucher.id)], _in_sale(voucher)):
         flags.append("stacking")
     if document_lines is not None and _promotion_breaches(batch.promotion_policy or "exclude", document_lines):

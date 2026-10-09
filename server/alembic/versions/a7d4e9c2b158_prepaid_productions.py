@@ -16,7 +16,13 @@ Create Date: 2026-10-09
   production's id is derived from (tenant, company, the lowered name), so a second run adds nothing.
 
 Fixed in place before it was applied anywhere (review 09.10): the case-insensitive grouping and
-index, and the event's `ON DELETE SET NULL`.
+index, and the event's `ON DELETE SET NULL`. A database where a `create_all` already made
+`prepaid_productions` from the earlier model (a case-sensitive `ux_prepaid_productions_name`
+unique constraint, maybe rows differing only in case) is brought to the same end: the old index /
+constraint replaced, rows differing only in case merged into the first (their batches follow), then
+the `lower(name)` index and the backfill. An FK on the batches' columns made by `create_all` under
+another name is kept for `production_id`, and replaced for `report_event_id` when it is not
+`ON DELETE SET NULL`.
 
 Idempotent (the table, columns and indexes only when missing; the data by name); offline
 (`--sql`) the plain statements, the data as one INSERT … SELECT and one UPDATE (Postgres).
@@ -66,6 +72,46 @@ def _index_names(table: str) -> set:
     return {r[0] for r in rows}
 
 
+def _index_defs(table: str) -> dict:
+    """{index name: its definition} (Postgres; SQLite: the stored SQL) — to tell `lower(name)` from the old one."""
+    if _offline():
+        return {}
+    bind = op.get_bind()
+    if bind.dialect.name == 'sqlite':
+        rows = bind.execute(sa.text("SELECT name, coalesce(sql, '') FROM sqlite_master WHERE type = 'index' AND tbl_name = :t"),
+                            {"t": table})
+    else:
+        rows = bind.execute(sa.text("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = :t"), {"t": table})
+    return {r[0]: r[1] for r in rows}
+
+
+def _replace_case_sensitive_name_index() -> None:
+    """The earlier model's case-sensitive unique name (a `create_all` made it): dropped, its duplicates merged."""
+    defs = _index_defs(TABLE)
+    old = defs.get('ux_prepaid_productions_name')
+    if old is None or 'lower(' in old.lower():
+        return
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute(sa.text(f"ALTER TABLE {TABLE} DROP CONSTRAINT IF EXISTS ux_prepaid_productions_name"))
+        op.execute(sa.text("DROP INDEX IF EXISTS ux_prepaid_productions_name"))
+    else:
+        op.drop_index('ux_prepaid_productions_name', table_name=TABLE)
+    # Rows differing only in case or spaces: the first one stays, the batches of the others follow it.
+    rows = bind.execute(sa.text(
+        f"SELECT id, tenant_id, company_id, name FROM {TABLE} ORDER BY created_at, id")).all()
+    keep: dict = {}
+    for pid, tenant_id, company_id, name in rows:
+        key = (str(tenant_id), str(company_id), (name or '').strip().lower())
+        if key not in keep:
+            keep[key] = pid
+            continue
+        if 'production_id' in _columns(BATCHES):
+            bind.execute(sa.text(f"UPDATE {BATCHES} SET production_id = :k WHERE production_id = :p"),
+                         {"k": keep[key], "p": pid})
+        bind.execute(sa.text(f"DELETE FROM {TABLE} WHERE id = :p"), {"p": pid})
+
+
 def _indexes(table: str) -> set:
     return set() if _offline() else {i['name'] for i in sa.inspect(op.get_bind()).get_indexes(table)}
 
@@ -88,6 +134,12 @@ def _move_customers() -> None:
             FROM {TABLE} p
             WHERE b.production_id IS NULL AND p.tenant_id = b.tenant_id AND p.company_id = b.company_id
               AND lower(p.name) = lower(btrim(b.customer_name))
+        """))
+        # Batches already naming a production (a `create_all`-era link): their name follows it.
+        op.execute(sa.text(f"""
+            UPDATE {BATCHES} b SET customer_name = p.name
+            FROM {TABLE} p
+            WHERE b.production_id = p.id AND b.customer_name IS DISTINCT FROM p.name
         """))
         return
     bind = op.get_bind()
@@ -138,6 +190,8 @@ def upgrade() -> None:
         )
         op.create_index('ix_prepaid_productions_tenant_id', TABLE, ['tenant_id'])
         op.create_index('ix_prepaid_productions_company_id', TABLE, ['company_id'])
+    if not _offline():
+        _replace_case_sensitive_name_index()
     if 'ux_prepaid_productions_name' not in _index_names(TABLE):
         # One name per company whatever its case ("הפקות כהן" / "HAFAKOT" vs "hafakot").
         op.create_index('ux_prepaid_productions_name', TABLE, ['tenant_id', 'company_id', sa.text('lower(name)')], unique=True)
@@ -148,15 +202,22 @@ def upgrade() -> None:
         op.add_column(BATCHES, sa.Column('report_event_id', _uuid(), nullable=True))
     # The foreign keys (SQLite — the tests — cannot add a constraint to a table in place).
     if op.get_context().dialect.name == 'postgresql':
-        fks = set() if _offline() else {fk['name'] for fk in sa.inspect(op.get_bind()).get_foreign_keys(BATCHES)}
+        # By column, not by name: a `create_all` may have made one under its own name.
+        fks = [] if _offline() else sa.inspect(op.get_bind()).get_foreign_keys(BATCHES)
         for name, column, target in (
             ('fk_prepaid_voucher_batches_production', 'production_id', TABLE),
             ('fk_prepaid_voucher_batches_report_event', 'report_event_id', 'report_events'),
         ):
-            if name not in fks:
+            on_column = [fk for fk in fks if fk.get('constrained_columns') == [column]]
+            want_set_null = column == 'report_event_id'
+            for fk in on_column:
+                if want_set_null and (fk.get('options') or {}).get('ondelete', '').upper() != 'SET NULL':
+                    op.drop_constraint(fk['name'], BATCHES, type_='foreignkey')
+                    on_column = []
+            if not on_column:
                 # An event deleted: its batches lose the link (their printed event name stays).
                 op.create_foreign_key(name, BATCHES, target, [column], ['id'],
-                                      ondelete='SET NULL' if column == 'report_event_id' else None)
+                                      ondelete='SET NULL' if want_set_null else None)
     indexes = _indexes(BATCHES)
     if 'ix_prepaid_voucher_batches_production_id' not in indexes:
         op.create_index('ix_prepaid_voucher_batches_production_id', BATCHES, ['production_id'])

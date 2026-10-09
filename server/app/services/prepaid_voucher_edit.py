@@ -504,14 +504,15 @@ def _used(db: Session, vouchers: List[PrepaidVoucher], groups: bool) -> Dict[str
             for u in r.units or []:
                 if not isinstance(u, dict) or not u.get("groupKey"):
                     continue
-                q = _pieces(PV.qty(u.get("quantity") or 1))
+                q = _pieces(PV.taken_of(u))
                 used[f"g:{u['groupKey']}"] = used.get(f"g:{u['groupKey']}", zero) + q
                 used["total"] = used.get("total", zero) + q
         else:
-            for it in (r.items or r.units or []):
+            # The units first: they carry what was really taken (`takenQuantity`, an over-use cut short).
+            for it in (r.units or r.items or []):
                 if isinstance(it, dict) and it.get("productId"):
                     pid = str(it["productId"])
-                    used[pid] = used.get(pid, zero) + PV.qty(it.get("quantity") or 0)
+                    used[pid] = used.get(pid, zero) + PV.taken_of(it)
     return out
 
 

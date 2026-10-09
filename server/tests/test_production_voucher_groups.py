@@ -121,7 +121,8 @@ class TestBatches:
                                       clientRequestId="r1", features=FEATURES)
         with pytest.raises(HTTPException) as e:
             R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
-        assert e.value.detail == PV.UPDATE_REQUIRED
+        # A till that holds groups: reserve → confirm is its way, not an update (review 09.10).
+        assert e.value.detail == PV.RESERVE_REQUIRED
 
 
 class TestEdit:
