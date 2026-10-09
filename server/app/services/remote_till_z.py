@@ -109,7 +109,7 @@ def _key(kind: str, shift_ids: List[Any], t: Dict[str, Any]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def _pending(db: Session, machine: POSMachine, kind: str) -> Optional[Dict[str, Any]]:
+def _pending(db: Session, machine: POSMachine, kind: str, user: Any = None) -> Optional[Dict[str, Any]]:
     from app.services import shift_close_requests as close_requests
     from app.services import till_z
 
@@ -132,11 +132,12 @@ def _pending(db: Session, machine: POSMachine, kind: str) -> Optional[Dict[str, 
             "heldSales": held_sales_close.held_count(req.error_code, req.error_message),
             "heldSalesList": getattr(req, "held_sales", None) or [],
             "keepHeldSales": bool(getattr(req, "keep_held_sales", False)),
+            "keepOffer": held_sales_close.keep_offer(db, machine, user),
             "cancelHeldSales": held_sales_close.cancel_offer(db, machine),
             "heldSalesCancelled": held_sales_close.cancelled_events(db, [req.id]).get(str(req.id), [])}
 
 
-def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None, user: Any = None) -> Dict[str, Any]:
     """What the manager confirms: the till, what it will do, the figures it will close on."""
     from app.services.machine_status import is_online
     from app.services.shift_totals import compute_totals
@@ -175,7 +176,7 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None)
         "totals": totals,
         "lastZNumber": last,
         "nextZNumber": (last + 1) if last is not None else None,
-        "pending": _pending(db, machine, kind),
+        "pending": _pending(db, machine, kind, user),
         "totalsKey": _key(kind, [s.id for s in shifts], totals),
         "canRequest": why is None,
         "whyNot": why,

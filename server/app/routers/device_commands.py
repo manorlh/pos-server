@@ -180,7 +180,7 @@ def get_close_preview(
 
     remote_till_z.require_enabled()
     machine = _remote_z_machine(db, current_user, active_tenant_id, machine_id)
-    out = remote_till_z.preview(db, machine)
+    out = remote_till_z.preview(db, machine, user=current_user)
     db.commit()  # requests expired on the way
     return out
 

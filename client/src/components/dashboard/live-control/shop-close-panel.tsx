@@ -17,6 +17,7 @@ import { CalendarCheck, Wifi, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { HeldSalesDialog } from './held-sales-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -239,6 +240,7 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
   });
   const [forceReason, setForceReason] = useState('');
   const [startReason, setStartReason] = useState('');
+  const [heldFor, setHeldFor] = useState<string | null>(null);
   const force = useMutation({
     mutationFn: ({ runId, ids, reason }: { runId: string; ids: string[]; reason: string }) => forceShopClose(runId, ids, reason),
     onSuccess: () => {
@@ -332,6 +334,16 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
                 <span>{i.machineName ?? i.machineId}</span>
                 {i.posNumber ? <span className="text-xs text-muted-foreground">#{i.posNumber}</span> : null}
                 <span className={cn('ms-auto', TONE[itemTone(i.status, i.errorCode)])}>{i.words}</span>
+                {i.heldSales != null && runActive(run.status) ? (
+                  <Button size="sm" variant="outline" className="min-h-9" onClick={() => setHeldFor(i.id)}>
+                    מכירות מושהות…
+                  </Button>
+                ) : null}
+                {(i.heldSalesCancelled ?? []).length > 0 ? (
+                  <span className="w-full text-xs text-muted-foreground">
+                    בוטלו מהענן: {(i.heldSalesCancelled ?? []).map((c) => `${c.total ?? '—'} (${c.by ?? '—'}: ${c.reason ?? ''})`).join(' · ')}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -388,6 +400,18 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
           </ul>
         </details>
       ) : null}
+      {heldFor && run ? (() => {
+        const item = run.items.find((x) => x.id === heldFor);
+        return item ? (
+          <HeldSalesDialog
+            machineId={item.machineId}
+            machineName={item.machineName ?? item.machineId}
+            runId={run.id}
+            state={item}
+            onClose={() => setHeldFor(null)}
+          />
+        ) : null;
+      })() : null}
       {confirming ? (
         <ShopCloseDialog
           p={p}

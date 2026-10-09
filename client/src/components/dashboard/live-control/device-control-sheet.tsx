@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { DEVICE_ACTIONS, actionLabel, commandStatusLabel, commandTone, type DeviceAction, type DeviceRow } from '@/lib/liveControl';
 import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose, sendDeviceCommand } from '@/lib/liveControlApi';
 import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
+import { HeldSalesDialog } from './held-sales-dialog';
 import { ShopClosePanel } from './shop-close-panel';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
 
@@ -53,6 +54,7 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
   const qc = useQueryClient();
   const preview = useQuery({ queryKey: ['device-commands', 'close-preview', machineId], queryFn: () => fetchClosePreview(machineId) });
   const [checked, setChecked] = useState<string | null>(null);
+  const [held, setHeld] = useState(false);
   const p: RemoteClosePreview | undefined = preview.data;
   const send = useMutation({
     mutationFn: () => requestRemoteClose(machineId, p!.totalsKey),
@@ -122,7 +124,21 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
             {p.pending ? (
               <p className="text-amber-700 dark:text-amber-400">
                 כבר יש בקשה פתוחה לקופה: {requestStateLabel(p.pending.status, p.pending.errorCode)}
+                {p.pending.heldSales != null ? ` (${p.pending.heldSales})` : ''}
               </p>
+            ) : null}
+            {p.pending?.heldSales != null ? (
+              <Button type="button" size="sm" variant="outline" className="min-h-10" onClick={() => setHeld(true)}>
+                מכירות מושהות…
+              </Button>
+            ) : null}
+            {held && p.pending ? (
+              <HeldSalesDialog
+                machineId={p.machineId}
+                machineName={p.name}
+                state={{ ...p.pending, keepHeldSales: p.pending.keepOffer ?? null }}
+                onClose={() => setHeld(false)}
+              />
             ) : null}
             {!p.canRequest ? <p className="text-muted-foreground">{p.whyNot}</p> : (
               <label className="flex min-h-11 items-start gap-2">

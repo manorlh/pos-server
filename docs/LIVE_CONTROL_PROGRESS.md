@@ -118,6 +118,45 @@ to close with the shop Z and records who cancelled; the wizard's "build without"
 it; the tills re-check "at rest" right before closing, drop stale realtime replays and stop retrying a
 cancelled request; the main till asks the cloud before its local shop Z; pushes after the commit.
 
+### Configuration matrix — remote close as configured (`tests/test_remote_close_matrix.py`)
+
+Every row is a test. "Offered" = shown on the dashboard; "allowed" = the server accepts it.
+
+**Parameters** (each at company only, shop over company, area over shop — the nearest level wins;
+a shop Z reads the shop's value, an area Z its area's):
+
+| Parameter | Default | On | Off |
+| --- | --- | --- | --- |
+| `zRequireAllShiftsClosed` "חסימת Z כשיש משמרות פתוחות" | on | No Z while a till is open / not accepted / unknown; no "build without"; support may force with a reason | As before |
+| `allowCloseWithHeldSales` "סגירה עם מכירות מושהות" | off | Till: "סגור והשאר מושהות"; dashboard: "סגור בכל זאת — המכירות המושהות יישמרו" for a manager | Till: close only once every held sale is paid or cancelled; dashboard: support only, with a reason |
+| `remoteCancelHeldSales` "ביטול מכירות מושהות מהענן בסגירה מרחוק" | on | "בטל מכירות מושהות וסגור" offered (Z edit + reason; exactly the listed sales) | Not offered; refused "בסניף כבוי ..."; the till ignores such a command |
+
+**Till configuration** ("סגירת יום סניפית"):
+
+| Configuration | Day close | Source shown | Per till |
+| --- | --- | --- | --- |
+| Every till in the shop Z, cloud | Offered, allowed | "יופק בענן" | Shift close |
+| Every till its own Z | Not offered: "אין בסניף קופות ב-Z הסניפי (כל הקופות מפיקות Z משלהן)" | — | Its own Z, its next number |
+| Mixed | Offered; takes only the shop-Z tills | "יופק בענן" | Shift close / its own Z |
+| `shopZFrom` main till, main till online | "לא זמין עדיין: …" | "יופק בקופה הראשית: …" | Shift close |
+| `shopZFrom` main till, main till offline | Offered, allowed (the existing rule) | "יופק בענן" | Shift close |
+| Local mode | "לא זמין עדיין: …" | "יופק בקופה הראשית: …" | "לא זמין עדיין: ברשת מקומית המשמרות נסגרות דרך הקופה הראשית" |
+| `zScope = machine` | "לא זמין עדיין: העסק מוגדר ל-Z נפרד לכל קופה …" | "יופק בענן" | — |
+| Kiosk in the shop Z | Offered, allowed; never held by the kiosk's version | "יופק בענן" | "קיוסק — מלשונית הקיוסקים" |
+| Kiosk with its own Z | Offered, allowed; "close with the shop Z" shown | "יופק בענן" | "קיוסק — מלשונית הקיוסקים" |
+
+**Each till's state** (all-cloud shop, `zRequireAllShiftsClosed` on):
+
+| Till state | Day close | Shown |
+| --- | --- | --- |
+| At rest | Allowed; it closes | "נסגר" |
+| Open sale (basket, payment, card in flight) | Allowed; the till waits | "ממתין למכירה פתוחה" — neither held-sales option closes over it |
+| Held sales | Allowed; the till waits | "ממתין — מכירות מושהות (N)" + the list; "בטל מכירות מושהות וסגור" / "סגור בכל זאת — המכירות המושהות יישמרו" per the parameters |
+| Offline, last report "no shift open", 0 pending, after its last shift | Allowed; never waits for it | "לא מחובר — המשמרת האחרונה סגורה"; a warning on the run; on the Z's own line when not taken |
+| Offline with an open shift | Allowed to start; waits for it; "build without" refused | "מנותקת · משמרת פתוחה"; support may force with a reason |
+| Offline, state unknown (never reported, open / pending last report, or "closed" older than its last shift) | Not allowed to start | "מצב לא ידוע — ייתכן שיש משמרת פתוחה"; support may start anyway with a reason |
+| Old app without `remote_close_v2` | Not allowed | "הקופה צריכה עדכון גרסה לפני סגירה מרחוק" (kiosks exempt) |
+
 ## Saturday — decided at the Friday integration (09.10)
 
 The coordinator's decisions on the `integration/fri` merge; event-live's and the vouchers' items

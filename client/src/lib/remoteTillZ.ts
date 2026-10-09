@@ -28,7 +28,12 @@ export interface RemoteClosePreview {
   };
   lastZNumber: number | null;
   nextZNumber: number | null;
-  pending: { kind: string; id: string; status: string; errorCode: string | null; waitForRest: boolean; createdAt: string | null } | null;
+  pending:
+    | ({ kind: string; id: string; status: string; errorCode: string | null; waitForRest: boolean; createdAt: string | null } & Omit<
+        import('./heldSales').HeldSalesState,
+        'keepHeldSales'
+      > & { keepHeldSales?: boolean; keepOffer?: import('./heldSales').HeldSalesOffer | null })
+    | null;
   totalsKey: string;
   canRequest: boolean;
   whyNot: string | null;
@@ -66,6 +71,7 @@ export function confirmLabel(p: Pick<RemoteClosePreview, 'kind'>): string {
 
 const WAITS: Record<string, string> = {
   sale_open: 'ממתין לסיום המכירה בקופה',
+  held_sales: 'ממתין — מכירות מושהות',
   payment_in_progress: 'ממתין לסיום התשלום בקופה',
   card_in_flight: 'ממתין לעסקת אשראי שבדרך',
   printing: 'ממתין למדפסת',

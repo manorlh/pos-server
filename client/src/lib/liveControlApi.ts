@@ -125,6 +125,16 @@ export async function forceShopClose(runId: string, excludeMachineIds: string[],
   return (await api.post(`/device-commands/shop-close/${runId}/force`, { excludeMachineIds, reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
 
+/** "סגור והשאר מושהות" (pos-server held_sales_close.py): the shop's parameter, or support with a reason. */
+export async function keepHeldSales(body: { machineId: string; runId?: string; reason?: string }) {
+  return (await api.post('/device-commands/keep-held-sales', body)).data;
+}
+
+/** "בטל מכירות מושהות וסגור": exactly the listed sales, with a reason. */
+export async function cancelHeldSales(body: { machineId: string; runId?: string; saleIds: string[]; reason: string }) {
+  return (await api.post('/device-commands/cancel-held-sales', body)).data;
+}
+
 export async function fetchDevices(s: { companyId?: string | null; shopId?: string | null; machineIds?: string[] }): Promise<DeviceRow[]> {
   const params = new URLSearchParams();
   if (s.companyId) params.set('companyId', s.companyId);

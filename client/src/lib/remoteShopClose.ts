@@ -4,6 +4,7 @@
  * shop's configuration — where its Z is produced, which tills are in it, which have their own Z — and
  * says why an action is not available; these are the pure parts the panel shows.
  */
+import type { HeldSalesState } from './heldSales';
 import type { RemoteClosePreview } from './remoteTillZ';
 
 export interface ShopCloseAction {
@@ -48,7 +49,7 @@ export interface ShopCloseCommand {
   expiresAt: string | null;
 }
 
-export interface ShopCloseRunItem {
+export interface ShopCloseRunItem extends HeldSalesState {
   id: string;
   machineId: string;
   machineName: string | null;
