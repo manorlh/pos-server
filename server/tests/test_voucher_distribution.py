@@ -430,7 +430,7 @@ class TestLinks:
         finally:
             RL._buckets.pop("voucher_link_miss_all", None)
 
-    def test_the_token_never_reaches_the_logs(self, w, caplog):
+    def test_the_token_never_reaches_the_logs(self, w):
         import logging
 
         token = VD.new_token()
@@ -446,11 +446,26 @@ class TestLinks:
         done.response_body = f"<a href='/api/v1/public/vouchers/{token}/pdf'>"
         f.filter(done)
         assert token not in done.path and token not in done.response_body
-        # Through the real logger, as the middleware logs it.
-        with caplog.at_level(logging.INFO, logger="app.middleware.request_context"):
-            logging.getLogger("app.middleware.request_context").info(
-                "request completed", extra={"path": f"/api/v1/public/vouchers/{token}"})
-        assert caplog.records and all(token not in getattr(r, "path", "") for r in caplog.records)
+        # Through the real logger, as the middleware logs it — with a handler of the test's own on
+        # that logger (whatever propagation another test left configured).
+        seen = []
+
+        class Keep(logging.Handler):
+            def emit(self, record):
+                seen.append(record)
+
+        lg = logging.getLogger("app.middleware.request_context")
+        handler, level, disabled = Keep(logging.INFO), lg.level, lg.disabled
+        lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+        lg.disabled = False
+        try:
+            lg.info("request completed", extra={"path": f"/api/v1/public/vouchers/{token}"})
+        finally:
+            lg.removeHandler(handler)
+            lg.setLevel(level)
+            lg.disabled = disabled
+        assert len(seen) == 1 and seen[0].path == "/api/v1/public/vouchers/[link]"
 
     def test_a_past_expiry_is_refused(self, w):
         batch = make(w, count=1)
