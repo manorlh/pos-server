@@ -1,8 +1,8 @@
 """
 App releases from the dashboard ("עדכוני גרסה" — Android tills and the Windows app).
 
-POST   /app-releases                          → upload an APK or a Windows installer
-                                                (multipart, `platform`), super admin
+POST   /app-releases                          → upload an APK, a Windows installer or a
+                                                web bundle (multipart, `platform`), super admin
 GET    /app-releases[?platform=]              → every release, newest first, super admin
 PATCH  /app-releases/{id}                     → notes / retire (isActive), super admin
 POST   /app-releases/{id}/assignments         → send it to a tenant/company/shop/area/device
@@ -74,7 +74,8 @@ from app.services import app_updates as AU
 from app.services import device_profile
 from app.services import till_parameters as TP
 from app.services.apk_manifest import ApkManifestError, read_apk_version
-from app.services.kiosk_web_bundle import BundleError, read_bundle
+from app.services import web_bundles as WB
+from app.services.web_bundles import BundleError, read_bundle
 from app.services import device_management as DM
 from app.services.apk_signing import signing_cert_sha256_or_none
 from app.services.company_hierarchy import visible_shop_ids
@@ -121,6 +122,8 @@ def _out(release: AppRelease, assignment_count: int = 0) -> AppReleaseOut:
         assignment_count=assignment_count,
         signing_cert_sha256=getattr(release, "signing_cert_sha256", None),
         bridge_api=getattr(release, "bridge_api", None),
+        protocol=getattr(release, "protocol", None),
+        shell_api=getattr(release, "shell_api", None),
     )
 
 
@@ -271,17 +274,21 @@ def _invalid_bundle(msg: str) -> HTTPException:
     )
 
 
-def _settle_bundle(path: Path, size: int, typed_name: Optional[str], typed_code: Optional[int]):
+def _settle_bundle(
+    path: Path, size: int, typed_name: Optional[str], typed_code: Optional[int],
+    platform: str = AU.PLATFORM_KIOSK_WEB,
+):
     """
-    A kiosk web bundle's `(versionName, versionCode, bridgeApi)`: its manifest's, the zip
-    checked against it (app/services/kiosk_web_bundle.py) — `422 invalid_bundle` with what
-    is wrong. A typed versionName / versionCode that disagrees with the manifest is `422
+    A web bundle's manifest (app/services/web_bundles.py: "r2m-kiosk-web" for `kiosk_web`,
+    the signed "r2m-app" for `web_app`), the zip checked against it — `422 invalid_bundle`
+    with what is wrong (a bad or missing signature, a protocol this server does not know
+    among them). A typed versionName / versionCode that disagrees with the manifest is `422
     bundle_version_mismatch`.
     """
     if size == 0 or not zipfile.is_zipfile(path):
         raise _invalid_bundle("not a zip")
     try:
-        manifest = read_bundle(str(path))
+        manifest = read_bundle(str(path), WB.KIND_OF_PLATFORM[platform])
     except BundleError as exc:
         raise _invalid_bundle(str(exc))
     if typed_name and typed_name != manifest.version:
@@ -294,7 +301,7 @@ def _settle_bundle(path: Path, size: int, typed_name: Optional[str], typed_code:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "bundle_version_mismatch", "msg": f"The bundle's versionCode is {manifest.version_code}"},
         )
-    return manifest.version, manifest.version_code, manifest.bridge_api
+    return manifest
 
 
 # ── Releases ─────────────────────────────────────────────────────────────────
@@ -317,8 +324,8 @@ def upload_app_release(
     platform: Annotated[Optional[str], Form()] = None,
 ):
     """
-    Upload one release; form field `platform` "android" (default), "windows" or "kiosk_web"
-    (`422 invalid_platform` otherwise). SHA-256 and size are computed here.
+    Upload one release; form field `platform` "android" (default), "windows", "kiosk_web" or
+    "web_app" (`422 invalid_platform` otherwise). SHA-256 and size are computed here.
 
     * Android — an APK: versionCode / versionName are read from its manifest, and the
       form's values are only needed when that fails (`422 apk_version_required`) — given
@@ -332,6 +339,10 @@ def upload_app_release(
       at its root: versionName / versionCode / bridgeApi come from the manifest, every file
       is checked against it (`422 {"code": "invalid_bundle", "msg": …}` for anything wrong);
       a typed version that disagrees is `422 bundle_version_mismatch`. Stored as `{id}.zip`.
+    * Web app (`platform` "web_app") — the "r2m-app" bundle of every role, the same way, plus
+      its `manifest.sig` (Ed25519 over manifest.json, checked against
+      `web_bundle_public_keys`), a known `protocol` and its `shellApi`, kept on the release
+      for the offer's filter. Stored as `{id}.zip`.
 
     `409 app_release_version_taken` (within the platform), `413 app_release_too_large`
     (`app_release_max_bytes`).
@@ -340,15 +351,21 @@ def upload_app_release(
     typed_name = _clean_version_name(version_name)
     release_id = uuid.uuid4()
     directory = _releases_dir()
-    ext = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_KIOSK_WEB: "zip"}.get(platform, "apk")
+    ext = {AU.PLATFORM_WINDOWS: "exe", AU.PLATFORM_KIOSK_WEB: "zip", AU.PLATFORM_WEB_APP: "zip"}.get(platform, "apk")
     partial = directory / f"{release_id}.{ext}.part"
     final = directory / f"{release_id}.{ext}"
     committed = False
     bridge_api = None
+    protocol = None
+    shell_api = None
     try:
         sha256, size = _store_upload(file, partial, get_settings().app_release_max_bytes)
-        if platform == AU.PLATFORM_KIOSK_WEB:
-            name, code, bridge_api = _settle_bundle(partial, size, typed_name, version_code)
+        if platform in (AU.PLATFORM_KIOSK_WEB, AU.PLATFORM_WEB_APP):
+            manifest = _settle_bundle(partial, size, typed_name, version_code, platform)
+            name, code, bridge_api = manifest.version, manifest.version_code, manifest.bridge_api
+            if platform == AU.PLATFORM_WEB_APP:
+                protocol, shell_api = manifest.protocol, dict(manifest.shell_api or {})
+                logger.info("web_app release %s: signed by key %s", release_id, manifest.signed_by)
         elif platform == AU.PLATFORM_WINDOWS:
             if size == 0 or not _starts_with_mz(partial):
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_installer")
@@ -374,6 +391,8 @@ def upload_app_release(
             sha256=sha256,
             signing_cert_sha256=cert_sha256,
             bridge_api=bridge_api,
+            protocol=protocol,
+            shell_api=shell_api,
             size_bytes=size,
             file_path=str(final),
             notes=(notes or "").strip() or None,

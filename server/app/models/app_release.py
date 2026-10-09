@@ -13,7 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -26,9 +26,10 @@ APP_RELEASE_LEVELS = ("tenant", "company", "shop", "area", "machine")
 #: What a till reports while it takes a release (`POST /sync/{id}/app-update/status`).
 APP_UPDATE_STATUSES = ("downloading", "downloaded", "installing", "installed", "failed", "declined")
 
-#: Which app a release is: the Android till APK, the Windows app's installer (.exe), or a
-#: kiosk web bundle (.zip: the kiosk's screens as static files, shown by the Android kiosk).
-APP_RELEASE_PLATFORMS = ("android", "windows", "kiosk_web")
+#: Which app a release is: the Android till APK, the Windows app's installer (.exe), a
+#: kiosk web bundle (.zip: the kiosk's screens as static files, shown by the Android kiosk), or
+#: the signed "r2m-app" screens bundle of every role for every host (web-till spec v2 §8.1).
+APP_RELEASE_PLATFORMS = ("android", "windows", "kiosk_web", "web_app")
 
 
 class AppRelease(Base):
@@ -49,13 +50,15 @@ class AppRelease(Base):
 
     __tablename__ = "app_releases"
     __table_args__ = (
-        CheckConstraint("platform IN ('android', 'windows', 'kiosk_web')", name="ck_app_releases_platform"),
+        CheckConstraint(
+            "platform IN ('android', 'windows', 'kiosk_web', 'web_app')", name="ck_app_releases_platform"
+        ),
         # A version name is unique within its platform (Windows 0.2.0 and Android 0.2.0 may both exist).
         UniqueConstraint("platform", "version_name", name="uq_app_releases_platform_version_name"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    #: "android" | "windows" | "kiosk_web" (`APP_RELEASE_PLATFORMS`).
+    #: "android" | "windows" | "kiosk_web" | "web_app" (`APP_RELEASE_PLATFORMS`).
     platform = Column(String(16), nullable=False, default="android", server_default="android", index=True)
     #: Android `versionCode`; for Windows derived from the name ("a.b.c" → a·10⁶ + b·10³ + c).
     #: A device is never offered a lower one than it runs, unless the assignment allows a
@@ -75,6 +78,13 @@ class AppRelease(Base):
     #: Kiosk web bundles only: the bridge API the bundle needs from the kiosk's APK
     #: (`manifest.bridgeApi`); null for Android / Windows releases.
     bridge_api = Column(Integer, nullable=True)
+    #: "r2m-app" bundles (`web_app`) only: the till engine protocol it speaks
+    #: (`manifest.protocol`, till_web_protocol.json) — a device whose engine does not speak it
+    #: is not offered it (app/services/app_updates.py `web_app_fits`). Null otherwise.
+    protocol = Column(Integer, nullable=True)
+    #: "r2m-app" bundles only: the shell API it needs from each shell (`manifest.shellApi`,
+    #: {"electron": 1, "android": 1, "ios": 1}; a shell it does not name: 0). Null otherwise.
+    shell_api = Column(JSONB, nullable=True)
     notes = Column(Text, nullable=True)
     uploaded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")

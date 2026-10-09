@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # off a web / iOS code is a kiosk's, a KDS's or a board's only (422 `web_platform_not_a_till`),
     # exactly as before (app/services/display_devices.py `web_till_enabled`).
     web_till_enabled: bool = False
+    # The "r2m-app" screens bundle (release platform "web_app", app/services/web_bundles.py) is
+    # signed with Ed25519 in CI; these are the public keys the server checks an upload against:
+    # base64 of the raw 32-byte keys, comma separated (two while a key is rotated). Empty = no
+    # "r2m-app" upload is accepted. Public keys only — the private key is never on a server.
+    web_bundle_public_keys: str = ""
 
     # Notifications / 019 SMS (docs/SPEC_NOTIFICATIONS_CLUB.md). Live sending is its own
     # explicit switch, OFF by default: with it off no request ever goes to 019's live

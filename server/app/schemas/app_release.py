@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -13,7 +13,7 @@ AppReleaseLevel = Literal["tenant", "company", "shop", "area", "machine"]
 #: The same set as `APP_UPDATE_STATUSES` (app/models/app_release.py).
 AppUpdateStatus = Literal["downloading", "downloaded", "installing", "installed", "failed", "declined"]
 #: The same set as `APP_RELEASE_PLATFORMS`.
-AppPlatform = Literal["android", "windows", "kiosk_web"]
+AppPlatform = Literal["android", "windows", "kiosk_web", "web_app"]
 
 
 class InstallWindow(BaseModel):
@@ -60,6 +60,10 @@ class AppReleaseOut(BaseModel):
     assignment_count: int = Field(0, alias="assignmentCount")
     #: Kiosk web bundles: the bridge API the bundle needs from the kiosk's APK; null otherwise.
     bridge_api: Optional[int] = Field(None, alias="bridgeApi")
+    #: "r2m-app" bundles (`web_app`): the till engine protocol it speaks and the shell API it
+    #: needs from each shell; null otherwise.
+    protocol: Optional[int] = None
+    shell_api: Optional[Dict[str, int]] = Field(None, alias="shellApi")
     #: Android: hex SHA-256 of the signing certificate (the provisioning QR's checksum); null
     #: for Windows or when the APK's signature block could not be read.
     signing_cert_sha256: Optional[str] = Field(None, alias="signingCertSha256")
@@ -234,6 +238,11 @@ class AppUpdateOffer(BaseModel):
     #: Kiosk web bundles (`?platform=kiosk_web`): the bridge API the offered bundle needs
     #: from the kiosk's APK; null when nothing is offered or the release is not a bundle.
     bridge_api: Optional[int] = Field(None, alias="bridgeApi")
+    #: "r2m-app" bundles (`?platform=web_app`): the till engine protocol the offered bundle
+    #: speaks and the shell API it needs from each shell — what the device checks once more
+    #: before it downloads (it declines what it cannot run); null otherwise.
+    protocol: Optional[int] = None
+    shell_api: Optional[Dict[str, int]] = Field(None, alias="shellApi")
 
 
 class AppUpdateStatusIn(BaseModel):

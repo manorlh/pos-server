@@ -2498,6 +2498,8 @@ def get_app_update(
     db: Session = Depends(get_db),
     # Annotated, so a direct call (the tests) that leaves it out gets a plain None.
     platform: Annotated[Optional[str], Query()] = None,
+    protocol: Annotated[Optional[str], Query()] = None,
+    shell_api: Annotated[Optional[int], Query(alias="shellApi")] = None,
 ):
     """
     The release assigned to this device, if it should take it. Asked on every sync with
@@ -2507,12 +2509,18 @@ def get_app_update(
     level, rollout stage applied (app/services/app_updates.py); `available` only when
     that release is not what the device runs and not a lower versionCode — unless the
     assignment allows a (Windows) rollback (`allowDowngrade`). Every key is always present.
+
+    "web_app" (the r2m-app screens bundle, app/services/app_updates.py): `protocol` ("N" or
+    "A-B", the till engine protocols the device's engine speaks) and `shellApi` (its shell's
+    API) pass over a bundle it cannot run (`web_app_fits`) — `422 invalid_protocol` for a
+    malformed `protocol`. Not said: not checked.
     """
     try:
         platform = app_updates.normalize_platform(platform)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_platform")
-    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
+    accept = _web_app_accept(machine, platform, protocol, shell_api)
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform, accept=accept)
     if resolved is None:
         return AppUpdateOffer(available=False, platform=platform)
     assignment, release = resolved
@@ -2533,7 +2541,23 @@ def get_app_update(
         rollout_percent=assignment.rollout_percent if assignment.rollout_percent is not None else 100,
         install_window=app_updates.install_window_of(assignment),
         bridge_api=getattr(release, "bridge_api", None),
+        protocol=getattr(release, "protocol", None),
+        shell_api=getattr(release, "shell_api", None),
     )
+
+
+def _web_app_accept(machine: POSMachine, platform: str, protocol: Optional[str], shell_api: Optional[int]):
+    """The "r2m-app" offer's filter for this device (None for any other platform)."""
+    if platform != app_updates.PLATFORM_WEB_APP:
+        return None
+    try:
+        protocol_range = app_updates.parse_protocol_range(protocol)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_protocol")
+    if protocol_range is None and shell_api is None:
+        return None
+    shell = app_updates.shell_of_machine(machine)
+    return lambda release: app_updates.web_app_fits(release, shell, shell_api, protocol_range)
 
 
 #: Per platform: the download's media type and file name.
@@ -2541,6 +2565,7 @@ _RELEASE_DOWNLOAD = {
     "android": ("application/vnd.android.package-archive", "app-{version}.apk"),
     "windows": ("application/vnd.microsoft.portable-executable", "R2M-POS-Windows-{version}-setup.exe"),
     "kiosk_web": ("application/zip", "kiosk-web-{version}.zip"),
+    "web_app": ("application/zip", "r2m-app-{version}.zip"),
 }
 
 
@@ -2551,18 +2576,23 @@ def get_app_update_apk(
     release_id: uuid.UUID,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    protocol: Annotated[Optional[str], Query()] = None,
+    shell_api: Annotated[Optional[int], Query(alias="shellApi")] = None,
 ):
     """
     The file of the release this device resolves to now — the APK, or the Windows
     installer (`/apk` and its alias `/file` serve both). The release is looked up by id
     and the device resolved among releases of THAT release's platform: `404` unless it is
     the resolved one, so a device can only ever fetch what it was sent. Streamed from disk.
+    An "r2m-app" bundle resolves with the offer's `protocol` / `shellApi`, which the device
+    sends here again.
     """
     release = db.query(AppRelease).filter(AppRelease.id == release_id).first()
     if release is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
     platform = app_updates.release_platform(release)
-    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
+    accept = _web_app_accept(machine, platform, protocol, shell_api)
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform, accept=accept)
     if resolved is None or resolved[1].id != release_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
     release = resolved[1]

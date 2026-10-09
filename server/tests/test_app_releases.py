@@ -292,6 +292,9 @@ def test_the_wire_shape_when_nothing_is_offered(world):
         "installWindow": None,
         # Kiosk web bundles (tests/test_kiosk_web_bundles.py): null for anything else.
         "bridgeApi": None,
+        # The r2m-app bundle (tests/test_web_app_releases.py): null for anything else.
+        "protocol": None,
+        "shellApi": None,
     }
 
 
@@ -712,6 +715,8 @@ def test_the_offer_wire_shape_for_a_windows_release(world):
         "rolloutPercent": 100,
         "installWindow": {"start": "02:00", "end": "05:30"},
         "bridgeApi": None,
+        "protocol": None,
+        "shellApi": None,
     }
     # The Android till's offer has the same keys, its platform "android".
     android = _release(world, 10, "1.0")

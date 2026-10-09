@@ -13,6 +13,14 @@ shown by the Android kiosk in a WebView. The Android devices ask for it explicit
 dashboard its devices are the Android kiosks (`kiosk_web_machines`). A bundle may be rolled
 back (`allow_downgrade`), as on Windows.
 
+A fourth, `web_app` (web-till spec v2 §8.1), is the signed "r2m-app" screens bundle of every
+role (app/services/web_bundles.py). The browser and the iOS shell take it as their app
+(`machine_platform` is "web_app" for a "web" / "ios" device); the Windows app and the APK ask
+for it explicitly besides their own. Its offer is filtered by what the device speaks
+(`web_app_fits`): the till engine protocol (`?protocol=`) and the shell's API (`?shellApi=`) —
+a bundle it cannot run is passed over, as a rollout stage that leaves it out is. It may be
+rolled back like the kiosk bundle.
+
 A super admin uploads a release (`AppRelease`) and sends it to targets
 (`AppReleaseAssignment`). A device takes the live assignment of the most specific level
 that has one:
@@ -40,7 +48,7 @@ import hashlib
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
@@ -67,10 +75,16 @@ PLATFORM_WINDOWS = "windows"
 #: Kiosk web bundles (a zip of the kiosk's screens as static files): taken by the ANDROID
 #: devices, which ask for them explicitly (`?platform=kiosk_web`) besides their APK.
 PLATFORM_KIOSK_WEB = "kiosk_web"
-PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB)
+#: The "r2m-app" screens bundle (every role, every host; signed): the browser's and the iOS
+#: shell's app, and asked for explicitly (`?platform=web_app`) by the Windows app and the APK.
+PLATFORM_WEB_APP = "web_app"
+PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB, PLATFORM_WEB_APP)
 #: The platforms whose assignment may roll a device back to a lower versionCode: the Windows
-#: app, and a kiosk web bundle (a bundle rollback is assigning an older bundle). Never Android.
-DOWNGRADE_PLATFORMS = (PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB)
+#: app, and the bundles (a bundle rollback is assigning an older bundle). Never Android.
+DOWNGRADE_PLATFORMS = (PLATFORM_WINDOWS, PLATFORM_KIOSK_WEB, PLATFORM_WEB_APP)
+#: The shell each device platform runs the "r2m-app" bundle in (`shellApi` key); the
+#: browser has none (shell API 0).
+SHELL_OF_PLATFORM = {"android": "android", "windows": "electron", "ios": "ios", "web": "browser"}
 
 #: A Windows version name: "a.b.c", an optional "-pre" / "+build" suffix ignored.
 _WINDOWS_VERSION = re.compile(r"^\s*(\d+)\.(\d+)\.(\d+)(?:[-+].*)?\s*$")
@@ -98,11 +112,73 @@ def release_platform(release: Any) -> str:
 
 
 def machine_platform(machine: Any) -> str:
-    """'windows' when the device said so at pairing (`device_info.platform`), else 'android'."""
-    info = getattr(machine, "device_info", None)
-    if isinstance(info, dict) and str(info.get("platform") or "").strip().lower() == PLATFORM_WINDOWS:
+    """
+    The release platform of the device's own app: 'windows' for the Windows app, 'web_app'
+    for a browser or the iOS shell (their app is the r2m-app bundle), else 'android' — from
+    the stored platform, else what the device said at pairing (`device_info.platform`).
+    """
+    from app.services import display_devices as DD
+
+    platform = DD.platform_of(machine)
+    if platform == DD.PLATFORM_WINDOWS:
         return PLATFORM_WINDOWS
+    if platform in DD.WEB_TILL_PLATFORMS:
+        return PLATFORM_WEB_APP
     return PLATFORM_ANDROID
+
+
+def shell_of_machine(machine: Any) -> str:
+    """The shell an "r2m-app" bundle runs in on this device: electron | android | ios | browser."""
+    from app.services import display_devices as DD
+
+    return SHELL_OF_PLATFORM.get(DD.platform_of(machine), "android")
+
+
+def parse_protocol_range(value: Optional[str]) -> Optional[Tuple[int, int]]:
+    """
+    `?protocol=` of an "r2m-app" offer: the till engine protocols the device's engine speaks —
+    "N", or "A-B" (inclusive). None for nothing; `ValueError` for anything else.
+    """
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip()
+    match = re.fullmatch(r"(\d{1,9})(?:\s*(?:-|\.\.)\s*(\d{1,9}))?", text)
+    if match is None:
+        raise ValueError("protocol is N or A-B")
+    low = int(match.group(1))
+    high = int(match.group(2)) if match.group(2) is not None else low
+    if low < 1 or high < low:
+        raise ValueError("protocol range is 1 <= A <= B")
+    return low, high
+
+
+def web_app_fits(
+    release: Any,
+    shell: Optional[str],
+    shell_api: Optional[int],
+    protocol: Optional[Tuple[int, int]],
+) -> bool:
+    """
+    Whether a device can run this "r2m-app" bundle (web-till spec v2 §8.4): its engine speaks
+    the bundle's protocol (`protocol` the device's range; None = not said, not checked) and its
+    shell offers the API the bundle needs from that shell (`shell_api` the device's; None =
+    not said). A browser needs nothing from a shell. Any other release always fits.
+    """
+    if release_platform(release) != PLATFORM_WEB_APP:
+        return True
+    needed_protocol = getattr(release, "protocol", None)
+    if protocol is not None and needed_protocol is not None:
+        if not protocol[0] <= int(needed_protocol) <= protocol[1]:
+            return False
+    if shell_api is not None and shell and shell != "browser":
+        needs = getattr(release, "shell_api", None) or {}
+        try:
+            needed = int(needs.get(shell, 0)) if isinstance(needs, dict) else 0
+        except (TypeError, ValueError):
+            needed = 0
+        if needed > shell_api:
+            return False
+    return True
 
 
 def windows_version_code(version_name: str) -> int:
@@ -193,6 +269,7 @@ def resolve_assignment(
     chain: MachineChain,
     platform: str = PLATFORM_ANDROID,
     machine_id: Any = None,
+    accept: Optional[Callable[[Any], bool]] = None,
 ) -> Optional[Resolved]:
     """
     The assignment (and its release) this device takes, or None.
@@ -201,7 +278,8 @@ def resolve_assignment(
     only the live ones (not cancelled) of active releases of `platform` whose rollout
     stage covers the device (`machine_id`, by default the chain's). Most specific level
     first, then the newest `created_at`; an assignment that leaves the device out of its
-    stage is passed over, so the next one in that order applies.
+    stage is passed over, so the next one in that order applies — and so is one whose
+    release `accept` refuses (a bundle the device cannot run, `web_app_fits`).
     """
     machine_id = machine_id if machine_id is not None else chain.machine_id
     rank = {key: i for i, key in enumerate(chain.levels())}
@@ -215,6 +293,8 @@ def resolve_assignment(
         if position is None:
             continue
         if not in_rollout_stage(assignment.id, machine_id, getattr(assignment, "rollout_percent", None)):
+            continue
+        if accept is not None and not accept(release):
             continue
         created = as_utc(assignment.created_at)
         # Lower is better: a more specific level, then a later stamp.
@@ -295,11 +375,21 @@ def _rows_on_chains(db: Session, chains: Sequence[MachineChain]) -> List[Resolve
     )
 
 
-def resolved_for_machine(db: Session, machine: POSMachine, platform: Optional[str] = None) -> Optional[Resolved]:
-    """The device's assignment among releases of `platform` (default: `machine_platform`)."""
+def resolved_for_machine(
+    db: Session,
+    machine: POSMachine,
+    platform: Optional[str] = None,
+    accept: Optional[Callable[[Any], bool]] = None,
+) -> Optional[Resolved]:
+    """
+    The device's assignment among releases of `platform` (default: `machine_platform`) that
+    `accept` takes (default: all).
+    """
     chain = chain_for_machine(db, machine)
     platform = platform or machine_platform(machine)
-    return resolve_assignment(_rows_on_chains(db, [chain]), chain, platform=platform, machine_id=machine.id)
+    return resolve_assignment(
+        _rows_on_chains(db, [chain]), chain, platform=platform, machine_id=machine.id, accept=accept,
+    )
 
 
 def resolved_for_machines(
@@ -379,7 +469,33 @@ def machines_under(db: Session, level: str, target_id: Any, platform: Optional[s
         return machines
     if platform == PLATFORM_KIOSK_WEB:
         return kiosk_web_machines(db, machines)
+    if platform == PLATFORM_WEB_APP:
+        return web_app_machines(db, machines)
     return [m for m in machines if machine_platform(m) == platform]
+
+
+def web_app_machines(db: Session, machines: Sequence[POSMachine]) -> List[POSMachine]:
+    """
+    Of `machines`, the ones "r2m-app" bundles are for: the browsers and the iOS shells (it is
+    their app), and any other device that has reported on an r2m-app release (a Windows app
+    or an APK showing web screens). Order kept.
+    """
+    from app.models.app_release import AppReleaseMachineStatus
+
+    others = [m for m in machines if machine_platform(m) != PLATFORM_WEB_APP]
+    reported = set()
+    if others:
+        reported = {
+            row[0]
+            for row in db.query(AppReleaseMachineStatus.machine_id)
+            .join(AppRelease, AppRelease.id == AppReleaseMachineStatus.release_id)
+            .filter(
+                AppRelease.platform == PLATFORM_WEB_APP,
+                AppReleaseMachineStatus.machine_id.in_([m.id for m in others]),
+            )
+            .all()
+        }
+    return [m for m in machines if machine_platform(m) == PLATFORM_WEB_APP or m.id in reported]
 
 
 def kiosk_web_machines(db: Session, machines: Sequence[POSMachine]) -> List[POSMachine]:
