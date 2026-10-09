@@ -330,8 +330,16 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
     catalog_flags(db, batch.tenant_id, units)
     approval = getattr(body, "approval", None)
     if approval is not None and not PV.approval_valid(db, machine, approval):
-        raise _refuse(PV.APPROVAL_INVALID, PV.APPROVAL_INVALID_MESSAGE, needsApproval=True)
-    answer = value_units(db, batch, voucher, units, units_left, approved=approval is not None)
+        # Not an approval the cloud accepts: as if none was sent — refused only when one is needed.
+        try:
+            answer = value_units(db, batch, voucher, units, units_left, approved=False)
+        except HTTPException as e:
+            if isinstance(e.detail, dict) and e.detail.get("needsApproval"):
+                raise _refuse(PV.APPROVAL_INVALID, PV.APPROVAL_INVALID_MESSAGE, needsApproval=True)
+            raise
+        approval = None
+    else:
+        answer = value_units(db, batch, voucher, units, units_left, approved=approval is not None)
     answer.update({
         "forfeited": forfeited,
         "serial": int(voucher.serial),

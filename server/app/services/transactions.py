@@ -196,35 +196,51 @@ def _confirm_document_holds(db: Session, issuer, tx, refund_of, entries) -> List
         return []
     if tx.status in ("pending", "cancelled"):
         return []
-    holds: List[tuple] = []  # (where, reservation id, agorot)
+    holds: List[tuple] = []  # (where, reservation id, how to read the amount, warn when unreadable)
     for n, e in enumerate(entries):
         if e.kind != PRODUCTION_VOUCHER_DEDUCTION or not e.reservation_id:
             continue
-        lines = [ln for ln in (e.lines or []) if isinstance(ln, dict) and ln.get("amount") is not None]
-        amount = sum(_agorot_of(ln.get("amount")) for ln in lines) if lines else _agorot_of(e.amount)
-        holds.append((f"voucherDiscounts[{n}]", e.reservation_id, amount))
+        # Read inside the hold's own guard (below): an unreadable line amount never refuses the document.
+        holds.append((f"voucherDiscounts[{n}]", e.reservation_id, lambda e=e: _deduction_agorot(e), False))
     for n, p in enumerate(getattr(tx, "payments", None) or []):
         if getattr(p, "reservation_id", None) and is_production_voucher(p.method):
-            holds.append((f"payments[{n}]", p.reservation_id, _agorot_of(p.amount)))
-    memo: Dict[str, int] = {}
+            holds.append((f"payments[{n}]", p.reservation_id, lambda p=p: _agorot_of(p.amount), True))
     for it in getattr(tx, "items", None) or []:
+        # A memo line only (`zero` mode, its memo value): a priced line naming a hold confirms nothing.
         rid = getattr(it, "voucher_reservation_id", None)
-        if rid and rid not in memo:
-            memo[rid] = 0
-    holds += [(f"items[voucherReservationId={rid}]", rid, amount) for rid, amount in memo.items()]
+        if rid and getattr(it, "voucher_memo_value_agorot", None) is not None:
+            holds.append((f"items[voucherReservationId={rid}]", rid, lambda: 0, True))
     warnings: List[str] = []
-    for where, raw, amount in holds:
+    seen: set = set()
+    for where, raw, read_amount, warn in holds:
         rid = _promotion_uuid(raw)
         if rid is None:
-            warnings.append(f"{where}.reservationId: unreadable, not confirmed")
+            # A deduction's unreadable id is already warned about by `_voucher_discounts`.
+            if warn:
+                warnings.append(f"{where}.reservationId: unreadable, not confirmed")
             continue
+        if rid in seen:
+            continue  # one hold, named twice in the document (a leg and its lines …): confirmed once
+        seen.add(rid)
         try:
+            amount = read_amount()
             with db.begin_nested():
                 _PV.confirm(db, issuer, str(rid), str(tx.id), amount, any_till=True, document_amount=amount)
         except Exception as exc:  # noqa: BLE001 — the document stands; the next push confirms again
             detail = getattr(exc, "detail", None) or exc.__class__.__name__
             warnings.append(f"{where}: the hold was not confirmed ({detail})")
     return warnings
+
+
+def _deduction_agorot(e) -> int:
+    """A deduction's amount as the document booked it: its lines' sum when they all read, else its amount."""
+    lines = [ln for ln in (e.lines or []) if isinstance(ln, dict) and ln.get("amount") is not None]
+    if lines:
+        try:
+            return sum(_agorot_of(ln.get("amount")) for ln in lines)
+        except Exception:  # noqa: BLE001 — an optional field that does not read: the deduction's own amount
+            pass
+    return _agorot_of(e.amount)
 
 
 def _safe_item_product_id(

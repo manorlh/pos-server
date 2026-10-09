@@ -169,3 +169,63 @@ def test_nit_the_migration_indexes_and_legacy_discounts():
     sql = buf.getvalue()
     assert "SET LOCAL lock_timeout" in sql and "WHERE status IN ('active', 'releasing')" in sql
 
+
+def test_followup_5_moving_a_machine_to_another_shop_releases_its_assignments(w, monkeypatch):
+    from app.services import document_prefix, register_number
+    from app.services.register_number import set_machine_shop
+
+    # The register number's own rules (a Postgres regex) are not this test's.
+    monkeypatch.setattr(register_number, "assign_register_number", lambda db, m: None)
+    monkeypatch.setattr(document_prefix, "settle_default", lambda db, m: None)
+
+    b = batch(w)
+    assign(w, b)
+    till = w.tills[0]
+    set_machine_shop(w.db, till, w.other_shop.id)
+    w.db.commit()
+    a = w.db.query(PrepaidVoucherOfflineAssignment).one()
+    assert (a.status, a.forced) == ("released", True)
+
+
+def test_followup_nit_assigning_while_releasing_is_refused(w):
+    from app.schemas.prepaid_voucher import PrepaidOfflineReleaseIn
+
+    b = batch(w)
+    assign(w, b)
+    till = w.tills[0]
+    R.download_prepaid_offline(str(till.id), machine=till, db=w.db)
+    R.release_prepaid_batch_offline(b["id"], PrepaidOfflineReleaseIn(), **_ctx(w))
+    assert refused(assign, w, b).detail == PVO.OFFLINE_ASSIGNED
+
+
+def test_followup_4_a_create_all_era_case_sensitive_name_index_is_replaced():
+    import importlib.util
+    import pathlib
+
+    import sqlalchemy as sa
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    path = pathlib.Path(__file__).absolute().parents[1] / "alembic" / "versions" / "a7d4e9c2b158_prepaid_productions.py"
+    spec = importlib.util.spec_from_file_location("migration_a7d4e9c2b158_ca", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(sa.text("CREATE TABLE prepaid_voucher_batches (id CHAR(32) PRIMARY KEY, tenant_id CHAR(32), "
+                             "company_id CHAR(32), customer_name VARCHAR(200), production_id CHAR(32))"))
+        # The earlier model, as a `create_all` made it: a case-sensitive unique name, rows differing in case.
+        conn.execute(sa.text("CREATE TABLE prepaid_productions (id CHAR(32) PRIMARY KEY, tenant_id CHAR(32), company_id CHAR(32), "
+                             "name VARCHAR(200), billing_basis VARCHAR(16), active BOOLEAN, created_at TIMESTAMP)"))
+        conn.execute(sa.text("CREATE UNIQUE INDEX ux_prepaid_productions_name ON prepaid_productions (tenant_id, company_id, name)"))
+        conn.execute(sa.text("INSERT INTO prepaid_productions VALUES ('p1', 't', 'c', 'Acme', 'redemption', 1, '2026-10-01'), "
+                             "('p2', 't', 'c', 'ACME', 'redemption', 1, '2026-10-02')"))
+        conn.execute(sa.text("INSERT INTO prepaid_voucher_batches VALUES ('b1', 't', 'c', 'ACME', 'p2'), ('b2', 't', 'c', 'acme', NULL)"))
+        with Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+            module.upgrade()  # idempotent
+        assert conn.execute(sa.text("SELECT id, name FROM prepaid_productions")).all() == [("p1", "Acme")]
+        assert dict(conn.execute(sa.text("SELECT id, production_id FROM prepaid_voucher_batches")).all()) == {"b1": "p1", "b2": "p1"}
+        index = conn.execute(sa.text("SELECT sql FROM sqlite_master WHERE name = 'ux_prepaid_productions_name'")).scalar()
+        assert "lower(" in index.lower()
+
