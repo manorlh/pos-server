@@ -512,7 +512,10 @@ def post_kiosk_command(
 ):
     """pause / resume (applied at once), close_shift / till_z (the existing channels; refusals pass through)."""
     check_kiosk_action(db, current_user, body.action)
-    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    # A manager of points of sale: one of their kiosks only (app/routers/kiosk_live.py).
+    from app.routers.kiosk_live import _kiosk_checked
+
+    machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     result = svc.run_command(
         db,
         kiosk_machine=machine,
