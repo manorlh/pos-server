@@ -237,5 +237,6 @@ def test_the_migration_chains_on_the_head_it_was_written_for():
     spec = importlib.util.spec_from_file_location("mg_migration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert (module.revision, module.down_revision) == ("e8b3f5a1c7d2", "6b1e9d4f2a87")
+    # Written on 6b1e9d4f2a87; re-chained after restricted items' c7e2a9d4f1b6 at the integration merge.
+    assert (module.revision, module.down_revision) == ("e8b3f5a1c7d2", "c7e2a9d4f1b6")
     assert "'group'" in module.LEVELS_WITH_GROUP

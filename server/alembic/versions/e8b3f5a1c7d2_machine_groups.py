@@ -1,8 +1,12 @@
 """Device groups ("קבוצות מכשירים") and the menus' `group` assignment level
 
 Revision ID: e8b3f5a1c7d2
-Revises: 6b1e9d4f2a87
+Revises: c7e2a9d4f1b6
 Create Date: 2026-10-09
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 6b1e9d4f2a87, now
+after the integration head c7e2a9d4f1b6 (restricted items) so the chain stays linear. The upgrade
+itself is unchanged.
 
 * `machine_groups` — a named group of tills across the shops of one company ("קיוסקים", "בר",
   "עמדות אירוע"); `machine_group_members` — its tills (a till may be in several groups).
@@ -19,7 +23,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'e8b3f5a1c7d2'
-down_revision: Union[str, Sequence[str], None] = '6b1e9d4f2a87'
+down_revision: Union[str, Sequence[str], None] = 'c7e2a9d4f1b6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
