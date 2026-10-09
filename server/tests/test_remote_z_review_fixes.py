@@ -113,8 +113,12 @@ def test_the_force_passes_only_the_open_shifts_rule_never_block_or_local(z):
     till_closes(z, z.t1, s1)
     with pytest.raises(HTTPException) as e:
         R.post_shop_close_force(run.id, R.ShopCloseForceIn(excludeMachineIds=[z.t2.id], reason="המכשיר לא נדלק"), **_ctx(z))
-    # The open-shifts rule is forced past; "חובה לסגור את כל הקופות" still holds as always.
-    assert e.value.status_code == 409 and e.value.detail["code"] == "all_tills_required"
+    # "חובה לסגור את כל הקופות" is what holds it: nothing for support's force (it passes the open-shifts
+    # rule only); the setting keeps its own meaning and paths.
+    assert e.value.status_code == 409 and e.value.detail["code"] == "force_not_applicable"
+    with pytest.raises(HTTPException) as e:
+        R.post_shop_close_proceed(run.id, R.ShopCloseProceedIn(excludeMachineIds=[z.t2.id]), **_ctx(z))
+    assert e.value.detail["code"] == "all_tills_required"
     z.db.refresh(run)
     assert run.status == ZRunStatus.WAITING
     # The open-shifts rule off, "block" alone: nothing to force.
@@ -312,8 +316,10 @@ def test_an_unreadable_rule_reads_as_on(z, monkeypatch):
     def broken(*a, **k):
         raise RuntimeError("db hiccup")
 
-    monkeypatch.setattr(G, "_value", broken)
-    assert G.required(z.db, z.shop) is True
+    import app.services.till_parameters as TPmod
+
+    monkeypatch.setattr(TPmod, "till_parameters_for_machine", broken)
+    assert G.till_required(z.db, z.t2) is True and G.required(z.db, z.shop) is True
     with pytest.raises(HTTPException) as e:
         R.post_shop_close_proceed(run.id, R.ShopCloseProceedIn(excludeMachineIds=[z.t2.id]), **_ctx(z))
     assert e.value.detail["code"] == G.REFUSED_CODE
@@ -690,3 +696,17 @@ def test_a_close_shift_ack_sweeps_expired_requests_first(z):
     z.db.commit()
     status_after = remote_close.apply_close_shift_ack(z.db, z.t1, request_id=req.id, phase="received")
     assert status_after == "expired"
+
+
+def test_a_claim_the_cloud_holds_closed_is_not_read_as_open_anywhere(z):
+    """An administrative close keeps the till's claim; readers take it only while it may still be open."""
+    from app.services import remote_credits
+    from app.services.administrative_close import close_shift_administratively
+
+    s2 = selling(z, z.t2, 1, "20.00")
+    z.t2.reported_open_shift_id = s2.id
+    z.db.flush()
+    assert remote_credits.open_shift_of(z.db, z.t2)["id"] == str(s2.id)
+    close_shift_administratively(z.db, z.t2, s2, z.admin, force=True, now=NOW)
+    assert z.t2.reported_open_shift_id == s2.id  # kept as the till reported it
+    assert remote_credits.open_shift_of(z.db, z.t2) is None  # but not read as open

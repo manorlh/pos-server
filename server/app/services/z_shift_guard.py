@@ -126,11 +126,39 @@ def _truthy(value: Any) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on", "כן")
 
 
+def till_required(db: Session, machine: POSMachine) -> bool:
+    """
+    Must THIS till be closed (and accepted) for a Z to go ahead? Its own resolved value — till › area
+    › shop › company › default (on), as every till parameter (till_parameters_for_machine). So a bar
+    area with the rule on and a kitchen area with it off: an open bar till holds the shop Z, an open
+    kitchen till is left for the next Z. Off with the release flag; unreadable: on (fail closed).
+    """
+    if machine is None or not flag_on():
+        return False
+    try:
+        from app.models.till_parameter import TillParameter
+        from app.services.till_parameters import till_parameters_for_machine
+
+        if db.query(TillParameter.id).filter(TillParameter.key == KEY).first() is None:
+            return True  # not registered yet: the owner's default
+        value = till_parameters_for_machine(db, machine).parameters.get(KEY)
+        return False if value is None else _truthy(value)  # absent: deactivated by a super admin
+    except Exception:  # noqa: BLE001 - never breaks a run; logged, and read as ON (fail closed)
+        logger.exception("zRequireAllShiftsClosed unreadable for till %s", getattr(machine, "id", None))
+        return True
+
+
 def required(db: Session, shop: Any, *, area_id: Any = None) -> bool:
-    """Does a Z of this shop (or of this area of it) need every till's shifts closed and accepted?"""
+    """
+    Does the rule hold anywhere in this shop's Z (or this area's)? True when any of its tills has it
+    on (each till decides for itself — `till_required`); with no tills, the shop's (area's) own value.
+    """
     if shop is None or not flag_on():
         return False
     try:
+        tills = _scoped(db, shop, area_id)
+        if tills:
+            return any(till_required(db, m) for m in tills)
         return _value(db, company_id=getattr(shop, "company_id", None), shop_id=shop.id, area_id=area_id)
     except Exception:  # noqa: BLE001 - never breaks a run; logged, and read as ON (fail closed)
         logger.exception("zRequireAllShiftsClosed unreadable for shop %s", getattr(shop, "id", None))
@@ -225,7 +253,7 @@ def blockers(db: Session, shop: Any, machines: Iterable[POSMachine], *, now: Opt
     out = []
     for m in machines:
         found = till_status(db, m, shop.id, now=now)
-        if found is not None and found["blocks"]:
+        if found is not None and found["blocks"] and till_required(db, m):
             out.append(found)
     return out
 
@@ -245,7 +273,7 @@ def offline_closed(db: Session, shop: Any, machines: Iterable[POSMachine], *, no
     out = []
     for m in machines:
         found = till_status(db, m, shop.id, now=now)
-        if found is not None and found["status"] == STATUS_OFFLINE_CLOSED:
+        if found is not None and found["status"] == STATUS_OFFLINE_CLOSED and till_required(db, m):
             out.append(found)
     return out
 
@@ -264,7 +292,7 @@ def unknown_at_start(db: Session, shop: Any, tills: Iterable[POSMachine], *, now
     out = []
     for m in tills:
         found = till_status(db, m, shop.id, now=now)
-        if found is not None and found["status"] == STATUS_UNKNOWN:
+        if found is not None and found["status"] == STATUS_UNKNOWN and till_required(db, m):
             out.append(found)
     return out
 

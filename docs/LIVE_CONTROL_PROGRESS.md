@@ -122,14 +122,25 @@ cancelled request; the main till asks the cloud before its local shop Z; pushes 
 
 Every row is a test. "Offered" = shown on the dashboard; "allowed" = the server accepts it.
 
-**Parameters** (each at company only, shop over company, area over shop — the nearest level wins;
-a shop Z reads the shop's value, an area Z its area's):
+**Parameters** — each set at company, shop, point of sale (area) or till on "פרמטרים לקופות", like
+every till parameter; **each till uses its own resolved value** (till › area › shop › company ›
+default). Tested at company only, shop over company, area over shop and till over area:
 
-| Parameter | Default | On | Off |
+| Parameter | Default | On (for a till) | Off (for a till) |
 | --- | --- | --- | --- |
-| `zRequireAllShiftsClosed` "חסימת Z כשיש משמרות פתוחות" | on | No Z while a till is open / not accepted / unknown; no "build without"; support may force with a reason | As before |
+| `zRequireAllShiftsClosed` "חסימת Z כשיש משמרות פתוחות" | on | This till must be closed (and accepted) for the shop Z: it holds the Z while open / not accepted / unknown, can't be left out ("הפק בלי" refused for it); support may force with a reason | This till may be left out — its shifts go to the next Z, as with "הפק בלי" |
 | `allowCloseWithHeldSales` "סגירה עם מכירות מושהות" | off | Till: "סגור והשאר מושהות"; dashboard: "סגור בכל זאת — המכירות המושהות יישמרו" for a manager | Till: close only once every held sale is paid or cancelled; dashboard: support only, with a reason |
-| `remoteCancelHeldSales` "ביטול מכירות מושהות מהענן בסגירה מרחוק" | on | "בטל מכירות מושהות וסגור" offered (Z edit + reason; exactly the listed sales) | Not offered; refused "בסניף כבוי ..."; the till ignores such a command |
+| `remoteCancelHeldSales` "ביטול מכירות מושהות מהענן בסגירה מרחוק" | on | "בטל מכירות מושהות וסגור" offered (Z edit + reason; exactly the listed sales) | Not offered (hidden); refused "בסניף כבוי ..."; the till ignores such a command |
+| `remoteCloseParkOpenBasket` "סגירה מרחוק גם עם עגלה פתוחה (העגלה נשמרת כמכירה מושהית)" | off | A basket being composed is parked as a held sale (recorded `held_sale_parked`; the cashier sees "העגלה נשמרה כמכירה מושהית — בוצעה סגירה מרחוק") and the till closes; that basket never holds that close. Never a payment, a card in flight or a held tender; never at a kiosk. Shown "עגלה פתוחה — תישמר כמכירה מושהית" | The till waits for rest: "עגלה פתוחה — ממתין לסיום המכירה" |
+
+Mixed areas, as tested: the rule on for the bar's area and off for the kitchen's — an open bar till holds
+the shop Z (and can't be left out); an open kitchen till is left out and goes to the next Z. The main
+till's local check is the same: the cloud's answer lists only tills whose own rule is on.
+
+**"Every close" for held sales** (the owner's decision): the check applies to the employee's own
+attended close at the till (its shift close or Z, the main till's own close) and to remote closes of
+every kind. Other tills inside a LAN round, and closes from the cloud wizard that are not from remote
+control, keep their current behaviour — their held sales survive the close.
 
 **Till configuration** ("סגירת יום סניפית"):
 

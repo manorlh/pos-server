@@ -28,6 +28,7 @@ import {
   confirmationAsked,
   forceReasonOk,
   itemTone,
+  leavableIds,
   notClosedIds,
   runActive,
   runCounts,
@@ -70,6 +71,7 @@ function DeviceLine({ row, showAction }: { row: ShopCloseRow; showAction: boolea
       <span className="w-full text-xs text-muted-foreground">
         {row.openShift ? 'משמרת פתוחה' : row.shiftsAwaitingZ > 0 ? `${row.shiftsAwaitingZ} משמרות ממתינות ל-Z` : 'אין משמרות ל-Z'}
         {row.closesWithShopZ ? ' · ייסגר ויפיק Z משלו יחד עם ה-Z הסניפי' : ''}
+        {row.openBasket ? ` · ${row.openBasket}` : ''}
         {showAction && !row.action.available && row.action.whyNot ? ` · ${row.action.label}: ${row.action.whyNot}` : ''}
         {showAction && row.action.available ? ` · ${row.action.label} — מ"סגירה / Z" בשורת הקופה` : ''}
       </span>
@@ -262,6 +264,7 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
   const run = p.run ?? (lastRunId && finished.data?.id === lastRunId ? finished.data : null);
   const counts = run ? runCounts(run) : null;
   const waiting = run ? notClosedIds(run) : [];
+  const leavable = run ? leavableIds(run) : [];
   return (
     <section className="space-y-2 rounded-xl border bg-card p-3 shadow-sm" aria-label={p.shopClose.label}>
       <div className="flex flex-wrap items-center gap-2">
@@ -357,9 +360,9 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
                   size="sm"
                   variant="outline"
                   className="min-h-10"
-                  disabled={!run.leaveOutAllowed || proceed.isPending}
+                  disabled={!run.leaveOutAllowed || leavable.length === 0 || proceed.isPending}
                   title={run.leaveOutWhyNot ?? undefined}
-                  onClick={() => proceed.mutate({ runId: run.id, ids: waiting })}
+                  onClick={() => proceed.mutate({ runId: run.id, ids: leavable })}
                 >
                   הפק בלי הקופות שלא נסגרו
                 </Button>

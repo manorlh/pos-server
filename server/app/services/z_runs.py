@@ -542,7 +542,8 @@ def open_tills_rule(
     from app.services import z_shift_guard
 
     if guard and z_shift_guard.required(db, shop, area_id=area_id):
-        # "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): no till left out.
+        # "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py) somewhere in the shop — shown as
+        # "block"; each till is held by its own value (`check_open_tills`, `proceed_without`).
         return "block"
     value = TP.resolve_for_shop(db, shop).get(TP.SHOP_Z_OPEN_TILLS_KEY)
     if value is None:
@@ -565,7 +566,16 @@ def check_open_tills(
     """
     if not left_out:
         return False
-    rule = open_tills_rule(db, tenant, shop, area_id=area_id)
+    # "חסימת Z כשיש משמרות פתוחות", each till by its own resolved value: never left out with it on.
+    from app.services import z_shift_guard
+
+    held = [t for t in left_out if z_shift_guard.till_required(db, t.machine)]
+    if held:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "open_tills_block_z", "tills": [t.to_json() for t in held]},
+        )
+    rule = open_tills_rule(db, tenant, shop, area_id=area_id, guard=False)
     if rule is None:
         return False
     tills = [t.to_json() for t in left_out]
@@ -865,7 +875,7 @@ def create_z_run(
     left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
     if guard_on and z_scope_of(tenant) == Z_SCOPE_MACHINE:
         # One till per Z: the rule holds for the Z's own till — never started leaving its shift open.
-        mine = [t for t in left_out if t.machine.id in by_id]
+        mine = [t for t in left_out if t.machine.id in by_id and z_shift_guard.till_required(db, t.machine)]
         if mine:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1460,7 +1470,11 @@ def proceed_without(
                 i.error_code == WAITING_DOCUMENTS or (strict and not verify_item(db, run, i).ok)
             )
 
-        leaving = [str(i.machine_id) for i in run.items if i.machine_id in excluded and _not_in(i)]
+        leaving = [
+            str(i.machine_id) for i in run.items
+            if i.machine_id in excluded and _not_in(i)
+            and (required != "shifts" or z_shift_guard.till_required(db, i.machine))
+        ]
         if leaving:
             db.rollback()
             raise HTTPException(
@@ -1531,17 +1545,34 @@ def _all_tills_required(db: Session, run: ZRun, *, guard: bool = True) -> Option
 
     try:
         shop = db.get(Shop, run.shop_id)
-        if guard and shop is not None and z_shift_guard.required(db, shop, area_id=run.area_id):
-            return "shifts"
         tenant = db.get(Tenant, run.tenant_id) if run.tenant_id else None
         if shop is not None and open_tills_rule(db, tenant, shop, guard=False) == "block":
             return "block"
+        if guard and shop is not None and any(
+            z_shift_guard.till_required(db, i.machine) for i in _not_yet_in(db, run) if i.machine is not None
+        ):
+            # A till the run still waits for whose own "חסימת Z כשיש משמרות פתוחות" is on.
+            return "shifts"
         return None
     except Exception:  # noqa: BLE001 - a rule read must never break an expiry sweep
         logger.exception("open-tills rule of shop %s unreadable", run.shop_id)
         # Fail closed while "חסימת Z כשיש משמרות פתוחות" can apply (it ships behind
         # REMOTE_TILL_Z_ENABLED): an unreadable rule never lets a till be left behind.
         return "shifts" if guard and z_shift_guard.flag_on() else None
+
+
+def _not_yet_in(db: Session, run: ZRun) -> List[ZRunItem]:
+    """The run's tills not (yet) in its Z: waiting, closing, failed — or ready but missing documents."""
+    from app.services.z_completeness import WAITING_DOCUMENTS
+
+    strict = bool(getattr(run, "strict_cloud_check", False))
+    out = []
+    for i in run.items:
+        if i.status == ZRunItemStatus.EXCLUDED or is_left_out_marker(i):
+            continue
+        if i.status != ZRunItemStatus.READY or i.error_code == WAITING_DOCUMENTS or (strict and not verify_item(db, run, i).ok):
+            out.append(i)
+    return out
 
 
 def _local_mode_run(db: Session, run: ZRun) -> bool:

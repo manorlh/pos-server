@@ -558,8 +558,11 @@ def handover_of(db: Session, predecessor: POSMachine, *, now: datetime) -> Dict[
         "predecessorTenantId": str(predecessor.tenant_id) if predecessor.tenant_id else None,
         "predecessorShopId": str(predecessor.shop_id) if predecessor.shop_id else None,
         "openShiftId": str(open_shift.id) if open_shift is not None else None,
+        # The till's claim only while it may still be open (not a shift the cloud holds closed).
         "reportedOpenShiftId": (
-            str(predecessor.reported_open_shift_id) if getattr(predecessor, "reported_open_shift_id", None) else None
+            str(predecessor.reported_open_shift_id)
+            if getattr(predecessor, "reported_open_shift_id", None) and _claim_live(db, predecessor)
+            else None
         ),
         "pendingDocuments": getattr(predecessor, "pending_documents", None),
         "pendingCount": getattr(predecessor, "pending_count", None),
@@ -709,3 +712,9 @@ def refile_document(
     if is_waiting(target):
         refresh_bucket(db, target)
     return target.id
+
+
+def _claim_live(db: Session, machine: POSMachine) -> bool:
+    from app.services.z_runs import _reported_open_is_live
+
+    return _reported_open_is_live(db, machine)

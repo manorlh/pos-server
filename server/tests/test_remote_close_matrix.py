@@ -61,7 +61,7 @@ LEVELS = [
 
 
 @pytest.mark.parametrize("label, company, shop, area, in_area, outside", LEVELS, ids=[r[0] for r in LEVELS])
-@pytest.mark.parametrize("key", [G.KEY, H.KEY, H.REMOTE_CANCEL_KEY])
+@pytest.mark.parametrize("key", [G.KEY, H.KEY, H.REMOTE_CANCEL_KEY, H.PARK_KEY])
 def test_parameter_levels(z, key, label, company, shop, area, in_area, outside):
     a = area_of(z, z.t1)
     if company is not None:
@@ -78,6 +78,9 @@ def test_parameter_levels(z, key, label, company, shop, area, in_area, outside):
         mgr = manager(z)
         assert H.keep_offer(z.db, z.t1, mgr)["allowed"] is in_area
         assert H.keep_offer(z.db, z.t2, mgr)["allowed"] is outside
+    elif key == H.PARK_KEY:
+        assert H.park_open_basket_on(z.db, z.t1) is in_area
+        assert H.park_open_basket_on(z.db, z.t2) is outside
     else:
         assert H.cancel_offer(z.db, z.t1)["allowed"] is in_area
         assert H.cancel_offer(z.db, z.t2)["allowed"] is outside
@@ -87,6 +90,7 @@ def test_parameter_defaults(z):
     assert G.required(z.db, z.shop) is True               # zRequireAllShiftsClosed: on
     assert H.allowed(z.db, z.t1) is False                 # allowCloseWithHeldSales: off
     assert H.remote_cancel_on(z.db, z.t1) is True         # remoteCancelHeldSales: on
+    assert H.park_open_basket_on(z.db, z.t1) is False     # remoteCloseParkOpenBasket: off
     assert H.keep_offer(z.db, z.t1, z.admin) == {"allowed": True, "needsReason": True}  # support, with a reason
 
 
@@ -252,3 +256,123 @@ def test_a_till_busy_at_the_close_defers_and_says_why(z, code, message, words):
     if code == "held_sales":
         assert item["cancelHeldSales"]["allowed"] is True       # remoteCancelHeldSales on by default
         assert item["keepHeldSales"] == {"allowed": True, "needsReason": True}  # support (allowCloseWithHeldSales off)
+
+
+# ── 4. The four parameters at the till's own level too (till › area › shop › company) ─────────
+
+
+@pytest.mark.parametrize("key", [G.KEY, H.KEY, H.REMOTE_CANCEL_KEY, H.PARK_KEY])
+def test_a_tills_own_value_overrides_its_area_shop_and_company(z, key):
+    a = area_of(z, z.t1, z.t2)
+    set_param(z, key, "company", z.shop.company_id, True)
+    set_param(z, key, "shop", z.shop.id, True)
+    set_param(z, key, "area", a.id, True)
+    set_param(z, key, "machine", z.t1.id, False)
+    read = {
+        G.KEY: lambda t: G.till_required(z.db, t),
+        H.KEY: lambda t: H.allowed(z.db, t),
+        H.REMOTE_CANCEL_KEY: lambda t: H.remote_cancel_on(z.db, t),
+        H.PARK_KEY: lambda t: H.park_open_basket_on(z.db, t),
+    }[key]
+    assert read(z.t1) is False and read(z.t2) is True
+    set_param(z, key, "machine", z.t1.id, True)
+    set_param(z, key, "area", a.id, False)
+    assert read(z.t1) is True and read(z.t2) is False
+
+
+def test_mixed_areas_the_bar_holds_the_shop_z_the_kitchen_goes_to_the_next(z):
+    """The rule on for the bar's area, off for the kitchen's: an open bar till holds; an open kitchen till is left."""
+    bar = area_of(z, z.t1)
+    kitchen = area_of(z, z.t2)
+    set_param(z, G.KEY, "area", bar.id, True)
+    set_param(z, G.KEY, "area", kitchen.id, False)
+    s1 = selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    p = preview(z)
+    assert [b["machineId"] for b in p["shiftGuard"]["blockers"]] == [str(z.t1.id)]  # only the bar till
+    run = start(z)
+    progress = svc.run_progress(z.db, run, now=NOW, user=z.admin)
+    may = {str(i["machineId"]): i["mayLeaveOut"] for i in progress["items"]}
+    assert may == {str(z.t1.id): False, str(z.t2.id): True}
+    # The bar till can't be left out …
+    from fastapi import HTTPException
+
+    from app.routers import device_commands as R
+
+    with pytest.raises(HTTPException) as e:
+        R.post_shop_close_proceed(run.id, R.ShopCloseProceedIn(excludeMachineIds=[z.t1.id]), **_ctx(z))
+    assert e.value.detail["code"] == G.REFUSED_CODE
+    # … the kitchen till can — it goes to the next Z, as with proceed.
+    from test_remote_shop_close import till_closes
+
+    till_closes(z, z.t1, s1)
+    out = R.post_shop_close_proceed(run.id, R.ShopCloseProceedIn(excludeMachineIds=[z.t2.id]), **_ctx(z))
+    assert out["status"] == "completed"
+
+
+def test_the_main_tills_answer_lists_only_tills_with_the_rule_on(z):
+    from app.routers import till_shop_z_local as LR
+
+    bar = area_of(z, z.t1)
+    kitchen = area_of(z, z.t2)
+    set_param(z, G.KEY, "area", bar.id, True)
+    set_param(z, G.KEY, "area", kitchen.id, False)
+    selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    # Asked by the kitchen till (as a main till would): only the bar till holds it.
+    out = LR.till_shop_z_shift_guard(str(z.t2.id), machine=z.t2, db=z.db)
+    assert out["required"] is True and [b["machineId"] for b in out["blockers"]] == [str(z.t1.id)]
+
+
+# ── 5. "סגירה מרחוק גם עם עגלה פתוחה" ─────────────────────────────────────────────────────
+
+
+def test_park_open_basket_is_off_by_default_and_shown_per_till(z):
+    from app.services import till_parameters as TP
+
+    (spec,) = [p for p in TP.BUILTIN_PARAMETERS if p.key == H.PARK_KEY]
+    assert spec.default_value is False and spec.label == "סגירה מרחוק גם עם עגלה פתוחה (העגלה נשמרת כמכירה מושהית)"
+    selling(z, z.t1, 1, "10.00")
+    rows = {r["machineId"]: r for r in preview(z)["inShopZ"]}
+    assert rows[str(z.t1.id)]["openBasket"] == "עגלה פתוחה — ממתין לסיום המכירה"
+    set_param(z, H.PARK_KEY, "shop", z.shop.id, True)
+    rows = {r["machineId"]: r for r in preview(z)["inShopZ"]}
+    assert rows[str(z.t1.id)]["openBasket"] == "עגלה פתוחה — תישמר כמכירה מושהית"
+    assert svc.preview(z.db, z.t1, now=NOW)["openBasket"] == "עגלה פתוחה — תישמר כמכירה מושהית"
+    # Never at a kiosk.
+    z.db.add(KioskDevice(machine_id=z.t2.id, tenant_id=z.tenant.id, shop_id=z.shop.id, name="K", enabled=True))
+    z.db.flush()
+    rows = {r["machineId"]: r for r in preview(z)["inShopZ"]}
+    assert rows[str(z.t2.id)]["openBasket"] == "עגלה פתוחה — ממתין לסיום המכירה"
+
+
+def test_a_parked_basket_is_kept_for_the_audit(z):
+    from app.models.audit_exception import TillEvent
+    from app.schemas.audit_exception import TillEventIn
+    from app.services.exceptions import record_till_event
+
+    body = TillEventIn.model_validate({
+        "id": str(uuid.uuid4()), "type": "held_sale_parked", "occurredAt": NOW.isoformat(), "amount": "31.00",
+        "details": {"heldSaleId": "h-9", "source": "remote_close", "requestId": str(uuid.uuid4()), "requestedBy": "mgr",
+                    "items": [{"name": "סלט", "quantity": 1}], "total": "31.00"},
+    })
+    event, created = record_till_event(z.db, z.t1, body)
+    z.db.flush()
+    assert created and z.db.get(TillEvent, event.id).event_type == "held_sale_parked"
+
+
+def test_the_runs_log_reads_only_its_own_tills_and_requests(z):
+    from app.models.audit_exception import TillEvent
+    from app.schemas.audit_exception import TillEventIn
+    from app.services.exceptions import record_till_event
+
+    rid = str(uuid.uuid4())
+    for till, request in ((z.t1, rid), (z.t2, rid), (z.t1, str(uuid.uuid4()))):
+        record_till_event(z.db, till, TillEventIn.model_validate({
+            "id": str(uuid.uuid4()), "type": "held_sale_cancelled", "occurredAt": NOW.isoformat(),
+            "details": {"heldSaleId": "h", "requestId": request, "reason": "r", "by": "m", "total": "1.00"},
+        }))
+    z.db.flush()
+    out = H.cancelled_events(z.db, [rid], [z.t1.id])
+    assert list(out) == [rid] and len(out[rid]) == 1  # t1's, for this request only
+    assert z.db.query(TillEvent).count() == 3

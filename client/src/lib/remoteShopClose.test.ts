@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { confirmationAsked, forceReasonOk, itemTone, notClosedIds, runActive, runCounts, shopConfirmLabel } from './remoteShopClose';
+import { confirmationAsked, forceReasonOk, itemTone, leavableIds, notClosedIds, runActive, runCounts, shopConfirmLabel } from './remoteShopClose';
 
 const item = (machineId: string, status: string, errorCode: string | null = null) => ({
   id: `i-${machineId}`, machineId, machineName: machineId, posNumber: null, status, errorCode, words: '', online: true,
@@ -20,6 +20,11 @@ describe('remote shop close', () => {
     const run = { items: [item('a', 'ready'), item('b', 'closing', 'sale_open'), item('c', 'excluded')] };
     assert.deepEqual(runCounts(run), { closed: 1, total: 2 });
     assert.deepEqual(notClosedIds(run), ['b']);
+  });
+  it("builds without only the tills whose own rule lets them wait", () => {
+    const run = { items: [{ ...item('a', 'closing'), mayLeaveOut: false }, { ...item('b', 'waiting_close'), mayLeaveOut: true }, item('c', 'ready')] };
+    assert.deepEqual(leavableIds(run), ['b']);
+    assert.deepEqual(notClosedIds(run), ['a', 'b']);
   });
   it('tones a deferred till as waiting, a closed one as done', () => {
     assert.equal(itemTone('closing', 'sale_open'), 'wait');

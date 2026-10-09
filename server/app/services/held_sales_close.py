@@ -35,6 +35,12 @@ LABEL = "סגירה עם מכירות מושהות"
 REMOTE_CANCEL_KEY = "remoteCancelHeldSales"
 REMOTE_CANCEL_LABEL = "ביטול מכירות מושהות מהענן בסגירה מרחוק"
 CANCEL_LABEL = "בטל מכירות מושהות וסגור"
+#: The owner: "אין בעיה שתיסגר עם עגלה פתוחה — שינוי פרמטר, לאפשר או לא". On, a remote close parks a
+#: basket being composed as a held sale (never a payment, a card in flight or a held tender; never at a
+#: kiosk) and closes; that basket never holds the close it was parked for. Off (default): it waits.
+PARK_KEY = "remoteCloseParkOpenBasket"
+PARK_LABEL = "סגירה מרחוק גם עם עגלה פתוחה (העגלה נשמרת כמכירה מושהית)"
+PARK_WORDS = "עגלה פתוחה — תישמר כמכירה מושהית"
 DEFER_CODE = "held_sales"
 EXCEPTION_TYPE = "close_keep_held_sales"
 KEEP_LABEL = "סגור בכל זאת — המכירות המושהות יישמרו"
@@ -64,6 +70,19 @@ PARAMETER_SPECS = (
             "כשכבוי: האפשרות לא מוצעת והקופה מתעלמת מפקודה כזו. נקבע לחברה, לסניף או לנקודת מכירה."
         ),
     ),
+    dict(
+        key=PARK_KEY,
+        label=PARK_LABEL,
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: סגירה מרחוק (משמרת, Z או סגירת יום סניפית) לא ממתינה לעגלה שנבנית בקופה — הקופה שומרת "
+            "אותה כמכירה מושהית (נרשם: מי ביקש, מתי, הפריטים והסכום), מציגה לקופאי \"העגלה נשמרה כמכירה "
+            "מושהית — בוצעה סגירה מרחוק\" וממשיכה בסגירה. לעולם לא כשמסך התשלום פתוח, עסקת אשראי בדרך או "
+            "אמצעי תשלום ממתין, ולעולם לא בקיוסק. העגלה שנשמרה כך לא עוצרת את הסגירה שבשבילה נשמרה. "
+            "כשכבוי (ברירת המחדל): הקופה ממתינה למנוחה כמו היום. נקבע לחברה, לסניף או לנקודת מכירה."
+        ),
+    ),
 )
 
 
@@ -80,37 +99,29 @@ def allowed(db: Session, machine: POSMachine) -> bool:
     return _param(db, machine, KEY, False)
 
 
+def park_open_basket_on(db: Session, machine: POSMachine) -> bool:
+    """`remoteCloseParkOpenBasket` at the till's area → its shop → its company → the default (off)."""
+    return _param(db, machine, PARK_KEY, False)
+
+
 def remote_cancel_on(db: Session, machine: POSMachine) -> bool:
     """`remoteCancelHeldSales` at the till's area → its shop → its company → the default (on)."""
     return _param(db, machine, REMOTE_CANCEL_KEY, True)
 
 
 def _param(db: Session, machine: POSMachine, key: str, missing: bool) -> bool:
-    from app.models.shop import Shop
-    from app.models.till_parameter import TillParameter, TillParameterValue
+    """
+    The till's own resolved value — till › area › shop › company › default, as every till parameter
+    (till_parameters_for_machine: inactive and invalid values handled there). Not registered yet:
+    `missing` (the parameter's default). Deactivated by a super admin: off.
+    """
+    from app.models.till_parameter import TillParameter
+    from app.services.till_parameters import till_parameters_for_machine
 
-    parameter = db.query(TillParameter).filter(TillParameter.key == key).first()
-    if parameter is None:
+    if db.query(TillParameter.id).filter(TillParameter.key == key).first() is None:
         return missing
-    if getattr(parameter, "is_active", True) is False:
-        return False
-    shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
-    chain = [("area", machine.area_id), ("shop", machine.shop_id), ("company", getattr(shop, "company_id", None))]
-    on_chain = [
-        and_(TillParameterValue.scope_type == kind, TillParameterValue.scope_id == ident)
-        for kind, ident in chain if ident is not None
-    ]
-    rows = (
-        db.query(TillParameterValue)
-        .filter(TillParameterValue.parameter_id == parameter.id, or_(*on_chain))
-        .all()
-        if on_chain else []
-    )
-    by_scope = {(r.scope_type, str(r.scope_id)): r.value for r in rows}
-    for kind, ident in chain:
-        if ident is not None and by_scope.get((kind, str(ident))) is not None:
-            return _truthy(by_scope[(kind, str(ident))])
-    return _truthy(parameter.default_value) if parameter.default_value is not None else missing
+    value = till_parameters_for_machine(db, machine).parameters.get(key)
+    return False if value is None else _truthy(value)
 
 
 def held_count(error_code: Optional[str], error_message: Optional[str]) -> Optional[int]:
@@ -280,15 +291,24 @@ def cancel(db: Session, user: Any, machine: POSMachine, *, run_id: Optional[uuid
     return {"requestId": str(target.id), "ids": wanted}
 
 
-def cancelled_events(db: Session, request_ids: list) -> Dict[str, list]:
-    """The till's `held_sale_cancelled` events per request id — the run's log."""
+def cancelled_events(db: Session, request_ids: list, machine_ids: list) -> Dict[str, list]:
+    """The tills' `held_sale_cancelled` events per request id — the run's log (these tills, these requests)."""
     from app.models.audit_exception import TillEvent
 
     ids = {str(r) for r in request_ids}
     out: Dict[str, list] = {}
-    if not ids:
+    if not ids or not machine_ids:
         return out
-    for ev in db.query(TillEvent).filter(TillEvent.event_type == "held_sale_cancelled").all():
+    rows = (
+        db.query(TillEvent)
+        .filter(
+            TillEvent.machine_id.in_(list(machine_ids)),
+            TillEvent.event_type == "held_sale_cancelled",
+            TillEvent.details["requestId"].as_string().in_(list(ids)),
+        )
+        .all()
+    )
+    for ev in rows:
         d = ev.details or {}
         rid = str(d.get("requestId") or "")
         if rid in ids:

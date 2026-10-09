@@ -29,6 +29,8 @@ export interface ShopCloseRow {
   action: ShopCloseAction;
   /** An own-Z kiosk set "סגירה יחד עם ה-Z הסניפי". */
   closesWithShopZ?: boolean;
+  /** What an open basket will do at this close ("עגלה פתוחה — תישמר כמכירה מושהית" / "… ממתין"). */
+  openBasket?: string;
   runItem?: { status: string; errorCode: string | null; words: string };
 }
 
@@ -51,6 +53,8 @@ export interface ShopCloseCommand {
 
 export interface ShopCloseRunItem extends HeldSalesState {
   id: string;
+  /** May it be left for the next Z ("הפק בלי")? Per till: its own "חסימת Z כשיש משמרות פתוחות" decides. */
+  mayLeaveOut?: boolean;
   machineId: string;
   machineName: string | null;
   posNumber: string | null;
@@ -132,6 +136,13 @@ export function runCounts(run: Pick<ShopCloseRun, 'items'>): { closed: number; t
 /** The tills the manager could build without ("בנה בלי"): not closed yet, still in the run. */
 export function notClosedIds(run: Pick<ShopCloseRun, 'items'>): string[] {
   return run.items.filter((i) => i.status !== 'ready' && i.status !== 'excluded').map((i) => i.machineId);
+}
+
+/** Of those, the ones the configuration lets wait for the next Z (each till's own rule). */
+export function leavableIds(run: Pick<ShopCloseRun, 'items'>): string[] {
+  return run.items
+    .filter((i) => i.status !== 'ready' && i.status !== 'excluded' && i.mayLeaveOut !== false)
+    .map((i) => i.machineId);
 }
 
 /** The tone of a till's state in the run. */

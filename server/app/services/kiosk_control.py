@@ -455,7 +455,11 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
         if isinstance(st.get("shiftOpen"), bool):
             shift_open = st["shiftOpen"]
         else:
-            shift_open = d.machine_id in open_shifts or machine.reported_open_shift_id is not None
+            from app.services.z_runs import _reported_open_is_live
+
+            shift_open = d.machine_id in open_shifts or (
+                machine.reported_open_shift_id is not None and _reported_open_is_live(db, machine)
+            )
         controllers = [str(c) for c in (d.controller_machine_ids or [])]
         out.append({
             "machineId": str(machine.id),

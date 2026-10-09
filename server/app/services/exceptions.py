@@ -205,7 +205,10 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
                     "restricted_item",
                     # A held sale ("מכירה מושהית") cancelled at a close: who, why, its items and total.
                     # Not a document — the audit trail. Recorded, feeds no rule.
-                    "held_sale_cancelled")
+                    "held_sale_cancelled",
+                    # An open basket parked as a held sale by a remote close ("remoteCloseParkOpenBasket"):
+                    # who asked, when, its items and total. Recorded, feeds no rule.
+                    "held_sale_parked")
 
 
 class RuleValueError(ValueError):

@@ -134,7 +134,7 @@ def _pending(db: Session, machine: POSMachine, kind: str, user: Any = None) -> O
             "keepHeldSales": bool(getattr(req, "keep_held_sales", False)),
             "keepOffer": held_sales_close.keep_offer(db, machine, user),
             "cancelHeldSales": held_sales_close.cancel_offer(db, machine),
-            "heldSalesCancelled": held_sales_close.cancelled_events(db, [req.id]).get(str(req.id), [])}
+            "heldSalesCancelled": held_sales_close.cancelled_events(db, [req.id], [machine.id]).get(str(req.id), [])}
 
 
 def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None, user: Any = None) -> Dict[str, Any]:
@@ -177,6 +177,7 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None,
         "lastZNumber": last,
         "nextZNumber": (last + 1) if last is not None else None,
         "pending": _pending(db, machine, kind, user),
+        "openBasket": _open_basket_words(db, machine, False),
         "totalsKey": _key(kind, [s.id for s in shifts], totals),
         "canRequest": why is None,
         "whyNot": why,
@@ -394,6 +395,15 @@ def _kiosk_ids(db: Session, machines: List[POSMachine]) -> set:
     return {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
 
 
+def _open_basket_words(db: Session, machine: POSMachine, kiosk: bool) -> str:
+    """What an open basket will do at this close: parked (the shop's `remoteCloseParkOpenBasket`), or waited for."""
+    from app.services import held_sales_close
+
+    if not kiosk and held_sales_close.park_open_basket_on(db, machine):
+        return held_sales_close.PARK_WORDS
+    return "עגלה פתוחה — ממתין לסיום המכירה"
+
+
 def _closes_with_shop_z(db: Session, machine: POSMachine) -> bool:
     try:
         from app.services import kiosk_config as KC
@@ -482,7 +492,8 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
             row = next((i for i in run.items if str(i.id) == str(item["id"])), None)
             item["heldSalesList"] = (row.held_sales or []) if row is not None else []
     # The run's log: each held sale a till discarded on "בטל מכירות מושהות וסגור".
-    events = held_sales_close.cancelled_events(db, [i["id"] for i in out["items"]])
+    events = held_sales_close.cancelled_events(db, [i["id"] for i in out["items"]],
+                                               [i["machineId"] for i in out["items"]])
     for item in out["items"]:
         item["heldSalesCancelled"] = events.get(str(item["id"]), [])
         # One command per till, the run its batch: the shared chip / tray reads these.
@@ -501,8 +512,22 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
     ]
     # "בנה בלי הקופה" (the existing proceed_without) only where the configuration lets a till wait
     # for the next Z: never in local mode, never under "חובה לסגור את כל הקופות".
+    from app.services import z_shift_guard
+
     required = ZR._all_tills_required(db, run) if run.status == ZRunStatus.WAITING else None
-    out["leaveOutAllowed"] = run.status == ZRunStatus.WAITING and required is None
+    # Per till: may it be left for the next Z? Never in local mode or under "חובה לסגור את כל הקופות";
+    # under "חסימת Z כשיש משמרות פתוחות", only a till whose own value is off.
+    rows = {str(i.id): i for i in run.items}
+    for item in out["items"]:
+        row = rows.get(str(item["id"]))
+        held = required in ("local", "block") or (
+            required == "shifts" and row is not None and z_shift_guard.till_required(db, row.machine)
+        )
+        item["mayLeaveOut"] = run.status == ZRunStatus.WAITING and not held
+    waiting_items = [i for i in out["items"] if i["status"] not in ("ready", "excluded")]
+    out["leaveOutAllowed"] = run.status == ZRunStatus.WAITING and (
+        required is None or any(i["mayLeaveOut"] for i in waiting_items)
+    )
     out["leaveOutWhyNot"] = (
         "במצב רשת מקומית ה-Z הסניפי כולל את כל הקופות" if required == "local"
         else "בסניף מופעל \"חסימת Z כשיש משמרות פתוחות\"" if required == "shifts"
@@ -612,6 +637,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
                    else TOO_OLD_TEXT if needs_update(m, kiosk=m.id in kiosks)
                    else None if shifts else "אין משמרות שעוד לא נכללו ב-Z")
             row["action"] = {"kind": KIND_TILL_Z, "label": "הפקת Z לקופה", "available": why is None, "whyNot": why}
+            row["openBasket"] = _open_basket_words(db, m, m.id in kiosks)
             if m.id in kiosks:
                 # "סגירה יחד עם ה-Z הסניפי" (kiosk_ops): the run asks it to close and make its own Z.
                 row["closesWithShopZ"] = _closes_with_shop_z(db, m)
@@ -626,6 +652,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             if seated and needs_update(m, kiosk=m.id in kiosks):
                 row["needsUpdate"] = True
             row["action"] = {"kind": KIND_CLOSE_SHIFT, "label": "סגירת משמרת", "available": why is None, "whyNot": why}
+            row["openBasket"] = _open_basket_words(db, m, m.id in kiosks)
             in_shop_z.append(row)
     # What the build takes besides (z_builder, document_filing.shop_leftovers): the shop-Z documents
     # of tills that make their own Z now — a waiting bucket, late documents — in this shop Z.

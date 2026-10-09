@@ -78,13 +78,10 @@ export function HeldSalesDialog({
           <Input
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="סיבה (חובה לביטול)"
+            placeholder={cancelOffer?.allowed ? 'סיבה (חובה לביטול)' : 'סיבה'}
             maxLength={300}
             className="min-h-10"
           />
-          {cancelOffer && !cancelOffer.allowed && cancelOffer.whyNot ? (
-            <p className="text-xs text-muted-foreground">{CANCEL_LABEL}: {cancelOffer.whyNot}</p>
-          ) : null}
           {keepOffer && !keepOffer.allowed && keepOffer.whyNot ? (
             <p className="text-xs text-muted-foreground">{KEEP_LABEL}: {keepOffer.whyNot}</p>
           ) : null}
@@ -99,14 +96,17 @@ export function HeldSalesDialog({
               {KEEP_LABEL}
             </Button>
           ) : null}
-          <Button
-            variant="destructive"
-            className="min-h-11"
-            disabled={sales.length === 0 || !canSend(cancelOffer, reason) || cancel.isPending}
-            onClick={() => cancel.mutate()}
-          >
-            {CANCEL_LABEL}
-          </Button>
+          {/* Not offered at all where the shop's `remoteCancelHeldSales` is off. */}
+          {cancelOffer?.allowed ? (
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              disabled={sales.length === 0 || !canSend(cancelOffer, reason) || cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
+              {CANCEL_LABEL}
+            </Button>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
