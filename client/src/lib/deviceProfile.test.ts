@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  BUILTIN_PRINTER_MODEL_IDS,
   DEVICE_MODEL_CAPABILITIES,
   DEVICE_MODEL_IDS,
   DEVICE_PLATFORMS,
@@ -51,7 +52,7 @@ describe('the model catalog', () => {
     );
     assert.deepEqual(
       [...DEVICE_MODEL_IDS].slice(6),
-      [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS, ...VENDOR_DEVICE_MODEL_IDS],
+      [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS, ...VENDOR_DEVICE_MODEL_IDS, ...BUILTIN_PRINTER_MODEL_IDS],
     );
   });
 
@@ -169,6 +170,39 @@ describe('PAX A77 / Urovo i9100 (app/models/vendor_devices.py)', () => {
     assert.equal(capabilitiesOf('UROVO_I9100').builtinTerminal, true);
     assert.equal(capabilitiesOf('UROVO_I9100', { kiosk: true }).builtinTerminal, false);
     assert.equal(deviceModelIdOf(' pax_a77 '), 'PAX_A77');
+  });
+});
+
+describe('iMin / LANDI / Feitian docks (app/models/builtin_printers.py)', () => {
+  // The server's table, shared byte-for-byte with pos-android (BuiltinPrinterModels.kt).
+  const golden = JSON.parse(
+    readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'builtin_printers_golden.json'), 'utf8'),
+  ) as { models: { id: string; paperMm: 58 | 80; drawerPort: boolean; support: 'auto' | 'partial' | 'sdk' }[] };
+
+  it('the same table as the server, model by model', () => {
+    assert.deepEqual(
+      golden.models.map((m) => m.id),
+      [...BUILTIN_PRINTER_MODEL_IDS],
+    );
+    for (const m of golden.models) {
+      const c = DEVICE_MODEL_CAPABILITIES[m.id as keyof typeof DEVICE_MODEL_CAPABILITIES];
+      const prints = m.support !== 'sdk';
+      assert.deepEqual(
+        [c.builtinPrinter, c.paperWidthMm, c.cashDrawerPort, c.builtinScanner, c.builtinTerminal, c.driverPending],
+        [prints, prints ? m.paperMm : null, prints && m.drawerPort, false, false, !prints],
+        m.id,
+      );
+    }
+  });
+
+  it('iMin Falcon 2 prints at 80 mm and opens the drawer by itself; a LANDI handheld waits for its SDK', () => {
+    assert.equal(capabilitiesOf('IMIN_FALCON2').paperWidthMm, 80);
+    assert.equal(capabilitiesOf('IMIN_FALCON2').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('IMIN_FALCON2_58').paperWidthMm, 58);
+    assert.equal(capabilitiesOf('IMIN_FALCON1').cashDrawerPort, false);
+    assert.equal(capabilitiesOf('LANDI_M20').driverPending, true);
+    assert.equal(capabilitiesOf('LANDI_M20').builtinPrinter, false);
+    assert.equal(deviceModelIdOf(' imin_falcon2 '), 'IMIN_FALCON2');
   });
 });
 

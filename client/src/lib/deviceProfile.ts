@@ -152,6 +152,36 @@ export const SYNQPAY_DEVICE_MODEL_IDS = [
  */
 export const VENDOR_DEVICE_MODEL_IDS = ['PAX_A77', 'UROVO_I9100'] as const;
 
+/**
+ * "מדפסת מובנית" with no vendor SDK (pos-server app/models/builtin_printers.py, the matrix in
+ * specs/android-builtin-printers.md): iMin, LANDI and Feitian tablets in their printer docks. The
+ * till finds the head by itself (an inner USB printer, iMin's print service, the virtual Bluetooth
+ * printer) and prints at its width; a model only its vendor's SDK reaches (LANDI's handhelds) is
+ * "בקרוב". None has a card terminal of its own.
+ */
+export const BUILTIN_PRINTER_MODEL_IDS = [
+  'IMIN_FALCON2',
+  'IMIN_FALCON2_58',
+  'IMIN_FALCON2MAX',
+  'IMIN_D4_PRO',
+  'IMIN_SWAN2',
+  'IMIN_SWIFT2',
+  'IMIN_FALCON1',
+  'IMIN_D4',
+  'IMIN_D1',
+  'IMIN_M2',
+  'IMIN_SWIFT1',
+  'IMIN',
+  'LANDI_C20_PRO',
+  'LANDI_M20',
+  'LANDI_P20',
+  'LANDI_APOS_A8',
+  'FEITIAN_M60',
+  'FEITIAN_F360',
+  'FEITIAN_F310',
+  'FEITIAN_M500',
+] as const;
+
 export const DEVICE_MODEL_IDS = [
   'N55F',
   'MODO',
@@ -162,6 +192,7 @@ export const DEVICE_MODEL_IDS = [
   ...SUNMI_MODEL_IDS,
   ...SYNQPAY_DEVICE_MODEL_IDS,
   ...VENDOR_DEVICE_MODEL_IDS,
+  ...BUILTIN_PRINTER_MODEL_IDS,
 ] as const;
 export type DeviceModelId = (typeof DEVICE_MODEL_IDS)[number];
 
@@ -186,6 +217,20 @@ const caps = (builtinPrinter: boolean, builtinTerminal: boolean, driverPending =
   cashDrawerPort: false,
   driverPending,
   paperWidthMm: builtinPrinter ? 58 : null,
+  builtinScanner: false,
+});
+
+/**
+ * A built-in-printer model (app/models/builtin_printers.py): its head's paper when the till prints
+ * on it by itself (null: only the vendor's SDK reaches it — "בקרוב"), and whether the till opens
+ * the drawer through it. Never a terminal of its own, never a scan head.
+ */
+const builtin = (paperWidthMm: 58 | 80 | null, cashDrawerPort: boolean): DeviceCapabilities => ({
+  builtinPrinter: paperWidthMm !== null,
+  builtinTerminal: false,
+  cashDrawerPort,
+  driverPending: paperWidthMm === null,
+  paperWidthMm,
   builtinScanner: false,
 });
 
@@ -242,6 +287,29 @@ export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities
   // Agamento / TC on the device (like the F20); a 58 mm head; the Urovo has a scan head.
   PAX_A77: caps(true, true),
   UROVO_I9100: { ...caps(true, true), builtinScanner: true },
+  // iMin: Android 13+ through its print service (the drawer too); Android 11 prints, the drawer is the SDK's.
+  IMIN_FALCON2: builtin(80, true),
+  IMIN_FALCON2_58: builtin(58, true),
+  IMIN_FALCON2MAX: builtin(80, true),
+  IMIN_D4_PRO: builtin(80, true),
+  IMIN_SWAN2: builtin(80, true),
+  IMIN_SWIFT2: builtin(58, false),
+  IMIN_FALCON1: builtin(80, false),
+  IMIN_D4: builtin(80, false),
+  IMIN_D1: builtin(58, false),
+  IMIN_M2: builtin(58, false),
+  IMIN_SWIFT1: builtin(58, false),
+  IMIN: builtin(58, false),
+  // LANDI: the C20 Pro desktop on its USB head; the handhelds need LANDI's USDK.
+  LANDI_C20_PRO: builtin(80, true),
+  LANDI_M20: builtin(null, false),
+  LANDI_P20: builtin(null, false),
+  LANDI_APOS_A8: builtin(null, false),
+  // Feitian tablets in their printer docks (the dock's drawer port through its head).
+  FEITIAN_M60: builtin(80, true),
+  FEITIAN_F360: builtin(58, true),
+  FEITIAN_F310: builtin(58, true),
+  FEITIAN_M500: builtin(80, true),
 };
 
 /** A model this build knows, else null. */
