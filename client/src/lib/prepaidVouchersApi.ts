@@ -6,6 +6,7 @@
  */
 import { api } from './api';
 import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
+import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
   PrepaidDiscountType,
@@ -144,6 +145,11 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   figures?: PrepaidBatchFigures;
   /** Every status the list filters by, at once. */
   state?: PrepaidBatchState;
+  /**
+   * Only on the answer of POST /prepaid-vouchers/batches: an identical batch the same user made a
+   * moment ago ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
+   */
+  possibleDuplicate?: PrepaidDuplicateRef | null;
 }
 
 // ── Productions ("הפקות") and the events a batch may name (§13) ──────────────
@@ -573,8 +579,19 @@ export async function fetchPrepaidBatch(id: string): Promise<PrepaidVoucherBatch
   return data;
 }
 
-export async function createPrepaidBatch(body: PrepaidBatchCreate): Promise<PrepaidVoucherBatch> {
-  const { data } = await api.post<PrepaidVoucherBatch>('/prepaid-vouchers/batches', body);
+/**
+ * A new batch. `idempotencyKey` (one per form submission, lib/prepaidBatchSubmit.ts): a retry with
+ * the same key gets the same batch back (200), never a second one. `timeoutMs`: past it the answer
+ * counts as lost — the caller asks again with the same key.
+ */
+export async function createPrepaidBatch(
+  body: PrepaidBatchCreate,
+  opts: { idempotencyKey?: string; timeoutMs?: number } = {},
+): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>('/prepaid-vouchers/batches', body, {
+    headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    timeout: opts.timeoutMs,
+  });
   return data;
 }
 

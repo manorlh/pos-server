@@ -55,6 +55,15 @@ import {
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
 import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
+import {
+  ATTEMPT_TIMEOUT_MS,
+  batchKeys,
+  duplicateOf,
+  sessionStore,
+  submitWithKey,
+  type PrepaidDuplicateRef,
+  type SubmitPhase,
+} from '@/lib/prepaidBatchSubmit';
 import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
@@ -501,10 +510,15 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     if (await editSave.save(body)) onOpenChange(false);
   };
 
-  const create = useMutation({
-    mutationFn: () => chosen
-      ? createPrepaidBatch({ ...common, typeId: chosen.id, splitAllowed: false, items: [] })
-      : createPrepaidBatch({
+  // One Idempotency-Key per submission (lib/prepaidBatchSubmit.ts): a retry of the same form —
+  // automatic after a lost answer, "נסה שוב", the dialog reopened, the page reloaded — gets the same
+  // batch back from the server, never a second one.
+  const [keys] = useState(() => batchKeys(sessionStore()));
+  const [phase, setPhase] = useState<SubmitPhase>('idle');
+  const [lostAnswer, setLostAnswer] = useState(false);
+  const createBody = (): Parameters<typeof createPrepaidBatch>[0] => chosen
+      ? { ...common, typeId: chosen.id, splitAllowed: false, items: [] }
+      : {
         ...common,
         tillValue: decimal(tillValue),
         productionPrice: pricesVisible ? decimal(productionPrice) : null,
@@ -538,8 +552,25 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
             }
           : {}),
-      }),
+      };
+  const create = useMutation({
+    mutationFn: async () => {
+      const body = createBody();
+      setLostAnswer(false);
+      const res = await submitWithKey(
+        keys, body,
+        (key) => createPrepaidBatch(body, { idempotencyKey: key, timeoutMs: ATTEMPT_TIMEOUT_MS }),
+        { onPhase: setPhase },
+      );
+      if (!res.ok) {
+        // No answer even after the re-checks: the batch may exist — "נסה שוב" asks with the same key.
+        setLostAnswer(res.retryable);
+        throw res.error;
+      }
+      return res.value;
+    },
     onSuccess: (b) => {
+      setLostAnswer(false);
       toast.success(t('created', { count: b.stats.total }));
       void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
       reset();
@@ -907,6 +938,15 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               {t('missing', { list: [...problems.map((p) => t(`problem.${p}`)), ...editProblems].join(', ') })}
             </p>
           ) : null}
+          {!ed && create.isPending && phase === 'checking' ? (
+            <p role="status" aria-live="polite" className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> {t('checking')}
+            </p>
+          ) : !ed && lostAnswer && !create.isPending ? (
+            <p role="status" aria-live="polite" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              {t('lostAnswer')}
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tc('cancel')}</Button>
@@ -918,7 +958,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
           ) : (
             <Button onClick={() => create.mutate()} disabled={!canCreate || create.isPending}>
               {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <TicketCheck className="h-4 w-4" />}
-              {t('submit', { count: Number.isFinite(n) ? n : 0 })}
+              {create.isPending && phase === 'checking'
+                ? t('checking')
+                : lostAnswer && !create.isPending
+                  ? t('retrySame')
+                  : t('submit', { count: Number.isFinite(n) ? n : 0 })}
             </Button>
           )}
         </DialogFooter>
@@ -1662,6 +1706,9 @@ export default function PrepaidVouchersPage() {
   // `?batch=<id>`: the control board's "שוברים" card opens a voucher's batch directly.
   const searchParams = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('batch'));
+  // The answer of a new batch named an identical one made a moment ago (a lost answer retried
+  // without its key — an old tab, a reload): offered for cancelling, never blocked.
+  const [duplicate, setDuplicate] = useState<PrepaidDuplicateRef | null>(null);
   // The view, the sort and every filter live in the URL (lib/prepaidVoucherFilters.ts): a filtered
   // view is a link, and the views share one set of filters.
   const [page, setPage] = useVoucherPageState();
@@ -1707,6 +1754,10 @@ export default function PrepaidVouchersPage() {
           </Button>
         ) : null}
       </div>
+
+      {duplicate ? (
+        <DuplicateBatchNotice dup={duplicate} onOpen={() => setSelectedId(duplicate.id)} onDone={() => setDuplicate(null)} />
+      ) : null}
 
       {!selected ? <VoucherSearch onPick={onPick} /> : null}
 
@@ -1786,7 +1837,51 @@ export default function PrepaidVouchersPage() {
         </>
       )}
 
-      <CreateBatchDialog open={creating} onOpenChange={setCreating} onCreated={(b) => setSelectedId(b.id)} />
+      <CreateBatchDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(b) => { setSelectedId(b.id); setDuplicate(duplicateOf(b)); }}
+      />
+    </div>
+  );
+}
+
+/**
+ * "נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?" — the earlier identical batch the server named
+ * (`possibleDuplicate`): cancelled through the existing batch cancel, with its reason in the audit.
+ */
+function DuplicateBatchNotice({ dup, onOpen, onDone }: { dup: PrepaidDuplicateRef; onOpen: () => void; onDone: () => void }) {
+  const t = useTranslations('prepaidVouchers.create.duplicate');
+  const errorText = useErrorText();
+  const qc = useQueryClient();
+  const cancel = useMutation({
+    mutationFn: () => cancelPrepaidBatch(dup.id, dup.cancelReason),
+    onSuccess: () => {
+      toast.success(t('cancelled'));
+      void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
+      onDone();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+  const at = dup.createdAt ? new Date(dup.createdAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '';
+  return (
+    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+      <div className="min-w-0 space-y-0.5">
+        <p className="font-medium">{t('title')}</p>
+        <p className="text-xs">{t('details', { name: dup.name, count: dup.count, time: at })}</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={cancel.isPending}
+          onClick={() => { if (window.confirm(t('confirm', { reason: dup.cancelReason }))) cancel.mutate(); }}
+        >
+          {cancel.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />} {t('cancel')}
+        </Button>
+        <Button size="sm" variant="outline" onClick={onOpen}>{t('open')}</Button>
+        <Button size="sm" variant="ghost" onClick={onDone}>{t('keep')}</Button>
+      </div>
     </div>
   );
 }
