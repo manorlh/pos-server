@@ -369,7 +369,8 @@ class TestRemoteClose:
 
         assert w.sent == []
         handed = ZR.take_pending_close_shift(w.db, till, now=NOW)
-        assert handed == {"requestId": str(r.items[0].id), "shiftId": str(open_shift.id)}
+        # Who asked, as the realtime push says it.
+        assert handed == {"requestId": str(r.items[0].id), "shiftId": str(open_shift.id), "initiatedBy": "admin"}
 
     def test_acks_move_the_item_but_never_make_it_ready(self, w):
         till = w.tills[0]

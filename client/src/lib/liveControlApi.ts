@@ -94,6 +94,11 @@ export async function fetchShopClosePreview(shopId: string, areaId?: string | nu
   return (await api.get('/device-commands/shop-close-preview', { params: areaId ? { shopId, areaId } : { shopId } })).data;
 }
 
+/** The points of sale this user may close: all for the shop's manager, their own for an area's manager. */
+export async function fetchAreaCloseList(shopId: string): Promise<import('@/lib/remoteShopClose').AreaCloseList> {
+  return (await api.get('/device-commands/area-close-list', { params: { shopId } })).data;
+}
+
 /** "סגירת משמרות לנקודת מכירה": each till of the area as its own remote close shows it. */
 export async function fetchAreaShiftPreview(shopId: string, areaId: string): Promise<import('@/lib/remoteShopClose').AreaShiftPreview> {
   return (await api.get('/device-commands/area-shift-close-preview', { params: { shopId, areaId } })).data;

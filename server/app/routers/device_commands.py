@@ -243,6 +243,8 @@ def _remote_z_shop(db: Session, user: User, tenant_id, shop_id) -> Shop:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
             "code": "shop_close_needs_whole_shop",
             "message": "סגירת יום סניפית — למנהל הסניף כולו בלבד",
+            # Their own points of sale, each closable on its own (`area-close-list`).
+            "areasOnly": True,
         })
     if not DA.effective_access(db, user).allows("z", DS.EDIT):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "section_forbidden", "section": "z", "level": DS.EDIT})
@@ -447,7 +449,36 @@ class AreaShiftCloseIn(BaseModel):
     shop_id: uuid.UUID = Field(..., alias="shopId")
     area_id: uuid.UUID = Field(..., alias="areaId")
     #: Each till the manager confirmed, with the totals key it saw.
-    totals_keys: Dict[str, str] = Field(default_factory=dict, alias="totalsKeys")
+    totals_keys: Dict[uuid.UUID, str] = Field(default_factory=dict, alias="totalsKeys")
+
+
+@router.get("/area-close-list")
+def get_area_close_list(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The shop's points of sale this user may close on their own — every one for the shop's manager,
+    their own for a manager of some points of sale (who has no shop-wide close).
+    """
+    from app.routers.z_runs import _shop_for
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    get_current_machine_admin(current_user)
+    shop = _shop_for(db, shop_id, current_user, active_tenant_id)
+    if not DA.effective_access(db, current_user).allows("z", DS.EDIT):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "section_forbidden", "section": "z", "level": DS.EDIT})
+    narrow = _narrowing(db, current_user)
+    source = remote_till_z.source_of(db, shop)
+    areas = remote_till_z.shop_areas(db, shop) if source["available"] else []
+    if narrow is not None:
+        areas = [a for a in areas if uuid.UUID(a["areaId"]) in narrow.area_ids]
+    return {"shopId": str(shop.id), "wholeShop": narrow is None, "areas": areas}
 
 
 @router.get("/area-shift-close-preview")
@@ -482,8 +513,9 @@ def post_area_shift_close(
     shop = _remote_z_area(db, current_user, active_tenant_id, body.shop_id, body.area_id)
     for machine_id in body.totals_keys:
         # Each till by the machine admins' own scope rules, as its single remote close.
-        _remote_z_machine(db, current_user, active_tenant_id, uuid.UUID(str(machine_id)))
-    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, body.totals_keys)
+        _remote_z_machine(db, current_user, active_tenant_id, machine_id)
+    keys = {str(k): v for k, v in body.totals_keys.items()}
+    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, keys)
     db.commit()
     return out
 

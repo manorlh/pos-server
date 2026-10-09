@@ -23,9 +23,18 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
-import { cancelShopClose, fetchShopClosePreview, fetchShopCloseRun, forceShopClose, proceedShopClose, requestShopClose } from '@/lib/liveControlApi';
+import {
+  cancelShopClose,
+  fetchAreaCloseList,
+  fetchShopClosePreview,
+  fetchShopCloseRun,
+  forceShopClose,
+  proceedShopClose,
+  requestShopClose,
+} from '@/lib/liveControlApi';
 import { money, tenderLabel } from '@/lib/remoteTillZ';
 import {
+  closePanels,
   confirmationAsked,
   forceReasonOk,
   itemTone,
@@ -201,6 +210,29 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The remote control's close section for a shop: the shop's manager gets the shop panel (its points of
+ * sale inside it); a manager of some points of sale gets one panel per own area — the area day close
+ * and the area shift close.
+ */
+export function ShopCloseSection({ shopId }: { shopId: string }) {
+  const list = useQuery({
+    queryKey: ['device-commands', 'area-close-list', shopId],
+    queryFn: () => fetchAreaCloseList(shopId),
+    retry: (count, e) => ![403, 404].includes((e as { response?: { status?: number } })?.response?.status ?? 0) && count < 2,
+    staleTime: 60_000,
+  });
+  const panels = closePanels(list.data);
+  if (panels.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {panels.map((p) => (
+        <ShopClosePanel key={p.areaId ?? 'shop'} shopId={shopId} areaId={p.areaId} />
+      ))}
+    </div>
   );
 }
 

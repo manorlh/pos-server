@@ -126,6 +126,7 @@ GET /demo-menu/status -> products:view
 GET /demo-menu/templates -> products:view
 GET /device-commands -> device_control:view
 POST /device-commands -> device_control:edit
+GET /device-commands/area-close-list -> device_control:view
 POST /device-commands/area-shift-close -> device_control:edit
 GET /device-commands/area-shift-close-preview -> device_control:view
 POST /device-commands/cancel-held-sales -> device_control:edit

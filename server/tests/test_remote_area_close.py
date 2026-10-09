@@ -209,3 +209,50 @@ def test_one_tills_changed_totals_never_stop_the_others(z):
     res = {r["machineId"]: r for r in out["results"]}
     assert res[str(z.t1.id)]["ok"] is False and res[str(z.t1.id)]["code"] == "totals_changed"
     assert res[str(z.t2.id)]["ok"] is True
+
+
+# ── Follow-ups after the final verification ───────────────────────────────────────────────
+
+
+def test_a_manager_of_some_points_of_sale_reaches_their_own_areas_close(z, monkeypatch):
+    bar = area(z, "Bar", z.t1)
+    kitchen = area(z, "Kitchen", z.t2)
+    selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    # The shop's manager: every point of sale.
+    out = R.get_area_close_list(shop_id=z.shop.id, **_ctx(z))
+    assert out["wholeShop"] is True and [a["areaId"] for a in out["areas"]] == [str(bar.id), str(kitchen.id)]
+    # A manager of the bar only: the bar alone; no shop-wide close (it says to use the areas).
+    monkeypatch.setattr(R, "_narrowing", lambda db, user: SimpleNamespace(area_ids={bar.id}, machine_ids=set(),
+                                                                           covers_path=lambda path: True))
+    out = R.get_area_close_list(shop_id=z.shop.id, **_ctx(z))
+    assert out["wholeShop"] is False and [a["areaId"] for a in out["areas"]] == [str(bar.id)]
+    with pytest.raises(HTTPException) as e:
+        R.get_shop_close_preview(shop_id=z.shop.id, **_ctx(z))
+    assert e.value.status_code == 403 and e.value.detail["areasOnly"] is True
+    # Their own area's day close and shift close both reachable.
+    assert R.get_shop_close_preview(shop_id=z.shop.id, area_id=bar.id, **_ctx(z))["shopClose"]["available"] is True
+    assert R.get_area_shift_close_preview(shop_id=z.shop.id, area_id=bar.id, **_ctx(z))["available"] is True
+
+
+def test_a_non_uuid_till_key_is_refused_as_invalid_never_a_crash(z):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        R.AreaShiftCloseIn.model_validate({"shopId": str(z.shop.id), "areaId": str(uuid.uuid4()), "totalsKeys": {"not-a-uuid": "k"}})
+    ok = R.AreaShiftCloseIn.model_validate({"shopId": str(z.shop.id), "areaId": str(uuid.uuid4()), "totalsKeys": {str(z.t1.id): "k"}})
+    assert list(ok.totals_keys) == [z.t1.id]
+
+
+def test_the_heartbeats_close_instruction_says_who_asked(z):
+    from app.services import remote_close
+
+    bar = area(z, "Bar", z.t1)
+    selling(z, z.t1, 1, "10.00")
+    start_area(z, bar)
+    assert remote_close.take_pending_close_shift(z.db, z.t1, now=NOW)["initiatedBy"] == "admin"
+    # A till's own remote shift close too.
+    selling(z, z.t2, 1, "20.00")
+    p = svc.preview(z.db, z.t2, now=NOW)
+    svc.request(z.db, z.admin, z.t2, totals_key=p["totalsKey"], now=NOW)
+    assert remote_close.take_pending_close_shift(z.db, z.t2, now=NOW)["initiatedBy"] == "admin"

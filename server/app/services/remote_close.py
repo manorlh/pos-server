@@ -97,6 +97,12 @@ def take_pending_close_shift(
         req.sent_at = now
     named = close_requests.named_shift_id(req)
     out = {"requestId": str(req.id), "shiftId": str(named) if named else None}
+    # Who asked, as the realtime push says it (`initiatedBy`).
+    from app.models.user import User
+
+    creator = db.get(User, req.created_by_user_id) if req.created_by_user_id else None
+    if creator is not None:
+        out["initiatedBy"] = z_runs._initiator(creator)
     if getattr(req, "wait_for_rest", False):
         # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
         out["waitForRest"] = True
