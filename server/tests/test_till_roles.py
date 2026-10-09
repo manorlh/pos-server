@@ -216,8 +216,8 @@ class TestLegacy:
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
         eff = TP.legacy_effective("cashier")
         # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
-        # "מחייב אישור מנהל במכירה" did not exist before roles).
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS"}
+        # "מחייב אישור מנהל במכירה", HELD_SALE_CANCEL: "ביטול מכירה מושהית" — neither existed before roles).
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others and leaving the Windows kiosk, which were a manager's alone.
         assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}
@@ -825,3 +825,39 @@ class TestRestrictedItemsPermission:
         w.db.refresh(w.nir)
         assert w.nir.till_role.builtin_key == TP.CASHIER  # the other shop's legacy cashier
         assert S.effective_for_pos_user(w.nir).state("SELL_RESTRICTED_ITEMS") == P
+
+
+# ── "ביטול מכירה מושהית" (HELD_SALE_CANCEL) on every built-in role ────────────────────────────
+
+
+class TestHeldSaleCancelPermission:
+    """
+    Cancelling a held sale at the till (a shift close or Z, app/services/held_sales_close.py): a manager
+    or a supervisor alone; a cashier or a waiter on a manager's code; the legacy roles the same way.
+    """
+
+    EXPECTED = {
+        TP.MANAGER: A, TP.SUPERVISOR: A, TP.CASHIER: P, TP.WAITER: P,
+        TP.LEGACY_MANAGER: A, TP.LEGACY_CASHIER: P,
+    }
+
+    def test_each_built_in_role_as_the_till_pulls_it(self, w):
+        roles(w)
+        for key in (TP.WAITER, TP.CASHIER, TP.SUPERVISOR, TP.MANAGER, TP.LEGACY_CASHIER, TP.LEGACY_MANAGER):
+            R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, key).id), **ctx(w))
+            assert roster(w)["dana"].permissions["HELD_SALE_CANCEL"] == self.EXPECTED[key], key
+
+    def test_users_not_moved_to_a_role_yet_keep_their_legacy_reading(self, w):
+        rows = roster(w)
+        assert rows["dana"].permissions["HELD_SALE_CANCEL"] == P  # a cashier: a manager's code
+        assert rows["boss"].permissions["HELD_SALE_CANCEL"] == A  # a shop manager: alone
+
+    def test_the_roles_editor_shows_it_in_the_sale_group_with_hebrew_words(self, w):
+        catalogue = R.get_catalogue(current_user=w.admin)
+        spec = {p["code"]: p for p in catalogue["permissions"]}["HELD_SALE_CANCEL"]
+        assert spec["group"] == "sale" and spec["label"] == "ביטול מכירה מושהית"
+        builtins = {r["key"]: r for r in catalogue["builtinRoles"]}
+        assert {k: r["permissions"]["HELD_SALE_CANCEL"] for k, r in builtins.items()} == self.EXPECTED
+        # Right after "ביטול שורה" in the catalogue (and in the shared matrix the till reads).
+        codes = list(TP.CODES)
+        assert codes.index("HELD_SALE_CANCEL") == codes.index("LINE_VOID") + 1
