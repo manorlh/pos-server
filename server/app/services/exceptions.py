@@ -163,6 +163,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # A self-order kiosk out of touch with the cloud for ≥ X minutes during its opening hours
     # ("קיוסק לא מחובר"; app/services/kiosk_offline.py records it, and when it came back).
     RuleSpec("kiosk_offline", True, (ParamSpec("offlineMinutes", 5, 1, 240, integer=True),), "high", "kiosk"),
+    # A till with an open shift that stopped talking to the cloud for ≥ X minutes ("קופה לא
+    # מחוברת"; app/services/exception_alerts/till_watch.py records it, and when it came back).
+    RuleSpec("till_offline", True, (ParamSpec("offlineMinutes", 10, 2, 240, integer=True),), "high", "till_event"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",

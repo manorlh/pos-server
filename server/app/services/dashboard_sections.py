@@ -98,8 +98,17 @@ SECTIONS: Tuple[Section, ...] = (
         "מצב הקופות והקיוסקים, ופעולות מרחוק עליהם.",
         (),
     ),
-    Section("live_event", "מצב אירוע חי", "מסך האירוע בזמן אמת.", ()),
-    Section("alerts", "התראות", "התראות על חריגות ותקלות (הרשמה להתראות בטלפון — של המשתמש עצמו).", ()),
+    # "מצב אירוע חי" and "התראות" — their pages and texts are feat/event-live's (one definition each).
+    Section(
+        "live_event", "מצב אירוע חי",
+        "מסך גדול לאירוע: מכירות בזמן אמת מול היעד, קצב, פריטים, קופות, מטבח ושוברים. עריכה: יעד המכירות של האירוע.",
+        ("/dashboard/live-event",),
+    ),
+    Section(
+        "alerts", "התראות",
+        "היסטוריית ההתראות לטלפון (Push) של המשתמש וטיפול בהן. ההרשמה וההעדפות האישיות פתוחות לכל משתמש.",
+        ("/dashboard/alerts",),
+    ),
     Section("stock", "מלאי", "רמות מלאי, קבלת סחורה, ספירה ותיקונים.", ("/dashboard/stock",)),
     Section("vouchers", "שוברים", "שוברי הנחה בקטלוג.", ("/dashboard/vouchers",)),
     Section("prepaid_vouchers", "שוברי הפקה", "שוברים לצוותי הפקה, מומשים בקופות ב-QR.", ("/dashboard/prepaid-vouchers",)),
@@ -250,6 +259,9 @@ def S(*sections: str, level: Optional[str] = None) -> RouteRule:
 
 
 SELF = RouteRule("self")
+#: "עמדת מפיק": the producer's own routes — the only ones a PRODUCER_VIEW user may use
+#: (app/services/dashboard_access.py `enforce_route`), and every one checks the event grant.
+PRODUCER = RouteRule("producer")
 REFERENCE = RouteRule("reference")
 TILL = RouteRule("till")
 SUPER_ADMIN = RouteRule("super_admin")
@@ -262,6 +274,8 @@ _GET = "GET"
 #: (methods, path pattern, rule). Patterns are the route's path after the API prefix: `{}` is
 #: one path parameter, `*` is anything (including nothing). First match wins.
 ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
+    # ── "עמדת מפיק" (feat/event-live): the producer's read-only portal ──
+    (_ALL, "/producer/*", PRODUCER),
     # ── The caller themselves ──
     (_ALL, "/users/me", SELF),
     (_ALL, "/users/me/*", SELF),
@@ -385,6 +399,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/exception-log*", S("reports", "exception_alerts", "alerts", level=VIEW)),
     (_ALL, "/exception-log*", S("reports", "exception_alerts")),
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
+    # "התראות" (feat/event-live): the alerts feed and my history are the section; my own devices
+    # and preferences are mine (the router refuses a producer).
+    (_ALL, "/push/alerts*", S("alerts")),
+    (_GET, "/push/history", S("alerts")),
+    (_ALL, "/push/*", SELF),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
@@ -397,7 +416,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/insights/quick-actions/happy-hours*", S("quick_actions", level=EDIT)),
     ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
-    # "מצב אירוע חי" reads the events (making and confirming one stays a report action).
+    # "מצב אירוע חי" (feat/event-live): the screen reads are view; setting its target is edit.
+    # First: the live screen is its own section, not a report.
+    (_ALL, "/report-events/live/*", S("live_event")),
+    (_ALL, "/report-events/{}/live*", S("live_event")),
+    # An event's producer grants (names and emails) stay the reports' — not the live screen's.
+    (_GET, "/report-events/{}/producers", S("reports", level=VIEW)),
+    # The cockpit's "מצב אירוע חי" reads the events too (making and confirming one stays a report action).
     (_GET, "/report-events*", S("reports", "live_event", level=VIEW)),
     (_ALL, "/report-events*", S("reports")),
     # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.

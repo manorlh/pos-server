@@ -81,8 +81,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'quick_actions', pages: [] },
   { id: 'item_blocks', pages: [] },
   { id: 'device_control', pages: [] },
-  { id: 'live_event', pages: [] },
-  { id: 'alerts', pages: [] },
+  // "מצב אירוע חי" and "התראות" (the phone alerts' history) — their pages are feat/event-live's.
+  { id: 'live_event', pages: ['/dashboard/live-event'] },
+  { id: 'alerts', pages: ['/dashboard/alerts'] },
   { id: 'stock', pages: ['/dashboard/stock'] },
   { id: 'vouchers', pages: ['/dashboard/vouchers'] },
   { id: 'prepaid_vouchers', pages: ['/dashboard/prepaid-vouchers'] },

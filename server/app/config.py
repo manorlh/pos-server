@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
     exception_alerts_worker_enabled: bool = True
 
+    # "התראות לטלפון" (Web Push, app/services/webpush.py): the VAPID key pair, base64url — the
+    # 65-byte public point and the 32-byte private scalar (`python -m scripts.generate_vapid_keys`).
+    # Set only in the environment; never committed. Both empty = phone alerts off.
+    webpush_vapid_public_key: str = ""
+    webpush_vapid_private_key: str = ""
+    # The contact the push services see ("mailto:…" or "https://…"). Empty = the dashboard's
+    # https URL when it has one.
+    webpush_vapid_subject: str = ""
+
     # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
     ably_api_key: str = ""
     

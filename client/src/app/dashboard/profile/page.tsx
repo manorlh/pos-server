@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useAuth } from '@/lib/auth';
+import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
 import { usePageScope } from '@/lib/scope';
 import { updateMyPreferences } from '@/lib/compareApi';
 import { useRoleAccess } from '@/lib/accessApi';
@@ -96,6 +97,7 @@ export default function ProfilePage() {
   const role = internalUser?.role;
 
   const handleSignOut = async () => {
+    await forgetThisBrowserOnSignOut(); // feat/event-live: this browser stops getting the person's alerts
     clearUser();
     await signOut({ redirectUrl: '/sign-in' });
   };

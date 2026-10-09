@@ -72,6 +72,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { entitySelectItems } from '@/lib/selectItems';
+import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
 import { toast } from 'sonner';
 
 /**
@@ -249,6 +250,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   };
 
   const handleSignOut = async () => {
+    await forgetThisBrowserOnSignOut(); // feat/event-live: this browser stops getting the person's alerts
     clearUser();
     await signOut({ redirectUrl: '/sign-in' });
   };

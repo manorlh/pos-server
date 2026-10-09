@@ -78,6 +78,17 @@ class EffectiveAccess:
 
 UNRESTRICTED = EffectiveAccess(restricted=False)
 
+#: "עמדת מפיק" (role PRODUCER_VIEW): no section at all — only the producer routes and a few
+#: about themselves (`PRODUCER_SELF_PATHS`), checked first in `enforce_route`.
+PRODUCER_ACCESS = EffectiveAccess(restricted=True, sections={}, has_profile=False, full_access=False, template="producer")
+PRODUCER_ONLY = "producer_only"
+#: What a producer may read about themselves (GET only): who they are and their organization.
+PRODUCER_SELF_PATHS = frozenset({"/users/me", "/auth/me", "/tenants/mine", "/dashboard-access/me"})
+
+
+def is_producer(user: Any) -> bool:
+    return getattr(user, "role", None) == getattr(UserRole, "PRODUCER_VIEW", None)
+
 #: A user with no profile row: "מנהל ארגון"'s sections, the role's own org scope.
 DEFAULT_ACCESS = EffectiveAccess(
     restricted=True,
@@ -187,6 +198,8 @@ def effective_access(db: Session, user: Any) -> EffectiveAccess:
     """What `user` may open, memoised for the session (one request)."""
     if user is None or getattr(user, "role", None) == UserRole.SUPER_ADMIN:
         return UNRESTRICTED
+    if is_producer(user):
+        return PRODUCER_ACCESS
     user_id = getattr(user, "id", None)
     if user_id is None:
         return UNRESTRICTED
@@ -384,6 +397,10 @@ def check_rule(access: EffectiveAccess, rule: DS.RouteRule, method: str) -> Opti
     """None when allowed, else the 403 to raise."""
     if not access.restricted:
         return None
+    if rule.kind == "producer":
+        # The producer's routes are a producer's (enforce_route lets them through for one);
+        # a restricted dashboard user has no business there.
+        return _refusal(None, rule.needed_level(method))
     if rule.kind in ("self", "reference"):
         return None
     if rule.kind == "any_edit":
@@ -399,8 +416,36 @@ def check_rule(access: EffectiveAccess, rule: DS.RouteRule, method: str) -> Opti
     return _refusal(None, rule.needed_level(method))
 
 
+def _producer_refusal() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": PRODUCER_ONLY, "message": "חשבון מפיק רואה רק את האירועים שנפתחו לו."},
+    )
+
+
+def enforce_producer(request, user: Any) -> None:
+    """
+    "עמדת מפיק": a PRODUCER_VIEW user reaches the producer routes and the few GETs about
+    themselves — nothing else in the business, whatever the route's own checks would say.
+    """
+    scope = getattr(request, "scope", None) if request is not None else None
+    route = scope.get("route") if isinstance(scope, dict) else None
+    if route is None:
+        raise _producer_refusal()
+    method = (getattr(request, "method", "GET") or "GET").upper()
+    rule = classify(route, method)
+    if rule.kind == "producer":
+        return
+    if method in ("GET", "HEAD") and _api_path(getattr(route, "path", "") or "") in PRODUCER_SELF_PATHS:
+        return
+    raise _producer_refusal()
+
+
 def enforce_route(request, db: Session, user: Any) -> None:
     """Refuse the request when `user` may not use this route (403 `section_forbidden`)."""
+    if is_producer(user):
+        enforce_producer(request, user)
+        return
     if request is None or user is None or getattr(user, "role", None) == UserRole.SUPER_ADMIN:
         return
     scope = getattr(request, "scope", None)

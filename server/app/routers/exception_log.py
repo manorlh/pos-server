@@ -179,7 +179,8 @@ def _labels(db: Session, rows: List[ExceptionLogEntry]) -> Dict[str, Dict[Any, A
     )
     dispatches = (
         db.query(ExceptionAlertDispatch)
-        .filter(ExceptionAlertDispatch.entry_id.in_(entry_ids))
+        # The SMS attempts only: a phone (push) attempt is its user's own (GET /push/history).
+        .filter(ExceptionAlertDispatch.entry_id.in_(entry_ids), ExceptionAlertDispatch.channel == "sms")
         .order_by(ExceptionAlertDispatch.created_at)
         .all() if entry_ids else []
     )
@@ -205,6 +206,8 @@ def _iso(value) -> Optional[str]:
 def dispatch_json(d: ExceptionAlertDispatch, rule_names: Dict[Any, str]) -> Dict[str, Any]:
     return {
         "id": str(d.id),
+        # "sms" | "push" ("התראות לטלפון": the recipient is the device's label).
+        "channel": getattr(d, "channel", None) or "sms",
         "ruleId": str(d.rule_id) if d.rule_id else None,
         "ruleName": rule_names.get(d.rule_id),
         "kind": d.kind,

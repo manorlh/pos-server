@@ -13,6 +13,9 @@
   failed / suppressed (rate limit, quiet hours, stale), with the rule, the entry, the
   masked recipient and the text. Never the full phone number (only a keyed hash + mask).
 * `exception_alert_rule_changes` — who changed a rule, when, before → after (append only).
+* "התראות לטלפון" (Web Push) extends the same three: a rule with `channel = "push"` is one
+  dashboard user's preferences (alert types, shops / events, quiet hours, rate limit, digest),
+  its dispatches go to the devices in `push_subscriptions` (app/services/exception_alerts/push.py).
 """
 import uuid
 
@@ -34,6 +37,11 @@ from sqlalchemy.sql import func
 from app.database import Base
 
 SEVERITIES = ("low", "medium", "high")
+
+# Channels of a rule and of a dispatch.
+CHANNEL_SMS = "sms"
+CHANNEL_PUSH = "push"
+CHANNELS = (CHANNEL_SMS, CHANNEL_PUSH)
 
 # Dispatch kinds and statuses.
 DISPATCH_ALERT = "alert"
@@ -127,10 +135,23 @@ class ExceptionAlertRule(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     #: The company it watches (and its sub-companies); `shop_id` narrows it to one shop.
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    #: Null for a phone (push) rule: it follows its owner's reach (app/services/exception_alerts/push.py).
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True)
     name = Column(String(120), nullable=False)
     enabled = Column(Boolean, nullable=False, default=True, server_default="true")
+
+    #: "sms" (the company's rules, phone numbers) | "push" ("התראות לטלפון": one rule per
+    #: dashboard user and tenant — its owner's preferences, delivered to their subscribed devices).
+    channel = Column(String(12), nullable=False, default=CHANNEL_SMS, server_default=CHANNEL_SMS)
+    #: A push rule's owner (and only recipient).
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    #: A push rule: which alert types (push.CATEGORIES keys) — instead of `kinds`.
+    categories = Column(JSONB, nullable=True)
+    #: A push rule: only these shops / these events (ids as strings); null or empty = everything
+    #: its owner may see. Both set: either matches.
+    shop_ids = Column(JSONB, nullable=True)
+    event_ids = Column(JSONB, nullable=True)
 
     #: The kinds it fires on; empty = every kind (narrowed by `min_severity`).
     kinds = Column(JSONB, nullable=False, default=list, server_default="[]")
@@ -171,11 +192,17 @@ class ExceptionAlertDispatch(Base):
         Index("ix_exception_alert_dispatches_digest", "digest_id"),
         # The digest pass, every minute: held-back rows not summed up yet.
         Index("ix_exception_alert_dispatches_pending", "status", "digest_id"),
+        # "התראות לטלפון": one user's history.
+        Index("ix_exception_alert_dispatches_user_created", "user_id", "created_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     rule_id = Column(UUID(as_uuid=True), ForeignKey("exception_alert_rules.id"), nullable=True)
+    #: "sms" | "push". A push dispatch: the user it went to and the device (subscription).
+    channel = Column(String(12), nullable=False, default=CHANNEL_SMS, server_default=CHANNEL_SMS)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    subscription_id = Column(UUID(as_uuid=True), nullable=True)
     #: The log entry it is about (null for a digest or a test message).
     entry_id = Column(UUID(as_uuid=True), ForeignKey("exception_log.id"), nullable=True)
     #: alert | digest | test
@@ -199,6 +226,42 @@ class ExceptionAlertDispatch(Base):
     created_by = Column(UUID(as_uuid=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     sent_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class PushSubscription(Base):
+    """
+    "התראות לטלפון": one browser / phone a dashboard user subscribed for Web Push (the
+    dashboard is a PWA). The endpoint and its keys come from the browser's PushManager; they
+    are the device's address, not a secret of ours. A device that signs in as someone else
+    moves to that user. The push service answering 404 / 410 (unsubscribed, expired) turns
+    it off (`disabled_at`); it is never sent to again.
+    """
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("endpoint_hash", name="uq_push_subscriptions_endpoint_hash"),
+        Index("ix_push_subscriptions_user", "user_id", "disabled_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    #: The tenant it was subscribed from (informative; the rules decide what it receives).
+    tenant_id = Column(UUID(as_uuid=True), nullable=True)
+    endpoint = Column(Text, nullable=False)
+    #: SHA-256 of the endpoint (unique; an endpoint may be longer than an index allows).
+    endpoint_hash = Column(String(64), nullable=False)
+    p256dh = Column(String(200), nullable=False)
+    auth = Column(String(100), nullable=False)
+    #: "Chrome · Android" — what the person sees in their devices list.
+    label = Column(String(120), nullable=True)
+    user_agent = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_failure_at = Column(DateTime(timezone=True), nullable=True)
+    failure_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_error = Column(String(200), nullable=True)
+    disabled_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class ExceptionAlertRuleChange(Base):

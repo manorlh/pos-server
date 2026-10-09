@@ -703,6 +703,7 @@ export default function DashboardPage() {
               {tO('liveItems')}
             </Link>
           ) : null}
+          {/* "מצב אירוע חי" is the cockpit's quick action (registry `liveEvent`), not a chip here. */}
           {canMessageTills ? (
             <Link href="/dashboard/till-messages" className={chip}>
               <Megaphone className="size-4 text-cb-muted" aria-hidden />
