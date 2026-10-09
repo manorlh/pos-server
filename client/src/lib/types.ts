@@ -1800,7 +1800,31 @@ export interface ZRun {
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
   /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
   force?: boolean;
+  /**
+   * "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (pos-server app/services/cloud_refund_z_gate.py): the
+   * credit notes the run's tills still owe; `cloudRefundsHold` while one holds the Z.
+   */
+  pendingCloudRefunds?: CloudRefundPending[];
+  cloudRefundsHold?: boolean;
+  cloudRefundsMessage?: string | null;
   items: ZRunItem[];
+}
+
+/** A cloud card refund whose credit note a till of a Z still owes ("זיכוי אשראי מהענן ממתין להפקה (₪X)"). */
+export interface CloudRefundPending {
+  refundId: string;
+  transactionId?: string;
+  amount: string;
+  originalDocumentNumber?: string | null;
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  /** The Z closes that till's open shift: the till issues the note into it first (shown, not holding). */
+  landsInThisZ: boolean;
+  words: string;
+  message: string;
+  /** Only on a refund that does not hold its Z (`cloudCardRefundBlocksNextZ` off). */
+  warning?: string;
 }
 
 export type ShiftCloseRequestStatus =

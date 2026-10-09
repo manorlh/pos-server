@@ -79,6 +79,11 @@ export interface ShopCloseRun {
   commands: ShopCloseCommand[];
   /** One line per till the Z went ahead without waiting for (offline since a report of no shift open). */
   warnings?: string[];
+  /** "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": the notes the run's tills still owe, and support's force. */
+  pendingCloudRefunds?: import('./types').CloudRefundPending[];
+  cloudRefundsHold?: boolean;
+  cloudRefundsMessage?: string | null;
+  forceCloudRefundsAllowed?: boolean;
 }
 
 export interface ShiftGuardBlocker {
@@ -138,8 +143,24 @@ export interface ShopClosePreview {
   run: ShopCloseRun | null;
   /** "חסימת Z כשיש משמרות פתוחות": on here, and the tills holding the Z now (מנותקת / משמרת פתוחה / ממתין לקבלה). */
   shiftGuard: ShiftGuard;
-  /** `forceStartAllowed`: a super admin may start past tills in "מצב לא ידוע", with a typed reason. */
-  shopClose: { label: string; available: boolean; whyNot: string | null; forceStartAllowed?: boolean };
+  /**
+   * `forceStartAllowed`: a super admin may start past tills in "מצב לא ידוע", with a typed reason;
+   * `forceCloudRefundAllowed`: past cloud card refunds whose credit note the Z would go without.
+   */
+  shopClose: {
+    label: string;
+    available: boolean;
+    whyNot: string | null;
+    forceStartAllowed?: boolean;
+    forceCloudRefundAllowed?: boolean;
+  };
+  /** The cloud card refunds' notes the shop Z's tills still owe (`hold`: one holds the close). */
+  cloudRefundGuard?: {
+    pending: import('./types').CloudRefundPending[];
+    hold: boolean;
+    message: string | null;
+    warnings: import('./types').CloudRefundPending[];
+  };
   /** What the build takes besides: shop-Z documents of tills that make their own Z now. */
   leftovers?: { machineId: string; name: string; posNumber: string | null; shifts: number; net: number }[];
   totalsKey: string;

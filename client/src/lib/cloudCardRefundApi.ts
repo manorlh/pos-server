@@ -44,6 +44,12 @@ export async function resolveCloudCardRefund(
   return data;
 }
 
+/** Support's release of a refund from the next Z of its note's till (super admin, typed reason). */
+export async function releaseCloudCardRefundFromZ(id: string, reason: string): Promise<CloudCardRefund> {
+  const { data } = await api.post<CloudCardRefund>(`/cloud-card-refunds/${id}/release-z`, { reason });
+  return data;
+}
+
 export async function resendCloudCardRefund(id: string, machineId: string, force = false): Promise<CloudCardRefund> {
   const { data } = await api.post<CloudCardRefund>(`/cloud-card-refunds/${id}/resend`, { machineId, force });
   return data;

@@ -119,6 +119,18 @@ export interface RemoteCreditTarget {
   lastHeartbeatAt?: string | null;
   openShift?: { id: string; openedAt?: string | null; sequenceNumber?: number | null } | null;
   isOriginalTill: boolean;
+  areaId?: string | null;
+  /**
+   * A cloud card refund's target only (SPEC_REMOTE_CREDIT.md §11.8): where its credit note lands —
+   * the open shift, or (`cloudCardRefundLanding = open_or_next_shift`) the till's next shift — in
+   * the server's words ("ייכנס למשמרת הבאה בקופה X — חובה לפני ה-Z הבא").
+   */
+  landing?: 'open_shift' | 'next_shift' | null;
+  landingWords?: string | null;
+  /** `cloudCardRefundBlocksNextZ` of that till: its next Z waits for the note. */
+  blocksNextZ?: boolean;
+  /** Shares the sale's Z-Credit terminal (its branch / point of sale); always true for a till's own terminal. */
+  sameBranch?: boolean;
 }
 
 export interface RemoteCreditPrepareLine {
@@ -158,6 +170,8 @@ export interface RemoteCreditPrepare {
   pendingRequests: RemoteCreditRequest[];
   reasons: { code: string; label: string }[];
   preparedExpiryHours: number;
+  /** A cloud card refund's prepare only: the till the server proposes for the credit note (§11.8). */
+  defaultTargetId?: string | null;
 }
 
 export interface RemoteCreditCreateBody {
