@@ -203,6 +203,27 @@ class TestFlagOff:
         R._path(s.db, s.users.h_shop_manager, s.tid, "shop", s.h_shop.id)  # not narrowed while off
 
 
+class TestRefunds:
+    def test_a_refund_at_another_till_goes_back_where_the_sale_took_it(self, s):
+        _levels(s, ["shop", "area"])
+        _set(s, s.bar_loc, 5)
+        sale_tx = uuid.uuid4()
+        stock_service.apply_movement(
+            s.db, movement_id=uuid.uuid4(), tenant_id=s.tid, shop_id=s.h_shop.id, product_id=s.P.id, delta=-D(1),
+            reason=StockMovementReason.SALE, occurred_at=datetime.now(timezone.utc), machine_id=s.h1.id,
+            transaction_id=sale_tx, location=stock_service.sale_location(s.db, s.h1, s.P.id),
+        )
+        s.db.commit()
+        # Refunded at the lobby's till (h2): back to the bar, not the lobby.
+        assert stock_service.refund_location(s.db, sale_tx, s.P.id) == s.bar_loc
+        assert stock_service.sale_location(s.db, s.h2, s.P.id) == s.lobby_loc
+        # The bar no longer managed: the refunding till's own location then.
+        s.db.query(StockLevelSetting).delete()
+        s.db.commit()
+        _levels(s, ["shop"])
+        assert stock_service.refund_location(s.db, sale_tx, s.P.id) is None
+
+
 class TestAtomicWrites:
     """The review's scenario: two documents moving the same product, and two tills' first sale."""
 

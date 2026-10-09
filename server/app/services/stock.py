@@ -151,6 +151,38 @@ def sale_location(db: Session, machine: Any, product_id: Any, *, path: Optional[
     return L.sell_from(path, managed)
 
 
+def refund_location(db: Session, original_transaction_id: Any, product_id: Any) -> Optional[Location]:
+    """
+    Where the original sale took the product from — a refund puts it back there (a sale at the bar
+    refunded at the lobby's till returns to the bar), while that location still holds the product's
+    stock; else None (the refunding till's own location then).
+    """
+    if original_transaction_id is None or product_id is None:
+        return None
+    global_pid = _resolve_global_product_id(db, product_id)
+    if global_pid is None:
+        return None
+    row = (
+        db.query(StockMovement.level, StockMovement.target_id)
+        .filter(
+            StockMovement.transaction_id == original_transaction_id,
+            StockMovement.product_id == global_pid,
+            StockMovement.delta < 0,
+        )
+        .order_by(StockMovement.created_at, StockMovement.id)
+        .first()
+    )
+    if row is None or row.target_id is None:
+        return None
+    loc = Location(row.level or "shop", row.target_id)
+    try:
+        path = L.location_path(db, loc)
+    except LookupError:
+        return None
+    product = db.get(Product, global_pid)
+    return loc if loc.level in L.managed_for(db, path, product) else None
+
+
 # ── Applying a movement ──────────────────────────────────────────────────────
 
 
