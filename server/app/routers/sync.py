@@ -1291,6 +1291,7 @@ async def machine_upload_product_image(
     product_id: str,
     file: UploadFile = File(...),
     keep_background: bool = Query(False, alias="keepBackground"),
+    enhance: bool = Query(True, alias="enhance"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
@@ -1299,6 +1300,9 @@ async def machine_upload_product_image(
     A product's picture taken or picked on the till: stored as the dashboard's upload
     stores it — the background cut out unless `keepBackground`, the upload kept beside
     it (`originalUrl`, to go back to with a product update) — and set on the product.
+    "שפר תמונה" (`enhance`, on unless the till says false): the same enhancement the till
+    applied to the picture it shows (app/services/product_image_processing.py `enhance_image`),
+    so the cloud's refined picture (`processed`: not the bytes sent) replaces it looking alike.
     The picture is the product's own, so only for a product this shop alone lists
     (403 `shared_product_master_readonly`), as for every master field from a till.
     """
@@ -1314,7 +1318,9 @@ async def machine_upload_product_image(
     contents = await file.read()
     if len(contents) > images._MAX_SIZE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
-    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    # Called directly (a test), the Query default is not a bool: the till's default, on.
+    enhance = enhance if isinstance(enhance, bool) else True
+    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background, enhance=enhance)
     product.image_url = stored.url
     _audit(
         db,
@@ -1323,7 +1329,8 @@ async def machine_upload_product_image(
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=product.id,
-        note="image" + (" background removed" if stored.background_removed else ""),
+        note="image" + (" background removed" if stored.background_removed else "")
+        + (" enhanced" if stored.enhanced else ""),
     )
     db.commit()
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
@@ -1331,6 +1338,7 @@ async def machine_upload_product_image(
         "url": stored.url,
         "originalUrl": stored.original_url,
         "backgroundRemoved": stored.background_removed,
+        "processed": stored.processed,
     }
 
 
