@@ -127,3 +127,27 @@ class ReportEventMachine(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     event = relationship("ReportEvent", back_populates="machines")
+
+
+class ReportEventMachineChange(Base):
+    """
+    "שיוך קופות מהיר לאירוע": every till added to, removed from or moved between events, by whom
+    and when — a move is two rows (out of the other event, into this one), each naming the other.
+    Append only.
+    """
+
+    __tablename__ = "report_event_machine_changes"
+    __table_args__ = (Index("ix_report_event_machine_changes_event", "event_id", "created_at"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    #: Not foreign keys: the history outlives a deleted draft event.
+    event_id = Column(UUID(as_uuid=True), nullable=False)
+    machine_id = Column(UUID(as_uuid=True), nullable=False)
+    #: "added" | "removed" | "moved_in" | "moved_out"
+    action = Column(String(16), nullable=False)
+    #: A move: the event it came from (moved_in) or went to (moved_out).
+    other_event_id = Column(UUID(as_uuid=True), nullable=True)
+    other_event_name = Column(String(120), nullable=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

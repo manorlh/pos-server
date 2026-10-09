@@ -1,6 +1,10 @@
 """
 Temporary events ("אירועים") — tills grouped at report level only (docs/SPEC_EVENTS.md).
 
+A till in an overlapping draft event is never taken silently: create, edit and the bulk
+assignment refuse it (409 `till_in_overlapping_event`) unless it is named in the move list
+("העבר לאירוע הזה"), which takes editing that other event as well.
+
 Dashboard-only (Clerk/user JWT + X-Tenant-Id). Reading follows the shop's access (as
 "sales by area"); creating, editing, deleting and confirming take a managing role
 (super admin, distributor, company manager, shop manager) as well. Nothing here writes to
@@ -13,6 +17,8 @@ GET    /report-events/compare?ids=a,b       → 2–6 events side by side
 GET    /report-events/{id}                  → the event
 PUT    /report-events/{id}                  → edit (draft only)
 DELETE /report-events/{id}                  → delete (draft only)
+POST   /report-events/{id}/tills            → add / remove / move tills in one go, all or nothing (draft only)
+GET    /report-events/{id}/till-changes     → who added, removed or moved which till, and when
 GET    /report-events/{id}/report           → the producer report (the snapshot once confirmed)
 GET    /report-events/{id}/readiness        → what stands between the event and its confirmation
 GET    /report-events/{id}/export           → the report as Excel (`bucket` 15 / 30 / 60)
@@ -30,7 +36,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user
 from app.models.user import User
-from app.schemas.report_event import ReportEventConfirm, ReportEventCreate, ReportEventUpdate
+from app.schemas.report_event import (
+    ReportEventConfirm,
+    ReportEventCreate,
+    ReportEventTillsChange,
+    ReportEventUpdate,
+)
 from app.services.report_events import crud as C
 from app.services.report_events.export import XLSX_MEDIA_TYPE, build_workbook, file_name
 from app.services.report_events.report import event_block, report_for
@@ -56,8 +67,12 @@ def create_report_event(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    event = C.create_event(db, current_user, active_tenant_id, body)
-    db.commit()
+    try:
+        event = C.create_event(db, current_user, active_tenant_id, body)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(event)
     return event_block(db, event)
 
@@ -112,8 +127,12 @@ def update_report_event(
     db: Session = Depends(get_db),
 ):
     event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
-    event = C.update_event(db, current_user, active_tenant_id, event, body)
-    db.commit()
+    try:
+        event = C.update_event(db, current_user, active_tenant_id, event, body)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(event)
     return event_block(db, event)
 
@@ -129,6 +148,42 @@ def delete_report_event(
     C.delete_event(db, event)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{event_id}/tills")
+def change_report_event_tills(
+    event_id: uuid.UUID,
+    body: ReportEventTillsChange,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שיוך קופות מהיר לאירוע": add, remove and move tills in one transaction. Any refusal rolls
+    the whole request back — no till moves unless every till does.
+    """
+    try:
+        event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
+        changes = C.change_tills(
+            db, current_user, active_tenant_id, event, add=body.add, remove=body.remove, move=body.move,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(event)
+    return {**event_block(db, event), "changes": changes}
+
+
+@router.get("/{event_id}/till-changes")
+def get_report_event_till_changes(
+    event_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    event = C.load_event(db, current_user, active_tenant_id, event_id)
+    return {"changes": C.till_changes(db, event)}
 
 
 @router.get("/{event_id}/report")
