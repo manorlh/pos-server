@@ -289,11 +289,7 @@ class TestCommands:
             rule = DS.rule_for("POST", path)
             assert (rule.kind, rule.sections, rule.needed_level("POST")) == ("section", ("reports",), "edit")
         rule = DS.rule_for("GET", "/failed-payments/{attempt_id}/card-commands")
-        # Reading is the list's: whoever reads `GET /failed-payments` (reports, Z — and since the
-        # cockpit's review fixes, "הניהול שלי") reads a payment's commands, at view.
-        listing = DS.rule_for("GET", "/failed-payments")
-        assert (rule.sections, rule.needed_level("GET")) == (listing.sections, "view")
-        assert {"reports", "z"} <= set(rule.sections)
+        assert (rule.sections, rule.needed_level("GET")) == (("reports", "z"), "view")
 
     def test_only_an_unresolved_attempt_with_a_vuid(self, cw):
         till = cw.tills[0]

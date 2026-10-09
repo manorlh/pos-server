@@ -74,8 +74,10 @@ const INSIGHT_ACTION_GATE: CockpitGate = { sections: ['quick_actions'], level: '
 const TILL_MESSAGE_GATE: CockpitGate = { sections: ['till_messages', 'quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES };
 
 /**
- * `GET /failed-payments` and `GET /failed-payments/*` (`reports|z|cockpit:view`, no role check): the
- * feed and its review sheet, which only reads. Deciding one stays a reports edit, on its page.
+ * The LIST, `GET /failed-payments` (`reports|z|cockpit:view`, no role check): the feed and its
+ * review sheet read only it. A payment's own routes are not the cockpit's — reading its decision
+ * commands (`GET /failed-payments/*`) is `reports|z`, deciding is a reports edit — and stay on the
+ * transactions page; anything here that calls them must be gated `reports|z` on its own.
  */
 const FAILED_PAYMENTS_GATE: CockpitGate = { sections: ['reports', 'z', 'cockpit'], level: 'view' };
 
