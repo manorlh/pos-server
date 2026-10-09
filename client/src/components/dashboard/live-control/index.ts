@@ -4,7 +4,8 @@
  * own dialog while mounted.
  */
 export { BlockItemSheet } from './block-item-sheet';
-export { ActiveBlocksList, useActiveBlocks } from './active-blocks';
+export { ActiveBlocksList, useActiveBlocks, type ActiveBlocksFilters } from './active-blocks';
+export { ProductBlocksSection } from './product-blocks-section';
 export { DeviceControlSheet, DeviceControlPanel, useDevices } from './device-control-sheet';
 export { ShopClosePanel } from './shop-close-panel';
 export { KioskControlSheet, KioskControlPanel, useKioskLive } from './kiosk-control-sheet';

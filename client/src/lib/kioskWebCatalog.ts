@@ -87,6 +87,8 @@ export interface WebProduct {
   imageLarge: string | null;
   soldOut: boolean;
   available: boolean;
+  /** A block's own look on the kiosks ("hide" / "grey"; null: `soldOutMode`) — lib/kioskConfig.ts `kioskCatalogView`. */
+  kioskDisplay?: 'hide' | 'grey' | null;
   description: string | null;
   categoryId: string | null;
   dietaryTags: WebDietaryTag[];
@@ -212,6 +214,7 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
         imageLarge: sizedImage(url, 960),
         soldOut: !available,
         available,
+        kioskDisplay: p.kioskDisplay === 'hide' ? 'hide' : p.kioskDisplay === 'grey' ? 'grey' : null,
         description: str(p.description),
         categoryId: (p.categoryId as string) ?? null,
         dietaryTags: DIETARY.filter((t) => tags.has(t)),

@@ -428,6 +428,20 @@ describe('kioskCatalogView', () => {
     assert.deepEqual(shape(view({}, 'hide')), ['drinks:cola,water', 'mains:burger,salad', 'desserts:cake']);
   });
 
+  it("follows a block's own look: hide leaves it out, grey keeps it greyed where sold out hides", () => {
+    // pos-server specs/item-blocks-targets.md: the catalog row's `kioskDisplay`.
+    const looks = [
+      { id: 'cola', categoryId: 'drinks', available: false, kioskDisplay: 'grey' as const },
+      { id: 'water', categoryId: 'drinks', available: false, kioskDisplay: 'hide' as const },
+      { id: 'juice', categoryId: 'drinks', available: false, kioskDisplay: null },
+    ];
+    const cfg = (soldOutMode: 'disable' | 'hide') => ({ catalog: KIOSK_DEFAULTS.catalog, general: { soldOutMode } });
+    const ids = (soldOutMode: 'disable' | 'hide') =>
+      kioskCatalogView(categories, looks, cfg(soldOutMode)).categories.flatMap((c) => c.products.map((p) => `${p.product.id}${p.soldOut ? '*' : ''}`));
+    assert.deepEqual(ids('disable'), ['cola*', 'juice*']);
+    assert.deepEqual(ids('hide'), ['cola*']);
+  });
+
   it('keeps everything, marked, for the editor', () => {
     const v = view({ hiddenCategories: ['mains'], hiddenProducts: ['cake'] }, 'disable', true);
     assert.deepEqual(shape(v), ['drinks:cola,water,juice', 'mains:burger,salad', 'desserts:cake', 'empty:']);

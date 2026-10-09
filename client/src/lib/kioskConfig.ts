@@ -2051,6 +2051,12 @@ export interface CatalogProductIn {
   categoryId: string | null;
   /** False = sold out ("אזל") at this kiosk. */
   available?: boolean;
+  /**
+   * A block's own look on the kiosks (pos-server specs/item-blocks-targets.md): "hide" — left out
+   * whatever `soldOutMode` says; "grey" — kept, greyed "אזל", even where `soldOutMode` hides; absent
+   * or null — `soldOutMode` decides.
+   */
+  kioskDisplay?: 'hide' | 'grey' | null;
 }
 
 export interface CatalogViewProduct<P> {
@@ -2093,7 +2099,8 @@ function orderBy<T extends { id: string }>(items: readonly T[], order: readonly 
  * - categories in `categoryOrder` first, the rest after them in the till's order;
  * - in each category, `productOrder[categoryId]` first, the rest in the till's order;
  * - hidden categories / products left out, and sold-out products left out when
- *   `soldOutMode` is "hide" (else kept, marked sold out);
+ *   `soldOutMode` is "hide" (else kept, marked sold out) — a block's own look first: "hide" leaves
+ *   it out, "grey" keeps it greyed (`kioskDisplay`, pos-server specs/item-blocks-targets.md);
  * - a category with no product left to show is left out;
  * - `featured` = `featuredProductIds` in order, among the products that are shown.
  * `includeHidden` keeps everything (the editor), marked `hidden`.
@@ -2127,7 +2134,8 @@ export function kioskCatalogView<C extends CatalogCategoryIn, P extends CatalogP
     const rows: CatalogViewProduct<P>[] = [];
     for (const p of orderBy(byCategory.get(c.id) ?? [], cat.productOrder?.[c.id])) {
       const soldOut = p.available === false;
-      const hidden = hiddenProducts.has(p.id) || (soldOut && hideSoldOut);
+      const look = p.kioskDisplay ?? null;
+      const hidden = hiddenProducts.has(p.id) || look === 'hide' || (soldOut && hideSoldOut && look !== 'grey');
       if (hidden && !includeHidden) continue;
       const row = { product: p, hidden, soldOut, featured: featuredIds.has(p.id) };
       rows.push(row);

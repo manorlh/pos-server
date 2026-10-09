@@ -2,7 +2,16 @@
  * "שליטה חיה" API calls (pos-server app/routers/item_blocks.py, device_commands.py, kiosk_live.py).
  */
 import { api } from '@/lib/api';
-import type { BlockKind, BlockScope, DeviceAction, DeviceRow, DurationChoice, ItemBlock } from '@/lib/liveControl';
+import type {
+  BlockKind,
+  BlockScope,
+  BlockTarget,
+  DeviceAction,
+  DeviceRow,
+  DurationChoice,
+  ItemBlock,
+  KioskDisplay,
+} from '@/lib/liveControl';
 
 export interface BlockTargets {
   company: { id: string; name: string } | null;
@@ -23,11 +32,27 @@ export interface BlockTargets {
 export interface BlockScopeIds {
   companyId?: string | null;
   shopId?: string | null;
+  /** The product's own blocks and its category's (and above). */
   productId?: string | null;
+  /** That category's blocks. */
+  categoryId?: string | null;
+  /** "חסומים כעת" of a point of sale: the blocks that reach a device of it. */
+  areaId?: string | null;
+  /** As the block means it: "all" / "kiosks" / "tills". */
+  target?: BlockTarget | null;
 }
 
 export const liveKeys = {
-  blocks: (s: BlockScopeIds) => ['item-blocks', s.companyId ?? null, s.shopId ?? null, s.productId ?? null] as const,
+  blocks: (s: BlockScopeIds) =>
+    [
+      'item-blocks',
+      s.companyId ?? null,
+      s.shopId ?? null,
+      s.productId ?? null,
+      s.categoryId ?? null,
+      s.areaId ?? null,
+      s.target ?? null,
+    ] as const,
   targets: (shopId: string) => ['item-blocks', 'targets', shopId] as const,
   devices: (s: { companyId?: string | null; shopId?: string | null }) => ['device-commands', 'devices', s.companyId ?? null, s.shopId ?? null] as const,
   kiosks: (s: { companyId?: string | null; shopId?: string | null }) => ['kiosks', 'live', s.companyId ?? null, s.shopId ?? null] as const,
@@ -38,6 +63,9 @@ export async function fetchBlocks(s: BlockScopeIds, includeEnded = false): Promi
   if (s.companyId) params.companyId = s.companyId;
   if (s.shopId) params.shopId = s.shopId;
   if (s.productId) params.productId = s.productId;
+  if (s.categoryId) params.categoryId = s.categoryId;
+  if (s.areaId) params.areaId = s.areaId;
+  if (s.target) params.target = s.target;
   if (includeEnded) params.includeEnded = 'true';
   return (await api.get('/item-blocks', { params })).data;
 }
@@ -50,13 +78,21 @@ export async function previewEnd(choice: DurationChoice, shopId?: string | null)
   return (await api.post('/item-blocks/end-preview', { ...choice, shopId: shopId ?? undefined })).data;
 }
 
-export async function createBlocks(body: {
-  productId: string;
-  kind: BlockKind;
-  note?: string;
-  targets: { scope: BlockScope; scopeId: string }[];
-  duration: DurationChoice;
-}): Promise<{ blocks: ItemBlock[]; until: string | null; rolled: boolean }> {
+/** What a block is on: a product, or a whole category — exactly one. */
+export type BlockItemRef = { productId: string; categoryId?: never } | { categoryId: string; productId?: never };
+
+export async function createBlocks(
+  body: BlockItemRef & {
+    kind: BlockKind;
+    /** "קופות וקיוסקים" (default) / "קיוסקים בלבד" / "קופות בלבד", on every target's level. */
+    target?: BlockTarget;
+    /** The kiosks' look; null = their own setting. */
+    kioskDisplay?: KioskDisplay | null;
+    note?: string;
+    targets: { scope: BlockScope; scopeId: string }[];
+    duration: DurationChoice;
+  },
+): Promise<{ blocks: ItemBlock[]; until: string | null; rolled: boolean }> {
   return (await api.post('/item-blocks', body)).data;
 }
 
@@ -68,8 +104,10 @@ export async function clearBlock(id: string): Promise<ItemBlock> {
   return (await api.delete(`/item-blocks/${id}`)).data;
 }
 
-export async function clearProductBlocks(productId: string, shopId?: string | null): Promise<{ cleared: number }> {
-  return (await api.post('/item-blocks/clear', { productId, shopId: shopId ?? undefined })).data;
+/** Every block in force of the product (a string) or of the category. */
+export async function clearProductBlocks(item: string | BlockItemRef, shopId?: string | null): Promise<{ cleared: number }> {
+  const ref = typeof item === 'string' ? { productId: item } : item;
+  return (await api.post('/item-blocks/clear', { ...ref, shopId: shopId ?? undefined })).data;
 }
 
 // ── Devices ──────────────────────────────────────────────────────────────────
@@ -190,7 +228,13 @@ export interface KioskLiveRow {
   banner: { message: string; until: string | null; by: string | null; since: string | null } | null;
 }
 
-export interface KioskHide {
+/**
+ * "מוסתר עכשיו בקיוסקים": a hand block in force that reaches the shop's kiosks (pos-server
+ * app/services/kiosk_live.py `hides_out`) — the old keys (`kind` product / category, `itemId`,
+ * `itemName`) and the block's own (its `kind` as `blockKind`, level, target, kiosk look…).
+ */
+export interface KioskHide
+  extends Partial<Omit<ItemBlock, 'id' | 'kind' | 'shopId' | 'until' | 'secondsLeft' | 'note' | 'by' | 'itemName'>> {
   id: string;
   shopId: string;
   kind: 'product' | 'category';
@@ -200,6 +244,8 @@ export interface KioskHide {
   secondsLeft: number | null;
   note: string | null;
   by: string | null;
+  /** The block's "אזל" / "חסום". */
+  blockKind?: BlockKind;
 }
 
 export async function fetchKioskLive(s: { companyId?: string | null; shopId?: string | null }): Promise<{ kiosks: KioskLiveRow[]; hides: KioskHide[] }> {

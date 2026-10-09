@@ -87,6 +87,8 @@ export interface KProduct {
   imageLarge: string | null;
   soldOut: boolean;
   available: boolean;
+  /** A block's own look on the kiosks ("hide" / "grey"; null: `soldOutMode`) — `kioskCatalogView`. */
+  kioskDisplay?: 'hide' | 'grey' | null;
   description: string | null;
   categoryId: string | null;
   dietaryTags: Array<(typeof DIETARY)[number]>;
@@ -194,6 +196,7 @@ export function buildKioskCatalog(
         imageLarge: localImage(url, 'large'),
         soldOut: !available,
         available,
+        kioskDisplay: p.kioskDisplay === 'hide' ? 'hide' : p.kioskDisplay === 'grey' ? 'grey' : null,
         description: str(p.description),
         categoryId: (p.categoryId as string) ?? null,
         dietaryTags: DIETARY.filter((t) => tags.has(t)),

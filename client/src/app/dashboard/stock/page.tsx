@@ -2,8 +2,8 @@
 
 /**
  * "מלאי" — stock along the hierarchy (company › shop › point of sale › till), in tabs:
- * "מלאי מהיר" (find, + / −, count, receive, transfer, block), "חסימות פעילות" ("אזל" / "חסום" in
- * force), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
+ * "מלאי מהיר" (find, + / −, count, receive, transfer, block), "חסימות פעילות" ("חסומים כעת": "אזל" /
+ * "חסום" in force, by point of sale and target), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
  * "הגדרות ניהול מלאי" (the managed levels, with the switch wizard) and "נשאר בסוף היום".
  * `?tab=` opens a tab (the board links to `?tab=blocks`).
  */
@@ -18,6 +18,8 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import { nodeKey, type StockNode } from '@/lib/stockLive';
 import { fetchStockFeatures } from '@/lib/stockLiveApi';
+import { TARGET_LABELS, type BlockTarget } from '@/lib/liveControl';
+import { fetchBlockTargets, liveKeys } from '@/lib/liveControlApi';
 // "שליטה חיה" (components/dashboard/live-control): blocks, the stock sheet.
 import { ActiveBlocksList, BlockItemSheet, StockUpdateSheet } from '@/components/dashboard/live-control';
 import { QuickStockTab } from '@/components/dashboard/stock/quick-stock-tab';
@@ -42,6 +44,76 @@ const LOCATION_TABS: StockTab[] = ['transfers', 'opening', 'levels', 'leftover']
 function tabOf(raw: string | null): StockTab {
   if (raw === 'stock') return 'quick';
   return TABS.some((t) => t.id === raw) ? (raw as StockTab) : 'quick';
+}
+
+const TARGET_FILTERS: BlockTarget[] = ['all', 'kiosks', 'tills'];
+
+/**
+ * "חסומים כעת" (specs/item-blocks-targets.md §5): every block in force in the scope, narrowed to a
+ * point of sale (the blocks that reach it: the company / shop, the point itself, its devices, an
+ * event / a group with a device in it) and to a target.
+ */
+function BlocksNowTab({ scope }: { scope: { companyId: string | null; shopId: string | null } }) {
+  const [areaPick, setAreaPick] = useState('');
+  const [targetPick, setTargetPick] = useState<BlockTarget | ''>('');
+  // The points of sale of the shop in scope (none to pick from for a company).
+  const targets = useQuery({
+    queryKey: liveKeys.targets(scope.shopId ?? ''),
+    queryFn: () => fetchBlockTargets(scope.shopId!),
+    enabled: !!scope.shopId,
+  });
+  const areas = scope.shopId ? targets.data?.areas ?? [] : [];
+  const areaId = areas.some((a) => a.id === areaPick) ? areaPick : '';
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-lg font-semibold">חסומים כעת</h2>
+        <p className="text-sm text-muted-foreground">
+          פריטים ומחלקות שסומנו &quot;אזל&quot; או &quot;חסום&quot; — לכל אחד: איפה, למי, מי, עד מתי. אפשר להאריך או לבטל מיד.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {areas.length > 0 ? (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">נקודת מכירה</span>
+            <select
+              className="h-11 w-full rounded-lg border bg-background px-3"
+              value={areaId}
+              onChange={(e) => setAreaPick(e.target.value)}
+            >
+              <option value="">כל הנקודות</option>
+              {areas.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">יעד</span>
+          <select
+            className="h-11 w-full rounded-lg border bg-background px-3"
+            value={targetPick}
+            onChange={(e) => setTargetPick(e.target.value as BlockTarget | '')}
+          >
+            <option value="">הכול</option>
+            {TARGET_FILTERS.map((t) => (
+              <option key={t} value={t}>
+                {TARGET_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <ActiveBlocksList
+        scope={scope}
+        areaId={areaId || null}
+        target={targetPick || null}
+        emptyText={areaId || targetPick ? 'אין חסימות פעילות בסינון הזה' : 'אין חסימות פעילות'}
+      />
+    </section>
+  );
 }
 
 export default function ShopStockPage() {
@@ -101,10 +173,7 @@ export default function ShopStockPage() {
       </div>
 
       {tab === 'blocks' ? (
-        <section className="space-y-3">
-          <p className="text-sm text-muted-foreground">פריטים שסומנו &quot;אזל&quot; או &quot;חסום&quot; — לכל אחד: איפה, מי, עד מתי. אפשר להאריך או לבטל מיד.</p>
-          <ActiveBlocksList scope={scope} />
-        </section>
+        <BlocksNowTab scope={scope} />
       ) : (
         <ScopeGate resolution={resolution}>
           {root ? (
