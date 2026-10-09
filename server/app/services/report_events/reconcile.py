@@ -107,7 +107,10 @@ def _load_docs(db: Session, query) -> List[Doc]:
     for chunk in chunks(ids):
         for leg in db.query(TransactionPayment).filter(TransactionPayment.transaction_id.in_(list(chunk))).all():
             legs.setdefault(leg.transaction_id, []).append(leg)
-    return [make_doc(t, legs.get(t.id, [])) for t in txs]
+    from app.services.shift_totals import production_deductions_of
+
+    deductions = production_deductions_of(db, [t.id for t in txs])
+    return [make_doc(t, legs.get(t.id, []), deductions.get(t.id, Decimal("0"))) for t in txs]
 
 
 def reconcile_z(

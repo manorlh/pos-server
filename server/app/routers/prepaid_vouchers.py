@@ -5,6 +5,11 @@ Dashboard (user JWT, the catalog's writers, scoped by company / shop):
 
 GET    /prepaid-vouchers/products                     → the products a batch of a company may carry
 GET    /prepaid-vouchers/categories                   → the categories an item discount of a company may name
+GET    /prepaid-vouchers/types                        → voucher types (the spec's §2–3)
+POST   /prepaid-vouchers/types                        → a new type
+GET    /prepaid-vouchers/types/{id}                   → one type
+PATCH  /prepaid-vouchers/types/{id}                   → name / code / active; terms → a new version
+GET    /prepaid-vouchers/types/{id}/events            → the type's audit trail
 GET    /prepaid-vouchers/batches                      → batches with their counts
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
@@ -50,6 +55,8 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
+    PrepaidProductionCreate,
+    PrepaidProductionUpdate,
     PrepaidVoucherAddIn,
     PrepaidVoucherBatchCreate,
     PrepaidVoucherBatchUpdate,
@@ -58,11 +65,18 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherGroupsIn,
     PrepaidVoucherLookupIn,
     PrepaidVoucherNoteIn,
+    PrepaidOfflineAssignIn,
+    PrepaidOfflineReleaseIn,
+    PrepaidOfflineSyncIn,
     PrepaidVoucherRedeemIn,
     PrepaidVoucherReserveIn,
+    PrepaidVoucherTypeCreate,
+    PrepaidVoucherTypeUpdate,
 )
 from app.services import prepaid_vouchers as PV
+from app.services import prepaid_productions as PPR
 from app.services import prepaid_voucher_reports as PVR
+from app.services import prepaid_voucher_analytics as PVA
 
 # Display devices are not tills (app/services/display_devices.py).
 from app.middleware.auth import FISCAL_MACHINE_TOKEN
@@ -107,14 +121,355 @@ def list_prepaid_voucher_categories(
     return {"items": PV.eligible_categories(db, current_user, active_tenant_id, company_id)}
 
 
+def voucher_scope(
+    customer: Optional[List[str]] = Query(None, description="For whom: the production (until then the batch's customer)"),
+    event: Optional[List[str]] = Query(None),
+    type_id: Optional[List[str]] = Query(None, alias="typeId"),
+    kind: Optional[str] = Query(None, description="items | discount"),
+    batch_id: Optional[List[str]] = Query(None, alias="batchId"),
+    shop_id: Optional[List[str]] = Query(None, alias="shopId"),
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    accounting: Optional[str] = Query(None, description="discount | payment | zero"),
+    pricing: Optional[str] = Query(None, description="fixed | cover"),
+    override: Optional[str] = Query(None, description="yes | no: a discount-block policy other than honour"),
+    offline: Optional[str] = Query(None, description="yes | no: offline redemption allowed"),
+    value_min: Optional[str] = Query(None, alias="valueMin"),
+    value_max: Optional[str] = Query(None, alias="valueMax"),
+    price_min: Optional[str] = Query(None, alias="priceMin", description="Production price (₪) — only with the prices section"),
+    price_max: Optional[str] = Query(None, alias="priceMax"),
+    created_by: Optional[str] = Query(None, alias="createdBy"),
+    issued_from: Optional[str] = Query(None, alias="issuedFrom"),
+    issued_to: Optional[str] = Query(None, alias="issuedTo"),
+    valid_on: Optional[str] = Query(None, alias="validOn"),
+    batch_status: Optional[str] = Query(None, alias="batchStatus"),
+    date_from: Optional[str] = Query(None, alias="from", description="Redeemed from (the tenant's day)"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    machine_id: Optional[List[str]] = Query(None, alias="machineId"),
+    employee: Optional[List[str]] = Query(None),
+    state: Optional[str] = Query(None, description="open | partial | redeemed | cancelled | expired"),
+    group: Optional[int] = Query(None, ge=1),
+    q: Optional[str] = Query(None, max_length=100),
+) -> "PVA.Scope":
+    """The vouchers' one filter model (app/services/prepaid_voucher_analytics.py)."""
+    return PVA.make_scope(
+        customer=customer, event=event, type_id=type_id, kind=kind, batch_id=batch_id, shop_id=shop_id,
+        company_id=company_id, accounting=accounting, pricing=pricing, override=override, offline=offline,
+        value_min=value_min, value_max=value_max, price_min=price_min, price_max=price_max, created_by=created_by,
+        issued_from=issued_from, issued_to=issued_to, valid_on=valid_on, batch_status=batch_status,
+        date_from=date_from, date_to=date_to, machine_id=machine_id, employee=employee, state=state, group=group, q=q,
+    )
+
+
+def _scope(value) -> "PVA.Scope":
+    """The dependency's value; an empty filter for a direct call that left it out."""
+    return value if isinstance(value, PVA.Scope) else PVA.Scope()
+
+
 @router.get("/prepaid-vouchers/batches")
 def list_prepaid_voucher_batches(
     include_cancelled: bool = Query(True, alias="includeCancelled"),
+    sort: str = Query("newest", description="newest | customer | event | redeemed"),
+    scope: PVA.Scope = Depends(voucher_scope),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    return {"items": PV.list_batches(db, current_user, active_tenant_id, include_cancelled=include_cancelled)}
+    """
+    The batches under the filters (every one without), each with its figures — issued,
+    redeemed (in full or in part), open, the redemption rate — and its status flags.
+    """
+    out = PVA.list_batches(db, current_user, active_tenant_id, _scope(scope), sort=_given(sort) or "newest")
+    if _given(include_cancelled) is False:
+        out["items"] = [b for b in out["items"] if b["status"] == "active"]
+        out["total"] = len(out["items"])
+    return out
+
+
+@router.get("/prepaid-vouchers/vouchers")
+def list_all_prepaid_vouchers(
+    limit: int = Query(100, ge=1, le=PVA.PAGE_MAX),
+    offset: int = Query(0, ge=0),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"כל השוברים": vouchers across every batch (or one, `batchId`) under the filters, a page at a time."""
+    return PVA.list_vouchers(db, current_user, active_tenant_id, _scope(scope), limit=limit, offset=offset)
+
+
+@router.get("/prepaid-vouchers/facets")
+def prepaid_voucher_facets(
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """What the filters offer: for whom, events, types, batches, shops, tills, employees, creators."""
+    return PVA.facets(db, current_user, active_tenant_id)
+
+
+# ── Productions ("הפקות") and the events a batch may name (the contract's §13) ──────────────
+
+
+@router.get("/prepaid-vouchers/productions")
+def list_prepaid_productions(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    include_inactive: bool = Query(False, alias="includeInactive"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The productions (the customers vouchers are made for), by name, with how many batches name each."""
+    return PPR.list_productions(db, current_user, active_tenant_id, company_id=company_id, include_inactive=include_inactive)
+
+
+@router.post("/prepaid-vouchers/productions", status_code=status.HTTP_201_CREATED)
+def create_prepaid_production(
+    body: PrepaidProductionCreate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    p = PPR.create_production(db, current_user, active_tenant_id, body)
+    db.commit()
+    return PPR.production_out(p)
+
+
+@router.patch("/prepaid-vouchers/productions/{production_id}")
+def update_prepaid_production(
+    production_id: str,
+    body: PrepaidProductionUpdate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """In place; a new name reaches the batches that name the production."""
+    p = PPR.update_production(db, current_user, active_tenant_id, production_id, body)
+    db.commit()
+    return PPR.production_out(p, PPR._counts(db, [p.id]).get(str(p.id), 0))
+
+
+@router.get("/prepaid-vouchers/events")
+def list_prepaid_voucher_events(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The events a batch may name — the existing report events of the shops the user sees, newest first."""
+    return PPR.list_events(db, current_user, active_tenant_id, company_id=company_id)
+
+
+@router.get("/prepaid-vouchers/search")
+def search_prepaid_vouchers(
+    q: str = Query(..., min_length=1, max_length=100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """One box over batches, vouchers, tills and employees, grouped."""
+    return PVA.search(db, current_user, active_tenant_id, q)
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/offline/assign")
+def assign_prepaid_batch_offline(
+    batch_id: str,
+    body: PrepaidOfflineAssignIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Assign the batch for redemption without the internet to a till or the shop's LAN host (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.assign(db, current_user, active_tenant_id, batch_id, body.target, body.machine_id, body.shop_id)
+    db.commit()
+    return out
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/offline/release")
+def release_prepaid_batch_offline(
+    batch_id: str,
+    body: PrepaidOfflineReleaseIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Release it once the device synced everything — or by force, with a reason (audited)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.release(db, current_user, active_tenant_id, batch_id, body.force, body.reason)
+    db.commit()
+    return out
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/offline/targets")
+def prepaid_batch_offline_targets(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Where the batch may be assigned: the tills of its shops the user sees, and each shop's LAN host."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    return PVO.targets(db, current_user, active_tenant_id, batch_id)
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/offline")
+def get_prepaid_batch_offline(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import prepaid_voucher_offline as PVO
+
+    return PVO.history(db, current_user, active_tenant_id, batch_id)
+
+
+@router.get("/sync/{machine_id}/prepaid-vouchers/offline", dependencies=FISCAL_MACHINE_TOKEN)
+def download_prepaid_offline(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """What is assigned to this device: the batches' terms and their vouchers by code hash (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.download(db, machine)
+    db.commit()
+    return out
+
+
+@router.post("/sync/{machine_id}/prepaid-vouchers/offline/sync", dependencies=FISCAL_MACHINE_TOKEN)
+def sync_prepaid_offline(
+    machine_id: str,
+    body: PrepaidOfflineSyncIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """What this device redeemed without the cloud; idempotent by its own id (§7)."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    out = PVO.sync(db, machine, body)
+    db.commit()
+    return out
+
+
+@router.get("/prepaid-vouchers/analytics/tills")
+def prepaid_voucher_tills_report(
+    bucket: str = Query("day", description="hour | day"),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"מימושים לפי קופה": one row per till."""
+    return PVA.tills_report(db, current_user, active_tenant_id, _scope(scope), bucket=_given(bucket) or "day")
+
+
+@router.get("/prepaid-vouchers/analytics/redemptions")
+def prepaid_voucher_redemptions(
+    limit: int = Query(100, ge=1, le=PVA.PAGE_MAX),
+    offset: int = Query(0, ge=0),
+    scope: PVA.Scope = Depends(voucher_scope),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The redemptions under the filters, newest first (a till's: `machineId`)."""
+    return PVA.redemptions_list(db, current_user, active_tenant_id, _scope(scope), limit=limit, offset=offset)
+
+
+# ── Voucher types (the spec's §2–3) ───────────────────────────────────────────
+
+
+@router.get("/prepaid-vouchers/types")
+def list_prepaid_voucher_types(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    include_inactive: bool = Query(True, alias="includeInactive"),
+    include_one_off: bool = Query(False, alias="includeOneOff"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The types batches are issued from — the company's own and its parents' (`companyId`), else
+    every company the caller sees. `includeOneOff`: also the types of single batches (made
+    without a type, or before types).
+    """
+    from app.services import prepaid_voucher_types as PVT
+
+    company_id = _given(company_id)
+    include_inactive = True if _given(include_inactive) is None else include_inactive
+    one_off = bool(_given(include_one_off))
+    origins = ("manual", "batch", "legacy") if one_off else ("manual",)
+    return {
+        "items": PVT.list_types(
+            db, current_user, active_tenant_id, company_id=company_id, include_inactive=include_inactive,
+            origins=origins,
+        ),
+        # Whether this user sees / sets production prices at all (the `prepaid_voucher_prices` section).
+        "pricesVisible": PVT.prices_visible(db, current_user),
+        "pricesEditable": PVT.prices_visible(db, current_user, "edit"),
+        # Whether this user sets a discount-block override (the `voucher_discount_override` section).
+        "overrideEditable": PVT.override_editable(db, current_user),
+    }
+
+
+@router.post("/prepaid-vouchers/types", status_code=status.HTTP_201_CREATED)
+def create_prepaid_voucher_type(
+    body: PrepaidVoucherTypeCreate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import prepaid_voucher_types as PVT
+
+    t = PVT.create_type(db, current_user, active_tenant_id, body)
+    db.commit()
+    return PVT.type_out(db, current_user, t)
+
+
+@router.get("/prepaid-vouchers/types/{type_id}")
+def get_prepaid_voucher_type(
+    type_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import prepaid_voucher_types as PVT
+
+    return PVT.type_out(db, current_user, PVT.get_type(db, current_user, active_tenant_id, type_id))
+
+
+@router.patch("/prepaid-vouchers/types/{type_id}")
+def update_prepaid_voucher_type(
+    type_id: str,
+    body: PrepaidVoucherTypeUpdate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Name, code, description, active in place; terms, goods or prices — a new version."""
+    from app.services import prepaid_voucher_types as PVT
+
+    t = PVT.update_type(db, current_user, active_tenant_id, type_id, body)
+    db.commit()
+    return PVT.type_out(db, current_user, t)
+
+
+@router.get("/prepaid-vouchers/types/{type_id}/events")
+def prepaid_voucher_type_events(
+    type_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.services import prepaid_voucher_types as PVT
+
+    return {"items": PVT.type_events(db, current_user, active_tenant_id, type_id)}
 
 
 @router.post("/prepaid-vouchers/batches", status_code=status.HTTP_201_CREATED)
@@ -126,7 +481,7 @@ def create_prepaid_voucher_batch(
 ):
     batch = PV.create_batch(db, current_user, active_tenant_id, body)
     db.commit()
-    return PV.batch_out(db, batch)
+    return PV.batch_out(db, batch, user=current_user)
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}")
@@ -136,7 +491,25 @@ def get_prepaid_voucher_batch(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    return PV.batch_out(db, PV.get_batch(db, current_user, active_tenant_id, batch_id))
+    return PV.batch_out(db, PV.get_batch(db, current_user, active_tenant_id, batch_id), user=current_user)
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/edit-preview")
+def preview_prepaid_voucher_batch_edit(
+    batch_id: str,
+    body: PrepaidVoucherBatchUpdate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "ערוך סדרה" before it is saved: each setting that changes (before → after, its category)
+    and what it touches (`effects`: open vouchers, unredeemed / partly redeemed, the vouchers to
+    issue, the serial a new production price starts at). Nothing is written.
+    """
+    out = PV.preview_batch_edit(db, current_user, active_tenant_id, batch_id, body)
+    db.rollback()
+    return out
 
 
 @router.patch("/prepaid-vouchers/batches/{batch_id}")
@@ -149,7 +522,7 @@ def update_prepaid_voucher_batch(
 ):
     batch = PV.update_batch(db, current_user, active_tenant_id, batch_id, body)
     db.commit()
-    return PV.batch_out(db, batch)
+    return PV.batch_out(db, batch, user=current_user)
 
 
 @router.post("/prepaid-vouchers/batches/{batch_id}/vouchers", status_code=status.HTTP_201_CREATED)
@@ -162,7 +535,7 @@ def add_prepaid_vouchers(
 ):
     batch = PV.add_vouchers(db, current_user, active_tenant_id, batch_id, body.count, body.group_size)
     db.commit()
-    return PV.batch_out(db, batch)
+    return PV.batch_out(db, batch, user=current_user)
 
 
 @router.post("/prepaid-vouchers/batches/{batch_id}/cancel")
@@ -175,7 +548,7 @@ def cancel_prepaid_voucher_batch(
 ):
     batch = PV.cancel_batch(db, current_user, active_tenant_id, batch_id, (body.reason if body else None))
     db.commit()
-    return PV.batch_out(db, batch)
+    return PV.batch_out(db, batch, user=current_user)
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}/groups")
@@ -200,7 +573,7 @@ def assign_prepaid_voucher_groups(
     """Split the vouchers that have no group yet into groups of `groupSize` (409 when none is left)."""
     batch = PV.assign_groups(db, current_user, active_tenant_id, batch_id, body.group_size)
     db.commit()
-    return PV.batch_out(db, batch)
+    return PV.batch_out(db, batch, user=current_user)
 
 
 @router.post("/prepaid-vouchers/batches/{batch_id}/groups/{group_no}/cancel")
@@ -427,10 +800,11 @@ def lookup_prepaid_voucher(
     product ids, and whether it can be redeemed here now (`redeemable`, else `reason`).
     A discount voucher: its kind, terms (`benefit`) and uses. A client that does not list
     the kind in `supportedKinds` gets it as not redeemable (`prepaid_voucher_kind_unsupported`,
-    with a Hebrew `message`). 404 `prepaid_voucher_not_found` for an unknown code or
-    another tenant's.
+    with a Hebrew `message`). A voucher whose terms need what the client did not list in
+    `features` reads as `prepaid_voucher_update_required`. 404 `prepaid_voucher_not_found` for
+    an unknown code or another tenant's.
     """
-    return PV.lookup(db, machine, body.code, body.supported_kinds)
+    return PV.lookup(db, machine, body.code, body.supported_kinds, features=body.features)
 
 
 @router.post("/sync/{machine_id}/prepaid-vouchers/redeem", dependencies=FISCAL_MACHINE_TOKEN)
@@ -521,7 +895,7 @@ def confirm_prepaid_reservation(
     document itself confirms it too when it reaches the cloud (the till's outbox). A breach
     found by the re-check is recorded in `flags`, never refused.
     """
-    out = PV.confirm(db, machine, reservation_id, body.transaction_id, body.amount_agorot, body.uses)
+    out = PV.confirm(db, machine, reservation_id, body.transaction_id, body.amount_agorot, body.uses, units=body.units)
     db.commit()
     return out
 

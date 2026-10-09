@@ -341,6 +341,15 @@ export function OthClubReport({ params }: { params: ReportWindowParams | null })
         </CardContent>
       </Card>
 
+      {data.productionVouchers && data.productionVouchers.totals.count > 0 ? (
+        <p className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
+          {t('productionVouchers', {
+            amount: formatCurrency(data.productionVouchers.totals.amount),
+            documents: data.productionVouchers.totals.documents,
+          })}
+        </p>
+      ) : null}
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{t('vouchers.title')}</CardTitle>

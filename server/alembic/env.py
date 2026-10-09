@@ -31,6 +31,9 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        # One transaction per migration (review 09.10): a failure keeps what was applied before it;
+        # every migration of the release is idempotent, so the next run carries on from there.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -47,6 +50,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            transaction_per_migration=True,
         )
         with context.begin_transaction():
             context.run_migrations()

@@ -1181,7 +1181,8 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
         z.business_date = body.business_date
     z.totals_mismatch = False
     header = dict(z.header or {})
-    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal", "byWaiter"):
+    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal",
+                "productionVoucherDeductionsTotal", "byWaiter"):
         header.pop(key, None)
     if printed_drawer:
         # The drawer as printed: card tips paid out of it ("cardTipsFromDrawer") and its cash

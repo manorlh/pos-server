@@ -133,6 +133,8 @@ def build_discounts_report(
             "totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0},
             "byBatch": [], "byTill": [], "byDay": [],
         },
+        # Production vouchers booked as a deduction: not discounts — their own category.
+        "productionVouchers": {"totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0}, "byBatch": []},
     }
     tx_q = build_scoped_transaction_query(db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id)
     if tx_q is None:
@@ -239,15 +241,20 @@ def build_discounts_report(
     # ── Discount vouchers ──
     from app.models.prepaid_voucher import TransactionVoucherDiscount as TVD
 
-    voucher_rows = (
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+
+    all_voucher_rows = (
         db.query(
             TVD.discount_amount, TVD.uses, TVD.batch_id, TVD.batch_name,
-            Transaction.id, Transaction.created_at, Transaction.machine_id,
+            Transaction.id, Transaction.created_at, Transaction.machine_id, TVD.kind,
         )
         .join(Transaction, Transaction.id == TVD.transaction_id)
         .filter(TVD.transaction_id.in_(db.query(sale_ids.c.id)))
         .all()
     )
+    # Discount vouchers only: a production voucher's deduction is "שוברי הפקה", apart.
+    voucher_rows = [r[:7] for r in all_voucher_rows if r[7] != PRODUCTION_VOUCHER_DEDUCTION]
+    deduction_rows = [r[:7] for r in all_voucher_rows if r[7] == PRODUCTION_VOUCHER_DEDUCTION]
 
     def voucher_bucket():
         return {"count": 0, "uses": 0, "amount": Decimal("0"), "documents": set()}
@@ -314,6 +321,23 @@ def build_discounts_report(
     out["basketByKind"] = [
         {"kind": kind, **club_flat(by_kind[kind])} for kind in (CLUB, MANUAL) if kind in by_kind
     ]
+    d_totals = voucher_bucket()
+    d_by_batch: Dict[Optional[str], dict] = {}
+    for amount, uses, batch_id, batch_name, tx_id, _created_at, _till in deduction_rows:
+        batch_key = str(batch_id) if batch_id else None
+        if batch_name:
+            v_batch_names[batch_key] = batch_name
+        for b in (d_totals, d_by_batch.setdefault(batch_key, voucher_bucket())):
+            b["count"] += 1
+            b["uses"] += int(uses or 1)
+            b["amount"] += abs(_dec(amount))
+            b["documents"].add(tx_id)
+    out["productionVouchers"] = {
+        "totals": voucher_flat(d_totals),
+        "byBatch": by_value([
+            {"batchId": k, "name": v_batch_names.get(k), **voucher_flat(b)} for k, b in d_by_batch.items()
+        ], "amount"),
+    }
     out["vouchers"] = {
         "totals": voucher_flat(v_totals),
         "byBatch": by_value([

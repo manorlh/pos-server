@@ -110,6 +110,39 @@ export interface StartPaymentIn {
   expectedTotalAgorot?: number;
 }
 
+/** "voucherApply" (Android, pos-android KioskWebProtocol.parseVoucher): the code scanned or typed, and the basket as "לתשלום" sends it. */
+export interface VoucherApplyIn {
+  code: string;
+  payment: StartPaymentIn;
+}
+
+/** One voucher on the order as the APK words it: "שובר מס׳ 0008 · ארוחה", its amount, what it covered. */
+export interface AppliedVoucher {
+  serial: number;
+  title: string;
+  /** How the order books it: `discount` (a deduction), `payment` (a tender) or `zero`. */
+  mode: string;
+  amountAgorot: number;
+  /** What it covered ("מנה: נקניקייה ×1"); empty for a plain amount. */
+  lines: string[];
+}
+
+/**
+ * The APK's answer to voucherApply / voucherRemove — the order's vouchers as they stand: "סה״כ"
+ * (`totalAgorot`; null with no production voucher on it), "קיזוז שוברי הפקה" (`deductionAgorot`),
+ * each voucher, and "סה״כ לתשלום" (`dueAgorot`, the tip included). `error`: why this code was not
+ * taken, `note`: what to tell the customer — both Hebrew, as the APK words them.
+ */
+export interface VoucherAnswer {
+  ok: boolean;
+  error: string | null;
+  note: string | null;
+  totalAgorot: number | null;
+  deductionAgorot: number;
+  dueAgorot: number;
+  vouchers: AppliedVoucher[];
+}
+
 /** `key`: the basket line; `from` / `to`: its unit price, agorot (core/basketCheck.ts). */
 export type BasketChange =
   | { kind: 'removed'; productId: string; name: string; key?: string }
@@ -240,6 +273,14 @@ export interface KioskBridge {
   redeemVoucher?(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult>;
   /** A redeemed voucher back on itself (kept and retried until the cloud answers). */
   reverseVoucher?(redemptionId: string): Promise<void>;
+  /**
+   * Android: the APK holds this order's vouchers itself (its own redemption path, the payment books
+   * them) — a code applied to the basket (staged as the order at the checkout, with no charge yet),
+   * and a voucher taken off. Never a rejection: null is no answer (the order's vouchers as they were).
+   * The APK keeps them while the screens report "details" or "pay"; any other screen gives them back.
+   */
+  voucherApply?(input: VoucherApplyIn): Promise<VoucherAnswer | null>;
+  voucherRemove?(serial: number): Promise<VoucherAnswer | null>;
   cancelPayment(): Promise<void>;
   receiptChoice(orderId: string, print: boolean): Promise<void>;
   /** "עזרה": a help request to the tills (an alert on the next sync). */

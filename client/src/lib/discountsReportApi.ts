@@ -61,6 +61,14 @@ export interface DiscountsReport {
     byTill: (VoucherFigures & TillLabel)[];
     byDay: (VoucherFigures & { date: string })[];
   };
+  /**
+   * Production vouchers booked as a document deduction ("קיזוז שוברי הפקה"): not discounts —
+   * apart, so the discount figures above leave them out. Absent from an older server.
+   */
+  productionVouchers?: {
+    totals: VoucherFigures;
+    byBatch: (VoucherFigures & { batchId: string | null; name: string | null })[];
+  };
 }
 
 export interface VoucherFigures extends ClubFigures {

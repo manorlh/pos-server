@@ -23,10 +23,10 @@ import {
   History,
   ImagePlus,
   Loader2,
-  Minus,
+  Pencil,
   Plus,
+  FileSpreadsheet,
   Printer,
-  Search,
   TicketCheck,
   X,
 } from 'lucide-react';
@@ -40,28 +40,53 @@ import {
   createPrepaidBatch,
   downloadPrepaidVouchersFile,
   fetchAllPrepaidVouchers,
+  fetchFilteredPrepaidBatches,
   fetchPrepaidBatches,
-  fetchPrepaidVoucher,
-  fetchPrepaidVouchers,
-  searchPrepaidProducts,
+  fetchPrepaidVoucherRows,
+  fetchPrepaidTypes,
   updatePrepaidBatch,
   type PrepaidBarcodeType,
-  type PrepaidProductOption,
+  type PrepaidBatchEditBody,
+  type PrepaidPricing,
+  type PrepaidRedemptionAccounting,
   type PrepaidVoucher,
   type PrepaidVoucherBatch,
   type PrepaidVoucherStatus,
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
+import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
+import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
+import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
+import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
+import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import {
-  NO_BATCH_FILTERS,
-  batchFormProblems,
-  filterBatches,
-  issueTotals,
-  type BatchFilters,
-} from '@/lib/prepaidBatchForm';
-import { clampQuantity, DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText, quantityStep } from '@/lib/prepaidVoucherProducts';
-import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
-import { discountDraftErrors, isDiscountKind, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+  BATCH_SORTS,
+  EMPTY_FILTERS,
+  VOUCHER_STATES,
+  VOUCHER_VIEWS,
+  activeFilterCount,
+  filtersToQuery,
+  rateText,
+  type VoucherFilters,
+  type VoucherView,
+} from '@/lib/prepaidVoucherFilters';
+import { downloadExcel } from '@/lib/excelExport';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { STATE_STYLE, VoucherRowsTable, voucherSheet } from '@/components/dashboard/prepaid-vouchers/all-vouchers';
+import { MultiPicker, VoucherFilterBar, useVoucherFacets, useVoucherPageState } from '@/components/dashboard/prepaid-vouchers/voucher-filters';
+import { TillsReport } from '@/components/dashboard/prepaid-vouchers/tills-report';
+import { VoucherSearch, type SearchPick } from '@/components/dashboard/prepaid-vouchers/voucher-search';
+import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
+import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
+import {
+  PrepaidTypesView,
+  ToggleFields,
+  TypeSummary,
+  policyBody,
+  policyState,
+  type PolicyState,
+} from '@/components/dashboard/prepaid-vouchers/voucher-types';
+import { discountDraftErrors, isDiscountKind, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import {
   BatchRulesCard,
   DEFAULT_RULES,
@@ -69,13 +94,15 @@ import {
   EMPTY_DISCOUNT_TERMS,
   KindPicker,
   RulesFields,
+  stackingBody,
+  stackingValid,
   useBatchTermsText,
   type DiscountTermsState,
   type RulesState,
 } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
 import { PrepaidBatchGroupsView } from '@/components/dashboard/prepaid-vouchers/batch-groups';
 import { cn } from '@/lib/utils';
-import { formatDate, formatDateTime, isoDate } from '@/lib/format';
+import { formatDate, isoDate } from '@/lib/format';
 import {
   PAGE_PRESETS,
   VoucherPreview,
@@ -87,6 +114,7 @@ import {
 import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/batch-report';
 import { VoucherDistributionView } from '@/components/dashboard/prepaid-vouchers/distribution/distribution-view';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
+import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,10 +131,6 @@ const LAYOUT_KEY = 'prepaidVouchers.layout';
 
 function day(iso: string | null | undefined): string {
   return isoDate(iso) ? formatDate(iso) : '';
-}
-
-function time(iso: string | null | undefined): string {
-  return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
 /** `yyyy-mm-dd` from a date input → the start / end of that day, local time, as ISO. */
@@ -215,70 +239,111 @@ function BarcodeTypePicker({ value, onChange, disabled }: {
  * A weight typed as text ("0.5"), taken when the field is left or Enter is pressed — so "0." can be
  * typed. Keyed by its value where it is used: a +/- or a commit starts it afresh.
  */
-function WeightInput({ value, label, onCommit }: { value: number; label: string; onCommit: (q: number) => void }) {
-  const [text, setText] = useState(String(value));
-  const commit = () => {
-    const q = Number(text.replace(',', '.'));
-    if (Number.isFinite(q) && q > 0) onCommit(q);
-    else setText(String(value));
-  };
-  return (
-    <Input inputMode="decimal" aria-label={label} className="h-8 w-20 text-center tabular-nums" value={text}
-      onChange={(e) => setText(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
-  );
-}
+/** A number field's text ('' for none). */
+const numText = (v: number | null | undefined) => (v == null ? '' : String(v));
 
-interface DraftItem {
-  product: PrepaidProductOption;
-  quantity: number;
-}
-
-function CreateBatchDialog({ open, onOpenChange, onCreated }: {
+/**
+ * The new-batch form — and, with [editing], "ערוך סדרה": the same form opened with the batch's own
+ * settings (a snapshot: its type is not read again). Mounted afresh each time it opens to edit.
+ */
+function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (b: PrepaidVoucherBatch) => void;
+  onCreated?: (b: PrepaidVoucherBatch) => void;
+  editing?: PrepaidVoucherBatch | null;
 }) {
   const t = useTranslations('prepaidVouchers.create');
-  const te = useTranslations('prepaidVouchers.eligibility');
+  const te = useTranslations('prepaidVouchers.edit');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
+  const ed = editing;
 
-  const [name, setName] = useState('');
-  const [eventName, setEventName] = useState('');
-  const [freeText, setFreeText] = useState('');
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [name, setName] = useState(ed?.name ?? '');
+  const [eventName, setEventName] = useState(ed?.eventName ?? '');
+  const [freeText, setFreeText] = useState(ed?.freeText ?? '');
+  const [logoUrl, setLogoUrl] = useState<string | null>(ed?.logoUrl ?? null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [companyId, setCompanyId] = useState('');
-  const [shopIds, setShopIds] = useState<string[]>([]);
-  const [validFrom, setValidFrom] = useState('');
-  const [validUntil, setValidUntil] = useState('');
-  const [splitAllowed, setSplitAllowed] = useState(false);
-  const [count, setCount] = useState('50');
-  const [items, setItems] = useState<DraftItem[]>([]);
-  const [search, setSearch] = useState('');
-  const [debounced, setDebounced] = useState('');
+  const [companyId, setCompanyId] = useState(ed?.companyId ?? '');
+  const [shopIds, setShopIds] = useState<string[]>(ed?.shopIds ?? []);
+  const [validFrom, setValidFrom] = useState(ed ? day(ed.validFrom) : '');
+  const [validUntil, setValidUntil] = useState(ed ? day(ed.validUntil) : '');
+  const [splitAllowed, setSplitAllowed] = useState(ed?.splitAllowed ?? false);
+  const issued = ed ? (ed.issuedCount ?? ed.stats.total) : 0;
+  const [count, setCount] = useState(ed ? String(issued) : '50');
+  const [items, setItems] = useState<DraftItem[]>(() => (ed?.items ?? []).map((i) => ({
+    product: { id: i.productId, name: i.name, price: 0, isWeighed: !!i.weighed, unitLabel: i.unitLabel ?? null },
+    quantity: i.quantity,
+  })));
+  // The type it is issued from (the spec's §2); '' — the form says it all (a type of its own).
+  const [typeId, setTypeId] = useState('');
+  // Without a type: its value at the till and price to the production (₪, optional).
+  const [tillValue, setTillValue] = useState(numText(ed?.tillValue));
+  const [productionPrice, setProductionPrice] = useState(numText(ed?.productionPrice));
+  // Editing: how a redemption is priced, as the batch says (a new batch: fixed with a value).
+  const [pricing, setPricing] = useState<PrepaidPricing>(ed?.pricing ?? 'cover');
+  const [allowTopUp, setAllowTopUp] = useState(ed?.allowTopUp ?? true);
+  // The three toggles, set at setup (a type brings its own).
+  // How the till books a redemption: a document deduction by default.
+  const [accounting, setAccounting] = useState<PrepaidRedemptionAccounting>(ed?.redemptionAccounting ?? 'discount');
+  // "הצג תוקף על השובר": on by default.
+  const [showValidity, setShowValidity] = useState(ed ? ed.showValidity !== false : true);
+  const [offlineAllowed, setOfflineAllowed] = useState(ed?.offlineAllowed ?? false);
+  const [policy, setPolicy] = useState<PolicyState>(policyState(ed?.discountBlockPolicy));
   // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [groupCustom, setGroupCustom] = useState('');
-  const [showCode, setShowCode] = useState(false);
+  const [showCode, setShowCode] = useState(ed?.showCode ?? false);
   // "הצגת הפריטים על השובר": on by default; off prints the voucher without its goods / benefit.
-  const [showItems, setShowItems] = useState(true);
+  const [showItems, setShowItems] = useState(ed ? ed.showItems !== false : true);
   // "נוצר על ידי Runner Systems" at the bottom of the voucher: on by default.
-  const [showCredit, setShowCredit] = useState(true);
-  const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
-  const [customerName, setCustomerName] = useState('');
-  const [orderRef, setOrderRef] = useState('');
+  const [showCredit, setShowCredit] = useState(ed ? ed.showCredit !== false : true);
+  const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>(ed?.barcodeType ?? 'qr');
+  const [customerName, setCustomerName] = useState(ed?.customerName ?? '');
+  const [orderRef, setOrderRef] = useState(ed?.orderRef ?? '');
+  // The production it is made for and its event (§13): picked from lists; their names are printed.
+  const [productionId, setProductionId] = useState(ed?.production?.id ?? '');
+  const [reportEventId, setReportEventId] = useState(ed?.reportEvent?.id ?? '');
   // Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
-  const [kind, setKind] = useState<PrepaidVoucherKind>('items');
-  const [terms, setTerms] = useState<DiscountTermsState>(EMPTY_DISCOUNT_TERMS);
-  const [rules, setRules] = useState<RulesState>(DEFAULT_RULES);
+  const [kind, setKind] = useState<PrepaidVoucherKind>(ed?.kind ?? 'items');
+  const [terms, setTerms] = useState<DiscountTermsState>(() => (ed
+    ? {
+        discountType: ed.discountType ?? 'fixed',
+        value: numText(ed.discountValue),
+        minPurchase: numText(ed.minPurchase),
+        maxDiscount: numText(ed.maxDiscount),
+        // The chips: the products by the names they were printed with (products first, then categories).
+        products: (ed.targets?.productIds ?? []).map((id, n) => ({ id, name: ed.targets?.names?.[n] ?? id, price: 0 })),
+        categoryIds: ed.targets?.categoryIds ?? [],
+        maxUnits: ed.maxUnits ? String(ed.maxUnits) : '1',
+      }
+    : EMPTY_DISCOUNT_TERMS));
+  const [rules, setRules] = useState<RulesState>(() => (ed
+    ? {
+        stacking: ed.stacking ?? 'single',
+        maxVouchersPerSale: ed.maxVouchersPerSale ? String(ed.maxVouchersPerSale) : '',
+        promotionPolicy: ed.promotionPolicy ?? 'exclude',
+        usesPerVoucher: String(ed.usesPerVoucher ?? 1),
+        maxUsesPerSale: String(ed.maxUsesPerSale ?? 1),
+        maxUsesPerDay: ed.maxUsesPerDay ? String(ed.maxUsesPerDay) : '',
+      }
+    : DEFAULT_RULES));
   // Goods: "כולל תוספות" — paid options and a meal's upcharges covered too (§7.14). Off by default.
-  const [includeExtras, setIncludeExtras] = useState(false);
-  const discount = isDiscountKind(kind);
-  const termErrors = discountDraftErrors({
+  const [includeExtras, setIncludeExtras] = useState(ed?.includeExtras ?? false);
+  // "החל גם על שוברים במימוש חלקי": new contents reach the partly redeemed vouchers too.
+  const [applyToPartial, setApplyToPartial] = useState(false);
+  const groupsBatch = ed?.selection === 'groups';
+  // The company's active types (its own and its parents').
+  const types = useQuery({
+    queryKey: ['prepaid-voucher-types', companyId, 'active'],
+    queryFn: () => fetchPrepaidTypes({ companyId, includeInactive: false }),
+    enabled: open && !!companyId,
+  });
+  const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
+  const pricesVisible = ed ? !!ed.pricesVisible : !!types.data?.pricesVisible;
+  const discount = isDiscountKind(chosen ? chosen.kind : kind);
+  const termErrors = chosen ? [] : discountDraftErrors({
     kind,
     discountType: terms.discountType,
     value: terms.value,
@@ -292,22 +357,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   });
   const planText = useGroupPlanText();
 
-  useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(search), 300);
-    return () => window.clearTimeout(id);
-  }, [search]);
-
   const companies = useQuery({ queryKey: ['companies'], queryFn: fetchCompanies, enabled: open });
   useEffect(() => {
     if (!companyId && companies.data?.length === 1) setCompanyId(companies.data[0].id);
   }, [companies.data, companyId]);
   const shops = useQuery({ queryKey: ['shops', companyId], queryFn: () => fetchShops(companyId), enabled: open && !!companyId });
-  // Every product, each with whether it can go on and why not; a till's own product depends on the shops.
-  const products = useQuery({
-    queryKey: ['prepaid-voucher-products', companyId, debounced, 'items', shopIds],
-    queryFn: () => searchPrepaidProducts(debounced, companyId, { purpose: 'items', shopIds }),
-    enabled: open && !!companyId,
-  });
 
   const reset = () => {
     setName('');
@@ -320,7 +374,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setSplitAllowed(false);
     setCount('50');
     setItems([]);
-    setSearch('');
+    setTypeId('');
+    setTillValue('');
+    setProductionPrice('');
+    setAccounting('discount');
+    setShowValidity(true);
+    setOfflineAllowed(false);
+    setPolicy(policyState());
     setGroupMode('none');
     setGroupCustom('');
     setShowCode(false);
@@ -329,6 +389,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     setBarcodeType('qr');
     setCustomerName('');
     setOrderRef('');
+    setProductionId('');
+    setReportEventId('');
     setKind('items');
     setTerms(EMPTY_DISCOUNT_TERMS);
     setRules(DEFAULT_RULES);
@@ -341,26 +403,109 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const plan = groupOk ? planText(n, groupSize) : null;
   // What is still missing, said in words under the button (not just a disabled button).
   const problems = batchFormProblems({
-    name, companyId, discount, itemCount: items.length, termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
+    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch ? 1 : items.length,
+    termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
+    stackingOk: chosen ? true : stackingValid(rules),
   });
-  const canCreate = problems.length === 0;
+  // Editing: never fewer vouchers than were issued, and a fixed value has its value.
+  const editProblems = ed
+    ? [
+        Number.isFinite(n) && n < issued ? te('problem.countBelowIssued', { n: issued }) : null,
+        !discount && pricing === 'fixed' && !tillValue.trim() ? te('problem.value') : null,
+      ].filter((x): x is string => !!x)
+    : [];
+  const canCreate = problems.length === 0 && editProblems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
-  const totals = discount ? null : issueTotals(n, items.map((i) => ({
-    quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel,
-  })), DEFAULT_WEIGHT_UNIT);
+  const totals = discount ? null : issueTotals(n, chosen
+    ? chosen.items.map((i) => ({ quantity: i.quantity, weighed: i.weighed, unitLabel: i.unitLabel }))
+    : items.map((i) => ({ quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel })),
+  DEFAULT_WEIGHT_UNIT);
   const decimal = (v: string) => (v.trim() ? Number(v) : null);
 
+  const common = {
+    name: name.trim(),
+    companyId,
+    shopIds: shopIds.length ? shopIds : null,
+    eventName: eventName.trim() || null,
+    logoUrl,
+    freeText: freeText.trim() || null,
+    validFrom: dayBoundIso(validFrom, false),
+    validUntil: dayBoundIso(validUntil, true),
+    count: n,
+    groupSize,
+    showCode,
+    showItems,
+    showCredit,
+    showValidity,
+    barcodeType,
+    customerName: customerName.trim() || null,
+    orderRef: orderRef.trim() || null,
+    productionId: productionId || null,
+    reportEventId: reportEventId || null,
+  };
+  // "ערוך סדרה": the settings as the PATCH reads them — sent only where they differ from how the
+  // form opened (lib/prepaidBatchEdit.ts changedFields), the cloud plans and confirms the rest.
+  const editSnapshot = (): PrepaidBatchEditBody => {
+    const out: PrepaidBatchEditBody = {
+      name: name.trim(),
+      customerName: customerName.trim() || null,
+      eventName: eventName.trim() || null,
+      orderRef: orderRef.trim() || null,
+      freeText: freeText.trim() || null,
+      logoUrl,
+      showItems, showValidity, showCredit, showCode, barcodeType,
+      validFrom: dayBoundIso(validFrom, false),
+      validUntil: dayBoundIso(validUntil, true),
+      shopIds: shopIds.length ? [...shopIds].sort() : null,
+      count: n,
+      productionId: productionId || null,
+      reportEventId: reportEventId || null,
+      ...stackingBody(rules),
+    };
+    if (pricesVisible) out.productionPrice = decimal(productionPrice);
+    if (!discount) {
+      Object.assign(out, {
+        offlineAllowed, redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
+        pricing, tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
+        includeExtras, splitAllowed,
+      });
+      if (!groupsBatch) out.items = items.map((i) => ({ productId: i.product.id, quantity: i.quantity }));
+    } else {
+      Object.assign(out, {
+        discountType: terms.discountType, discountValue: decimal(terms.value),
+        minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
+        maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
+        maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
+        targets: kind === 'item_discount' ? { productIds: terms.products.map((p) => p.id), categoryIds: terms.categoryIds } : null,
+        promotionPolicy: rules.promotionPolicy,
+        usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+        maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+        maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+      });
+    }
+    return out;
+  };
+  // How the form opened: taken once, from the very same function (no change: nothing sent).
+  const [opened] = useState<PrepaidBatchEditBody | null>(() => (ed ? editSnapshot() : null));
+  const editBody = opened ? (changedFields(opened as Record<string, unknown>, editSnapshot() as Record<string, unknown>) as PrepaidBatchEditBody) : {};
+  const contentsChanged = touchesContents(editBody as Record<string, unknown>);
+  const partial = ed?.stats.partiallyUsed ?? 0;
+  const editSave = useBatchEditSave(ed, (b) => onCreated?.(b));
+  const saveEdit = async () => {
+    const body: PrepaidBatchEditBody = contentsChanged && applyToPartial ? { ...editBody, applyToPartial: true } : editBody;
+    if (await editSave.save(body)) onOpenChange(false);
+  };
+
   const create = useMutation({
-    mutationFn: () =>
-      createPrepaidBatch({
-        name: name.trim(),
-        companyId,
-        shopIds: shopIds.length ? shopIds : null,
-        eventName: eventName.trim() || null,
-        logoUrl,
-        freeText: freeText.trim() || null,
-        validFrom: dayBoundIso(validFrom, false),
-        validUntil: dayBoundIso(validUntil, true),
+    mutationFn: () => chosen
+      ? createPrepaidBatch({ ...common, typeId: chosen.id, splitAllowed: false, items: [] })
+      : createPrepaidBatch({
+        ...common,
+        tillValue: decimal(tillValue),
+        productionPrice: pricesVisible ? decimal(productionPrice) : null,
+        redemptionAccounting: discount ? 'discount' : accounting,
+        offlineAllowed,
+        discountBlockPolicy: discount ? { mode: 'honour' } : policyBody(policy),
         splitAllowed: discount ? false : splitAllowed,
         items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
         includeExtras: discount ? false : includeExtras,
@@ -373,7 +518,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
         customerName: customerName.trim() || null,
         orderRef: orderRef.trim() || null,
         kind,
-        stacking: rules.stacking,
+        ...stackingBody(rules),
         ...(discount
           ? {
               discountType: terms.discountType,
@@ -394,13 +539,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
       void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
       reset();
       onOpenChange(false);
-      onCreated(b);
+      onCreated?.(b);
     },
     onError: (err) => toast.error(errorText(err)),
   });
 
   // The voucher as it will print, while the form is being filled (the same SVG as the batch screen's).
-  const draft: PrepaidVoucherBatch = {
+  const manualDraft: PrepaidVoucherBatch = {
     id: 'draft', name: name.trim() || t('title'), eventName: eventName.trim() || null, logoUrl,
     freeText: freeText.trim() || null, validFrom: dayBoundIso(validFrom, false), validUntil: dayBoundIso(validUntil, true),
     splitAllowed: discount ? false : splitAllowed, status: 'active', companyId, companyName: null, shopIds: null, shops: [],
@@ -417,16 +562,21 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
       ? { productIds: terms.products.map((x) => x.id), categoryIds: terms.categoryIds, names: terms.products.map((x) => x.name) }
       : null,
     usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+    tillValue: decimal(tillValue), pricing: tillValue.trim() ? 'fixed' : 'cover',
   };
+  const draft: PrepaidVoucherBatch = chosen
+    ? {
+        ...manualDraft, kind: chosen.kind, items: chosen.items, includeExtras: chosen.includeExtras,
+        splitAllowed: chosen.splitAllowed, discountType: chosen.discountType, discountValue: chosen.discountValue,
+        minPurchase: chosen.minPurchase, maxDiscount: chosen.maxDiscount, maxUnits: chosen.maxUnits, targets: chosen.targets,
+        usesPerVoucher: chosen.usesPerVoucher, benefitText: chosen.benefitText,
+        typeName: chosen.origin === 'manual' ? chosen.name : null, tillValue: chosen.tillValue, pricing: chosen.pricing,
+        printTillValue: chosen.printTillValue,
+      }
+    : manualDraft;
   const draftVoucher = {
     id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
   };
-
-  const addItem = (p: PrepaidProductOption) =>
-    setItems((cur) => (cur.some((i) => i.product.id === p.id) ? cur : [...cur, { product: p, quantity: 1 }]));
-  // By weight to the gram ("0.5 ק״ג"), by the piece a whole unit (the cloud checks the same).
-  const setQty = (id: string, q: number) =>
-    setItems((cur) => cur.map((i) => (i.product.id === id ? { ...i, quantity: clampQuantity(q, i.product.isWeighed) } : i)));
 
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return;
@@ -445,9 +595,15 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('title')}</DialogTitle>
+          <DialogTitle>{ed ? te('title') : t('title')}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {ed ? (
+            <div className="space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <p>{te('intro')}</p>
+              {ed.type?.origin === 'manual' && ed.type.name ? <p>{te('typeLine', { name: ed.type.name, version: ed.type.version })}</p> : null}
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-name">{t('name')}</Label>
@@ -458,64 +614,46 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
             </div>
           </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
+              onChange={(id, pname) => {
+                setProductionId(id);
+                // "עבור מי" is the production's name (the cloud keeps them in step).
+                if (id && pname) setCustomerName(pname);
+              }} />
+            <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
+              onChange={(id, ename) => {
+                setReportEventId(id);
+                // The printed event name: the event's, unless one was typed.
+                if (id && ename && !eventName.trim()) setEventName(ename);
+              }} />
+          </div>
 
-          <KindPicker value={kind} onChange={setKind} />
+          {ed ? null : (
+          <div className="space-y-1">
+            <Label>{t('type')}</Label>
+            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+              value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
+              <option value="">{t('typeNone')}</option>
+              {(types.data?.items ?? []).map((x) => (
+                <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
+          </div>
+          )}
+          {chosen ? <TypeSummary type={chosen} /> : (<>
+          {ed ? (
+            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
+          ) : <KindPicker value={kind} onChange={setKind} />}
           {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
 
-          {!discount ? (
-            <div className="space-y-2">
-              <Label>{t('items')}</Label>
-              {items.length ? (
-                <ul className="divide-y rounded-lg border">
-                  {items.map((i) => (
-                    <li key={i.product.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                      <span className="min-w-0 flex-1 truncate">{i.product.name}</span>
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('less')}
-                        onClick={() => setQty(i.product.id, i.quantity - quantityStep(i.product.isWeighed))}>
-                        <Minus className="h-3.5 w-3.5" />
-                      </Button>
-                      {i.product.isWeighed ? (
-                        // Sold by weight: a decimal of its unit ("0.5 ק״ג").
-                        <span className="flex items-center gap-1" title={t('weightHint')}>
-                          <WeightInput key={i.quantity} value={i.quantity} label={t('weightQty', { unit: i.product.unitLabel || DEFAULT_WEIGHT_UNIT })}
-                            onCommit={(q) => setQty(i.product.id, q)} />
-                          <span className="text-xs text-muted-foreground">{i.product.unitLabel || DEFAULT_WEIGHT_UNIT}</span>
-                        </span>
-                      ) : (
-                        <span className="w-6 text-center tabular-nums">{i.quantity}</span>
-                      )}
-                      <Button type="button" size="icon-sm" variant="outline" aria-label={t('more')}
-                        onClick={() => setQty(i.product.id, i.quantity + quantityStep(i.product.isWeighed))}>
-                        <Plus className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button type="button" size="icon-sm" variant="ghost" aria-label={t('remove')}
-                        onClick={() => setItems((cur) => cur.filter((x) => x.product.id !== i.product.id))}>
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">{t('itemsEmpty')}</p>
-              )}
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('searchProducts')} className="ps-8" />
-              </div>
-              <div className="max-h-48 overflow-y-auto rounded-lg border">
-                <PrepaidProductPickList
-                  products={products.data}
-                  purpose="items"
-                  chosen={new Set(items.map((i) => i.product.id))}
-                  onPick={addItem}
-                  pending={!!companyId && products.isPending}
-                  pendingText={tc('loading')}
-                  emptyText={companyId ? t('noProducts') : t('pickCompany')}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">{te('searchHint')}</p>
-            </div>
+          {!discount && groupsBatch ? (
+            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+              {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
+            </p>
           ) : null}
+          {!discount && !groupsBatch ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
 
           {!discount ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
@@ -527,12 +665,60 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           ) : null}
 
+          {!discount ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
+                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
+                  placeholder={t('tillValuePlaceholder')} />
+                <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+              </div>
+              {pricesVisible ? (
+                <div className="space-y-1">
+                  <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
+                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
+                  <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {!discount && ed ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
+                <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                  value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
+                  <option value="fixed">{te('choice.pricing.fixed')}</option>
+                  <option value="cover">{te('choice.pricing.cover')}</option>
+                </select>
+              </div>
+              {pricing === 'cover' ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
+                  <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {!discount ? (
+            <div className="rounded-lg border p-3">
+              <ToggleFields
+                accounting={accounting} onAccounting={setAccounting}
+                offlineAllowed={offlineAllowed} onOfflineAllowed={setOfflineAllowed}
+                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable}
+              />
+            </div>
+          ) : null}
+          </>)}
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="pv-count">{t('count')}</Label>
-              <Input id="pv-count" type="number" min={1} max={5000} value={count} onChange={(e) => setCount(e.target.value)} />
+              <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
+              <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
+                onChange={(ev) => setCount(ev.target.value)} />
+              {ed ? <p className="text-xs text-muted-foreground">{te('countHint', { n: issued })}</p> : null}
             </div>
-            {!discount ? (
+            {!discount && !chosen ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
@@ -543,10 +729,26 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             ) : null}
           </div>
 
-          <div className="rounded-lg border p-3">
-            <RulesFields kind={kind} value={rules} onChange={setRules} />
-          </div>
+          {!chosen ? (
+            <div className="rounded-lg border p-3">
+              <RulesFields kind={kind} value={rules} onChange={setRules} />
+            </div>
+          ) : null}
 
+          {ed && contentsChanged ? (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={applyToPartial}
+                onChange={(ev) => setApplyToPartial(ev.target.checked)} disabled={partial === 0} />
+              <span className="min-w-0">
+                <span className="block font-medium">{te('applyToPartial')}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {partial > 0 ? te('applyToPartialHint', { n: partial }) : te('applyToPartialNone')}
+                </span>
+              </span>
+            </label>
+          ) : null}
+
+          {ed ? null : (
           <div className="space-y-2 rounded-lg border p-3">
             <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
             {!groupOk ? (
@@ -555,6 +757,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <p className="text-sm font-medium" aria-live="polite">{plan}</p>
             ) : null}
           </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
             <div className="min-w-0">
@@ -579,11 +782,17 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               onChange={(e) => setShowCredit(e.target.checked)} />
             {t('showCredit')}
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
+              onChange={(e) => setShowValidity(e.target.checked)} />
+            {t('showValidity')}
+          </label>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-customer">{t('customerName')}</Label>
-              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)} placeholder={t('customerPlaceholder')} />
+              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
+                placeholder={t('customerPlaceholder')} disabled={!!productionId} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="pv-order">{t('orderRef')}</Label>
@@ -639,9 +848,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <Label>{t('company')}</Label>
               <Select
                 value={companyId}
+                disabled={!!ed}
                 onValueChange={(v) => {
                   setCompanyId(String(v ?? ''));
                   setShopIds([]);
+                  // A production and an event are a company's: they go with it.
+                  setProductionId('');
+                  setReportEventId('');
                   // What another company may carry is another list: the picks go with the company.
                   setItems([]);
                   setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
@@ -684,19 +897,27 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               {totals.weights.map((x) => ` ${t('totalsWeight', { quantity: quantityNumberText(x.quantity), unit: x.unit })}`).join('')}
             </p>
           ) : null}
-          {problems.length ? (
+          {problems.length || editProblems.length ? (
             <p className="text-xs text-muted-foreground">
-              {t('missing', { list: problems.map((p) => t(`problem.${p}`)).join(', ') })}
+              {t('missing', { list: [...problems.map((p) => t(`problem.${p}`)), ...editProblems].join(', ') })}
             </p>
           ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tc('cancel')}</Button>
-          <Button onClick={() => create.mutate()} disabled={!canCreate || create.isPending}>
-            {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <TicketCheck className="h-4 w-4" />}
-            {t('submit', { count: Number.isFinite(n) ? n : 0 })}
-          </Button>
+          {ed ? (
+            <Button onClick={() => void saveEdit()} disabled={!canCreate || editSave.busy || Object.keys(editBody).length === 0}>
+              {editSave.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+              {te('submit')}
+            </Button>
+          ) : (
+            <Button onClick={() => create.mutate()} disabled={!canCreate || create.isPending}>
+              {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <TicketCheck className="h-4 w-4" />}
+              {t('submit', { count: Number.isFinite(n) ? n : 0 })}
+            </Button>
+          )}
         </DialogFooter>
+        {editSave.dialog}
       </DialogContent>
     </Dialog>
   );
@@ -732,34 +953,53 @@ function contentsText(b: PrepaidVoucherBatch, benefit: string | null): string {
   return benefit ?? b.items.map((i) => itemText(i)).join(' + ');
 }
 
+function validityText(b: PrepaidVoucherBatch, t: (k: string, v?: Record<string, string>) => string): string {
+  if (b.validFrom && b.validUntil) return t('row.validity', { from: day(b.validFrom), to: day(b.validUntil) });
+  if (b.validUntil) return t('row.validUntil', { date: day(b.validUntil) });
+  if (b.validFrom) return t('row.validFrom', { date: day(b.validFrom) });
+  return t('row.noValidity');
+}
+
 function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
   const t = useTranslations('prepaidVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const termsText = useBatchTermsText()(b);
   const discount = isDiscountKind(b.kind);
+  const f = b.figures;
+  const statusKey = b.state
+    ? (['cancelled', 'not_started', 'expired', 'fully_redeemed'] as const).find((k) => b.state![k]) ?? 'active'
+    : null;
   return (
     <li>
       <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold">{b.eventName || b.name}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {b.eventName ? `${b.name} · ` : ''}
-              {contentsText(b, termsText.benefit)}
+            <p className="truncate font-semibold">
+              {b.customerName ? t('row.forWhom', { name: b.customerName }) : <span className="text-muted-foreground">{t('row.noCustomer')}</span>}
             </p>
+            <p className="truncate text-sm">{b.eventName ? `${b.eventName} · ${b.name}` : b.name}</p>
+            <p className="truncate text-xs text-muted-foreground">{contentsText(b, termsText.benefit)}</p>
           </div>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]',
             discount ? 'bg-violet-100 text-violet-900 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-muted')}>
             {termsText.kind}
           </span>
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
-            {t(`batchStatus.${b.status}`)}
+            {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
         </div>
+        {f ? (
+          <p className="flex flex-wrap gap-x-3 text-xs">
+            <span>{t('row.issued', { n: f.issued })}</span>
+            <span className="font-medium">{t('row.redeemed', { n: f.redeemed })} {t('row.rate', { rate: rateText(f.rate) })}</span>
+            <span>{t('row.open', { n: f.open })}</span>
+            <span className="text-muted-foreground">{validityText(b, t)}</span>
+          </p>
+        ) : null}
         <StatsBar b={b} />
         <p className="text-xs text-muted-foreground">
           {termsText.uses ?? (b.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
           {!discount && b.includeExtras ? ` · ${t('create.includeExtras')}` : ''}
-          {b.validUntil ? ` · ${t('validUntil', { date: day(b.validUntil) })}` : ''}
           {' · '}
           {b.shops.length ? b.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: b.companyName ?? '' })}
         </p>
@@ -818,57 +1058,11 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
   );
 }
 
-function RedemptionHistory({ voucherId }: { voucherId: string }) {
-  const t = useTranslations('prepaidVouchers.history');
-  const tk = useTranslations('prepaidVouchers.kinds');
-  const q = useQuery({ queryKey: ['prepaid-voucher', voucherId], queryFn: () => fetchPrepaidVoucher(voucherId) });
-  // A discount voucher's use: its uses and the ₪ it took off (a discount on the sale, not a tender).
-  const discountUseText = (r: { uses?: number | null; discountAmount?: number | null }) =>
-    tk('historyUse', {
-      uses: (r.uses ?? 1) === 1 ? tk('usesOne') : tk('usesMany', { n: r.uses ?? 1 }),
-      amount: `₪${(r.discountAmount ?? 0).toFixed(2)}`,
-    });
-  if (q.isPending) return <Skeleton className="h-10 w-full" />;
-  const rows = q.data?.redemptions ?? [];
-  if (!rows.length) return <p className="text-xs text-muted-foreground">{t('empty')}</p>;
-  // A weighed item reads by its unit ("0.3 ק״ג זיתים"), as the voucher's own items say.
-  const byProduct = new Map((q.data?.items ?? []).map((i) => [i.productId, i]));
-  const lineText = (i: { productId: string; name: string | null; quantity: number }) => {
-    const item = byProduct.get(i.productId);
-    return itemText({ name: i.name ?? '', quantity: i.quantity, weighed: item?.weighed, unitLabel: item?.unitLabel });
-  };
-  return (
-    <ul className="space-y-1 text-xs">
-      {rows.map((r) => (
-        <li key={r.id} className={cn('rounded border px-2 py-1', r.reversedAt && 'opacity-60')}>
-          {r.reversedAt ? (
-            <span className="me-1 rounded bg-muted px-1 font-medium">{t('reversed')}</span>
-          ) : null}
-          <span className={cn('font-medium', r.reversedAt && 'line-through')}>{time(r.redeemedAt)}</span>
-          {' · '}
-          {r.machineName ?? t('unknownTill')}
-          {r.posUserName ? ` · ${r.posUserName}` : ''}
-          {' — '}
-          {r.uses ? discountUseText(r) : r.items.map(lineText).join(', ')}
-          {(r.flags ?? []).map((f) => (
-            <span key={f} className="ms-1 rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-              {tk.has(`flag.${f}`) ? tk(`flag.${f}`) : f}
-            </span>
-          ))}
-          {r.forfeited.length ? (
-            <span className="text-destructive">
-              {' '}({t('forfeited', { items: r.forfeited.map(lineText).join(', ') })})
-            </span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: () => void }) {
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
+  const ta = useTranslations('prepaidVouchers.allVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const errorText = useErrorText();
   const qc = useQueryClient();
   const termsText = useBatchTermsText()(batch);
@@ -885,36 +1079,40 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     }
   };
 
-  const [statusFilter, setStatusFilter] = useState<'all' | PrepaidVoucherStatus>('all');
-  const [serialText, setSerialText] = useState('');
+  // The vouchers' filters (the shared model, lib/prepaidVoucherFilters.ts): state, group, words,
+  // redeemed between, at which till, by whom — filtered and paged on the server.
+  const [vf, setVf] = useState<VoucherFilters>(EMPTY_FILTERS);
+  const setFilter = (next: VoucherFilters) => { setVf(next); setOffset(0); };
+  const [exporting, setExporting] = useState(false);
+  const facets = useVoucherFacets();
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [view, setView] = useState<'vouchers' | 'groups' | 'report' | 'distribution'>('vouchers');
   const td = useTranslations('voucherDistribution');
+  // "ערוך סדרה": the batch's form, opened with its own settings.
+  const [editOpen, setEditOpen] = useState(false);
   const [addCount, setAddCount] = useState('10');
   const [busy, setBusy] = useState<string | null>(null);
-  const [groupText, setGroupText] = useState('');
-  const [codeText, setCodeText] = useState('');
   const [assignMode, setAssignMode] = useState<GroupMode>('10');
   const [assignCustom, setAssignCustom] = useState('');
   const planText = useGroupPlanText();
-  const serial = parseInt(serialText, 10);
-  const groupNo = parseInt(groupText, 10);
-  const codeQuery = codeText.replace(/[^0-9a-z]/gi, '').length >= 4 ? codeText.trim() : '';
-
+  const voucherQuery = filtersToQuery({ ...vf, batchId: [batch.id] });
   const list = useQuery({
-    queryKey: ['prepaid-vouchers', batch.id, statusFilter, serialText, offset, groupText, codeQuery],
-    queryFn: () =>
-      fetchPrepaidVouchers(batch.id, {
-        status: statusFilter === 'all' ? undefined : statusFilter,
-        serial: Number.isFinite(serial) && serial > 0 ? serial : undefined,
-        group: Number.isFinite(groupNo) && groupNo > 0 ? groupNo : undefined,
-        code: codeQuery || undefined,
-        limit: PAGE_SIZE,
-        offset,
-      }),
+    queryKey: ['prepaid-vouchers', batch.id, voucherQuery.toString(), offset],
+    queryFn: () => fetchPrepaidVoucherRows(voucherQuery, PAGE_SIZE, offset),
   });
+  const exportVouchers = async () => {
+    setExporting(true);
+    try {
+      const rows = await fetchAllPages((page, size) => fetchPrepaidVoucherRows(voucherQuery, size, (page - 1) * size), { pageSize: 1000 });
+      await downloadExcel([voucherSheet(rows, ta, ts)], `${fileBase} — ${ta('sheet')}`);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
@@ -926,7 +1124,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   // Print settings: only what the next print looks like changes (the code under the barcode,
   // the goods on the voucher, the barcode).
   const saveSettings = useMutation({
-    mutationFn: (body: { showCode?: boolean; showItems?: boolean; showCredit?: boolean; barcodeType?: PrepaidBarcodeType }) =>
+    mutationFn: (body: { showCode?: boolean; showItems?: boolean; showCredit?: boolean; showValidity?: boolean; printTillValue?: boolean; barcodeType?: PrepaidBarcodeType }) =>
       updatePrepaidBatch(batch.id, body),
     onSuccess: () => { toast.success(t('production.settingsSaved')); refresh(); },
     onError: (err) => toast.error(errorText(err)),
@@ -1043,7 +1241,6 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const cancelled = batch.status === 'cancelled';
   const grouped = (batch.groupCount ?? 0) > 0;
   const narrowLine = batch.barcodeType === 'code128' && geometryOf(layout).cardW < 70;
-  const statuses: ('all' | PrepaidVoucherStatus)[] = ['all', 'active', 'partially_used', 'used', 'cancelled'];
 
   return (
     <div className="space-y-4">
@@ -1065,27 +1262,54 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <p className="text-xs text-muted-foreground">
             {termsText.uses ?? (batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
             {` · ${tk(`stacking.${batch.stacking ?? 'single'}`)}`}
+            {batch.maxVouchersPerSale ? ` · ${tk('maxVouchersShort', { n: batch.maxVouchersPerSale })}` : null}
             {discount ? ` · ${tk(`promotionPolicy.${batch.promotionPolicy ?? 'exclude'}`)}` : ''}
             {batch.validFrom ? ` · ${t('validFrom', { date: day(batch.validFrom) })}` : ''}
             {batch.validUntil ? ` · ${t('validUntil', { date: day(batch.validUntil) })}` : ''}
             {' · '}
             {batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: batch.companyName ?? '' })}
           </p>
-          {batch.customerName || batch.orderRef ? (
+          {batch.type ? (
+            <p className="text-xs text-muted-foreground">
+              {[
+                batch.type.origin === 'manual' && batch.type.name
+                  ? t('typeLine', { name: batch.type.name, code: batch.type.code ?? '', version: batch.type.version })
+                  : t('typeOwn'),
+                batch.type.currentVersion && batch.type.currentVersion > batch.type.version
+                  ? t('typeNewer', { n: batch.type.currentVersion }) : null,
+                !discount && batch.tillValue != null ? t('tillValueIs', { v: moneyText(Math.round(batch.tillValue * 100)) }) : null,
+                !discount && batch.pricesVisible && batch.productionPrice != null
+                  ? t('productionPriceIs', { v: moneyText(Math.round(batch.productionPrice * 100)) }) : null,
+                !discount ? t(`pricingShort.${batch.pricing ?? 'cover'}`) : null,
+                !discount ? t(`accountingShort.${batch.redemptionAccounting ?? 'zero'}`) : null,
+                batch.offlineAllowed ? t('offlineShort') : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          ) : null}
+          {batch.customerName || batch.orderRef || batch.reportEvent ? (
             <p className="text-xs text-muted-foreground">
               {[
                 batch.customerName ? t('production.customer', { name: batch.customerName }) : null,
                 batch.orderRef ? t('production.order', { ref: batch.orderRef }) : null,
+                batch.reportEvent ? t('productions.eventLine', { name: batch.reportEvent.name }) : null,
               ].filter(Boolean).join(' · ')}
             </p>
           ) : null}
         </div>
-        <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
-          {t(`batchStatus.${batch.status}`)}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
+            {t(`batchStatus.${batch.status}`)}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} className="print:hidden">
+            <Pencil className="h-4 w-4" />
+            {t('edit.button')}
+          </Button>
+        </div>
       </div>
+      {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
 
       <StatsBar b={batch} />
+      {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
         {(['vouchers', 'groups', 'report', 'distribution'] as const).map((v) => (
@@ -1132,6 +1356,20 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                 onChange={(e) => saveSettings.mutate({ showCredit: e.target.checked })} />
               {t('create.showCredit')}
             </label>
+            <label className="flex items-center gap-2 self-center text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={batch.showValidity !== false}
+                disabled={saveSettings.isPending || cancelled}
+                onChange={(e) => saveSettings.mutate({ showValidity: e.target.checked })} />
+              {t('create.showValidity')}
+            </label>
+            {!discount && batch.tillValue != null ? (
+              <label className="flex items-center gap-2 self-center text-sm">
+                <input type="checkbox" className="h-4 w-4 accent-primary" checked={!!batch.printTillValue}
+                  disabled={saveSettings.isPending || cancelled}
+                  onChange={(e) => saveSettings.mutate({ printTillValue: e.target.checked })} />
+                {t('printTillValue')}
+              </label>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label htmlFor="pv-free-text-edit">{t('create.freeText')}</Label>
@@ -1214,7 +1452,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         </CardContent>
       </Card>
 
-      <BatchRulesCard key={`${batch.stacking}:${batch.promotionPolicy}:${batch.maxUsesPerSale}:${batch.maxUsesPerDay}`}
+      <BatchRulesCard key={`${batch.stacking}:${batch.maxVouchersPerSale}:${batch.promotionPolicy}:${batch.maxUsesPerSale}:${batch.maxUsesPerDay}`}
         batch={batch} onSaved={refresh} />
 
       {!cancelled ? (
@@ -1242,40 +1480,52 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       ) : null}
 
       <div className="space-y-2">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
-            <Label>{t('filterStatus')}</Label>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => { if (v) { setStatusFilter(v as typeof statusFilter); setOffset(0); } }}
-              items={statuses.map((s) => ({ value: s, label: t(`status.${s}`) }))}
-            >
-              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {statuses.map((s) => (
-                  <SelectItem key={s} value={s} label={t(`status.${s}`)}>{t(`status.${s}`)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pv-serial">{t('serialSearch')}</Label>
-            <Input id="pv-serial" inputMode="numeric" className="h-9 w-28" value={serialText}
-              onChange={(e) => { setSerialText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
-          </div>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+          <label className="block space-y-1 lg:col-span-2">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('qVouchers')}</span>
+            <Input dir="auto" className="h-9" value={vf.q} placeholder="#12 · ABCD-EFGH-…"
+              onChange={(e) => setFilter({ ...vf, q: e.target.value })} />
+          </label>
+          <label className="block space-y-1">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('state')}</span>
+            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" value={vf.state}
+              onChange={(e) => setFilter({ ...vf, state: e.target.value as VoucherFilters['state'] })}>
+              <option value="">{ts('stateAll')}</option>
+              {VOUCHER_STATES.map((s) => <option key={s} value={s}>{ts(`states.${s}`)}</option>)}
+            </select>
+          </label>
           {grouped ? (
-            <div className="space-y-1">
-              <Label htmlFor="pv-group">{t('groupFilter')}</Label>
-              <Input id="pv-group" inputMode="numeric" className="h-9 w-24" value={groupText} placeholder={t('groupAll')}
-                onChange={(e) => { setGroupText(e.target.value.replace(/\D/g, '')); setOffset(0); }} />
-            </div>
+            <label className="block space-y-1">
+              <span className="block text-xs font-medium text-muted-foreground">{t('groupFilter')}</span>
+              <Input inputMode="numeric" className="h-9" value={vf.group} placeholder={t('groupAll')}
+                onChange={(e) => setFilter({ ...vf, group: e.target.value.replace(/\D/g, '') })} />
+            </label>
           ) : null}
-          <div className="space-y-1">
-            <Label htmlFor="pv-code">{t('codeSearch')}</Label>
-            <Input id="pv-code" dir="ltr" className="h-9 w-48 font-mono" value={codeText} placeholder="ABCD-EFGH-…"
-              onChange={(e) => { setCodeText(e.target.value); setOffset(0); }} />
-          </div>
+          <MultiPicker label={ts('till')} allLabel={ts('tillAll')} value={vf.machineId} onChange={(v) => setFilter({ ...vf, machineId: v })}
+            options={(facets.data?.tills ?? []).map((x) => ({ id: x.id, label: x.name ?? x.id, hint: x.shopName }))} />
+          <MultiPicker label={ts('employee')} allLabel={ts('employeeAll')} value={vf.employee} onChange={(v) => setFilter({ ...vf, employee: v })}
+            options={(facets.data?.employees ?? []).map((x) => ({ id: x.id, label: x.name }))} />
+          <label className="block space-y-1 lg:col-span-2">
+            <span className="block text-xs font-medium text-muted-foreground">{ts('redeemed')}</span>
+            <span className="flex items-center gap-1">
+              <Input type="date" aria-label={`${ts('redeemed')} — ${ts('fromLabel')}`} className="h-9 min-w-0" value={vf.from}
+                onChange={(e) => setFilter({ ...vf, from: e.target.value })} />
+              <span className="text-xs text-muted-foreground">–</span>
+              <Input type="date" aria-label={`${ts('redeemed')} — ${ts('toLabel')}`} className="h-9 min-w-0" value={vf.to}
+                onChange={(e) => setFilter({ ...vf, to: e.target.value })} />
+            </span>
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {activeFilterCount(vf) ? (
+            <Button size="sm" variant="ghost" onClick={() => setFilter(EMPTY_FILTERS)}>
+              <X className="h-4 w-4" /> {ts('clearAll')}
+            </Button>
+          ) : null}
           <span className="ms-auto text-xs text-muted-foreground">{list.data ? t('count', { n: list.data.total }) : null}</span>
+          <Button size="sm" variant="outline" onClick={() => void exportVouchers()} disabled={exporting || !list.data?.total}>
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {ta('export')}
+          </Button>
         </div>
 
         {list.isPending ? (
@@ -1291,7 +1541,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   {v.groupNo ? (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums">{t('groupBadge', { g: v.groupNo })}</span>
                   ) : null}
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATUS_STYLE[v.status])}>{t(`status.${v.status}`)}</span>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[11px]', STATE_STYLE[v.state])}>{ts(`states.${v.state}`)}</span>
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.usesLeft != null
                       ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
@@ -1360,37 +1610,121 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The three toggles on an issued batch — editable after issue (each redemption records the mode it
+ * used): "נכנס כאמצעי תשלום ולסה״כ הכללי", "מימוש ללא אינטרנט" and the discount-block policy.
+ */
+function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved: () => void }) {
+  const t = useTranslations('prepaidVouchers');
+  const types = useQuery({
+    queryKey: ['prepaid-voucher-types', 'flags'],
+    queryFn: () => fetchPrepaidTypes({ includeInactive: false }),
+  });
+  const [policy, setPolicy] = useState<PolicyState>(policyState(batch.discountBlockPolicy));
+  // Accounting, offline and the policy apply to redemptions from now on: planned and confirmed first ("ערוך סדרה").
+  const edit = useBatchEditSave(batch, () => onSaved());
+  const policyChanged = JSON.stringify(policyBody(policy)) !== JSON.stringify(policyBody(policyState(batch.discountBlockPolicy)));
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('togglesTitle')}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">{t('togglesHint')}</p>
+        <ToggleFields
+          accounting={batch.redemptionAccounting ?? 'zero'} onAccounting={(v) => void edit.save({ redemptionAccounting: v })}
+          offlineAllowed={!!batch.offlineAllowed} onOfflineAllowed={(v) => void edit.save({ offlineAllowed: v })}
+          policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} disabled={edit.busy}
+        />
+        {policyChanged ? (
+          <Button size="sm" onClick={() => void edit.save({ discountBlockPolicy: policyBody(policy) })} disabled={edit.busy}>
+            {t('togglesSavePolicy')}
+          </Button>
+        ) : null}
+        {/* "מימוש ללא אינטרנט": the assignment to a till or the shop's LAN host (§7). */}
+        {batch.offlineAllowed ? <OfflineAssignmentPanel batch={batch} /> : null}
+        {edit.dialog}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function PrepaidVouchersPage() {
   const t = useTranslations('prepaidVouchers');
+  const ts = useTranslations('prepaidVouchers.scope');
   const errorText = useErrorText();
   const [creating, setCreating] = useState(false);
   // `?batch=<id>`: the control board's "שוברים" card opens a voucher's batch directly.
   const searchParams = useSearchParams();
   const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('batch'));
+  // The view, the sort and every filter live in the URL (lib/prepaidVoucherFilters.ts): a filtered
+  // view is a link, and the views share one set of filters.
+  const [page, setPage] = useVoucherPageState();
+  const { view, sort, filters } = page;
+  const setView = (v: VoucherView) => setPage({ ...page, view: v });
+  const setFilters = (f: VoucherFilters) => setPage({ ...page, filters: f });
+  const facets = useVoucherFacets();
 
   const batches = useQuery({ queryKey: ['prepaid-voucher-batches'], queryFn: fetchPrepaidBatches });
   const selected = batches.data?.find((b) => b.id === selectedId) ?? null;
-  // The list's filters (the spec's §10.1): words over name / event / customer / order, status, kind, company.
-  const [filters, setFilters] = useState<BatchFilters>(NO_BATCH_FILTERS);
-  const shown = filterBatches(batches.data ?? [], filters);
-  const companies = Array.from(new Map((batches.data ?? []).map((b) => [b.companyId, b.companyName ?? b.companyId])));
+  const listQuery = filtersToQuery(filters, ['state', 'group']);
+  const shown = useQuery({
+    queryKey: ['prepaid-voucher-batches', 'filtered', listQuery.toString(), sort],
+    queryFn: () => fetchFilteredPrepaidBatches(listQuery, sort),
+    enabled: view === 'batches' && !selectedId,
+  });
+
+  const onPick = (p: SearchPick) => {
+    if (p.kind === 'batch') {
+      setSelectedId(p.batch.id);
+      return;
+    }
+    setSelectedId(null);
+    if (p.kind === 'voucher') setPage({ ...page, view: 'vouchers', filters: { ...EMPTY_FILTERS, q: p.code } });
+    else if (p.kind === 'till') setPage({ ...page, view: 'tills', filters: { ...filters, machineId: [p.id] } });
+    else setPage({ ...page, view: 'tills', filters: { ...filters, employee: [p.id] } });
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
-        {!selected ? (
+        {!selected && view === 'batches' ? (
           <Button onClick={() => setCreating(true)}>
             <Plus className="h-4 w-4" /> {t('new')}
           </Button>
         ) : null}
       </div>
 
+      {!selected ? <VoucherSearch onPick={onPick} /> : null}
+
+      {!selected ? (
+        <div className="flex flex-wrap gap-1" role="tablist" aria-label={t('tabs.label')}>
+          {VOUCHER_VIEWS.map((v) => (
+            <Button key={v} role="tab" aria-selected={view === v} size="sm" variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
+              {t(`tabs.${v}`)}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      {!selected && view !== 'types' && view !== 'productions' ? (
+        <VoucherFilterBar view={view} value={filters} onChange={setFilters} facets={facets.data} />
+      ) : null}
+
       {selected ? (
         <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} />
+      ) : view === 'types' ? (
+        <PrepaidTypesView />
+      ) : view === 'productions' ? (
+        <PrepaidProductionsView />
+      ) : view === 'vouchers' ? (
+        <VoucherRowsTable filters={filters} onQuery={(q) => setFilters({ ...filters, q })} />
+      ) : view === 'tills' ? (
+        <TillsReport filters={filters} />
       ) : batches.isPending ? (
         <div className="space-y-2">
           <Skeleton className="h-24 w-full rounded-xl" />
@@ -1407,30 +1741,27 @@ export default function PrepaidVouchersPage() {
         <>
           <div className="flex flex-wrap items-end gap-2">
             <div className="relative min-w-48 flex-1">
-              <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground ltr:left-2.5 rtl:right-2.5" aria-hidden />
-              <Input value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                placeholder={t('filters.search')} aria-label={t('filters.search')} className="ps-8" />
+              <Input value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+                placeholder={ts('qBatches')} aria-label={ts('qBatches')} dir="auto" />
             </div>
-            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.statusLabel')}
-              value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value as BatchFilters['status'] })}>
-              {(['all', 'active', 'cancelled'] as const).map((s) => <option key={s} value={s}>{t(`filters.status.${s}`)}</option>)}
-            </select>
-            <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.kindLabel')}
-              value={filters.kind} onChange={(e) => setFilters({ ...filters, kind: e.target.value as BatchFilters['kind'] })}>
-              {(['all', 'items', 'discount'] as const).map((k) => <option key={k} value={k}>{t(`filters.kind.${k}`)}</option>)}
-            </select>
-            {companies.length > 1 ? (
-              <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" aria-label={t('filters.companyLabel')}
-                value={filters.companyId} onChange={(e) => setFilters({ ...filters, companyId: e.target.value })}>
-                <option value="">{t('filters.allCompanies')}</option>
-                {companies.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+              {ts('sort')}
+              <select className="h-9 rounded-lg border border-input bg-transparent px-2 text-sm text-foreground dark:bg-input/30"
+                value={sort} onChange={(e) => setPage({ ...page, sort: e.target.value as typeof sort })}>
+                {BATCH_SORTS.map((s) => <option key={s} value={s}>{ts(`sorts.${s}`)}</option>)}
               </select>
-            ) : null}
-            <span className="text-xs text-muted-foreground">{t('filters.count', { shown: shown.length, total: batches.data!.length })}</span>
+            </label>
+            <span className="text-xs text-muted-foreground">
+              {shown.data ? ts('count', { shown: shown.data.total, total: batches.data!.length }) : null}
+            </span>
           </div>
-          {shown.length ? (
+          {shown.isPending ? (
+            <Skeleton className="h-24 w-full rounded-xl" />
+          ) : shown.isError ? (
+            <p className="text-sm text-destructive">{errorText(shown.error)}</p>
+          ) : shown.data!.items.length ? (
             <ul className="space-y-2">
-              {shown.map((b) => (
+              {shown.data!.items.map((b) => (
                 <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
               ))}
             </ul>

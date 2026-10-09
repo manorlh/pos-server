@@ -11,9 +11,15 @@ Pure: no database, no clock. Money in whole agorot; a percent in basis points (2
 
 **Stacking** (`stacking_refusal`) — per batch, one of:
 
-* `single` ("שובר אחד בעסקה", the default) — no other voucher in the same sale, of any kind;
-* `distinct_batches` ("שוברים מסדרות שונות בלבד") — others, but none of the same batch;
-* `unlimited` ("ללא הגבלה") — any (every batch made before kinds existed).
+* `single` ("שובר אחד בעסקה") — no other voucher in the same sale, of any kind ("ניתן לממש
+  שובר אחד בלבד בעסקה");
+* `unlimited` ("כמה שוברים בעסקה", the default of a new type) — any (every batch made before
+  kinds existed);
+* `distinct_batches` ("כמה שוברים, רק מסוגים שונים") — others, but none of the same batch.
+
+With `unlimited` / `distinct_batches` a batch may set `max_per_sale` ("מספר שוברים מקסימלי
+בעסקה"): the sale holds at most that many vouchers, this one included. Every voucher in the sale
+with a maximum is honoured — the smallest wins ("הגעת למספר השוברים המקסימלי בעסקה (N)").
 
 The same voucher again is not "another voucher": a goods voucher may be redeemed twice in
 one sale (the rest of its goods), a discount voucher is refused (`already_applied` — its
@@ -66,6 +72,7 @@ ALREADY_APPLIED = "prepaid_voucher_already_applied"
 NOT_STACKABLE = "prepaid_voucher_not_stackable"
 OTHER_NOT_STACKABLE = "prepaid_voucher_other_not_stackable"
 SAME_BATCH = "prepaid_voucher_same_batch"
+MAX_PER_SALE = "prepaid_voucher_max_per_sale"
 MIN_PURCHASE = "prepaid_voucher_min_purchase"
 NO_ELIGIBLE = "prepaid_voucher_no_eligible_items"
 PROMOTION_BETTER = "prepaid_voucher_promotion_better"
@@ -90,6 +97,40 @@ class VoucherInSale:
     batch_id: str
     kind: str = "items"
     stacking: str = "single"
+    #: "מספר שוברים מקסימלי בעסקה" (with `unlimited` / `distinct_batches`): the most vouchers the
+    #: sale may hold, this one included. None: no maximum.
+    max_per_sale: Optional[int] = None
+
+
+#: The Hebrew the cashier reads for a stacking refusal (`{n}`: the maximum). The others are the
+#: till's own words for the code.
+STACKING_TEXT = {
+    NOT_STACKABLE: "ניתן לממש שובר אחד בלבד בעסקה",
+    OTHER_NOT_STACKABLE: "ניתן לממש שובר אחד בלבד בעסקה",
+    MAX_PER_SALE: "הגעת למספר השוברים המקסימלי בעסקה ({n})",
+}
+
+
+def sale_limit(existing: Iterable[VoucherInSale], incoming: VoucherInSale) -> Optional[int]:
+    """
+    The maximum [incoming] would break by joining the sale (the smallest of the vouchers'
+    `max_per_sale`, a `single` one aside), or None. A voucher counts once however many of its
+    goods the sale takes.
+    """
+    everyone = [v for v in existing if v.voucher_id != incoming.voucher_id] + [incoming]
+    count = len({v.voucher_id for v in everyone})
+    limits = [int(v.max_per_sale) for v in everyone if v.max_per_sale and v.stacking != "single"]
+    if limits and count > min(limits):
+        return min(limits)
+    return None
+
+
+def stacking_text(code: Optional[str], limit: Optional[int] = None) -> Optional[str]:
+    """The cloud's words for a stacking refusal, or None (the till's own text for the code)."""
+    text = STACKING_TEXT.get(code or "")
+    if text is None:
+        return None
+    return text.format(n=limit if limit is not None else "")
 
 
 def stacking_refusal(existing: Iterable[VoucherInSale], incoming: VoucherInSale) -> Optional[str]:
@@ -113,6 +154,8 @@ def stacking_refusal(existing: Iterable[VoucherInSale], incoming: VoucherInSale)
         or any(v.stacking == "distinct_batches" for v in same)
     ):
         return SAME_BATCH
+    if sale_limit(others, incoming) is not None:
+        return MAX_PER_SALE
     return None
 
 
@@ -460,6 +503,6 @@ def batch_benefit_text(batch) -> Optional[str]:
 
 __all__ = [
     "Benefit", "BasketLine", "DiscountResult", "VoucherInSale",
-    "stacking_refusal", "discount_for", "uses_wanted", "benefit_text", "benefit_of",
+    "stacking_refusal", "sale_limit", "stacking_text", "discount_for", "uses_wanted", "benefit_text", "benefit_of",
     "batch_benefit_text", "money_text", "percent_text",
 ]

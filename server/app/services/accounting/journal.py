@@ -59,7 +59,9 @@ CENT = Decimal("0.01")
 MAX_ROUNDING = Decimal("1.00")
 
 #: Tender methods booked as voucher redemptions rather than "other".
-VOUCHER_METHODS = frozenset({"voucher", "vouchers", "giftcard", "gift_card", "coupon", "credit_voucher"})
+VOUCHER_METHODS = frozenset({
+    "voucher", "vouchers", "production_voucher", "giftcard", "gift_card", "coupon", "credit_voucher",
+})
 
 #: Hebrew line labels — the `פרטים` a bookkeeper reads in the ledger.
 LABELS = {

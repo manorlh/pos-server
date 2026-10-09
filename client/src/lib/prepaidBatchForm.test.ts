@@ -26,6 +26,8 @@ describe('batchFormProblems', () => {
     assert.deepEqual(batchFormProblems({ ...ok, count: Number.NaN }), ['count']);
     assert.deepEqual(batchFormProblems({ ...ok, validFrom: '2026-08-14', validUntil: '2026-08-12' }), ['dates']);
     assert.deepEqual(batchFormProblems({ ...ok, validFrom: '2026-08-12', validUntil: '2026-08-12' }), []);
+    assert.deepEqual(batchFormProblems({ ...ok, stackingOk: false }), ['maxVouchers']);
+    assert.deepEqual(batchFormProblems({ ...ok, stackingOk: true }), []);
   });
 });
 

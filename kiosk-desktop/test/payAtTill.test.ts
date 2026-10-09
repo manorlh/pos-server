@@ -257,6 +257,21 @@ describe('vouchers', () => {
       expect(sent.some((s) => s.path.endsWith('prepaid-vouchers/redeem'))).toBe(false);
       answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({ status: 200, body: { redeemable: false, status: 'used' } });
       expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'y' })).toEqual({ kind: 'refused', reason: 'prepaid_voucher_used' });
+      // The cloud's own words come along…
+      answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({
+        status: 200, body: { redeemable: false, reason: 'prepaid_voucher_used', message: 'השובר מומש כבר בקופה 2 בשעה 14:05' },
+      });
+      expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'z' })).toEqual({
+        kind: 'refused', reason: 'prepaid_voucher_used', message: 'השובר מומש כבר בקופה 2 בשעה 14:05',
+      });
+      // …but a voucher this kiosk cannot book sends the customer to the till, never "update the till".
+      answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({
+        status: 200, body: { redeemable: false, reason: 'prepaid_voucher_update_required', message: 'יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה' },
+      });
+      expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'u' })).toEqual({
+        kind: 'refused', reason: 'prepaid_voucher_update_required',
+      });
+      expect(sent.some((s) => s.path.endsWith('prepaid-vouchers/redeem'))).toBe(false);
     } finally {
       svc.stop();
     }

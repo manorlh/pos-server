@@ -100,6 +100,8 @@ def make_batch(w, *, count=3, split=False, user=None, shops=None, valid_from=Non
     body = PrepaidVoucherBatchCreate(
         name="הפקה — פסטיבל",
         companyId=w.company.id,
+        # What today's tills book (the `voucher` tender at list prices): no `features` needed.
+        redemptionAccounting="payment",
         shopIds=shops,
         eventName="פסטיבל הקיץ",
         freeText="בתוקף 12–14.8",
@@ -130,7 +132,7 @@ def lookup(w, code, till=None):
     return R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=code), machine=till, db=w.db)
 
 
-def redeem(w, code, items, *, till=None, request_id=None, forfeit=False):
+def redeem(w, code, items, *, till=None, request_id=None, forfeit=False, features=None):
     till = till or w.tills[0]
     body = PrepaidVoucherRedeemIn(
         code=code,
@@ -139,6 +141,7 @@ def redeem(w, code, items, *, till=None, request_id=None, forfeit=False):
         forfeitRest=forfeit,
         posUserId=7,
         posUserName="דנה",
+        features=features,
     )
     return R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
 

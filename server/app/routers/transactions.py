@@ -252,12 +252,16 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
         )
         query = query.filter(or_(func.lower(Transaction.payment_method) == "mixed", legs > 1))
     elif method:
+        # "שובר" finds every production voucher leg, whichever code the till wrote.
+        from app.services.tenders import PRODUCTION_VOUCHER_METHODS
+
+        methods = sorted(PRODUCTION_VOUCHER_METHODS) if method == "voucher" else [method]
         query = query.filter(
             or_(
-                func.lower(Transaction.payment_method) == method,
+                func.lower(Transaction.payment_method).in_(methods),
                 exists().where(
                     TransactionPayment.transaction_id == Transaction.id,
-                    func.lower(TransactionPayment.method) == method,
+                    func.lower(TransactionPayment.method).in_(methods),
                 ),
             )
         )

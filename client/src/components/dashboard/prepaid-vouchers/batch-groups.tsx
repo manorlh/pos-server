@@ -20,6 +20,8 @@ import {
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
 import { serialRange } from '@/lib/prepaidVoucherGroups';
+import { editValueText } from '@/lib/prepaidBatchEdit';
+import { useEditFieldLabel, useEditValueFormat } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime, isoDate } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
@@ -35,9 +37,18 @@ function when(iso: string | null): string {
   return isoDate(iso) ? formatDateTime(iso) : '';
 }
 
-function EventLine({ e }: { e: PrepaidBatchEvent }) {
+/** An "update" line's changes ("ערוך סדרה"): each setting before → after (a production price only to whoever may see it). */
+function changesOf(e: PrepaidBatchEvent): { field: string; before?: unknown; after?: unknown; secret?: string }[] {
+  const changes = e.details?.changes;
+  return Array.isArray(changes) ? (changes as { field: string; before?: unknown; after?: unknown; secret?: string }[]).filter((c) => c && typeof c.field === 'string') : [];
+}
+
+function EventLine({ e, batch }: { e: PrepaidBatchEvent; batch: PrepaidVoucherBatch }) {
   const t = useTranslations('prepaidVouchers.events');
+  const fmt = useEditValueFormat(batch);
+  const label = useEditFieldLabel();
   const serial = typeof e.details?.serial === 'number' ? ` #${e.details.serial}` : '';
+  const changes = e.action === 'update' ? changesOf(e) : [];
   return (
     <li className="rounded border px-2 py-1 text-xs">
       <span className="font-medium tabular-nums">{when(e.createdAt)}</span>
@@ -46,6 +57,16 @@ function EventLine({ e }: { e: PrepaidBatchEvent }) {
       {serial}
       {e.userName ? <span className="text-muted-foreground"> · {t('by', { name: e.userName })}</span> : null}
       {e.reason ? <span className="block text-muted-foreground">{t('reason', { reason: e.reason })}</span> : null}
+      {changes.length ? (
+        <ul className="mt-0.5 space-y-0.5 text-muted-foreground">
+          {changes.map((c) => (
+            <li key={c.field} className="break-words">
+              {label(c.field)}
+              {'before' in c || 'after' in c ? `: ${editValueText(c.field, c.before, fmt)} ← ${editValueText(c.field, c.after, fmt)}` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }
@@ -258,7 +279,7 @@ export function PrepaidBatchGroupsView({
             <p className="text-sm text-muted-foreground">{te('empty')}</p>
           ) : (
             <ul className="space-y-1">
-              {events.data!.map((e) => <EventLine key={e.id} e={e} />)}
+              {events.data!.map((e) => <EventLine key={e.id} e={e} batch={batch} />)}
             </ul>
           )}
         </CardContent>

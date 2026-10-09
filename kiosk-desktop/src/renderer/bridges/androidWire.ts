@@ -8,7 +8,7 @@
 export const ANDROID_BRIDGE_API = 1;
 
 /** Calls that are answered. */
-export const ANDROID_CALLS = ['bootstrap', 'shellView', 'startPayment', 'cancelPayment', 'receiptChoice', 'helpRequest'] as const;
+export const ANDROID_CALLS = ['bootstrap', 'shellView', 'startPayment', 'cancelPayment', 'receiptChoice', 'helpRequest', 'voucherApply', 'voucherRemove'] as const;
 /** One-way messages to the APK. */
 export const ANDROID_SENDS = ['reportFlow', 'funnel', 'activity', 'ready', 'error'] as const;
 /** What the APK pushes. */

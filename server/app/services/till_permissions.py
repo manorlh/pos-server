@@ -103,6 +103,9 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("DISCOUNT", "הנחה (סל / שורה)", "sale",
                    "הנחת סל או הנחת שורה, וגם פתיחת ארוחת צוות / מנהל בשולחן. מעל האחוז שהוגדר נדרש אישור "
                    "של מי שמותר לו אחוז כזה.", limits=(_MAX_PERCENT,), scope="discount"),
+    PermissionSpec("VOUCHER_DISCOUNT_OVERRIDE", "אישור כפיית הנחה בשובר", "sale",
+                   "אישור הורדת מחיר של מוצר \"לא מקבל הנחות\" במימוש שובר הפקה, כשסוג השובר מגדיר "
+                   "כפייה באישור מנהל — רק בהיקף ובתקרות שהוגדרו בו."),
     PermissionSpec("LINE_VOID", "ביטול שורה", "sale",
                    "הסרת שורה שכבר נוספה להזמנה (לפני תשלום / לפני שליחה למטבח). נרשם כאירוע קופה."),
     PermissionSpec("OTH", "על חשבון הבית (OTH)", "sale",
@@ -253,7 +256,7 @@ SPEC_ROLE_KEYS: Tuple[str, ...] = (WAITER, CASHIER, SUPERVISOR, MANAGER)
 #: What `TillAuthority.SENIOR_MAY_ACT_ALONE` gated for a cashier before roles existed —
 #: the permissions a legacy cashier needs approval for (OTH rode on the discount scope).
 LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
-    "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK",
+    "REFUND", "DISCOUNT", "VOUCHER_DISCOUNT_OVERRIDE", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK",
     "REPRINT", "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK",
     "KIOSK_CONTROL", "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
     # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
@@ -277,6 +280,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CALCULATOR.USE":                    (D, A, A, A),
     "PRICE_OVERRIDE":                    (P, A, A, A),
     "DISCOUNT":                          (P, P, A, A),
+    # Production vouchers (§7): a manager-approved override — a supervisor or a manager approves.
+    "VOUCHER_DISCOUNT_OVERRIDE":         (P, P, A, A),
     "LINE_VOID":                         (A, A, A, A),
     "OTH":                               (P, P, A, A),
     "REFUND":                            (D, P, A, A),

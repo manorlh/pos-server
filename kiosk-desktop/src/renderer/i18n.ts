@@ -58,6 +58,7 @@ export const LIVE: Record<string, string> = {
   voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
   voucherAppliedNote: 'השובר נקלט · {amount}',
   voucherChecking: 'בודקים את השובר…',
+  voucherNoAnswer: 'לא הצלחנו לבדוק את השובר כרגע. נסו שוב או פנו לצוות.',
   voucherForfeitYes: 'לממש בכל זאת',
   voucherForfeitNo: 'לא, תודה',
   'voucher.prepaid_voucher_not_found': 'השובר לא נמצא',
@@ -69,11 +70,25 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_partial_not_allowed': 'שובר חד-פעמי: יש לממש את כולו בבת אחת',
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
+  'voucher.prepaid_voucher_update_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_reserve_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_kind_unsupported': 'זהו שובר הנחה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',
+  'voucher.prepaid_voucher_other_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',
+  'voucher.prepaid_voucher_max_per_sale': 'הגעת למספר השוברים המקסימלי בעסקה',
+  'voucher.prepaid_voucher_same_batch': 'לא ניתן לממש שני שוברים מאותה סדרה בעסקה',
+  'voucher.prepaid_voucher_in_use': 'השובר בשימוש בעסקה אחרת',
+  'voucher.prepaid_voucher_item_unusable': 'הפריט שבשובר אינו זמין כעת — יש להציג את השובר בקופה',
   'voucher.other': 'השובר לא נקלט. אפשר לנסות שוב או לשלם בקופה.',
 };
 
-/** The voucher's refusal in words (`prepaid_voucher_used` → "השובר כבר מומש"). */
-export function voucherReason(reason: string): string {
+/**
+ * The voucher's refusal in words (`prepaid_voucher_used` → "השובר כבר מומש"). The cloud's own words
+ * ([message]: which till used it and when, the day it expired) say more than ours, so they win;
+ * an unknown reason without them reads as the general "not taken".
+ */
+export function voucherReason(reason: string, message?: string): string {
+  if (message) return message;
   const key = `voucher.${reason}`;
   return LIVE[key] ? LIVE[key] : LIVE['voucher.other'];
 }

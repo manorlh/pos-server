@@ -55,6 +55,12 @@ class TransactionItem(Base):
     #: document's `document_discount`, never in `total_price`, never a tender. The
     #: vouchers themselves: `transaction_voucher_discounts`. Null: none.
     voucher_discount = Column(Numeric(12, 2), nullable=True)
+    #: Production vouchers (the production vouchers contract §4): a `discount`-mode deduction's
+    #: share of the line (inside `document_discount`), and a `zero`-mode ₪0 line's memo value
+    #: (agorot, the unit's list value × quantity) with its redemption. Null: none.
+    prepaid_deduction = Column(Numeric(12, 2), nullable=True)
+    voucher_memo_value = Column(Integer, nullable=True)
+    voucher_redemption_id = Column(String(100), nullable=True)
     #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md
     #: §3.8): modifiers, notes, allergies, seat, course, a meal's components. Taken apart
     #: for the reports into `transaction_item_parts`. Null: a plain line.

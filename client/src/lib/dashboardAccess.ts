@@ -24,6 +24,8 @@ export type SectionId =
   | 'stock'
   | 'vouchers'
   | 'prepaid_vouchers'
+  | 'prepaid_voucher_prices'
+  | 'voucher_discount_override'
   | 'promotions'
   | 'customers'
   | 'notifications'
@@ -89,6 +91,10 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'stock', pages: ['/dashboard/stock'] },
   { id: 'vouchers', pages: ['/dashboard/vouchers'] },
   { id: 'prepaid_vouchers', pages: ['/dashboard/prepaid-vouchers'] },
+  // No page of its own: the production price inside the prepaid vouchers pages.
+  { id: 'prepaid_voucher_prices', pages: [] },
+  // No page of its own: setting an override policy in the voucher type / batch forms.
+  { id: 'voucher_discount_override', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
   { id: 'customers', pages: ['/dashboard/club'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },

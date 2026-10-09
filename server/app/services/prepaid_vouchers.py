@@ -61,7 +61,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -75,6 +75,7 @@ from app.models.prepaid_voucher import (
     PrepaidVoucherEvent,
     PrepaidVoucherRedemption,
     PrepaidVoucherReservation,
+    PrepaidVoucherType,
 )
 from app.models.product import CatalogLevel, Product
 from app.models.shop import Shop
@@ -145,6 +146,20 @@ PROMOTION_BETTER = RULES.PROMOTION_BETTER
 
 #: Said to a client that cannot apply a discount voucher (it shows `message` as is).
 KIND_UNSUPPORTED_MESSAGE = "זהו שובר הנחה — לא ניתן לממש אותו בעמדה זו. יש להציג אותו בקופה."
+#: A voucher whose terms this client cannot book as they say (the contract's §2 `features`).
+UPDATE_REQUIRED = "prepaid_voucher_update_required"
+UPDATE_REQUIRED_MESSAGE = "יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה"
+#: A goods voucher with a value, a policy or groups: never the immediate `/redeem` (no cap, no
+#: top-up, no override there) — reserve → confirm only (the contract's §3, review 09.10).
+RESERVE_REQUIRED = "prepaid_voucher_reserve_required"
+#: A manager's approval the cloud does not accept: no such active till user of the shop, or one
+#: whose till permissions do not allow `VOUCHER_DISCOUNT_OVERRIDE` (review 09.10).
+APPROVAL_INVALID = "prepaid_voucher_approval_invalid"
+APPROVAL_INVALID_MESSAGE = "האישור אינו תקף — נדרש אישור של בעל הרשאת \"אישור כפיית הנחה בשובר\""
+OVERRIDE_PERMISSION = "VOUCHER_DISCOUNT_OVERRIDE"
+RESERVE_REQUIRED_MESSAGE = "שובר זה ממומש דרך החזקה בקופה — יש לעדכן את הקופה"
+#: What a client may say it can do, beyond today's goods redemption.
+FEATURES = ("accounting", "override", "groups", "production_voucher", "reserve_goods", "offline")
 #: How long a discount voucher stays held for an open sale without the till asking again.
 RESERVATION_TTL = timedelta(minutes=15)
 #: Every kind a client may say it supports; one that says nothing supports goods only.
@@ -738,6 +753,10 @@ def _issue(
 ) -> List[PrepaidVoucher]:
     discount = is_discount(batch)
     remaining = {} if discount else {str(i.product_id): qty_out(i.quantity) for i in batch.items}
+    if not discount and (getattr(batch, "selection", None) or "items") == "groups":
+        from app.services import production_voucher_groups as PG
+
+        remaining = PG.initial_remaining(batch.groups or [], batch.total_qty)
     uses = int(batch.uses_per_voucher or 1) if discount else None
     codes = _unique_codes(db, count)
     start = int(batch.next_serial or 1)
@@ -814,6 +833,13 @@ def _issued_details(vouchers: List[PrepaidVoucher], group_size: Optional[int]) -
 
 
 def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatch:
+    """
+    A batch and its vouchers. Issued from a type (`typeId`, the spec's §2): what each voucher
+    gives, its terms and prices are the type's, copied with its version. Without one, the body
+    says them and the batch gets a type of its own (§19.1: no voucher without a type).
+    """
+    from app.services import prepaid_voucher_types as PVT
+
     _require_role(user)
     company = db.query(Company).filter(Company.id == body.company_id).first()
     if company is None or str(company.tenant_id) != str(tenant_id):
@@ -822,14 +848,44 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
     if not _covers_company(db, user, company.id) and not shop_ids:
         # A shop manager makes batches for their own shop only.
         raise _http(status.HTTP_403_FORBIDDEN, FORBIDDEN)
-    products = _validate_products(db, tenant_id, company.id, body.items, shop_ids=shop_ids)
-    kind = getattr(body, "kind", None) or "items"
+
+    the_type = None
+    if getattr(body, "type_id", None):
+        the_type = PVT.type_for_batch(db, user, tenant_id, body.type_id, company.id)
+        src_terms = PVT.terms_from_type(the_type)
+        terms = {f: getattr(src_terms, f) for f in PVT.TERM_FIELDS}
+        items_in = src_terms.items
+        targets_in = None
+    else:
+        if getattr(body, "production_price", None) is not None:
+            PVT._require_prices(db, user)
+        terms = PVT.stored_terms(body)
+        terms.update(PVT.policy_columns(db, user, tenant_id, getattr(body, "discount_block_policy", None)))
+        items_in = body.items
+        targets_in = getattr(body, "targets", None)
+    kind = terms.get("kind") or "items"
     discount = kind in RULES.DISCOUNT_KINDS
-    targets = (
-        _validate_targets(db, tenant_id, company.id, body.targets, shop_ids=shop_ids)
-        if kind == "item_discount" and getattr(body, "targets", None) is not None else None
+    products = _validate_products(db, tenant_id, company.id, items_in, shop_ids=shop_ids)
+    if the_type is not None:
+        targets = the_type.targets if kind == "item_discount" else None
+    else:
+        targets = (
+            _validate_targets(db, tenant_id, company.id, targets_in, shop_ids=shop_ids)
+            if kind == "item_discount" and targets_in is not None else None
+        )
+    if the_type is None:
+        the_type = PVT.one_off_type(db, user, tenant_id, company.id, body.name, terms, items_in, products, targets)
+    # The production it is made for and its event (the contract's §13): names kept as printed text.
+    from app.services import prepaid_productions as PPR
+
+    production = (
+        PPR.production_for_batch(db, tenant_id, body.production_id, company.id, user)
+        if getattr(body, "production_id", None) else None
     )
-    from app.schemas.prepaid_voucher import agorot
+    report_event = (
+        PPR.event_for_batch(db, tenant_id, body.report_event_id, company.id, user)
+        if getattr(body, "report_event_id", None) else None
+    )
 
     batch = PrepaidVoucherBatch(
         id=uuid.uuid4(),
@@ -837,12 +893,14 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         company_id=company.id,
         shop_ids=shop_ids,
         name=body.name,
-        event_name=body.event_name,
+        event_name=body.event_name or (report_event.name if report_event is not None else None),
+        report_event_id=report_event.id if report_event is not None else None,
+        production_id=production.id if production is not None else None,
         logo_url=body.logo_url,
         free_text=body.free_text,
         valid_from=body.valid_from,
         valid_until=body.valid_until,
-        split_allowed=bool(body.split_allowed),
+        split_allowed=bool(terms.get("split_allowed")) and not discount,
         status="active",
         next_serial=1,
         group_size=body.group_size or None,
@@ -850,27 +908,49 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         show_items=getattr(body, "show_items", True) is not False,
         show_credit=getattr(body, "show_credit", True) is not False,
         barcode_type=body.barcode_type or "qr",
-        customer_name=body.customer_name,
+        customer_name=production.name if production is not None else body.customer_name,
         order_ref=body.order_ref,
         # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
-        include_extras=bool(getattr(body, "include_extras", False)) and not discount,
+        include_extras=bool(terms.get("include_extras")) and not discount,
         kind=kind,
         # Agorot for a fixed discount, basis points for a percent (₪ / % × 100 both).
-        discount_type=body.discount_type if discount else None,
-        discount_value=agorot(body.discount_value) if discount else None,
-        min_purchase=agorot(body.min_purchase) if discount else None,
-        max_discount=agorot(body.max_discount) if discount else None,
-        max_units=body.max_units if kind == "item_discount" else None,
+        discount_type=terms.get("discount_type") if discount else None,
+        discount_value=terms.get("discount_value") if discount else None,
+        min_purchase=terms.get("min_purchase") if discount else None,
+        max_discount=terms.get("max_discount") if discount else None,
+        max_units=terms.get("max_units") if kind == "item_discount" else None,
         targets=targets,
-        stacking=getattr(body, "stacking", None) or "single",
-        promotion_policy=getattr(body, "promotion_policy", None) or "exclude",
-        uses_per_voucher=int(getattr(body, "uses_per_voucher", 1) or 1) if discount else 1,
-        max_uses_per_sale=int(getattr(body, "max_uses_per_sale", 1) or 1) if discount else 1,
-        max_uses_per_day=getattr(body, "max_uses_per_day", None) if discount else None,
+        stacking=terms.get("stacking") or "unlimited",
+        # "מספר שוברים מקסימלי בעסקה" — "שובר אחד בעסקה" is its own maximum.
+        max_vouchers_per_sale=(
+            terms.get("max_vouchers_per_sale") if (terms.get("stacking") or "unlimited") != "single" else None
+        ),
+        # Groups (§1): a package / "one of several"; the catalog is expanded below when frozen.
+        selection="groups" if not discount and (terms.get("selection") or "items") == "groups" else "items",
+        total_qty=terms.get("total_qty") if not discount else None,
+        catalog_mode=terms.get("catalog_mode") or "frozen",
+        promotion_policy=terms.get("promotion_policy") or "exclude",
+        uses_per_voucher=int(terms.get("uses_per_voucher") or 1) if discount else 1,
+        max_uses_per_sale=int(terms.get("max_uses_per_sale") or 1) if discount else 1,
+        max_uses_per_day=terms.get("max_uses_per_day") if discount else None,
+        # The two prices and how a redemption is priced / recorded (the spec's §5).
+        till_value=terms.get("till_value"),
+        production_price=terms.get("production_price"),
+        pricing=terms.get("pricing") or "cover",
+        allow_top_up=terms.get("allow_top_up") is not False,
+        # How the till books a redemption (the owner): a document deduction by default.
+        redemption_accounting="discount" if discount else (terms.get("redemption_accounting") or "discount"),
+        # A print setting of the batch: the form's own choice, else the type's.
+        show_validity=(
+            body.show_validity if getattr(body, "show_validity", None) is not None else terms.get("show_validity")
+        ) is not False,
+        offline_allowed=bool(terms.get("offline_allowed")),
+        print_till_value=bool(terms.get("print_till_value")),
         created_by=user.id,
         created_at=_now(),
         updated_at=_now(),
     )
+    PVT.copy_into(batch, the_type)
     batch.items = [
         PrepaidVoucherBatchItem(
             id=uuid.uuid4(),
@@ -882,12 +962,21 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
             unit_label=((p.unit_label or DEFAULT_WEIGHT_UNIT) if p.is_weighed else None),
             sort_order=n,
         )
-        for n, (item, p) in enumerate(zip(body.items, products))
+        for n, (item, p) in enumerate(zip(items_in, products))
     ]
+    if batch.selection == "groups":
+        from app.services import production_voucher_groups as PG
+
+        stored = terms.get("groups") or []
+        PG.validate(db, tenant_id, company.id, stored)
+        # `frozen`: the catalog as it is now — a product added to a category later does not join.
+        batch.groups = PG.freeze(db, tenant_id, company.id, stored) if batch.catalog_mode == "frozen" else stored
     db.add(batch)
     db.flush()
     issued = _issue(db, batch, body.count, batch.group_size)
-    _event(db, batch, user, "create", count=body.count, details=_issued_details(issued, batch.group_size))
+    details = _issued_details(issued, batch.group_size)
+    details.update({"typeId": str(the_type.id), "typeVersion": batch.type_version})
+    _event(db, batch, user, "create", count=body.count, details=details)
     db.flush()
     return batch
 
@@ -951,32 +1040,27 @@ def assign_groups(db: Session, user: User, tenant_id, batch_id, group_size: int)
     return batch
 
 
-def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+def _locked_batch(db: Session, user: User, tenant_id, batch_id) -> PrepaidVoucherBatch:
     batch = get_batch(db, user, tenant_id, batch_id)
-    fields = body.model_dump(exclude_unset=True, by_alias=False)
-    if "name" in fields and not fields["name"]:
-        fields.pop("name")
-    # Print settings are never cleared by a null: they always have a value. Nor are the
-    # rules of use (a null daily limit clears it: no limit is a value of its own).
-    for key in ("show_code", "show_items", "show_credit", "barcode_type", "stacking", "promotion_policy", "max_uses_per_sale"):
-        if key in fields and fields[key] is None:
-            fields.pop(key)
-    if not is_discount(batch):
-        # A goods voucher has no promotions to weigh and no uses: only its stacking.
-        for key in ("promotion_policy", "max_uses_per_sale", "max_uses_per_day"):
-            fields.pop(key, None)
-    changed = sorted(k for k, v in fields.items() if getattr(batch, k) != v)
-    for key, value in fields.items():
-        setattr(batch, key, value)
-    if batch.valid_from and batch.valid_until and _utc(batch.valid_until) <= _utc(batch.valid_from):
-        raise _http(status.HTTP_400_BAD_REQUEST, "validUntil must be after validFrom")
-    if is_discount(batch) and int(batch.max_uses_per_sale or 1) > int(batch.uses_per_voucher or 1):
-        batch.max_uses_per_sale = int(batch.uses_per_voucher or 1)
-    batch.updated_at = _now()
-    if changed:
-        _event(db, batch, user, "update", details={"fields": changed})
+    return db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().one()
+
+
+def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+    """"ערוך סדרה": planned, checked and written as a whole (app/services/prepaid_voucher_edit.py)."""
+    from app.services import prepaid_voucher_edit as PVE
+
+    batch = _locked_batch(db, user, tenant_id, batch_id)
+    PVE.apply_edit(db, user, tenant_id, batch, body)
     db.flush()
     return batch
+
+
+def preview_batch_edit(db: Session, user: User, tenant_id, batch_id, body) -> Dict[str, Any]:
+    """What an edit would change and touch — nothing written (the confirmation's list)."""
+    from app.services import prepaid_voucher_edit as PVE
+
+    batch = get_batch(db, user, tenant_id, batch_id)
+    return PVE.plan_out(PVE.plan_edit(db, user, tenant_id, batch, body))
 
 
 def _cancel_open(vouchers: Iterable[PrepaidVoucher], now: datetime) -> List[PrepaidVoucher]:
@@ -1168,10 +1252,18 @@ def batch_events(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]
         .limit(500)
         .all()
     )
-    return {"items": [_event_out(e) for e in rows]}
+    items = [_event_out(e) for e in rows]
+    if not _prices_visible(db, user):
+        from app.services.prepaid_voucher_edit import strip_secret
+
+        for e in items:
+            e["details"] = strip_secret(e["details"])
+    return {"items": items}
 
 
-def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+def batch_out(
+    db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str, int]] = None, user: Optional[User] = None,
+) -> Dict[str, Any]:
     if stats is None:
         stats = _stats(db, [batch.id]).get(str(batch.id))
     company = db.query(Company.name).filter(Company.id == batch.company_id).scalar()
@@ -1208,15 +1300,111 @@ def batch_out(db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str,
         "barcodeType": batch.barcode_type or "qr",
         "customerName": batch.customer_name,
         "orderRef": batch.order_ref,
+        # The production and the event (the contract's §13), when named.
+        "production": _production_ref(db, batch),
+        "reportEvent": _event_ref(db, batch),
         # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
         "includeExtras": bool(getattr(batch, "include_extras", False)),
+        # Its type (the spec's §2), as issued, and the two prices (§5) — the production price
+        # only to whoever has the `prepaid_voucher_prices` section.
+        "type": _type_ref(batch),
+        # The type's name as printed above the title (a manual type's; null for a batch's own).
+        "typeName": getattr(batch, "type_name", None),
+        "tillValue": _shekels_out(getattr(batch, "till_value", None)),
+        "productionPrice": _shekels_out(getattr(batch, "production_price", None)) if _prices_visible(db, user) else None,
+        # "ערוך סדרה": the price by serial once it was changed (the settlement reads it) — prices only.
+        "productionPriceHistory": (
+            [{**h, "price": _shekels_out(h.get("priceAgorot"))} for h in (getattr(batch, "production_price_history", None) or [])]
+            if _prices_visible(db, user) else None
+        ),
+        # Issued so far (the next serial less one): "ערוך סדרה" never goes below it.
+        "issuedCount": int(batch.next_serial or 1) - 1,
+        "pricesVisible": _prices_visible(db, user),
+        "pricing": getattr(batch, "pricing", None) or "cover",
+        "allowTopUp": getattr(batch, "allow_top_up", None) is not False,
+        # Editable after issue; each redemption records the mode it used.
+        "redemptionAccounting": getattr(batch, "redemption_accounting", None) or "zero",
+        "showValidity": getattr(batch, "show_validity", None) is not False,
+        "discountBlockPolicy": _policy_out(batch),
+        "offlineAllowed": bool(getattr(batch, "offline_allowed", False)),
+        "printTillValue": bool(getattr(batch, "print_till_value", False)),
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
 
 
+def _production_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
+    if getattr(batch, "production_id", None) is None:
+        return None
+    from app.models.prepaid_voucher import PrepaidProduction
+    from app.services.prepaid_productions import ref_out
+
+    return ref_out(db.get(PrepaidProduction, batch.production_id))
+
+
+def _event_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
+    if getattr(batch, "report_event_id", None) is None:
+        return None
+    from app.models.report_event import ReportEvent
+    from app.services.prepaid_productions import event_ref_out
+
+    return event_ref_out(db.get(ReportEvent, batch.report_event_id))
+
+
+def _policy_out(batch, agorot: bool = False) -> Dict[str, Any]:
+    from app.services.prepaid_voucher_types import policy_out
+
+    return policy_out(batch, agorot=agorot)
+
+
+def _prices_visible(db: Session, user: Optional[User]) -> bool:
+    if user is None:
+        return False
+    from app.services.prepaid_voucher_types import prices_visible
+
+    return prices_visible(db, user)
+
+
+def _type_ref(batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
+    if getattr(batch, "type_id", None) is None:
+        return None
+    from app.models.prepaid_voucher import PrepaidVoucherType
+
+    origin = None
+    t = batch.__dict__.get("_type_row")
+    if t is None:
+        from sqlalchemy.orm import object_session
+
+        s = object_session(batch)
+        t = s.get(PrepaidVoucherType, batch.type_id) if s is not None else None
+    if t is not None:
+        origin = t.origin
+    return {
+        "id": str(batch.type_id),
+        "code": getattr(batch, "type_code", None),
+        "name": getattr(batch, "type_name", None) or (t.name if t is not None else None),
+        "version": int(getattr(batch, "type_version", None) or 1),
+        "origin": origin,
+        "currentVersion": int(t.version) if t is not None else None,
+    }
+
+
 def _shekels_out(agorot_value: Optional[int]) -> Optional[float]:
     return None if agorot_value is None else round(int(agorot_value) / 100, 2)
+
+
+def _groups_out(groups):
+    from app.services import production_voucher_groups as PG
+
+    return PG.out_shekels(groups)
+
+
+def _max_per_sale(batch) -> Optional[int]:
+    """"מספר שוברים מקסימלי בעסקה" — none with "שובר אחד בעסקה"; None: no maximum."""
+    n = getattr(batch, "max_vouchers_per_sale", None)
+    if not n or (getattr(batch, "stacking", None) or "single") == "single":
+        return None
+    return int(n)
 
 
 def terms_out(batch: PrepaidVoucherBatch) -> Dict[str, Any]:
@@ -1240,6 +1428,12 @@ def terms_out(batch: PrepaidVoucherBatch) -> Dict[str, Any]:
             if batch.kind == "item_discount" else None
         ),
         "stacking": batch.stacking or "single",
+        "maxVouchersPerSale": _max_per_sale(batch),
+        # Groups (§1): the value of each in ₪; the frozen expansion stays on the server.
+        "selection": getattr(batch, "selection", None) or "items",
+        "groups": _groups_out(getattr(batch, "groups", None)),
+        "totalQty": getattr(batch, "total_qty", None),
+        "catalogMode": getattr(batch, "catalog_mode", None) or "frozen",
         "promotionPolicy": batch.promotion_policy or "exclude",
         "usesPerVoucher": int(batch.uses_per_voucher or 1),
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1),
@@ -1256,7 +1450,7 @@ def list_batches(db: Session, user: User, tenant_id, *, include_cancelled: bool 
         q = q.filter(PrepaidVoucherBatch.status == "active")
     batches = [b for b in q.order_by(PrepaidVoucherBatch.created_at.desc()).all() if may_manage(db, user, tenant_id, b)]
     stats = _stats(db, [b.id for b in batches])
-    return [batch_out(db, b, stats.get(str(b.id))) for b in batches]
+    return [batch_out(db, b, stats.get(str(b.id)), user) for b in batches]
 
 
 def _remaining_out(batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> List[Dict[str, Any]]:
@@ -1291,6 +1485,18 @@ def _redemption_out(r: PrepaidVoucherRedemption, machine_names: Dict[str, str]) 
         "uses": r.uses,
         "discountAmount": _shekels_out(r.discount_amount),
         "flags": list(r.flags or []),
+        # The record (the production vouchers contract §5), ₪: null on a redemption made before it.
+        "accounting": getattr(r, "redemption_accounting", None),
+        "pricing": getattr(r, "pricing", None),
+        "value": _shekels_out(getattr(r, "value_agorot", None)),
+        "covered": _shekels_out(getattr(r, "covered_agorot", None)),
+        "topUp": _shekels_out(getattr(r, "top_up_agorot", None)),
+        "listValue": _shekels_out(getattr(r, "list_value_agorot", None)),
+        "units": list(getattr(r, "units", None) or []),
+        "typeName": getattr(r, "type_name", None),
+        "productionName": getattr(r, "production_name", None),
+        "offline": bool(getattr(r, "offline", False)),
+        "approvedBy": getattr(r, "approved_by_pos_user_name", None),
     }
 
 
@@ -1395,6 +1601,11 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
         return NOT_YET_VALID
     if batch.valid_until is not None and now > _utc(batch.valid_until):
         return EXPIRED
+    # Assigned for redemption without the internet (§7): only that device redeems it.
+    from app.services import prepaid_voucher_offline as PVO
+
+    if PVO.assigned_elsewhere(db, machine, batch) is not None:
+        return PVO.ASSIGNED_OFFLINE
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
     if shop is None or str(shop.company_id) not in _company_group(db, batch.company_id):
         return WRONG_SHOP
@@ -1610,6 +1821,88 @@ def _benefit_rules(db: Session, batch: PrepaidVoucherBatch) -> RULES.Benefit:
     return RULES.Benefit(**{**base.__dict__, "category_ids": frozenset(cats)})
 
 
+def _groups_view(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> Dict[str, Any]:
+    if is_discount(batch):
+        return {"selection": "items"}
+    from app.services import production_voucher_groups as PG
+
+    return PG.till_view(db, machine, batch, voucher)
+
+
+def approval_valid(db: Session, machine: POSMachine, approval) -> bool:
+    """
+    The approval of a forced discount (§6), checked here, never trusted from the till: its
+    `posUserId` names an active till user of the machine's shop (and tenant) whose effective till
+    permissions *allow* `VOUCHER_DISCOUNT_OVERRIDE` (an approval of a second person's is not enough).
+    """
+    from app.models.pos_user import PosUser
+    from app.services import till_roles
+
+    uid = _as_uuid(getattr(approval, "pos_user_id", None) if not isinstance(approval, dict) else approval.get("posUserId"))
+    if uid is None or machine is None or machine.shop_id is None:
+        return False
+    user = db.query(PosUser).filter(PosUser.id == uid).first()
+    if user is None or not user.is_active or user.shop_id != machine.shop_id:
+        return False
+    if user.tenant_id is not None and str(user.tenant_id) != str(machine.tenant_id):
+        return False
+    return till_roles.effective_for_pos_user(user).states.get(OVERRIDE_PERMISSION) == "allow"
+
+
+def redeemable_immediately(batch: PrepaidVoucherBatch) -> bool:
+    """
+    A *plain* goods batch — `cover` with no value, the policy honoured, a fixed list: the only kind
+    `/redeem` may take (at the goods' list prices, no cap, no top-up, no override). Anything else
+    goes through reserve → confirm, where the value, the top-up and the override are applied.
+    """
+    return (
+        not is_discount(batch)
+        and (getattr(batch, "pricing", None) or "cover") == "cover"
+        and getattr(batch, "till_value", None) is None
+        and (getattr(batch, "discount_block_policy", None) or "honour") == "honour"
+        and (getattr(batch, "selection", None) or "items") != "groups"
+    )
+
+
+def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
+    """
+    What a client must say it can do (`features`) to redeem [batch]'s goods as its terms say.
+    Today's tills book every goods redemption as the `voucher` tender at the goods' list prices:
+    right for `payment` + `cover` with no value and the policy honoured — and, by the owner's
+    decision (the contract's §11), for a batch printed before types (`legacy`, `zero`), which
+    stays redeemable exactly as before. Anything else needs `accounting` (a document deduction,
+    ₪0 lines, a fixed value) and a forced discount needs `override`. A discount voucher needs
+    nothing here (its kind is `supportedKinds`').
+    """
+    if is_discount(batch):
+        return []
+    need: List[str] = []
+    plain = (getattr(batch, "pricing", None) or "cover") == "cover" and getattr(batch, "till_value", None) is None
+    accounting = getattr(batch, "redemption_accounting", None) or "zero"
+    if not plain or accounting == "discount":
+        need.append("accounting")
+    elif accounting == "zero":
+        origin = None
+        if getattr(batch, "type_id", None) is not None:
+            origin = db.query(PrepaidVoucherType.origin).filter(PrepaidVoucherType.id == batch.type_id).scalar()
+        if origin != "legacy":
+            need.append("accounting")
+    if (getattr(batch, "discount_block_policy", None) or "honour") != "honour":
+        need.append("override")
+    if (getattr(batch, "selection", None) or "items") == "groups":
+        # A package / "one of several" is chosen unit by unit and held (§3).
+        need += [f for f in ("groups", "reserve_goods") if f not in need]
+    if not redeemable_immediately(batch) and "reserve_goods" not in need:
+        # A value, a cap or a policy is applied only by reserve → confirm (review 09.10).
+        need.append("reserve_goods")
+    return need
+
+
+def missing_features(db: Session, batch: PrepaidVoucherBatch, features: Optional[Iterable[str]]) -> List[str]:
+    have = {str(f).strip().lower() for f in (features or ())}
+    return [f for f in required_features(db, batch) if f not in have]
+
+
 def till_view(
     db: Session,
     machine: POSMachine,
@@ -1617,6 +1910,8 @@ def till_view(
     supported_kinds: Optional[Iterable[str]] = ALL_KINDS,
     *,
     exclude_reservation=None,
+    features: Optional[Iterable[str]] = None,
+    check_features: bool = False,
 ) -> Dict[str, Any]:
     batch = voucher.batch
     reason = refusal_reason(db, machine, voucher)
@@ -1625,6 +1920,10 @@ def till_view(
         # A client that cannot apply a discount (the web / Windows kiosks today) never
         # treats one as goods: it is not redeemable there, and the customer is told why.
         reason, message = KIND_UNSUPPORTED, KIND_UNSUPPORTED_MESSAGE
+    if reason is None and check_features and missing_features(db, batch, features):
+        # Terms this client would book wrongly (a deduction as a tender, a fixed value at
+        # list prices): not here — the till must be updated first.
+        reason, message = UPDATE_REQUIRED, UPDATE_REQUIRED_MESSAGE
     uses = (
         uses_open(db, voucher, exclude_id=exclude_reservation)
         if is_discount(batch) and reason is None else None
@@ -1633,6 +1932,10 @@ def till_view(
         reason = IN_USE
     elif uses is not None and uses["today"] <= 0:
         reason = DAILY_LIMIT
+    if reason == "prepaid_voucher_assigned_offline":
+        from app.services import prepaid_voucher_offline as PVO
+
+        message = PVO.assigned_text(db, machine, batch)
     if message is None:
         message = refusal_message(db, voucher, reason)
     till = _till_products(db, machine, [str(i.product_id) for i in batch.items])
@@ -1680,9 +1983,28 @@ def till_view(
         "batchId": str(batch.id),
         "kind": batch.kind or "items",
         "stacking": batch.stacking or "single",
+        # "מספר שוברים מקסימלי בעסקה" (with "כמה שוברים בעסקה"); null: no maximum.
+        "maxVouchersPerSale": _max_per_sale(batch),
         # Goods: false — a dish's base price is covered and its paid options / a meal's
         # upcharges are paid at the till; true ("כולל תוספות") — the whole line (§7.14).
         "includeExtras": bool(getattr(batch, "include_extras", False)),
+        # Its type and how it is priced / recorded (the spec's §2, §5). The production price
+        # never reaches a till. Older tills read none of these (a payment at the goods' price).
+        "typeName": getattr(batch, "type_name", None),
+        "typeCode": getattr(batch, "type_code", None),
+        "tillValueAgorot": getattr(batch, "till_value", None),
+        "pricing": getattr(batch, "pricing", None) or "cover",
+        "allowTopUp": getattr(batch, "allow_top_up", None) is not False,
+        # discount — a document deduction (`kind: production_voucher` in the document's voucher
+        # deductions); payment — the `production_voucher` tender; zero — ₪0 lines with the value.
+        "redemptionAccounting": getattr(batch, "redemption_accounting", None) or "zero",
+        "productionName": getattr(batch, "customer_name", None),
+        "wholeAtOnce": not bool(batch.split_allowed),
+        "discountBlockPolicy": _policy_out(batch, agorot=True),
+        "offline": {"allowed": bool(getattr(batch, "offline_allowed", False)), "assignedMachineId": None,
+                    "assignedKind": None},
+        # Groups (§2): each with what is left and its products (the till's ids too); "items" else.
+        **_groups_view(db, machine, batch, voucher),
         "message": message,
         "benefit": benefit_for_till(db, machine, batch),
         "usesLeft": voucher.uses_left,
@@ -1695,10 +2017,11 @@ def till_view(
 
 
 def lookup(
-    db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None
+    db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None,
+    *, features: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     voucher = _locate(db, machine, raw_code, lock=False)
-    return till_view(db, machine, voucher, supported_kinds)
+    return till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
 
 
 #: What the redemption re-checks: the product lost its identity (the general item) or left
@@ -1754,8 +2077,10 @@ def _requested(db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, ite
 def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     """
     Take goods off a voucher. The caller commits. See the module docstring for the rules;
-    the order here matters: lock, then idempotency, then every check, then the write.
+    the order here matters: lock (the sale, then the voucher), then idempotency, then every
+    check, then the write.
     """
+    _lock_sale(db, machine, getattr(body, "sale_ref", None))
     voucher = _locate(db, machine, body.code, lock=True)
     request_id = body.client_request_id.strip()
 
@@ -1780,6 +2105,14 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     if is_discount(batch):
         # A discount is never taken as goods (nor as a tender): reserve → confirm.
         raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+    if missing_features(db, batch, getattr(body, "features", None)):
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+    if (getattr(batch, "selection", None) or "items") == "groups":
+        # Groups are redeemed through reserve → confirm (§3), never the immediate redeem.
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+    if not redeemable_immediately(batch):
+        # A value (fixed or a cover cap), a top-up or a policy: only reserve → confirm applies them.
+        raise _http(status.HTTP_409_CONFLICT, RESERVE_REQUIRED)
     sale_ref = (getattr(body, "sale_ref", None) or "").strip() or None
     if sale_ref:
         refusal = RULES.stacking_refusal(_vouchers_in_sale(db, machine, sale_ref), _in_sale(voucher))
@@ -1831,6 +2164,7 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         ],
         forfeited=forfeited or None,
         redeemed_at=now,
+        **record_snapshot(db, machine, batch, voucher, wanted, features=getattr(body, "features", None)),
     )
     # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
     voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
@@ -1847,6 +2181,134 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         db.rollback()
         raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
     return _redeem_out(db, machine, voucher, redemption, replayed=False)
+
+
+def _type_name_of(db: Session, batch: PrepaidVoucherBatch) -> Optional[str]:
+    if getattr(batch, "type_name", None):
+        return batch.type_name
+    if getattr(batch, "type_id", None) is None:
+        return None
+    return db.query(PrepaidVoucherType.name).filter(PrepaidVoucherType.id == batch.type_id).scalar()
+
+
+def _units_per_voucher(batch: PrepaidVoucherBatch) -> Decimal:
+    total = Decimal(0)
+    for i in batch.items:
+        q = qty(i.quantity)
+        total += q if q == q.to_integral_value() else Decimal(1)
+    return total
+
+
+def record_snapshot(
+    db: Session, machine: POSMachine, batch: PrepaidVoucherBatch, voucher: PrepaidVoucher, wanted: Dict[str, Decimal],
+    features: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """
+    The redemption record's snapshot (the production vouchers contract §5) for goods taken
+    through `/redeem` — today's tills: each unit's name and quantity at this till's price, the
+    list value, the value (a fixed voucher's value pro rata to the units, else the list value),
+    what the till booked (the `voucher` leg at the goods' price), the names to report by.
+    """
+    names = {str(i.product_id): i.product_name for i in batch.items}
+    till = _till_products(db, machine, list(wanted))
+    units: List[Dict[str, Any]] = []
+    list_total = 0
+    taken = Decimal(0)
+    for pid, q in wanted.items():
+        if not q:
+            continue
+        price = till.get(pid, {}).get("price")
+        unit_price = int((Decimal(str(price)) * 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if price is not None else 0
+        line = int((Decimal(unit_price) * q).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        list_total += line
+        taken += q if q == q.to_integral_value() else Decimal(1)
+        units.append({
+            "productId": pid, "productName": names.get(pid), "groupKey": None, "groupName": None,
+            "quantity": qty_out(q), "listPriceAgorot": unit_price, "listValueAgorot": line,
+        })
+    pricing = getattr(batch, "pricing", None) or "cover"
+    value = list_total
+    covered = list_total
+    if pricing == "fixed" and getattr(batch, "till_value", None):
+        per = _units_per_voucher(batch)
+        value = int((Decimal(int(batch.till_value)) * taken / per).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if per else int(batch.till_value)
+        # A fixed value covers its allocated share, never the list prices.
+        covered = value
+    elif getattr(batch, "till_value", None):
+        # A cover cap: no more than the value left.
+        from app.services.production_voucher_reserve import value_left
+
+        left = value_left(db, voucher)
+        covered = min(list_total, left if left is not None else list_total)
+        value = covered
+    # How the till booked it: one that does not say "accounting" books every goods redemption as
+    # the `voucher` tender at the goods' price — `payment`, whatever the batch says (review 09.10).
+    said = {str(f).strip().lower() for f in (features or ())}
+    accounting = (getattr(batch, "redemption_accounting", None) or "payment") if "accounting" in said else "payment"
+    return {
+        "redemption_accounting": accounting,
+        "pricing": pricing,
+        "value_agorot": value,
+        # What the document took: `zero` books ₪0 lines; else the goods' price, a value's share at most.
+        "covered_agorot": 0 if accounting == "zero" else covered,
+        "top_up_agorot": 0,
+        "list_value_agorot": list_total,
+        "units": units,
+        "serial": int(voucher.serial),
+        "type_name": _type_name_of(db, batch),
+        "production_name": getattr(batch, "customer_name", None),
+        "batch_name": batch.name,
+    }
+
+
+def taken_of(u: Dict[str, Any]) -> Decimal:
+    """What a unit really took off its voucher: `takenQuantity` when it was cut short (an over-use), else its quantity."""
+    q = u.get("takenQuantity")
+    return qty(q if q is not None else (u.get("quantity") or 1))
+
+
+def give_back(voucher: PrepaidVoucher, redemption: PrepaidVoucherRedemption) -> None:
+    """
+    What [redemption] took goes back on [voucher]: per product (a fixed list, and what was forfeited
+    with it), per group and in all (groups — `units[].groupKey`, pieces), a discount's uses. Only what
+    was really taken (`takenQuantity` on a unit cut short by an over-use). The status follows; a
+    cancelled voucher stays cancelled. The caller has locked the voucher.
+    """
+    remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
+    zero = Decimal(0)
+    if (getattr(voucher.batch, "selection", None) or "items") == "groups":
+        for u in redemption.units or []:
+            if not isinstance(u, dict) or not u.get("groupKey"):
+                continue
+            q = taken_of(u)
+            pieces = q if q == q.to_integral_value() else Decimal(1)
+            key = f"g:{u['groupKey']}"
+            remaining[key] = remaining.get(key, zero) + pieces
+            remaining["total"] = remaining.get("total", zero) + pieces
+    else:
+        rows = [u for u in (redemption.units or []) if isinstance(u, dict) and u.get("productId")] or list(redemption.items or [])
+        for row in rows + list(redemption.forfeited or []):
+            pid = str(row.get("productId"))
+            remaining[pid] = remaining.get(pid, zero) + taken_of(row)
+    voucher.remaining = {k: qty_out(q) for k, q in remaining.items()}
+    if redemption.uses:
+        # A discount voucher's use comes back as a use.
+        voucher.uses_left = int(voucher.uses_left or 0) + int(redemption.uses)
+
+
+def _status_after_give_back(db: Session, voucher: PrepaidVoucher, redemption: PrepaidVoucherRedemption) -> None:
+    if voucher.status == "cancelled":
+        return
+    others = (
+        db.query(PrepaidVoucherRedemption.id)
+        .filter(
+            PrepaidVoucherRedemption.voucher_id == voucher.id,
+            PrepaidVoucherRedemption.id != redemption.id,
+            PrepaidVoucherRedemption.reversed_at.is_(None),
+        )
+        .first()
+    )
+    voucher.status = "partially_used" if others is not None else "active"
 
 
 def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> Dict[str, Any]:
@@ -1872,30 +2334,31 @@ def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> 
         .first()
     )
     if redemption.reversed_at is None and voucher is not None:
-        remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
-        for row in list(redemption.items or []) + list(redemption.forfeited or []):
-            pid = str(row.get("productId"))
-            remaining[pid] = remaining.get(pid, Decimal(0)) + qty(row.get("quantity") or 0)
         now = _now()
-        voucher.remaining = {pid: qty_out(q) for pid, q in remaining.items()}
-        if redemption.uses:
-            # A discount voucher's use comes back as a use.
-            voucher.uses_left = int(voucher.uses_left or 0) + int(redemption.uses)
-        if voucher.status != "cancelled":
-            others = (
-                db.query(PrepaidVoucherRedemption.id)
-                .filter(
-                    PrepaidVoucherRedemption.voucher_id == voucher.id,
-                    PrepaidVoucherRedemption.id != redemption.id,
-                    PrepaidVoucherRedemption.reversed_at.is_(None),
-                )
-                .first()
-            )
-            voucher.status = "partially_used" if others is not None else "active"
+        give_back(voucher, redemption)
+        _status_after_give_back(db, voucher, redemption)
         voucher.updated_at = now
         redemption.reversed_at = now
         db.flush()
     return {"ok": True, "redemptionId": str(redemption.id), "reversedAt": _iso(redemption.reversed_at)}
+
+
+def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
+    """
+    The production-voucher deductions of a document (`kind` production_voucher with a
+    `redemptionId`): each redemption of this till learns the document it was booked on (set once).
+    """
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+
+    ids = [r.redemption_id for r in rows if r.kind == PRODUCTION_VOUCHER_DEDUCTION and r.redemption_id is not None]
+    if not ids or machine is None:
+        return
+    for redemption in db.query(PrepaidVoucherRedemption).filter(
+        PrepaidVoucherRedemption.id.in_(ids), PrepaidVoucherRedemption.machine_id == machine.id,
+    ):
+        if not redemption.transaction_id:
+            redemption.transaction_id = str(transaction_id)[:100]
+    db.flush()
 
 
 def attach_transaction(db: Session, machine: POSMachine, redemption_id: str, transaction_id: str) -> None:
@@ -1949,6 +2412,22 @@ def _redeem_out(
 # ── Till: discount vouchers — reserve → confirm / release ────────────────────
 
 
+def _lock_sale(db: Session, machine: POSMachine, sale_ref: Optional[str]) -> None:
+    """
+    One voucher at a time per sale (this till's basket), so its stacking — "שובר אחד בעסקה",
+    "מספר שוברים מקסימלי בעסקה" — is checked atomically: two vouchers scanned into one sale at
+    once cannot both see it empty. Taken before the voucher's own lock, always in that order.
+    A transaction lock (released at commit / rollback); Postgres only.
+    """
+    sale = (sale_ref or "").strip()
+    if not sale or db.get_bind().dialect.name != "postgresql":
+        return
+    import hashlib
+
+    digest = hashlib.sha256(f"prepaid-sale:{machine.id}:{sale}".encode("utf-8")).digest()
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": int.from_bytes(digest[:8], "big", signed=True)})
+
+
 def _in_sale(voucher: PrepaidVoucher) -> RULES.VoucherInSale:
     batch = voucher.batch
     return RULES.VoucherInSale(
@@ -1956,6 +2435,7 @@ def _in_sale(voucher: PrepaidVoucher) -> RULES.VoucherInSale:
         batch_id=str(batch.id),
         kind=batch.kind or "items",
         stacking=batch.stacking or "single",
+        max_per_sale=_max_per_sale(batch),
     )
 
 
@@ -2013,6 +2493,7 @@ def _vouchers_in_sale(
                 batch_id=str(getattr(other, "batch_id", "") or ""),
                 kind=getattr(other, "kind", None) or "items",
                 stacking=getattr(other, "stacking", None) or "single",
+                max_per_sale=getattr(other, "max_vouchers_per_sale", None),
             )
     return list(seen.values())
 
@@ -2076,6 +2557,7 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     The same `clientRequestId` again renews it (held for the full time again, the basket
     re-checked) — or answers a confirmed one as it stands; a released one is refused.
     """
+    _lock_sale(db, machine, body.sale_ref)
     voucher = _locate(db, machine, body.code, lock=True)
     batch = voucher.batch
     now = _now()
@@ -2094,13 +2576,19 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         if prior.voucher_id != voucher.id or prior.sale_ref != sale_ref:
             raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
         if prior.status == "confirmed":
+            if getattr(prior, "goods", None) is not None:
+                from app.services import production_voucher_reserve as PVRG
+
+                return PVRG.reservation_out(db, machine, voucher, prior, replayed=True)
             return _reservation_out(db, machine, voucher, prior, replayed=True)
         if prior.status == "released":
             raise _http(status.HTTP_409_CONFLICT, RESERVATION_RELEASED)
 
     if not is_discount(batch):
-        # Goods are redeemed (a tender), never reserved.
-        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+        # Goods: held for the sale with their units valued (the production vouchers contract §3).
+        from app.services import production_voucher_reserve as PVRG
+
+        return PVRG.reserve_goods(db, machine, body, voucher, prior, now, sale_ref)
     if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
         raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
     reason = refusal_reason(db, machine, voucher, now)
@@ -2209,6 +2697,8 @@ def confirm(
     *,
     document_lines: Optional[List[Dict[str, Any]]] = None,
     any_till: bool = False,
+    units=None,
+    document_amount: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     The sale was written: take the voucher's uses and record the use (a redemption row with
@@ -2221,12 +2711,37 @@ def confirm(
     """
     r = _reservation(db, machine, reservation_id, any_till=any_till)
     transaction_id = str(transaction_id).strip()[:100]
+    # The voucher first (as the reserve locks it), then the reservation again under its own lock:
+    # two confirms of one hold (the till's and the document's) never both write a redemption.
     voucher = db.query(PrepaidVoucher).filter(PrepaidVoucher.id == r.voucher_id).with_for_update().first()
     if voucher is None:
         raise _http(status.HTTP_404_NOT_FOUND, NOT_FOUND)
+    r = (
+        db.query(PrepaidVoucherReservation)
+        .filter(PrepaidVoucherReservation.id == r.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    if r.status != "confirmed":
+        # A redemption already written for this hold (a confirm that died before it marked the hold).
+        done = (
+            db.query(PrepaidVoucherRedemption)
+            .filter(PrepaidVoucherRedemption.reservation_id == r.id, PrepaidVoucherRedemption.reversed_at.is_(None))
+            .first()
+        )
+        if done is not None:
+            r.status, r.redemption_id = "confirmed", done.id
+            r.transaction_id = r.transaction_id or done.transaction_id
+            r.confirmed_at = r.confirmed_at or done.redeemed_at
     batch = voucher.batch
     now = _now()
     amount_agorot = max(0, int(amount_agorot))
+    if getattr(r, "goods", None) is not None:
+        # A goods voucher's hold: its units come off the voucher, the redemption records them.
+        from app.services import production_voucher_reserve as PVRG
+
+        return PVRG.confirm_goods(db, machine, r, voucher, transaction_id, units, document_amount=document_amount)
 
     if r.status == "confirmed":
         if r.transaction_id and r.transaction_id != transaction_id:
@@ -2280,7 +2795,11 @@ def confirm(
         redeemed_at=now,
     )
     voucher.uses_left = max(0, left - take)
-    voucher.status = "used" if voucher.uses_left == 0 else "partially_used"
+    if voucher.status == "cancelled":
+        flags.append("cancelled")  # a fiscal fact by now: recorded, the voucher stays cancelled
+        redemption.flags = list(flags)
+    else:
+        voucher.status = "used" if voucher.uses_left == 0 else "partially_used"
     voucher.first_redeemed_at = voucher.first_redeemed_at or now
     voucher.last_redeemed_at = now
     voucher.updated_at = now
@@ -2291,6 +2810,14 @@ def confirm(
     r.uses = take
     r.redemption_id = redemption.id
     db.add(redemption)
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        # Another confirm of this hold wrote it first: its answer, never a 500.
+        db.refresh(r)
+        done = db.query(PrepaidVoucherRedemption).filter(PrepaidVoucherRedemption.reservation_id == r.id).first()
+        return _confirm_out(r, done, replayed=True)
     if flags:
         _event(
             db, batch, None, "use_flagged", group_no=voucher.group_no, voucher_id=voucher.id, count=take,

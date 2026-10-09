@@ -117,6 +117,18 @@ SECTIONS: Tuple[Section, ...] = (
     Section("stock", "מלאי", "רמות מלאי, קבלת סחורה, ספירה ותיקונים.", ("/dashboard/stock",)),
     Section("vouchers", "שוברים", "שוברי הנחה בקטלוג.", ("/dashboard/vouchers",)),
     Section("prepaid_vouchers", "שוברי הפקה", "שוברים לצוותי הפקה, מומשים בקופות ב-QR.", ("/dashboard/prepaid-vouchers",)),
+    Section(
+        "prepaid_voucher_prices", "מחירי הפקה בשוברים",
+        "מחיר המכירה להפקה בסוגי שוברי הפקה ובאצוות (לא מודפס ולא מגיע לקופה). צפייה: רואה את המחירים; "
+        "עריכה: קובע אותם.",
+        (),
+    ),
+    Section(
+        "voucher_discount_override", "כפיית הנחה בשוברי הפקה",
+        "קביעת מדיניות שעוקפת \"לא מקבל הנחות\" בסוגי שוברי הפקה ובאצוות (אוטומטית בתקרות, או באישור מנהל). "
+        "האישור בקופה הוא הרשאת הקופה VOUCHER_DISCOUNT_OVERRIDE.",
+        (),
+    ),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
     Section("customers", "לקוחות ומועדון", "מועדון לקוחות, חברים ולקוחות.", ("/dashboard/club",)),
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),

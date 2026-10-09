@@ -144,6 +144,9 @@ class TransactionPaymentIn(BaseModel):
     #: "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): a credit's leg for a
     #: sale that never really happened — the original's method, no money moved.
     no_money_movement: Optional[bool] = Field(None, alias="noMoneyMovement")
+    #: A `production_voucher` leg names the goods hold it pays (the production vouchers contract
+    #: §4.2): the document confirms it. Optional; an unreadable id is a warning, never a refusal.
+    reservation_id: Optional[str] = Field(None, alias="reservationId", max_length=100)
 
     class Config:
         populate_by_name = True
@@ -203,6 +206,13 @@ class TransactionItemIn(BaseModel):
     #: §7), an amount; inside `documentDiscount` like `promotionDiscount`, never in
     #: `totalPrice`, never a tender. Optional.
     voucher_discount: Optional[Decimal] = Field(None, alias="voucherDiscount")
+    #: Production vouchers: a deduction's share of the line (inside `documentDiscount`), and a
+    #: ₪0 memo line's value (agorot) with its redemption (the contract's §4.1 / §4.3). Optional.
+    prepaid_deduction: Optional[Decimal] = Field(None, alias="prepaidDeduction")
+    voucher_memo_value_agorot: Optional[int] = Field(None, alias="voucherMemoValueAgorot", ge=0)
+    voucher_redemption_id: Optional[str] = Field(None, alias="voucherRedemptionId", max_length=100)
+    #: A memo line's goods hold (§4.3): the document confirms it (amount 0). Optional.
+    voucher_reservation_id: Optional[str] = Field(None, alias="voucherReservationId", max_length=100)
     #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
     #: allergies, seat, course, a meal's components. Optional; never checked against the
     #: menu — anything that is not an object, or too big, is dropped and the line kept.
@@ -270,11 +280,18 @@ class TransactionVoucherDiscountIn(BaseModel):
     batch_id: Optional[str] = Field(None, alias="batchId")
     serial: Optional[int] = None
     batch_name: Optional[str] = Field(None, alias="batchName")
+    #: `order_discount` / `item_discount`, or `production_voucher` — a production voucher booked
+    #: as a document deduction (the production vouchers contract §4.1).
     kind: Optional[str] = None
     uses: int = Field(1, ge=1, le=1000)
     amount: Decimal = Decimal("0")
     #: [{"itemId", "amount"}] — the lines it took its discount from.
     lines: Optional[List[Any]] = None
+    #: A production voucher's: its redemption, its type's name, the units it covered
+    #: ([{"productName", "groupName", "quantity"}], as the receipt lists them).
+    redemption_id: Optional[str] = Field(None, alias="redemptionId")
+    type_name: Optional[str] = Field(None, alias="typeName")
+    units: Optional[List[Any]] = None
 
     class Config:
         populate_by_name = True
@@ -287,7 +304,19 @@ class TransactionVoucherDiscountIn(BaseModel):
     @field_validator("kind", mode="before")
     @classmethod
     def _cut_kind(cls, value):
-        return cut_text(value, 16)
+        return cut_text(value, 32)
+
+    @field_validator("type_name", mode="before")
+    @classmethod
+    def _cut_type(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _units(cls, value):
+        if not isinstance(value, list):
+            return None
+        return [v for v in value if isinstance(v, dict)][:200]
 
     @field_validator("lines", mode="before")
     @classmethod
@@ -395,6 +424,8 @@ class TransactionIn(BaseModel):
     promotions: List[TransactionPromotionIn] = Field(default_factory=list)
     #: The discount vouchers on this sale (docs/SPEC_VOUCHER_PRODUCTION.md §7). Optional.
     voucher_discounts: List[TransactionVoucherDiscountIn] = Field(default_factory=list, alias="voucherDiscounts")
+    #: A document made only of production vouchers' ₪0 memo lines (§4.3).
+    voucher_memo: bool = Field(False, alias="voucherMemo")
 
     class Config:
         populate_by_name = True

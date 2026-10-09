@@ -409,9 +409,12 @@ def _hour_in_window(hour: int, from_hour: int, to_hour: int) -> bool:
 
 
 def detect_transaction(
-    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None
+    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None, deduction: Decimal = Decimal("0")
 ) -> List[Found]:
-    """The exceptions one document raises under `rules`. Pure: no database."""
+    """
+    The exceptions one document raises under `rules`. Pure: no database. [deduction]: the document's
+    production vouchers' deductions (out of the cashier's discount, review 09.10).
+    """
     found: List[Found] = []
     status = _status(tx)
     occurred = _utc(tx.created_at) or datetime.now(timezone.utc)
@@ -470,6 +473,8 @@ def detect_transaction(
     promotion_sum = sum((abs(_money(getattr(it, "promotion_discount", None))) for it in items), Decimal("0"))
     # Nor are discount vouchers ("שוברי הנחה"): the customer's voucher, checked by the cloud.
     promotion_sum += sum((abs(_money(getattr(it, "voucher_discount", None))) for it in items), Decimal("0"))
+    # Nor a production voucher's deduction ("קיזוז שוברי הפקה"): a voucher paid for, never a discount.
+    promotion_sum += abs(_money(deduction))
     # Nor are the OTH lines (reported as "oth"), nor the club button's fixed rate ("הנחת
     # מועדון", till parameter `clubButtonEnabled`) — the shop's own policy, in its report.
     oth_sum = sum((abs(_money(it.discount)) for it in oth_items), Decimal("0"))
@@ -786,7 +791,10 @@ class Detector:
         machine = self.machine(tx.machine_id)
         if machine is None:
             return
-        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id)):
+        from app.services.shift_totals import production_deductions_of
+
+        deduction = production_deductions_of(self.db, [tx.id]).get(tx.id, Decimal("0"))
+        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id), deduction):
             if found.type == "oth" and found.details.get("approvedBy"):
                 found.details["approverName"] = self.approver_name(found.details["approvedBy"])
             self._record(machine, found)
