@@ -5,6 +5,7 @@
  * Unrelated to `/vouchers` (gift-voucher templates) and to item tickets.
  */
 import { api } from './api';
+import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
   PrepaidDiscountType,
@@ -126,10 +127,36 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   /** "מימוש ללא אינטרנט". */
   offlineAllowed?: boolean;
   printTillValue?: boolean;
+  /** Issued so far (the next serial less one): "ערוך סדרה" never goes below it. */
+  issuedCount?: number;
+  /** "ערוך סדרה": the production price by serial once it was changed (prices section only). */
+  productionPriceHistory?: { fromSerial: number; price: number | null; at?: string | null; by?: string | null }[] | null;
+  /** "items" (a fixed list) or "groups" (a package / one of several, the production vouchers contract §1). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidBatchGroup[] | null;
+  totalQty?: number | null;
+  catalogMode?: 'frozen' | 'live';
   /** The list's figures (GET /prepaid-vouchers/batches): issued, redeemed, open, the rate. */
   figures?: PrepaidBatchFigures;
   /** Every status the list filters by, at once. */
   state?: PrepaidBatchState;
+}
+
+/** One group of a batch of groups (₪ for its value). */
+export interface PrepaidBatchGroup {
+  key: string;
+  name: string;
+  minQty: number;
+  maxQty: number;
+  value?: number | null;
+  allowRepeat?: boolean;
+  allItems?: boolean;
+  productIds?: string[];
+  categoryIds?: string[];
+  includeSubcategories?: boolean;
+  excludeProductIds?: string[];
+  excludeCategoryIds?: string[];
+  sortOrder?: number;
 }
 
 export interface PrepaidBatchFigures {
@@ -418,16 +445,29 @@ export async function createPrepaidBatch(body: PrepaidBatchCreate): Promise<Prep
   return data;
 }
 
-export async function updatePrepaidBatch(
-  id: string,
-  body: Partial<Pick<
-    PrepaidBatchCreate,
-    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'showCredit' | 'printTillValue' | 'redemptionAccounting' | 'showValidity' | 'discountBlockPolicy'
-    | 'offlineAllowed' | 'barcodeType'
-    | 'customerName' | 'orderRef'
-  >> & PrepaidBatchRulesUpdate,
-): Promise<PrepaidVoucherBatch> {
+/**
+ * "ערוך סדרה": any setting but the codes, serials, kind and company. Absent fields stay; a null
+ * clears what may be empty. `count`: the vouchers in all (more is issued, never fewer).
+ * `applyToPartial`: new contents reach the partly redeemed vouchers too.
+ */
+export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets'>> &
+  PrepaidBatchRulesUpdate & {
+    targets?: { productIds: string[]; categoryIds: string[] } | null;
+    selection?: 'items' | 'groups';
+    groups?: PrepaidBatchGroup[] | null;
+    totalQty?: number | null;
+    catalogMode?: 'frozen' | 'live';
+    applyToPartial?: boolean;
+  };
+
+export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);
+  return data;
+}
+
+/** What an edit would change and touch (each change before → after, the effects); nothing is saved. */
+export async function previewPrepaidBatchEdit(id: string, body: PrepaidBatchEditBody): Promise<PrepaidBatchEditPlan> {
+  const { data } = await api.post<PrepaidBatchEditPlan>(`/prepaid-vouchers/batches/${id}/edit-preview`, body);
   return data;
 }
 
@@ -483,7 +523,8 @@ export async function cancelPrepaidGroup(
 }
 
 export type PrepaidEventAction =
-  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged';
+  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
+  | 'offline_assign' | 'offline_release' | 'offline_force_release';
 
 export interface PrepaidBatchEvent {
   id: string;

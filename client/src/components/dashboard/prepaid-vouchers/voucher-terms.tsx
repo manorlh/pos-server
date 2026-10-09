@@ -12,11 +12,10 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import { Loader2, Search, X } from 'lucide-react';
 import { PrepaidProductPickList } from '@/components/dashboard/prepaid-vouchers/product-pick-list';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import {
   PREPAID_KINDS,
   PREPAID_PROMOTION_POLICIES,
@@ -34,7 +33,6 @@ import {
 import {
   fetchPrepaidCategories,
   searchPrepaidProducts,
-  updatePrepaidBatch,
   type PrepaidProductOption,
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
@@ -412,8 +410,6 @@ export function useBatchTermsText() {
 /** The rules of use on the batch's page: they change from the next sale; the paper does not. */
 export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved: () => void }) {
   const t = useTranslations('prepaidVouchers.kinds');
-  const tc = useTranslations('common');
-  const qc = useQueryClient();
   const kind = batch.kind ?? 'items';
   const [rules, setRules] = useState<RulesState>({
     stacking: batch.stacking ?? 'single',
@@ -427,18 +423,11 @@ export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch;
   const perDay = rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null;
   const valid = Number.isFinite(perSale) && perSale >= 1 && (perDay === null || (Number.isFinite(perDay) && perDay >= 1))
     && stackingValid(rules);
-  const save = useMutation({
-    mutationFn: () =>
-      updatePrepaidBatch(batch.id, isDiscountKind(kind)
-        ? { ...stackingBody(rules), promotionPolicy: rules.promotionPolicy, maxUsesPerSale: perSale, maxUsesPerDay: perDay }
-        : stackingBody(rules)),
-    onSuccess: () => {
-      toast.success(t('rulesSaved'));
-      void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
-      onSaved();
-    },
-    onError: (err) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
-  });
+  // The rules apply to redemptions from now on: planned and confirmed first ("ערוך סדרה").
+  const edit = useBatchEditSave(batch, () => onSaved());
+  const save = () => void edit.save(isDiscountKind(kind)
+    ? { ...stackingBody(rules), promotionPolicy: rules.promotionPolicy, maxUsesPerSale: perSale, maxUsesPerDay: perDay }
+    : stackingBody(rules));
   return (
     <Card>
       <CardHeader>
@@ -447,10 +436,11 @@ export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch;
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground">{t('rulesHint')}</p>
         <RulesFields kind={kind} value={rules} onChange={setRules} usesFixed />
-        <Button size="sm" onClick={() => save.mutate()} disabled={!valid || save.isPending || batch.status === 'cancelled'}>
-          {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+        <Button size="sm" onClick={save} disabled={!valid || edit.busy || batch.status === 'cancelled'}>
+          {edit.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
           {t('save')}
         </Button>
+        {edit.dialog}
       </CardContent>
     </Card>
   );

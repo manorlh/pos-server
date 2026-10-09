@@ -22,6 +22,7 @@ import {
   History,
   ImagePlus,
   Loader2,
+  Pencil,
   Plus,
   FileSpreadsheet,
   Printer,
@@ -44,6 +45,8 @@ import {
   fetchPrepaidTypes,
   updatePrepaidBatch,
   type PrepaidBarcodeType,
+  type PrepaidBatchEditBody,
+  type PrepaidPricing,
   type PrepaidRedemptionAccounting,
   type PrepaidVoucher,
   type PrepaidVoucherBatch,
@@ -51,6 +54,8 @@ import {
 } from '@/lib/prepaidVouchersApi';
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
 import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
+import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
+import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import {
   BATCH_SORTS,
   EMPTY_FILTERS,
@@ -230,58 +235,98 @@ function BarcodeTypePicker({ value, onChange, disabled }: {
  * A weight typed as text ("0.5"), taken when the field is left or Enter is pressed — so "0." can be
  * typed. Keyed by its value where it is used: a +/- or a commit starts it afresh.
  */
-function CreateBatchDialog({ open, onOpenChange, onCreated }: {
+/** A number field's text ('' for none). */
+const numText = (v: number | null | undefined) => (v == null ? '' : String(v));
+
+/**
+ * The new-batch form — and, with [editing], "ערוך סדרה": the same form opened with the batch's own
+ * settings (a snapshot: its type is not read again). Mounted afresh each time it opens to edit.
+ */
+function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (b: PrepaidVoucherBatch) => void;
+  onCreated?: (b: PrepaidVoucherBatch) => void;
+  editing?: PrepaidVoucherBatch | null;
 }) {
   const t = useTranslations('prepaidVouchers.create');
+  const te = useTranslations('prepaidVouchers.edit');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
+  const ed = editing;
 
-  const [name, setName] = useState('');
-  const [eventName, setEventName] = useState('');
-  const [freeText, setFreeText] = useState('');
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [name, setName] = useState(ed?.name ?? '');
+  const [eventName, setEventName] = useState(ed?.eventName ?? '');
+  const [freeText, setFreeText] = useState(ed?.freeText ?? '');
+  const [logoUrl, setLogoUrl] = useState<string | null>(ed?.logoUrl ?? null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [companyId, setCompanyId] = useState('');
-  const [shopIds, setShopIds] = useState<string[]>([]);
-  const [validFrom, setValidFrom] = useState('');
-  const [validUntil, setValidUntil] = useState('');
-  const [splitAllowed, setSplitAllowed] = useState(false);
-  const [count, setCount] = useState('50');
-  const [items, setItems] = useState<DraftItem[]>([]);
+  const [companyId, setCompanyId] = useState(ed?.companyId ?? '');
+  const [shopIds, setShopIds] = useState<string[]>(ed?.shopIds ?? []);
+  const [validFrom, setValidFrom] = useState(ed ? day(ed.validFrom) : '');
+  const [validUntil, setValidUntil] = useState(ed ? day(ed.validUntil) : '');
+  const [splitAllowed, setSplitAllowed] = useState(ed?.splitAllowed ?? false);
+  const issued = ed ? (ed.issuedCount ?? ed.stats.total) : 0;
+  const [count, setCount] = useState(ed ? String(issued) : '50');
+  const [items, setItems] = useState<DraftItem[]>(() => (ed?.items ?? []).map((i) => ({
+    product: { id: i.productId, name: i.name, price: 0, isWeighed: !!i.weighed, unitLabel: i.unitLabel ?? null },
+    quantity: i.quantity,
+  })));
   // The type it is issued from (the spec's §2); '' — the form says it all (a type of its own).
   const [typeId, setTypeId] = useState('');
   // Without a type: its value at the till and price to the production (₪, optional).
-  const [tillValue, setTillValue] = useState('');
-  const [productionPrice, setProductionPrice] = useState('');
+  const [tillValue, setTillValue] = useState(numText(ed?.tillValue));
+  const [productionPrice, setProductionPrice] = useState(numText(ed?.productionPrice));
+  // Editing: how a redemption is priced, as the batch says (a new batch: fixed with a value).
+  const [pricing, setPricing] = useState<PrepaidPricing>(ed?.pricing ?? 'cover');
+  const [allowTopUp, setAllowTopUp] = useState(ed?.allowTopUp ?? true);
   // The three toggles, set at setup (a type brings its own).
   // How the till books a redemption: a document deduction by default.
-  const [accounting, setAccounting] = useState<PrepaidRedemptionAccounting>('discount');
+  const [accounting, setAccounting] = useState<PrepaidRedemptionAccounting>(ed?.redemptionAccounting ?? 'discount');
   // "הצג תוקף על השובר": on by default.
-  const [showValidity, setShowValidity] = useState(true);
-  const [offlineAllowed, setOfflineAllowed] = useState(false);
-  const [policy, setPolicy] = useState<PolicyState>(policyState());
+  const [showValidity, setShowValidity] = useState(ed ? ed.showValidity !== false : true);
+  const [offlineAllowed, setOfflineAllowed] = useState(ed?.offlineAllowed ?? false);
+  const [policy, setPolicy] = useState<PolicyState>(policyState(ed?.discountBlockPolicy));
   // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
   const [groupCustom, setGroupCustom] = useState('');
-  const [showCode, setShowCode] = useState(false);
+  const [showCode, setShowCode] = useState(ed?.showCode ?? false);
   // "הצגת הפריטים על השובר": on by default; off prints the voucher without its goods / benefit.
-  const [showItems, setShowItems] = useState(true);
+  const [showItems, setShowItems] = useState(ed ? ed.showItems !== false : true);
   // "נוצר על ידי Runner Systems" at the bottom of the voucher: on by default.
-  const [showCredit, setShowCredit] = useState(true);
-  const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>('qr');
-  const [customerName, setCustomerName] = useState('');
-  const [orderRef, setOrderRef] = useState('');
+  const [showCredit, setShowCredit] = useState(ed ? ed.showCredit !== false : true);
+  const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>(ed?.barcodeType ?? 'qr');
+  const [customerName, setCustomerName] = useState(ed?.customerName ?? '');
+  const [orderRef, setOrderRef] = useState(ed?.orderRef ?? '');
   // Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
-  const [kind, setKind] = useState<PrepaidVoucherKind>('items');
-  const [terms, setTerms] = useState<DiscountTermsState>(EMPTY_DISCOUNT_TERMS);
-  const [rules, setRules] = useState<RulesState>(DEFAULT_RULES);
+  const [kind, setKind] = useState<PrepaidVoucherKind>(ed?.kind ?? 'items');
+  const [terms, setTerms] = useState<DiscountTermsState>(() => (ed
+    ? {
+        discountType: ed.discountType ?? 'fixed',
+        value: numText(ed.discountValue),
+        minPurchase: numText(ed.minPurchase),
+        maxDiscount: numText(ed.maxDiscount),
+        // The chips: the products by the names they were printed with (products first, then categories).
+        products: (ed.targets?.productIds ?? []).map((id, n) => ({ id, name: ed.targets?.names?.[n] ?? id, price: 0 })),
+        categoryIds: ed.targets?.categoryIds ?? [],
+        maxUnits: ed.maxUnits ? String(ed.maxUnits) : '1',
+      }
+    : EMPTY_DISCOUNT_TERMS));
+  const [rules, setRules] = useState<RulesState>(() => (ed
+    ? {
+        stacking: ed.stacking ?? 'single',
+        maxVouchersPerSale: ed.maxVouchersPerSale ? String(ed.maxVouchersPerSale) : '',
+        promotionPolicy: ed.promotionPolicy ?? 'exclude',
+        usesPerVoucher: String(ed.usesPerVoucher ?? 1),
+        maxUsesPerSale: String(ed.maxUsesPerSale ?? 1),
+        maxUsesPerDay: ed.maxUsesPerDay ? String(ed.maxUsesPerDay) : '',
+      }
+    : DEFAULT_RULES));
   // Goods: "כולל תוספות" — paid options and a meal's upcharges covered too (§7.14). Off by default.
-  const [includeExtras, setIncludeExtras] = useState(false);
+  const [includeExtras, setIncludeExtras] = useState(ed?.includeExtras ?? false);
+  // "החל גם על שוברים במימוש חלקי": new contents reach the partly redeemed vouchers too.
+  const [applyToPartial, setApplyToPartial] = useState(false);
+  const groupsBatch = ed?.selection === 'groups';
   // The company's active types (its own and its parents').
   const types = useQuery({
     queryKey: ['prepaid-voucher-types', companyId, 'active'],
@@ -289,7 +334,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     enabled: open && !!companyId,
   });
   const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
-  const pricesVisible = !!types.data?.pricesVisible;
+  const pricesVisible = ed ? !!ed.pricesVisible : !!types.data?.pricesVisible;
   const discount = isDiscountKind(chosen ? chosen.kind : kind);
   const termErrors = chosen ? [] : discountDraftErrors({
     kind,
@@ -349,11 +394,18 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
   const plan = groupOk ? planText(n, groupSize) : null;
   // What is still missing, said in words under the button (not just a disabled button).
   const problems = batchFormProblems({
-    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : items.length,
+    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch ? 1 : items.length,
     termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
     stackingOk: chosen ? true : stackingValid(rules),
   });
-  const canCreate = problems.length === 0;
+  // Editing: never fewer vouchers than were issued, and a fixed value has its value.
+  const editProblems = ed
+    ? [
+        Number.isFinite(n) && n < issued ? te('problem.countBelowIssued', { n: issued }) : null,
+        !discount && pricing === 'fixed' && !tillValue.trim() ? te('problem.value') : null,
+      ].filter((x): x is string => !!x)
+    : [];
+  const canCreate = problems.length === 0 && editProblems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
   const totals = discount ? null : issueTotals(n, chosen
     ? chosen.items.map((i) => ({ quantity: i.quantity, weighed: i.weighed, unitLabel: i.unitLabel }))
@@ -380,6 +432,57 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     customerName: customerName.trim() || null,
     orderRef: orderRef.trim() || null,
   };
+  // "ערוך סדרה": the settings as the PATCH reads them — sent only where they differ from how the
+  // form opened (lib/prepaidBatchEdit.ts changedFields), the cloud plans and confirms the rest.
+  const editSnapshot = (): PrepaidBatchEditBody => {
+    const out: PrepaidBatchEditBody = {
+      name: name.trim(),
+      customerName: customerName.trim() || null,
+      eventName: eventName.trim() || null,
+      orderRef: orderRef.trim() || null,
+      freeText: freeText.trim() || null,
+      logoUrl,
+      showItems, showValidity, showCredit, showCode, barcodeType,
+      validFrom: dayBoundIso(validFrom, false),
+      validUntil: dayBoundIso(validUntil, true),
+      shopIds: shopIds.length ? [...shopIds].sort() : null,
+      count: n,
+      ...stackingBody(rules),
+    };
+    if (pricesVisible) out.productionPrice = decimal(productionPrice);
+    if (!discount) {
+      Object.assign(out, {
+        offlineAllowed, redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
+        pricing, tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
+        includeExtras, splitAllowed,
+      });
+      if (!groupsBatch) out.items = items.map((i) => ({ productId: i.product.id, quantity: i.quantity }));
+    } else {
+      Object.assign(out, {
+        discountType: terms.discountType, discountValue: decimal(terms.value),
+        minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
+        maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
+        maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
+        targets: kind === 'item_discount' ? { productIds: terms.products.map((p) => p.id), categoryIds: terms.categoryIds } : null,
+        promotionPolicy: rules.promotionPolicy,
+        usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
+        maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+        maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+      });
+    }
+    return out;
+  };
+  // How the form opened: taken once, from the very same function (no change: nothing sent).
+  const [opened] = useState<PrepaidBatchEditBody | null>(() => (ed ? editSnapshot() : null));
+  const editBody = opened ? (changedFields(opened as Record<string, unknown>, editSnapshot() as Record<string, unknown>) as PrepaidBatchEditBody) : {};
+  const contentsChanged = touchesContents(editBody as Record<string, unknown>);
+  const partial = ed?.stats.partiallyUsed ?? 0;
+  const editSave = useBatchEditSave(ed, (b) => onCreated?.(b));
+  const saveEdit = async () => {
+    const body: PrepaidBatchEditBody = contentsChanged && applyToPartial ? { ...editBody, applyToPartial: true } : editBody;
+    if (await editSave.save(body)) onOpenChange(false);
+  };
+
   const create = useMutation({
     mutationFn: () => chosen
       ? createPrepaidBatch({ ...common, typeId: chosen.id, splitAllowed: false, items: [] })
@@ -423,7 +526,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
       void qc.invalidateQueries({ queryKey: ['prepaid-voucher-batches'] });
       reset();
       onOpenChange(false);
-      onCreated(b);
+      onCreated?.(b);
     },
     onError: (err) => toast.error(errorText(err)),
   });
@@ -479,9 +582,15 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t('title')}</DialogTitle>
+          <DialogTitle>{ed ? te('title') : t('title')}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {ed ? (
+            <div className="space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <p>{te('intro')}</p>
+              {ed.type?.origin === 'manual' && ed.type.name ? <p>{te('typeLine', { name: ed.type.name, version: ed.type.version })}</p> : null}
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-name">{t('name')}</Label>
@@ -493,10 +602,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           </div>
 
+          {ed ? null : (
           <div className="space-y-1">
             <Label>{t('type')}</Label>
             <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-              value={typeId} onChange={(e) => setTypeId(e.target.value)} disabled={!companyId} aria-label={t('type')}>
+              value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
               <option value="">{t('typeNone')}</option>
               {(types.data?.items ?? []).map((x) => (
                 <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
@@ -504,11 +614,19 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </select>
             <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
           </div>
+          )}
           {chosen ? <TypeSummary type={chosen} /> : (<>
-          <KindPicker value={kind} onChange={setKind} />
+          {ed ? (
+            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
+          ) : <KindPicker value={kind} onChange={setKind} />}
           {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
 
-          {!discount ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
+          {!discount && groupsBatch ? (
+            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+              {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
+            </p>
+          ) : null}
+          {!discount && !groupsBatch ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
 
           {!discount ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
@@ -524,15 +642,33 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
-                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(e) => setTillValue(e.target.value)}
+                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
                   placeholder={t('tillValuePlaceholder')} />
-                <p className="text-xs text-muted-foreground">{tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+                <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
               </div>
               {pricesVisible ? (
                 <div className="space-y-1">
                   <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
-                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(e) => setProductionPrice(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">{t('productionPriceHint')}</p>
+                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
+                  <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {!discount && ed ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
+                <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                  value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
+                  <option value="fixed">{te('choice.pricing.fixed')}</option>
+                  <option value="cover">{te('choice.pricing.cover')}</option>
+                </select>
+              </div>
+              {pricing === 'cover' ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
+                  <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
                 </div>
               ) : null}
             </div>
@@ -550,8 +686,10 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <Label htmlFor="pv-count">{t('count')}</Label>
-              <Input id="pv-count" type="number" min={1} max={5000} value={count} onChange={(e) => setCount(e.target.value)} />
+              <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
+              <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
+                onChange={(ev) => setCount(ev.target.value)} />
+              {ed ? <p className="text-xs text-muted-foreground">{te('countHint', { n: issued })}</p> : null}
             </div>
             {!discount && !chosen ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
@@ -570,6 +708,20 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
             </div>
           ) : null}
 
+          {ed && contentsChanged ? (
+            <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={applyToPartial}
+                onChange={(ev) => setApplyToPartial(ev.target.checked)} disabled={partial === 0} />
+              <span className="min-w-0">
+                <span className="block font-medium">{te('applyToPartial')}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {partial > 0 ? te('applyToPartialHint', { n: partial }) : te('applyToPartialNone')}
+                </span>
+              </span>
+            </label>
+          ) : null}
+
+          {ed ? null : (
           <div className="space-y-2 rounded-lg border p-3">
             <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
             {!groupOk ? (
@@ -578,6 +730,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <p className="text-sm font-medium" aria-live="polite">{plan}</p>
             ) : null}
           </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
             <div className="min-w-0">
@@ -667,6 +820,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               <Label>{t('company')}</Label>
               <Select
                 value={companyId}
+                disabled={!!ed}
                 onValueChange={(v) => {
                   setCompanyId(String(v ?? ''));
                   setShopIds([]);
@@ -712,19 +866,27 @@ function CreateBatchDialog({ open, onOpenChange, onCreated }: {
               {totals.weights.map((x) => ` ${t('totalsWeight', { quantity: quantityNumberText(x.quantity), unit: x.unit })}`).join('')}
             </p>
           ) : null}
-          {problems.length ? (
+          {problems.length || editProblems.length ? (
             <p className="text-xs text-muted-foreground">
-              {t('missing', { list: problems.map((p) => t(`problem.${p}`)).join(', ') })}
+              {t('missing', { list: [...problems.map((p) => t(`problem.${p}`)), ...editProblems].join(', ') })}
             </p>
           ) : null}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tc('cancel')}</Button>
-          <Button onClick={() => create.mutate()} disabled={!canCreate || create.isPending}>
-            {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <TicketCheck className="h-4 w-4" />}
-            {t('submit', { count: Number.isFinite(n) ? n : 0 })}
-          </Button>
+          {ed ? (
+            <Button onClick={() => void saveEdit()} disabled={!canCreate || editSave.busy || Object.keys(editBody).length === 0}>
+              {editSave.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+              {te('submit')}
+            </Button>
+          ) : (
+            <Button onClick={() => create.mutate()} disabled={!canCreate || create.isPending}>
+              {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <TicketCheck className="h-4 w-4" />}
+              {t('submit', { count: Number.isFinite(n) ? n : 0 })}
+            </Button>
+          )}
         </DialogFooter>
+        {editSave.dialog}
       </DialogContent>
     </Dialog>
   );
@@ -896,6 +1058,8 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
   const [view, setView] = useState<'vouchers' | 'groups' | 'report'>('vouchers');
+  // "ערוך סדרה": the batch's form, opened with its own settings.
+  const [editOpen, setEditOpen] = useState(false);
   const [addCount, setAddCount] = useState('10');
   const [busy, setBusy] = useState<string | null>(null);
   const [assignMode, setAssignMode] = useState<GroupMode>('10');
@@ -1099,10 +1263,17 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             </p>
           ) : null}
         </div>
-        <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
-          {t(`batchStatus.${batch.status}`)}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
+            {t(`batchStatus.${batch.status}`)}
+          </span>
+          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} className="print:hidden">
+            <Pencil className="h-4 w-4" />
+            {t('edit.button')}
+          </Button>
+        </div>
       </div>
+      {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
 
       <StatsBar b={batch} />
       {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
@@ -1412,17 +1583,13 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
  */
 function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved: () => void }) {
   const t = useTranslations('prepaidVouchers');
-  const errorText = useErrorText();
   const types = useQuery({
     queryKey: ['prepaid-voucher-types', 'flags'],
     queryFn: () => fetchPrepaidTypes({ includeInactive: false }),
   });
   const [policy, setPolicy] = useState<PolicyState>(policyState(batch.discountBlockPolicy));
-  const save = useMutation({
-    mutationFn: (body: Parameters<typeof updatePrepaidBatch>[1]) => updatePrepaidBatch(batch.id, body),
-    onSuccess: () => { toast.success(t('production.settingsSaved')); onSaved(); },
-    onError: (err) => toast.error(errorText(err)),
-  });
+  // Accounting, offline and the policy apply to redemptions from now on: planned and confirmed first ("ערוך סדרה").
+  const edit = useBatchEditSave(batch, () => onSaved());
   const policyChanged = JSON.stringify(policyBody(policy)) !== JSON.stringify(policyBody(policyState(batch.discountBlockPolicy)));
   return (
     <Card>
@@ -1432,15 +1599,16 @@ function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved:
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground">{t('togglesHint')}</p>
         <ToggleFields
-          accounting={batch.redemptionAccounting ?? 'zero'} onAccounting={(v) => save.mutate({ redemptionAccounting: v })}
-          offlineAllowed={!!batch.offlineAllowed} onOfflineAllowed={(v) => save.mutate({ offlineAllowed: v })}
-          policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} disabled={save.isPending}
+          accounting={batch.redemptionAccounting ?? 'zero'} onAccounting={(v) => void edit.save({ redemptionAccounting: v })}
+          offlineAllowed={!!batch.offlineAllowed} onOfflineAllowed={(v) => void edit.save({ offlineAllowed: v })}
+          policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} disabled={edit.busy}
         />
         {policyChanged ? (
-          <Button size="sm" onClick={() => save.mutate({ discountBlockPolicy: policyBody(policy) })} disabled={save.isPending}>
+          <Button size="sm" onClick={() => void edit.save({ discountBlockPolicy: policyBody(policy) })} disabled={edit.busy}>
             {t('togglesSavePolicy')}
           </Button>
         ) : null}
+        {edit.dialog}
       </CardContent>
     </Card>
   );

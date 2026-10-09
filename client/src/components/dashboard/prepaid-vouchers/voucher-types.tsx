@@ -30,6 +30,7 @@ import {
 } from '@/lib/prepaidVouchersApi';
 import { benefitText, discountDraftErrors, isDiscountKind, moneyText, termsOfBatch, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import { itemText } from '@/lib/prepaidVoucherProducts';
+import { changedFields } from '@/lib/prepaidBatchEdit';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import {
   DiscountTermsFields,
@@ -306,6 +307,24 @@ function TypeForm({
     return out;
   };
 
+  // Editing a type that batches were issued from: a change of what it gives, its prices or its terms
+  // makes a new version — confirmed first, with what changes; the batches issued keep theirs.
+  const te = useTranslations('prepaidVouchers.edit');
+  // How the form opened, from the very same function (taken once).
+  const [opened] = useState<PrepaidTypeBody | null>(() => (initial ? body() : null));
+  const [versionAsk, setVersionAsk] = useState<string[] | null>(null);
+  const submit = () => {
+    if (initial && initial.batchCount > 0 && opened) {
+      const changed = Object.keys(changedFields(opened as Record<string, unknown>, body() as Record<string, unknown>))
+        .filter((k) => !['name', 'code', 'description'].includes(k));
+      if (changed.length) {
+        setVersionAsk(changed);
+        return;
+      }
+    }
+    save.mutate();
+  };
+
   const save = useMutation({
     mutationFn: () => (initial ? updatePrepaidType(initial.id, body()) : createPrepaidType(body())),
     onSuccess: (x) => {
@@ -430,11 +449,29 @@ function TypeForm({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onDone}>{tc('cancel')}</Button>
-          <Button onClick={() => save.mutate()} disabled={problems.length > 0 || save.isPending}>
+          <Button onClick={submit} disabled={problems.length > 0 || save.isPending}>
             {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {initial ? t('save') : t('create')}
           </Button>
         </DialogFooter>
+        <Dialog open={versionAsk !== null} onOpenChange={(v) => { if (!v && !save.isPending) setVersionAsk(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t('versionAskTitle', { v: (initial?.version ?? 1) + 1 })}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm">{t('versionAskBody', { n: initial?.batchCount ?? 0, v: initial?.version ?? 1 })}</p>
+            <ul className="list-inside list-disc text-sm text-muted-foreground">
+              {(versionAsk ?? []).map((k) => <li key={k}>{te.has(`field.${k}`) ? te(`field.${k}`) : k}</li>)}
+            </ul>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setVersionAsk(null)} disabled={save.isPending}>{te('back')}</Button>
+              <Button onClick={() => save.mutate(undefined, { onSettled: () => setVersionAsk(null) })} disabled={save.isPending}>
+                {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {te('confirm')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </>
   );
 }
