@@ -55,9 +55,12 @@ export function money(v: number | null | undefined): string {
   return `₪${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-/** The confirm button's words: "הפק Z 18" / "סגור משמרת". */
-export function confirmLabel(p: Pick<RemoteClosePreview, 'kind' | 'nextZNumber'>): string {
-  if (p.kind === 'till_z') return p.nextZNumber != null ? `הפק Z ${p.nextZNumber}` : 'הפק Z';
+/**
+ * The confirm button's words: "הפק Z הבא" / "סגור משמרת". Never a predicted number: the Z is
+ * numbered when it is made (another Z may come first).
+ */
+export function confirmLabel(p: Pick<RemoteClosePreview, 'kind'>): string {
+  if (p.kind === 'till_z') return 'הפק Z הבא';
   return 'סגור משמרת';
 }
 

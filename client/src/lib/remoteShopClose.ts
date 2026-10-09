@@ -106,7 +106,10 @@ export interface ShopClosePreview {
   run: ShopCloseRun | null;
   /** "חסימת Z כשיש משמרות פתוחות": on here, and the tills holding the Z now (מנותקת / משמרת פתוחה / ממתין לקבלה). */
   shiftGuard: ShiftGuard;
-  shopClose: { label: string; available: boolean; whyNot: string | null };
+  /** `forceStartAllowed`: a super admin may start past tills in "מצב לא ידוע", with a typed reason. */
+  shopClose: { label: string; available: boolean; whyNot: string | null; forceStartAllowed?: boolean };
+  /** What the build takes besides: shop-Z documents of tills that make their own Z now. */
+  leftovers?: { machineId: string; name: string; posNumber: string | null; shifts: number; net: number }[];
   totalsKey: string;
 }
 
@@ -148,7 +151,7 @@ export function confirmationAsked(code: string | null | undefined): { flag: 'con
   return null;
 }
 
-/** The confirm button's words: "סגור את היום · Z 42". */
-export function shopConfirmLabel(p: Pick<ShopClosePreview, 'nextShopZNumber'>): string {
-  return `סגור את היום · Z ${p.nextShopZNumber}`;
+/** The confirm button's words — never a predicted number: the Z is numbered when it is made. */
+export function shopConfirmLabel(): string {
+  return 'סגור את היום · Z הבא';
 }

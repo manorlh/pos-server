@@ -95,7 +95,14 @@ export async function fetchShopClosePreview(shopId: string): Promise<import('@/l
 }
 
 /** The confirmed day close: sent at once — each till closes at rest; progress in the preview. */
-export async function requestShopClose(body: { shopId: string; totalsKey: string; confirmOpenTills?: boolean; confirmCloudData?: boolean }) {
+export async function requestShopClose(body: {
+  shopId: string;
+  totalsKey: string;
+  confirmOpenTills?: boolean;
+  confirmCloudData?: boolean;
+  /** A super admin starting past tills in "מצב לא ידוע". */
+  forceReason?: string;
+}) {
   return (await api.post('/device-commands/shop-close', body)).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
 

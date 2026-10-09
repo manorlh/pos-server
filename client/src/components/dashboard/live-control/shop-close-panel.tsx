@@ -77,7 +77,7 @@ function DeviceLine({ row, showAction }: { row: ShopCloseRow; showAction: boolea
 }
 
 /** The confirmation: every till's figures, the shop total and the next number. Sends and closes. */
-function ShopCloseDialog({ p, onClose }: { p: ShopClosePreview; onClose: () => void }) {
+function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onClose: () => void; forceReason?: string }) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState<string | null>(null);
   const [asked, setAsked] = useState<{ flag: 'confirmCloudData' | 'confirmOpenTills'; text: string; message?: string } | null>(null);
@@ -85,7 +85,7 @@ function ShopCloseDialog({ p, onClose }: { p: ShopClosePreview; onClose: () => v
   const [askedChecked, setAskedChecked] = useState(false);
   const send = useMutation({
     mutationFn: (extra: { confirmCloudData?: boolean; confirmOpenTills?: boolean }) =>
-      requestShopClose({ shopId: p.shopId, totalsKey: p.totalsKey, ...extra }),
+      requestShopClose({ shopId: p.shopId, totalsKey: p.totalsKey, ...extra, ...(forceReason ? { forceReason } : {}) }),
     onSuccess: () => {
       toast.success('נשלח לקופות — כל קופה תיסגר כשאין בה מכירה או תשלום פתוחים');
       qc.invalidateQueries({ queryKey: key(p.shopId) });
@@ -144,12 +144,22 @@ function ShopCloseDialog({ p, onClose }: { p: ShopClosePreview; onClose: () => v
                 <dd className="tabular-nums">{money(amount)}</dd>
               </div>
             ))}
-            <dt className="text-muted-foreground">Z סניפי הבא</dt>
+            <dt className="text-muted-foreground">Z סניפי הבא (צפוי)</dt>
             <dd className="tabular-nums">{p.nextShopZNumber}</dd>
           </dl>
           {p.ownZ.length > 0 ? (
             <p className="text-muted-foreground">
               לא נכללות (Z משלהן): {p.ownZ.map((r) => r.name).join(', ')}
+            </p>
+          ) : null}
+          {(p.leftovers ?? []).length > 0 ? (
+            <p className="text-muted-foreground">
+              נכללים גם מסמכים ממתינים של: {(p.leftovers ?? []).map((r) => `${r.name} (${money(r.net)})`).join(', ')}
+            </p>
+          ) : null}
+          {forceReason ? (
+            <p className="rounded-lg bg-amber-50 p-2 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
+              כפיית התחלה (תמיכה): {forceReason}
             </p>
           ) : null}
           <label className="flex min-h-11 items-start gap-2">
@@ -176,7 +186,7 @@ function ShopCloseDialog({ p, onClose }: { p: ShopClosePreview; onClose: () => v
             ביטול
           </Button>
           <Button className="min-h-11" disabled={!confirmed || send.isPending} onClick={go}>
-            {send.isPending ? 'שולח…' : shopConfirmLabel(p)}
+            {send.isPending ? 'שולח…' : shopConfirmLabel()}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -228,6 +238,7 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
     onError: (e) => toast.error(errorDetail(e)?.message ?? axiosErrorToToastMessage(e, 'ההפקה נכשלה')),
   });
   const [forceReason, setForceReason] = useState('');
+  const [startReason, setStartReason] = useState('');
   const force = useMutation({
     mutationFn: ({ runId, ids, reason }: { runId: string; ids: string[]; reason: string }) => forceShopClose(runId, ids, reason),
     onSuccess: () => {
@@ -266,6 +277,21 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
         )}
       </div>
       {!run && !p.shopClose.available && p.shopClose.whyNot ? <p className="text-sm text-muted-foreground">{p.shopClose.whyNot}</p> : null}
+      {!run && !p.shopClose.available && p.shopClose.forceStartAllowed ? (
+        <div className="space-y-2 rounded-lg border border-destructive/40 p-2">
+          <p className="text-xs font-medium">התחלה בכפייה (תמיכה) — קופות במצב לא ידוע לא ייסגרו, והמשמרות שלהן ייכנסו ל-Z הבא</p>
+          <Input
+            value={startReason}
+            onChange={(e) => setStartReason(e.target.value)}
+            placeholder="סיבת הכפייה (חובה)"
+            maxLength={300}
+            className="min-h-10"
+          />
+          <Button size="sm" variant="destructive" className="min-h-10" disabled={!forceReasonOk(startReason)} onClick={() => setConfirming(true)}>
+            {p.shopClose.label} בכפייה…
+          </Button>
+        </div>
+      ) : null}
       {p.shiftGuard.required && p.shiftGuard.blockers.length > 0 ? (
         <div className="space-y-1 text-sm">
           <p className="text-amber-700 dark:text-amber-400">{p.shiftGuard.label}: ה-Z ימתין לכל הקופות האלה</p>
@@ -348,7 +374,13 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
           </ul>
         </details>
       ) : null}
-      {confirming ? <ShopCloseDialog p={p} onClose={() => setConfirming(false)} /> : null}
+      {confirming ? (
+        <ShopCloseDialog
+          p={p}
+          forceReason={!p.shopClose.available && p.shopClose.forceStartAllowed ? startReason.trim() : undefined}
+          onClose={() => setConfirming(false)}
+        />
+      ) : null}
     </section>
   );
 }

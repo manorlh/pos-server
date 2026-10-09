@@ -7,10 +7,9 @@ import assert from 'node:assert/strict';
 import { confirmLabel, money, requestStateLabel, tenderLabel } from './remoteTillZ';
 
 describe('remote shift close / Z', () => {
-  it('names the act: the Z with its next number, or a shift close', () => {
-    assert.equal(confirmLabel({ kind: 'till_z', nextZNumber: 18 }), 'הפק Z 18');
-    assert.equal(confirmLabel({ kind: 'till_z', nextZNumber: null }), 'הפק Z');
-    assert.equal(confirmLabel({ kind: 'close_shift', nextZNumber: null }), 'סגור משמרת');
+  it('names the act: the next Z (never a predicted number), or a shift close', () => {
+    assert.equal(confirmLabel({ kind: 'till_z' }), 'הפק Z הבא');
+    assert.equal(confirmLabel({ kind: 'close_shift' }), 'סגור משמרת');
   });
   it('says why a request waits — never that it closed mid-sale', () => {
     assert.equal(requestStateLabel('waiting', 'sale_open'), 'נשלח · ממתין לסיום המכירה בקופה');

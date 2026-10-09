@@ -40,7 +40,7 @@ describe('remote shop close', () => {
     assert.equal(forceReasonOk('   x   '), false);
     assert.equal(forceReasonOk('המכשיר לא נדלק'), true);
   });
-  it('names the act with the next shop Z number', () => {
-    assert.equal(shopConfirmLabel({ nextShopZNumber: 42 }), 'סגור את היום · Z 42');
+  it('names the act with the next Z, never a predicted number', () => {
+    assert.equal(shopConfirmLabel(), 'סגור את היום · Z הבא');
   });
 });

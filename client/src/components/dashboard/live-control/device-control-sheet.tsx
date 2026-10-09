@@ -114,7 +114,7 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
               ))}
               {p.kind === 'till_z' && p.nextZNumber != null ? (
                 <>
-                  <dt className="text-muted-foreground">Z הבא</dt>
+                  <dt className="text-muted-foreground">Z הבא (צפוי)</dt>
                   <dd className="tabular-nums">{p.nextZNumber}</dd>
                 </>
               ) : null}

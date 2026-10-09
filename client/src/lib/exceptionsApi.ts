@@ -51,6 +51,9 @@ export const EXCEPTION_TYPES = [
   // A super admin moved the shop Z's production before its producer handed over
   // ("קופה עצמאית בתוך סניף", docs/SPEC_INDEPENDENT_TILL.md §8).
   'shop_z_producer_forced',
+  // A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
+  // closed (details: runId, zReportId, tills, reason, forcedBy, summary).
+  'z_forced_open_shifts',
   // A local shop Z stored as printed whose cloud recomputation differs — an internal check
   // for support only; the Z itself is never corrected (details: zReportId, zNumber,
   // discrepancies [{key, till, cloud}], summary).
