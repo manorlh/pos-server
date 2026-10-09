@@ -759,7 +759,11 @@ class TestTheRouter:
         w.db.commit()
 
         created = router.post_z_run(
-            ZRunCreateIn.model_validate({"shopId": str(w.shop.id), "machines": [{"machineId": str(w.tills[0].id)}]}),
+            ZRunCreateIn.model_validate({
+                "shopId": str(w.shop.id), "machines": [{"machineId": str(w.tills[0].id)}],
+                # Not seen "now" in this world: the state is confirmed (offline till Z §4.6.1).
+                "confirmCloudData": True,
+            }),
             current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
         assert created["status"] == "completed" and created["zNumber"] == 1

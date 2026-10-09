@@ -120,8 +120,15 @@ def resolve_window(
 
 
 def shop_tills(db: Session, shop: Shop, extra_ids: Sequence[uuid.UUID] = ()) -> List[POSMachine]:
-    """The shop's active tills, plus any named (an inactive till already in the event)."""
-    rows = db.query(POSMachine).filter(POSMachine.shop_id == shop.id, POSMachine.is_active.is_(True)).all()
+    """
+    The shop's active tills, plus any named (an inactive till already in the event). Not a
+    display device (a KDS / the board, app/services/display_devices.py): it sells nothing.
+    """
+    rows = (
+        db.query(POSMachine)
+        .filter(POSMachine.shop_id == shop.id, POSMachine.is_active.is_(True), POSMachine.is_fiscal.is_(True))
+        .all()
+    )
     have = {m.id for m in rows}
     missing = [i for i in extra_ids if i not in have]
     if missing:

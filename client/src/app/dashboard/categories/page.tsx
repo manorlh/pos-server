@@ -42,6 +42,9 @@ import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, GripVertical, Info } from 'lucide-react';
 import { TargetPrintersSection } from '@/components/dashboard/kitchen-printers/target-printers-section';
 import { CategoryMenuSection } from '@/components/dashboard/menu/menu-sections';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
+import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/products/restricted-item';
+import { categoryRestrictionOf, restrictedCategoryIds } from '@/lib/restrictedItems';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
 
@@ -83,6 +86,13 @@ export default function CategoriesPage() {
     queryFn: () => api.get('/vouchers', { params: { page: 1, pageSize: 200 } }).then((r) => r.data),
   });
   const vouchers = vouchersData?.items ?? [];
+  // "מחייב אישור מנהל במכירה": flagged, or beneath a flagged category (lib/restrictedItems.ts).
+  const restrictedCategories = useMemo(() => restrictedCategoryIds(categories), [categories]);
+  /** A category above [c] that restricts it — the form says so; the switch then adds nothing. */
+  const restrictingParent = (c: Partial<Category>) =>
+    c.parentId && restrictedCategories.has(c.parentId)
+      ? categories.find((x) => x.id === c.parentId)?.name ?? ''
+      : null;
 
   // ── Reorder draft ──────────────────────────────────────────────────────────
   // The server already returns categories ordered by sort_order then name, so the
@@ -168,6 +178,7 @@ export default function CategoriesPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('title')}</h1>
@@ -317,6 +328,7 @@ export default function CategoriesPage() {
                       <Badge variant={c.isActive ? 'outline' : 'destructive'}>
                         {c.isActive ? tc('active') : tc('inactive')}
                       </Badge>
+                      <RestrictedBadge state={categoryRestrictionOf(c, restrictedCategories)} />
                       {/* Switched off from a till for a shop, area or single till. */}
                       {c.isActive && c.inactiveAt && c.inactiveAt.length > 0 ? (
                         <Badge variant="secondary" title={t('inactiveAtHint')}>
@@ -428,6 +440,16 @@ export default function CategoriesPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{tt('hint')}</p>
             </div>
+            {/* "מחייב אישור מנהל במכירה": every product here and beneath — a manager's code at the till, never at a kiosk. */}
+            <RestrictedSwitch
+              checked={editing.requiresManagerApproval ?? false}
+              hint={t('requiresManagerApprovalHint')}
+              inheritedNote={(() => {
+                const parent = restrictingParent(editing);
+                return parent != null ? t('requiresManagerApprovalInherited', { category: parent }) : null;
+              })()}
+              onChange={(c) => setEditing((x) => ({ ...x, requiresManagerApproval: c }))}
+            />
             {/* Kitchen / bar printers of the whole category ("מדפסות בונים"). */}
             {!isNew && editing.id ? <TargetPrintersSection kind="category" id={editing.id} /> : null}
             {/* Modifier groups, note chips and course for the category (docs/SPEC_MENU_MODIFIERS.md §12). */}

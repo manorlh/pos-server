@@ -20,7 +20,44 @@ MANAGED_SETTING_KEYS = (
     "nayaxDeviceHost",
     "nayaxDevicePort",
     "nayaxSpicyPath",
+    # "סוג אינטגרציית אשראי" and Z-Credit's non-secret fields
+    # (app/services/payment_integration.py). The password is not a setting: it lives
+    # encrypted apart (payment_secrets.py) and only the till's sync adds it.
+    "paymentIntegration",
+    # `nayax_usb` ("Nayax — מסופון בחיבור USB"): the C4's USB ids ("VVVV:PPPP"); unset = the
+    # first CDC-ACM device on the till.
+    "nayaxUsbDevice",
+    "zcreditTerminalNumber",
+    "zcreditPinpadId",
+    "zcreditMode",
+    # SynqPay's non-secret fields (docs/SPEC_SYNQPAY.md); its API key is a secret like the
+    # Z-Credit password, added by the till's sync only.
+    "synqpayDeviceModel",
+    "synqpayConnection",
+    "synqpayHost",
+    "synqpayProtocol",
+    "synqpayPort",
+    "synqpayTls",
+    "synqpayUsbDevice",
+    "synqpaySerialNumber",
+    # "מכשירי תשלום" (app/services/payment_devices.py): whether a till without built-in
+    # clearing works with several devices, and how it picks one (a fixed device, or a group to
+    # choose from). The devices themselves (`paymentDevices`), their secrets and the group as
+    # a JSON string are put in by the till's sync.
+    "multiPaymentDevices",
+    "paymentDeviceMode",
+    "fixedPaymentDeviceId",
+    "paymentDeviceGroup",
     "outOfStockPolicy",
+    # "פתיחת פריטים אוטומטית אחרי Z" ("off" | "day" | "all") and whether it opens an item
+    # that tracks stock and has none (app/services/availability_reopen.py). Sent to the
+    # tills too: a Z closed with no connection reopens the till's own locks itself.
+    "autoReopenAfterZ",
+    "autoReopenIgnoreStock",
+    # "אזל אוטומטי" (unset = on) — the till blocks a product that tracks stock and has none by
+    # itself, the cloud's automatic block aside (app/services/sold_out.py) — and the business day's
+    # start ("05:00" when unset).
+    "autoSoldOutAtZero",
     "tipsEnabled",
     "cashTipsEnabled",
     # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment
@@ -28,6 +65,8 @@ MANAGED_SETTING_KEYS = (
     *PAYMENT_OPTION_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
+    # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).
+    "payOrder",
     # sellSearchEnabled, sellScanEnabled, sellCalculatorEnabled — spelled out once in
     # sell_screen.py.
     *SELL_SCREEN_SETTING_KEYS,
@@ -54,6 +93,9 @@ MANAGED_SETTING_KEYS = (
     "clearingServer",
     # Whether the till writes the expected terminal number into its Agamento.
     "forceTerminalNumber",
+    # "חזרה אוטומטית לקיוסק" (R2M POS for Windows, app/services/desktop_idle_return.py):
+    # the idle minutes on the desktop before the device is back in full screen; 0 = never.
+    "desktopIdleReturnMinutes",
 )
 
 #: White-label keys. Written at any layer, but only by BRANDING_WRITE_ROLES
@@ -187,8 +229,20 @@ def build_business_info(
         company_zip=bi_override.get("companyZip") or "",
         company_reg_number=bi_override.get("companyRegNumber"),
         has_branches=bi_override.get("hasBranches", has_branches),
-        branch_id=bi_override.get("branchId") or branch_id,
+        # The shop's own code first: it is mandatory and unique in the company
+        # (app/services/branch_code.py); an override is only for a row with none.
+        branch_id=branch_id or bi_override.get("branchId"),
+        # Always the company's: a shop has no business identity of its own, and a
+        # `businessInfo` override in settings does not change the dealer type
+        # (docs/SPEC_BUSINESS_TYPE.md, open question 7).
+        dealer_type=dealer_type_of(company),
     )
+
+
+def dealer_type_of(company: Optional[Company]) -> str:
+    """The company's "סוג עוסק", "company" when unset or unknown (today's behaviour)."""
+    value = getattr(company, "dealer_type", None)
+    return value if value in ("company", "licensed", "exempt") else "company"
 
 
 def patch_settings_json(current: Any, patch: Dict[str, Any]) -> Dict[str, Any]:

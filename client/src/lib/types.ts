@@ -1,4 +1,8 @@
 import type { CardBrandBreakdownRow } from './cardBrands';
+import type { DealerType, DealerTypeChange } from './dealerType';
+import type { TillDataState } from './zDataState';
+import type { AutoReopenMode } from './availabilityReopen';
+import { DEVICE_MODEL_IDS } from './deviceProfile';
 
 /**
  * Listed most senior first, matching the server's `ROLE_LEVEL`, so a reader does
@@ -16,7 +20,9 @@ export type UserRole =
   | 'company_manager'
   | 'shop_manager'
   | 'shift_supervisor'
-  | 'cashier';
+  | 'cashier'
+  // "עמדת מפיק" (feat/event-live): an event's producer — the producer portal only.
+  | 'producer_view';
 
 export interface User {
   id: string;
@@ -57,6 +63,11 @@ export interface UserCapabilities {
    * PIN would buy them nothing, so the profile page says so instead of offering it.
    */
   tillScopes?: string[];
+  /**
+   * "הרשאות דשבורד": the sections this user may open (lib/dashboardAccess.ts). The server
+   * enforces the same grant on every route; this only decides the menu and the pages.
+   */
+  dashboardAccess?: import('./dashboardAccess').DashboardAccess;
 }
 
 /** `GET /users/me` — the caller's own record plus its capabilities. */
@@ -86,10 +97,21 @@ export interface Company {
   /** "לקוח זמני": the tills stop selling after `licenseExpiresOn`. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
+  /**
+   * "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md). Absent on a server that predates it, which
+   * means "company" — see `dealerTypeOf` in lib/dealerType.ts.
+   */
+  dealerType?: DealerType;
+  dealerTypeChangedAt?: string | null;
+  dealerTypeChangedBy?: string | null;
+  dealerTypeHistory?: DealerTypeChange[];
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+/** חברה בע״מ (ח.פ.) / עוסק מורשה / עוסק פטור — defined in lib/dealerType.ts. */
+export type { DealerType, DealerTypeChange };
 
 // ── Dashboard scope (organization ▸ company ▸ shop ▸ device) ───────────────────
 
@@ -188,6 +210,7 @@ export interface Shop {
   name: string;
   /** Shop #1, #2 … in its company; never reused. */
   shopNumber?: number | null;
+  /** "קוד סניף": internal, mandatory, digits 1–7, unique in the company (lib/branchCode.ts). */
   branchId?: string;
   address?: string;
   city?: string;
@@ -213,7 +236,53 @@ export interface PosSettingsV1 {
   nayaxDeviceHost?: string;
   nayaxDevicePort?: string;
   nayaxSpicyPath?: string;
+  /**
+   * "סוג אינטגרציית אשראי" (lib/paymentIntegration.ts). Unset = automatic: a till with a
+   * terminal of its own charges on Agamento (or Nayax when `nayaxEnabled`), a tablet on
+   * an external one. `auto` is never stored.
+   */
+  paymentIntegration?: 'auto' | 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | 'tap_to_pay';
+  /** `nayax_usb`: the C4's USB ids "VVVV:PPPP" (hex); unset = the first CDC-ACM device on the till. */
+  nayaxUsbDevice?: string;
+  /** Z-Credit: the terminal number, digits with leading zeros kept. */
+  zcreditTerminalNumber?: string;
+  /** Z-Credit: the PinPad id, stored without the "PINPAD" prefix. */
+  zcreditPinpadId?: string;
+  zcreditMode?: 'test' | 'production';
+  /** SynqPay (docs/SPEC_SYNQPAY.md): the terminal's model (lib/paymentIntegration.ts SYNQPAY_MODELS). */
+  synqpayDeviceModel?: string;
+  /** SynqPay (an external terminal): `lan` | `usb`. */
+  synqpayConnection?: string;
+  synqpayHost?: string;
+  /** SynqPay over the network: `tcp` (default) | `http`. */
+  synqpayProtocol?: string;
+  /** Text, like `nayaxDevicePort`; unset = the protocol's documented port. */
+  synqpayPort?: string;
+  synqpayTls?: boolean;
+  /** USB serial: "" = detect, "VVVV:PPPP" (hex) or "COMn" (Windows). */
+  synqpayUsbDevice?: string;
+  synqpaySerialNumber?: string;
+  /**
+   * "מכשירי תשלום" (lib/paymentDevices.ts): a till without built-in clearing works with several
+   * payment devices of its shop. Unset = inherit (off when no level sets it).
+   */
+  multiPaymentDevices?: boolean;
+  /**
+   * How a till picks its device (shop = the default for its tills, area, till): "fixed" — always
+   * `fixedPaymentDeviceId`; "group" — the cashier picks from `paymentDeviceGroup` (empty = every
+   * device of the shop). Unset everywhere = a group of every device.
+   */
+  paymentDeviceMode?: 'fixed' | 'group';
+  fixedPaymentDeviceId?: string;
+  paymentDeviceGroup?: string[];
   outOfStockPolicy?: OutOfStockPolicy;
+  /**
+   * "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts, pos-server
+   * docs/SPEC_AVAILABILITY.md): unset = off. And whether it reopens an item that tracks
+   * stock and has none (unset = no).
+   */
+  autoReopenAfterZ?: AutoReopenMode;
+  autoReopenIgnoreStock?: boolean;
   /**
    * Legacy tip switches. The server still reads them as the fallback for the
    * per-option `pay*Tips` keys below, so they stay in the type, but the
@@ -238,6 +307,12 @@ export interface PosSettingsV1 {
    * terminal decides.
    */
   payInstallmentsMax?: number;
+  /**
+   * "סדר אמצעי התשלום": the payment methods' ids in the order the till lists them (see
+   * lib/payOrder.ts). Unset = the default order. In `effective` the server sends it
+   * completed (every method); a layer's own list is as it was saved.
+   */
+  payOrder?: string[];
   // Optional tools on the till's sell screen. Unset = shown; see lib/sellScreen.ts.
   sellSearchEnabled?: boolean;
   sellScanEnabled?: boolean;
@@ -275,6 +350,11 @@ export interface PosSettingsV1 {
    * into Agamento on its next sync (only while idle, with nothing waiting to transmit).
    */
   forceTerminalNumber?: boolean;
+  /**
+   * "חזרה אוטומטית לקיוסק" (R2M POS for Windows, lib/desktopIdleReturn.ts): back in full screen
+   * after this many idle minutes on the desktop; 0 = never; unset = 10.
+   */
+  desktopIdleReturnMinutes?: number;
   /**
    * Tenant level only: how Z reports are produced. `shop` (default) = one Z per shop
    * over all its tills; `machine` = one till per Z. Not sent to tills.
@@ -327,9 +407,28 @@ export type PosSettingsPatch = Partial<
     | 'tipDistribution'
     | 'tipPromptText'
     | 'payInstallmentsMax'
+    | 'payOrder'
+    | 'desktopIdleReturnMinutes'
+    | 'autoReopenAfterZ'
+    | 'autoReopenIgnoreStock'
+    | 'multiPaymentDevices'
+    | 'paymentDeviceMode'
+    | 'fixedPaymentDeviceId'
+    | 'paymentDeviceGroup'
     | ResettableSwitchKey
+    | PaymentIntegrationSettingKey
   >
 > & {
+  /** "מכשירי תשלום": `null` = inherit the switch / the device choice from the level above again. */
+  multiPaymentDevices?: boolean | null;
+  paymentDeviceMode?: 'fixed' | 'group' | null;
+  fixedPaymentDeviceId?: string | null;
+  paymentDeviceGroup?: string[] | null;
+  /** `null` = inherit "פתיחת פריטים אוטומטית אחרי Z" from the level above again. */
+  autoReopenAfterZ?: AutoReopenMode | null;
+  autoReopenIgnoreStock?: boolean | null;
+  /** `null` = unset this layer's payment order and inherit the level above's again. */
+  payOrder?: string[] | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;
@@ -347,9 +446,57 @@ export type PosSettingsPatch = Partial<
   tipPromptText?: string | null;
   /** `null` = unset this layer's most instalments and inherit the level above's again. */
   payInstallmentsMax?: number | null;
+  /** `null` = inherit "חזרה אוטומטית לקיוסק" (Windows) from the level above again. */
+  desktopIdleReturnMinutes?: number | null;
+  // "סוג אינטגרציית אשראי": `null` = inherit the level above's again (`auto` too, for the type).
+  paymentIntegration?: PosSettingsV1['paymentIntegration'] | null;
+  nayaxUsbDevice?: string | null;
+  zcreditTerminalNumber?: string | null;
+  zcreditPinpadId?: string | null;
+  zcreditMode?: 'test' | 'production' | null;
+  synqpayDeviceModel?: string | null;
+  synqpayConnection?: string | null;
+  synqpayHost?: string | null;
+  synqpayProtocol?: string | null;
+  synqpayPort?: string | null;
+  synqpayTls?: boolean | null;
+  synqpayUsbDevice?: string | null;
+  synqpaySerialNumber?: string | null;
+  nayaxEnabled?: boolean | null;
+  nayaxDeviceHost?: string | null;
+  nayaxDevicePort?: string | null;
+  nayaxSpicyPath?: string | null;
+  /**
+   * Write-only Z-Credit secrets: never returned by a GET. A string sets this layer's,
+   * `null` removes it, absent leaves it as it is. Never send the "••••" mask or ''.
+   */
+  zcreditPassword?: string | null;
+  zcreditKey?: string | null;
+  /** The SynqPay API key: write-only, as the Z-Credit password. */
+  synqpayApiKey?: string | null;
 } & {
   [K in ResettableSwitchKey]?: boolean | null;
 };
+
+/** Settings keys of the payment integration whose PATCH takes `null` (= inherit again). */
+export type PaymentIntegrationSettingKey =
+  | 'paymentIntegration'
+  | 'nayaxUsbDevice'
+  | 'zcreditTerminalNumber'
+  | 'zcreditPinpadId'
+  | 'zcreditMode'
+  | 'synqpayDeviceModel'
+  | 'synqpayConnection'
+  | 'synqpayHost'
+  | 'synqpayProtocol'
+  | 'synqpayPort'
+  | 'synqpayTls'
+  | 'synqpayUsbDevice'
+  | 'synqpaySerialNumber'
+  | 'nayaxEnabled'
+  | 'nayaxDeviceHost'
+  | 'nayaxDevicePort'
+  | 'nayaxSpicyPath';
 
 /** The most tip percentages a layer may offer: the till lays them out as square buttons. */
 export const TIP_PRESETS_MAX = 6;
@@ -425,11 +572,22 @@ export interface ShopProductCatalogCandidate {
 }
 
 /**
- * The hardware a till is: a Nova 55F (built-in printer), a Modo (no printer) or a Nebullar
- * P18 tablet (no printing yet). A P18 is recognised by itself when it pairs.
+ * "דגם מכשיר" — the hardware a till is (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md): a Feitian
+ * F20 / Nova 55F (built-in printer and terminal), a Modo (terminal, no printer), a Kozen
+ * Nebullar P18 tablet, a LANDI and a Feitian tablet (no printer / drawer driver yet), or a
+ * plain Android tablet — and every SUNMI (docs/SPEC_SUNMI.md). Capabilities:
+ * lib/deviceProfile.ts. A P18, a LANDI and a SUNMI are recognised by themselves when they pair.
  */
-export const DEVICE_MODELS = ['N55F', 'MODO', 'P18'] as const;
+export const DEVICE_MODELS = DEVICE_MODEL_IDS;
 export type DeviceModel = (typeof DEVICE_MODELS)[number];
+
+/** Who set "עקיפת בדיקת מספר מסוף" for the level a till takes it from, and when (lib/terminalCheckBypass.ts). */
+export interface TerminalCheckBypassChange {
+  userEmail: string | null;
+  userRole: string | null;
+  scopeType: string | null;
+  at: string | null;
+}
 
 export interface PosMachine {
   id: string;
@@ -444,6 +602,12 @@ export interface PosMachine {
    * `registerNumberOf`, which never yields 0.
    */
   posNumber?: string | null;
+  /**
+   * "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): the till's own prefix (null = the
+   * default, its register number), and the one its documents are issued under now.
+   */
+  documentPrefix?: string | null;
+  effectiveDocumentPrefix?: string | null;
   /**
    * The area of its shop the till is in now (bar, terrace …), or null when unassigned.
    * Current membership only — history (shifts, Zs, reports) carries its own stamp.
@@ -463,6 +627,32 @@ export interface PosMachine {
    * pinpad on the network. Absent on a server that predates it.
    */
   hasBuiltinTerminal?: boolean;
+  /**
+   * "סוג מכשיר (תפקיד)": `till`, `kiosk` (a self-order kiosk), `kds` (a kitchen screen) or
+   * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
+   * it. `kioskEnabled` false: a kiosk switched off, working as a till.
+   */
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | null;
+  kioskEnabled?: boolean | null;
+  /**
+   * False for a display device (a KDS / the board): not a till, not an accounting system —
+   * no sales, shifts, Z, payments or register number. Absent on an older server: a till.
+   */
+  fiscal?: boolean;
+  /** "android" | "windows" | "web" (the browser kiosk, docs/SPEC_KIOSK.md §27) — what the device runs. */
+  platform?: 'android' | 'windows' | 'web' | null;
+  /**
+   * Its KDS screen, or null. On a fiscal till: a screen paired on the KDS page before
+   * display devices existed (flagged "מסך מטבח על קופה").
+   */
+  kdsScreen?: { role: 'station' | 'expo' | 'pickup' | 'manager'; name: string; isActive: boolean; shopId: string | null } | null;
+  /** The model chosen on the dashboard, and the one the device named itself at pairing. */
+  deviceModelChosen?: DeviceModel | null;
+  deviceModelReported?: DeviceModel | null;
+  /** A drawer port the till drives itself (no model today). */
+  hasCashDrawerPort?: boolean;
+  /** LANDI / Feitian tablet: built-in printer / drawer support "בקרוב". */
+  deviceDriverPending?: boolean;
   /** "לקוח זמני" on this till alone; the till keeps the earliest end above it too. */
   licenseType?: LicenseType;
   licenseExpiresOn?: string | null;
@@ -598,6 +788,23 @@ export interface PosMachine {
   forceTerminalNumberSource?: SettingsLevel | null;
   /** Server-resolved, ignoring leading zeros as the till does. */
   terminalStatus?: TerminalStatus;
+  /** The level `expectedTerminalNumber` comes from; null = none sets it. */
+  expectedTerminalNumberSource?: string | null;
+  /**
+   * The till's card lock on its last report (docs/SPEC_KIOSK.md §20): a network pinpad needs
+   * the expected number on the till itself and a matching report; null = not locked.
+   */
+  cardLock?: 'mismatch' | 'not_configured' | 'unknown' | null;
+  /**
+   * "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): the till parameter is on for this till
+   * (then `cardLock` is null), the level it comes from, who set that level and when, what the
+   * till itself last reported it applies (null: never said), and the lock it lifts now.
+   */
+  terminalNumberCheckBypass?: boolean;
+  terminalNumberCheckBypassSource?: string | null;
+  terminalNumberCheckBypassChange?: TerminalCheckBypassChange | null;
+  terminalNumberCheckBypassReported?: boolean | null;
+  cardLockBypassed?: 'mismatch' | 'not_configured' | 'unknown' | null;
   /** The merged `nayaxEnabled`: the till charges on a Nayax pinpad on the network. */
   pinpadEnabled?: boolean;
   /** The merged pinpad address (`nayaxDeviceHost`, `nayaxDevicePort`); null = not set. */
@@ -607,11 +814,36 @@ export interface PosMachine {
   pinpadRequired?: boolean;
   /** It does, and no level gives it an address: "נדרשת כתובת IP למסופון". */
   pinpadAddressMissing?: boolean;
+  /** "סוג אינטגרציית אשראי" the till charges on; null on an older server. */
+  paymentIntegration?: 'agamento' | 'nayax_lan' | 'nayax_usb' | 'zcredit' | 'synqpay' | null;
+  /** The level that chose it; null = automatic (hardware / `nayaxEnabled`). */
+  paymentIntegrationSource?: SettingsLevel | null;
+  paymentIntegrationAutomatic?: boolean | null;
+  /** Fields it still needs ("zcreditTerminalNumber", "nayaxDeviceHost", …); [] = none. */
+  paymentIntegrationMissing?: string[];
   /**
    * Who produces this till's Z (docs/SHIFTS_API.md §5.1): the cloud, as part of the
    * shop's Z (`cloud`, the default), or the till itself, numbered per till (`till`).
    */
   zMode?: ZMode;
+  /**
+   * Zs the till closed with no connection and has not uploaded, as it last said (null:
+   * never said), and whether one is held in a conflict for support
+   * (docs/SPEC_OFFLINE_TILL_Z.md §4.4–4.5).
+   */
+  offlineTillZPending?: number | null;
+  offlineTillZConflict?: boolean;
+  /** Support produced this till's Z from the cloud (§4.6): who, when, why, the Z; null otherwise. */
+  supportZ?: Record<string, unknown> | null;
+  /** The last reset of the till's data support ordered from the cloud (§4.7); null otherwise. */
+  tillReset?: Record<string, unknown> | null;
+  /** "הוחלפה קופה": every replacement of the till's device, oldest first (§4.6.2). */
+  replacements?: TillReplacement[] | null;
+  /**
+   * "קופה עצמאית" (always zMode `till`): its own Z, never part of the shop Z, and never
+   * leaning on the shop's main till. Absent on a server that predates it.
+   */
+  independentTill?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -703,6 +935,11 @@ export interface CardTransmissionList {
 export interface UntransmittedCardSale {
   transactionId: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
   documentType?: number | null;
   createdAt: string;
   shiftId?: string | null;
@@ -771,6 +1008,11 @@ export interface Category {
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;
+  /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): every product here and beneath it needs a
+   * manager's code at the till and is not shown at a kiosk. The category's own flag.
+   */
+  requiresManagerApproval?: boolean;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -814,6 +1056,21 @@ export interface Product {
   /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
   noDiscount?: boolean;
   /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): the product's own flag — its category
+   * (or one above it) may restrict it too.
+   */
+  requiresManagerApproval?: boolean;
+  /**
+   * "היכן הפריט נמכר" (lib/productChannel.ts): all (קופות וקיוסק, the default) /
+   * kiosk_only (the tills hide it) / pos_only (the kiosk hides it).
+   */
+  salesChannel?: import('./productChannel').SalesChannel;
+  /**
+   * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
+   * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
+   */
+  dietaryTags?: string[];
+  /**
    * The company's built-in general item ("פריט כללי"), which the till's calculator
    * sells through. Every company has exactly one; it cannot be deleted, and whether it
    * is open price, its VAT and where it is sold are fixed by the server.
@@ -825,6 +1082,13 @@ export interface Product {
    * list itself comes from `GET /products/{id}/shops`.
    */
   shopScope?: ShopScope | null;
+  /** "הודעות לעובד": shown on the till when the product is added (lib/productExtras.ts). */
+  alerts?: import('./productExtras').ProductAlert[];
+  /** "הצג אזהרת אלרגנים": one more alert, from the product's allergens. */
+  allergenAlert?: boolean;
+  allergenAlertRequireAck?: boolean;
+  /** "פריטים נלווים": added by the till with the product, as lines of their own. */
+  companions?: import('./productExtras').ProductCompanion[];
   createdAt: string;
   updatedAt: string;
 }
@@ -876,6 +1140,12 @@ export interface AvailabilityNode {
   effective: boolean;
   source: AvailabilityLevel;
   canEdit: boolean;
+  /**
+   * "חסימה קבועה" on this level's own lock (only while `value` is false, never on the
+   * company level): "פתיחת פריטים אוטומטית אחרי Z" never opens it. And when the lock began.
+   */
+  permanent?: boolean;
+  blockedAt?: string | null;
 }
 
 export interface MachineAvailability extends AvailabilityNode {
@@ -1043,9 +1313,15 @@ export interface TaxOpenFormatPreview {
     companyName?: string;
     companyCity?: string;
     branchId?: string;
+    /** "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md); absent on an older server. */
+    dealerType?: DealerType;
   };
   globalTaxRate: number;
   dateRange: { year?: number; from?: string; to?: string };
+  /** Documents whose payment records were apportioned (their tenders did not add up). */
+  flaggedDocuments?: { transactionId: string; documentNumber: string | null; code: string; text: string }[];
+  /** Duplicate copies left out of the file (each document once). */
+  excludedDuplicateCopies?: number;
 }
 
 export type ValueDisplayMode = 'product_price' | 'fixed' | 'none';
@@ -1109,6 +1385,10 @@ export interface PairingCode {
   isUsed: boolean;
   usedAt?: string;
   createdAt: string;
+  /** "till" | "kiosk" | "kds" | "order_status_board"; null = till (an older code). */
+  deviceRole?: string | null;
+  /** "android" | "windows" | "web"; null = no check (an older code, a replacement code). */
+  platform?: 'android' | 'windows' | 'web' | null;
 }
 
 export interface SyncLog {
@@ -1164,12 +1444,25 @@ export interface TransactionPayment {
   cardBrand?: string | null;
   cardAcquirer?: string | null;
   cardIssuer?: string | null;
+  /** "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg. */
+  noMoneyMovement?: boolean;
+  /**
+   * The acquirer's reply as the till stored it: `result.provider` says Z-Credit (a cloud card
+   * refund may be offered, SPEC_REMOTE_CREDIT.md §11); `cloudCardRefundId` marks a credit
+   * note's leg that records one.
+   */
+  nayaxMeta?: Record<string, unknown> | null;
 }
 
 /** Another document of the same mixed basket (same `basketId`). */
 export interface BasketDocument {
   id: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
   documentType?: number | null;
   status: TransactionStatus;
   totalAmount: number;
@@ -1184,6 +1477,13 @@ export interface Transaction {
   shopId?: string;
   shiftId?: string;
   transactionNumber: string;
+  /**
+   * The number as its till printed it: `<prefix>-<number>` ("קידומת מסמכים",
+   * docs/SPEC_DOCUMENT_PREFIX.md). Show this; `transactionNumber` is the bare counter.
+   */
+  documentNumber?: string | null;
+  /** The prefix frozen on the document at issue; null on one from before the prefix. */
+  documentPrefix?: string | null;
   status: TransactionStatus;
   documentType?: number;
   documentProductionDate?: string;
@@ -1199,7 +1499,7 @@ export interface Transaction {
   branchId?: string;
   notes?: string;
   refundOfTransactionId?: string;
-  /** The original's document number (detail read only). */
+  /** The original's document number as printed, `2-57` (detail read only). */
   refundOfTransactionNumber?: string | null;
   nayaxMeta?: Record<string, unknown> | null;
   /** The till basket this document was committed in; shared by its sibling documents. */
@@ -1222,6 +1522,26 @@ export interface Transaction {
   offlineOutcome?: OfflineOutcome | null;
   /** List rows: the brands (מותג) of its card legs. */
   cardBrands?: string[];
+  /**
+   * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
+   * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
+   */
+  remoteCreditRequestId?: string | null;
+  noMoneyMovement?: boolean;
+  /** The approver linked when they are of this business (informational, never a refusal). */
+  approvedByUserId?: string | null;
+  approvedByPosUserId?: string | null;
+  /** The approver exactly as the till sent it (docs/SHIFTS_API.md §1.2b). */
+  claimedApproverUserId?: string | null;
+  claimedApproverPosUserId?: string | null;
+  /** Quiet notes written at ingest — shown in the detail, never an alarm. */
+  ingestNotes?: IngestNote[] | null;
+}
+
+export interface IngestNote {
+  code: string;
+  text: string;
+  detail?: string;
 }
 
 export type OfflineOutcome = 'approved' | 'declined';
@@ -1310,6 +1630,11 @@ export interface Shift {
   machineName?: string | null;
   shopName?: string | null;
   /**
+   * The till's register number in the shift's shop ("קופה 2"); null once the till moved to
+   * another shop. Absent from a server that predates it (lib/shiftsPage shiftRegisterNumber).
+   */
+  posNumber?: string | null;
+  /**
    * The area the till was in when the cloud created this shift. Stamped, never
    * updated: moving the till later does not move its past shifts.
    */
@@ -1365,6 +1690,8 @@ export interface ZCandidateMachine {
   isActive?: boolean;
   /** `till`: the cloud never builds this till's Z; it is asked for its own (§5.4). */
   zMode?: ZMode;
+  /** The till as the cloud knows it before the Z, with its warnings (offline till Z §4.6.1). */
+  dataState?: TillDataState | null;
 }
 
 export interface ZCandidates {
@@ -1386,6 +1713,19 @@ export interface ZCandidates {
    * only tills' own Zs here. The server refuses the rest (409 `z_only_from_main_till`).
    */
   dashboardZBlocked?: boolean;
+}
+
+/** "הוחלפה קופה" — one replacement of a till's device (offline till Z §4.6.2). */
+export interface TillReplacement {
+  id: string;
+  at: string;
+  by?: string | null;
+  reason?: string | null;
+  oldDevice?: Record<string, unknown> | null;
+  newDevice?: Record<string, unknown> | null;
+  oldLastHeartbeatAt?: string | null;
+  supportZFirst?: boolean;
+  supportZ?: { at?: string; by?: string; zNumber?: number | null } | null;
 }
 
 /** A till as a small reference. */
@@ -1458,6 +1798,8 @@ export interface ZRun {
   errorMessage?: string | null;
   /** Set when the operator confirmed producing this shop Z without some tills. */
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
+  /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
+  force?: boolean;
   items: ZRunItem[];
 }
 
@@ -1532,6 +1874,30 @@ export interface TillZRequest {
   online?: boolean | null;
   pendingDocuments?: number | null;
   pendingAsOf?: string | null;
+  /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
+  force?: boolean;
+}
+
+/** One figure where a Z closed offline differs from the cloud's own (docs/SPEC_OFFLINE_TILL_Z.md §6.1). */
+export interface ZOfflineDiscrepancy {
+  key: string;
+  till: unknown;
+  cloud: unknown;
+}
+
+/** The card batch transmitted before a till Z, as the terminal answered (§7.3). */
+export interface ZCardTransmission {
+  outcome: 'success' | 'failed' | 'busy' | 'unknown' | 'skipped';
+  batchNumber?: string | null;
+  statusCode?: number | null;
+  statusMessage?: string | null;
+  error?: string | null;
+  transactionCount?: number | null;
+  amount?: string | null;
+  byBrand?: { brand: string; count: number; amount: string }[];
+  at?: string | null;
+  confirmedFailure?: boolean;
+  confirmedByName?: string | null;
 }
 
 export interface ZReport {
@@ -1597,6 +1963,14 @@ export interface ZReport {
    */
   betweenShiftAdjustments?: Money | null;
   /**
+   * "טיפ באשראי משולם מהמזומן" (till parameter `cashDrawer.cardTipsFromDrawer`): the card
+   * tips the tills paid staff in cash out of their drawers, as frozen at each close —
+   * already out of expectedCash. Null/absent when no included close carried the figure.
+   */
+  cardTipsFromDrawer?: Money | null;
+  /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
+  drawerCash?: Money | null;
+  /**
    * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
    * on a legacy Z): shown as nothing, never as zero.
    */
@@ -1631,15 +2005,144 @@ export interface ZReport {
   createdByName?: string | null;
   /** Till Zs: the till's own figures differed from the ones the cloud built. */
   totalsMismatch?: boolean;
+  /** Closed at the till with no connection to the cloud, uploaded at `uploadedAt`. */
+  builtOffline?: boolean;
+  uploadedAt?: string | null;
+  /** Where the cloud's figures differ from the offline Z's paper; null/empty = none. */
+  offlineDiscrepancies?: ZOfflineDiscrepancy[] | null;
+  /** What this Z includes ("קופה עצמאית בתוך סניף"); null on older Zs. */
+  scope?: ZReportScope | null;
+  /** "סוג Z": shop | independent | till | kiosk | legacy (docs/SPEC_REPORTS.md §4). */
+  zType?: 'shop' | 'independent' | 'till' | 'kiosk' | 'legacy' | null;
+  /**
+   * The shop's branch code ("קוד סניף") — on every Z, so two Z sequences of one branch
+   * (the shop Z and an independent till's) are told apart with the till number.
+   */
+  branchCode?: string | null;
+  /**
+   * A till Z's run ("רצף"): a till made independent starts again at Z 1, and switching it
+   * back and making it independent again starts another run — so one till can have two
+   * "Z 1", told apart by the run's start. 0 = the till's first run.
+   */
+  machineSequenceEpoch?: number | null;
+  /** When the run started; set on runs > 0 and on every independent till Z, else null. */
+  sequenceStartedAt?: string | null;
+  /**
+   * A local shop Z's check against the cloud's documents (null on any other Z): stored as
+   * printed, compared only once every document it names has arrived.
+   */
+  verification?: ZVerification | null;
+  /** The card transmission the till ran before the Z. */
+  cardTransmission?: ZCardTransmission | null;
+  /** Produced by support from the cloud for a dead till (offline till Z §4.6). */
+  producedBySupport?: {
+    by?: string;
+    at?: string;
+    reasonText?: string;
+    note?: string | null;
+    reportedByTill?: { lastNumber?: number | null; pendingZs?: number; numbers?: number[] } | null;
+  } | null;
+  /** Late documents of a period support closed, carried into this Z — own section (§4.6.3). */
+  lateFromEarlier?: {
+    shiftId: string;
+    posNumber?: string | null;
+    label?: string;
+    sourceZNumber?: number | null;
+    documents: number;
+    firstDocumentNumber?: string | null;
+    lastDocumentNumber?: string | null;
+    totalSales?: string | null;
+  }[] | null;
+  /** "המכשיר הוחלף בתאריך …": the till(s) whose device was replaced before this Z (§4.6.2). */
+  devicesReplaced?: { machineId: string; posNumber?: string | null; name?: string | null; at?: string | null }[] | null;
   /** Legacy rows only: the till's own Z blob. */
   payload?: Record<string, unknown> | null;
   /** Legacy rows only. */
   reconstructionBasis?: Record<string, unknown> | null;
 }
 
+/**
+ * What a Z includes: the shop, an area, one till, or an independent till of the shop.
+ * `label` is the server's Hebrew sentence; `independentOutside` are the shop's independent
+ * tills a shop Z leaves out.
+ */
+/**
+ * A local shop Z's verification. Every till part carries a manifest (document ids, per-type
+ * count/first/last, totals, digest) computed the same on the till and in the cloud. The
+ * cloud compares only once every named document arrived — until then it waits; a dead,
+ * removed or 24 h-late till is "incomplete", for support to close. `mismatch` means every
+ * document arrived and the same computation still disagrees: a bug.
+ */
+export type ZVerificationState =
+  | 'waiting'
+  | 'incomplete'
+  | 'verified'
+  | 'mismatch'
+  | 'closed_by_support'
+  | 'unverified';
+
+export interface ZVerificationSupportClose {
+  by?: string | null;
+  at?: string | null;
+  note?: string | null;
+  /** Ids on the detail; a count (or absent) on the list. */
+  missingDocuments?: string[] | number | null;
+  missingShiftIds?: string[] | number | null;
+  printedTotals?: Record<string, unknown> | null;
+  printedTypes?: Record<string, unknown> | null;
+}
+
+export interface ZVerificationTill {
+  /**
+   * "<machineId>" for a till's regular part, "<machineId>:late" for its "late documents"
+   * part — one till can have both in one local shop Z.
+   */
+  key?: string | null;
+  /** The late part: documents from an earlier period; `label` names it. */
+  late?: boolean;
+  label?: string | null;
+  machineId: string;
+  posNumber?: string | null;
+  state: ZVerificationState | string;
+  /** Hebrew, ready to show. */
+  message?: string | null;
+  named?: number | null;
+  arrived?: number | null;
+  missing?: number | null;
+  shiftsAwaited?: number | null;
+  reason?: 'removed' | 'support_closed' | 'stale' | string | null;
+  closedBySupport?: ZVerificationSupportClose | null;
+  /** Detail only: the till's manifest as printed, and the cloud's from the documents. */
+  printed?: { totals?: Record<string, unknown>; types?: Record<string, unknown>; digest?: string } | null;
+  cloud?: { totals?: Record<string, unknown>; types?: Record<string, unknown>; digest?: string } | null;
+}
+
+export interface ZVerification {
+  state: ZVerificationState | string;
+  /** Hebrew, ready to show. */
+  message?: string | null;
+  checkedAt?: string | null;
+  tills?: ZVerificationTill[];
+  /** Detail only, on `mismatch`: [{key, printed, cloud}]. */
+  discrepancies?: { key: string; printed?: unknown; cloud?: unknown }[];
+}
+
+export interface ZReportScope {
+  kind: 'shop' | 'area' | 'till' | 'independent_till';
+  label?: string | null;
+  tills?: TillRef[];
+  independentOutside?: TillRef[];
+}
+
 /** One register's section of a Z (§3.6) — what the regulation ties a Z to. */
 export interface ZReportMachineSection {
   machineId: string;
+  /**
+   * A local shop Z's "late documents" part of a till (it may also have its regular part):
+   * shown under `label`, never as a second "קופה N".
+   */
+  late?: boolean;
+  label?: string | null;
   machineName?: string | null;
   posNumber?: string | null;
   shiftIds?: string[];
@@ -1672,6 +2175,10 @@ export interface ZReportMachineSection {
   overShort?: Money | null;
   /** Cash put into (+) / taken out of (−) the drawer between its shifts; part of expectedCash. */
   betweenShiftAdjustments?: Money | null;
+  /** Card tips this till paid out of the drawer (Σ of its closes'); absent without the parameter. */
+  cardTipsFromDrawer?: Money | null;
+  /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
+  drawerCash?: Money | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;
@@ -1718,9 +2225,18 @@ export interface ZReportBusiness {
   capturedAt?: string | null;
   /** Frozen too: the tills the operator confirmed producing this shop Z without. */
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
+  /** "סוג עוסק" as the Z was built (docs/SPEC_BUSINESS_TYPE.md); absent on older Zs. */
+  dealerType?: DealerType | null;
+  /**
+   * A local shop Z: the main till's printed Z IS the Z — stored exactly as printed (figures,
+   * ranges, number), never corrected by the cloud.
+   */
+  asPrinted?: { producedBy?: TillRef | null; note?: string | null } | null;
 }
 
 export interface ZReportDetail extends ZReport {
+  /** A Z closed offline: what the till printed (number, shifts, range, section). */
+  offlineReport?: Record<string, unknown> | null;
   perMachine: ZReportMachineSection[];
   shifts: Shift[];
   business?: ZReportBusiness | null;
@@ -1744,6 +2260,8 @@ export interface ZWaiterRow {
   net: string;
   cash: string;
   card: string;
+  /** "שוברי הפקה" — the production voucher tender (a Z frozen before it: absent, read as 0). */
+  productionVoucher?: string;
   other: string;
   tips: string;
   tables: number;
@@ -1791,7 +2309,15 @@ export interface ZPrintDoc {
 
 /** `GET /z-reports/print-documents`: several Zs, in Z-number order. */
 export interface ZPrintDocList {
-  items: { id: string; number: number | null; shopId: string | null; document: ZPrintDoc }[];
+  items: {
+    id: string;
+    number: number | null;
+    shopId: string | null;
+    document: ZPrintDoc;
+    /** A till Z's run ("רצף") and its start — one till can have two "Z 1". */
+    sequenceEpoch?: number | null;
+    sequenceStartedAt?: string | null;
+  }[];
   total: number;
 }
 
@@ -1913,6 +2439,10 @@ export interface PosUser {
   workerNumber?: string | null;
   role: PosUserRole;
   isActive: boolean;
+  /** "תפקידים והרשאות": the till role (null = not assigned yet: the legacy role of `role`). */
+  tillRoleId?: string | null;
+  tillRoleName?: string | null;
+  permissionOverrides?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1923,6 +2453,7 @@ export interface PosUserCreate {
   lastName?: string;
   workerNumber?: string;
   role: PosUserRole;
+  tillRoleId?: string;
   pin: string;
 }
 
@@ -1931,6 +2462,7 @@ export interface PosUserUpdate {
   lastName?: string;
   workerNumber?: string | null;
   role?: PosUserRole;
+  tillRoleId?: string;
   isActive?: boolean;
   pin?: string;
 }
@@ -2010,15 +2542,20 @@ export interface CashierSalesRow {
   salesCount: number;
   refundsCount: number;
   gross: number;
+  /** Without production vouchers' deductions (`productionVoucherDeductions`). */
   discounts: number;
+  /** "שוברי הפקה": what production vouchers booked as a document deduction took off — not a discount. */
+  productionVoucherDeductions?: number;
   refunds: number;
-  /** gross - discounts - refunds */
+  /** gross - discounts - productionVoucherDeductions - refunds */
   net: number;
   averageBasket: number;
-  /** cashNet + cardNet + otherNet === net. */
+  /** cashNet + cardNet + productionVoucherNet + otherNet === net. */
   cashNet: number;
   cardNet: number;
   otherNet: number;
+  /** "שוברי הפקה": what production vouchers paid (absent from an older server: 0). */
+  productionVoucherNet?: number;
   tips: number;
 }
 
@@ -2139,11 +2676,20 @@ export interface DaySummaryContributor {
   discrepancy: number | null;
   offlineDeclinedCount?: number;
   offlineDeclinedAmount?: number;
+  /** An independent till of its shop ("קופה עצמאית"): its Z is apart from the shop Z. */
+  independent?: boolean;
+  /** Its shop's branch code ("קוד סניף"). */
+  branchCode?: string | null;
+  /** A till Z's run ("רצף") and when it started (see `ZReport.sequenceStartedAt`). */
+  machineSequenceEpoch?: number | null;
+  sequenceStartedAt?: string | null;
 }
 
 export interface DaySummaryRow {
   /** The Zs' business date (the field keeps its old name on the wire). */
   dayDate: string;
+  /** What the day's Zs include, in Hebrew ("Z סניפי מס׳ 12 (קופות 1–5) · Z עצמאי: …"); null = nothing to add. */
+  includesNote?: string | null;
   /** Distinct tills across the day's Zs' per-till sections, not Z reports. */
   machineCount: number;
   zReportCount: number;
@@ -2284,11 +2830,15 @@ export interface SalesByAreaRow {
   transactionsCount: number;
   gross: Money;
   discounts: Money;
+  /** "שוברי הפקה": production vouchers' deductions (not in `discounts`). */
+  productionVoucherDeductions?: Money;
   net: Money;
   refunds: Money;
   cash: Money;
   card: Money;
   other: Money;
+  /** "שוברי הפקה". */
+  productionVoucher?: Money;
   tips: Money;
 }
 
@@ -2404,9 +2954,23 @@ export type AppUpdateStatus =
   | 'failed'
   | 'declined';
 
-/** One uploaded APK. Global — every tenant's tills run the same app. */
+/**
+ * Which app a release is: the Android till APK, the Windows app's installer, or a kiosk web
+ * bundle (`kiosk_web`: a zip of the kiosk's screens the Android kiosk shows in a WebView).
+ */
+export type AppPlatform = 'android' | 'windows' | 'kiosk_web';
+
+/** Auto-install only between these device-local times ("HH:MM"; may cross midnight). */
+export interface AppInstallWindow {
+  start: string;
+  end: string;
+}
+
+/** One uploaded APK or Windows installer. Global — every tenant's devices run the same app. */
 export interface AppRelease {
   id: string;
+  /** Absent on an older server: Android. */
+  platform?: AppPlatform;
   versionCode: number;
   versionName: string;
   sha256: string;
@@ -2417,12 +2981,16 @@ export interface AppRelease {
   createdAt?: string | null;
   /** Live (not cancelled) assignments. */
   assignmentCount: number;
+  /** Kiosk web bundles: the bridge API the bundle needs from the kiosk's APK; null otherwise. */
+  bridgeApi?: number | null;
 }
 
 export interface AppReleaseAssignment {
   id: string;
   releaseId: string;
   versionName?: string | null;
+  /** The release's platform: the assignment reaches only devices of that platform. */
+  platform?: AppPlatform;
   level: AppReleaseLevel;
   targetId: string;
   /** The target's name; null when it no longer exists. */
@@ -2431,9 +2999,14 @@ export interface AppReleaseAssignment {
   targetContext?: string | null;
   tenantId: string;
   autoInstall: boolean;
+  /** Staged rollout: the share (1..100) of the target's devices it covers. */
+  rolloutPercent?: number;
+  /** Rollback allowed (Windows and kiosk web bundles only). */
+  allowDowngrade?: boolean;
+  installWindow?: AppInstallWindow | null;
   createdAt?: string | null;
   cancelledAt?: string | null;
-  /** Active tills it reaches (whether or not something more specific wins there). */
+  /** Active devices of its platform it reaches (whether or not something more specific wins there). */
   machineCount: number;
 }
 
@@ -2442,6 +3015,9 @@ export interface AppReleaseRolloutRow {
   machineId: string;
   machineName: string;
   posNumber?: string | null;
+  platform?: AppPlatform;
+  /** "till" | "kiosk". */
+  deviceRole?: string | null;
   companyId?: string | null;
   companyName?: string | null;
   shopId?: string | null;
@@ -2459,10 +3035,37 @@ export interface AppReleaseRolloutRow {
   autoInstall?: boolean | null;
   /** The till already runs the target. */
   upToDate: boolean;
+  /** A target is assigned and the device does not run it. */
+  behind?: boolean;
+  /** The newest active release of the device's platform. */
+  newestVersion?: string | null;
+  newestVersionCode?: number | null;
+  behindNewest?: boolean;
   /** The till's last report about the target; null = it has said nothing yet. */
   status?: AppUpdateStatus | null;
   statusMessage?: string | null;
   statusAt?: string | null;
+  // Kiosk web rows only (`platform` "kiosk_web"; null on the others) — the kiosk's last
+  // kiosk-web status. On these rows `currentVersion` is its active bundle (not the APK).
+  /** What the kiosk shows now. */
+  renderer?: 'native' | 'web' | null;
+  /** What its config asks (`general.renderer`). */
+  rendererConfigured?: 'native' | 'web' | null;
+  /** Why it shows the built-in screens: ready_timeout | render_gone | js_errors | no_bundle | bridge_api | load_error … */
+  fallbackReason?: string | null;
+  /** Downloaded, waiting for the kiosk to be idle. */
+  pendingVersion?: string | null;
+  /** "bundled" (inside the APK) | "downloaded". */
+  bundleSource?: string | null;
+  webStatusAt?: string | null;
+  webStatusMessage?: string | null;
+  // "עדכון שקט" (lib/deviceManagement.ts), from the device's heartbeat; null: not said yet.
+  deviceOwner?: boolean | null;
+  silentUpdate?: boolean | null;
+  /** device_owner | self_update | urovo | pax — silent; tap — someone confirms on screen. */
+  updatePath?: string | null;
+  kioskLock?: string | null;
+  deviceManagementReportedAt?: string | null;
 }
 
 // ── Live sales by item (`GET /reports/live-items`) ────────────────────────────
@@ -2508,6 +3111,10 @@ export type TillMessageLevel = 'company' | 'shop' | 'area' | 'machine';
 /** scheduled = not gone out yet; paused / ended = a recurring message's schedule. */
 export type TillMessageStatus = 'active' | 'expired' | 'cancelled' | 'scheduled' | 'paused' | 'ended';
 export type TillMessageScheduleKind = 'now' | 'scheduled' | 'recurring';
+/** fullscreen = until "קראתי" (the default); banner = the specials strip on the sell screen and the floor. */
+export type TillMessageDisplay = 'fullscreen' | 'banner';
+/** A banner's colour preset; none = amber. */
+export type TillMessageColor = 'amber' | 'blue' | 'green' | 'red' | 'purple' | 'dark';
 
 /** Days are 0 = Sunday (א׳) … 6 = Saturday (ש׳); `time` is "HH:MM" in the tenant's zone. */
 export interface TillMessageRecurrence {
@@ -2560,6 +3167,12 @@ export interface TillMessage {
   recurrence?: TillMessageRecurrence | null;
   nextOccurrenceAt?: string | null;
   occurrence?: { date: string; startsAt: string; expiresAt: string; live: boolean } | null;
+  /** Absent from an older server: full-screen. */
+  display?: TillMessageDisplay;
+  /** A banner's product (its chip adds it to the order on the till). */
+  productId?: string | null;
+  productName?: string | null;
+  color?: TillMessageColor | null;
 }
 
 export interface TillMessageList {
@@ -2581,12 +3194,26 @@ export interface TillMessageCreate {
   recurStartDate?: string | null;
   recurEndDate?: string | null;
   occurrenceTtlMinutes?: number | null;
+  display?: TillMessageDisplay;
+  productId?: string | null;
+  color?: TillMessageColor | null;
 }
 
 /** Only the fields sent change; null clears an optional one. */
 export type TillMessageUpdate = Partial<
   Pick<
     TillMessageCreate,
-    'title' | 'body' | 'expiresAt' | 'sendAt' | 'recurDays' | 'recurTime' | 'recurStartDate' | 'recurEndDate' | 'occurrenceTtlMinutes'
+    | 'title'
+    | 'body'
+    | 'expiresAt'
+    | 'sendAt'
+    | 'recurDays'
+    | 'recurTime'
+    | 'recurStartDate'
+    | 'recurEndDate'
+    | 'occurrenceTtlMinutes'
+    | 'display'
+    | 'productId'
+    | 'color'
   >
 >;

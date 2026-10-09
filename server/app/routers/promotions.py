@@ -14,6 +14,9 @@ POST   /promotions/{id}/duplicate     → a paused copy
 DELETE /promotions/{id}
 GET    /reports/promotions            → times applied and discount, by promotion, shop,
                                         till and day
+GET    /reports/discounts             → OTH ("על חשבון הבית") by item, employee, reason,
+                                        till and day; club discounts by till and day
+                                        (app/services/discounts_report.py)
 
 Till (machine JWT, like its other pulls):
 
@@ -41,7 +44,9 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.promotion import PromotionIn, PromotionPauseIn
+from app.services import promotion_announcements as PA
 from app.services import promotions as P
+from app.services import till_messages as TM
 from app.services.reports import resolve_report_window
 
 router = APIRouter(tags=["promotions"])
@@ -50,10 +55,14 @@ router = APIRouter(tags=["promotions"])
 COPY_SUFFIX = "(עותק)"
 
 
-def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
+def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks, woken=()) -> None:
+    """Commit; wake the tills for the promotions, and those an announcement reached now."""
     targets = P.notify_targets(db, tenant_id)
+    message_targets = TM.notify_targets(woken)
     db.commit()
     background_tasks.add_task(P.publish_promotions_notify, targets)
+    if message_targets:
+        background_tasks.add_task(TM.publish_message_notify, message_targets)
 
 
 @router.get("/promotions")
@@ -88,7 +97,8 @@ def create_promotion(
     db: Session = Depends(get_db),
 ):
     promotion = P.create_promotion(db, current_user, active_tenant_id, body)
-    _changed(db, active_tenant_id, background_tasks)
+    woken = PA.plan(db, current_user, promotion, settings=PA.clean_settings(body.announcement))
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -103,7 +113,8 @@ def update_promotion(
 ):
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
     P.update_promotion(db, current_user, active_tenant_id, promotion, body)
-    _changed(db, active_tenant_id, background_tasks)
+    woken = PA.plan(db, current_user, promotion, settings=PA.clean_settings(body.announcement))
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -119,7 +130,9 @@ def pause_promotion(
     """Pause (`paused: true`) or resume; idempotent."""
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
     P.set_paused(db, current_user, active_tenant_id, promotion, body.paused)
-    _changed(db, active_tenant_id, background_tasks)
+    # Activated: an announcement not yet out is planned; paused: it comes down.
+    woken = PA.plan(db, current_user, promotion)
+    _changed(db, active_tenant_id, background_tasks, woken)
     return P.one_out(db, current_user, active_tenant_id, promotion)
 
 
@@ -146,8 +159,10 @@ def delete_promotion(
     db: Session = Depends(get_db),
 ):
     promotion = P.get_promotion(db, active_tenant_id, promotion_id)
+    P._require_edit(db, current_user, active_tenant_id, promotion)
+    woken = PA.withdraw(db, current_user, promotion)
     P.delete_promotion(db, current_user, active_tenant_id, promotion)
-    _changed(db, active_tenant_id, background_tasks)
+    _changed(db, active_tenant_id, background_tasks, woken)
 
 
 @router.get("/reports/promotions")
@@ -172,6 +187,28 @@ def get_promotions_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, promotion_id=promotion_id,
     )
+
+
+@router.get("/reports/discounts")
+def get_discounts_report(
+    from_date: Optional[date] = Query(None, alias="from"),
+    to_date: Optional[date] = Query(None, alias="to"),
+    from_hour: Optional[int] = Query(None, alias="fromHour"),
+    to_hour: Optional[int] = Query(None, alias="toHour"),
+    tz: Optional[str] = Query(None),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """OTH ("על חשבון הבית") and club discounts ("הנחת מועדון") over the window's sales."""
+    from app.services.discounts_report import build_discounts_report
+
+    window = resolve_report_window(
+        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+    )
+    return build_discounts_report(db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id)
 
 
 # ── The till's side ───────────────────────────────────────────────────────────

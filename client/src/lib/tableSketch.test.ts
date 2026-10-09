@@ -5,7 +5,40 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CHAIR, CHAIR_REACH, chairLayout, chairSides, uniqueElements, type SketchElement } from './tableSketch';
+import {
+  CHAIR,
+  CHAIR_REACH,
+  SKETCH_BACKGROUNDS,
+  SKETCH_KINDS,
+  backgroundOf,
+  chairLayout,
+  chairSides,
+  newElement,
+  templateSketch,
+  uniqueElements,
+  type SketchElement,
+} from './tableSketch';
+
+describe('the logo and the clean floor', () => {
+  it('offers a logo, sized from the canvas, with no picture of its own', () => {
+    assert.ok(SKETCH_KINDS.includes('logo'));
+    const logo = newElement('logo', 1000, 700);
+    assert.equal(logo.kind, 'logo');
+    assert.deepEqual([logo.w, logo.h], [140, 84]);
+    assert.equal(logo.src ?? null, null);
+    assert.equal(logo.text, null);
+  });
+
+  it('draws the clean floor when nothing was chosen, and keeps what was', () => {
+    assert.equal(SKETCH_BACKGROUNDS[0], 'clean');
+    assert.equal(backgroundOf(null, false), 'clean');
+    assert.equal(backgroundOf({ elements: [] }, true), 'image');
+    assert.equal(backgroundOf({ background: 'wood', elements: [] }, false), 'wood');
+    assert.equal(backgroundOf({ background: 'image', elements: [] }, false), 'clean');
+    // A template draws no floor of its own.
+    assert.equal(templateSketch('cafeBar', 1000, 700).background, null);
+  });
+});
 
 describe('chairSides', () => {
   it('shares a square table round its four sides', () => {

@@ -76,6 +76,16 @@ def make_main(w, till):
     set_param(w, MT.MAIN_TILL_KEY, "machine", till.id, True)
 
 
+def outside_local_mode(w, other):
+    """
+    Another till prints for the shop and the tables are not on the LAN: the main till is no
+    LAN host, so the shop is not in local mode — where the dashboard and `shopZFrom` keep
+    the rules below (in local mode the main till alone makes the shop Z,
+    docs/SPEC_INDEPENDENT_TILL.md §8; tests/test_independent_till.py).
+    """
+    set_param(w, "printHostTill", "machine", other.id, True)
+
+
 def closed_shift(w, till, seq, *docs):
     shift = w.shift(till, seq, status=ShiftStatus.OPEN)
     made = list(docs) or [lambda s: w.doc(till, s, "10.00")]
@@ -97,7 +107,8 @@ def start(w, till):
 
 def dashboard_run(w, *tills, user=None):
     return z_runs_router.post_z_run(
-        ZRunCreateIn(shopId=w.shop.id, machines=[{"machineId": str(t.id)} for t in tills]),
+        # The tills here are not seen "now": the state is confirmed (offline till Z §4.6.1).
+        ZRunCreateIn(shopId=w.shop.id, machines=[{"machineId": str(t.id)} for t in tills], confirmCloudData=True),
         current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
 
@@ -168,6 +179,7 @@ def test_only_the_main_till_runs_the_shop_z(w):
 def test_every_till_when_the_shop_says_so(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     set_param(w, MT.SHOP_Z_FROM_KEY, "shop", w.shop.id, MT.Z_FROM_ANY)
     assert R.till_shop_z_status(str(t2.id), machine=t2, db=w.db)["zScope"] == "shop"
     assert MT.dashboard_z_refusal(w.db, w.shop) is None
@@ -186,6 +198,7 @@ def test_the_dashboard_is_refused_the_shop_z_of_a_main_till_shop(w):
     closed_shift(w, t1, 1)
     closed_shift(w, t2, 1)
     make_main(w, t1)
+    outside_local_mode(w, t2)
     _heard(t1, 5)
     with pytest.raises(HTTPException) as e:
         dashboard_run(w, t1, t2)
@@ -209,6 +222,7 @@ def test_the_dashboard_is_refused_the_shop_z_of_a_main_till_shop(w):
 def test_a_main_till_the_cloud_lost_does_not_hold_the_z(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     _heard(t1, 5)
     assert MT.dashboard_z_refusal(w.db, w.shop) is not None
     # Down for a while (crashed, off, will not start): the dashboard may produce the Z.
@@ -248,6 +262,7 @@ def test_the_card_is_the_super_admins_and_waits_for_a_run(w):
     assert e.value.status_code == 422
     # A run under way: its master was chosen when it started.
     make_main(w, t1)
+    outside_local_mode(w, t2)
     closed_shift(w, t1, 1)
     w.shift(t2, 1, status=ShiftStatus.OPEN)
     assert start(w, t1)["status"] == ZRunStatus.WAITING
@@ -283,6 +298,7 @@ def _table_order(w, *, waiter, waiter_id, tx=None, parts=(), guests=2, number=5)
 def test_one_z_from_the_main_till_with_each_till_and_each_waiter(w):
     t1, t2 = w.tills
     make_main(w, t1)
+    outside_local_mode(w, t2)
     cashier = PosUser(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, username="yossi",
                       first_name="יוסי", last_name="כהן", pin_hash="x")
     w.db.add(cashier)
@@ -440,3 +456,55 @@ def test_no_takeover_outside_the_lan_mode(w):
     with pytest.raises(HTTPException) as e:
         MT.take_over(w.db, t2)
     assert e.value.detail == "tables_not_lan"
+
+
+# ── "השרת הוחלף — יש לבדוק תקינות נתונים" (the owner, 08.10.2026) ────────────
+
+
+def _switch_notices(w):
+    from app.models.till_message import TillMessage, TillMessageReceipt
+    from app.services.till_messages import SERVER_SWITCH_TITLE
+
+    out = []
+    for m in w.db.query(TillMessage).filter(TillMessage.title == SERVER_SWITCH_TITLE).all():
+        tills = {str(r.machine_id) for r in w.db.query(TillMessageReceipt).filter(TillMessageReceipt.message_id == m.id)}
+        out.append((m, tills))
+    return out
+
+
+def test_moving_the_main_till_on_the_card_tells_every_till_to_check_the_data(w):
+    t1, t2 = w.tills
+    put(w, t1.id)
+    assert _switch_notices(w) == [], "naming the first main till is no switch"
+    put(w, t1.id)
+    assert _switch_notices(w) == [], "the same till again is no switch"
+    put(w, t2.id)
+    [(message, tills)] = _switch_notices(w)
+    assert tills == {str(t1.id), str(t2.id)}
+    assert message.display == "fullscreen" and message.created_by is None and message.expires_at is not None
+    assert t1.name in message.body and t2.name in message.body and "תקינות נתונים" in message.body
+
+
+def test_a_till_taking_over_tells_every_till_to_check_the_data(w):
+    from app.routers import tables as tables_router
+    from app.schemas.tables import TakeOverIn
+
+    t1, t2 = w.tills
+    set_param(w, "tablesMode", "shop", w.shop.id, LAN)
+    make_main(w, t1)
+    _heard(t1, 3600)
+    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
+    [(message, tills)] = _switch_notices(w)
+    assert tills == {str(t1.id), str(t2.id)}
+    assert "מנהל" in message.body
+    # Nothing moved (already the main till): no second notice.
+    tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), BackgroundTasks(), machine=t2, db=w.db)
+    assert len(_switch_notices(w)) == 1
+
+
+def test_the_notice_says_what_moved_who_moved_it_and_what_to_check():
+    from app.services.till_messages import server_switch_body
+
+    body = server_switch_body({"name": "קופה 2", "posNumber": "2"}, {"name": "קופה 1", "posNumber": "1"}, "דנה")
+    assert body.startswith("הקופה הראשית (שרת הסניף) הוחלפה מקופה 1 (#1) לקופה 2 (#2) על ידי דנה.")
+    assert "סנכרון רשת מקומית" in body

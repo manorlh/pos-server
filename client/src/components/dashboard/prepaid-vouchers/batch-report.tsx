@@ -18,6 +18,7 @@ import {
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { DEFAULT_WEIGHT_UNIT } from '@/lib/prepaidVoucherProducts';
 import { formatDate, formatHour } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
@@ -107,7 +108,27 @@ function sheetsOf(
     rows: rows.map((g) => [g.name || unknown, ...(withShop ? [g.shopName || ''] : []), g.redemptions, g.vouchers, g.units]),
   });
   const v = r.vouchers;
+  const u = r.usage;
+  // Usage (docs/SPEC_VOUCHER_PRODUCTION.md §7): issued / used / remaining / void and the ₪ given.
+  const usage: ExcelSheet[] = u
+    ? [{
+        name: t('usage.sheet'),
+        columns: [{ header: t('col.measure'), width: 28 }, { header: u.unit === 'uses' ? t('usage.unitUses') : t('usage.unitUnits'), kind: 'number' }],
+        rows: [
+          [t('usage.issued'), u.issued],
+          [t('usage.used'), u.used],
+          [t('usage.remaining'), u.remaining],
+          [t('usage.void'), u.void],
+          ...(u.unit === 'uses' ? [[t('usage.held'), u.held], [t('usage.flagged'), u.flagged]] as (string | number)[][] : []),
+        ],
+      }, ...(u.benefit != null ? [{
+        name: t('usage.benefit'),
+        columns: [{ header: t('col.measure'), width: 28 }, { header: t('usage.amount'), kind: 'money' as const }],
+        rows: [[t('usage.benefit'), u.benefit]],
+      }] : [])]
+    : [];
   return [
+    ...usage,
     {
       name: t('sheet.summary'),
       columns: [{ header: t('col.measure'), width: 28 }, { header: t('col.count'), kind: 'number' }],
@@ -132,7 +153,10 @@ function sheetsOf(
         { header: t('col.outstanding'), kind: 'number' },
         { header: t('col.void'), kind: 'number' },
       ],
-      rows: r.products.map((p) => [p.name ?? '', p.perVoucher, p.issued, p.taken, p.forfeited, p.outstanding, p.void]),
+      rows: r.products.map((p) => [
+        p.weighed ? `${p.name ?? ''} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name ?? '',
+        p.perVoucher, p.issued, p.taken, p.forfeited, p.outstanding, p.void,
+      ]),
     },
     {
       name: t('sheet.byDay'),
@@ -196,6 +220,11 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
 
   return (
     <div className="space-y-4">
+      {r.isTest ? (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          {t('testBatch')}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <p className="text-xs text-muted-foreground">{t('reversedNote')}</p>
         <div className="flex flex-wrap items-center gap-2">
@@ -219,6 +248,33 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
         <Counts label={t('vouchers.cancelled')} value={r.vouchers.cancelled} tone="text-destructive" />
       </div>
 
+      {r.usage ? (
+        <Card className="break-inside-avoid">
+          <CardHeader>
+            <CardTitle className="text-base">
+              {t('usage.title')} · {r.usage.unit === 'uses' ? t('usage.unitUses') : t('usage.unitUnits')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <Counts label={t('usage.issued')} value={r.usage.issued} />
+            <Counts label={t('usage.used')} value={r.usage.used} tone="text-emerald-700 dark:text-emerald-300" />
+            <Counts label={t('usage.remaining')} value={r.usage.remaining} />
+            <Counts label={t('usage.void')} value={r.usage.void} tone="text-destructive" />
+            {r.usage.benefit != null ? (
+              <div className="rounded-lg border px-3 py-2">
+                <p className="text-xs text-muted-foreground">{t('usage.benefit')}</p>
+                <p className="text-xl font-semibold tabular-nums">₪{r.usage.benefit.toFixed(2)}</p>
+              </div>
+            ) : null}
+            {r.usage.unit === 'uses' && (r.usage.held || r.usage.flagged) ? (
+              <p className="col-span-full text-xs text-muted-foreground">
+                {t('usage.held')}: {r.usage.held} · {t('usage.flagged')}: {r.usage.flagged}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Card className="break-inside-avoid">
         <CardHeader>
           <CardTitle className="text-base">{t('productsTitle')}</CardTitle>
@@ -239,7 +295,8 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
             <TableBody>
               {r.products.map((p) => (
                 <TableRow key={p.productId}>
-                  <TableCell>{p.name}</TableCell>
+                  {/* By weight: every figure of the row is in its unit ("זיתים (ק״ג)"). */}
+                  <TableCell>{p.weighed ? `${p.name} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name}</TableCell>
                   <TableCell className={NUM}>{p.perVoucher}</TableCell>
                   <TableCell className={NUM}>{p.issued}</TableCell>
                   <TableCell className={`${NUM} font-semibold`}>{p.taken}</TableCell>

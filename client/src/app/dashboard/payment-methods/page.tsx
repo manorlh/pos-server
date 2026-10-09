@@ -10,12 +10,20 @@
  * left to inherit — and the inherited state shows what it currently is and which level
  * above decided it (`effectiveSources` from the server; absent = the method's default).
  *
+ * Under the methods, "סדר אמצעי התשלום" (`payOrder`, lib/payOrder.ts): the order the
+ * tills list them in, moved with up/down arrows within its two groups — the big "מהיר"
+ * buttons at the top of the payment screen and the rows under them — inherited the same way.
+ *
  * Saving PATCHes that level's settings with only what changed, under the same server
  * rules as the settings dialogs: company managers and up for a company, shop managers
  * for their shop, its points of sale and tills; never every method blocked.
+ *
+ * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
+ * devices for tills without built-in clearing, its switch and default device — saved at once.
  */
 
 import { useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -37,6 +45,14 @@ import {
   noPaymentOptionAllowed,
   type PaymentOptionId,
 } from '@/lib/paymentOptions';
+import {
+  DEFAULT_PAY_ORDER,
+  groupPayOrder,
+  movePayOrder,
+  normalizePayOrder,
+  samePayOrder,
+  type PayOrderId,
+} from '@/lib/payOrder';
 import type {
   EffectiveSources,
   PaymentOptionSettingKey,
@@ -55,6 +71,7 @@ import {
   deepestOrgScope,
   type OrgScope,
 } from '@/components/dashboard/org-scope-cascade';
+import { PaymentDevicesCard } from '@/components/dashboard/payment-devices/payment-devices-card';
 import { cn } from '@/lib/utils';
 
 type EditLevel = Exclude<SettingsLevel, 'tenant'>;
@@ -69,6 +86,9 @@ const INSTALLMENTS_MAX = 36;
 
 /** Page order and wording; the keys and defaults come from lib/paymentOptions.ts. */
 const METHOD_ORDER: PaymentOptionId[] = ['fastCash', 'cash', 'fastCard', 'card', 'manualCard'];
+
+/** The methods that end in cash ("אשראי בלבד" blocks these); the rest end in card. */
+const CASH_METHODS: PaymentOptionId[] = ['fastCash', 'cash'];
 
 const PAYMENT_KEYS: PaymentKey[] = [
   ...PAYMENT_OPTIONS.flatMap((o) => [o.enabledKey, o.tipsKey] as PaymentOptionSettingKey[]),
@@ -170,6 +190,9 @@ export default function PaymentMethodsPage() {
           canWrite={canWrite}
         />
       )}
+
+      {/* "מכשירי תשלום": the shop's devices and its switch, whatever level below it is edited. */}
+      {scope.shopId ? <PaymentDevicesCard shopId={scope.shopId} /> : null}
     </div>
   );
 }
@@ -193,6 +216,9 @@ function MethodsEditor({
   const stored = useMemo(() => ownDraft(layer.settings), [layer]);
   const [draft, setDraft] = useState<Draft>(stored);
   const [rejected, setRejected] = useState(false);
+  // This layer's own payment order (completed, grouped), or null = it inherits.
+  const storedOrder = useMemo(() => normalizePayOrder(layer.settings?.payOrder), [layer]);
+  const [orderDraft, setOrderDraft] = useState<PayOrderId[] | null>(storedOrder);
 
   /** Only the keys whose value differs from what the layer stores; `null` = inherit again. */
   const changes = useMemo(() => {
@@ -202,8 +228,9 @@ function MethodsEditor({
       const after = draft[key] ?? null;
       if (before !== after) (out as Record<string, unknown>)[key] = after;
     }
+    if (!samePayOrder(storedOrder, orderDraft)) out.payOrder = orderDraft;
     return out;
-  }, [draft, stored]);
+  }, [draft, stored, orderDraft, storedOrder]);
   const dirty = Object.keys(changes).length > 0;
 
   const inherited = layer.effective;
@@ -246,6 +273,37 @@ function MethodsEditor({
 
   const options = METHOD_ORDER.map((id) => PAYMENT_OPTIONS.find((o) => o.id === id)!);
 
+  /** Whether the method is on at this level as drafted: its own value, else what it inherits. */
+  const effectiveOnOf = (opt: (typeof options)[number]): boolean => {
+    const own = draft[opt.enabledKey];
+    if (typeof own === 'boolean') return own;
+    const inh = inherited?.[opt.enabledKey];
+    return typeof inh === 'boolean' ? inh : opt.enabledByDefault;
+  };
+
+  /**
+   * "אשראי בלבד" / "מזומן בלבד": the other tender's methods blocked at this level, and this
+   * tender's one-tap and keyed paths switched on where they are not on already. Keyed card
+   * is left as it is (opt-in). "הכול בירושה" takes this level's switches back to inherit.
+   */
+  const applyQuick = (kind: 'card' | 'cash' | 'inherit') => {
+    setRejected(false);
+    setDraft((d) => {
+      const next = { ...d };
+      for (const opt of options) {
+        const cash = CASH_METHODS.includes(opt.id);
+        if (kind === 'inherit') delete next[opt.enabledKey];
+        else if ((kind === 'card') === cash) next[opt.enabledKey] = false;
+        else if (opt.id !== 'manualCard' && !effectiveOnOf(opt)) next[opt.enabledKey] = true;
+      }
+      return next;
+    });
+  };
+
+  // The order shown: this level's own, else what it inherits (completed), else the default.
+  const inheritedOrder = normalizePayOrder(inherited?.payOrder) ?? [...DEFAULT_PAY_ORDER];
+  const shownOrder = orderDraft ?? inheritedOrder;
+
   return (
     <>
       <div className="rounded-lg border bg-muted/40 p-3 text-sm">
@@ -253,6 +311,23 @@ function MethodsEditor({
         {!canWrite ? (
           <p className="text-amber-600 dark:text-amber-400 text-xs mt-1">{t('readOnly')}</p>
         ) : null}
+      </div>
+
+      {/* "קופה 1 אשראי בלבד" in one tap at the level chosen; then save. */}
+      <div className="space-y-2 rounded-lg border p-3">
+        <p className="text-sm font-medium">{t('quickTitle')}</p>
+        <p className="text-muted-foreground text-xs">{t('quickHint')}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={!canWrite} onClick={() => applyQuick('card')}>
+            {t('quickCardOnly')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={!canWrite} onClick={() => applyQuick('cash')}>
+            {t('quickCashOnly')}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={!canWrite} onClick={() => applyQuick('inherit')}>
+            {t('quickInheritAll')}
+          </Button>
+        </div>
       </div>
 
       {/* One list, one row per method: what it is and whether it is on now, then the
@@ -357,6 +432,20 @@ function MethodsEditor({
         </ul>
       </Card>
 
+      <PayOrderCard
+        order={shownOrder}
+        own={orderDraft !== null}
+        source={levelName(layer.effectiveSources?.payOrder)}
+        disabled={!canWrite}
+        label={(id) => (id === 'voucher' ? t('orderVoucherLabel') : t(`methods.${id}.label`))}
+        isOn={(id) => {
+          const opt = options.find((o) => o.id === id);
+          return opt ? effectiveOnOf(opt) : null;
+        }}
+        onMove={(id, direction) => setOrderDraft(movePayOrder(shownOrder, id, direction))}
+        onReset={() => setOrderDraft(null)}
+      />
+
       {noneAllowed || rejected ? (
         <p className="text-sm text-destructive">{tps('payNoneAllowed')}</p>
       ) : null}
@@ -368,7 +457,14 @@ function MethodsEditor({
         >
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
-        <Button variant="outline" disabled={!dirty || save.isPending} onClick={() => setDraft(stored)}>
+        <Button
+          variant="outline"
+          disabled={!dirty || save.isPending}
+          onClick={() => {
+            setDraft(stored);
+            setOrderDraft(storedOrder);
+          }}
+        >
           {t('discard')}
         </Button>
       </div>
@@ -474,5 +570,114 @@ function InstallmentsField({
             : t('installmentsHint')}
       </p>
     </div>
+  );
+}
+
+/**
+ * "סדר אמצעי התשלום" at the level chosen: the big "מהיר" buttons and the list rows, each
+ * group in its order, moved with up/down arrows (a phone's way; no drag needed). Inherited
+ * until an arrow is pressed — then this level holds its own order, until reset.
+ */
+function PayOrderCard({
+  order,
+  own,
+  source,
+  disabled,
+  label,
+  isOn,
+  onMove,
+  onReset,
+}: {
+  order: PayOrderId[];
+  /** Whether this level sets its own order (else it shows what it inherits). */
+  own: boolean;
+  /** Where the inherited order comes from ("ברירת מחדל" when nowhere). */
+  source: string;
+  disabled: boolean;
+  label: (id: PayOrderId) => string;
+  /** Whether the method is on at this level; null for one without a switch (the voucher). */
+  isOn: (id: PayOrderId) => boolean | null;
+  onMove: (id: PayOrderId, direction: -1 | 1) => void;
+  onReset: () => void;
+}) {
+  const t = useTranslations('paymentMethods');
+  const { big, list } = groupPayOrder(order);
+  const groups: Array<{ key: 'big' | 'list'; title: string; badge: string; ids: PayOrderId[] }> = [
+    { key: 'big', title: t('orderBigTitle'), badge: t('orderFastBadge'), ids: big },
+    { key: 'list', title: t('orderListTitle'), badge: t('orderListBadge'), ids: list },
+  ];
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <div className="space-y-1 border-b px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">{t('orderTitle')}</h2>
+          <Button type="button" variant="outline" size="sm" disabled={disabled || !own} onClick={onReset}>
+            {t('orderReset')}
+          </Button>
+        </div>
+        <p className="text-muted-foreground text-xs">{t('orderHint')}</p>
+        <p className={cn('text-xs', own ? 'text-primary font-medium' : 'text-muted-foreground')}>
+          {own ? t('orderOwn') : t('orderInherited', { source })}
+        </p>
+      </div>
+      {groups.map((group) => (
+        <div key={group.key} className="border-b last:border-b-0">
+          <div className="text-muted-foreground bg-muted/40 px-4 py-2 text-xs font-medium">{group.title}</div>
+          <ol className="divide-y">
+            {group.ids.map((id, i) => {
+              const on = isOn(id);
+              return (
+                <li key={id} className="flex items-center gap-3 px-4 py-2">
+                  <span className="text-muted-foreground w-5 shrink-0 text-center text-sm tabular-nums">{i + 1}</span>
+                  <div className={cn('flex min-w-0 flex-1 flex-wrap items-center gap-2', on === false && 'opacity-60')}>
+                    <span className="font-medium">{label(id)}</span>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-xs font-medium',
+                        group.key === 'big'
+                          ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
+                          : 'bg-muted text-muted-foreground',
+                      )}
+                    >
+                      {group.badge}
+                    </span>
+                    {on === false ? (
+                      <span className="text-muted-foreground text-xs">{t('orderBlocked')}</span>
+                    ) : null}
+                    {id === 'voucher' ? (
+                      <span className="text-muted-foreground w-full text-xs">{t('orderVoucherDesc')}</span>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t('orderUp', { method: label(id) })}
+                      title={t('orderUp', { method: label(id) })}
+                      disabled={disabled || i === 0}
+                      onClick={() => onMove(id, -1)}
+                    >
+                      <ArrowUp className="size-4" aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      aria-label={t('orderDown', { method: label(id) })}
+                      title={t('orderDown', { method: label(id) })}
+                      disabled={disabled || i === group.ids.length - 1}
+                      onClick={() => onMove(id, 1)}
+                    >
+                      <ArrowDown className="size-4" aria-hidden />
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+    </Card>
   );
 }

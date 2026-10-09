@@ -321,7 +321,9 @@ def test_a_group_the_customer_linked_to_their_own_product_is_kept(w):
     assert db.query(ModifierLink).filter(ModifierLink.target_id == own.id).count() == 1
 
 
-def test_leaving_training_mode_can_take_the_demo_menu_with_it(w):
+def test_leaving_training_mode_can_take_the_demo_menu_with_it(w, monkeypatch):
+    # A shop put in training mode before it was blocked (TM.AVAILABLE) can still leave it.
+    monkeypatch.setattr(TM, "AVAILABLE", True)
     TM.start(w.db, w.shop, w.admin)
     _load(w, "bar")
     preview = R.get_disable_preview(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)

@@ -46,6 +46,26 @@ from app.models.transaction_payment import TransactionPayment
 # same name in `app/services/reports.py`.
 CREDIT_NOTE_DOCUMENT_TYPE = 330
 
+# "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): an exempt dealer (עוסק פטור) sells on a
+# receipt (קבלה, 400) and pays back on a receipt in the other direction. There is no
+# מבנה אחיד code for the latter, so it is stored as the internal -400 — never printed,
+# filed as a 400 with negative amounts (`open_format_document_type`). Mirrors
+# `DocumentType.RECEIPT` / `RECEIPT_REFUND` on the till.
+RECEIPT_DOCUMENT_TYPE = 400
+RECEIPT_REFUND_DOCUMENT_TYPE = -400
+
+#: Every document type that moves money back to the customer: the credit note of a
+#: VAT-registered business and the receipt refund of an exempt one.
+CREDIT_DOCUMENT_TYPES = (CREDIT_NOTE_DOCUMENT_TYPE, RECEIPT_REFUND_DOCUMENT_TYPE)
+
+#: The documents an exempt dealer issues: no VAT on either.
+RECEIPT_DOCUMENT_TYPES = (RECEIPT_DOCUMENT_TYPE, RECEIPT_REFUND_DOCUMENT_TYPE)
+
+
+def is_credit_document_type(document_type: Optional[int]) -> bool:
+    """A credit note (330) or an exempt dealer's receipt refund (-400)."""
+    return document_type in CREDIT_DOCUMENT_TYPES
+
 # The value `transactions.payment_method` carries for a document with more than one
 # tender leg.
 #
@@ -68,6 +88,12 @@ UNKNOWN_PAYMENT_METHOD = "other"
 # (rule 4 above). OpenFormat payment type 6, "תלוש החלפה".
 EXCHANGE_PAYMENT_METHOD = "exchange"
 
+# "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): the tender split's own
+# bucket for a credit leg that moved no money (`TransactionPayment.no_money_movement`) and
+# does not cancel a sale of its own shift — never cash, card or the drawer. The legs keep
+# their real method; only the X/Z split (`shift_totals.compute_totals`) files them here.
+NO_MONEY_BUCKET = "no_money"
+
 # Rounding slack allowed when checking that the legs sum to the document.
 #
 # Per leg, not flat: amounts are Numeric(12,2) here and integer agorot on the till,
@@ -77,13 +103,27 @@ EXCHANGE_PAYMENT_METHOD = "exchange"
 TENDER_TOLERANCE_PER_LEG = Decimal("0.01")
 
 
+#: A prepaid production voucher ("שובר הפקה") paying for the goods on it: a tender bucket of its
+#: own ("שוברי הפקה"), never cash and never "other" (the production vouchers contract, §4.2).
+#: `voucher` is what every till writes today, `production_voucher` the contract's code for the
+#: `payment` accounting mode, `vouchers` the alias the Z already read. Uniform file: D120 code 5.
+PRODUCTION_VOUCHER_BUCKET = "production_voucher"
+PRODUCTION_VOUCHER_METHODS = frozenset({"voucher", "vouchers", PRODUCTION_VOUCHER_BUCKET})
+
+
+def is_production_voucher(method: Optional[str]) -> bool:
+    return (method or "").strip().lower() in PRODUCTION_VOUCHER_METHODS
+
+
 def normalize_tender(method: Optional[str]) -> str:
     """
-    Collapse a payment method to cash / card / exchange / other for the tender splits.
+    Collapse a payment method to cash / card / exchange / production_voucher / other for the
+    tender splits.
 
     `exchange` is a bucket of its own rather than `other`: it is the offset between the
     two halves of a mixed basket, not money anyone took, and folding it into `other`
-    would show a basket's sale half as unclassified takings.
+    would show a basket's sale half as unclassified takings. A production voucher is its
+    own too: "שוברי הפקה" — the voucher paid, not an unknown tender.
     """
     m = (method or "").strip().lower()
     if m == "cash":
@@ -92,6 +132,8 @@ def normalize_tender(method: Optional[str]) -> str:
         return "card"
     if m == EXCHANGE_PAYMENT_METHOD:
         return EXCHANGE_PAYMENT_METHOD
+    if m in PRODUCTION_VOUCHER_METHODS:
+        return PRODUCTION_VOUCHER_BUCKET
     return "other"
 
 
@@ -109,7 +151,7 @@ def is_refund_document(
     null `document_type`, and a credit note raised outside the refund flow may not
     carry the back-link.
     """
-    return document_type == CREDIT_NOTE_DOCUMENT_TYPE or refund_of_transaction_id is not None
+    return is_credit_document_type(document_type) or refund_of_transaction_id is not None
 
 
 def _dec(value) -> Decimal:
@@ -222,7 +264,7 @@ def refund_condition():
     flow may not carry the back-link.
     """
     return or_(
-        Transaction.document_type == CREDIT_NOTE_DOCUMENT_TYPE,
+        Transaction.document_type.in_(CREDIT_DOCUMENT_TYPES),
         Transaction.refund_of_transaction_id.isnot(None),
     )
 
@@ -237,7 +279,7 @@ def sale_condition():
     return and_(
         or_(
             Transaction.document_type.is_(None),
-            Transaction.document_type != CREDIT_NOTE_DOCUMENT_TYPE,
+            Transaction.document_type.notin_(CREDIT_DOCUMENT_TYPES),
         ),
         Transaction.refund_of_transaction_id.is_(None),
     )

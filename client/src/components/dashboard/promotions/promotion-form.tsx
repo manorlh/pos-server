@@ -9,14 +9,17 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Plus, Trash2, X } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatShortDateTime } from '@/lib/format';
+import { MESSAGE_MAX, addDays, announcementText, endAnnouncementText } from '@/lib/insightsActions';
 import {
   PROMOTION_TYPES,
   THRESHOLD_TYPES,
   createPromotion,
+  fetchPromoProduct,
   updatePromotion,
   type DiscountKind,
   type PromoGroup,
@@ -36,6 +39,7 @@ import {
 import { useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DatePicker, TimeInput } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -58,6 +62,19 @@ interface Draft {
   maxApplications: string;
   priority: string;
   isPaused: boolean;
+  /** "שלח הודעה לעובדים"; a null text follows the promotion (prefilled, editable). */
+  announce: boolean;
+  announceText: string | null;
+  endEnabled: boolean;
+  endText: string | null;
+}
+
+/** "Happy hour": a preset — weekdays, an afternoon window, 15% off, four weeks from today. */
+export type PromotionPreset = 'happy_hour';
+
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** The parameters a new promotion of `type` starts with. */
@@ -80,7 +97,27 @@ export function defaultConfig(type: PromotionType): PromotionConfig {
   }
 }
 
-function draftOf(p: Promotion | null): Draft {
+function draftOf(p: Promotion | null, preset?: PromotionPreset, presetName = 'Happy hour'): Draft {
+  const noAnnouncement = { announce: false, announceText: null, endEnabled: false, endText: null };
+  if (!p && preset === 'happy_hour') {
+    const today = localToday();
+    return {
+      name: presetName,
+      description: '',
+      type: 'discount',
+      config: { target: { all: true }, discountKind: 'percent', discountValue: 15 },
+      scopes: [],
+      validFrom: today,
+      validTo: addDays(today, 27),
+      weekdays: [0, 1, 2, 3, 4],
+      startTime: '16:00',
+      endTime: '18:00',
+      maxApplications: '',
+      priority: '0',
+      isPaused: false,
+      ...noAnnouncement,
+    };
+  }
   if (!p) {
     return {
       name: '',
@@ -96,8 +133,10 @@ function draftOf(p: Promotion | null): Draft {
       maxApplications: '',
       priority: '0',
       isPaused: false,
+      ...noAnnouncement,
     };
   }
+  const a = p.announcement;
   return {
     name: p.name,
     description: p.description ?? '',
@@ -112,6 +151,10 @@ function draftOf(p: Promotion | null): Draft {
     maxApplications: p.maxApplications != null ? String(p.maxApplications) : '',
     priority: String(p.priority ?? 0),
     isPaused: p.isPaused,
+    announce: !!a?.enabled,
+    announceText: a?.text ?? null,
+    endEnabled: !!a?.endEnabled,
+    endText: a?.endText ?? null,
   };
 }
 
@@ -168,7 +211,93 @@ function inputOf(d: Draft): PromotionInput {
     maxApplications: Number.isFinite(max) && max > 0 ? max : null,
     priority: Math.max(0, Math.min(100, parseInt(d.priority, 10) || 0)),
     isPaused: d.isPaused,
+    announcement: {
+      enabled: d.announce,
+      text: d.announceText?.trim() || null,
+      endEnabled: d.announce && d.endEnabled,
+      endText: d.endText?.trim() || null,
+    },
   };
+}
+
+/** "שלח הודעה לעובדים": a switch, the text (prefilled from the promotion), and the end message. */
+function AnnouncementField({
+  draft,
+  set,
+  planned,
+}: {
+  draft: Draft;
+  set: (patch: Partial<Draft>) => void;
+  planned?: Promotion['announcement'];
+}) {
+  const t = useTranslations('insightsActions.promotionForm');
+  const ids = (draft.config.target?.productIds ?? []).slice(0, 3);
+  const names = useQueries({
+    queries: ids.map((id) => ({ queryKey: ['promo-product', id], queryFn: () => fetchPromoProduct(id), staleTime: 300_000 })),
+  })
+    .map((q) => q.data?.name)
+    .filter((n): n is string => !!n);
+  const auto = announcementText(
+    {
+      name: draft.name || '—',
+      type: draft.type,
+      config: draft.config,
+      weekdays: draft.weekdays,
+      startTime: draft.startTime || null,
+      endTime: draft.endTime || null,
+      validTo: draft.validTo || null,
+    },
+    names,
+  );
+  const area = 'w-full resize-none rounded-md border bg-transparent p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
+  return (
+    <section className="space-y-2 rounded-lg border px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{t('announce')}</p>
+          <p className="text-xs text-muted-foreground">{t('announceHint')}</p>
+        </div>
+        <Switch checked={draft.announce} onCheckedChange={(v) => set({ announce: !!v })} aria-label={t('announce')} />
+      </div>
+      {draft.announce ? (
+        <div className="space-y-2">
+          <Label htmlFor="pr-announce-text">{t('text')}</Label>
+          <textarea
+            id="pr-announce-text"
+            rows={2}
+            maxLength={MESSAGE_MAX}
+            dir="rtl"
+            className={area}
+            value={draft.announceText ?? auto}
+            onChange={(e) => set({ announceText: e.target.value })}
+          />
+          {planned?.startAt ? <p className="text-xs text-muted-foreground">{t('planned', { at: formatShortDateTime(planned.startAt) })}</p> : null}
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <div className="min-w-0">
+              <p className="text-sm">{t('endEnabled')}</p>
+              <p className="text-xs text-muted-foreground">{t('endHint')}</p>
+            </div>
+            <Switch checked={draft.endEnabled} onCheckedChange={(v) => set({ endEnabled: !!v })} aria-label={t('endEnabled')} />
+          </div>
+          {draft.endEnabled ? (
+            <>
+              <Label htmlFor="pr-announce-end">{t('endText')}</Label>
+              <textarea
+                id="pr-announce-end"
+                rows={1}
+                maxLength={MESSAGE_MAX}
+                dir="rtl"
+                className={area}
+                value={draft.endText ?? endAnnouncementText(draft.name || '—')}
+                onChange={(e) => set({ endText: e.target.value })}
+              />
+              {planned?.endAt ? <p className="text-xs text-muted-foreground">{t('plannedEnd', { at: formatShortDateTime(planned.endAt) })}</p> : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
 }
 
 function NumberField({
@@ -458,32 +587,38 @@ export function PromotionFormDialog({
   open,
   onOpenChange,
   promotion,
+  preset,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Null: a new one. */
   promotion: Promotion | null;
+  /** A new one from a preset ("Happy hour"). */
+  preset?: PromotionPreset;
 }) {
   // The form mounts with each opening, so it always starts from the promotion as it is.
   return open ? (
-    <PromotionForm key={promotion?.id ?? 'new'} onOpenChange={onOpenChange} promotion={promotion} />
+    <PromotionForm key={promotion?.id ?? `new-${preset ?? ''}`} onOpenChange={onOpenChange} promotion={promotion} preset={preset} />
   ) : null;
 }
 
 function PromotionForm({
   onOpenChange,
   promotion,
+  preset,
 }: {
   onOpenChange: (open: boolean) => void;
   promotion: Promotion | null;
+  preset?: PromotionPreset;
 }) {
   const open = true;
   const t = useTranslations('promotions.form');
   const tt = useTranslations('promotions.types');
   const td = useTranslations('promotions.weekdays');
   const tc = useTranslations('common');
+  const tA = useTranslations('insightsActions.promotionForm');
   const qc = useQueryClient();
-  const [draft, setDraft] = useState<Draft>(() => draftOf(promotion));
+  const [draft, setDraft] = useState<Draft>(() => draftOf(promotion, preset, tA('happyHourName')));
 
   const typeItems = useMemo(() => PROMOTION_TYPES.map((v) => ({ value: v, label: tt(`${v}.name`) })), [tt]);
   const problem = problemOf(draft);
@@ -554,11 +689,11 @@ function PromotionForm({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pr-from">{t('validFrom')}</Label>
-                <Input id="pr-from" type="date" value={draft.validFrom} onChange={(e) => set({ validFrom: e.target.value })} />
+                <DatePicker id="pr-from" value={draft.validFrom} onChange={(e) => set({ validFrom: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="pr-to">{t('validTo')}</Label>
-                <Input id="pr-to" type="date" value={draft.validTo} onChange={(e) => set({ validTo: e.target.value })} />
+                <DatePicker id="pr-to" value={draft.validTo} onChange={(e) => set({ validTo: e.target.value })} />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -589,11 +724,11 @@ function PromotionForm({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pr-start">{t('startTime')}</Label>
-                <Input id="pr-start" type="time" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value })} />
+                <TimeInput id="pr-start" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value })} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="pr-end">{t('endTime')}</Label>
-                <Input id="pr-end" type="time" value={draft.endTime} onChange={(e) => set({ endTime: e.target.value })} />
+                <TimeInput id="pr-end" value={draft.endTime} onChange={(e) => set({ endTime: e.target.value })} />
               </div>
             </div>
             <p className="text-xs text-muted-foreground">{t('hoursHint')}</p>
@@ -622,6 +757,8 @@ function PromotionForm({
             <h3 className="text-sm font-semibold">{t('scopes')}</h3>
             <ScopesField value={draft.scopes} onChange={(scopes) => set({ scopes })} />
           </section>
+
+          <AnnouncementField draft={draft} set={set} planned={promotion?.announcement} />
 
           <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
             <div className="min-w-0">

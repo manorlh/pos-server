@@ -159,6 +159,8 @@ class TestBlock:
             {
                 "transactionId": str(tx_b.id),
                 "documentNumber": "7001",
+                # A number names a document only with its type (docs/SPEC_DOCUMENT_PREFIX.md).
+                "documentType": 320,
                 "amount": "25.50",
                 "terminalUid": "B",
                 "at": block["declined"][0]["at"],

@@ -109,6 +109,8 @@ def publish_close_shift_notify(
     request_id: str,
     shift_id: Optional[str],
     initiated_by: str,
+    force: bool = False,
+    wait_for_rest: bool = False,
 ) -> None:
     """
     Ask a till to close its open shift so a Z can include it (docs/SHIFTS_API.md §1.7).
@@ -120,6 +122,12 @@ def publish_close_shift_notify(
     body["requestId"] = request_id
     body["shiftId"] = shift_id
     body["initiatedBy"] = initiated_by
+    if force:
+        # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
+        body["force"] = True
+    if wait_for_rest:
+        # Remote control: only once the till is at rest (no sale, no payment, no card).
+        body["waitForRest"] = True
     publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
@@ -146,6 +154,8 @@ def publish_till_z_notify(
     machine_id: str,
     request_id: str,
     initiated_by: str,
+    force: bool = False,
+    wait_for_rest: bool = False,
 ) -> None:
     """
     Ask a till in `zMode = till` to produce its own Z now (docs/SHIFTS_API.md §5.3).
@@ -156,7 +166,42 @@ def publish_till_z_notify(
     body = _notify_base()
     body["requestId"] = request_id
     body["initiatedBy"] = initiated_by
+    if force:
+        body["force"] = True
+    if wait_for_rest:
+        body["waitForRest"] = True
     publish_notify(tenant_id, machine_id, "till-z", body)
+
+
+def publish_remote_credit_notify(
+    tenant_id: str,
+    machine_id: str,
+    request_id: str,
+    initiated_by: str,
+    cancelled: bool = False,
+) -> None:
+    """
+    "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): a credit request for this till was made
+    (or cancelled). A wake-up only: the till pulls `GET /sync/{m}/remote-credits`, and the
+    heartbeat's `pendingRemoteCredits` hands the same to a till that missed this.
+    """
+    body = _notify_base()
+    body["requestId"] = request_id
+    body["initiatedBy"] = initiated_by
+    if cancelled:
+        body["cancelled"] = True
+    publish_notify(tenant_id, machine_id, "remote-credit", body)
+
+
+def publish_card_command_notify(tenant_id: str, machine_id: str, command: dict[str, Any]) -> None:
+    """
+    "תשלום לא מוכרע" (app/services/card_attempt_commands.py): a manager's command about an
+    unknown card for this till — `{commandId, vuid, action, requestedBy, requestedAt}`, the
+    same item the heartbeat's `pendingCardCommands` carries to a till that missed this.
+    """
+    body = _notify_base()
+    body.update(command)
+    publish_notify(tenant_id, machine_id, "card-command", body)
 
 
 def publish_transactions_synced(tenant_id: str, machine_id: str, count: int) -> None:

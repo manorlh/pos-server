@@ -1,0 +1,683 @@
+"""
+"תשלום בקופה" — kiosk orders paid at the till (app/services/kiosk_open_orders.py,
+docs/SPEC_KIOSK.md §23):
+
+* the kiosk posts an OPEN order and writes no tax document for it; the shop's tills list it;
+* one till locks it ("בטיפול בקופה X" for the others), pays it with its own document and marks
+  it paid — idempotent; a second document for it is refused; a stale lock lets another till in;
+* unpaid within the kiosk's `payment.cashAtTillExpiryMin` it expires (never under a till
+  holding it), and its vouchers go back — as they do when a till cancels it with a reason;
+* a prepaid voucher redeemed on the kiosk pays part of it (pending), the till takes the rest;
+  a redemption is never on two orders, never another machine's, never one given back;
+* the config: card / voucher / cash_at_till / split_card, a voucher never alone, bare cash still
+  refused, "איך תרצו לשלם?" always the last step; split_card's options (payment.splitCard);
+* the cloud prices the basket again (base, a menu's price, choices by their group's rules, a
+  meal's upcharges): a new order it prices differently is refused with the lines while the
+  kiosk says its customer waits, and taken with the cloud's verdict on it otherwise.
+
+Runs on the in-memory SQLite world of tests/shift_world.py, through the router functions.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import date, datetime, timedelta, timezone
+
+import pytest
+from fastapi import HTTPException
+
+from decimal import Decimal
+
+from app.models.catalog_menu import CatalogMenu, CatalogMenuAssignment, CatalogMenuProduct
+from app.models.category import Category
+from app.models.kiosk import KioskOrder
+from app.models.menu import MealSlot, MealSlotOption, ModifierGroup, ModifierOption
+from app.models.pos_machine import PairingStatus, POSMachine
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherRedemption
+from app.models.product import CatalogLevel, Product
+from app.models.shop_product_override import ShopProductOverride
+from app.models.transaction import Transaction
+from app.routers import kiosk_open_orders as R
+from app.routers import kiosks as KR
+from app.routers import prepaid_vouchers as PVR
+from app.schemas.kiosk import KioskCreateIn, KioskSettingsIn
+from app.schemas.kiosk_open_orders import KioskOpenOrdersIn, OpenOrderCancelIn, OpenOrderPaidIn, TillActorIn
+from app.schemas.prepaid_voucher import PrepaidVoucherBatchCreate, PrepaidVoucherRedeemIn
+from app.services import ably_notify
+from app.services import kiosk_config as C
+from app.services import kiosk_open_orders as S
+from app.services import prepaid_vouchers as PV
+from app.services import till_parameters as TP
+from shift_world import accept_str_uuids, make_world
+
+T0 = datetime(2026, 10, 7, 12, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def w(monkeypatch):
+    accept_str_uuids(monkeypatch)
+    world = make_world()
+    world.woken = []
+    monkeypatch.setattr(
+        ably_notify, "publish_notify",
+        lambda tenant, machine, event, body: world.woken.append((machine, event, body.get("reason"))),
+    )
+    for name in ("publish_close_shift_notify", "publish_till_z_notify", "publish_settings_notify"):
+        if hasattr(ably_notify, name):
+            monkeypatch.setattr(ably_notify, name, lambda *a, **k: None)
+    TP.ensure_builtin_parameters(world.db)
+    world.kiosk, world.till = world.tills
+    world.till2 = POSMachine(
+        id=uuid.uuid4(), tenant_id=world.tenant.id, shop_id=world.shop.id, distributor_id=world.admin.id,
+        name="קופה 2", machine_code=f"X-{uuid.uuid4().hex[:8]}", pos_number="9", is_active=True,
+        pairing_status=PairingStatus.ASSIGNED,
+    )
+    world.db.add(world.till2)
+    world.till.name = "קופה 1"
+    KR.create_kiosk(
+        body=KioskCreateIn(machineId=world.kiosk.id, name="קיוסק רויאל"),
+        current_user=world.admin, active_tenant_id=world.tenant.id, db=world.db,
+    )
+    cat = Category(id=uuid.uuid4(), tenant_id=world.tenant.id, name="Food")
+    world.db.add(cat)
+    world.db.flush()
+
+    def product(name, price):
+        p = Product(
+            id=uuid.uuid4(), tenant_id=world.tenant.id, company_id=world.company.id, category_id=cat.id,
+            catalog_level=CatalogLevel.GLOBAL, name=name, price=price, sku=f"sku-{name}",
+        )
+        world.db.add(p)
+        world.db.flush()
+        world.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=world.shop.id, global_product_id=p.id, is_listed=True))
+        return p
+
+    world.hotdog = product("נקניקייה", 25)
+    world.drink = product("שתייה", 12)
+    world.db.commit()
+    return world
+
+
+def body(json_text: object) -> dict:
+    """A router answer: a dict, or a JSONResponse (a refusal) as {status, detail…}."""
+    if isinstance(json_text, dict):
+        return json_text
+    return {"status": json_text.status_code, **json.loads(json_text.body)}
+
+
+def order(local_id="o-1", *, total=6200, tip=0, vouchers=(), created=T0, **extra):
+    voucher_sum = sum(v["amountAgorot"] for v in vouchers)
+    return {
+        "localId": local_id, "pickupNumber": 17, "pickupLabel": "A-17", "businessDate": "2026-10-07",
+        "serviceType": "take_away", "fulfillmentMode": "BON", "customerName": "דנה", "itemCount": 3,
+        "totalAgorot": total, "tipAgorot": tip, "voucherAgorot": voucher_sum, "dueAgorot": total + tip - voucher_sum,
+        "createdAt": created.isoformat(),
+        "lines": [{"name": "נקניקייה", "quantity": 1, "totalAgorot": 2500}, {"name": "שתייה", "quantity": 2, "totalAgorot": 3700}],
+        "cart": {"cartId": "c1", "lines": []},
+        "vouchers": list(vouchers),
+        **extra,
+    }
+
+
+def post(w, *orders, now=T0):
+    out = S.upsert_from_kiosk(w.db, w.kiosk, list(orders), now=now)
+    w.db.commit()
+    return out
+
+
+def listed(w, till=None, now=T0):
+    out = S.list_for_till(w.db, till or w.till, now=now)
+    w.db.commit()
+    return out
+
+
+def lock(w, till, ref, now=T0, user="דנה"):
+    try:
+        out = S.lock(w.db, till, ref, pos_user_name=user, now=now)
+    except S.OpenOrderRefused as refused:
+        w.db.commit()
+        return {"status": refused.status_code, **refused.body}
+    w.db.commit()
+    return out
+
+
+def paid(w, till, ref, tx="tx-1", now=T0):
+    try:
+        out = S.mark_paid(w.db, till, ref, transaction_id=tx, transaction_number="20000057", pos_user_name="דנה", now=now)
+    except S.OpenOrderRefused as refused:
+        w.db.commit()
+        return {"status": refused.status_code, **refused.body}
+    w.db.commit()
+    return out
+
+
+def cancel(w, till, ref, reason="הלקוח עזב", now=T0):
+    try:
+        out = S.cancel(w.db, till, ref, reason=reason, pos_user_name="דנה", now=now)
+    except S.OpenOrderRefused as refused:
+        w.db.commit()
+        return {"status": refused.status_code, **refused.body}
+    w.db.commit()
+    return out
+
+
+def row(w, local_id="o-1") -> KioskOrder:
+    return w.db.query(KioskOrder).filter(KioskOrder.local_id == local_id).one()
+
+
+# ── The life of an open order ─────────────────────────────────────────────────
+
+
+def test_the_kiosk_writes_no_document_and_the_shops_tills_list_the_order(w):
+    before = w.db.query(Transaction).count()
+    out = post(w, order())
+    assert out["accepted"] == ["o-1"] and out["rejected"] == []
+    assert out["states"]["o-1"]["state"] == "open"
+    r = row(w)
+    assert r.pay_at_till and r.open_state == "open" and r.status == "open"
+    # No tax document until a till takes the money: no transaction, no paid_at, no number.
+    assert r.paid_at is None and r.transaction_id is None and r.transaction_number is None
+    assert w.db.query(Transaction).count() == before
+    # The shop's tills hear of it at once (never the kiosk itself).
+    woken = {m for m, event, _ in w.woken if event == S.WAKE_EVENT}
+    assert str(w.till.id) in woken and str(w.till2.id) in woken and str(w.kiosk.id) not in woken
+    orders = listed(w)
+    assert [o["localId"] for o in orders] == ["o-1"]
+    o = orders[0]
+    assert o["kioskName"] == "קיוסק רויאל" and o["pickupLabel"] == "A-17" and o["customerName"] == "דנה"
+    assert o["dueAgorot"] == 6200 and o["lockedBy"] is None and o["cart"] == {"cartId": "c1", "lines": []}
+    assert o["expiresAt"] == (T0 + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+    # Another shop's till sees nothing of it.
+    assert listed(w, w.other_till) == []
+
+
+def test_one_till_locks_it_the_others_see_who_and_cannot_take_it(w):
+    post(w, order())
+    got = lock(w, w.till, "o-1")
+    assert got["lockedByMe"] is True and got["lockedBy"] == "קופה 1 · דנה"
+    other = listed(w, w.till2)[0]
+    assert other["lockedBy"] == "קופה 1 · דנה" and other["lockedByMe"] is False
+    refused = lock(w, w.till2, "o-1")
+    assert refused["status"] == 409 and refused["detail"] == S.LOCKED and refused["lockedBy"] == "קופה 1 · דנה"
+    assert cancel(w, w.till2, "o-1")["detail"] == S.LOCKED
+    # Locking again is the same till coming back: fine, and the hold is refreshed.
+    assert lock(w, w.till, "o-1", now=T0 + timedelta(minutes=5))["lockedByMe"] is True
+    # The cashier put it back: anyone may open it.
+    S.release(w.db, w.till, "o-1", now=T0 + timedelta(minutes=6))
+    w.db.commit()
+    assert lock(w, w.till2, "o-1", now=T0 + timedelta(minutes=6))["lockedBy"] == "קופה 2 · דנה"
+
+
+def test_a_stale_lock_lets_another_till_in(w):
+    post(w, order())
+    lock(w, w.till, "o-1")
+    later = T0 + timedelta(minutes=S.LOCK_STALE_MIN + 1)
+    assert listed(w, w.till2, now=later)[0]["lockedBy"] is None
+    assert lock(w, w.till2, "o-1", now=later)["lockedByMe"] is True
+
+
+def test_paying_it_marks_it_paid_once(w):
+    post(w, order())
+    lock(w, w.till, "o-1")
+    out = paid(w, w.till, "o-1", tx="tx-1", now=T0 + timedelta(minutes=3))
+    assert out["state"] == "paid" and out["paidBy"] == "קופה 1 · דנה" and out["transactionNumber"] == "20000057"
+    r = row(w)
+    assert r.status == "paid_at_till" and r.transaction_id == "tx-1" and r.paid_by_machine_id == w.till.id
+    assert r.paid_at is not None and r.locked_by_machine_id is None
+    # The same document again: the same answer. Another document: refused, never paid twice.
+    assert paid(w, w.till, "o-1", tx="tx-1")["state"] == "paid"
+    again = paid(w, w.till2, "o-1", tx="tx-2")
+    assert again["status"] == 409 and again["detail"] == S.CLOSED and again["state"] == "paid"
+    assert lock(w, w.till2, "o-1")["detail"] == S.CLOSED
+    # The tills see it go, then it is gone from the list.
+    assert listed(w, now=T0 + timedelta(minutes=4))[0]["state"] == "paid"
+    assert listed(w, now=T0 + timedelta(minutes=10)) == []
+
+
+def test_the_slips_barcode_finds_it(w):
+    post(w, order("4f1c2a9e-0000-4000-8000-000000000001"))
+    got = lock(w, w.till, "KO:4f1c2a9e-0000-4000-8000-000000000001")
+    assert got["localId"] == "4f1c2a9e-0000-4000-8000-000000000001"
+    # Its cloud id works as well; an unknown one is not found.
+    assert lock(w, w.till, got["id"])["lockedByMe"] is True
+    assert lock(w, w.till, "KO:nothing")["detail"] == S.NOT_FOUND
+    # Another shop's till: not found, whatever it scans.
+    assert lock(w, w.other_till, got["id"])["detail"] == S.NOT_FOUND
+
+
+def test_a_kiosk_never_pays_orders_and_a_till_never_posts_them(w):
+    post(w, order())
+    with pytest.raises(S.OpenOrderRefused) as caught:
+        S.list_for_till(w.db, w.kiosk, now=T0)
+    assert caught.value.code == S.NOT_A_TILL
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as e:
+        R.post_open_orders(machine_id=str(w.till.id), body=KioskOpenOrdersIn(orders=[order("x")]), machine=w.till, db=w.db)
+    assert e.value.status_code == 403
+
+
+def test_money_that_does_not_add_up_is_refused_alone(w):
+    bad = order("bad")
+    bad["dueAgorot"] = 100
+    out = post(w, bad, order("good"))
+    assert out["accepted"] == ["good"]
+    assert out["rejected"][0]["localId"] == "bad" and out["rejected"][0]["reason"].startswith("invalid")
+
+
+def test_posting_again_changes_nothing_of_the_snapshot(w):
+    post(w, order())
+    changed = order(total=9900)
+    out = post(w, changed, now=T0 + timedelta(minutes=1))
+    assert out["accepted"] == ["o-1"]
+    assert row(w).total_agorot == 6200 and row(w).due_agorot == 6200
+
+
+# ── Expiry and cancel ─────────────────────────────────────────────────────────
+
+
+def test_unpaid_it_expires_and_disappears(w):
+    post(w, order())
+    assert listed(w, now=T0 + timedelta(minutes=29))[0]["state"] == "open"
+    out = listed(w, now=T0 + timedelta(minutes=30))
+    assert out[0]["state"] == "expired"
+    r = row(w)
+    assert r.open_state == "expired" and r.status == "expired" and r.close_reason == "expired"
+    assert r.paid_at is None and r.transaction_id is None
+    assert listed(w, now=T0 + timedelta(minutes=40)) == []
+    assert lock(w, w.till, "o-1", now=T0 + timedelta(minutes=40))["detail"] == S.CLOSED
+
+
+def test_the_expiry_is_the_kiosks_setting_and_never_under_a_till_paying_it(w):
+    KR.put_settings(
+        body=KioskSettingsIn(overrides={"payment": {"methods": ["card", "cash_at_till"], "cashAtTillExpiryMin": 10}}),
+        level="machine", scope_id=w.kiosk.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    w.db.commit()
+    post(w, order())
+    assert row(w).expires_at.replace(tzinfo=timezone.utc) == T0 + timedelta(minutes=10)
+    lock(w, w.till, "o-1", now=T0 + timedelta(minutes=8))
+    # Held by a till: not expired at its time…
+    assert listed(w, w.till2, now=T0 + timedelta(minutes=12))[0]["state"] == "open"
+    assert paid(w, w.till, "o-1", now=T0 + timedelta(minutes=12))["state"] == "paid"
+
+
+def test_an_order_uploaded_after_its_time_is_expired_at_once(w):
+    out = post(w, order(created=T0), now=T0 + timedelta(hours=2))
+    assert out["states"]["o-1"]["state"] == "expired"
+
+
+def test_a_cancel_needs_a_reason_and_is_logged_on_the_order(w):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        OpenOrderCancelIn(reason="")
+    post(w, order())
+    out = cancel(w, w.till, "o-1", reason="הלקוח ויתר")
+    assert out["state"] == "cancelled" and out["closeReason"] == "הלקוח ויתר"
+    r = row(w)
+    assert r.status == "cancelled" and r.closed_by_name == "קופה 1 · דנה" and r.transaction_id is None
+    assert cancel(w, w.till, "o-1")["state"] == "cancelled"  # idempotent
+    assert paid(w, w.till, "o-1")["state"] == "paid"  # money taken anyway: believed, and logged
+    assert row(w).close_reason == "paid_after_cancelled"
+
+
+def test_a_lan_paid_order_reported_by_the_kiosk_is_paid(w):
+    o = order(state="paid", paidByName="קופה ראשית", paidTransactionId="tx-lan", paidTransactionNumber="20000060")
+    out = post(w, o)
+    assert out["states"]["o-1"]["state"] == "paid"
+    r = row(w)
+    assert r.transaction_id == "tx-lan" and r.paid_by_name == "קופה ראשית" and r.paid_at is not None
+
+
+# ── Vouchers: part on the kiosk, the rest at the till ─────────────────────────
+
+
+def _redeem_hotdog(w, *, machine=None, request="r-1"):
+    """A prepaid voucher (1 hotdog + 2 drinks, in parts) of which the kiosk takes the hotdog."""
+    batch = PVR.create_prepaid_voucher_batch(
+        PrepaidVoucherBatchCreate(
+            name="פסטיבל", companyId=w.company.id, splitAllowed=True, count=1,
+            # What the Windows kiosk books (the `voucher` tender at list prices): it sends no `features`.
+            redemptionAccounting="payment",
+            items=[{"productId": w.hotdog.id, "quantity": 1}, {"productId": w.drink.id, "quantity": 2}],
+        ),
+        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    voucher = w.db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == uuid.UUID(batch["id"])).one()
+    out = PVR.redeem_prepaid_voucher(
+        str((machine or w.kiosk).id),
+        PrepaidVoucherRedeemIn(code=voucher.code, items=[{"productId": str(w.hotdog.id), "quantity": 1}], clientRequestId=request),
+        machine=machine or w.kiosk, db=w.db,
+    )
+    return voucher, out
+
+
+def _voucher_leg(out, amount=2500):
+    return {
+        "redemptionId": out["redemptionId"], "serial": 1, "amountAgorot": amount, "eventName": "פסטיבל",
+        "redeemed": [{"productId": r["productId"], "tillProductId": r["tillProductId"], "name": r["name"], "quantity": r["quantity"]} for r in out["redeemed"]],
+    }
+
+
+def test_a_voucher_the_kiosk_cannot_book_sends_the_customer_to_the_till(w):
+    """A batch booked as a document deduction (the default since voucher types): the Windows kiosk
+    sends no `features`, so the cloud says "update required" — kiosk-desktop sends the customer to the till."""
+    batch = PVR.create_prepaid_voucher_batch(
+        PrepaidVoucherBatchCreate(name="פסטיבל", companyId=w.company.id, count=1,
+                                  items=[{"productId": w.hotdog.id, "quantity": 1}]),
+        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    assert batch["redemptionAccounting"] == "discount"
+    voucher = w.db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == uuid.UUID(batch["id"])).one()
+    with pytest.raises(HTTPException) as e:
+        PVR.redeem_prepaid_voucher(
+            str(w.kiosk.id),
+            PrepaidVoucherRedeemIn(code=voucher.code, items=[{"productId": str(w.hotdog.id), "quantity": 1}], clientRequestId="r-x"),
+            machine=w.kiosk, db=w.db,
+        )
+    assert e.value.detail == PV.UPDATE_REQUIRED
+
+
+def test_a_voucher_pays_part_and_the_till_takes_the_rest(w):
+    voucher, redeemed = _redeem_hotdog(w)
+    posted = post(w, order(vouchers=[_voucher_leg(redeemed)]))
+    assert posted["accepted"] == ["o-1"]
+    o = listed(w)[0]
+    # Agorot all the way: 62.00 − 25.00 = 37.00 left for the till.
+    assert o["totalAgorot"] == 6200 and o["voucherAgorot"] == 2500 and o["dueAgorot"] == 3700
+    assert o["vouchers"][0]["redemptionId"] == redeemed["redemptionId"]
+    lock(w, w.till, "o-1")
+    paid(w, w.till, "o-1", tx="tx-9")
+    red = w.db.get(PrepaidVoucherRedemption, uuid.UUID(redeemed["redemptionId"]))
+    assert red.transaction_id == "tx-9" and red.reversed_at is None
+    w.db.refresh(voucher)
+    assert voucher.remaining[str(w.hotdog.id)] == 0
+
+
+def test_a_cancelled_or_expired_order_gives_its_voucher_back(w):
+    voucher, redeemed = _redeem_hotdog(w)
+    post(w, order(vouchers=[_voucher_leg(redeemed)]))
+    cancel(w, w.till, "o-1")
+    w.db.refresh(voucher)
+    assert voucher.remaining[str(w.hotdog.id)] == 1 and voucher.status == "active"
+    red = w.db.get(PrepaidVoucherRedemption, uuid.UUID(redeemed["redemptionId"]))
+    assert red.reversed_at is not None
+
+
+def test_an_expired_order_gives_its_voucher_back(w):
+    voucher, redeemed = _redeem_hotdog(w)
+    post(w, order(vouchers=[_voucher_leg(redeemed)]))
+    listed(w, now=T0 + timedelta(hours=1))
+    w.db.refresh(voucher)
+    assert voucher.remaining[str(w.hotdog.id)] == 1
+
+
+def test_a_voucher_is_never_counted_twice_nor_anothers(w):
+    _voucher, redeemed = _redeem_hotdog(w)
+    assert post(w, order("a", vouchers=[_voucher_leg(redeemed)]))["accepted"] == ["a"]
+    twice = post(w, order("b", vouchers=[_voucher_leg(redeemed)]))
+    assert twice["rejected"][0]["reason"] == "invalid:vouchers.on_another_order"
+    # Another machine's redemption (a till's): not the kiosk's to claim.
+    _v2, at_till = _redeem_hotdog(w, machine=w.till, request="r-2")
+    foreign = post(w, order("c", vouchers=[_voucher_leg(at_till)]))
+    assert foreign["rejected"][0]["reason"] == "invalid:vouchers.unknown_redemption"
+    # One the kiosk already gave back: nothing to claim.
+    _v3, given_back = _redeem_hotdog(w, request="r-3")
+    PVR.reverse_prepaid_redemption(str(w.kiosk.id), given_back["redemptionId"], machine=w.kiosk, db=w.db)
+    back = post(w, order("d", vouchers=[_voucher_leg(given_back)]))
+    assert back["rejected"][0]["reason"] == "invalid:vouchers.reversed"
+
+
+# ── The kiosk's config ────────────────────────────────────────────────────────
+
+
+def test_the_methods_and_the_choice_step(w):
+    assert C.PAYMENT_METHODS == ("card", "voucher", "cash_at_till", "split_card")
+    _c, errors = C.validate_layer({"payment": {"methods": ["card", "voucher", "cash_at_till"]}})
+    assert errors == []
+    assert C.validate_config(C.resolve({"payment": {"methods": ["cash_at_till", "voucher"]}})) == []
+    # A voucher alone cannot pay what it leaves; bare "cash" is still refused (no cash hardware).
+    codes = {e.path: e.code for e in C.validate_config(C.merge(C.default_config(), {"payment": {"methods": ["voucher"]}}))}
+    assert codes.get("payment.methods") == "voucher_needs_method"
+    codes = {e.path: e.code for e in C.validate_config(C.merge(C.default_config(), {"payment": {"methods": ["cash"]}}))}
+    assert codes.get("payment.methods[0]") == "cash_not_supported"
+    # repair makes what a kiosk gets valid: a voucher alone gets the card beside it.
+    assert C.resolve({"payment": {"methods": ["voucher"]}})["payment"]["methods"] == ["card", "voucher"]
+    # "איך תרצו לשלם?" is always last, right before the payment.
+    assert C.resolve({"payment": {"checkoutSteps": ["payMethod", "details", "tip"]}})["payment"]["checkoutSteps"] == ["details", "tip", "payMethod"]
+    assert C.resolve({"payment": {"checkoutSteps": ["details"]}})["payment"]["checkoutSteps"] == ["details", "payMethod"]
+    # The expiry's range, the kitchen switch, the texts.
+    _c, errors = C.validate_layer({"payment": {"cashAtTillExpiryMin": 1, "cashAtTillKitchenBeforePay": "yes"}})
+    got = {e.path: e.code for e in errors}
+    assert got["payment.cashAtTillExpiryMin"] == "out_of_range" and "payment.cashAtTillKitchenBeforePay" in got
+    for key in ("payMethodTitle", "payCashLabel", "remainingToPay", "voucherOffline", "cashSlipTitle", "cashSlipFooter", "cashSlipPending", "cashDoneTitle", "stepPayMethod"):
+        assert key in C.TEXT_KEYS
+
+
+def test_split_card_is_a_method_off_by_default_that_pays_what_a_voucher_leaves(w):
+    """"פיצול תשלום בכרטיסים" (§23.7): listed like the others, in any place; never on by itself."""
+    assert "split_card" in C.PAYMENT_METHODS and "split_card" in C.REMAINDER_METHODS
+    assert C.DEFAULT_CONFIG["payment"]["methods"] == ["card"]
+    assert C.limits()["enums"]["paymentMethods"][-1] == "split_card"
+    # Its place in the list is the tile's place; alone, or beside a voucher, it is enough.
+    for methods in (["split_card"], ["voucher", "split_card"], ["cash_at_till", "split_card", "card"]):
+        assert C.validate_config(C.resolve({"payment": {"methods": methods}})) == [], methods
+        assert C.resolve({"payment": {"methods": methods}})["payment"]["methods"] == methods
+    # Alone it is not the card: "איך תרצו לשלם?" is asked.
+    assert C.step_mode(C.resolve({"payment": {"methods": ["split_card"]}}), "payMethod") == "required"
+
+
+def test_split_card_options_defaults_ranges_and_something_to_offer(w):
+    defaults = {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000}
+    assert C.DEFAULT_CONFIG["payment"]["splitCard"] == defaults
+    # A config that never had the key resolves to the defaults.
+    assert C.resolve({"payment": {"methods": ["card", "split_card"]}})["payment"]["splitCard"] == defaults
+    assert C.limits()["payment"]["splitCard"] == {"counts": [2, 3, 4], "minPerCardAgorot": {"min": 100, "max": 100000}}
+    # A layer: the counts stored sorted, each once; a partial object merges over the parent's.
+    cleaned, errors = C.validate_layer({"payment": {"splitCard": {"counts": [4, 2]}}})
+    assert errors == [] and cleaned == {"payment": {"splitCard": {"counts": [2, 4]}}}
+    assert C.resolve(cleaned)["payment"]["splitCard"] == {"counts": [2, 4], "otherAmount": True, "minPerCardAgorot": 1000}
+    # Only "סכום אחר": no equal numbers at all.
+    only_other = {"payment": {"splitCard": {"counts": [], "otherAmount": True, "minPerCardAgorot": 100}}}
+    assert C.validate_config(C.merge(C.default_config(), only_other)) == []
+
+    def codes(layer):
+        _c, errs = C.validate_layer(layer)
+        return {e.path: e.code for e in errs}
+
+    assert codes({"payment": {"splitCard": {"counts": [1]}}}) == {"payment.splitCard.counts[0]": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"counts": [5]}}}) == {"payment.splitCard.counts[0]": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"counts": [2, 2]}}}) == {"payment.splitCard.counts[1]": "duplicate"}
+    assert codes({"payment": {"splitCard": {"counts": ["2"]}}}) == {"payment.splitCard.counts[0]": "invalid_type"}
+    assert codes({"payment": {"splitCard": {"minPerCardAgorot": 99}}}) == {"payment.splitCard.minPerCardAgorot": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"minPerCardAgorot": 100001}}}) == {"payment.splitCard.minPerCardAgorot": "out_of_range"}
+    assert codes({"payment": {"splitCard": {"otherAmount": "yes"}}}) == {"payment.splitCard.otherAmount": "invalid_type"}
+    assert codes({"payment": {"splitCard": {"cards": [2]}}}) == {"payment.splitCard.cards": "unknown_key"}
+    assert codes({"payment": {"splitCard": {"counts": [2], "otherAmount": False, "minPerCardAgorot": 100000}}}) == {}
+    # Nothing to offer: no number of cards and no "סכום אחר".
+    nothing = {"payment": {"splitCard": {"counts": [], "otherAmount": False}}}
+    got = {e.path: e.code for e in C.validate_config(C.merge(C.default_config(), nothing))}
+    assert got == {"payment.splitCard.counts": "splitCardNoOption"}
+    # …and what a kiosk gets is repaired when two levels' changes leave it so.
+    assert C.resolve({"payment": {"splitCard": {"counts": []}}}, {"payment": {"splitCard": {"otherAmount": False}}})[
+        "payment"]["splitCard"] == {"counts": [2, 3, 4], "otherAmount": False, "minPerCardAgorot": 1000}
+
+
+def test_split_card_saved_on_a_kiosk_keeps_what_it_saved(w):
+    def put(overrides):
+        KR.put_settings(
+            body=KioskSettingsIn(overrides=overrides),
+            level="machine", scope_id=w.kiosk.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        w.db.commit()
+
+    # Before anything is saved: off, the defaults.
+    got = C.effective_config(w.db, w.kiosk)["payment"]
+    assert "split_card" not in got["methods"] and got["splitCard"]["counts"] == [2, 3, 4]
+    put({"payment": {"methods": ["voucher", "split_card"], "splitCard": {"counts": [3, 2], "otherAmount": False, "minPerCardAgorot": 2500}}})
+    stored = C.layer_row(w.db, "machine", w.kiosk.id).overrides["payment"]
+    assert stored["methods"] == ["voucher", "split_card"]
+    assert stored["splitCard"] == {"counts": [2, 3], "otherAmount": False, "minPerCardAgorot": 2500}
+    got = C.effective_config(w.db, w.kiosk)["payment"]
+    assert got["methods"] == ["voucher", "split_card"] and got["splitCard"] == stored["splitCard"]
+    # Refused whole: nothing to offer.
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as refused:
+        put({"payment": {"methods": ["card", "split_card"], "splitCard": {"counts": [], "otherAmount": False}}})
+    assert refused.value.status_code == 422
+    assert {(e["path"], e["code"]) for e in refused.value.detail["errors"]} == {("payment.splitCard.counts", "splitCardNoOption")}
+    assert C.effective_config(w.db, w.kiosk)["payment"]["splitCard"]["counts"] == [2, 3]
+
+
+def test_the_dashboard_sees_where_an_order_stands_and_open_ones_are_not_sales(w):
+    post(w, order("open-1"))
+    post(w, order("paid-1"))
+    paid(w, w.till, "paid-1")
+    from app.services import kiosk_control as KC
+
+    rows = KC.list_orders(w.db, w.admin, w.kiosk, date(2026, 10, 7))
+    by = {r["localId"]: r for r in rows}
+    assert by["open-1"]["payAtTill"] is True and by["open-1"]["openState"] == "open" and by["open-1"]["dueAgorot"] == 6200
+    assert by["paid-1"]["openState"] == "paid" and by["paid-1"]["paidBy"] == "קופה 1 · דנה"
+
+# ── The cloud's price: the basket priced again ────────────────────────────────
+
+
+@pytest.fixture
+def m(w):
+    """Sauces (one free), a hotdog meal with a drink at +₪3, and a lunch menu selling the hotdog at ₪22."""
+    t = w.tenant.id
+    w.sauces = ModifierGroup(id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, name="רטבים", kind="addon",
+                             free_count=1, allow_quantity=True, allow_pre=True, sort_order=0)
+    w.db.add(w.sauces)
+    w.db.flush()
+    w.chili = ModifierOption(id=uuid.uuid4(), group_id=w.sauces.id, name="צ'ילי", price=Decimal("2"), sort_order=0)
+    w.aioli = ModifierOption(id=uuid.uuid4(), group_id=w.sauces.id, name="איולי", price=Decimal("3"), sort_order=1)
+    w.db.add_all([w.chili, w.aioli])
+    w.meal = Product(
+        id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, category_id=w.hotdog.category_id,
+        catalog_level=CatalogLevel.GLOBAL, name="ארוחת נקניקייה", price=40, sku="sku-meal",
+    )
+    w.db.add(w.meal)
+    w.db.flush()
+    w.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=w.shop.id, global_product_id=w.meal.id, is_listed=True))
+    w.slot = MealSlot(id=uuid.uuid4(), tenant_id=t, product_id=w.meal.id, name="שתייה", quantity=1, min_select=1, max_select=1)
+    w.db.add(w.slot)
+    w.db.flush()
+    w.db.add(MealSlotOption(id=uuid.uuid4(), slot_id=w.slot.id, product_id=w.drink.id, upcharge=Decimal("3"), is_default=True))
+    w.lunch = CatalogMenu(id=uuid.uuid4(), tenant_id=t, company_id=w.company.id, name="צהריים", channel="both", always=True)
+    w.db.add(w.lunch)
+    w.db.flush()
+    w.db.add(CatalogMenuProduct(id=uuid.uuid4(), menu_id=w.lunch.id, product_id=w.hotdog.id, sort_order=0, price=Decimal("22")))
+    w.db.add(CatalogMenuAssignment(id=uuid.uuid4(), tenant_id=t, menu_id=w.lunch.id, level="shop", target_id=w.shop.id))
+    w.db.commit()
+    return w
+
+
+def sauce(option, qty=1, pre=None):
+    return {"groupId": str(option.group_id), "optionId": str(option.id), "qty": qty, "pre": pre}
+
+
+def held(*lines):
+    """The till's held sale, as the kiosks write it (client/src/lib/kioskWebOrders.ts heldSaleCodec)."""
+    return {
+        "codec": json.dumps({
+            "cartId": "c1",
+            "lines": [
+                {
+                    "id": key, "quantity": qty, "unitPrice": unit, "discount": 0, "discountType": None, "notes": None,
+                    "product": json.dumps({"id": str(p.id), "cloudId": str(p.id), "name": p.name, "price": base}),
+                    "details": details,
+                }
+                for key, p, qty, unit, base, details in lines
+            ],
+        }),
+        "bon": {"mode": "routing", "printerId": None, "copies": 1},
+        "fulfillment": "BON",
+    }
+
+
+def test_a_basket_the_cloud_prices_the_same_is_taken(m):
+    # Two sauces, one free — the cheaper one (chili): the aioli's ₪3 is charged.
+    hotdog = (m.hotdog, 1, 2800, 2500, {"v": 1, "basePrice": 25, "modifiers": [sauce(m.aioli), sauce(m.chili)]})
+    drink = (m.drink, 2, 1200, 1200, None)
+    out = post(m, order(cart=held(("l1",) + hotdog, ("l2",) + drink), customerWaiting=True))
+    assert out["accepted"] == ["o-1"] and out["rejected"] == []
+    assert "priceCheck" not in row(m).cart
+
+
+def test_a_price_the_cloud_does_not_hold_is_refused_while_the_customer_is_at_the_kiosk(m):
+    before = m.db.query(KioskOrder).count()
+    cart = held(
+        # The aioli sent free, though the chili is the free one: the cloud charges ₪3.
+        ("l1", m.hotdog, 1, 2500, 2500, {"v": 1, "basePrice": 25, "modifiers": [sauce(m.aioli), sauce(m.chili)]}),
+        # A base price nobody set ("הרבה" doubles nothing here: no sauce).
+        ("l2", m.drink, 1, 500, 500, None),
+        ("l3", m.drink, 1, 1200, 1200, None),
+    )
+    out = post(m, order(cart=cart, customerWaiting=True), now=T0 + timedelta(minutes=2))
+    assert out["accepted"] == []
+    (refused,) = out["rejected"]
+    assert refused["localId"] == "o-1" and refused["reason"] == S.PRICE_CHANGED == "price_changed"
+    got = {l["key"]: (l["fromAgorot"], l["toAgorot"], l["reason"]) for l in refused["lines"]}
+    assert got == {"l1": (2500, 2800, "price"), "l2": (500, 1200, "price")}
+    assert m.db.query(KioskOrder).count() == before
+    # "הרבה" doubles a sauce's price before the free one is chosen; a group without "pre" ignores it.
+    extra = held(("l1", m.hotdog, 1, 2500 + 400, 2500, {"v": 1, "modifiers": [sauce(m.chili, pre="extra"), sauce(m.aioli)]}))
+    assert post(m, order("o-2", cart=extra, customerWaiting=True))["accepted"] == ["o-2"]
+
+
+def test_what_the_cloud_cannot_price_is_named(m):
+    gone = Product(id=uuid.uuid4(), tenant_id=m.tenant.id, company_id=m.company.id, category_id=m.hotdog.category_id,
+                   catalog_level=CatalogLevel.GLOBAL, name="מנה שנמחקה", price=30, sku="sku-gone")
+    other = ModifierOption(id=uuid.uuid4(), group_id=m.sauces.id, name="ישן", price=Decimal("1"), is_active=False)
+    m.db.add(other)
+    m.db.commit()
+    cart = held(
+        ("l1", gone, 1, 3000, 3000, None),
+        ("l2", m.hotdog, 1, 2600, 2500, {"v": 1, "modifiers": [sauce(other)]}),
+        ("l3", m.meal, 1, 4000, 4000, {"v": 1, "meal": {"productId": str(m.meal.id), "components": [
+            {"slotId": str(uuid.uuid4()), "productId": str(m.drink.id), "upcharge": 0, "modifiers": []}]}}),
+    )
+    (refused,) = post(m, order(cart=cart, customerWaiting=True))["rejected"]
+    got = {l["key"]: (l["toAgorot"], l["reason"]) for l in refused["lines"]}
+    assert got == {"l1": (None, "not_in_catalog"), "l2": (None, "choice_gone"), "l3": (None, "meal_changed")}
+
+
+def test_a_menus_price_and_a_meals_upcharge_are_the_clouds_too(m):
+    # "תפריטים": the hotdog at the lunch menu's ₪22 (or the catalog's ₪25), never another price.
+    meal = {"v": 1, "meal": {"productId": str(m.meal.id), "components": [
+        {"slotId": str(m.slot.id), "productId": str(m.drink.id), "upcharge": 3, "modifiers": []}]}}
+    cart = held(("l1", m.hotdog, 1, 2200, 2200, None), ("l2", m.hotdog, 1, 2500, 2500, None), ("l3", m.meal, 1, 4300, 4000, meal))
+    assert post(m, order(cart=cart, customerWaiting=True))["accepted"] == ["o-1"]
+    # The drink's +₪3 left out of the meal: refused with the cloud's ₪43.
+    cart = held(("l1", m.meal, 1, 4000, 4000, meal))
+    (refused,) = post(m, order("o-2", cart=cart, customerWaiting=True))["rejected"]
+    assert [(l["fromAgorot"], l["toAgorot"]) for l in refused["lines"]] == [(4000, 4300)]
+
+
+def test_an_order_whose_customer_may_hold_the_slip_is_taken_with_the_clouds_verdict(m):
+    cart = held(("l1", m.drink, 1, 500, 500, None))
+    # Placed ten minutes ago (the kiosk was offline): the customer holds the slip — taken, the verdict kept.
+    out = post(m, order(cart=cart, created=T0, customerWaiting=True), now=T0 + timedelta(minutes=10))
+    assert out["accepted"] == ["o-1"]
+    check = row(m).cart["priceCheck"]
+    assert check["ok"] is False and check["lines"][0]["toAgorot"] == 1200 and check["checkedAt"]
+    (listed_order,) = listed(m, now=T0 + timedelta(minutes=10))
+    assert listed_order["cart"]["priceCheck"]["lines"][0]["key"] == "l1"
+    # A retry, or a kiosk that does not say its customer waits (the Android kiosk today): taken, the verdict kept.
+    assert post(m, order("o-2", cart=cart))["accepted"] == ["o-2"]
+    assert row(m, "o-2").cart["priceCheck"]["ok"] is False
+    # A till on the shop's LAN already took the money: history, never refused.
+    paid_on_lan = order("o-3", cart=cart, state="paid", paidByName="קופה ראשית", paidTransactionId="tx-lan", customerWaiting=True)
+    assert post(m, paid_on_lan)["accepted"] == ["o-3"]
+
+
+def test_an_order_with_no_service_reaches_the_tills_with_none(w):
+    """"ללא סוג שירות" (general.serviceMode = none): no service, and the tills hear of none."""
+    out = post(w, order("o-none", serviceType=None))
+    assert out["accepted"] == ["o-none"] and out["rejected"] == []
+    o = next(x for x in listed(w) if x["localId"] == "o-none")
+    assert o["serviceType"] is None

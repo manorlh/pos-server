@@ -94,7 +94,17 @@ def expire_overdue(db: Session, *, now: Optional[datetime] = None) -> int:
         req.error_code = "expired"
         req.error_message = "The till did not close its shift in time"
         req.failed_at = now
+    if rows:
+        db.flush()
+        _settle_kiosk_commands(db, [r.id for r in rows])
     return len(rows)
+
+
+def _settle_kiosk_commands(db: Session, request_ids) -> None:
+    """A kiosk's "סגירת משמרת" command follows the request it made (kiosk_z.settle_commands)."""
+    from app.services import kiosk_z
+
+    kiosk_z.settle_commands(db, request_ids=request_ids)
 
 
 def reconcile(db: Session, req: ShiftCloseRequest, *, now: Optional[datetime] = None) -> bool:
@@ -142,7 +152,7 @@ def _live_z_item(db: Session, machine_id: uuid.UUID) -> Optional[ZRunItem]:
 
 
 def request_close(
-    db: Session, user: User, machine: POSMachine, *, now: Optional[datetime] = None
+    db: Session, user: User, machine: POSMachine, *, wait_for_rest: bool = False, now: Optional[datetime] = None
 ) -> Tuple[ShiftCloseRequest, bool]:
     """
     Ask `machine` to close its open shift. Returns `(request, created)`.
@@ -165,6 +175,11 @@ def request_close(
 
     for existing in _pending_query(db, machine.id).order_by(ShiftCloseRequest.created_at.asc()).all():
         if not reconcile(db, existing, now=now):
+            if wait_for_rest and not existing.wait_for_rest:
+                # Remote control asked too: the pending one waits for rest from now on.
+                existing.wait_for_rest = True
+                db.flush()
+                _send(machine, existing, user, now)
             return existing, False
 
     open_shift = find_open_shift(db, machine.id)
@@ -184,6 +199,7 @@ def request_close(
         created_by_user_id=user.id,
         status=S.WAITING_CLOSE,
         expires_at=now + timedelta(hours=CLOSE_REQUEST_TTL_HOURS),
+        wait_for_rest=bool(wait_for_rest),
     )
     _name_shift(db, req, shift_id)
     db.add(req)
@@ -204,6 +220,7 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
         str(req.id),
         str(named_shift_id(req)) if named_shift_id(req) else None,
         z_runs._initiator(user),
+        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
     )
     req.sent_at = now
 
@@ -218,6 +235,7 @@ def cancel(db: Session, req: ShiftCloseRequest) -> ShiftCloseRequest:
     req.status = S.CANCELLED
     req.error_code = "cancelled"
     db.flush()
+    _settle_kiosk_commands(db, [req.id])
     return req
 
 
@@ -292,6 +310,8 @@ def apply_ack(
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid phase")
     db.flush()
+    if req.status not in PENDING_CLOSE_REQUEST_STATUSES:
+        _settle_kiosk_commands(db, [req.id])
     return req
 
 
@@ -316,6 +336,7 @@ def on_shift_close_accepted(
             done.append(req)
     if done:
         db.flush()
+        _settle_kiosk_commands(db, [r.id for r in done])
     return done
 
 

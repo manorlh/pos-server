@@ -6,7 +6,9 @@ Dashboard (the shop page's "מצב הדרכה" and "תפריט דמה" cards):
 
 GET  /shops/{shop_id}/training-mode                  → the flag, who / when, the
                                                        quarantined counts, the log
-POST /shops/{shop_id}/training-mode/enable           → turn it on; 409 `real_shift_open`
+POST /shops/{shop_id}/training-mode/enable           → turn it on; 409 `training_not_available`
+                                                       (no device implements it yet), 409
+                                                       `real_shift_open`
 GET  /shops/{shop_id}/training-mode/disable-preview  → what leaving would delete, and
                                                        what holds it back (blockers)
 POST /shops/{shop_id}/training-mode/disable          → `{confirmName, removeDemoMenu, force}`
@@ -49,6 +51,9 @@ from app.models.shop import Shop
 from app.models.user import User
 from app.services import demo_menu as DM
 from app.services import training_mode as TM
+
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN
 
 router = APIRouter(tags=["training-mode"])
 
@@ -215,7 +220,7 @@ def get_training_report(
 # ── The till's training documents ─────────────────────────────────────────────
 
 
-@router.post("/sync/{machine_id}/training-documents")
+@router.post("/sync/{machine_id}/training-documents", dependencies=FISCAL_MACHINE_TOKEN)
 def post_training_documents(
     machine_id: str,
     body: TrainingDocumentsIn,

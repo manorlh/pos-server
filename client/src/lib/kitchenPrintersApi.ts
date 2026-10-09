@@ -3,12 +3,14 @@
  * docs/SPEC_PROMOTIONS_TABLES_SHOPZ.md §4.
  */
 import { api } from './api';
+import type { BonTillLocalPrinter, LocalConnection } from './kioskBonPrinters';
 import type { TillParameterValueType } from './types';
 
 export type PrinterConnectionType = 'network' | 'bluetooth' | 'cloud' | 'till' | 'usb';
 /** kitchen — "מדפסת בונים" (tickets, by the routing); receipt — "מדפסת חשבוניות" (bills, receipts, the drawer). */
 export type PrinterPurpose = 'kitchen' | 'receipt';
-export type PrinterHostConnection = 'till' | 'network' | 'bluetooth';
+/** How a cloud printer's host till reaches it: its own head, a network / Bluetooth printer, or its own USB port. */
+export type PrinterHostConnection = 'till' | 'network' | 'bluetooth' | 'usb';
 
 export interface KitchenPrinter {
   id: string;
@@ -30,6 +32,8 @@ export interface KitchenPrinter {
   machineId: string | null;
   machineName: string | null;
   paperWidth: 58 | 80;
+  /** "רוחב הדפסה" in dots; null — by the paper (58 mm → 384, 80 mm → 576). */
+  printWidthDots?: PrintWidthDots | null;
   copies: number;
   cutPaper: boolean;
   beep: boolean;
@@ -37,6 +41,10 @@ export interface KitchenPrinter {
   sortOrder: number;
   updatedAt: string | null;
 }
+
+/** How many dots wide the printer's head prints; a narrower head than the ticket skews it. */
+export type PrintWidthDots = 576 | 512 | 432 | 384;
+export const PRINT_WIDTHS: PrintWidthDots[] = [576, 512, 432, 384];
 
 export interface KitchenPrinterInput {
   name: string;
@@ -52,6 +60,7 @@ export interface KitchenPrinterInput {
   areaId?: string | null;
   machineId?: string | null;
   paperWidth: 58 | 80;
+  printWidthDots?: PrintWidthDots | null;
   copies: number;
   cutPaper: boolean;
   beep: boolean;
@@ -233,6 +242,29 @@ export async function fetchKitchenPrinters(shopId: string): Promise<KitchenPrint
   return data;
 }
 
+/** A till's own printer (built-in head, USB, Bluetooth), by name — the kiosk's "מדפסת בונים" (SPEC_KIOSK §16.9). */
+export type TillLocalPrinter = BonTillLocalPrinter & {
+  btAddress: string | null;
+  paperWidth: number | null;
+  printerStatus: string | null;
+  printerName: string | null;
+};
+
+export async function fetchTillLocalPrinters(shopId: string): Promise<TillLocalPrinter[]> {
+  const { data } = await api.get<{ printers: TillLocalPrinter[] }>(`/shops/${shopId}/till-local-printers`);
+  return data.printers ?? [];
+}
+
+/** The hosted printer behind a till's own printer: made, or reused (and switched on). */
+export async function ensureTillLocalPrinter(
+  shopId: string,
+  machineId: string,
+  connection: LocalConnection,
+): Promise<KitchenPrinter> {
+  const { data } = await api.post<KitchenPrinter>(`/shops/${shopId}/till-local-printers`, { machineId, connection });
+  return data;
+}
+
 export async function createKitchenPrinter(shopId: string, body: KitchenPrinterInput): Promise<KitchenPrinter> {
   const { data } = await api.post<KitchenPrinter>(`/shops/${shopId}/printers`, body);
   return data;
@@ -247,9 +279,17 @@ export async function deleteKitchenPrinter(id: string): Promise<void> {
   await api.delete(`/printers/${id}`);
 }
 
-/** A test ticket for the printer's host, or for every till that uses it. */
-export async function testKitchenPrinter(id: string): Promise<PrintJob[]> {
-  const { data } = await api.post<{ jobs: PrintJob[] }>(`/printers/${id}/test`, {});
+/**
+ * A test ticket for the printer's host, or for every till that uses it. With `idempotencyKey`
+ * the POST carries an `Idempotency-Key` (lib/deviceCommandsStore.ts `idempotencyHeaders`): a
+ * retry with the same key never makes a second test.
+ */
+export async function testKitchenPrinter(id: string, idempotencyKey?: string): Promise<PrintJob[]> {
+  const { data } = await api.post<{ jobs: PrintJob[] }>(
+    `/printers/${id}/test`,
+    {},
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  );
   return data.jobs ?? [];
 }
 

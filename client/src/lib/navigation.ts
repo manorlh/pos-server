@@ -18,10 +18,14 @@ import type { ElementType } from 'react';
 import {
   Activity,
   BadgePercent,
+  Banknote,
   BarChart3,
+  BellRing,
   BookOpenCheck,
+  BookOpenText,
   Boxes,
   Calculator,
+  CalendarClock,
   ChefHat,
   ClipboardList,
   Building2,
@@ -33,16 +37,22 @@ import {
   FileBarChart,
   FilePlus2,
   FileText,
+  GitCompareArrows,
+  ListChecks,
+  RadioTower,
   Grid3x3,
   IdCard,
+  KeyRound,
   LayoutDashboard,
   LayoutGrid,
+  LayoutTemplate,
   Layers,
   Lightbulb,
   ListFilter,
   ListOrdered,
   Megaphone,
   Monitor,
+  MonitorSmartphone,
   Package,
   Package2,
   Palette,
@@ -52,6 +62,7 @@ import {
   QrCode,
   Receipt,
   Scale,
+  ScrollText,
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
@@ -66,6 +77,13 @@ import {
   UtensilsCrossed,
   Wallet,
   WifiOff,
+  Workflow,
+  MonitorPlay,
+  MessageSquareText,
+  HeartHandshake,
+  HeartPulse,
+  TabletSmartphone,
+  Target,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -108,9 +126,19 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/compare', labelKey: 'compareBoard', icon: BarChart3 },
       // What to look at and do: dead items, weak hours, the menu matrix, forecast, outliers.
       { href: '/dashboard/insights', labelKey: 'insights', icon: Lightbulb },
+      // "ביצועי קיוסקים": the kiosks' funnel, where customers leave, time to order, upsell
+      // and payments. Its own exact href, so it — not "insights" — lights up on its route.
+      { href: '/dashboard/insights/kiosks', labelKey: 'kioskInsights', icon: TabletSmartphone },
+      // "מצב אירוע חי": an event's big screen (feat/event-live).
+      { href: '/dashboard/live-event', labelKey: 'liveEvent', icon: MonitorPlay, matchPrefixes: ['/dashboard/live-event/'] },
+      // "התראות": the phone (push) alerts — history, subscribing this phone, preferences (feat/event-live).
+      { href: '/dashboard/alerts', labelKey: 'alerts', icon: BellRing },
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
+      // "הודעות": the SMS log (a shop manager reads their shop's), templates and the 019
+      // account (company managers and up — the page hides what the role cannot use).
+      { href: '/dashboard/notifications', labelKey: 'notifications', icon: MessageSquareText, gate: 'settingsWrite' },
     ],
   },
   {
@@ -128,6 +156,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // The menu layer: modifier groups, note chips and courses; and the till's upsells.
       { href: '/dashboard/modifiers', labelKey: 'modifiers', icon: ChefHat },
       { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
+      // "תפריטים": sales menus by schedule (בוקר, צהריים, הפי האוור…) and where they apply.
+      { href: '/dashboard/menus', labelKey: 'catalogMenus', icon: BookOpenText },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.
@@ -163,6 +193,11 @@ export const NAV_SECTIONS: NavSection[] = [
       // Sits next to the closing reports it is made of, so the relationship is
       // obvious: this is a roll-up of those, not a separate kind of document.
       { href: '/dashboard/day-summary', labelKey: 'daySummary', icon: CalendarRange },
+      // The report center (docs/SPEC_REPORTS.md): "דוח שמכיל הכל", the reconciliation of
+      // documents ↔ Zs ↔ card transmissions, and the transmissions across tills.
+      { href: '/dashboard/all-in-one', labelKey: 'allInOne', icon: ListChecks },
+      { href: '/dashboard/reconciliation', labelKey: 'reconciliation', icon: GitCompareArrows },
+      { href: '/dashboard/transmissions', labelKey: 'transmissions', icon: RadioTower },
       // Temporary events: a shop's tills grouped for a report only, with the producer's
       // report, reconciliations and the confirmation that freezes it (docs/SPEC_EVENTS.md).
       {
@@ -191,6 +226,10 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/cash-variance', labelKey: 'cashVariance', icon: Scale },
       // Discounts, refunds, cancelled baskets, long orders, high tips… for review.
       { href: '/dashboard/exceptions', labelKey: 'exceptions', icon: ShieldAlert },
+      // "יומן חריגות": every detected exception from every source, handled with a note, with its SMS.
+      { href: '/dashboard/exceptions-log', labelKey: 'exceptionsLog', icon: ScrollText },
+      // "מגירת מזומן": every drawer opening and cash movement, KPIs and a shift's timeline.
+      { href: '/dashboard/cash-drawer', labelKey: 'cashDrawer', icon: Banknote },
       { href: '/dashboard/tax-reports', labelKey: 'taxReports', icon: FileText },
       // The books: the same super-admin / distributor / company-manager set the
       // accounting router enforces, which is exactly the `branding` gate's.
@@ -227,6 +266,19 @@ export const NAV_SECTIONS: NavSection[] = [
       // The floor: zones and tables (map or grid), open tables now, the tables report and
       // cancellation reasons — the shop's managers.
       { href: '/dashboard/tables', labelKey: 'tables', icon: UtensilsCrossed, gate: 'settingsWrite' },
+      // Customer self-order kiosks: tills turned into kiosks, their status, remote control,
+      // and their look and behaviour per company / shop / kiosk — the machine-admin roles.
+      { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      // "עיצוב קופה": the tills' order screens — template per device, layout, menu order,
+      // action bar, colours, texts, fields — per company / shop / point of sale / till, with a
+      // live preview; the same roles as the kiosks page.
+      { href: '/dashboard/till-design', labelKey: 'tillDesign', icon: LayoutTemplate, gate: 'settingsWrite' },
+      // "תקינות מכשירים": each kiosk's parts (app, terminal, printer, till link, KDS, media,
+      // uploads) live, and its open alerts — the same roles as the kiosks page.
+      { href: '/dashboard/kiosks/health', labelKey: 'deviceHealth', icon: HeartPulse, gate: 'settingsWrite' },
+      // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
+      // Every role but the cashier reads (the server scopes it); managers correct.
+      { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },
     ],
   },
   {
@@ -240,7 +292,13 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: IdCard,
         gate: 'canManagePosUsers',
       },
+      // "תפקידים והרשאות": what each till user may do — roles × permissions (tri-state), the
+      // users' roles, the cash drawer's parameters and the audit (docs/SPEC_ROLES_PERMISSIONS.md).
+      { href: '/dashboard/till-roles', labelKey: 'tillRoles', icon: KeyRound, gate: 'canManagePosUsers' },
       { href: '/dashboard/branding', labelKey: 'branding', icon: Palette, gate: 'branding' },
+      // "מועדון לקוחות": one club per company — the server's CLUB_ADMIN_ROLES, which are
+      // exactly the `branding` gate's super-admin / distributor / company-manager set.
+      { href: '/dashboard/club', labelKey: 'club', icon: HeartHandshake, gate: 'branding' },
       // Account mapping for the accounting export; same roles as the export itself.
       {
         href: '/dashboard/accounting-settings',
@@ -256,6 +314,15 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: SlidersVertical,
         gate: 'settingsWrite',
       },
+      // "יעדים": daily / event sales targets per shop, point of sale or cashier, with the pace.
+      { href: '/dashboard/targets', labelKey: 'targets', icon: Target, gate: 'settingsWrite' },
+      // "התראות SMS על חריגות": the alert rules per company / shop (dry run unless configured).
+      {
+        href: '/dashboard/exception-alerts',
+        labelKey: 'exceptionAlerts',
+        icon: BellRing,
+        gate: 'settingsWrite',
+      },
       {
         href: '/dashboard/payment-methods',
         labelKey: 'paymentMethods',
@@ -269,6 +336,9 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Printer,
         gate: 'settingsWrite',
       },
+      // "תצורת עבודה" (direct sale / order process, targets) per level, and the KDS screens.
+      { href: '/dashboard/workflow', labelKey: 'workflowMode', icon: Workflow, gate: 'settingsWrite' },
+      { href: '/dashboard/kds', labelKey: 'kds', icon: MonitorPlay, gate: 'settingsWrite' },
       // Global definitions every tenant's tills read; only a super admin sets them.
       {
         href: '/dashboard/till-parameters',
@@ -299,6 +369,40 @@ export const NAV_SECTIONS: NavSection[] = [
  * The entry a path belongs to. Exact match wins; otherwise the longest declared
  * prefix. `/dashboard` never prefix-matches, or it would claim every route.
  */
+/**
+ * "תצוגת מנהל פשוטה": the menu of a manager who runs one place (a shop, an area, an event) —
+ * the owner: "לתת יוזר למנהל, בלי מיליון לשוניות". Three groups: הניהול שלי (the cockpit, the
+ * home page), a short list of reports, and the settings they may change. Every entry still
+ * passes the same gates as the full menu (roles, "הרשאות", "הרשאות דשבורד"); the full menu
+ * stays for owners and admins, and behind the profile's switch.
+ */
+export const SIMPLE_NAV_SECTIONS: NavSection[] = [
+  {
+    id: 'mine',
+    labelKey: 'sections.mine',
+    items: [{ href: '/dashboard', labelKey: 'cockpit', icon: LayoutDashboard }],
+  },
+  {
+    id: 'simpleReports',
+    labelKey: 'sections.reports',
+    items: [
+      { href: '/dashboard/transactions', labelKey: 'transactions', icon: Receipt },
+      { href: '/dashboard/z-reports', labelKey: 'zReports', icon: FileText },
+      { href: '/dashboard/live-items', labelKey: 'liveItems', icon: Activity },
+    ],
+  },
+  {
+    id: 'simpleSettings',
+    labelKey: 'sections.settings',
+    items: [
+      { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
+      { href: '/dashboard/stock', labelKey: 'stock', icon: Boxes },
+      { href: '/dashboard/kiosks', labelKey: 'kiosks', icon: MonitorSmartphone, gate: 'settingsWrite' },
+      { href: '/dashboard/profile', labelKey: 'profile', icon: User },
+    ],
+  },
+];
+
 export function findNavEntry(pathname: string | null | undefined): NavItem | undefined {
   if (!pathname) return undefined;
   const all = NAV_SECTIONS.flatMap((section) => section.items);

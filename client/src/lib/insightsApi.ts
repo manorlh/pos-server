@@ -25,6 +25,8 @@ export interface InsightScopeParams {
   to?: string;
   /** Without from/to: the complete days ending yesterday. */
   days?: number;
+  /** A report event: its tills, window and days (the period is ignored). */
+  eventId?: string;
 }
 
 export interface InsightPeriod {
@@ -57,7 +59,8 @@ export type InsightSection =
   | 'baskets'
   | 'cashiers'
   | 'tables'
-  | 'customers';
+  | 'customers'
+  | 'anomalies';
 
 export interface InsightCard {
   id: string;

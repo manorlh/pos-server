@@ -36,6 +36,9 @@ class Category(Base):
     # The course its products' table lines are fired in by default (docs/SPEC_MENU_MODIFIERS.md
     # §8); null inherits the parent's. Not a key: a deleted course reads as none.
     course_id = Column(UUID(as_uuid=True), nullable=True)
+    # "מחייב אישור מנהל במכירה": every product here and in every category beneath it needs a
+    # manager's code at the till, and none of them is on a kiosk (app/services/restricted_items.py).
+    requires_manager_approval = Column(Boolean, default=False, nullable=False, server_default="false")
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
 

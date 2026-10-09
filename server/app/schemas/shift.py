@@ -93,7 +93,10 @@ class ShiftCloseIn(BaseModel):
     #: Every document of the shift. 409 until each one is on the cloud.
     transaction_ids: List[uuid.UUID] = Field(default_factory=list, alias="transactionIds")
     last_transaction_number: Optional[str] = Field(None, alias="lastTransactionNumber", max_length=100)
-    #: The till's own X figures. Stored for audit and compared; never used for a Z.
+    #: The till's own X figures. Stored for audit and compared; never used for a Z's sales.
+    #: One key feeds the drawer: `cardTipsFromDrawer` (card tips paid to staff out of the
+    #: drawer, present only when that till parameter was on), which a Z's expected cash
+    #: subtracts (app/services/z_builder.py `card_tips_from_drawer`); it is not compared.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
     #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.
@@ -184,6 +187,8 @@ class ShiftOut(BaseModel):
     # Filled on dashboard reads.
     machine_name: Optional[str] = Field(None, alias="machineName")
     shop_name: Optional[str] = Field(None, alias="shopName")
+    #: The till's register number in the shift's shop ("קופה 2"); null once it moved shops.
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     #: The till's area when the cloud created the shift (stamped, never updated).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
@@ -254,6 +259,11 @@ class LastClosedShift(BaseModel):
     #: The highest numeric document number the cloud holds from this machine (a JSON
     #: integer, the till's `Long`); null if none. Sent even when no shift was closed.
     highest_transaction_number: Optional[int] = Field(None, alias="highestTransactionNumber")
+    #: The same per number series — {"320": n, "330": n, "400": n} (-400 is in "400") —
+    #: for a till that numbers each document type on its own counter
+    #: (docs/SPEC_DOCUMENT_PREFIX.md). Null when the machine has no documents. An older
+    #: till reads only `highestTransactionNumber`, the max over every series.
+    highest_transaction_numbers: Optional[Dict[str, int]] = Field(None, alias="highestTransactionNumbers")
 
 
 class ShiftListResponse(BaseModel):

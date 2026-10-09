@@ -13,14 +13,16 @@ PUT  /sync/{machine_id}/categories/{id}/availability
 DELETE /sync/{machine_id}/products/{id}, /categories/{id}
                                                → refused (409): deactivate instead
 GET  /sync/{machine_id}/app-update             → the app release offered to this till
-GET  /sync/{machine_id}/app-update/{id}/apk    → its APK
+                                                 (?platform=windows for the Windows app,
+                                                 ?platform=kiosk_web for the kiosk's web bundle)
+GET  /sync/{machine_id}/app-update/{id}/apk    → its APK / Windows installer (alias …/file)
 POST /sync/{machine_id}/app-update/status      → how taking it is going
 """
 import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -61,7 +63,12 @@ from app.services.settings_merge import (
     effective_settings_updated_at,
     merge_all_settings_layers,
 )
-from app.services.payment_options import legacy_tip_flags, resolve_payment_options
+from app.services.payment_options import (
+    PAY_ORDER_KEY,
+    legacy_tip_flags,
+    resolve_pay_order,
+    resolve_payment_options,
+)
 from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
@@ -119,13 +126,14 @@ from app.services.shifts import (
     z_number_of,
 )
 from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
-from app.services.stock import effective_stock_updated_at, get_levels_for_shop
+from app.services.stock import effective_stock_updated_at, get_levels_for_shop, levels_for_machine
 from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
 from app.services import transmissions, transmit_requests
 from app.schemas.offline_authorization import OfflineAuthorizationIn
 from app.services import offline_authorizations
 from app.models.z_report import ZReport
 from app.services import z_print
+from app.services import failed_payments
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
 from app.schemas.till_parameter import TillParametersSyncResponse
 from app.services.till_parameters import till_parameters_for_machine
@@ -137,6 +145,9 @@ from app.services import till_z
 from app.routers.z_reports import z_detail_out
 
 logger = logging.getLogger(__name__)
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH
+
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
@@ -161,6 +172,11 @@ class CatalogSyncResponse(BaseModel):
     # only when the menu changed after `since` — absent means "keep what you have". An
     # older till ignores the key.
     menu: Optional[Dict[str, Any]] = None
+    # "תפריטים" (docs/SPEC_MENUS.md): the menus assigned along this till's chain, their
+    # schedules and assignments, and its fallback — the till works out which is active on
+    # its own clock. Full pull: always; delta: only when they changed after `since` —
+    # absent means "keep what you have". An older till ignores the key.
+    catalog_menus: Optional[Dict[str, Any]] = Field(None, alias="catalogMenus")
 
     class Config:
         populate_by_name = True
@@ -283,6 +299,10 @@ def get_catalog_sync(
             machine.tenant_id is not None
             and menu_service.include_menu(db, machine, review_pull.live_since)
         ) else None
+    # "תפריטים": live, or the shop's publication in review mode (app/services/catalog_menus.py).
+    from app.services import catalog_menus as catalog_menus_service
+
+    catalog_menus = catalog_menus_service.block_for_pull(db, machine, since_dt, review_pull)
 
     update_machine_sync_timestamp(db, mqid)
 
@@ -295,6 +315,7 @@ def get_catalog_sync(
         customers=customers,
         machine_catalog=machine_catalog_for_sync(machine),
         menu=menu,
+        catalog_menus=catalog_menus,
     )
 
 
@@ -508,6 +529,11 @@ def machine_create_cloud_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's (restricted_items.py).
+        requires_manager_approval=False,
+        dietary_tags=data.dietary_tags or None,
+        # "היכן הפריט נמכר" from the till's product dialog (app/services/sales_channel.py).
+        sales_channel=data.sales_channel,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
@@ -571,6 +597,8 @@ def machine_update_cloud_product(
     # rather than counted as a change to the chain's master record.
     general_item.check_general_item_update(product, updates)
     updates.pop("is_general", None)
+    # "מחייב אישור מנהל במכירה": the dashboard's alone — a till that echoes it changes nothing.
+    updates.pop("requires_manager_approval", None)
     if "is_listed" in updates and not updates["is_listed"]:
         general_item.refuse_general_item_unlist(product)
     # The item-ticket ("שובר") mode set from the till's catalog screen: written on the
@@ -775,6 +803,8 @@ def machine_create_cloud_category(
         color=data.color,
         image_url=data.image_url,
         parent_id=data.parent_id,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's.
+        requires_manager_approval=False,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
@@ -949,11 +979,15 @@ def machine_set_product_availability(
     target = _scope_target(machine, body.scope)
 
     if body.scope == "machine":
-        availability.set_machine_availability(db, target, product.id, body.active)
+        availability.set_machine_availability(
+            db, target, product.id, body.active, body.permanent, body.blocked_at
+        )
     elif body.scope == "area":
-        availability.set_area_availability(db, target, product.id, body.active)
+        availability.set_area_availability(
+            db, target, product.id, body.active, body.permanent, body.blocked_at
+        )
     else:
-        availability.set_shop_availability(row, body.active)
+        availability.set_shop_availability(row, body.active, body.permanent, body.blocked_at)
     _audit(
         db,
         machine=machine,
@@ -1073,17 +1107,52 @@ def machine_set_product_order(
 
 
 class PaymentTerminalIn(BaseModel):
-    """The till's Nayax pinpad on the network, as a manager typed it in at the till."""
+    """The till's Nayax pinpad, as a manager set it up at the till: on the network, or on its USB."""
 
-    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py.
-    host: str = Field(..., max_length=300)
+    model_config = {"populate_by_name": True}
+
+    #: An IPv4 address or a host name; validated in app/services/payment_terminal.py. Needed on
+    #: the network only ("" or absent with `connection` "usb").
+    host: Optional[str] = Field(None, max_length=300)
     #: SPICy's port; absent = 8080.
     port: Optional[int] = Field(None, ge=1, le=65535)
     #: SPICy's path; absent = "/SPICy".
     path: Optional[str] = Field(None, max_length=200)
+    #: "lan" (absent: as before) or "usb" — "חיבור USB": a Nayax C4 on the till's USB cable.
+    connection: Optional[str] = Field(None, max_length=10)
+    #: With "usb": the C4's USB ids "VVVV:PPPP" (`nayaxUsbDevice`); "" removes the till's own
+    #: (the first CDC-ACM device); absent leaves it as it is.
+    usb_device: Optional[str] = Field(None, alias="usbDevice", max_length=20)
 
 
-@router.put("/{machine_id}/payment-terminal")
+#: `PaymentTerminalIn.connection`: absent = the network, as before the USB choice.
+PAYMENT_TERMINAL_CONNECTIONS = ("lan", "usb")
+
+
+def _till_integration(db: Session, machine: POSMachine, own_settings: Any) -> str:
+    """What [machine] charges on with [own_settings] as its own layer (payment_integration.resolve)."""
+    from app.services import payment_integration as PI
+
+    shop = db.query(Shop).filter(Shop.id == machine.shop_id).first() if machine.shop_id else None
+    company = db.query(Company).filter(Company.id == shop.company_id).first() if shop is not None and shop.company_id else None
+    tenant = (
+        db.query(Tenant).filter(Tenant.id == company.tenant_id).first()
+        if company is not None and company.tenant_id
+        else None
+    )
+    area = get_area(db, getattr(machine, "area_id", None)) if shop is not None else None
+    layers = [
+        (level, getattr(entity, "settings", None))
+        for level, entity in (("tenant", tenant), ("company", company), ("shop", shop), ("area", area))
+        if entity is not None
+    ]
+    layers.append(("machine", own_settings))
+    return PI.resolve(
+        layers, bool(getattr(machine, "has_builtin_terminal", True)), synqpay_device=PI.is_synqpay_device(machine)
+    ).integration
+
+
+@router.put("/{machine_id}/payment-terminal", dependencies=FISCAL_SYNC_PATH)
 def machine_set_payment_terminal(
     machine_id: str,
     body: PaymentTerminalIn,
@@ -1092,27 +1161,65 @@ def machine_set_payment_terminal(
     db: Session = Depends(get_db),
 ):
     """
-    The address of the Nayax pinpad this till charges on, typed at the till: a till with
-    no card terminal of its own (a P18) asks for it before its first card payment.
-    Written to the till's own settings layer (`nayaxEnabled`, `nayaxDeviceHost`,
-    `nayaxDevicePort`, `nayaxSpicyPath`), where the dashboard's per-till settings show it
-    and can change it. A manager's write, gated like the till's other manager writes (a
-    signed-in manager, or a manager's grant). 422 with `host_invalid`, `host_required`,
-    `port_invalid` or `path_invalid` for an address the till must not be sent.
+    The Nayax pinpad this till charges on, set up at the till: a till with no card terminal
+    of its own (a P18) asks for it before its first card payment. A manager's write, gated
+    like the till's other manager writes (a signed-in manager, or a manager's grant), to the
+    till's own settings layer, where the dashboard's per-till settings show it and can change it.
+
+    * `connection` "lan" (or absent — as before): the address (`nayaxEnabled`, `nayaxDeviceHost`,
+      `nayaxDevicePort`, `nayaxSpicyPath`). A till that would still charge on a C4 on its USB
+      (`paymentIntegration` = `nayax_usb`, its own or inherited) is moved to `nayax_lan` on its
+      own layer. 422 with `host_invalid`, `host_required`, `port_invalid` or `path_invalid` for
+      an address the till must not be sent.
+    * `connection` "usb" ("חיבור USB"): `paymentIntegration` = `nayax_usb` on its own layer, no
+      address; `usbDevice` names the C4 (`nayaxUsbDevice`, 422 `usb_device_invalid`). One USB
+      terminal per till: 422 (the Hebrew reason as `detail`) while the till could also charge on
+      a SynqPay payment device on USB (app/services/payment_devices.py `usb_terminal_conflict`).
+    * Anything else: 422 `connection_invalid`.
     """
-    from app.services import payment_terminal, settings_notify
+    from app.services import payment_devices, payment_integration as PI, payment_terminal, settings_notify
     from app.services.settings_merge import patch_settings_json, utc_now
 
     _require_assigned_machine(machine)
+    connection = (body.connection or "lan").strip().lower()
+    if connection not in PAYMENT_TERMINAL_CONNECTIONS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="connection_invalid")
+    if connection == "usb":
+        patch: Dict[str, Any] = {PI.KEY: PI.NAYAX_USB}
+        if body.usb_device is not None:
+            try:
+                patch[PI.NAYAX_USB_DEVICE] = PI.validate_nayax_usb_device(body.usb_device)
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="usb_device_invalid")
+        after = patch_settings_json(machine.settings, patch)
+        conflict = payment_devices.usb_terminal_conflict(db, [machine], layer=("machine", machine.id, after))
+        if conflict is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=payment_devices.usb_terminal_message(conflict),
+            )
+        machine.settings = after
+        machine.settings_updated_at = utc_now()
+        usb_device = after.get(PI.NAYAX_USB_DEVICE)
+        logger.info(
+            "payment terminal set from till %s: Nayax on USB (%s) (user %s, till user %s)",
+            machine.id, usb_device or "first CDC-ACM device", actor.user_id, actor.pos_user_id,
+        )
+        db.commit()
+        settings_notify.notify_machine_settings(db, machine, reason="payment_terminal")
+        return {"connection": "usb", "paymentIntegration": PI.NAYAX_USB, "usbDevice": usb_device}
+
     try:
         host = payment_terminal.clean_pinpad_host(body.host)
         port = payment_terminal.clean_pinpad_port(body.port)
         path = payment_terminal.clean_pinpad_path(body.path)
     except payment_terminal.PinpadAddressError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.code)
-    machine.settings = patch_settings_json(
-        machine.settings, payment_terminal.pinpad_settings_patch(host, port, path)
-    )
+    after = patch_settings_json(machine.settings, payment_terminal.pinpad_settings_patch(host, port, path))
+    # Back from the cable to the network: the address alone would not move a till on `nayax_usb`.
+    if _till_integration(db, machine, after) == PI.NAYAX_USB:
+        after = patch_settings_json(after, {PI.KEY: PI.NAYAX_LAN})
+    machine.settings = after
     machine.settings_updated_at = utc_now()
     # No SyncLog row: its entity types are a database enum, and a new one is a migration.
     # The write is the till's own layer, and the log names who made it.
@@ -1125,12 +1232,66 @@ def machine_set_payment_terminal(
     return {"nayaxEnabled": True, "host": host, "port": port, "path": path}
 
 
+class PinpadHostIn(BaseModel):
+    """The till's own pinpad at a new address on its LAN (app/services/payment_terminal.py `relink_pinpad`)."""
+
+    model_config = {"populate_by_name": True}
+
+    host: str = Field(..., max_length=300)
+    #: SPICy's port; absent = unchanged.
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    #: "technician" (picked on the technician screen) | "relocated" (found by the till itself).
+    reason: str = Field(..., max_length=16)
+    #: The terminal number the pinpad at [host] said it is (`getRetailerInfo`).
+    terminal_number: Optional[str] = Field(None, alias="terminalNumber", max_length=20)
+    serial: Optional[str] = Field(None, max_length=60)
+    #: The address the till charged on before, as it held it.
+    previous_host: Optional[str] = Field(None, alias="previousHost", max_length=300)
+    #: The pinpad's MAC when Android let the till read it (a hint only).
+    mac: Optional[str] = Field(None, max_length=32)
+
+
+@router.put("/{machine_id}/pinpad-host", dependencies=FISCAL_MACHINE_TOKEN)
+def machine_set_pinpad_host(
+    machine_id: str,
+    body: PinpadHostIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "קישור מסופון מחדש" / a pinpad that moved (DHCP): the till writes its own pinpad's new
+    address — `nayaxDeviceHost` (and `nayaxDevicePort`) on its own settings layer and nothing
+    else, with its machine token alone (nobody at a kiosk is a manager). Only for a till that
+    already charges on a network Nayax pinpad, only a private IPv4 address, and a move the
+    till made by itself only to the same terminal (`terminal_mismatch`). Audited as the till
+    event `pinpad_host_set`. `422 host_invalid | host_not_private | port_invalid |
+    reason_invalid | terminal_number_required` · `409 pinpad_not_in_use | terminal_mismatch`.
+    """
+    from app.services import payment_terminal, settings_notify
+
+    _require_assigned_machine(machine)
+    try:
+        out = payment_terminal.relink_pinpad(
+            db, machine,
+            host=body.host, port=body.port, reason=body.reason, terminal_number=body.terminal_number,
+            serial=body.serial, previous_host=body.previous_host, mac=body.mac,
+        )
+    except payment_terminal.PinpadRelinkRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content={"detail": refused.code, "message": refused.message})
+    db.commit()
+    if not out["unchanged"]:
+        settings_notify.notify_machine_settings(db, machine, reason="pinpad_host")
+    return out
+
+
 @router.post("/{machine_id}/products/{product_id}/image")
 async def machine_upload_product_image(
     machine_id: str,
     product_id: str,
     file: UploadFile = File(...),
     keep_background: bool = Query(False, alias="keepBackground"),
+    enhance: bool = Query(True, alias="enhance"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
@@ -1139,6 +1300,9 @@ async def machine_upload_product_image(
     A product's picture taken or picked on the till: stored as the dashboard's upload
     stores it — the background cut out unless `keepBackground`, the upload kept beside
     it (`originalUrl`, to go back to with a product update) — and set on the product.
+    "שפר תמונה" (`enhance`, on unless the till says false): the same enhancement the till
+    applied to the picture it shows (app/services/product_image_processing.py `enhance_image`),
+    so the cloud's refined picture (`processed`: not the bytes sent) replaces it looking alike.
     The picture is the product's own, so only for a product this shop alone lists
     (403 `shared_product_master_readonly`), as for every master field from a till.
     """
@@ -1154,7 +1318,9 @@ async def machine_upload_product_image(
     contents = await file.read()
     if len(contents) > images._MAX_SIZE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
-    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    # Called directly (a test), the Query default is not a bool: the till's default, on.
+    enhance = enhance if isinstance(enhance, bool) else True
+    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background, enhance=enhance)
     product.image_url = stored.url
     _audit(
         db,
@@ -1163,7 +1329,8 @@ async def machine_upload_product_image(
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=product.id,
-        note="image" + (" background removed" if stored.background_removed else ""),
+        note="image" + (" background removed" if stored.background_removed else "")
+        + (" enhanced" if stored.enhanced else ""),
     )
     db.commit()
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
@@ -1171,7 +1338,44 @@ async def machine_upload_product_image(
         "url": stored.url,
         "originalUrl": stored.original_url,
         "backgroundRemoved": stored.background_removed,
+        "processed": stored.processed,
     }
+
+
+@router.delete("/{machine_id}/products/{product_id}/image")
+def machine_remove_product_image(
+    machine_id: str,
+    product_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    db: Session = Depends(get_db),
+):
+    """
+    "הסרת תמונה" from the till's product dialog: the product goes back to no picture.
+    Gated exactly like the upload above — a manager's authority, and only for a product
+    this shop alone lists (403 `shared_product_master_readonly`). Removing a picture the
+    product does not have is a no-op that still answers 200, so a till replaying a
+    queued removal never sees a refusal for it.
+    """
+    _require_assigned_machine(machine)
+    shop = _shop_or_400(db, machine)
+    product = _machine_editable_product(db, machine, product_id)
+    if not _product_belongs_only_to(db, product, shop.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="shared_product_master_readonly")
+    if product.image_url is not None:
+        product.image_url = None
+        _audit(
+            db,
+            machine=machine,
+            actor=actor,
+            entity=SyncEntityType.PRODUCTS,
+            action=SyncAction.UPDATE,
+            entity_id=product.id,
+            note="image removed",
+        )
+        db.commit()
+        notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
+    return {"url": None}
 
 
 @router.put(
@@ -1199,7 +1403,9 @@ def machine_set_category_availability(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
     target = _scope_target(machine, body.scope)
 
-    category_availability.set_override(db, body.scope, target, category.id, body.active)
+    category_availability.set_override(
+        db, body.scope, target, category.id, body.active, body.permanent, body.blocked_at
+    )
     _audit(
         db,
         machine=machine,
@@ -1224,6 +1430,7 @@ def machine_set_category_availability(
     "/{machine_id}/transactions",
     response_model=TransactionsBatchResponse,
     status_code=status.HTTP_200_OK,
+    dependencies=FISCAL_SYNC_PATH,
 )
 def post_transactions(
     machine_id: str,
@@ -1249,6 +1456,15 @@ def post_transactions(
 
     positions, real_documents, training = TM.divert_transactions(db, machine, body.transactions)
     valid, refused, unidentified = validate_documents(real_documents)
+    # "מסמך שנדחה בענן": the documents as sent, for the refusal record written after the
+    # upsert (app/services/document_refusals.py) — before positions are remapped.
+    from app.services import document_refusals as DR
+
+    raw_by_ref = {DR.document_ref(raw, i).lower(): raw for i, raw in enumerate(real_documents)}
+    unidentified_raw = [
+        (u.index, real_documents[u.index] if 0 <= u.index < len(real_documents) else None, u.reason)
+        for u in unidentified
+    ]
     if training:
         # Back to the positions in the till's own batch.
         valid = [(positions[i], tx, w) for i, tx, w in valid]
@@ -1303,6 +1519,11 @@ def post_transactions(
         )
         for u in unidentified
     ])
+    # Every refusal recorded (machine, document, reason, first / last seen, payload) and every
+    # stored document marked landed — never failing the push.
+    DR.record_push_safely(
+        db, machine, raw_by_ref=raw_by_ref, results=results, unidentified=unidentified_raw,
+    )
     db.commit()
 
     if accepted_count > 0:
@@ -1334,7 +1555,7 @@ def post_transactions(
 # closed shifts (`app/routers/z_runs.py`). Contract: docs/SHIFTS_API.md §1.
 
 
-@router.post("/{machine_id}/shifts", response_model=ShiftOut, response_model_by_alias=True)
+@router.post("/{machine_id}/shifts", response_model=ShiftOut, response_model_by_alias=True, dependencies=FISCAL_MACHINE_TOKEN)
 def post_shift_open(
     machine_id: str,
     data: ShiftOpenIn,
@@ -1379,6 +1600,7 @@ def get_last_closed_shift(
     "/{machine_id}/shifts/{shift_id}/close",
     status_code=status.HTTP_200_OK,
     responses={409: {"model": ShiftMissingResponse}, 200: {"model": ShiftCloseResponse}},
+    dependencies=FISCAL_MACHINE_TOKEN,
 )
 def post_shift_close(
     machine_id: str,
@@ -1481,6 +1703,7 @@ def post_shift_close(
     "/{machine_id}/shift-close/ack",
     response_model=ShiftCloseAckResponse,
     response_model_by_alias=True,
+    dependencies=FISCAL_MACHINE_TOKEN,
 )
 def post_shift_close_ack(
     machine_id: str,
@@ -1505,7 +1728,7 @@ def post_shift_close_ack(
 # ── Card transmission (docs/SHIFTS_API.md §4) ─────────────────────────────────
 
 
-@router.post("/{machine_id}/transmissions", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/transmissions", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_transmission_report(
     machine_id: str,
     body: TransmissionReportIn,
@@ -1526,6 +1749,8 @@ def post_transmission_report(
         "status": outcome.transmission.status,
         "created": outcome.created,
         "legsMarked": outcome.legs_marked,
+        # Of the sales kept with the batch, those the terminal never named (SPEC_REPORTS §7).
+        "legsAssumed": outcome.legs_assumed,
     }
     return JSONResponse(
         status_code=status.HTTP_201_CREATED if outcome.created else status.HTTP_200_OK,
@@ -1612,13 +1837,14 @@ def get_own_shop_z_print_document(
         doc = z_print.build_till_document(z, till, tzinfo)
         if doc is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="till_not_in_z")
-        return doc
+        # "עסקאות שלא הושלמו" / "מכירות שבוטלו" of that till (informational, docs/SPEC_FAILED_PAYMENTS.md).
+        return failed_payments.with_print_sections(db, z, doc, tzinfo, machine_id=till)
     if isinstance(part, str) and part == "summary":
         return z_print.build_summary_document(z, tzinfo)
-    return z_print.build_print_document(z, tzinfo)
+    return failed_payments.with_print_sections(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
 
 
-@router.post("/{machine_id}/transmit/ack")
+@router.post("/{machine_id}/transmit/ack", dependencies=FISCAL_MACHINE_TOKEN)
 def post_transmit_ack(
     machine_id: str,
     body: TransmitAckIn,
@@ -1650,7 +1876,7 @@ def _till_z_refusal(db: Session, refused: "till_z.TillZRefused") -> JSONResponse
     return JSONResponse(status_code=refused.status_code, content=refused.body)
 
 
-@router.post("/{machine_id}/till-z", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/till-z", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_till_z(
     machine_id: str,
     body: TillZIn,
@@ -1700,11 +1926,56 @@ def post_till_z(
             "shiftIds": [str(i) for i in till_z.z_shift_ids(db, z)],
             "totalsMismatch": bool(z.totals_mismatch),
             "serverTime": datetime.now(timezone.utc).isoformat(),
+            # A kiosk's Z a controlling till prints itself: the kiosk does not (app/services/kiosk_z.py).
+            **_kiosk_z_extra(db, machine, body),
         },
     )
 
 
-@router.post("/{machine_id}/till-z/ack")
+def _kiosk_z_extra(db: Session, machine: POSMachine, body: TillZIn) -> dict:
+    from app.services import kiosk_z
+
+    return kiosk_z.till_z_answer_extra(db, machine, body)
+
+
+@router.get("/{machine_id}/till-zs")
+def get_till_z_history(
+    machine_id: str,
+    days: int = Query(till_z.TILL_Z_HISTORY_DAYS, ge=1, le=400),
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    This till's own Zs of the last `days` days (default 31), oldest first, and always its
+    newest — each as the `POST till-z` answer reads, so the till keeps and reprints it —
+    with `lastTillZNumber`. What a new or reset till pulls before it may ever close a Z
+    with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.3).
+    """
+    from app.services.z_sequence import last_machine_z_number
+
+    from app.services.z_sequence import current_machine_epoch
+
+    zs = till_z.till_z_history(db, machine, days=days)
+    epoch, started = current_machine_epoch(db, machine.id)
+    return {
+        "lastTillZNumber": last_machine_z_number(db, machine.id),
+        # The run the till numbers in now (SPEC_INDEPENDENT_TILL §3.1).
+        "tillZEpoch": epoch,
+        "tillZEpochStartedAt": started.isoformat() if started is not None else None,
+        "serverTime": datetime.now(timezone.utc).isoformat(),
+        "items": [
+            {
+                "status": "history",
+                "zReport": z_detail_out(db, z).model_dump(by_alias=True, mode="json"),
+                "shiftIds": [str(i) for i in till_z.z_shift_ids(db, z)],
+                "totalsMismatch": bool(z.totals_mismatch),
+            }
+            for z in zs
+        ],
+    }
+
+
+@router.post("/{machine_id}/till-z/ack", dependencies=FISCAL_MACHINE_TOKEN)
 def post_till_z_ack(
     machine_id: str,
     body: TillZAckIn,
@@ -1724,10 +1995,70 @@ def post_till_z_ack(
     return {"ok": True, "status": req.status}
 
 
+# ── A reset ordered from the cloud by support (docs/SPEC_OFFLINE_TILL_Z.md §4.7) ──
+
+
+class TillResetResultIn(BaseModel):
+    """What the till did with `pendingReset`: carried it out, or refused and why."""
+
+    model_config = {"populate_by_name": True}
+
+    command_id: str = Field(..., alias="commandId", max_length=64)
+    #: done | refused | failed
+    status: str = Field(..., max_length=16)
+    #: Why it refused or failed: outbox_not_empty | unknown_kind | not_paired | failed.
+    code: Optional[str] = Field(None, max_length=64)
+    message: Optional[str] = Field(None, max_length=500)
+    executed_at: Optional[str] = Field(None, alias="executedAt", max_length=40)
+    transactions_deleted: Optional[int] = Field(None, alias="transactionsDeleted", ge=0)
+    outbox_pending: Optional[int] = Field(None, alias="outboxPending", ge=0)
+    kept_zs: Optional[int] = Field(None, alias="keptZs", ge=0)
+    kept_z_numbers: Optional[List[int]] = Field(None, alias="keptZNumbers", max_length=400)
+    kept_shop_zs: Optional[int] = Field(None, alias="keptShopZs", ge=0)
+    #: {"before": {...}, "after": {...}} — the till's Z run and document series.
+    counters: Optional[Dict[str, Dict[str, Optional[int]]]] = None
+    app_version: Optional[str] = Field(None, alias="appVersion", max_length=64)
+
+
+@router.post("/{machine_id}/till-reset/result")
+def post_till_reset_result(
+    machine_id: str,
+    body: TillResetResultIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    The till's answer to a reset support ordered (§4.7). Idempotent; `404 unknown_command`
+    for a command this till was never given.
+    """
+    from app.services import till_reset
+
+    record = till_reset.apply_result(
+        db,
+        machine,
+        command_id=body.command_id,
+        result_status=body.status,
+        code=body.code,
+        message=body.message,
+        details={
+            "executedAt": body.executed_at,
+            "transactionsDeleted": body.transactions_deleted,
+            "outboxPending": body.outbox_pending,
+            "keptZs": body.kept_zs,
+            "keptZNumbers": body.kept_z_numbers,
+            "keptShopZs": body.kept_shop_zs,
+            "counters": body.counters,
+            "appVersion": body.app_version,
+        },
+    )
+    db.commit()
+    return {"ok": True, "status": record.get("status")}
+
+
 # ── Offline card authorization (Agamento `authorizePendingTransactions`) ──────
 
 
-@router.post("/{machine_id}/offline-authorizations", status_code=status.HTTP_201_CREATED)
+@router.post("/{machine_id}/offline-authorizations", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_MACHINE_TOKEN)
 def post_offline_authorization(
     machine_id: str,
     body: OfflineAuthorizationIn,
@@ -1837,10 +2168,23 @@ def get_pos_users_sync(
 
     update_machine_sync_timestamp(db, str(machine.id))
 
+    # "תפקידים והרשאות": each row carries the user's effective permissions, resolved here.
+    from app.services.till_roles import effective_for_users, sync_fields
+
+    effective = effective_for_users(db, rows)
+
+    def _row(r: PosUser) -> PosUserSyncRow:
+        row = PosUserSyncRow.model_validate(r)
+        for key, value in sync_fields(effective[r.id]).items():
+            if key == "till_role_id":
+                value = uuid.UUID(value) if value else None
+            setattr(row, key, value)
+        return row
+
     return PosUsersSyncResponse(
         sync_type=sync_type,
         server_time=datetime.now(timezone.utc),
-        users=[PosUserSyncRow.model_validate(r) for r in rows],
+        users=[_row(r) for r in rows],
     )
 
 
@@ -1948,9 +2292,55 @@ def get_settings_sync(
     # And the force switch (unset -> off): a layer reset to inherit must reach the till
     # as `false`, not as a missing key it might read as "keep what you had".
     effective["forceTerminalNumber"] = all_settings.get("forceTerminalNumber") is True
+    # "סדר אמצעי התשלום": the deepest level's order, completed with every method it does
+    # not list; `[]` when no level sets one — the till then keeps each screen's own
+    # (today's) order. Always sent, so a reset to inherit reaches the till on any pull.
+    effective[PAY_ORDER_KEY] = resolve_pay_order(all_settings) or []
+    # "חזרה אוטומטית לקיוסק" (Windows): resolved, default 10 — always sent, like the order.
+    from app.services import desktop_idle_return
+
+    effective[desktop_idle_return.KEY] = desktop_idle_return.resolve(all_settings)
+    # "סוג אינטגרציית אשראי": the explicit choice down the layers (absent = automatic),
+    # and Z-Credit's password for a till that charges there — its only way out of the
+    # server (app/services/payment_integration.py).
+    from app.services import payment_integration
+
+    for key, value in payment_integration.till_sync_fields(
+        db, machine, tenant, company, shop, area_layer
+    ).items():
+        if value is None:
+            effective.pop(key, None)
+        else:
+            effective[key] = value
+    # "מכשירי תשלום": all the shop's devices (`paymentDevices`, a JSON string, inactive ones
+    # included), their secrets to a till without built-in clearing (`paymentDeviceSecrets`),
+    # how this till picks one (`paymentDeviceMode`, `fixedPaymentDeviceId`, `paymentDeviceGroup`
+    # as a JSON string) and the merged expected terminal number of all the layers, unguarded
+    # (`paymentDevicesTerminalNumber`) — app/services/payment_devices.py.
+    from app.services import payment_devices
+
+    for key, value in payment_devices.till_sync_fields(db, machine, shop, all_settings).items():
+        if value is None:
+            effective.pop(key, None)
+        else:
+            effective[key] = value
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
     business_info = build_business_info(company, shop, all_settings)
+    # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
+    # beside the identity. The till picks its document type and VAT by it.
+    effective["dealerType"] = business_info.dealer_type
+    # Terminal configuration (clearing server, forced terminal number) is never inherited
+    # onto a kiosk or a till on an external pinpad: only its own layer's value goes out, and
+    # where each value comes from, for the till's own check (terminal_config_guard.py).
+    from app.services import terminal_config_guard
+
+    effective, terminal_sources = terminal_config_guard.guard(
+        effective,
+        machine=machine,
+        merged=all_settings,
+        layers=terminal_config_guard.layers_of(tenant, company, shop, area_layer, machine),
+    )
 
     update_machine_sync_timestamp(db, str(machine.id))
 
@@ -1962,6 +2352,7 @@ def get_settings_sync(
         business_info=business_info,
         area=area,
         training_mode=bool(shop.training_mode),
+        terminal_config_sources=terminal_sources,
     )
 
 
@@ -1989,7 +2380,14 @@ def get_stock_sync(
             levels=[],
         )
 
-    watermark = effective_stock_updated_at(db, machine.shop_id)
+    from app.models.shop import Shop as _Shop
+
+    shop_row = db.get(_Shop, machine.shop_id)
+    watermark = effective_stock_updated_at(db, machine.shop_id, shop_row.company_id if shop_row else None)
+    moved = getattr(machine, "area_changed_at", None)
+    if moved is not None:
+        moved = moved if moved.tzinfo else moved.replace(tzinfo=timezone.utc)
+        watermark = max(watermark, moved)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -2005,7 +2403,8 @@ def get_stock_sync(
             levels=[],
         )
 
-    levels = get_levels_for_shop(db, machine.shop_id, since=since_dt)
+    # One level per product: the stock location this till sells it from (app/services/stock.py).
+    levels = levels_for_machine(db, machine, since=since_dt)
     out = [
         StockLevelOut(
             product_id=l.product_id,
@@ -2016,6 +2415,9 @@ def get_stock_sync(
             reorder_max=l.reorder_max,
             reorder_opt=l.reorder_opt,
             updated_at=l.updated_at,
+            level=l.location.level,
+            target_id=l.location.target_id,
+            reset_at=l.reset_at,
         )
         for l in levels
     ]
@@ -2084,19 +2486,29 @@ def get_app_update(
     version_name: Optional[str] = Query(None, alias="versionName"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    # Annotated, so a direct call (the tests) that leaves it out gets a plain None.
+    platform: Annotated[Optional[str], Query()] = None,
 ):
     """
-    The release assigned to this till, if it should take it. Asked on every sync with
-    the version the till runs. Resolved till → area → shop → company → tenant, newest at
-    a level (app/services/app_updates.py); `available` only when that release is not
-    what the till runs and not a lower versionCode. Every key is always present.
+    The release assigned to this device, if it should take it. Asked on every sync with
+    the version the device runs. `platform` "android" (absent — the Android till's call)
+    or "windows" (the Windows app); `422 invalid_platform` otherwise. Only releases of
+    that platform count. Resolved device → area → shop → company → tenant, newest at a
+    level, rollout stage applied (app/services/app_updates.py); `available` only when
+    that release is not what the device runs and not a lower versionCode — unless the
+    assignment allows a (Windows) rollback (`allowDowngrade`). Every key is always present.
     """
-    resolved = app_updates.resolved_for_machine(db, machine)
+    try:
+        platform = app_updates.normalize_platform(platform)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid_platform")
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
     if resolved is None:
-        return AppUpdateOffer(available=False)
+        return AppUpdateOffer(available=False, platform=platform)
     assignment, release = resolved
-    if not app_updates.offer_for(release, version_code, version_name):
-        return AppUpdateOffer(available=False)
+    allow_downgrade = app_updates.allows_downgrade(assignment, release)
+    if not app_updates.offer_for(release, version_code, version_name, allow_downgrade=allow_downgrade):
+        return AppUpdateOffer(available=False, platform=platform)
     return AppUpdateOffer(
         available=True,
         release_id=str(release.id),
@@ -2106,10 +2518,24 @@ def get_app_update(
         size_bytes=release.size_bytes,
         notes=release.notes,
         auto_install=bool(assignment.auto_install),
+        platform=app_updates.release_platform(release),
+        allow_downgrade=allow_downgrade,
+        rollout_percent=assignment.rollout_percent if assignment.rollout_percent is not None else 100,
+        install_window=app_updates.install_window_of(assignment),
+        bridge_api=getattr(release, "bridge_api", None),
     )
 
 
+#: Per platform: the download's media type and file name.
+_RELEASE_DOWNLOAD = {
+    "android": ("application/vnd.android.package-archive", "app-{version}.apk"),
+    "windows": ("application/vnd.microsoft.portable-executable", "R2M-POS-Windows-{version}-setup.exe"),
+    "kiosk_web": ("application/zip", "kiosk-web-{version}.zip"),
+}
+
+
 @router.get("/{machine_id}/app-update/{release_id}/apk")
+@router.get("/{machine_id}/app-update/{release_id}/file")
 def get_app_update_apk(
     machine_id: str,
     release_id: uuid.UUID,
@@ -2117,20 +2543,27 @@ def get_app_update_apk(
     db: Session = Depends(get_db),
 ):
     """
-    The APK of the release this till resolves to now — `404` for any other release, so
-    a till can only ever fetch what it was sent. Streamed from disk.
+    The file of the release this device resolves to now — the APK, or the Windows
+    installer (`/apk` and its alias `/file` serve both). The release is looked up by id
+    and the device resolved among releases of THAT release's platform: `404` unless it is
+    the resolved one, so a device can only ever fetch what it was sent. Streamed from disk.
     """
-    resolved = app_updates.resolved_for_machine(db, machine)
+    release = db.query(AppRelease).filter(AppRelease.id == release_id).first()
+    if release is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
+    platform = app_updates.release_platform(release)
+    resolved = app_updates.resolved_for_machine(db, machine, platform=platform)
     if resolved is None or resolved[1].id != release_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release not found")
     release = resolved[1]
     if not os.path.isfile(release.file_path):
         logger.error("app release %s: file missing at %s", release.id, release.file_path)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App release file missing")
+    media_type, filename = _RELEASE_DOWNLOAD.get(platform, _RELEASE_DOWNLOAD["android"])
     return FileResponse(
         release.file_path,
-        media_type="application/vnd.android.package-archive",
-        filename=f"app-{release.version_name}.apk",
+        media_type=media_type,
+        filename=filename.format(version=release.version_name),
     )
 
 

@@ -34,7 +34,22 @@ import {
   MachineNameMismatchHint,
   MachineShiftSummary,
 } from '@/components/dashboard/machines/machine-row';
-import { DeviceModelDialog } from '@/components/dashboard/machines/device-model';
+import {
+  DeviceCapabilityList,
+  DeviceModelWarningNote,
+  DevicePlatformBadge,
+  DeviceProfileDialog,
+  DeviceRoleBadge,
+  DisplayDeviceNote,
+  KioskPinpadWarning,
+} from '@/components/dashboard/machines/device-role';
+import { WebScreenNote } from '@/components/dashboard/machines/web-screen-note';
+import { isDisplayDevice } from '@/lib/deviceProfile';
+import {
+  DocumentPrefixBusinessStatus,
+  DocumentPrefixDialog,
+  DocumentPrefixValue,
+} from '@/components/dashboard/machines/document-prefix';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { LicenseDialog } from '@/components/dashboard/tenant-license-dialog';
@@ -47,6 +62,14 @@ import {
 } from '@/components/dashboard/machines/card-transmission';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { RequestTillZButton, ZModeField } from '@/components/dashboard/till-z/till-z-dialogs';
+import { SupportZButton } from '@/components/dashboard/machines/support-z-dialog';
+import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
+import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
+import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
+import { MachineLanServerCard } from '@/components/dashboard/machines/machine-lan-server-card';
+import { WorkConfigCard } from '@/components/dashboard/machines/work-config';
+import { tillResetTone, type TillResetRecord } from '@/lib/tillReset';
+import { IndependentTillBadge } from '@/components/dashboard/independent-till-badge';
 import { LatestTillZRequest } from '@/components/dashboard/till-z/till-z-request';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
@@ -64,6 +87,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -108,12 +132,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   const tShifts = useTranslations('shifts');
   const tSend = useTranslations('transmission');
   const tTillZ = useTranslations('tillZ');
+  const tTillReset = useTranslations('tillReset');
   const shiftLabel = useShiftLabel();
   const zNumberLabel = useZNumberLabel();
   const canProduceZ = useCanProduceZ();
   const [closeShiftOpen, setCloseShiftOpen] = useState(false);
   const [areaOpen, setAreaOpen] = useState(false);
   const [deviceModelOpen, setDeviceModelOpen] = useState(false);
+  const [documentPrefixOpen, setDocumentPrefixOpen] = useState(false);
   const tAreas = useTranslations('areas');
   const tLicense = useTranslations('license');
   const isSuperAdmin = useIsSuperAdmin();
@@ -226,6 +252,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
   // A till that produces its own Z is asked for it; the cloud wizard never builds one for it.
   const tillMode = zModeOf(machine) === 'till';
   const zSpansTills = zRows.some((r) => (r.machineCount ?? 1) > 1);
+  // "מסך — לא קופה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2): a KDS / the board has no
+  // shifts, Z, document prefix or card transmission — those controls are not offered.
+  const display = isDisplayDevice(machine);
 
   return (
     <div className="space-y-6">
@@ -251,6 +280,8 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </Badge>
             ) : null}
             <ClockSkewChip machine={machine} />
+            {/* The last command sent to this device and its status ("פקודות שנשלחו"). */}
+            <DeviceCommandChip machineId={machine.id} />
           </div>
           {shop ? (
             <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -267,12 +298,12 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-wrap gap-2">
           {/* Two separate actions: closing the shift only files its X; the Z is the
               wizard's. */}
-          {canProduceZ && canCloseShiftRemotely(machine) ? (
+          {canProduceZ && canCloseShiftRemotely(machine) && !display ? (
             <Button size="sm" variant="outline" onClick={() => setCloseShiftOpen(true)}>
               {tMachines('closeShiftRemotely')}
             </Button>
           ) : null}
-          {canProduceZ && tillMode ? (
+          {display ? null : canProduceZ && tillMode ? (
             <RequestTillZButton m={machine} />
           ) : canProduceZ && !removed && machine.shopId && machine.pairingStatus === 'assigned' ? (
             <Link
@@ -281,6 +312,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             >
               {tMachines('produceZForTill')}
             </Link>
+          ) : null}
+          {/* "הפקת Z מהענן (תמיכה)": a dead till's Z from the cloud — support alone (offline till Z §4.6). */}
+          {isSuperAdmin && !removed && machine.pairingStatus === 'assigned' && !display ? (
+            <SupportZButton machineId={machine.id} />
+          ) : null}
+          {/* "איפוס נתוני קופה (תמיכה)": the only reset of a till's data — support alone (§4.7). */}
+          {isSuperAdmin && !removed && machine.pairingStatus === 'assigned' ? (
+            <TillResetButton machineId={machine.id} />
           ) : null}
           <Link
             href="/dashboard/machines"
@@ -300,6 +339,72 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             />
           ) : null}
           <Field label={t('machineCode')} value={<span className="font-mono">{machine.machineCode}</span>} />
+          {/* "קידומת מסמכים": every document number of this till is printed `<prefix>-<number>`. */}
+          {display ? null : (
+          <Field
+            label={tMachines('documentPrefix.label')}
+            value={
+              <span className="inline-flex items-center gap-1">
+                <DocumentPrefixValue machine={machine} />
+                {/* PUT /machines/{id} is the machine admins' — the same set that produces a Z. */}
+                {canProduceZ && !removed && machine.shopId ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => setDocumentPrefixOpen(true)}
+                    aria-label={tMachines('documentPrefix.editTitle')}
+                    title={tMachines('documentPrefix.editTitle')}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+              </span>
+            }
+          />
+          )}
+          {/* Unique in the whole business (every branch): the tax file is one per business. */}
+          {machine.shopId && !removed && !display ? (
+            <Field
+              label={tMachines('documentPrefix.businessLabel')}
+              value={<DocumentPrefixBusinessStatus machineId={machine.id} canEdit={canProduceZ} />}
+            />
+          ) : null}
+          {/* "סוג מכשיר (תפקיד)": קופה / קיוסק (docs/SPEC_DEVICE_ROLE_MODEL.md). */}
+          <Field
+            label={tMachines('deviceRole.label')}
+            value={
+              <span className="inline-flex flex-wrap items-center gap-1">
+                {tMachines(`deviceRole.${machine.deviceRole ?? 'till'}`)}
+                {(machine.deviceRole === 'kiosk' && machine.kioskEnabled === false) || display || machine.kdsScreen ? (
+                  <DeviceRoleBadge m={machine} />
+                ) : null}
+                <DevicePlatformBadge m={machine} showAndroid />
+                {display || machine.kdsScreen ? (
+                  <Link href="/dashboard/kds" className="text-xs text-primary hover:underline">
+                    {tMachines('deviceRole.kds')}
+                  </Link>
+                ) : null}
+                {machine.deviceRole === 'kiosk' ? (
+                  <Link href="/dashboard/kiosks" className="text-xs text-primary hover:underline">
+                    {tMachines('deviceRole.kioskSettings')}
+                  </Link>
+                ) : null}
+                {canProduceZ && !removed ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => setDeviceModelOpen(true)}
+                    aria-label={tMachines('deviceRole.change')}
+                    title={tMachines('deviceRole.change')}
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+              </span>
+            }
+          />
           <Field
             label={tMachines('deviceModel.label')}
             value={
@@ -311,15 +416,15 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                     {tMachines('deviceModel.unknown')}
                   </span>
                 )}
-                {/* PUT /machines/{id} is the machine admins' — the same set that produces a Z. */}
+                {/* PUT /machines/{id}/device-profile — the machine admins', the same set that produces a Z. */}
                 {canProduceZ && !removed ? (
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-6 w-6 p-0"
                     onClick={() => setDeviceModelOpen(true)}
-                    aria-label={tMachines('deviceModel.editTitle')}
-                    title={tMachines('deviceModel.editTitle')}
+                    aria-label={tMachines('deviceRole.change')}
+                    title={tMachines('deviceRole.change')}
                   >
                     <Pencil className="h-3.5 w-3.5" aria-hidden />
                   </Button>
@@ -351,16 +456,51 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             />
           ) : null}
           {/* `PUT /machines/{id}` {zMode} is the Z producers'; read-only for everyone else. */}
+          {display ? null : (
           <Field
             label={tTillZ('mode.label')}
             value={
-              <ZModeField
-                machine={machine}
-                // The owner's rule: the super admin alone switches a till's Z mode.
-                canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
-              />
+              <span className="inline-flex flex-wrap items-center gap-1">
+                <ZModeField
+                  machine={machine}
+                  // The owner's rule: the super admin alone switches a till's Z mode.
+                  canEdit={isSuperAdmin && !removed && machine.pairingStatus === 'assigned'}
+                />
+                <IndependentTillBadge machine={machine} />
+                {/* Support produced this till's Z from the cloud (offline till Z §4.6). */}
+                {machine.supportZ ? (
+                  <Badge variant="destructive" className="text-[11px]" title={tTillZ('offline.supportHint', { by: String(machine.supportZ.by ?? ''), at: formatDateTime(String(machine.supportZ.at ?? '')) })}>
+                    {tTillZ('offline.support')}
+                  </Badge>
+                ) : null}
+                {/* The last reset support ordered from the cloud, and what the till did (§4.7). */}
+                {machine.tillReset ? (
+                  <Badge
+                    variant={tillResetTone((machine.tillReset as unknown as TillResetRecord).status)}
+                    className="text-[11px]"
+                    title={tTillReset('badgeHint', {
+                      kind: String(machine.tillReset.kindText ?? ''),
+                      by: String(machine.tillReset.by ?? ''),
+                      at: formatDateTime(String(machine.tillReset.requestedAt ?? '')),
+                    })}
+                  >
+                    {tTillReset(`status.${(machine.tillReset as unknown as TillResetRecord).status}`)}
+                  </Badge>
+                ) : null}
+                {/* Zs closed at the till with no connection, not in the cloud yet. */}
+                {machine.offlineTillZConflict ? (
+                  <Badge variant="destructive" className="text-[11px]" title={tTillZ('offline.conflictHint')}>
+                    {tTillZ('offline.conflict')}
+                  </Badge>
+                ) : machine.offlineTillZPending ? (
+                  <Badge variant="outline" className="text-[11px] border-amber-500 text-amber-700 dark:text-amber-300">
+                    {tTillZ('offline.pending', { count: machine.offlineTillZPending })}
+                  </Badge>
+                ) : null}
+              </span>
             }
           />
+          )}
           <Field
             label={tMachines('lastSeen')}
             value={
@@ -391,6 +531,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                 : tMachines('neverSynced')
             }
           />
+          {display ? null : (
           <Field
             label={tMachines('shift.label')}
             value={
@@ -409,6 +550,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </span>
             }
           />
+          )}
           {/* "לקוח קבוע / זמני" for this till alone — a till lent to an event. The super
               admin's to change; the till also keeps any earlier end of its shop or above. */}
           <Field
@@ -435,6 +577,22 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
               </span>
             }
           />
+          {/* What the model can do (the server's flags), "בקרוב" for LANDI / Feitian, and a
+              warning when the device named another model than the one chosen. */}
+          <div className="col-span-full space-y-2">
+            {/* "מסך — לא קופה": what a KDS / the board is; a till with a pre-rule KDS screen is flagged. */}
+            <DisplayDeviceNote m={machine} />
+            {/* "רץ בדפדפן": a web kiosk / KDS / board — where it opens, what browser (SPEC_KDS §13). */}
+            <WebScreenNote m={machine} />
+            <DeviceCapabilityList
+              model={machine.deviceModel ?? null}
+              flags={machine}
+              kiosk={machine.deviceRole === 'kiosk'}
+            />
+            <DeviceModelWarningNote m={machine} />
+            {/* "מכשירי הסליקה הם חיצוניים": a kiosk with no pinpad address cannot take a card. */}
+            <KioskPinpadWarning m={machine} />
+          </div>
         </CardContent>
       </Card>
 
@@ -442,7 +600,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         <div className="rounded-md border bg-muted/40 p-3 text-sm">{t('removedNotice')}</div>
       ) : null}
 
-      {showDeadTill ? (
+      {showDeadTill && !display ? (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -456,6 +614,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         </Card>
       ) : null}
 
+      {/* "הוחלפה קופה": the till's device replacements (offline till Z §4.6.2). */}
+      <TillReplacements replacements={machine.replacements} />
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -467,9 +628,19 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
         </CardContent>
       </Card>
 
+      {/* "עדכון שקט": device owner / silent updates, how to turn it on (adb or QR), "הפעל מחדש". */}
+      <DeviceManagementCard machine={machine} />
+
+      {/* "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): how the device works, each value with
+          where it comes from — set on the device or inherited from the shop / company. */}
+      {machine.shopId ? <WorkConfigCard machineId={machine.id} /> : null}
+
+      {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
+      {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}
+
       {/* Card sales waiting for Shva, the batches the till reported, and — for a till
           that dies with its batch — the list to take to the card company. */}
-      <Card id="transmission">
+      <Card id="transmission" className={display ? 'hidden' : undefined}>
         <CardHeader className="pb-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div className="space-y-1">
@@ -693,7 +864,7 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
                 (transactions.data?.items ?? []).map((tx) => (
                   <TableRow key={tx.id}>
                     <TableCell>{formatDateTime(tx.createdAt)}</TableCell>
-                    <TableCell className="font-mono text-xs">{tx.transactionNumber}</TableCell>
+                    <TableCell className="font-mono text-xs">{tx.documentNumber ?? tx.transactionNumber}</TableCell>
                     <TableCell>
                       <Badge variant="outline">{tTx(`statusLabels.${tx.status}`)}</Badge>
                     </TableCell>
@@ -709,7 +880,9 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       <MachineAreaDialog machine={machine} open={areaOpen} onOpenChange={setAreaOpen} />
-      <DeviceModelDialog machine={machine} open={deviceModelOpen} onOpenChange={setDeviceModelOpen} />
+      {/* "סוג מכשיר": the role and the model, changed over a clean break (server-checked). */}
+      <DeviceProfileDialog machine={machine} open={deviceModelOpen} onOpenChange={setDeviceModelOpen} />
+      <DocumentPrefixDialog machine={machine} open={documentPrefixOpen} onOpenChange={setDocumentPrefixOpen} />
       <LicenseDialog
         title={tLicense('machineTitle', { name: machine.name })}
         initial={machine}

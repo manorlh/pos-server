@@ -21,7 +21,7 @@ import { useTranslations } from 'next-intl';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Download, Loader2, RadioTower, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, RadioTower, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   cancelTransmitRequest,
@@ -31,8 +31,12 @@ import {
   fetchUntransmittedCardSales,
   requestTransmit,
 } from '@/lib/api';
-import { downloadCsv, toCsv } from '@/lib/csv';
+import { phaseOfRequest } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
+import type { ExcelSheet } from '@/lib/excelExport';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatCurrency, formatDateTime } from '@/lib/format';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import type {
   CardTransmission,
   PeriodTransmission,
@@ -169,7 +173,25 @@ function reportVariant(s: ReportStatus): 'default' | 'destructive' | 'secondary'
   return 'secondary';
 }
 
-/** "שדר עסקאות עכשיו": asks the till, then follows the request until it ends. */
+/** Follow a transmit request in "פקודות שנשלחו" (the tray reads `GET /transmit-requests/{id}`). */
+function trackTransmit(r: TransmitRequest, machineName: string | null): void {
+  const p = phaseOfRequest(r.status, r.errorMessage);
+  trackCommand({
+    kind: 'transmit',
+    id: r.id,
+    action: 'transmit',
+    machineId: r.machineId,
+    machineName,
+    phase: p.phase,
+    detail: p.detail,
+  });
+}
+
+/**
+ * "שדר עסקאות עכשיו": asks the till and closes — the request is followed in the background
+ * ("פקודות שנשלחו"). Opened for a till whose transmit already waits, it shows that request's
+ * progress and its cancel.
+ */
 export function TransmitNowDialog({
   machine,
   open,
@@ -225,11 +247,20 @@ export function TransmitNowDialog({
     setRequestId(next.id);
   };
 
+  // A transmit already waits for this till: reopening (and asking again) shows its progress.
+  const reopenedPending = !!machine?.transmitPending;
   const create = useMutation({
     mutationFn: () => requestTransmit(machine!.id),
     onSuccess: (next) => {
-      settle(next);
       refreshLists(next.machineId);
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): followed in the background (its popup,
+      // the tray, the till's chip) — the dialog closes, nothing waits for the till.
+      trackTransmit(next, machine?.name ?? null);
+      if (reopenedPending) {
+        settle(next);
+        return;
+      }
+      handleOpenChange(false);
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
@@ -238,6 +269,7 @@ export function TransmitNowDialog({
     onSuccess: (next) => {
       settle(next);
       refreshLists(next.machineId);
+      trackTransmit(next, machine?.name ?? null);
     },
     onError: (e) => {
       toast.error(errors.forError(e));
@@ -503,11 +535,13 @@ export function TransmissionHistory({ machineId }: { machineId: string }) {
 
 /**
  * Card sales in no successful batch, from our records — what a shop takes to the card
- * company when a terminal dies with its batch. Exported as CSV with the last four digits
- * only; the server never holds more.
+ * company when a terminal dies with its batch. Exported to Excel with the last four digits
+ * only (the server never holds more), beside every transmission the till reported.
  */
 export function UntransmittedSales({ m }: { m: PosMachine }) {
   const t = useTranslations('transmission.untransmitted');
+  const tr = useTranslations('transmission');
+  const tc = useTranslations('common');
   const list = useQuery({
     queryKey: ['untransmitted', m.id],
     queryFn: () => fetchUntransmittedCardSales(m.id),
@@ -515,26 +549,64 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
   const data = list.data;
   const items = data?.items ?? [];
 
-  const exportCsv = () => {
-    const header = [
-      t('col.date'),
-      t('col.document'),
-      t('col.amount'),
-      t('col.approval'),
-      t('col.terminalId'),
-      t('col.card'),
-      t('col.payments'),
+  // The untransmitted list (all of it — the endpoint is not paged) and the whole batch
+  // history, page after page at the endpoint's largest limit (the screen shows the last 50).
+  const getSheets = async (): Promise<ExcelSheet[]> => {
+    const history = await fetchAllPages(
+      (page, pageSize) => fetchMachineTransmissions(m.id, { limit: pageSize, offset: (page - 1) * pageSize }),
+      { pageSize: 200 },
+    );
+    return [
+      {
+        name: tr('untransmittedTitle'),
+        columns: [
+          { header: t('col.date'), kind: 'datetime' },
+          { header: t('col.document'), width: 16 },
+          { header: t('col.amount'), kind: 'money' },
+          { header: t('col.approval'), width: 14 },
+          { header: t('col.terminalId'), width: 20 },
+          { header: t('col.card'), width: 10 },
+          { header: t('col.payments'), kind: 'number' },
+        ],
+        rows: items.map((i) => [
+          i.createdAt,
+          i.documentNumber ?? i.transactionNumber,
+          i.amount,
+          i.approvalNumber ?? null,
+          i.terminalTransactionId ?? null,
+          i.cardLast4 ? `****${i.cardLast4}` : null,
+          i.creditPayments ?? null,
+        ]),
+        totals: [tc('total'), String(data?.count ?? items.length), data?.amount ?? null, null, null, null, null],
+      },
+      {
+        name: tr('historyTitle'),
+        columns: [
+          { header: tr('col.startedAt'), kind: 'datetime' },
+          { header: tr('export.finishedAt'), kind: 'datetime' },
+          { header: tr('col.trigger'), width: 12 },
+          { header: tr('col.status'), width: 10 },
+          { header: tr('export.message'), width: 28 },
+          { header: tr('col.batch'), width: 12 },
+          { header: tr('col.count'), kind: 'number' },
+          { header: tr('col.amount'), kind: 'money' },
+          { header: tr('col.matched'), kind: 'number' },
+          { header: tr('export.terminalCount'), kind: 'number' },
+        ],
+        rows: history.map((r) => [
+          r.startedAt,
+          r.finishedAt ?? null,
+          tr(`trigger.${r.trigger}`),
+          tr(`reportStatus.${r.status}`),
+          r.error ?? r.statusMessage ?? null,
+          r.batchNumber ?? null,
+          r.transactionCount ?? null,
+          r.amount ?? null,
+          r.legsMatched,
+          r.terminalTransactionCount,
+        ]),
+      },
     ];
-    const rows = items.map((i) => [
-      i.createdAt,
-      i.transactionNumber,
-      i.amount,
-      i.approvalNumber ?? '',
-      i.terminalTransactionId ?? '',
-      i.cardLast4 ?? '',
-      i.creditPayments ?? '',
-    ]);
-    downloadCsv(`untransmitted-${m.machineCode}.csv`, toCsv(header, rows));
   };
 
   return (
@@ -545,10 +617,12 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
             ? t('summary', { count: data.count, amount: formatCurrency(data.amount) })
             : t('untracked')}
         </span>
-        <Button size="sm" variant="outline" disabled={items.length === 0} onClick={exportCsv}>
-          <Download className="h-4 w-4 ms-1" aria-hidden />
-          {t('export')}
-        </Button>
+        <ReportExportToolbar
+          title={tr('title')}
+          scopeLabel={m.name}
+          disabled={!data}
+          getSheets={getSheets}
+        />
       </div>
       <Table>
         <TableHeader>
@@ -584,7 +658,7 @@ export function UntransmittedSales({ m }: { m: PosMachine }) {
             items.map((i) => (
               <TableRow key={i.legId}>
                 <TableCell className="text-xs">{formatDateTime(i.createdAt)}</TableCell>
-                <TableCell className="text-xs tabular-nums">{i.transactionNumber}</TableCell>
+                <TableCell className="text-xs tabular-nums">{i.documentNumber ?? i.transactionNumber}</TableCell>
                 <TableCell className="text-end tabular-nums">{formatCurrency(i.amount)}</TableCell>
                 <TableCell className="text-xs tabular-nums" dir="ltr">
                   {i.approvalNumber ?? '—'}
@@ -651,4 +725,42 @@ export function PeriodTransmissionSummary({ block }: { block: PeriodTransmission
       <p className="text-muted-foreground">{t('informational')}</p>
     </div>
   );
+}
+
+/** The X's (or a Z section's) batches as an Excel sheet, its leg counts as the heading. */
+export function usePeriodTransmissionSheet() {
+  const t = useTranslations('transmission.period');
+  const tr = useTranslations('transmission');
+  return (block: PeriodTransmission): ExcelSheet => ({
+    name: tr('title'),
+    heading: [
+      block.cardLegs === 0 && block.batches.length === 0
+        ? t('noCardSales')
+        : t('legs', { total: block.cardLegs, transmitted: block.transmittedLegs }),
+      block.untransmittedLegs > 0
+        ? t('untransmitted', { count: block.untransmittedLegs, amount: formatCurrency(block.untransmittedAmount) })
+        : '',
+      block.untrackedLegs > 0 ? t('untracked', { count: block.untrackedLegs }) : '',
+    ].filter(Boolean),
+    columns: [
+      { header: tr('col.startedAt'), kind: 'datetime' },
+      { header: tr('export.finishedAt'), kind: 'datetime' },
+      { header: tr('col.trigger'), width: 12 },
+      { header: tr('col.status'), width: 10 },
+      { header: tr('col.batch'), width: 12 },
+      { header: tr('col.count'), kind: 'number' },
+      { header: tr('col.amount'), kind: 'money' },
+      { header: tr('export.legsInPeriod'), kind: 'number' },
+    ],
+    rows: block.batches.map((b) => [
+      b.startedAt ?? null,
+      b.finishedAt ?? null,
+      tr(`trigger.${b.trigger}`),
+      tr(`reportStatus.${b.status}`),
+      b.batchNumber ?? null,
+      b.transactionCount ?? null,
+      b.amount ?? null,
+      b.legsInPeriod,
+    ]),
+  });
 }

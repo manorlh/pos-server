@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 import uuid
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -15,14 +16,18 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
+from app.services import kiosk_identity as _kiosk_identity
+from app.services.open_format.defaults import SoftwareInfo
 from app.services.open_format.tax_report_generator import (
+    DEFAULT_TIMEZONE,
     BusinessInfoDict,
     TaxReportResult,
     build_open_format_zip,
     generate_tax_report,
 )
+from app.services.document_prefix import document_number_of
 from app.services.settings_merge import build_business_info, merge_all_settings_layers
-from app.services.tenders import CREDIT_NOTE_DOCUMENT_TYPE
+from app.services.tenders import RECEIPT_DOCUMENT_TYPES, is_refund_document
 
 MAX_TRANSACTIONS_PER_EXPORT = 50_000
 
@@ -36,6 +41,24 @@ class TaxExportContext:
     date_range: Union[Dict[str, Any], Dict[str, int]]
     start: datetime
     end: datetime
+    #: The business's time zone: the export's days and every date and time in the file.
+    zone: tzinfo = DEFAULT_TIMEZONE
+    #: A000 1006–1010 (the platform setting `openFormat`, app/services/open_format/software.py).
+    software_info: Optional[SoftwareInfo] = None
+
+
+def export_timezone(db: Session, tenant_id: Optional[uuid.UUID]) -> tzinfo:
+    """
+    The time zone of the file's dates and of the export's days: the tenant's report time
+    zone, which is Asia/Jerusalem unless a tenant set another one ("UTC" counts as unset,
+    see `reports.resolve_report_timezone`).
+    """
+    from app.services.reports import resolve_report_timezone
+
+    try:
+        return ZoneInfo(resolve_report_timezone(db, tenant_id, None))
+    except (ZoneInfoNotFoundError, ValueError, KeyError):
+        return DEFAULT_TIMEZONE
 
 
 def _decimal_to_float(value: Any) -> float:
@@ -69,6 +92,8 @@ def business_info_to_dict(bi) -> BusinessInfoDict:
         "withholdingFileNumber": "000000000",
         "hasBranches": bool(bi.has_branches),
         "branchId": bi.branch_id or "",
+        # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): shown on the export's preview.
+        "dealerType": getattr(bi, "dealer_type", None) or "company",
     }
 
 
@@ -93,12 +118,21 @@ def parse_date_range(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     year: Optional[int] = None,
+    tz: Optional[tzinfo] = None,
 ) -> Tuple[datetime, datetime, Union[Dict[str, Any], Dict[str, int]]]:
+    """
+    The export window: whole calendar days **in the business's time zone** (`tz`,
+    Asia/Jerusalem by default), from the first instant of `from` to the last microsecond
+    of `to` — so a sale rung at 00:30 belongs to the day printed on it, and a day of a
+    daylight-saving change is 23 or 25 hours long, as it was in the shop.
+    1.31 §2.1: "את המסמכים יש לחתוך לפי תאריך המסמך (התאריך הרשום על גבי המסמך)".
+    """
+    zone = tz or DEFAULT_TIMEZONE
     if mode == "year":
         if year is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="year is required for year mode")
-        start = datetime(year, 1, 1, tzinfo=timezone.utc)
-        end = datetime(year, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        start = datetime(year, 1, 1, tzinfo=zone)
+        end = datetime.combine(date(year, 12, 31), time.max, tzinfo=zone)
         return start, end, {"year": year}
 
     if from_date is None or to_date is None:
@@ -108,9 +142,15 @@ def parse_date_range(
         )
     if from_date > to_date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="from must be before or equal to to")
-    start = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
-    end = datetime.combine(to_date, time.max.replace(microsecond=0), tzinfo=timezone.utc)
+    start = datetime.combine(from_date, time.min, tzinfo=zone)
+    end = datetime.combine(to_date, time.max, tzinfo=zone)
     return start, end, {"start": start, "end": end}
+
+
+def _as_utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
 
 
 def load_transactions_for_tax_export(
@@ -130,11 +170,19 @@ def load_transactions_for_tax_export(
             # queries per document while building the payment and customer records.
             joinedload(Transaction.payments),
             joinedload(Transaction.customer),
+            # The shop's branch code, for a document the till stamped none on.
+            joinedload(Transaction.shop),
         )
         .filter(
             Transaction.tenant_id == tenant_id,
-            Transaction.created_at >= start,
-            Transaction.created_at <= end,
+            # The window's local days as UTC instants (documents are stamped in UTC).
+            Transaction.created_at >= _as_utc(start),
+            Transaction.created_at <= _as_utc(end),
+            # A duplicate copy — the same document stored a second time under another id
+            # (docs/SHIFTS_API.md §1.2d) — is in the file once, as the document holding the
+            # number. A conflicting document with other content is a document of its own
+            # and stays: the file is then refused for its duplicate number, naming both.
+            Transaction.duplicate_copy.is_(False),
         )
         .order_by(Transaction.created_at.asc())
     )
@@ -186,11 +234,135 @@ class BaseDocuments:
     by_line: Dict[str, BaseDocument]
 
 
+def document_branch_id(tx: Transaction) -> Optional[str]:
+    """
+    Field 1231 of a document: the branch code the till stamped on it, else (a document
+    from before branch codes were mandatory, or from a till that had not synced its code
+    yet) its shop's code (app/services/branch_code.py). It does not tell two documents of
+    one type and number apart — the number itself must be unique in the business's file
+    (`refuse_duplicate_document_numbers`, docs/SPEC_DOCUMENT_PREFIX.md §5).
+    """
+    stamped = (tx.branch_id or "").strip()
+    if stamped:
+        return stamped
+    shop = getattr(tx, "shop", None)
+    code = (getattr(shop, "branch_id", None) or "").strip() if shop is not None else ""
+    return code or None
+
+
+def refuse_shops_without_branch_code(
+    db: Session, rows: List[Transaction], shop: Optional[Shop] = None
+) -> None:
+    """
+    400 when a shop the export covers has no branch code. Every shop has one since the
+    code became mandatory (migration f3a9c2d7e1b4 filled the rest), so this is defensive:
+    a file whose documents cannot be told apart by branch is not written at all.
+    """
+    from app.services.branch_code import shops_without_code
+
+    shop_ids = {tx.shop_id for tx in rows if tx.shop_id is not None}
+    shops = db.query(Shop).filter(Shop.id.in_(shop_ids)).all() if shop_ids else []
+    if shop is not None and all(s.id != shop.id for s in shops):
+        shops.append(shop)
+    missing = shops_without_code(shops)
+    if missing:
+        names = ", ".join(sorted(s.name for s in missing))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"לא ניתן להפיק קובץ: לסניפים הבאים אין קוד סניף — {names}. יש להגדיר קוד סניף בעמוד הסניף.",
+        )
+
+
+#: How many duplicate numbers the refusal names (the rest are counted).
+DUPLICATES_LISTED = 12
+
+
+def refuse_duplicate_document_numbers(
+    db: Session, rows: List[Transaction], tx_dicts: List[Dict[str, Any]]
+) -> None:
+    """
+    409 when two documents of the file would carry one type and one number (C100 1203 +
+    1204). The file is one per business, every branch of it, and the Tax Authority's
+    simulator refuses it — "נמצאה יותר מרשומה אחת עם אותו מס אסמכתא" — whatever the
+    branch codes (1231) say. It happens when tills of two branches issued under one
+    document prefix (docs/SPEC_DOCUMENT_PREFIX.md §5): the documents are issued and their
+    numbers printed, so nothing here renumbers them; the file is refused, naming them, and
+    the tills are to be given unique prefixes for what they issue next.
+
+    `detail` is `{code, message, duplicates}`; `message` is the Hebrew text the dashboard
+    shows, `duplicates` the pairs with the till and shop of each document.
+    """
+    from app.services.open_format.tax_report_generator import duplicate_document_numbers
+
+    duplicates = duplicate_document_numbers(tx_dicts)
+    if not duplicates:
+        return
+    by_id = {str(tx.id): tx for tx in rows}
+    shop_ids = {tx.shop_id for tx in rows if tx.shop_id is not None}
+    shop_names = (
+        {str(sid): name for sid, name in db.query(Shop.id, Shop.name).filter(Shop.id.in_(shop_ids)).all()}
+        if shop_ids
+        else {}
+    )
+    listed = []
+    for (doc_type, number), docs in sorted(duplicates.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        holders = []
+        for d in docs:
+            tx = by_id.get(str(d.get("id")))
+            holders.append({
+                "transactionId": str(d.get("id")),
+                "posNumber": getattr(tx, "pos_number", None),
+                "shopName": shop_names.get(str(getattr(tx, "shop_id", None))),
+                "branchId": d.get("branchId"),
+            })
+        listed.append({"documentType": doc_type, "documentNumber": number, "documents": holders})
+
+    def where(h: Dict[str, Any]) -> str:
+        shop = h.get("shopName") or (f"סניף {h['branchId']}" if h.get("branchId") else "סניף לא ידוע")
+        till = f"קופה {h['posNumber']}" if h.get("posNumber") else "קופה לא ידועה"
+        return f"{shop} — {till}"
+
+    lines = [
+        f"{d['documentType']} מס׳ {d['documentNumber']}: " + "; ".join(where(h) for h in d["documents"])
+        for d in listed[:DUPLICATES_LISTED]
+    ]
+    more = len(listed) - DUPLICATES_LISTED
+    if more > 0:
+        lines.append(f"ועוד {more} מספרים כפולים.")
+    message = (
+        f"לא ניתן להפיק את הקובץ: {len(listed)} מספרי מסמך מופיעים בו יותר מפעם אחת עם אותו סוג מסמך. "
+        "קובץ המבנה האחיד הוא אחד לכל העסק — כל הסניפים — ומספר מסמך חייב להיות ייחודי בו לכל סוג מסמך, "
+        "גם כשקוד הסניף שונה; סימולטור רשות המסים דוחה קובץ כזה (\"נמצאה יותר מרשומה אחת עם אותו מס אסמכתא\").\n"
+        + "\n".join(lines)
+        + "\nהסיבה: קופות בסניפים שונים הנפיקו תחת אותה קידומת מסמכים. יש לתת לכל קופה קידומת ייחודית בעסק "
+        "(עמוד הקופות ← \"קידומות מסמכים כפולות בעסק\"). זה משפיע רק על מסמכים חדשים — מסמכים שכבר הופקו "
+        "נשארים עם המספר שהודפס עליהם."
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": "duplicate_document_numbers", "message": message, "duplicates": listed},
+    )
+
+
+def export_document_number(tx: Transaction) -> str:
+    """
+    The document number filed in the open format, exactly as the till printed it: the
+    prefix and the number padded to 7 digits, no dash (`20000057`; the owner's "ללא מקף",
+    docs/SPEC_DOCUMENT_PREFIX.md). C100 field 1204, D110 field 1254 and D120 field 1304
+    are alphanumeric X(20) (`DOCUMENT_NUMBER_WIDTH`), so this is written as text; two
+    tills' #57 file as `10000057` and `20000057`. A number is unique together with its
+    type (field 1203): each type has its own series. Every record of a document — its
+    header, its lines, its payments — and every line that names it as a base document
+    (D110 field 1257) takes the number from here, so the file stays consistent.
+    """
+    return document_number_of(tx)
+
+
 def _base_of(tx: Transaction) -> BaseDocument:
     return {
         "documentType": tx.document_type or 320,
-        "transactionNumber": tx.transaction_number,
-        "branchId": tx.branch_id,
+        "transactionNumber": export_document_number(tx),
+        "branchId": document_branch_id(tx),
     }
 
 
@@ -253,14 +425,16 @@ def _build_cart_from_items(
     till printed and handed the customer, so a filing built from it agrees with the paper
     by construction and a later VAT-rate change cannot re-state it.
 
-    `discountAmount` is returned gross so the caller can reconstruct field 1219 as
-    1221 + the discount, keeping 1219 − 1220 = 1221 exact. Note it carries *all*
-    discounts, line and basket together, because that is what the till sends as one
-    figure; the per-line breakdown is reported separately in D110 field 1266 against
-    line totals that are themselves gross, so the two views stay consistent.
+    `discountAmount` is every discount the document carries, line and basket together
+    (what the till sends as one figure, `document_discount`). `basketDiscount` is the
+    document-level part alone — what is left of it after the lines' own discounts (the
+    cashier's and the promotions') — and is what C100 1220 files: a line's discount is
+    the line's (D110 1266), and D110 1267 is the line after it ("בניכוי הנחת השורה"). A
+    credit note's lines already carry their share of the original's discounts, so its
+    `basketDiscount` is 0. See `tax_report_generator.document_amounts` for the rule.
 
-    `items` deliberately keep their gross line totals — D110 reports each line's own
-    discount in 1266 and must not have it subtracted twice.
+    `items` keep their stored line totals: gross for a sale line (its discount beside it),
+    already credited for a credit-note line.
     """
     items = tx.items
     tax_rate = global_tax_rate / 100.0
@@ -284,6 +458,10 @@ def _build_cart_from_items(
                 "totalPrice": total_price,
                 "discount": _decimal_to_float(it.discount),
                 "lineDiscount": _decimal_to_float(it.line_discount),
+                # The promotions' share of the line ("מבצעים"): a discount of the line's own.
+                "promotionDiscount": _decimal_to_float(getattr(it, "promotion_discount", None)),
+                # Discount vouchers' share of the line: a discount of the line's own too.
+                "voucherDiscount": _decimal_to_float(getattr(it, "voucher_discount", None)),
                 "transactionType": it.transaction_type or 2,
                 # The receipt this credit-note line returns (D110 1256/1257), when the
                 # line names its original and the cloud holds it.
@@ -297,6 +475,16 @@ def _build_cart_from_items(
 
     discount = _decimal_to_float(tx.document_discount) or 0.0
     net, vat = _document_split(tx, gross_total, discount, tax_rate)
+    if _is_credit_note(tx):
+        basket = 0.0
+    else:
+        own = sum(
+            abs(_decimal_to_float(it.discount) or _decimal_to_float(it.line_discount))
+            + abs(_decimal_to_float(getattr(it, "promotion_discount", None)))
+            + abs(_decimal_to_float(getattr(it, "voucher_discount", None)))
+            for it in items
+        )
+        basket = round(max(discount - own, 0.0), 2)
 
     return {
         "items": cart_items,
@@ -306,6 +494,7 @@ def _build_cart_from_items(
         # exactly. These are the same number on an undiscounted document.
         "totalAmount": round(net + vat, 2),
         "discountAmount": discount,
+        "basketDiscount": basket,
     }
 
 
@@ -328,14 +517,17 @@ def _document_split(
         return _decimal_to_float(tx.net_amount), _decimal_to_float(tx.vat_amount)
 
     settled = gross_total if _is_credit_note(tx) else gross_total - discount
+    if tx.document_type in RECEIPT_DOCUMENT_TYPES:
+        # An exempt dealer's receipt never carried VAT (docs/SPEC_BUSINESS_TYPE.md).
+        return round(settled, 2), 0.0
     net = settled / (1 + tax_rate) if tax_rate > 0 else settled
     return round(net, 2), round(settled - net, 2)
 
 
 def _is_credit_note(tx: Transaction) -> bool:
-    return (
-        tx.document_type == CREDIT_NOTE_DOCUMENT_TYPE
-        or tx.refund_of_transaction_id is not None
+    # 330, or an exempt dealer's receipt refund (-400) — `tenders.is_refund_document`.
+    return is_refund_document(
+        document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id
     )
 
 
@@ -356,9 +548,72 @@ def _payments_for_open_format(tx: Transaction) -> List[Dict[str, Any]]:
             "sequence": leg.sequence,
             "method": leg.method,
             "amount": _decimal_to_float(leg.amount),
+            # What the terminal answered, as the till stored it — D120 1313–1315 of a
+            # card leg (`tax_report_generator.card_fields`).
+            "cardAcquirer": getattr(leg, "card_acquirer", None),
+            "cardBrand": getattr(leg, "card_brand", None),
+            "creditPayments": _credit_payments_of(getattr(leg, "nayax_meta", None)),
         }
         for leg in legs
     ]
+
+
+def _credit_payments_of(meta: Any) -> Optional[int]:
+    """The number of instalments (תשלומים) of a card leg, if the till recorded it."""
+    if not isinstance(meta, dict):
+        return None
+    result = meta.get("result") if isinstance(meta.get("result"), dict) else {}
+    for raw in (meta.get("creditPayments"), result.get("creditPayments")):
+        if raw is None or isinstance(raw, bool):
+            continue
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            return count
+    return None
+
+
+def cashier_user_names(db: Session, tenant_id: Optional[uuid.UUID], rows: Iterable[Transaction]) -> Dict[str, str]:
+    """
+    `cashier_id` → the till user's user name (`pos_users.username`), for C100 1233
+    ("מבצע הפעולה — שם המשתמש של מבצע הפעולה"). Only ids of this tenant's till users.
+    """
+    from app.models.pos_user import PosUser
+
+    ids = set()
+    for tx in rows:
+        raw = (tx.cashier_id or "").strip()
+        try:
+            ids.add(uuid.UUID(raw))
+        except (ValueError, AttributeError, TypeError):
+            continue
+    if not ids:
+        return {}
+    query = db.query(PosUser.id, PosUser.username).filter(PosUser.id.in_(list(ids)))
+    if tenant_id is not None:
+        query = query.filter(PosUser.tenant_id == tenant_id)
+    return {str(pid): (name or "") for pid, name in query.all()}
+
+
+def _cashier_name(tx: Transaction, user_names: Optional[Dict[str, str]]) -> str:
+    """
+    C100 1233: a kiosk's own short code; else the till user's user name; else the id as
+    the till sent it when it is not a bare UUID (an older or desktop client's own name or
+    code). An unresolved UUID is not a user name and is left blank.
+    """
+    kiosk = _kiosk_identity.open_format_code(tx.cashier_id)
+    if kiosk:
+        return kiosk
+    raw = (tx.cashier_id or "").strip()
+    if not raw:
+        return ""
+    try:
+        key = str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError):
+        return raw
+    return (user_names or {}).get(key, "")
 
 
 def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
@@ -398,20 +653,31 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
 
 
 def transform_transaction_for_open_format(
-    tx: Transaction, global_tax_rate: float, bases: Optional[BaseDocuments] = None
+    tx: Transaction,
+    global_tax_rate: float,
+    bases: Optional[BaseDocuments] = None,
+    user_names: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     status_val = tx.status.value if hasattr(tx.status, "value") else str(tx.status)
     doc_date = tx.document_production_date or tx.created_at
     return {
         "id": str(tx.id),
-        "transactionNumber": tx.transaction_number,
+        # `20000057` — the header, the lines and the payments all read it here.
+        "transactionNumber": export_document_number(tx),
         "status": status_val,
         "documentType": tx.document_type or 320,
+        # Stored UTC; the generator writes it in the business's local time.
         "documentProductionDate": doc_date.isoformat() if doc_date else None,
+        # The rate the document was issued at (a fraction, 0.18): its lines' 1265–1268.
+        "vatRate": (
+            _decimal_to_float(getattr(tx, "vat_rate", None))
+            if getattr(tx, "vat_rate", None) is not None
+            else None
+        ),
         "paymentMethod": tx.payment_method,
         "documentDiscount": _decimal_to_float(tx.document_discount),
         "whtDeduction": _decimal_to_float(tx.wht_deduction),
-        "branchId": tx.branch_id,
+        "branchId": document_branch_id(tx),
         "refundOfTransactionId": str(tx.refund_of_transaction_id) if tx.refund_of_transaction_id else None,
         # The original named by `refundOfTransactionId`, even when outside the export.
         "baseDocument": (
@@ -425,10 +691,59 @@ def transform_transaction_for_open_format(
         # own payment-type code. See `resolve_payment_legs` for how the amounts are
         # apportioned and why.
         "payments": _payments_for_open_format(tx),
-        "cashier": {"name": tx.cashier_id or ""},
+        # What ingest noted about the document (docs/SHIFTS_API.md §1.2): the generator reads
+        # `tenders_do_not_reconcile` to keep its payment records consistent (`resolve_payment_legs`).
+        "ingestNotes": [
+            n.get("code") for n in (getattr(tx, "ingest_notes", None) or []) if isinstance(n, dict) and n.get("code")
+        ],
+        # A kiosk's documents carry its own operator ("kiosk:<machine>"): field 1233 gets its
+        # short code; a till user's, their user name (`_cashier_name`).
+        "cashier": {"name": _cashier_name(tx, user_names)},
         "customer": _customer_for_open_format(tx),
         "cart": _build_cart_from_items(tx, global_tax_rate, bases),
     }
+
+
+def flagged_documents(tx_dicts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    The documents of the file whose payment records (D120) were not the till's tenders as
+    sent: their tenders did not add up to the document (`tenders_do_not_reconcile`), so the
+    records were apportioned to the document's total (`resolve_payment_legs`). Listed with
+    the export — the file itself keeps the format the Tax Authority requires.
+    """
+    from app.services.open_format.tax_report_generator import TENDERS_DO_NOT_RECONCILE, payment_records_flagged
+
+    out = []
+    for t in tx_dicts:
+        if TENDERS_DO_NOT_RECONCILE in (t.get("ingestNotes") or ()) and payment_records_flagged(t):
+            out.append({
+                "transactionId": t.get("id"),
+                "documentNumber": t.get("transactionNumber"),
+                "documentType": t.get("documentType"),
+                "code": TENDERS_DO_NOT_RECONCILE,
+                "text": "אמצעי התשלום מהקופה לא הסתכמו לסכום המסמך — רשומות התשלום (D120) חולקו לסכום המסמך",
+            })
+    return out
+
+
+def count_duplicate_copies(
+    db: Session, tenant_id: uuid.UUID, *, company_id: Optional[uuid.UUID], shop_id: Optional[uuid.UUID],
+    start: datetime, end: datetime,
+) -> int:
+    """Duplicate copies in the export's window — left out of the file (counted once, §1.2d)."""
+    query = db.query(Transaction.id).filter(
+        Transaction.tenant_id == tenant_id,
+        Transaction.created_at >= _as_utc(start),
+        Transaction.created_at <= _as_utc(end),
+        Transaction.duplicate_copy.is_(True),
+    )
+    if shop_id is not None:
+        query = query.filter(Transaction.shop_id == shop_id)
+    elif company_id is not None:
+        query = query.filter(
+            Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id == company_id, Shop.tenant_id == tenant_id))
+        )
+    return query.count()
 
 
 def resolve_export_context(
@@ -441,11 +756,18 @@ def resolve_export_context(
     to_date: Optional[date] = None,
     year: Optional[int] = None,
 ) -> TaxExportContext:
-    start, end, date_range = parse_date_range(mode, from_date=from_date, to_date=to_date, year=year)
+    from app.services.open_format import software
+
+    zone = export_timezone(db, company.tenant_id)
+    start, end, date_range = parse_date_range(mode, from_date=from_date, to_date=to_date, year=year, tz=zone)
     merged = merge_all_settings_layers(company, shop)
     bi = build_business_info(company, shop, merged)
     business_info = business_info_to_dict(bi)
     validate_business_info(business_info)
+    # A000 1034 — the business's branches, not whether this one shop has a code (which
+    # every shop has): only an explicit `businessInfo.hasBranches` setting is taken as is.
+    override = merged.get("businessInfo") if isinstance(merged.get("businessInfo"), dict) else {}
+    business_info["hasBranches"] = company_has_branches(db, company, explicit=override.get("hasBranches"))
     global_tax_rate = _resolve_global_tax_rate(company, shop)
     return TaxExportContext(
         company=company,
@@ -455,7 +777,23 @@ def resolve_export_context(
         date_range=date_range,
         start=start,
         end=end,
+        zone=zone,
+        software_info=software.software_info(db),
     )
+
+
+def company_has_branches(db: Session, company: Company, *, explicit: Any = None, codes: Iterable[Optional[str]] = ()) -> bool:
+    """
+    A000 field 1034 ("1 - בעסק יש סניפים/ענפים"; הבהרה 3): the business has branches when
+    its company has more than one shop, or the export's documents carry more than one
+    branch code — whichever shop the export is for. A `businessInfo.hasBranches: true`
+    setting still turns it on; nothing turns it off for a business with several shops
+    (the branch fields 1231/1270/1274/1320 and a B110 per branch go with it).
+    """
+    shops = db.query(Shop.branch_id).filter(Shop.company_id == company.id).all()
+    known = {(row[0] or "").strip() for row in shops} | {(c or "").strip() for c in codes}
+    known.discard("")
+    return len(shops) > 1 or len(known) > 1 or explicit is True
 
 
 def build_tax_open_format_export(
@@ -474,14 +812,32 @@ def build_tax_open_format_export(
         start=ctx.start,
         end=ctx.end,
     )
+    from app.services.open_format import software
+
+    refuse_shops_without_branch_code(db, rows, ctx.shop)
     bases = load_base_documents(db, tenant_id, rows)
-    tx_dicts = [transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases) for tx in rows]
+    user_names = cashier_user_names(db, tenant_id, rows)
+    tx_dicts = [
+        transform_transaction_for_open_format(tx, ctx.global_tax_rate, bases, user_names) for tx in rows
+    ]
+    # Before anything is written: a file with one (type, number) twice is refused by the
+    # Tax Authority, so it is not produced at all (docs/SPEC_DOCUMENT_PREFIX.md §9).
+    refuse_duplicate_document_numbers(db, rows, tx_dicts)
+    business_info = dict(ctx.business_info)
+    business_info["hasBranches"] = company_has_branches(
+        db, ctx.company, explicit=business_info.get("hasBranches"), codes=[t["branchId"] for t in tx_dicts]
+    )
+    ctx.business_info["hasBranches"] = business_info["hasBranches"]
+    produced_at = datetime.now(ctx.zone)
     result = generate_tax_report(
         tx_dicts,
-        ctx.business_info,
+        business_info,
         ctx.date_range,
-        output_path="",
+        output_path=software.output_path(db, business_info.get("vatNumber", ""), produced_at),
         global_tax_rate=ctx.global_tax_rate,
+        software_info=ctx.software_info,
+        process_date=produced_at,
+        tz=ctx.zone,
     )
     zip_bytes = build_open_format_zip(result.ini_content, result.bkmv_content)
     return result, tx_dicts, zip_bytes

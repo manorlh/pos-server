@@ -606,6 +606,8 @@ _ROUTES = [
         {"scopeType": "shop", "scopeId": str(uuid.uuid4()), "value": "x"},
     ),
     ("delete", f"/api/v1/till-parameters/{uuid.uuid4()}/values/{uuid.uuid4()}", None),
+    # The change log (app/services/till_parameter_audit.py).
+    ("get", f"/api/v1/till-parameters/{uuid.uuid4()}/changes", None),
 ]
 
 
@@ -633,6 +635,6 @@ def test_every_dashboard_route_hangs_on_the_super_admin_gate():
             yield from calls(sub)
 
     routes = [r for r in R.router.routes if hasattr(r, "dependant")]
-    assert len(routes) == 7
+    assert len(routes) == 8
     for route in routes:
         assert get_current_super_admin in set(calls(route.dependant)), route.path

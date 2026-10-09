@@ -16,6 +16,8 @@ import { eventErrorMessage, fetchEventCompare, type EventCompareEntry } from '@/
 import { clockLabel, durationText } from '@/lib/eventReport';
 import { CHART, Capsule, Card, InsightsSurface, Muted, SectionHeader, SkeletonCard, tooltipStyle } from '@/components/dashboard/insights/ios';
 import { IosTable, StatusChip, Td, Th, compactMoney, count, money, pctText, tillColor } from '@/components/dashboard/events/event-parts';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { EXCEL_FILL, type ExcelSheet } from '@/lib/excelExport';
 
 type Row = {
   key: string;
@@ -60,6 +62,74 @@ export default function EventsComparePage() {
   };
   const chart = events.map((e, i) => ({ name: e.event.name, net: e.kpis.net, avg: e.kpis.avgTicket, color: tillColor(i) }));
 
+  /**
+   * The figures grid (a row per figure, a column per event — numbers, the unit in the
+   * figure's name, the best named beside it), every event's tills by sales per hour (weak
+   * and silent tills highlighted, as on screen), and the top items.
+   */
+  const exportSheets = (): ExcelSheet[] => {
+    const unit = (row: Row) => (row.format === money ? ' (₪)' : row.key === 'tipPct' ? ' (%)' : '');
+    const tills = events.flatMap((e) =>
+      e.tills
+        .slice()
+        .sort((a, b) => b.salesPerHour - a.salesPerHour)
+        .map((x) => ({ event: e.event.name, x })),
+    );
+    return [
+      {
+        name: t('figures'),
+        columns: [
+          { header: t('figures') },
+          ...events.map((e) => ({
+            header: `${e.event.name} · ${clockLabel(e.event.startsAt, e.event.timezone, true)}`,
+            kind: 'number' as const,
+            width: 18,
+          })),
+          { header: t('best') },
+        ],
+        rows: rows.map((row) => {
+          const top = best(row);
+          return [
+            `${t(`rows.${row.key}`)}${unit(row)}`,
+            ...events.map(row.value),
+            top === null ? null : events.filter((e) => row.value(e) === top).map((e) => e.event.name).join(', '),
+          ];
+        }),
+        autoFilter: false,
+      },
+      {
+        name: t('tills'),
+        columns: [
+          { header: te('form.name') },
+          { header: te('tills.till') },
+          { header: te('tills.perHour'), kind: 'money' },
+          { header: te('tills.net'), kind: 'money' },
+          { header: te('tills.sales'), kind: 'number' },
+          { header: te('tills.avgTicket'), kind: 'money' },
+          { header: te('tills.share'), kind: 'percent' },
+          { header: t('rows.tipPct'), kind: 'percent' },
+        ],
+        rows: tills.map(({ event, x }) => [
+          event, x.name, x.salesPerHour, x.net, x.salesCount, x.avgTicket, x.sharePct, x.tipPct,
+        ]),
+        rowFills: tills.map(({ x }) => (x.weak || x.noSales ? EXCEL_FILL.missing : null)),
+      },
+      {
+        name: t('topItems'),
+        columns: [
+          { header: te('form.name') },
+          { header: te('items.item') },
+          { header: te('items.quantity'), kind: 'number' },
+          { header: te('items.revenue'), kind: 'money' },
+          { header: te('items.share'), kind: 'percent' },
+        ],
+        rows: events.flatMap((e) => e.topItems.map((i) => [e.event.name, i.name, i.quantity, i.revenue, i.sharePct])),
+      },
+    ];
+  };
+  const startDates = events.map((e) => e.event.startDate).filter(Boolean).sort();
+  const endDates = events.map((e) => e.event.endDate).filter(Boolean).sort();
+
   return (
     <InsightsSurface className="print:bg-white">
       <div className="space-y-1 px-1">
@@ -70,6 +140,14 @@ export default function EventsComparePage() {
         <h1 className="text-[34px] font-bold leading-tight tracking-tight">{t('title')}</h1>
         <p className="text-[15px] text-[#8E8E93]">{t('subtitle')}</p>
       </div>
+      <ReportExportToolbar
+        className="mt-3 px-1"
+        title={t('title')}
+        from={startDates[0]}
+        to={endDates[endDates.length - 1]}
+        disabled={events.length === 0}
+        getSheets={exportSheets}
+      />
 
       {query.isLoading ? (
         <div className="mt-4 space-y-3">

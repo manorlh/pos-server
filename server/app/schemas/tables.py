@@ -285,8 +285,13 @@ SKETCH_KINDS = (
     # Drawn with the editor's tools: a line, a polyline (a wall of several segments),
     # a freehand stroke, a rectangle (outline or filled).
     "line", "polyline", "freehand", "rect",
+    # The business's logo, placed on the floor: its own picture (`src`), else the business's.
+    "logo",
 )
-SKETCH_BACKGROUNDS = ("wood", "tiles", "light", "dark", "image")
+#: `clean` — the flat, neutral floor (the default when nothing is chosen).
+SKETCH_BACKGROUNDS = ("clean", "wood", "tiles", "light", "dark", "image")
+SketchBackground = Literal["clean", "wood", "tiles", "light", "dark", "image"]
+SKETCH_SRC_MAX = 1000
 SKETCH_ELEMENTS_MAX = 600
 SKETCH_POINTS_MAX = 4000
 
@@ -298,7 +303,7 @@ class SketchElementIn(_Camel):
     kind: Literal[
         "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
         "stairs", "cashier", "host", "exit", "stage", "sofa",
-        "line", "polyline", "freehand", "rect",
+        "line", "polyline", "freehand", "rect", "logo",
     ]
     x: float = Field(..., ge=-100, le=5100)
     y: float = Field(..., ge=-100, le=5100)
@@ -316,11 +321,27 @@ class SketchElementIn(_Camel):
     color: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
     stroke: Optional[float] = Field(None, ge=0.5, le=60)
     filled: Optional[bool] = None
+    #: A logo's own picture (an uploaded image's URL); none — the business's logo.
+    src: Optional[str] = Field(None, max_length=SKETCH_SRC_MAX)
 
     @field_validator("text", mode="before")
     @classmethod
     def _text(cls, value):
         return _clean_text(value, 60)
+
+    @field_validator("src", mode="before")
+    @classmethod
+    def _src(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("src is a URL")
+        value = value.strip()
+        if not value:
+            return None
+        if not (value.startswith("https://") or value.startswith("http://") or value.startswith("/")):
+            raise ValueError("src is an http(s) URL")
+        return value
 
     @field_validator("points")
     @classmethod
@@ -345,7 +366,7 @@ class SketchIn(_Camel):
     template: Optional[str] = Field(None, max_length=40)
     #: The floor under it all: wood planks (the default), tiles, plain light or dark, or
     #: the zone's uploaded image. Drawn by the till itself — no picture to download.
-    background: Optional[Literal["wood", "tiles", "light", "dark", "image"]] = None
+    background: Optional[SketchBackground] = None
     elements: List[SketchElementIn] = Field(default_factory=list, max_length=SKETCH_ELEMENTS_MAX)
 
 
@@ -392,6 +413,10 @@ class ZoneUpdate(_Camel):
         return cleaned
 
 
+#: What a table is for (app/services/table_policies.py).
+TableKind = Literal["regular", "staff", "managers"]
+
+
 class TableCreate(_Camel):
     zone_id: uuid.UUID = Field(..., alias="zoneId")
     number: int = Field(..., ge=1, le=99_999)
@@ -403,6 +428,11 @@ class TableCreate(_Camel):
     width: float = Field(80, ge=20, le=2000)
     height: float = Field(80, ge=20, le=2000)
     rotation: int = Field(0, ge=0, le=359)
+    #: "סוג שולחן": regular / staff ("שולחן עובדים") / managers ("שולחן מנהלים"), its
+    #: discount % ("הנחת שולחן", 0–100), or a type that decides both.
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -421,6 +451,10 @@ class TableUpdate(_Camel):
     width: Optional[float] = Field(None, ge=20, le=2000)
     height: Optional[float] = Field(None, ge=20, le=2000)
     rotation: Optional[int] = Field(None, ge=0, le=359)
+    #: The policy: a kind, a discount (null clears it), a type (null: the table's own).
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -435,6 +469,43 @@ class BulkTablesIn(_Camel):
     to_number: int = Field(..., alias="to", ge=1, le=99_999)
     seats: int = Field(4, ge=0, le=99)
     shape: Literal["round", "square", "rect"] = "square"
+    #: Every table added of this type ("סוג שולחן"), when one is named.
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
+
+
+class TableTypeIn(_Camel):
+    """"סוג שולחן": a policy reusable across the shop's tables (app/services/table_policies.py)."""
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    name: str = Field(..., min_length=1, max_length=60)
+    kind: TableKind = "regular"
+    discount_percent: Decimal = Field(Decimal("0"), alias="discountPercent", ge=0, le=100, decimal_places=2)
+    require_approval: Optional[bool] = Field(None, alias="requireApproval")
+    require_reason: Optional[bool] = Field(None, alias="requireReason")
+    staff_mode: Literal["percent", "price_list", "allowance"] = Field("percent", alias="staffMode")
+    staff_allowance: Optional[Decimal] = Field(None, alias="staffAllowance", ge=0, le=100_000, decimal_places=2)
+    sort_order: Optional[int] = Field(None, alias="sortOrder", ge=0, le=10_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, 60)
+
+
+class TableTypeUpdate(_Camel):
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    kind: Optional[TableKind] = None
+    discount_percent: Optional[Decimal] = Field(None, alias="discountPercent", ge=0, le=100, decimal_places=2)
+    require_approval: Optional[bool] = Field(None, alias="requireApproval")
+    require_reason: Optional[bool] = Field(None, alias="requireReason")
+    staff_mode: Optional[Literal["percent", "price_list", "allowance"]] = Field(None, alias="staffMode")
+    staff_allowance: Optional[Decimal] = Field(None, alias="staffAllowance", ge=0, le=100_000, decimal_places=2)
+    sort_order: Optional[int] = Field(None, alias="sortOrder", ge=0, le=10_000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, 60)
 
 
 class TablePositionIn(_Camel):
@@ -462,7 +533,7 @@ class TillZoneIn(_Camel):
     name: Optional[str] = Field(None, max_length=100)
     layout: Optional[Literal["map", "grid"]] = None
     #: The floor under the map — merged into the zone's sketch; its drawn shapes are kept.
-    background: Optional[Literal["wood", "tiles", "light", "dark", "image"]] = None
+    background: Optional[SketchBackground] = None
     #: The whole floor plan drawn on the till's map designer — the dashboard's own shape
     #: and rules (`SketchIn`); sent as null it clears the plan. Not sent: left as it is.
     sketch: Optional[SketchIn] = None

@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -68,12 +69,45 @@ class ReportEvent(Base):
     #: The report as it was at confirmation. Later syncs or edits never change it.
     snapshot = Column(JSONB, nullable=True)
 
+    #: "מצב אירוע חי": a target typed on the live screen before "יעדים ותחרות" (₪, net). Read only
+    #: as a last fallback (app/services/report_events/targets.py) — the screen now writes the
+    #: event's sales target, and migration 7f2e55223360 moved every typed one there. Never alerted.
+    live_target = Column(Numeric(12, 2), nullable=True)
+    #: "עמדת מפיק": what the event's producer sees beyond the sales —
+    #: `{"settlementEnabled": bool, "batchIds": [...], "productionPrices": {batchId: ₪}}`
+    #: (app/services/report_events/production.py).
+    producer_settings = Column(JSONB, nullable=True)
+
     machines = relationship(
         "ReportEventMachine",
         back_populates="event",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+
+
+class ProducerEventGrant(Base):
+    """
+    "עמדת מפיק": one event opened to one producer user (role PRODUCER_VIEW). Revoking keeps the
+    row (`revoked_at`) for the history. A producer sees an event only through an active grant.
+    """
+
+    __tablename__ = "producer_event_grants"
+    __table_args__ = (
+        UniqueConstraint("user_id", "event_id", name="uq_producer_event_grants_user_event"),
+        Index("ix_producer_event_grants_event", "event_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("report_events.id", ondelete="CASCADE"), nullable=False)
+    #: The name the owner gave the invitee (shown in the event's list), and who invited.
+    display_name = Column(String(120), nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
 
 
 class ReportEventMachine(Base):

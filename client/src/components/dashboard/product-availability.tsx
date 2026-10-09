@@ -17,10 +17,11 @@
 import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CornerDownLeft, EyeOff, Lock } from 'lucide-react';
+import { CornerDownLeft, EyeOff, Lock, Pin, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { lockKind } from '@/lib/availabilityReopen';
 import { cn } from '@/lib/utils';
 import type {
   AreaAvailability,
@@ -117,9 +118,52 @@ function overrides(node: AvailabilityNode): boolean {
   return node.value !== null && node.value !== node.inherited;
 }
 
+type OnSet = (path: string, value: boolean | null, permanent?: boolean) => void;
+
+/**
+ * "חסימה קבועה" on a level's own lock (pos-server docs/SPEC_AVAILABILITY.md): a temporary
+ * lock may be reopened by "פתיחת פריטים אוטומטית אחרי Z"; a permanent one never is. The
+ * company level has none — no Z closes a company's day.
+ */
+function LockPermanence({
+  level,
+  node,
+  onToggle,
+  disabled,
+  t,
+}: {
+  level: AvailabilityLevel;
+  node: AvailabilityNode;
+  onToggle: (permanent: boolean) => void;
+  disabled: boolean;
+  t: Translate;
+}) {
+  const kind = lockKind(level, node);
+  if (!kind) return null;
+  const permanent = kind === 'permanent';
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={permanent}
+      disabled={disabled}
+      title={permanent ? t('permanentHint') : t('temporaryHint')}
+      onClick={() => onToggle(!permanent)}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+        permanent ? 'border-foreground/30 bg-muted font-medium' : 'text-muted-foreground hover:bg-muted',
+      )}
+    >
+      {permanent ? <Pin aria-hidden className="size-3" /> : <RotateCcw aria-hidden className="size-3" />}
+      {permanent ? t('permanent') : t('temporary')}
+    </button>
+  );
+}
+
 function NodeRow({
   title,
   subtitle,
+  level,
   node,
   overrideLabel,
   onChange,
@@ -129,9 +173,10 @@ function NodeRow({
 }: {
   title: string;
   subtitle?: string;
+  level: AvailabilityLevel;
   node: AvailabilityNode;
   overrideLabel: string;
-  onChange: (next: boolean | null) => void;
+  onChange: (next: boolean | null, permanent?: boolean) => void;
   pending: boolean;
   extra?: ReactNode;
   t: Translate;
@@ -158,6 +203,13 @@ function NodeRow({
             {overrideLabel}
           </Badge>
         ) : null}
+        <LockPermanence
+          level={level}
+          node={node}
+          onToggle={(permanent) => onChange(false, permanent)}
+          disabled={!node.canEdit || pending}
+          t={t}
+        />
         {extra}
       </div>
       <div className="basis-full text-xs text-muted-foreground">
@@ -177,7 +229,7 @@ function MachineRows({
 }: {
   machines: MachineAvailability[];
   overrideLabel: string;
-  onSet: (path: string, value: boolean | null) => void;
+  onSet: OnSet;
   pending: boolean;
   t: Translate;
 }) {
@@ -188,9 +240,10 @@ function MachineRows({
           key={m.machineId}
           title={m.name}
           subtitle={m.posNumber ? t('machineNumber', { number: m.posNumber }) : undefined}
+          level="machine"
           node={m}
           overrideLabel={overrideLabel}
-          onChange={(v) => onSet(`machines/${m.machineId}`, v)}
+          onChange={(v, permanent) => onSet(`machines/${m.machineId}`, v, permanent)}
           pending={pending}
           extra={
             m.inCatalog === false ? (
@@ -215,7 +268,7 @@ function ShopChildren({
   t,
 }: {
   shop: ShopAvailability;
-  onSet: (path: string, value: boolean | null) => void;
+  onSet: OnSet;
   pending: boolean;
   t: Translate;
 }) {
@@ -232,9 +285,10 @@ function ShopChildren({
           <NodeRow
             title={area.name}
             subtitle={t('areaLevel')}
+            level="area"
             node={area}
             overrideLabel={t('overridesShop')}
-            onChange={(v) => onSet(`areas/${area.areaId}`, v)}
+            onChange={(v, permanent) => onSet(`areas/${area.areaId}`, v, permanent)}
             pending={pending}
             t={t}
           />
@@ -267,7 +321,7 @@ function CompanyBlock({
   t,
 }: {
   company: CompanyAvailability;
-  onSet: (path: string, value: boolean | null) => void;
+  onSet: OnSet;
   pending: boolean;
   t: Translate;
 }) {
@@ -276,6 +330,7 @@ function CompanyBlock({
       <NodeRow
         title={company.companyName ?? t('unnamedCompany')}
         subtitle={t('companyLevel')}
+        level="company"
         node={company}
         overrideLabel={t('overridesProduct')}
         onChange={(v) => onSet(`companies/${company.companyId}`, v)}
@@ -288,9 +343,10 @@ function CompanyBlock({
             <NodeRow
               title={shop.shopName}
               subtitle={t('shopLevel')}
+              level="shop"
               node={shop}
               overrideLabel={t('overridesCompany')}
-              onChange={(v) => onSet(`shops/${shop.shopId}`, v)}
+              onChange={(v, permanent) => onSet(`shops/${shop.shopId}`, v, permanent)}
               pending={pending}
               extra={!shop.isListed ? <Badge variant="secondary">{t('notListed')}</Badge> : null}
               t={t}
@@ -315,16 +371,28 @@ export function ProductAvailabilitySection({ productId }: { productId: string })
   });
 
   const put = useMutation({
-    mutationFn: ({ path, value }: { path: string; value: boolean | null }) =>
-      api.put(`/products/${productId}/availability/${path}`, { isAvailable: value }),
+    mutationFn: ({ path, value, permanent }: { path: string; value: boolean | null; permanent?: boolean }) =>
+      api.put(
+        `/products/${productId}/availability/${path}`,
+        // "חסימה קבועה" only when asked: a new lock is temporary, an existing one keeps its flag.
+        permanent === undefined ? { isAvailable: value } : { isAvailable: value, isPermanent: permanent },
+      ),
     onSuccess: (_data, vars) => {
-      toast.success(vars.value === null ? t('cleared') : t('saved'));
+      toast.success(
+        vars.permanent !== undefined
+          ? vars.permanent
+            ? t('madePermanent')
+            : t('madeTemporary')
+          : vars.value === null
+            ? t('cleared')
+            : t('saved'),
+      );
       qc.invalidateQueries({ queryKey: ['product-availability', productId] });
       qc.invalidateQueries({ queryKey: ['shop-product-overrides'] });
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, t('saveError'))),
   });
-  const onSet = (path: string, value: boolean | null) => put.mutate({ path, value });
+  const onSet: OnSet = (path, value, permanent) => put.mutate({ path, value, permanent });
 
   const data = query.data;
   return (
@@ -332,6 +400,7 @@ export function ProductAvailabilitySection({ productId }: { productId: string })
       <Label className="text-sm font-semibold">{t('title')}</Label>
       <p className="text-xs text-muted-foreground">{t('hint')}</p>
       <p className="text-xs text-muted-foreground">{t('noCrossCompany')}</p>
+      <p className="text-xs text-muted-foreground">{t('permanenceHint')}</p>
       {query.isLoading ? (
         <p className="text-sm text-muted-foreground">{t('loading')}</p>
       ) : query.isError || !data ? (

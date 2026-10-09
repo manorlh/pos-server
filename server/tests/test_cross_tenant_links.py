@@ -5,9 +5,11 @@ Every id a document names — a line's product, an issued voucher and its produc
 movement's product, the customer, the refunded original, the approver — was looked up by
 id alone (the customer aside), so a till could staple another merchant's rows onto its
 own documents by naming a UUID. Now another tenant's id is, to the till, an unknown one:
-a link is dropped with the same warning as an unknown UUID; a refunded original of
-another tenant refuses the document (it decides sale or refund); another tenant's user
-is an unknown approver.
+a link is dropped with the same warning as an unknown UUID; another tenant's user is an
+unknown approver. Since 2026-10-07 neither refuses the document (every document a till
+issued lands): a credit note naming another tenant's sale is stored without the link (kept
+only when the link is what makes it a credit), and an unknown approver is kept unlinked,
+both with a quiet `ingest_notes` entry.
 
 Runs on the in-memory SQLite world in tests/shift_world.py, with a second tenant.
 """
@@ -175,15 +177,31 @@ class TestTheRefundedOriginal:
         w.db.flush()
         return sale
 
-    def test_a_credit_note_for_another_tenants_sale_is_refused(self, w):
+    def test_a_credit_note_for_another_tenants_sale_lands_without_the_link(self, w):
         theirs = self._foreign_sale(w)
         credit = _doc(w, "50.00", documentType=330, refundOfTransactionId=str(theirs.id))
 
         (result,) = _push(w, [credit]).results
 
-        assert result.status == "rejected"
-        assert result.reason == "refundOfTransactionId: names a document of another tenant"
-        assert w.db.get(Transaction, uuid.UUID(credit["id"])) is None
+        assert result.status == "accepted"
+        assert any("another tenant" in x for x in result.warnings or [])
+        stored = w.db.get(Transaction, uuid.UUID(credit["id"]))
+        assert stored is not None and stored.refund_of_transaction_id is None
+        assert "refund_of_other_tenant" in [n["code"] for n in stored.ingest_notes or []]
+        # Never restates the other tenant's document.
+        w.db.expire_all()
+        assert w.db.get(Transaction, theirs.id).status == TransactionStatus.COMPLETED
+
+    def test_a_legacy_refund_whose_link_makes_it_a_credit_keeps_it(self, w):
+        """No credit type: dropping the link would turn the refund into a sale."""
+        theirs = self._foreign_sale(w)
+        credit = _doc(w, "50.00", documentType=None, refundOfTransactionId=str(theirs.id))
+
+        (result,) = _push(w, [credit]).results
+
+        assert result.status == "accepted"
+        stored = w.db.get(Transaction, uuid.UUID(credit["id"]))
+        assert stored.refund_of_transaction_id == theirs.id
         w.db.expire_all()
         assert w.db.get(Transaction, theirs.id).status == TransactionStatus.COMPLETED
 
@@ -222,12 +240,15 @@ class TestTheApproverIsOneOfTheTenantsPeople:
         till.distributor_id = distributor.id
         assert _user_in_tenant(w.db, distributor, till)
 
-    def test_another_tenants_manager_cannot_approve_here(self, w):
+    def test_another_tenants_manager_is_kept_as_claimed_never_linked(self, w):
         rival = self._user(w, UserRole.COMPANY_MANAGER, tenant_id=w.other_tenant.id,
                            member_of=w.other_tenant.id)
         sale = _doc(w, "8.00", documentDiscount="1.00", approvedByUserId=str(rival.id))
 
         (result,) = _push(w, [sale]).results
 
-        assert (result.status, result.reason) == ("rejected", "approver_unknown_or_inactive")
-        assert w.db.get(Transaction, uuid.UUID(sale["id"])) is None
+        assert result.status == "accepted"
+        stored = w.db.get(Transaction, uuid.UUID(sale["id"]))
+        assert stored.approved_by_user_id is None
+        assert stored.claimed_approver_user_id == rival.id
+        assert "approver_not_known" in [n["code"] for n in stored.ingest_notes]

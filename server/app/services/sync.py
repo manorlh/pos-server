@@ -46,11 +46,15 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
+from app.services import dietary
+from app.services import sales_channel
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
+from app.services import product_alerts
 from app.services import product_availability as availability
 from app.services import category_availability
+from app.services import sold_out
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────
@@ -125,14 +129,23 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "unitLabel": p.unit_label,
         # "לא מקבל הנחות": the till gives it no line, basket or promotion discount.
         "noDiscount": bool(getattr(p, "no_discount", False)),
+        # "מחייב אישור מנהל במכירה", the product's own flag: the till adds its categories'
+        # (app/services/restricted_items.py) and a kiosk leaves it out.
+        "requiresManagerApproval": bool(getattr(p, "requires_manager_approval", False)),
         # The menu layer (docs/SPEC_MENU_MODIFIERS.md): allergen codes, and the course
         # its table lines fire in (null: the category's).
         "allergens": list(getattr(p, "allergens", None) or []),
+        # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): codes in the fixed order, [] for none.
+        "dietaryTags": dietary.tags_out(getattr(p, "dietary_tags", None)),
+        # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md): all / kiosk_only / pos_only.
+        "salesChannel": sales_channel.out(getattr(p, "sales_channel", None)),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
         "refillable": bool(getattr(p, "refillable", False)),
         "maxRefills": getattr(p, "max_refills", None),
+        # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py).
+        **product_alerts.sync_fields(p),
         "isGeneral": _is_general(p),
         # A machine-local or tenant-level row is the till's own: always on its list.
         "inMachineCatalog": True,
@@ -170,6 +183,7 @@ def _serialize_merged_product(
     catalog_item: Optional[MachineCatalogItem] = None,
     area_override: Optional[AreaProductOverride] = None,
     area_changed_at: Optional[datetime] = None,
+    blocks: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
@@ -189,8 +203,13 @@ def _serialize_merged_product(
     moved = _aware_utc(area_changed_at)
     if moved is not None and moved > eff_ts:
         eff_ts = moved
+    # "אזל" / "חסום" (app/services/sold_out.py): a block set, removed or ended moves the row too.
+    blocked_at = _aware_utc(getattr(blocks, "changed_at", None))
+    if blocked_at is not None and blocked_at > eff_ts:
+        eff_ts = blocked_at
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
+    active_blocks = list(getattr(blocks, "active", None) or [])
 
     row_id = local.id if local is not None else global_p.id
     price = float(override.price) if override and override.price is not None else float(global_p.price)
@@ -204,6 +223,15 @@ def _serialize_merged_product(
         global_p, company_override, override, machine_override, area_row=area_override
     )
     is_avail = bool(shop_listed and resolved[availability.Level.MACHINE].available)
+    # The lock that decides, for a Z the till closes offline (docs/SPEC_AVAILABILITY.md).
+    lock = availability.lock_info(
+        resolved,
+        {
+            availability.Level.SHOP: override,
+            availability.Level.AREA: area_override,
+            availability.Level.MACHINE: machine_override,
+        },
+    ) if shop_listed else None
 
     catalog_level = local.catalog_level if local is not None else global_p.catalog_level
     is_local_override = local.is_local_override if local is not None else False
@@ -228,7 +256,17 @@ def _serialize_merged_product(
         "globalSku": global_p.global_sku,
         "imageUrl": image_url,
         "inStock": effective_in_stock,
-        "isAvailable": bool(is_avail),
+        # Not locked and not blocked: what a till or kiosk that reads only this field sells.
+        # A till that predates blocks reads only `isAvailable`: a block set by hand reaches it there;
+        # an automatic "אזל" (the stock ran out) only through `blocks`, which updated tills and kiosks
+        # read with their own stock policy (sold_out.manual_in_force).
+        "isAvailable": bool(is_avail) and not sold_out.manual_in_force(active_blocks),
+        # The catalog lock alone ("זמינות למכירה"), and the blocks in force that cover this device
+        # ("אזל" / "חסום", app/services/sold_out.py) — a current till decides between them with its
+        # own clock (app/services/sold_out_rules.py).
+        "lockAvailable": bool(is_avail),
+        "blocks": [sold_out.block_out(b) for b in active_blocks],
+        "availabilityLock": lock,
         "stockQuantity": stock_qty,
         "barcode": global_p.barcode,
         "taxRate": float(global_p.tax_rate) if global_p.tax_rate is not None else None,
@@ -246,13 +284,23 @@ def _serialize_merged_product(
         "unitLabel": global_p.unit_label,
         # "לא מקבל הנחות", from the global row like the rest of what the product is.
         "noDiscount": bool(getattr(global_p, "no_discount", False)),
+        # "מחייב אישור מנהל במכירה", from the global row like the rest of what the product is.
+        "requiresManagerApproval": bool(getattr(global_p, "requires_manager_approval", False)),
         # What the dish contains and its course, from the global row like the rest of
         # what the product is (docs/SPEC_MENU_MODIFIERS.md).
         "allergens": list(getattr(global_p, "allergens", None) or []),
+        # "סימוני תזונה", from the global row like the allergens.
+        "dietaryTags": dietary.tags_out(getattr(global_p, "dietary_tags", None)),
+        # "היכן הפריט נמכר", from the global row like the rest of what the product is: the
+        # till hides kiosk_only from its sell screen, the kiosk hides pos_only.
+        "salesChannel": sales_channel.out(getattr(global_p, "sales_channel", None)),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
         "maxRefills": getattr(global_p, "max_refills", None),
+        # "הודעות לעובד" and "פריטים נלווים", from the global row like the rest of what the
+        # product is (app/services/product_alerts.py).
+        **product_alerts.sync_fields(global_p),
         # From the global row like the rest of what the product *is*: a till's local
         # copy of the general item is still the general item.
         "isGeneral": general_item.is_general(global_p),
@@ -305,7 +353,13 @@ def _serialize_category(
         "ticketMode": item_ticket.category_mode(c),
         # The course its products fire in by default (docs/SPEC_MENU_MODIFIERS.md §8).
         "courseId": str(c.course_id) if getattr(c, "course_id", None) else None,
+        # "מחייב אישור מנהל במכירה": the category's own flag; the till applies it to every
+        # product beneath it (its tree is parentId).
+        "requiresManagerApproval": bool(getattr(c, "requires_manager_approval", False)),
         "isActive": category_availability.resolve_rows(c, activity),
+        # The switch-off that decides it, for a Z the till closes offline
+        # (docs/SPEC_AVAILABILITY.md); null when active, or switched off by the tenant.
+        "activeLock": category_availability.lock_info(c.is_active, activity),
         "sortOrder": c.sort_order,
         "createdAt": c.created_at.isoformat() if c.created_at else None,
         "updatedAt": updated.isoformat() if updated else None,
@@ -539,6 +593,7 @@ def _products_merged_for_shop_machine(
     machine_levels = availability.machine_overrides(db, mqid, assigned_ids)
     catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
     area_changed_at = getattr(machine, "area_changed_at", None)
+    product_blocks = sold_out.blocks_for_machine(db, machine, assigned_ids, since=since) if assigned_ids else {}
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -554,6 +609,7 @@ def _products_merged_for_shop_machine(
             catalog_item=catalog_rows.get(str(g.id)),
             area_override=area_levels.get(str(g.id)),
             area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
+            blocks=product_blocks.get(str(g.id)),
         )
         if row is not None:
             out.append(row)
@@ -982,6 +1038,18 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
         category_availability_max = category_availability.last_change(db, machine)
         # The till's own list and mode: a change to either changes what it shows.
         machine_catalog_max = machine_catalog.last_change(db, machine)
+        # "אזל" / "חסום" anywhere in the shop or its company (app/services/sold_out.py).
+        from app.models.sold_out import SoldOutMark
+
+        blocks_max = (
+            db.query(func.max(SoldOutMark.updated_at))
+            .filter(
+                (SoldOutMark.shop_id == machine.shop_id)
+                | ((SoldOutMark.scope == "company") & (SoldOutMark.company_id == (shop.company_id if shop else None)))
+            )
+            .scalar()
+        ) if sold_out.tables_ready(db) else None
+        points.append(blocks_max)
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,
@@ -1012,6 +1080,10 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
     from app.services.menu import menu_changed_at
 
     points.append(menu_changed_at(db, tid_uuid))
+    # And the "תפריטים" block (docs/SPEC_MENUS.md).
+    from app.services.catalog_menus import changed_at as catalog_menus_changed_at
+
+    points.append(catalog_menus_changed_at(db, tid_uuid))
 
     points = [p for p in points if p is not None]
     if not points:

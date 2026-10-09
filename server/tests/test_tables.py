@@ -1410,6 +1410,45 @@ class TestTillLayout:
         assert (label["text"], label["color"]) == ("רחבת ריקודים", "#2563eb") and "stroke" not in label
         assert {str(m) for m, _ in w.woken} >= {str(w.b.id)}
 
+    @staticmethod
+    def logo_sketch() -> dict:
+        import os
+
+        path = os.path.join(os.path.dirname(__file__), "fixtures", "sketch_with_logo.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_a_logo_on_the_clean_floor_is_stored_the_same_from_the_dashboard_and_the_till(self, w):
+        sample = self.logo_sketch()
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": sample}), BackgroundTasks(), **ctx(w))
+        from_dashboard = json.loads(json.dumps(w.db.get(type(w.hall), w.hall.id).sketch))
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": None}), BackgroundTasks(), **ctx(w))
+        self.save(w, w.a, {"zones": [{"id": str(w.hall.id), "sketch": sample}]})
+        from_till = json.loads(json.dumps(w.db.get(type(w.hall), w.hall.id).sketch))
+        assert from_till == from_dashboard
+        assert from_till["background"] == "clean"
+        logos = [e for e in from_till["elements"] if e["kind"] == "logo"]
+        assert [(e["id"], e.get("src")) for e in logos] == [
+            ("logo0001", None), ("logo0002", "https://cdn.example.com/brand/cafe-logo.png"),
+        ]
+        assert "src" not in logos[0] and logos[1]["rotation"] == 90
+
+    def test_a_logo_picture_must_be_a_url_and_only_a_logo_keeps_one(self, w):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ZoneUpdate.model_validate({"sketch": {"elements": [
+                {"id": "l", "kind": "logo", "x": 0, "y": 0, "w": 10, "h": 10, "src": "javascript:alert(1)"}]}})
+        R.update_zone(w.hall.id, ZoneUpdate.model_validate({"sketch": {"elements": [
+            {"id": "w", "kind": "wall", "x": 0, "y": 0, "w": 10, "h": 10, "src": "https://x.example/a.png"}]}}),
+            BackgroundTasks(), **ctx(w))
+        assert "src" not in w.db.get(type(w.hall), w.hall.id).sketch["elements"][0]
+
+    def test_the_layout_names_the_business_logo(self, w):
+        assert R.get_layout(w.shop.id, **ctx(w))["logoUrl"] is None
+        set_param(w, "receiptLogoUrl", "shop", w.shop.id, "https://cdn.example.com/shop-logo.png")
+        assert T.layout(w.db, w.shop)["logoUrl"] == "https://cdn.example.com/shop-logo.png"
+
     def test_a_new_zone_comes_with_its_plan_and_floor(self, w):
         sketch = {"template": None, "background": None, "elements": [
             {"id": "w1", "kind": "wall", "x": 0, "y": 0, "w": 600, "h": 10, "rotation": 0, "text": None}]}
@@ -1617,6 +1656,15 @@ class TestAskGuests:
         set_param(w, "tablesAskGuests", "machine", w.a.id, False)
         assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("tablesAskGuests") is False
         assert TP.till_parameters_for_machine(w.db, w.b).parameters.get("tablesAskGuests") is True
+
+    def test_the_tablet_cash_box_is_gone_and_its_quick_pay_buttons_are_set_per_layer(self, w):
+        # "התקבל מזומן" left the tablet's order panel; its switch is no longer a built-in
+        # (tests/test_quick_pay_buttons_parameter.py has the buttons that replaced it).
+        assert "cashChangeInPanel" not in w.params
+        assert w.params["quickPayButton1"].value_type == "enum"
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "אשראי מהיר"
+        set_param(w, "quickPayButton1", "shop", w.shop.id, "מזומן מהיר")
+        assert TP.till_parameters_for_machine(w.db, w.a).parameters.get("quickPayButton1") == "מזומן מהיר"
 
 
 def test_the_migration_is_a_single_head():

@@ -104,8 +104,11 @@ class CashierSalesRow(BaseModel):
     sales_count: int = Field(..., alias="salesCount")
     refunds_count: int = Field(..., alias="refundsCount")
 
+    #: Gross and discounts without production vouchers' deductions (as the till's X).
     gross: float
     discounts: float
+    #: "שוברי הפקה": what production vouchers booked as a document deduction took off — apart.
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     refunds: float
     #: gross - discounts - refunds
     net: float
@@ -117,8 +120,11 @@ class CashierSalesRow(BaseModel):
     card_net: float = Field(..., alias="cardNet")
     other_net: float = Field(..., alias="otherNet")
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a): not money
-    #: taken, and zero over complete baskets, so cash + card + other + exchange = net.
+    #: taken, and zero over complete baskets, so cash + card + other + exchange +
+    #: productionVoucher = net.
     exchange_net: float = Field(0.0, alias="exchangeNet")
+    #: "שוברי הפקה": what production vouchers paid for (the `voucher` / `production_voucher` legs).
+    production_voucher_net: float = Field(0.0, alias="productionVoucherNet")
 
     tips: float
 
@@ -153,14 +159,18 @@ class SalesByAreaRow(BaseModel):
     transactions_count: int = Field(0, alias="transactionsCount")
     gross: float = 0.0
     discounts: float = 0.0
+    #: "שוברי הפקה": production vouchers' deductions (not in `discounts`).
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     net: float = 0.0
     refunds: float = 0.0
     cash: float = 0.0
     card: float = 0.0
     other: float = 0.0
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a); zero over
-    #: complete baskets, so cash + card + other + exchange = net.
+    #: complete baskets, so cash + card + other + exchange + productionVoucher = net.
     exchange: float = 0.0
+    #: "שוברי הפקה".
+    production_voucher: float = Field(0.0, alias="productionVoucher")
     tips: float = 0.0
 
 
@@ -242,6 +252,9 @@ class ShopTransactionRow(BaseModel):
     #: till can group a basket's 320 and 330s. Additive and nullable: the shipped till
     #: (Moshi) ignores keys it does not know.
     basket_id: Optional[str] = Field(None, alias="basketId")
+    #: The number as its till printed it, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
+    #: Additive and nullable like `basketId`; a till shows it in place of the bare number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
 
 
 class ShopTransactionsResponse(BaseModel):
@@ -337,6 +350,15 @@ class DaySummaryContributor(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     shop_name: Optional[str] = Field(None, alias="shopName")
     closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    #: The Z of an independent till ("קופה עצמאית"): under the shop, never in its shop Z.
+    independent: bool = False
+    #: The shop's branch code as frozen on the Z (§11 of SPEC_INDEPENDENT_TILL): with
+    #: `posNumber` it tells apart two Zs of one branch that carry the same number.
+    branch_code: Optional[str] = Field(None, alias="branchCode")
+    #: A till Z's run and when it began (SPEC_INDEPENDENT_TILL §3.1): an independent till
+    #: starts again at Z 1, so its number is told apart by the run's first day.
+    machine_sequence_epoch: int = Field(0, alias="machineSequenceEpoch")
+    sequence_started_at: Optional[str] = Field(None, alias="sequenceStartedAt")
     unattended: bool = False
     #: Built by the cloud because the terminal could not close its own day. Shown in the
     #: drill-down so a day whose figures rest on a reconstruction says so on its face.
@@ -368,6 +390,9 @@ class DaySummaryRow(BaseModel):
     z_report_count: int = Field(0, alias="zReportCount")
     totals: DaySummaryTotals
     contributors: List[DaySummaryContributor] = Field(default_factory=list)
+    #: What the day's figures include, in words (docs/SPEC_INDEPENDENT_TILL.md §7): the
+    #: shop Zs with their tills, and each independent till's own Z — all under the shop.
+    includes_note: Optional[str] = Field(None, alias="includesNote")
 
 
 class DaySummaryReportResponse(BaseModel):

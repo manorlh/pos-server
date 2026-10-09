@@ -4,14 +4,22 @@ import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session, object_session, selectinload
 from sqlalchemy import or_, and_
 from sqlalchemy.exc import IntegrityError
 from app.services import licenses
 from app.services import access
+from app.services import device_profile
+from app.services import display_devices
+from app.services import device_identity
+from app.services import device_management
+from app.services import document_prefix
+from app.services import lan_server
+from app.services import support_z, till_reset
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
+from app.schemas.device_profile import DeviceProfileIn
 from app.models.pos_machine import POSMachine, PairingStatus
 from app.models.user import User, UserRole
 from app.models.shop import Shop
@@ -39,7 +47,7 @@ from app.services.sync import (
 )
 from app.services.catalog_notify import notify_machine_catalog_changed
 from app.routers.shops import _check_shop_access
-from app.services.company_hierarchy import user_covers_company, visible_shop_ids
+from app.services.company_hierarchy import user_covers_shop, visible_shop_ids
 from app.services.shop_validation import shop_belongs_to_company
 from app.services.realtime_info import (
     machine_realtime_connection_info,
@@ -78,7 +86,8 @@ from app.services.terminal_status import (
     terminal_settings_for,
 )
 from app.services import till_z, z_mode_policy
-from app.schemas.till_z import TillZRequestOut
+from app.schemas.till_z import MachineTillZIn, TillZRequestOut
+from app.services.z_sequence import last_machine_z_number
 from app.schemas.transmission import ReplacementCodeBody
 from fastapi.responses import JSONResponse
 from sqlalchemy import func
@@ -143,6 +152,7 @@ def _enrich_machine_status(
     latest_transmissions: Optional[Dict[uuid_mod.UUID, dict]] = None,
     pending_transmit: Optional[Dict[uuid_mod.UUID, uuid_mod.UUID]] = None,
     terminal_settings: Optional[Dict[uuid_mod.UUID, TerminalSettings]] = None,
+    kiosks: Optional[Dict[uuid_mod.UUID, Any]] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -179,6 +189,9 @@ def _enrich_machine_status(
         "areaId": machine.area_id,
         "areaName": machine.area_name,
         "posNumber": machine.pos_number,
+        # "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): its own, and the one in force.
+        "documentPrefix": machine.document_prefix,
+        "effectiveDocumentPrefix": machine.effective_document_prefix,
         # The till's shop and company by number: "חברה #N · סניף #M · קופה #K".
         "shopNumber": machine.shop.shop_number if machine.shop is not None else None,
         "companyNumber": (
@@ -187,6 +200,18 @@ def _enrich_machine_status(
             else None
         ),
         "zMode": till_z.z_mode_of(machine),
+        # Zs the till closed with no connection and has not uploaded, as it last said, and
+        # whether one is held in a conflict for support (docs/SPEC_OFFLINE_TILL_Z.md §4.4).
+        "offlineTillZPending": getattr(machine, "offline_till_z_pending", None),
+        "offlineTillZConflict": bool(getattr(machine, "offline_till_z_conflict", False)),
+        # Support produced this till's Z from the cloud (offline till Z §4.6), or null.
+        "supportZ": getattr(machine, "support_z", None),
+        # The last reset of the till's data support ordered from the cloud (§4.7), or null.
+        "tillReset": getattr(machine, "till_reset", None),
+        # "הוחלפה קופה" — every replacement of the till's device (offline till Z §4.6.2).
+        "replacements": getattr(machine, "replacements", None) or [],
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md).
+        "independentTill": bool(getattr(machine, "independent_till", False)),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -195,6 +220,12 @@ def _enrich_machine_status(
         "hasPrinter": machine.has_printer,
         # False for a P18: it charges on a Nayax pinpad on the network (`pinpad*` below).
         "hasBuiltinTerminal": machine.has_builtin_terminal,
+        # "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): till / kiosk, the model the dashboard
+        # chose and the one the device named, the drawer port and "בקרוב" for LANDI / Feitian.
+        **device_profile.machine_fields(
+            machine,
+            (kiosks if kiosks is not None else device_profile.kiosk_devices_by_machine(db, [machine.id])).get(machine.id),
+        ),
         "isActive": machine.is_active,
         "lastHeartbeatAt": machine.last_heartbeat_at,
         "mqttConnected": machine.mqtt_connected,
@@ -259,6 +290,10 @@ def _enrich_machine_status(
     result["printerStatusAt"] = machine.printer_status_at
     result["printerLastOkAt"] = machine.printer_last_ok_at
     result["printerReportedAt"] = machine.printer_reported_at
+    # Device identity (app/services/device_identity.py): serial source, SIMs, addresses.
+    result.update(device_identity.machine_fields(machine))
+    # "עדכון שקט": device owner, update path, kiosk lock; the "הפעל מחדש" request.
+    result.update(device_management.machine_fields(machine))
     # The card terminal: what Agamento reports beside the number the settings expect.
     if terminal_settings is None:
         terminal_settings = terminal_settings_for(db, [machine])
@@ -298,11 +333,39 @@ def _enrich_machine_status(
         )
     )
     result["status"] = resolved.status
+    if resolved.status == "no_open_shift" and not display_devices.is_fiscal(machine):
+        # A display device (a KDS / the board) has no shifts: it is up or down.
+        result["status"] = "online" if resolved.online else "offline"
     result["online"] = resolved.online
     result["statusFlags"] = resolved.flags
     result["pendingDocuments"] = resolved.pending_documents
     result["pendingAsOf"] = resolved.pending_as_of
     return result
+
+
+#: The ₪ a till's list carries (its card legs not yet transmitted). `/machines` is a look-up every
+#: signed-in user reads (the board's tills for a user without "דוחות"); the money is not.
+MONEY_FIELDS = ("pendingTransmissionAmount", "untransmittedCardAmount")
+#: The sections that read a till's money: the reports, the Zs, the devices.
+MONEY_SECTIONS = ("reports", "z", "devices")
+
+
+def _may_read_till_money(db: Session, user: User) -> bool:
+    from app.services import dashboard_access
+
+    access = dashboard_access.effective_access(db, user)
+    return any(access.allows(section, "view") for section in MONEY_SECTIONS)
+
+
+def strip_money(rows: List[Dict[str, Any]], db: Session, user: User) -> List[Dict[str, Any]]:
+    """The till rows without their ₪ for a user who holds none of `MONEY_SECTIONS`."""
+    if _may_read_till_money(db, user):
+        return rows
+    for row in rows:
+        for key in MONEY_FIELDS:
+            if key in row:
+                row[key] = None
+    return rows
 
 
 def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict[str, Any]]:
@@ -317,6 +380,9 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     untransmitted = transmissions.untransmitted_summary(db, ids)
     latest = transmissions.latest_by_machine(db, ids)
     pending_transmit = transmit_requests.pending_by_machine(db, ids)
+    # Before the terminal settings: a kiosk has no built-in terminal (its pinpad is external),
+    # and priming tells every machine at once rather than one lookup each.
+    kiosks = device_profile.prime_kiosks(db, machines)
     terminal = terminal_settings_for(db, machines)
     return [
         _enrich_machine_status(
@@ -331,6 +397,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             latest_transmissions=latest,
             pending_transmit=pending_transmit,
             terminal_settings=terminal,
+            kiosks=kiosks,
         )
         for m in machines
     ]
@@ -341,7 +408,7 @@ def _check_machine_list_access(current_user: User, machine: POSMachine, db: Sess
         return True
     if current_user.role == UserRole.COMPANY_MANAGER and machine.shop_id:
         shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
-        return shop is not None and user_covers_company(db, current_user, shop.company_id)
+        return shop is not None and user_covers_shop(db, current_user, shop)
     if current_user.role in SHOP_SCOPED_ROLES:
         return machine.shop_id == current_user.shop_id
     return False
@@ -397,7 +464,7 @@ def list_machines(
     query = areas.filter_on_column(query, POSMachine.area_id, area_filter)
 
     machines = query.offset(skip).limit(limit).all()
-    return _enrich_machines_batch(machines, db)
+    return strip_money(_enrich_machines_batch(machines, db), db, current_user)
 
 
 @router.get("/unassigned", response_model=List[POSMachineResponse])
@@ -417,6 +484,56 @@ def list_unassigned_machines(
         query = query.filter(POSMachine.distributor_id == current_user.id)
 
     return query.all()
+
+
+@router.get("/document-prefix-conflicts")
+def list_document_prefix_conflicts(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    shop_id: Optional[str] = Query(None, alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קידומות מסמכים כפולות בעסק" (docs/SPEC_DOCUMENT_PREFIX.md §5): the active tills of the
+    business — every shop of the company (`companyId`), or of the shop's company
+    (`shopId`), and of companies under the same VAT number — whose prefix in force would
+    repeat another document's number in the business's one open-format file. Each row
+    names who else holds the prefix and the free prefix it would get
+    (`POST /machines/{id}/document-prefix/assign-free`). A shop's own staff see their
+    shop's tills only.
+    """
+    from app.models.company import Company
+    from app.routers.companies import _check_company_access
+
+    if shop_id:
+        try:
+            sid = uuid_mod.UUID(str(shop_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shopId")
+        shop = db.query(Shop).filter(Shop.id == sid).first()
+        if not shop:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+        ensure_same_tenant(shop.tenant_id, active_tenant_id)
+        _check_shop_access(current_user, shop, db)
+        shop_ids = document_prefix.business_shop_ids(db, shop)
+    elif company_id:
+        try:
+            cid = uuid_mod.UUID(str(company_id))
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid companyId")
+        company = db.query(Company).filter(Company.id == cid).first()
+        if not company:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+        ensure_same_tenant(company.tenant_id, active_tenant_id)
+        _check_company_access(current_user, company, db)
+        shop_ids = document_prefix.company_business_shop_ids(db, company)
+    else:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="companyId or shopId is required")
+    rows = document_prefix.conflicts_in_shops(db, shop_ids)
+    if current_user.role in SHOP_SCOPED_ROLES:
+        rows = [r for r in rows if r["shopId"] == str(current_user.shop_id)]
+    return {"conflicts": rows, "businessShopCount": len(shop_ids)}
 
 
 @router.get("/me/ably-auth")
@@ -452,6 +569,9 @@ def get_my_machine(
         # register number, and the names of its shop and that shop's company.
         "machineName": machine.name,
         "posNumber": machine.pos_number,
+        # "קידומת מסמכים" in force (docs/SPEC_DOCUMENT_PREFIX.md): the till freezes it on
+        # every document it issues and prints the prefix and the number padded to 7 digits. Null: none (no shop).
+        "documentPrefix": machine.effective_document_prefix,
         "shopName": shop.name if shop is not None else None,
         "companyName": company.name if company is not None else None,
         # By number as well, for "חברה #N · סניף #M · קופה #K"; null without a shop.
@@ -470,6 +590,21 @@ def get_my_machine(
         # False (a P18): the till has no card terminal of its own and charges on a Nayax
         # pinpad on the network, at the address its settings carry (`nayaxDeviceHost`).
         "hasBuiltinTerminal": machine.has_builtin_terminal,
+        # Whether the till opens a drawer on a port of its own (no model does today): false
+        # leaves the built-in printer without a drawer; a receipt printer's stays.
+        "hasCashDrawerPort": machine.has_cash_drawer_port,
+        # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): the mode the till opens in —
+        # "kiosk" for an enabled kiosk, else "till"; "kds" / "order_status_board" for a
+        # display device. Read right after pairing, so a device added as a kiosk asks
+        # `kiosk/sync` at once rather than on its 2-minute poll.
+        "deviceRole": device_profile.effective_role(
+            db if isinstance(db, Session) else object_session(machine), machine
+        ),
+        # False for a display device (a KDS / the "מוכן / לא מוכן" board): not a till — no
+        # sales, shifts, Z or payments; every fiscal endpoint answers it 403 `device_not_fiscal`.
+        "fiscal": display_devices.is_fiscal(machine),
+        # "android" | "windows" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
+        "platform": display_devices.platform_of(machine),
         # "לקוח זמני": the license end this till keeps (app/services/licenses.py).
         # Called directly (a test), `db` is its Depends default: the machine's own session.
         "license": licenses.effective_license(
@@ -486,11 +621,44 @@ def get_my_machine(
     }
 
 
+def _closed_claimed_shift(db: Session, machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
+    """
+    The heartbeat's `closedOpenShift` (docs/SHIFTS_API.md §1.6): the shift [shift_id] the till
+    reports open, when it is this till's own and the cloud holds it closed — closed by no close
+    of the till's (that one leaves the till's row closing, never claimed open), but
+    administratively (§2.9) or by support. None otherwise: an unknown shift (its open has not
+    arrived), an open one, another till's (§1.1).
+    """
+    if shift_id is None:
+        return None
+    shift = db.query(Shift).filter(Shift.id == shift_id).first()
+    if shift is None or str(shift.machine_id) != str(machine.id):
+        return None
+    if shift.status != ShiftStatus.CLOSED:
+        return None
+    closed_at = shift.closed_at
+    if closed_at is not None and closed_at.tzinfo is None:
+        closed_at = closed_at.replace(tzinfo=timezone.utc)
+    return {
+        "shiftId": str(shift.id),
+        "closedAt": closed_at.isoformat() if closed_at is not None else None,
+        "reconstructed": bool(getattr(shift, "reconstructed", False)),
+    }
+
+
+def _till_z_run(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    from app.services.z_sequence import current_machine_epoch
+
+    epoch, started = current_machine_epoch(db, machine.id)
+    return {"tillZEpoch": epoch, "tillZEpochStartedAt": started.isoformat() if started is not None else None}
+
+
 @router.post("/me/heartbeat")
 def post_my_heartbeat(
     body: MachineHeartbeatBody | None = None,
     machine: POSMachine = Depends(get_pos_machine_from_machine_token),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """
     Till / POS desktop: periodic online signal over HTTP (replaces MQTT heartbeat publish).
@@ -512,6 +680,16 @@ def post_my_heartbeat(
         pending_count=body.pending_count if body is not None else None,
         pending_documents=body.pending_documents if body is not None else None,
     )
+    # "סוללה חלשה" (app/services/battery_alerts.py): a threshold crossed, cleared, routed to the tills.
+    if body is not None and (body.battery_percent is not None or body.battery_status is not None):
+        try:
+            from app.services import battery_alerts
+
+            battery_alerts.on_heartbeat(db, machine)
+            db.commit()
+        except Exception:  # noqa: BLE001 - a battery alert never fails a heartbeat
+            logger.exception("battery alert failed for %s", machine.id)
+            db.rollback()
     # The till's own account of its open shift, refreshed every beat. Absent means
     # "none open": the till's JSON encoder drops null fields, so a till with no shift
     # open sends no `openShiftId` at all. (A pre-shift build also sends none; it cannot
@@ -536,6 +714,14 @@ def post_my_heartbeat(
         machine.reported_open_shift_opened_at = (
             body.open_shift_opened_at if claimed else None
         )
+    # The shift the till says is open is one the cloud holds closed — closed administratively
+    # (§2.9: dead-till recovery, `force` on a till that came back, or support's Z): the till is
+    # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).
+    closed_open_shift = (
+        _closed_claimed_shift(db, machine, body.open_shift_id)
+        if body is not None and not body.open_shift_id_unreadable
+        else None
+    )
     # The pull half of a remote shift close. Every till calls this on a timer, so it is
     # the one channel that does not care whether the terminal was reachable when the
     # manager started the Z — a till that was off finds the instruction when it comes
@@ -552,14 +738,103 @@ def post_my_heartbeat(
     # The card terminal (Agamento), the same kind of snapshot.
     if body is not None and body.terminal is not None:
         apply_terminal_block(machine, body.terminal)
+    # "עקיפת בדיקת מספר מסוף" as the till applies it (the dashboard shows it beside the cloud's).
+    if body is not None and body.terminal_number_check_bypass is not None:
+        from app.services.terminal_check_bypass import apply_heartbeat as _apply_bypass
+
+        _apply_bypass(machine, body.terminal_number_check_bypass)
+    # The serial's source, the SIMs and the address the beat came from (device search).
+    device_identity.apply_heartbeat(machine, body, request)
+    # Device owner and silent updates (app/services/device_management.py); never fails a beat.
+    device_management.apply_heartbeat(machine, body)
+    # The dashboard's "הפעל מחדש", while it waits (a device-owner till only; the till decides when).
+    pending_reboot = device_management.take_pending_reboot(machine)
+    # Zs closed at the till with no connection, not uploaded yet (offline till Z §4.4).
+    if body is not None and body.offline_till_z is not None:
+        till_z.apply_offline_report(machine, body.offline_till_z)
+    # The till's document counters per series (offline till Z §4.6), for a replacement.
+    if body is not None and body.document_counters:
+        counters = {
+            k: int(v) for k, v in body.document_counters.items()
+            if k in ("320", "330", "400") and v is not None and 0 <= int(v) <= 10**18
+        }
+        if counters:
+            # Never down (§4.7): per series, the highest the till ever said.
+            held = getattr(machine, "reported_document_counters", None) or {}
+            for series, value in held.items():
+                try:
+                    if series in counters and int(value) > counters[series]:
+                        counters[series] = int(value)
+                    elif series not in counters and series in ("320", "330", "400"):
+                        counters[series] = int(value)
+                except (TypeError, ValueError):
+                    continue
+            machine.reported_document_counters = counters
+            machine.document_counters_reported_at = datetime.now(timezone.utc)
     pending_transmit = transmit_requests.take_pending(db, machine)
     # The pull half of "produce your Z" (§5.3), for a till in `zMode = till`.
     pending_till_z = till_z.take_pending(db, machine)
+    # "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the ids of this till's pending credit
+    # requests — the pull half; the till fetches them whole. Never fails a heartbeat.
+    pending_remote_credits = None
+    try:
+        from app.services import remote_credits
+
+        with db.begin_nested():
+            pending_remote_credits = remote_credits.take_pending(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("remote credit hand-over failed for %s", machine.id)
+    # Local mode: the dashboard asked the shop's main till for the shop Z
+    # (docs/SPEC_INDEPENDENT_TILL.md §8) — to the main till only.
+    from app.services.local_shop_z import take_pending_for_main
+
+    # The shop Zs this main till made that the cloud has not yet: what a handover of the
+    # shop's Z production waits for (docs/SPEC_INDEPENDENT_TILL.md §8.10).
+    if body is not None and body.local_shop_z is not None:
+        from app.services.local_shop_z import note_heartbeat
+
+        note_heartbeat(db, machine, body.local_shop_z)
+    # The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what the cloud copy still lacks.
+    if body is not None and body.lan_sync is not None:
+        lan_server.note_sync(machine, body.lan_sync)
+    # Local shop Zs of this shop still waiting for their tills' shifts and documents
+    # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
+    # everything it names is here. Never fails a heartbeat.
+    if machine.shop_id is not None:
+        from app.services.local_shop_z import verify_pending
+
+        try:
+            with db.begin_nested():
+                verify_pending(db, machine.shop_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("local shop Z verification failed for shop %s", machine.shop_id)
+    pending_shop_z = take_pending_for_main(db, machine)
+    # A participant off the LAN: the main till asked the cloud to close it (§8.14).
+    from app.services.local_shop_z import take_pending_remote_part
+
+    pending_shop_z_part = take_pending_remote_part(db, machine)
+    # Support ordered a reset of this till's data (offline till Z §4.7): the only way.
+    pending_reset = till_reset.take_pending(db, machine)
+    # "תשלום לא מוכרע": a manager's check / decision on an unknown card of this till
+    # (app/services/card_attempt_commands.py), said on every beat until answered. Never fails a beat.
+    pending_card_commands = None
+    try:
+        from app.services import card_attempt_commands
+
+        with db.begin_nested():
+            pending_card_commands = card_attempt_commands.take_pending(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("card command hand-over failed for %s", machine.id)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
     # beat every few seconds, so its close reaches this till at once without realtime.
     fast_beat = shop_z_fast_beat(db, machine)
+    if not fast_beat:
+        # A kiosk asked to close its shift / produce its Z, held by a customer: runs the moment they are done.
+        from app.services import kiosk_z
+
+        fast_beat = kiosk_z.fast_beat(db, machine)
     db.commit()
 
     response = {
@@ -574,17 +849,48 @@ def post_my_heartbeat(
         "license": licenses.effective_license(db, machine),
         # Who produces this till's Z (§5.1), on every beat: the till takes its mode from here.
         "zMode": till_z.z_mode_of(machine),
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, never in the shop Z, and
+        # outside the shop's LAN group (no main till, tables host or print server for it).
+        "independentTill": bool(getattr(machine, "independent_till", False)),
+        # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server — the
+        # till then starts no LAN host of its own (tables, any later one), whatever its
+        # technician set; it still serves its own printers, and stays in the shop Z.
+        "lanServerExcluded": lan_server.is_excluded(db, machine),
+        # The last number of the till's own Z run (0: none yet), so a till in `zMode =
+        # till` can number a Z it closes with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4).
+        "lastTillZNumber": last_machine_z_number(db, machine.id),
+        # Its run (SPEC_INDEPENDENT_TILL §3.1): made independent, a till starts again at Z 1.
+        **_till_z_run(db, machine),
         # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
         "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
     }
+    # Support produced this till's Z from the cloud (offline till Z §4.6): the till makes
+    # nothing for that period and keeps its data of it read-only.
+    support = support_z.heartbeat_block(machine)
+    if support is not None:
+        response["supportZ"] = support
     if fast_beat:
         response["fastBeat"] = True
     if pending is not None:
         response["pendingCloseShift"] = pending
+    if closed_open_shift is not None:
+        response["closedOpenShift"] = closed_open_shift
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
     if pending_till_z is not None:
         response["pendingTillZ"] = pending_till_z
+    if pending_shop_z is not None:
+        response["pendingShopZ"] = pending_shop_z
+    if pending_shop_z_part is not None:
+        response["pendingShopZPart"] = pending_shop_z_part
+    if pending_reset is not None:
+        response["pendingReset"] = pending_reset
+    if pending_reboot is not None:
+        response["pendingReboot"] = pending_reboot
+    if pending_remote_credits:
+        response["pendingRemoteCredits"] = pending_remote_credits
+    if pending_card_commands:
+        response["pendingCardCommands"] = pending_card_commands
     return response
 
 
@@ -607,7 +913,7 @@ def get_machine(
     elif not _check_machine_list_access(current_user, machine, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return _enrich_machine_status(machine, db)
+    return strip_money([_enrich_machine_status(machine, db)], db, current_user)[0]
 
 
 @router.put("/{machine_id}", response_model=POSMachineResponse)
@@ -631,9 +937,27 @@ def update_machine(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     update_data = machine_data.model_dump(exclude_unset=True, by_alias=False)
+    # "דגם מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md §5): a change only over a clean break, the
+    # same rules as `PUT /machines/{id}/device-profile`. First, so a refusal changes nothing.
+    if "device_model" in update_data:
+        new_model = update_data.pop("device_model")
+        try:
+            device_profile.check_model_change(db, machine, new_model)
+        except device_profile.DeviceProfileRefused as refused:
+            db.rollback()
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
+        device_profile.change_model(machine, new_model)
     # Who produces its Z (§5.1): first, so a refused switch changes nothing else either.
     # An explicit null is no change.
     z_mode = update_data.pop("z_mode", None)
+    # A display device (a KDS / the board, app/services/display_devices.py) makes no Z and
+    # issues no documents: no Z mode to switch, no document prefix (409 `device_not_fiscal`).
+    if not display_devices.is_fiscal(machine) and (
+        (z_mode is not None and z_mode != till_z.z_mode_of(machine))
+        or (update_data.get("document_prefix") or "").strip()
+    ):
+        db.rollback()
+        return display_devices.not_fiscal_response(machine)
     if z_mode is not None:
         try:
             # The owner's rules: the super admin alone, the till's shift closed first.
@@ -644,6 +968,10 @@ def update_machine(
             return JSONResponse(status_code=refused.status_code, content=refused.body)
     # "לקוח קבוע / זמני" for this till: the super admin's only; leaves `update_data`.
     licenses.apply_license(current_user, machine, update_data)
+    # "קידומת מסמכים": set after the shop below (a move gives the old one up), checked
+    # against the till's shop — never through the plain setattr loop.
+    prefix_sent = "document_prefix" in update_data
+    prefix_requested = update_data.pop("document_prefix", None)
 
     # Leaving its shop, or being retired, with shifts that belong to it: refused (409).
     leaving = "shop_id" in update_data and str(update_data["shop_id"]) != str(machine.shop_id)
@@ -692,6 +1020,18 @@ def update_machine(
         # and an archived area must not be left holding one that is later reactivated.
         areas.set_machine_area(machine, None)
 
+    if prefix_sent:
+        # 400 for a malformed prefix, 409 when another till of the shop / branch holds it
+        # (or its documents carry it). Documents already issued keep theirs.
+        try:
+            machine.document_prefix = document_prefix.check_prefix(db, machine, prefix_requested)
+        except document_prefix.DocumentPrefixRefused as refused:
+            db.rollback()
+            return JSONResponse(
+                status_code=refused.status_code,
+                content={"detail": refused.detail, "code": refused.code},
+            )
+
     for field, value in update_data.items():
         setattr(machine, field, value)
 
@@ -703,6 +1043,58 @@ def update_machine(
     return machine
 
 
+@router.get("/{machine_id}/document-prefix")
+def get_machine_document_prefix(
+    machine_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The till's "קידומת מסמכים" against its business (docs/SPEC_DOCUMENT_PREFIX.md §5):
+    `prefix` in force, `ownPrefix` (else the register number), `uniqueInBusiness`, and when
+    not, `heldBy` (who else, in Hebrew `text`) and `suggestedPrefix`.
+    """
+    machine = _machine_for_read(db, machine_id, current_user, active_tenant_id)
+    return document_prefix.prefix_status(db, machine)
+
+
+@router.post("/{machine_id}/document-prefix/assign-free")
+def assign_free_document_prefix(
+    machine_id: str,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שיוך קידומת פנויה": give a till whose prefix collides in its business the lowest free
+    prefix of the business. Its future documents only — what it issued keeps the prefix
+    frozen on it; the till learns the new one on its next `GET /machines/me`. A till whose
+    prefix is already unique is left alone (`changed: false`). The same roles as
+    `PUT /machines/{id}`.
+    """
+    machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # no documents, no prefix
+    if refused_display is not None:
+        return refused_display
+    try:
+        assigned = document_prefix.assign_free_prefix(db, machine)
+    except document_prefix.DocumentPrefixRefused as refused:
+        db.rollback()
+        return JSONResponse(
+            status_code=refused.status_code,
+            content={"detail": refused.detail, "code": refused.code},
+        )
+    db.commit()
+    db.refresh(machine)
+    return {
+        "changed": assigned is not None,
+        "documentPrefix": machine.document_prefix,
+        "effectiveDocumentPrefix": machine.effective_document_prefix,
+        "status": document_prefix.prefix_status(db, machine),
+    }
+
+
 def _machine_has_history(db: Session, machine_id: str) -> bool:
     if db.query(Transaction.id).filter(Transaction.machine_id == machine_id).first():
         return True
@@ -711,6 +1103,20 @@ def _machine_has_history(db: Session, machine_id: str) -> bool:
     if db.query(Shift.id).filter(Shift.machine_id == machine_id).first():
         return True
     if db.query(SyncLog.id).filter(SyncLog.machine_id == machine_id).first():
+        return True
+    # Its Z run, even with no Z on file, and what the device said it numbered: a hard
+    # delete would lose where the run is, and a till recreated in its place would start
+    # it again (docs/SPEC_OFFLINE_TILL_Z.md §4.7). Kept, as a soft delete.
+    from app.models.machine_z_sequence import MachineZSequence
+
+    if db.query(MachineZSequence.machine_id).filter(
+        MachineZSequence.machine_id == machine_id, MachineZSequence.last_number > 0
+    ).first():
+        return True
+    if db.query(POSMachine.id).filter(
+        POSMachine.id == machine_id,
+        (POSMachine.offline_till_z_last_number > 0) | POSMachine.reported_document_counters.isnot(None),
+    ).first():
         return True
     return False
 
@@ -736,6 +1142,12 @@ def delete_machine(
 
     # Before anything is touched: an open shift or shifts awaiting a Z keep the till.
     refuse_leaving_shop_with_shifts(db, machine)
+    # And Zs it may hold, closed with no connection, not in the cloud yet: removed, it
+    # could never send them (docs/SPEC_OFFLINE_TILL_Z.md §4.4, §4.7).
+    try:
+        till_z.refuse_while_producing_offline(db, machine)
+    except till_z.TillZRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
 
     db.query(PairingCode).filter(PairingCode.pos_machine_id == machine_id).delete(
         synchronize_session=False
@@ -897,6 +1309,7 @@ def request_remote_shift_close(
 )
 def request_till_z(
     machine_id: uuid_mod.UUID,
+    body: Optional[MachineTillZIn] = None,
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -911,8 +1324,13 @@ def request_till_z(
     `GET /till-z-requests/{id}`.
     """
     machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # a display device makes no Z
+    if refused_display is not None:
+        return refused_display
     try:
-        req, _created = till_z.request_for_machine(db, current_user, machine)
+        req, _created = till_z.request_for_machine(
+            db, current_user, machine, force=bool(body.force) if body is not None else False
+        )
     except till_z.TillZRefused as refused:
         db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)
@@ -955,6 +1373,9 @@ def request_transmit(
     `GET /transmit-requests/{id}`.
     """
     machine = machine_for_shift_admin(db, machine_id, current_user, active_tenant_id)
+    refused_display = display_devices.not_fiscal_response(machine)  # no card payments on a display device
+    if refused_display is not None:
+        return refused_display
     req, created = transmit_requests.request_transmit(db, current_user, machine)
     db.commit()
     db.refresh(req)
@@ -1096,6 +1517,121 @@ def reconstruct_close_removed(
     raise HTTPException(status_code=status.HTTP_410_GONE, detail="upgrade_required")
 
 
+class SupportZBody(BaseModel):
+    """`POST /machines/{id}/support-z` — "הפקת Z מהענן ע״י התמיכה"."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: destroyed | lost | permanent_failure (`support_z.REASONS`).
+    reason: str = Field(..., max_length=32)
+    note: Optional[str] = Field(None, max_length=500)
+    #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים" — required while the state warns (§4.6.1).
+    confirm_data: bool = Field(False, alias="confirmData")
+
+
+@router.get("/{machine_id}/support-z")
+def get_support_z_preview(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    What "הפקת Z מהענן ע״י התמיכה" would do for this till: the shifts it closes, the
+    documents and totals, the Z number, the numbers skipped, the document counters' gaps,
+    when the till was last seen (docs/SPEC_OFFLINE_TILL_Z.md §4.6). Support alone.
+    """
+    support_z.check_permission(current_user)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    return support_z.preview(db, machine)
+
+
+@router.post("/{machine_id}/support-z")
+def post_support_z(
+    machine_id: uuid_mod.UUID,
+    body: SupportZBody,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "הפקת Z מהענן ע״י התמיכה" — a till destroyed, lost or permanently broken: its shifts
+    closed and its Z produced from the documents the cloud holds, the machine marked, all
+    recorded (docs/SPEC_OFFLINE_TILL_Z.md §4.6). Support alone (`403 super_admin_only`);
+    `409 terminal_is_online` while the till can do it itself.
+    """
+    support_z.check_permission(current_user)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    result = support_z.produce(
+        db, current_user, machine, reason=body.reason, note=body.note, confirm_data=body.confirm_data,
+    )
+    db.commit()
+    return result
+
+
+class TillResetBody(BaseModel):
+    """`POST /machines/{id}/till-reset` — "איפוס נתוני קופה (תמיכה)"."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: transactions ("מחיקת תנועות מקומיות") | full ("איפוס מלא") — `till_reset.KINDS`.
+    kind: str = Field(..., max_length=32)
+    reason: str = Field(..., max_length=500)
+
+
+@router.get("/{machine_id}/till-reset")
+def get_till_reset_preview(
+    machine_id: uuid_mod.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    What a reset of this till's data would meet: what the till still holds unsynced, the
+    Zs it keeps, the counters that stay, a command already waiting
+    (docs/SPEC_OFFLINE_TILL_Z.md §4.7). Support alone.
+    """
+    till_reset.check_permission(current_user)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    out = till_reset.preview(db, machine)
+    db.commit()
+    return out
+
+
+@router.post("/{machine_id}/till-reset")
+def post_till_reset(
+    machine_id: uuid_mod.UUID,
+    body: TillResetBody,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "איפוס נתוני קופה (תמיכה)" — the only reset of a till's data there is (the owner:
+    "איפוס זדים קורה רק מהענן ובאמצעות סופר אדמין בתמיכה"). Sent to the till on its heartbeat
+    (`pendingReset`); the till carries it out under its guards or refuses, and reports.
+    Support alone (`403 super_admin_only`); `422 invalid_kind | reason_required`; `409
+    machine_not_assigned | reset_pending`. Recorded as a `till_reset` exception.
+    """
+    till_reset.check_permission(current_user)
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    result = till_reset.request(db, current_user, machine, kind=body.kind, reason=body.reason)
+    db.commit()
+    return result
+
+
 @router.post("/{machine_id}/replacement-code")
 def create_replacement_pairing_code(
     machine_id: uuid_mod.UUID,
@@ -1135,6 +1671,13 @@ def create_replacement_pairing_code(
             status_code=status.HTTP_409_CONFLICT,
             detail="open_shift — close this terminal's shift before replacing it.",
         )
+    # A replacement starts numbering from the cloud's last Z: never while the old unit may
+    # hold Zs it closed with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.4) — two
+    # devices would print the same numbers.
+    try:
+        till_z.refuse_while_producing_offline(db, machine)
+    except till_z.TillZRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     acknowledged = body is not None and body.acknowledge_untransmitted
     if not acknowledged and transmissions.has_untransmitted(db, machine):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="untransmitted_card_sales")
@@ -1150,6 +1693,10 @@ def create_replacement_pairing_code(
         # The replacement unit's hardware; none keeps the till's recorded model.
         device_model=body.device_model if body is not None else None,
     )
+    # Why — kept in "הוחלפה קופה" when a device redeems the code (offline till Z §4.6.2).
+    if body is not None and body.reason and body.reason.strip():
+        code.replacement_reason = body.reason.strip()[:500]
+        db.commit()
     return {
         "code": code.code,
         "expiresAt": code.expires_at,
@@ -1157,3 +1704,71 @@ def create_replacement_pairing_code(
         "machineCode": machine.machine_code,
         "untransmittedAcknowledged": bool(acknowledged),
     }
+
+
+# ── "סוג מכשיר": role and model (docs/SPEC_DEVICE_ROLE_MODEL.md) ──────────────
+
+
+@router.put("/{machine_id}/device-profile", response_model=POSMachineResponse)
+def update_device_profile(
+    machine_id: uuid_mod.UUID,
+    body: DeviceProfileIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Change the machine's role ("till" ↔ "kiosk") and / or model, from the machine page.
+
+    The same roles as any machine edit (`PUT /machines/{id}`); a change of role also goes
+    through the kiosks page's scope check. Each change only over a clean break — no Z under
+    way, no open shift, no documents the till reported unsynced, no Zs closed offline and
+    not uploaded; a kiosk never the shop's main till and always seated in a shop; a model
+    without a terminal not while card sales wait for transmission. `409` / `422` with
+    `{"detail": code, "message": Hebrew}`. Becoming a kiosk takes `kiosk` (name,
+    controlling tills, device lock) exactly as "הפוך קופה לקיוסק" does.
+    """
+    from app.services import kiosk_control
+
+    machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
+    if not machine:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
+    ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.DISTRIBUTOR:
+        if machine.distributor_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    elif not _check_machine_list_access(current_user, machine, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    sent = body.model_dump(exclude_unset=True, by_alias=False)
+    changed = device_profile.RoleChange()
+    try:
+        if "device_model" in sent:
+            device_profile.check_model_change(db, machine, body.device_model)
+            device_profile.change_model(machine, body.device_model)
+        if body.device_role is not None:
+            # A display device's too ("kds" / "order_status_board"): a till never becomes one,
+            # nor back — 409 `device_role_change_requires_pairing` (app/services/display_devices.py).
+            current_role = device_profile.current_role(db, machine)
+            if body.device_role != current_role:
+                kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
+                device_profile.check_role_switch(db, machine, body.device_role)
+                changed = device_profile.change_role(
+                    db, current_user, machine, body.device_role, body.kiosk, body.kds
+                )
+        db.commit()
+    except device_profile.DeviceProfileRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    except IntegrityError:
+        db.rollback()
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "already_kiosk", "message": "המכשיר כבר קיוסק."},
+        )
+    if changed.lock:
+        kiosk_control.notify_device_lock(machine)
+    if changed.pinpad:
+        device_profile.notify_settings(db, machine)
+    db.refresh(machine)
+    return _enrich_machine_status(machine, db)

@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": "c2835c9f-7d8e-4624-a5e5-e497493e7d95",
+  "result": {
+    "mainTerminal": {
+      "batchFile": [
+        { "type": "R", "referenceId": "5544a15f-2759-4622-8a97-53adfbbee184", "transactionId": "24111020193508831988304" }
+      ],
+      "terminalId": "0889198"
+    }
+  }
+}

@@ -93,17 +93,44 @@ class Product(Base):
     # a spend threshold). Enforced on the till; the cloud only carries the flag.
     no_discount = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # "מחייב אישור מנהל במכירה": the till asks a manager's code before the product enters a
+    # sale (permission SELL_RESTRICTED_ITEMS), and kiosks never show it. Inherited from the
+    # category and every category above it (app/services/restricted_items.py); the cloud only
+    # carries the flags, the till decides.
+    requires_manager_approval = Column(Boolean, default=False, nullable=False, server_default="false")
+
+    # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md, app/services/sales_channel.py):
+    # all (קופות וקיוסק) / kiosk_only / pos_only. The till hides kiosk_only from its sell
+    # screen and the kiosk hides pos_only; the cloud only carries the code.
+    sales_channel = Column(String(16), default="all", nullable=False, server_default="all")
+
     # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
     # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default
     # — null inherits the category's. Not a key, like the routes: a deleted course reads
     # as none.
     allergens = Column(JSON, nullable=True)
+    # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): what the dish is for the diner —
+    # vegan / vegetarian / dairy / meat / gluten_free / spicy, cleaned and ordered by
+    # app/services/dietary.py. Null: none.
+    dietary_tags = Column(JSON, nullable=True)
     course_id = Column(UUID(as_uuid=True), nullable=True)
     #: At most this many in one order (a promotional item limited to 1); null: no limit.
     max_per_order = Column(Integer, nullable=True)
     #: Refills at no charge ("כוס נוספת") — `max_refills` per line, null = unlimited.
     refillable = Column(Boolean, nullable=False, default=False, server_default="false")
     max_refills = Column(Integer, nullable=True)
+
+    # "הודעות לעובד על פריט" (app/services/product_alerts.py): what the till shows the
+    # employee on adding the product, before it enters the order —
+    # `[{text, kind, requireAck, whereShown}]`, in order. Null: none, as before.
+    alerts = Column(JSON, nullable=True)
+    #: "הצג אזהרת אלרגנים": one more alert, built from `allergens` in Hebrew.
+    allergen_alert = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: That alert must be confirmed ("עדכנתי את הלקוח") — on by default.
+    allergen_alert_require_ack = Column(Boolean, nullable=False, default=True, server_default="true")
+    # "פריטים נלווים": products the till adds with this one, as lines of their own under
+    # it — `[{productId, name, quantity, priceMode, price, kitchenPrint}]`. Null: none.
+    companions = Column(JSON, nullable=True)
 
     # Where a global product is sold. Null is every product that predates this: its
     # shops are whatever rows somebody added by hand on the assortment page. "company"

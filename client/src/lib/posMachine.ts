@@ -1,4 +1,6 @@
 import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
+import { normalizeMachineIntegration } from '@/lib/paymentIntegration';
+import { normalizeCheckBypass } from '@/lib/terminalCheckBypass';
 
 const BATTERY_STATUSES = ['charging', 'discharging', 'full', 'not_charging', 'unknown'] as const;
 const PRINTER_STATUSES = ['ok', 'no_paper', 'overheated', 'error', 'unavailable', 'unknown'] as const;
@@ -81,6 +83,17 @@ export function normalizeTerminalFields(raw: Record<string, unknown>) {
     forceTerminalNumberSource: (nullableString(raw.forceTerminalNumberSource) ??
       null) as PosMachine['forceTerminalNumberSource'],
     terminalStatus: terminalStatus(raw.terminalStatus),
+    expectedTerminalNumberSource: nullableString(raw.expectedTerminalNumberSource),
+    cardLock: (['mismatch', 'not_configured', 'unknown'] as const).find((v) => v === raw.cardLock) ?? null,
+    // "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1).
+    ...normalizeCheckBypass(raw),
+    // The network pinpad (app/services/payment_terminal.py): dropped here before, so the
+    // "נדרשת כתובת IP למסופון" alert never showed.
+    pinpadEnabled: raw.pinpadEnabled === true,
+    pinpadHost: nullableString(raw.pinpadHost),
+    pinpadPort: nullableString(raw.pinpadPort),
+    pinpadRequired: raw.pinpadRequired === true,
+    pinpadAddressMissing: raw.pinpadAddressMissing === true,
   };
 }
 
@@ -94,6 +107,21 @@ function closeSource(value: unknown): PosMachine['pendingCloseSource'] {
 function deviceModel(value: unknown): PosMachine['deviceModel'] {
   const s = nullableString(value)?.toUpperCase();
   return (DEVICE_MODELS as readonly string[]).includes(s ?? '') ? (s as DeviceModel) : null;
+}
+
+/** `till` | `kiosk`; null when the server did not say. */
+function deviceRole(value: unknown): PosMachine['deviceRole'] {
+  const s = nullableString(value)?.toLowerCase();
+  return s === 'till' || s === 'kiosk' ? s : null;
+}
+
+/** What the device runs, as the server says (else what it said at pairing); null when unknown. */
+function platformOf(value: unknown, deviceInfo: unknown): PosMachine['platform'] {
+  const said = (v: unknown) => {
+    const s = nullableString(v)?.toLowerCase();
+    return s === 'android' || s === 'windows' || s === 'web' ? s : null;
+  };
+  return said(value) ?? (deviceInfo && typeof deviceInfo === 'object' ? said((deviceInfo as { platform?: unknown }).platform) : null);
 }
 
 /** Absent (an older server) or anything unknown is the default, `cloud`. */
@@ -124,6 +152,8 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     tenantId: (raw.tenantId ?? raw.tenant_id) as string | undefined,
     shopId: (raw.shopId ?? raw.shop_id) as string | undefined,
     posNumber: nullableString(raw.posNumber ?? raw.pos_number),
+    documentPrefix: nullableString(raw.documentPrefix ?? raw.document_prefix),
+    effectiveDocumentPrefix: nullableString(raw.effectiveDocumentPrefix ?? raw.effective_document_prefix),
     areaId: nullableString(raw.areaId ?? raw.area_id),
     areaName: nullableString(raw.areaName ?? raw.area_name),
     pairingStatus,
@@ -131,6 +161,16 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     companyNumber: nullableNumber(raw.companyNumber ?? raw.company_number),
     deviceModel: deviceModel(raw.deviceModel ?? raw.device_model),
     hasPrinter: typeof raw.hasPrinter === 'boolean' ? raw.hasPrinter : undefined,
+    hasBuiltinTerminal: typeof raw.hasBuiltinTerminal === 'boolean' ? raw.hasBuiltinTerminal : undefined,
+    // "סוג מכשיר" (docs/SPEC_DEVICE_ROLE_MODEL.md): the role, and the chosen / reported model.
+    deviceRole: deviceRole(raw.deviceRole ?? raw.device_role),
+    // Android / Windows / the browser kiosk ("web") — the platform badge.
+    platform: platformOf(raw.platform, raw.deviceInfo ?? raw.device_info),
+    kioskEnabled: typeof raw.kioskEnabled === 'boolean' ? raw.kioskEnabled : null,
+    deviceModelChosen: deviceModel(raw.deviceModelChosen ?? raw.device_model_chosen),
+    deviceModelReported: deviceModel(raw.deviceModelReported ?? raw.device_model_reported),
+    hasCashDrawerPort: raw.hasCashDrawerPort === true,
+    deviceDriverPending: raw.deviceDriverPending === true,
     licenseType: (raw.licenseType ?? raw.license_type) === 'temporary' ? 'temporary' : 'permanent',
     licenseExpiresOn: nullableString(raw.licenseExpiresOn ?? raw.license_expires_on),
     mqttClientId: (raw.mqttClientId ?? raw.mqtt_client_id) as string | undefined,
@@ -188,7 +228,11 @@ export function normalizePosMachine(raw: Record<string, unknown>): PosMachine {
     printerLastOkAt: nullableString(raw.printerLastOkAt),
     printerReportedAt: nullableString(raw.printerReportedAt),
     ...normalizeTerminalFields(raw),
+    // "סוג אינטגרציית אשראי" and the fields it still lacks (the machines list's badge).
+    ...normalizeMachineIntegration(raw),
     zMode: zMode(raw.zMode ?? raw.z_mode),
+    // "קופה עצמאית": absent (an older server) reads as not independent.
+    independentTill: (raw.independentTill ?? raw.independent_till) === true,
     createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
     updatedAt: String(raw.updatedAt ?? raw.updated_at ?? ''),
   };

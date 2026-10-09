@@ -28,6 +28,7 @@ from app.routers import (
     elevation,
     products,
     product_availability,
+    availability_reopen as availability_reopen_router,
     machine_catalog,
     categories,
     companies,
@@ -60,9 +61,13 @@ from app.routers import (
     sales_reports as sales_reports_router,
     till_messages as till_messages_router,
     prepaid_vouchers as prepaid_vouchers_router,
+    prepaid_voucher_extras as prepaid_voucher_extras_router,
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
+    lan_server as lan_server_router,
     z_mode as z_mode_router,
+    z_participation as z_participation_router,
+    till_shop_z_local as till_shop_z_local_router,
     exceptions as exceptions_router,
     promotions as promotions_router,
     tables as tables_router,
@@ -89,6 +94,12 @@ app = FastAPI(
     version="0.2.0",
 )
 
+# "מכשיר תצוגה אינו קופה": `{"detail": "device_not_fiscal", "message": <Hebrew>}` for a fiscal
+# action asked of a KDS / board (app/services/display_devices.py).
+from app.services.display_devices import DeviceNotFiscal, not_fiscal_handler  # noqa: E402
+
+app.add_exception_handler(DeviceNotFiscal, not_fiscal_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -106,10 +117,20 @@ _prefix = settings.api_v1_prefix
 
 app.include_router(auth.router, prefix=_prefix)
 app.include_router(system_access.router, prefix=_prefix)
+# "הרשאות דשבורד" (app/routers/dashboard_access.py): per dashboard user — sections, org scope,
+# templates and their history. Enforced for every route in `get_current_user`.
+from app.routers import dashboard_access as dashboard_access_router  # noqa: E402
+
+app.include_router(dashboard_access_router.router, prefix=_prefix)
 app.include_router(users.router, prefix=_prefix)
 app.include_router(companies.router, prefix=_prefix)
 app.include_router(shops.router, prefix=_prefix)
 app.include_router(areas_router.router, prefix=_prefix)
+# "חיפוש מכשיר" (app/routers/machine_search.py): before the machines router, so
+# `/machines/search` is never read as `/machines/{machine_id}`.
+from app.routers import machine_search as machine_search_router  # noqa: E402
+
+app.include_router(machine_search_router.router, prefix=_prefix)
 app.include_router(machines.router, prefix=_prefix)
 app.include_router(close_day.router, prefix=_prefix)
 app.include_router(pairing.router, prefix=_prefix)
@@ -117,11 +138,28 @@ app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
+app.include_router(availability_reopen_router.router, prefix=_prefix)
 app.include_router(machine_catalog.router, prefix=_prefix)
 app.include_router(categories.router, prefix=_prefix)
 app.include_router(vouchers.router, prefix=_prefix)
 app.include_router(customers.router, prefix=_prefix)
 app.include_router(stock.router, prefix=_prefix)
+# "שליטה חיה בסניף": blocks on items ("אזל" / "חסום"), remote control of tills and kiosks.
+from app.routers import item_blocks as item_blocks_router  # noqa: E402
+from app.routers import device_commands as device_commands_router  # noqa: E402
+
+app.include_router(item_blocks_router.router, prefix=_prefix)
+# Stock over the hierarchy: quick stock, transfers, managed levels, alerts, the daily reset.
+from app.routers import stock_live as stock_live_router  # noqa: E402
+
+app.include_router(stock_live_router.router, prefix=_prefix)
+# "יעדים ותחרות" (app/routers/targets.py): targets, progress, the till's leaderboard.
+from app.routers import targets as targets_router  # noqa: E402
+
+app.include_router(targets_router.router, prefix=_prefix)
+app.include_router(targets_router.till_router, prefix=_prefix)
+app.include_router(device_commands_router.router, prefix=_prefix)
+app.include_router(device_commands_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
 # After tax_reports: both mount under /reports, and the literal /reports/tax/...
@@ -148,15 +186,48 @@ app.include_router(tenants.router, prefix=_prefix)
 app.include_router(settings_router.router, prefix=_prefix)
 app.include_router(till_parameters_router.router, prefix=_prefix)
 app.include_router(app_releases_router.router, prefix=_prefix)
+# "התקנת גשר ל-Windows" (app/routers/windows_bridge.py, docs/SPEC_KIOSK.md §28): the installer for machine admins.
+from app.routers import windows_bridge as windows_bridge_router  # noqa: E402
+
+app.include_router(windows_bridge_router.router, prefix=_prefix)
+# "עדכון שקט" (app/routers/device_management.py): the provisioning QR and its APK link, "הפעל מחדש".
+from app.routers import device_management as device_management_router  # noqa: E402
+
+app.include_router(device_management_router.router, prefix=_prefix)
 app.include_router(accounting_router.router, prefix=_prefix)
 app.include_router(sales_reports_router.router, prefix=_prefix)
 app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
+# Settlement, deliveries, replacements, §15 reports, §18 controls and the simulator (helper).
+app.include_router(prepaid_voucher_extras_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
+# "רשת מקומית" and "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3–4).
+app.include_router(lan_server_router.router, prefix=_prefix)
 app.include_router(z_mode_router.router, prefix=_prefix)
+app.include_router(z_participation_router.router, prefix=_prefix)
+# "תצורת עבודה למכשיר" (docs/SPEC_DEVICE_WORK_CONFIG.md): a device's way of working in one place.
+from app.routers import work_config as work_config_router  # noqa: E402
+
+app.include_router(work_config_router.router, prefix=_prefix)
+app.include_router(till_shop_z_local_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)
+# "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md): the till's failed payment attempts and the dashboard's list.
+from app.routers import failed_payments as failed_payments_router  # noqa: E402
+
+app.include_router(failed_payments_router.till_router, prefix=_prefix)
+app.include_router(failed_payments_router.router, prefix=_prefix)
+# "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard asks a till to issue a credit.
+from app.routers import remote_credits as remote_credits_router  # noqa: E402
+
+app.include_router(remote_credits_router.till_router, prefix=_prefix)
+app.include_router(remote_credits_router.router, prefix=_prefix)
+# "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card,
+# a till issues the credit note.
+from app.routers import cloud_card_refunds as cloud_card_refunds_router  # noqa: E402
+
+app.include_router(cloud_card_refunds_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
@@ -176,10 +247,189 @@ app.include_router(training_mode_router.router, prefix=_prefix)
 # release, and the dashboard's who-is-signed-in-where.
 app.include_router(user_sessions_router.till_router, prefix=_prefix)
 app.include_router(user_sessions_router.router, prefix=_prefix)
+# "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md): the till's clock-in/out/break actions and the
+# dashboard's live board, report and corrections — separate from the sign-in above.
+from app.routers import attendance as attendance_router  # noqa: E402
+
+app.include_router(attendance_router.till_router, prefix=_prefix)
+app.include_router(attendance_router.router, prefix=_prefix)
 # "סקירת שינויים לפני שידור לקופות" (docs/SPEC_MENU_BROADCAST_REVIEW.md).
 from app.routers import menu_broadcast as menu_broadcast_router  # noqa: E402
 
 app.include_router(menu_broadcast_router.router, prefix=_prefix)
+# "סוג אינטגרציית אשראי" — what a settings layer's form needs (docs/SPEC_ZCREDIT.md).
+from app.routers import payment_integration as payment_integration_router  # noqa: E402
+
+app.include_router(payment_integration_router.router, prefix=_prefix)
+# "צימוד מסוף SynqPay" from the till: the key it paired, a key the terminal refused (docs/SPEC_SYNQPAY.md §2.2).
+from app.routers import synqpay_pairing as synqpay_pairing_router  # noqa: E402
+
+app.include_router(synqpay_pairing_router.router, prefix=_prefix)
+# "מכשירי תשלום": a shop's card terminals for tills without one of their own.
+from app.routers import payment_devices as payment_devices_router  # noqa: E402
+
+app.include_router(payment_devices_router.router, prefix=_prefix)
+# "שירות הודעות ו-019" + "מועדון לקוחות" and its public sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md).
+from app.routers import club as club_router, notifications as notifications_router  # noqa: E402
+
+app.include_router(notifications_router.router, prefix=_prefix)
+app.include_router(notifications_router.till_router, prefix=_prefix)
+app.include_router(club_router.router, prefix=_prefix)
+app.include_router(club_router.till_router, prefix=_prefix)
+app.include_router(club_router.public_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_notifications_worker():
+    """The SMS queue worker (lease-safe across processes); NOTIFICATIONS_WORKER_ENABLED=false stops it."""
+    if not settings.notifications_worker_enabled:
+        return
+    from app.database import SessionLocal
+    from app.services.notifications.worker import start_background_worker
+
+    start_background_worker(SessionLocal)
+
+
+# "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts): the log of every
+# detected exception, and the SMS alert rules (dry run unless EXCEPTION_ALERTS_SMS_PROVIDER).
+from app.routers import exception_alerts as exception_alerts_router, exception_log as exception_log_router  # noqa: E402
+
+app.include_router(exception_log_router.router, prefix=_prefix)
+app.include_router(exception_alerts_router.router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_stock_reset_worker():
+    """"איפוס יומי": each stock location at its business day's start (app/services/stock_reset.py)."""
+    import os
+
+    if os.environ.get("STOCK_RESET_WORKER_ENABLED", "true").lower() in ("0", "false", "no"):
+        return
+    from app.database import SessionLocal
+    from app.services.stock_reset import start_background_worker as start_reset_worker
+
+    start_reset_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_sales_targets_worker():
+    """
+    "יעד הושג" every minute (app/services/sales_targets_worker.py) — its own job, never tied to stock
+    (`STOCK_LOCATIONS_ENABLED` / `STOCK_RESET_WORKER_ENABLED`); SALES_TARGETS_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.sales_targets_worker import start_background_worker as start_targets_worker
+
+    start_targets_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_exception_alerts_worker():
+    """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
+    if not getattr(settings, "exception_alerts_worker_enabled", True):
+        return
+    from app.database import SessionLocal
+    from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
+
+    start_alerts_worker(SessionLocal)
+# KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
+from app.routers import kds as kds_router  # noqa: E402
+
+app.include_router(kds_router.router, prefix=_prefix)
+# The customer self-order kiosk (app/routers/kiosks.py): the till's kiosk sync, orders,
+# pickup numbers and controller commands, and the dashboard's kiosks and their config.
+from app.routers import kiosks as kiosks_router  # noqa: E402
+# "ביצועי קיוסקים" / "תקינות מכשירים" (app/routers/kiosk_insights.py, docs/SPEC_KIOSK_INSIGHTS.md):
+# mounted first, so `/kiosks/health` is never read as a kiosk's id.
+from app.routers import kiosk_insights as kiosk_insights_router  # noqa: E402
+
+app.include_router(kiosk_insights_router.till_router, prefix=_prefix)
+app.include_router(kiosk_insights_router.router, prefix=_prefix)
+# "שליטה מרחוק בקיוסקים" (app/routers/kiosk_live.py): mounted before the kiosks' /{machine_id} routes.
+from app.routers import kiosk_live as kiosk_live_router  # noqa: E402
+
+app.include_router(kiosk_live_router.router, prefix=_prefix)
+app.include_router(kiosks_router.till_router, prefix=_prefix)
+app.include_router(kiosks_router.router, prefix=_prefix)
+# "עיצוב קופה" (app/routers/till_design.py, docs/SPEC_TILL_DESIGN.md): the till's design sync
+# and the dashboard's design layers company → shop → area → till.
+from app.routers import till_design as till_design_router  # noqa: E402
+
+app.include_router(till_design_router.till_router, prefix=_prefix)
+app.include_router(till_design_router.router, prefix=_prefix)
+# A kiosk's alerts on the tills ("התראות לקופות", app/routers/kiosk_alerts.py).
+from app.routers import kiosk_alerts as kiosk_alerts_router  # noqa: E402
+
+app.include_router(kiosk_alerts_router.till_router, prefix=_prefix)
+# "תשלום בקופה": kiosk orders paid at the till (app/routers/kiosk_open_orders.py, SPEC_KIOSK §23).
+from app.routers import kiosk_open_orders as kiosk_open_orders_router  # noqa: E402
+
+app.include_router(kiosk_open_orders_router.till_router, prefix=_prefix)
+# "בדיקות ומידע קיוסק": where a till stands, for the kiosk's technician screen (app/routers/kiosk_technician.py).
+from app.routers import kiosk_technician as kiosk_technician_router  # noqa: E402
+
+app.include_router(kiosk_technician_router.till_router, prefix=_prefix)
+# The Android kiosk's web renderer status (kiosk web bundles, app/routers/kiosk_web.py).
+from app.routers import kiosk_web as kiosk_web_router  # noqa: E402
+
+app.include_router(kiosk_web_router.till_router, prefix=_prefix)
+# "תפריטים" (docs/SPEC_MENUS.md): named sales menus by schedule, their assignments, what is
+# active where and the report by menu. The tills get them in the catalog pull.
+from app.routers import catalog_menus as catalog_menus_router  # noqa: E402
+
+app.include_router(catalog_menus_router.router, prefix=_prefix)
+# "קבוצות מכשירים": named groups of tills, a menu assignment level of their own.
+from app.routers import machine_groups as machine_groups_router  # noqa: E402
+
+app.include_router(machine_groups_router.router, prefix=_prefix)
+# The report center (docs/SPEC_REPORTS.md): the consolidated Z table, "דוח שמכיל הכל", the
+# reconciliation (transactions ↔ Zs ↔ transmissions) and the transmissions across tills.
+from app.routers import report_center as report_center_router  # noqa: E402
+
+app.include_router(report_center_router.router, prefix=_prefix)
+# "תפקידים והרשאות" for till users and "מגירת מזומן" (docs/SPEC_ROLES_PERMISSIONS.md).
+from app.routers import till_roles as till_roles_router  # noqa: E402
+
+app.include_router(till_roles_router.router, prefix=_prefix)
+from app.routers import cash_drawer as cash_drawer_router  # noqa: E402
+
+app.include_router(cash_drawer_router.till_router, prefix=_prefix)
+app.include_router(cash_drawer_router.router, prefix=_prefix)
+
+# ── Event and owner awareness (feat/event-live) ──
+# "מצב אירוע חי": the event's live screen (app/services/report_events/live.py).
+from app.routers import event_live as event_live_router  # noqa: E402
+
+app.include_router(event_live_router.router, prefix=_prefix)
+# "התראות לטלפון": Web Push on the exception alerts (app/services/exception_alerts/push.py).
+from app.routers import push_alerts as push_alerts_router  # noqa: E402
+
+app.include_router(push_alerts_router.router, prefix=_prefix)
+# "עמדת מפיק": the producer's read-only portal, and the owner's side on the event.
+from app.routers import event_producers as event_producers_router, producer as producer_router  # noqa: E402
+
+app.include_router(producer_router.router, prefix=_prefix)
+app.include_router(event_producers_router.router, prefix=_prefix)
+# "תחזית ואיוש": the forecast per shop and the tills to open (app/services/insights/staffing.py).
+from app.routers import forecast_staffing as forecast_staffing_router  # noqa: E402
+
+app.include_router(forecast_staffing_router.router, prefix=_prefix)
+
+# "הפצה בוואטסאפ" (app/routers/voucher_distribution.py): prepaid vouchers per recipient, their
+# public links, and the optional WhatsApp Cloud API (off unless WHATSAPP_CLOUD_API_ENABLED).
+from app.routers import voucher_distribution as voucher_distribution_router  # noqa: E402
+
+app.include_router(voucher_distribution_router.router, prefix=_prefix)
+app.include_router(voucher_distribution_router.public_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_whatsapp_distribution_worker():
+    """Cloud API retries; does nothing unless WHATSAPP_CLOUD_API_ENABLED (and WHATSAPP_WORKER_ENABLED)."""
+    from app.database import SessionLocal
+    from app.services.whatsapp_cloud import start_background_worker as start_whatsapp_worker
+
+    start_whatsapp_worker(SessionLocal)
 
 
 @app.on_event("startup")

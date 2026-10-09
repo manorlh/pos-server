@@ -9,6 +9,11 @@
  *
  * The super admin's alone, like the Z mode (pos-server app/routers/main_till.py); the
  * shop's managers see it read-only. Refused while a Z run is under way.
+ *
+ * Under it, "רשת מקומית" (pos-server docs/SPEC_LAN_MODE.md §4): the shop's switch (it needs a
+ * main till, and moves the shop Z production only when the handover is clean), a row per
+ * system with what works on the LAN through the main till today, and "סנכרון רשת מקומית" —
+ * what the local server holds that the cloud copy lacks, an alert past a minute online.
  */
 
 import { useState } from 'react';
@@ -18,6 +23,19 @@ import { Crown } from 'lucide-react';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { fetchMainTill, saveMainTill, type MainTillState } from '@/lib/mainTillApi';
+import {
+  ageText,
+  healthRows,
+  healthTone,
+  localNetworkBlock,
+  localNetworkView,
+  syncTone,
+  type Tone,
+} from '@/lib/lanMode';
+import { saveLocalNetwork } from '@/lib/lanServerApi';
+import { producerBusyOf, refusalOf, type ProducerBusy } from '@/lib/zParticipation';
+import { shopZProducerKey, zParticipationKey } from '@/lib/zParticipationApi';
+import { ShopZForceDialog } from '@/components/dashboard/shop-z-force-dialog';
 import type { TillRef } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,20 +72,44 @@ export function MainTillCard({ shopId }: { shopId: string }) {
 function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState }) {
   const t = useTranslations('mainTill');
   const tc = useTranslations('common');
+  const tIndependent = useTranslations('independentTill');
   const qc = useQueryClient();
   const [machineId, setMachineId] = useState<string>(data.mainTill?.machineId ?? '');
   const [zFrom, setZFrom] = useState<string>(data.zFrom);
+  // 409 `shop_z_producer_busy`: the shop Z's producer has not handed over; a super admin may force it.
+  const [busy, setBusy] = useState<ProducerBusy | null>(null);
+  const [confirmForce, setConfirmForce] = useState(false);
 
   const save = useMutation({
-    mutationFn: () => saveMainTill(shopId, { machineId: machineId || null, zFrom }),
+    mutationFn: (force: boolean) =>
+      saveMainTill(shopId, { machineId: machineId || null, zFrom, ...(force ? { forceProducerSwitch: true } : {}) }),
     onSuccess: (out) => {
+      setBusy(null);
+      setConfirmForce(false);
       qc.setQueryData(['main-till', shopId], out);
+      void qc.invalidateQueries({ queryKey: shopZProducerKey(shopId) });
       void qc.invalidateQueries({ queryKey: ['kitchen-printers', shopId] });
+      void qc.invalidateQueries({ queryKey: zParticipationKey(shopId) });
+      void qc.invalidateQueries({ queryKey: ['local-shop-z-request', shopId] });
       toast.success(t('saved'));
     },
     onError: (err: unknown) => {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-      toast.error(detail === 'z_run_in_progress' ? t('runInProgress') : axiosErrorToToastMessage(err, tc('error')));
+      // 409 {detail: {code, message}} (e.g. `main_till_independent`): the server's Hebrew text.
+      const refusal = refusalOf(err);
+      const producerBusy = producerBusyOf(err);
+      setBusy(producerBusy);
+      setConfirmForce(false);
+      // A switch the producer holds up: said on the card, with the super admin's way past it.
+      if (producerBusy) return;
+      toast.error(
+        detail === 'z_run_in_progress'
+          ? t('runInProgress')
+          : refusal?.message ??
+              (refusal?.code === 'main_till_independent'
+                ? tIndependent('errors.main_till_independent')
+                : axiosErrorToToastMessage(err, tc('error'))),
+      );
     },
   });
 
@@ -121,9 +163,34 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
 
       <Roles data={data} tillLabel={tillLabel} />
 
+      <LocalNetwork shopId={shopId} data={data} tillLabel={tillLabel} />
+
+      {busy ? (
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <p>{busy.message ?? tIndependent('errors.shop_z_producer_busy')}</p>
+          {busy.canForce ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={save.isPending}
+              onClick={() => setConfirmForce(true)}
+            >
+              {tIndependent('producer.forceAnyway')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <ShopZForceDialog
+        open={confirmForce}
+        pending={save.isPending}
+        onConfirm={() => save.mutate(true)}
+        onCancel={() => setConfirmForce(false)}
+      />
+
       {data.canEdit ? (
         <div className="flex justify-end">
-          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
+          <Button size="sm" onClick={() => save.mutate(false)} disabled={!dirty || save.isPending}>
             {save.isPending ? t('saving') : t('save')}
           </Button>
         </div>
@@ -131,6 +198,126 @@ function MainTillForm({ shopId, data }: { shopId: string; data: MainTillState })
         <p className="text-xs text-amber-700 dark:text-amber-400">{t('readOnly')}</p>
       )}
     </>
+  );
+}
+
+const TONE_CLASS: Record<Tone, string> = {
+  ok: 'text-emerald-700 dark:text-emerald-400',
+  warn: 'text-amber-700 dark:text-amber-400',
+  bad: 'text-destructive',
+  muted: 'text-muted-foreground',
+};
+
+/** "רשת מקומית": the switch, a row per system, and the local server's sync with the cloud. */
+function LocalNetwork({
+  shopId,
+  data,
+  tillLabel,
+}: {
+  shopId: string;
+  data: MainTillState;
+  tillLabel: (r: TillRef | null | undefined) => string;
+}) {
+  const t = useTranslations('mainTill.localNetwork');
+  const tc = useTranslations('common');
+  const tIndependent = useTranslations('independentTill');
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState<ProducerBusy | null>(null);
+  const [confirmForce, setConfirmForce] = useState(false);
+  const state = { localNetwork: !!data.localNetwork, localMode: !!data.localMode, mainTill: data.mainTill };
+  const view = localNetworkView(state);
+  const block = localNetworkBlock(state);
+  const toggle = useMutation({
+    mutationFn: (force: boolean) =>
+      saveLocalNetwork(shopId, { enabled: !state.localNetwork, ...(force ? { forceProducerSwitch: true } : {}) }),
+    onSuccess: (out) => {
+      setBusy(null);
+      setConfirmForce(false);
+      qc.setQueryData(['main-till', shopId], out);
+      void qc.invalidateQueries({ queryKey: shopZProducerKey(shopId) });
+      void qc.invalidateQueries({ queryKey: zParticipationKey(shopId) });
+      void qc.invalidateQueries({ queryKey: ['local-shop-z-request', shopId] });
+      toast.success(t('saved'));
+    },
+    onError: (err: unknown) => {
+      const producerBusy = producerBusyOf(err);
+      setBusy(producerBusy);
+      setConfirmForce(false);
+      if (producerBusy) return;
+      toast.error(refusalOf(err)?.message ?? axiosErrorToToastMessage(err, tc('error')));
+    },
+  });
+  const sync = data.lanSync ?? null;
+  const age = ageText(sync?.oldestAgeSeconds);
+  const ageLabel = age ? t(`sync.${age.key}`, age.values) : '';
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-0.5">
+          <p className="text-sm font-medium">{t('title')}</p>
+          <p className={`text-xs ${view === 'on' ? TONE_CLASS.ok : view === 'inactive' ? TONE_CLASS.warn : TONE_CLASS.muted}`}>
+            {t(view)}
+          </p>
+        </div>
+        {data.canEdit ? (
+          <Button
+            size="sm"
+            variant={state.localNetwork ? 'outline' : 'default'}
+            disabled={toggle.isPending || !!block}
+            onClick={() => toggle.mutate(false)}
+          >
+            {toggle.isPending ? t('switching') : state.localNetwork ? t('turnOff') : t('turnOn')}
+          </Button>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground">{t('desc')}</p>
+      {block ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('needsMainTill')}</p> : null}
+      {data.canEdit ? <p className="text-xs text-muted-foreground">{t('zNote')}</p> : null}
+      {busy ? (
+        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <p>{busy.message ?? tIndependent('errors.shop_z_producer_busy')}</p>
+          {busy.canForce ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={toggle.isPending}
+              onClick={() => setConfirmForce(true)}
+            >
+              {tIndependent('producer.forceAnyway')}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      <ShopZForceDialog
+        open={confirmForce}
+        pending={toggle.isPending}
+        onConfirm={() => toggle.mutate(true)}
+        onCancel={() => setConfirmForce(false)}
+      />
+      <ul className="space-y-1 rounded-md bg-muted/30 p-2 text-xs">
+        {healthRows(data.lanHealth).map((row) => (
+          <li key={row.system} className="flex flex-wrap justify-between gap-2">
+            <span className="font-medium">{t(`systems.${row.system}`)}</span>
+            <span className={TONE_CLASS[healthTone(row.state)]}>
+              {t(`states.${row.state}`, { till: tillLabel(row.host) })}
+            </span>
+          </li>
+        ))}
+        {/* "סנכרון רשת מקומית": the owner's rule — the cloud copy follows the server in real time. */}
+        <li className="flex flex-wrap justify-between gap-2 border-t pt-1">
+          <span className="font-medium">{t('sync.title')}</span>
+          <span className={TONE_CLASS[syncTone(sync)]}>
+            {t(`sync.${sync?.state ?? 'unknown'}`, {
+              n: String(sync?.pending ?? 0),
+              age: ageLabel,
+              till: tillLabel(sync?.host),
+            })}
+          </span>
+        </li>
+        {sync?.alert ? <li className="font-medium text-destructive">{t('sync.alert')}</li> : null}
+      </ul>
+    </div>
   );
 }
 

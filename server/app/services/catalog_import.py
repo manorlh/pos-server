@@ -39,6 +39,9 @@ The rules, in one place:
   the categories router's `_check_access`), assortment rows in the company's shops
   (`_require_shop_writes`) and a shop's routing (`printers.can_edit`).
 * **Cost** ("עלות") is the insights' `product_costs` row: per unit, excluding VAT.
+* **The restaurant layer** - add-on groups and options, a product's / category's groups,
+  quick notes, pictures by link and catalog-menu prices - follows the same rules and is
+  planned and written in app/services/catalog_import_menu.py.
 """
 from __future__ import annotations
 
@@ -69,10 +72,14 @@ from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User
+from app.services import catalog_import_menu as MI
 from app.services import catalog_sheet as S
+from app.services import dietary
 from app.services import item_ticket
+from app.services import sales_channel
 from app.services import printers as K
 from app.services import product_shop_scope as scope_svc
+from app.services.catalog_plan import Change, Issue, display as _display, row_issue as _row_issue  # noqa: F401
 from app.services.catalog_template import PrinterRef, TemplateView, ticket_label
 from app.services.company_hierarchy import ancestor_company_ids, descendant_company_ids
 
@@ -153,6 +160,8 @@ class Context:
     scope_shop_ids: List[uuid.UUID]
     areas: Dict[str, str] = field(default_factory=dict)
     machines: Dict[str, str] = field(default_factory=dict)
+    #: The add-on layer and the catalog menus as they are (app/services/catalog_import_menu.py).
+    menu: Optional["MI.MenuContext"] = None
 
     def __post_init__(self) -> None:
         self.category_by_id: Dict[str, Category] = {str(c.id): c for c in self.categories}
@@ -320,12 +329,14 @@ def load_context(db: Session, tenant_id, company: Company, user: Optional[User] 
         if machine_ids
         else {}
     )
-    return Context(
+    ctx = Context(
         db=db, user=user, tenant_id=tenant_id, company=company, up_ids=up_ids,
         categories=categories, products=products, costs=costs, shops=shops, locked_shops=locked,
         printers=printers, routes=routes, scope_shop_ids=[s.id for s in scope_shops],
         areas=areas, machines=machines,
     )
+    ctx.menu = MI.load_menu_context(db, tenant_id, up_ids, categories, products)
+    return ctx
 
 
 # ── Category names ────────────────────────────────────────────────────────────
@@ -405,42 +416,6 @@ class CategoryIndex:
 
 
 @dataclass
-class Issue:
-    level: str  # "error" | "warning" | "info"
-    #: As a list of messages shows it: "שורה 7: מחיר חסר".
-    text: str
-    sheet: Optional[str] = None
-    row: Optional[int] = None
-    #: The same without the row ("מחיר חסר"), for a view that shows the row by itself.
-    message: str = ""
-
-    def out(self) -> Dict[str, Any]:
-        return {"level": self.level, "text": self.text, "message": self.message or self.text,
-                "sheet": self.sheet, "row": self.row}
-
-
-def _display(value: Any) -> Any:
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return S.YES if value else S.NO
-    if isinstance(value, Decimal):
-        return f"{value:.2f}"
-    return value
-
-
-@dataclass
-class Change:
-    field: str
-    label: str
-    before: Any
-    after: Any
-
-    def out(self) -> Dict[str, Any]:
-        return {"field": self.field, "label": self.label, "before": _display(self.before), "after": _display(self.after)}
-
-
-@dataclass
 class CategoryPlan:
     ref: str
     name: str
@@ -458,6 +433,9 @@ class CategoryPlan:
     issues: List[Issue] = field(default_factory=list)
     #: Created because a cell of this row (products or categories sheet) names it.
     implicit_from: Optional[int] = None
+    #: "קבוצות תוספות" and "קישור לתמונה" as read (None = empty: no change).
+    groups_spec: Optional[S.RoutingSpec] = None
+    image_spec: Optional[str] = None
 
     @property
     def has_error(self) -> bool:
@@ -483,6 +461,11 @@ class ProductPlan:
     action: str = "create"
     changes: List[Change] = field(default_factory=list)
     issues: List[Issue] = field(default_factory=list)
+    #: "קבוצות תוספות", "קישור לתמונה" and the "מחיר בתפריט: …" cells as read
+    #: (None / absent = empty: no change; "" = "ללא").
+    groups_spec: Optional[S.RoutingSpec] = None
+    image_spec: Optional[str] = None
+    menu_prices: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def ref(self) -> str:
@@ -513,22 +496,22 @@ class Plan:
     examples_skipped: int
     file_kind: str
     fingerprint: str = ""
+    #: Add-on groups and options, links, quick notes, pictures, menu prices.
+    menu: Optional["MI.MenuPlan"] = None
 
     @property
     def fatal(self) -> bool:
         return any(i.level == "error" for i in self.issues)
 
+    def all_rows(self) -> List[Any]:
+        return [*self.categories, *self.products, *(self.menu.rows() if self.menu is not None else [])]
+
     def error_rows(self) -> int:
-        return sum(1 for x in [*self.categories, *self.products] if x.has_error)
+        return sum(1 for x in self.all_rows() if x.has_error)
 
     def warning_count(self) -> int:
-        rows = sum(sum(1 for i in x.issues if i.level == "warning") for x in [*self.categories, *self.products])
+        rows = sum(sum(1 for i in x.issues if i.level == "warning") for x in self.all_rows())
         return rows + sum(1 for i in self.issues if i.level == "warning")
-
-
-def _row_issue(level: str, sheet: str, row: Optional[int], message: str) -> Issue:
-    prefix = f"שורה {row}: " if row else ""
-    return Issue(level, prefix + message, sheet, row, message)
 
 
 def _ref(category: Category) -> str:
@@ -601,10 +584,13 @@ class _Planner:
             printers = S.parse_printers(cells.get("printers"))
             sort = S.parse_int(cells.get("sort"), "סדר", -100000, 100000)
             active = S.parse_bool(cells.get("active"), "פעיל")
-            for parsed in (printers, sort, active):
+            groups = S.parse_groups(cells.get("groups"))
+            image = S.parse_image(cells.get("image"))
+            for parsed in (printers, sort, active, groups, image):
                 if parsed.error:
                     err(parsed.error)
             plan.routing, plan.sort, plan.active = printers.value, sort.value, active.value
+            plan.groups_spec, plan.image_spec = groups.value, image.value
             if plan.name:
                 self.file_categories.setdefault(S.normalize_name(plan.name), []).append(plan)
             self.categories.append(plan)
@@ -860,6 +846,10 @@ class _Planner:
         "entries": lambda v: S.parse_int(v, "כרטיס כניסה", 1, S.ENTRIES_MAX, allow_clear=True),
         "active": lambda v: S.parse_bool(v, "פעיל"),
         "description": lambda v: S.parse_text(v, "תיאור", S.DESCRIPTION_MAX),
+        "dietary": S.parse_dietary,
+        "channel": S.parse_channel,
+        "groups": S.parse_groups,
+        "image": S.parse_image,
     }
 
     def _product_row(self, raw_row: S.RawRow) -> ProductPlan:
@@ -877,9 +867,21 @@ class _Planner:
             if parsed.warning:
                 warn(parsed.warning)
             values[key] = parsed.value
+        # "מחיר בתפריט: …" - one column per catalog menu.
+        for key, cell in raw_row.cells.items():
+            if not key.startswith("menu:"):
+                continue
+            parsed = S.parse_menu_price(cell, f"המחיר בתפריט '{key[5:]}'")
+            if parsed.error:
+                err(parsed.error)
+            elif parsed.value is not None:
+                if parsed.warning:
+                    warn(parsed.warning)
+                plan.menu_prices[key] = parsed.value
         plan.name = values.get("name") or S.clean_text(raw_row.cells.get("name"))
         plan.price, plan.routing = values.get("price"), values.get("printers")
         plan.barcode, plan.sku = values.get("barcode"), values.get("sku")
+        plan.groups_spec, plan.image_spec = values.get("groups"), values.get("image")
         if not plan.name:
             err("חסר שם פריט")
         if values.get("category"):
@@ -970,6 +972,9 @@ class _Planner:
             "ticket_mode": None if ticket in (None, S.TICKET_INHERIT) else item_ticket.normalize(ticket),
             "ticket_entries": entries if isinstance(entries, int) else None,
             "is_available": True if values.get("active") is None else bool(values.get("active")),
+            "dietary_tags": list(values.get("dietary") or ()) or None,
+            # "ערוץ מכירה": empty is the default, קופות וקיוסק.
+            "sales_channel": values.get("channel") or sales_channel.ALL,
         }
         plan.cost = values.get("cost")
         plan.action = "create"
@@ -985,7 +990,8 @@ class _Planner:
             out[column_name] = new
             changes.append(Change(key, label, current, new))
 
-        change("name", "שם", "name", p.name, plan.name or None)
+        # A name the sheet can only write cleaned (a double space) is the same name.
+        change("name", "שם", "name", p.name, plan.name if plan.name and plan.name != S.clean_text(p.name) else None)
         if plan.category_ref and plan.category_ref != f"id:{p.category_id}":
             out["category_id"] = plan.category_ref
             changes.append(Change("category", "מחלקה", self.ctx.labels.get(str(p.category_id), ""), plan.category_label))
@@ -1022,6 +1028,25 @@ class _Planner:
                 changes.append(Change("entries", "כרטיס כניסה", p.ticket_entries, wanted_entries))
         change("active", "פעיל", "is_available", bool(p.is_available), values.get("active"))
         change("description", "תיאור", "description", p.description, values.get("description"))
+        wanted_tags = values.get("dietary")
+        if wanted_tags is not None:
+            current_tags = dietary.tags_out(p.dietary_tags)
+            if list(wanted_tags) != current_tags:
+                out["dietary_tags"] = list(wanted_tags) or None
+                changes.append(Change(
+                    "dietary", "סימוני תזונה",
+                    ", ".join(dietary.labels(current_tags)), ", ".join(dietary.labels(wanted_tags)),
+                ))
+        # "ערוץ מכירה": empty leaves it as it is.
+        wanted_channel = values.get("channel")
+        if wanted_channel is not None:
+            current_channel = sales_channel.out(p.sales_channel)
+            if wanted_channel != current_channel:
+                out["sales_channel"] = wanted_channel
+                changes.append(Change(
+                    "channel", "ערוץ מכירה",
+                    sales_channel.label(current_channel), sales_channel.label(wanted_channel),
+                ))
 
         if out.get("is_open_price") is False:
             price = plan.price if plan.price is not None else current_price
@@ -1101,22 +1126,28 @@ class _Planner:
     def build(self) -> Plan:
         for note in self.raw.notes:
             self.issues.append(Issue("warning", note))
-        for sheet, title in ((self.raw.products, "הפריטים"), (self.raw.categories, "המחלקות")):
+        for title, sheet in self.raw.sheets():
+            for header in sheet.unknown_headers:
+                self.issues.append(Issue("warning", f"העמודה '{header}' בגיליון {title} לא מוכרת ותידלג"))
+        required = ((self.raw.products, S.PRODUCT_COLUMNS, "הפריטים"), (self.raw.groups, S.GROUP_COLUMNS, "קבוצות התוספות"),
+                    (self.raw.options, S.OPTION_COLUMNS, "האפשרויות"), (self.raw.quick_notes, S.NOTE_COLUMNS, "ההערות המהירות"))
+        for sheet, columns, title in required:
             if sheet is not None:
-                for header in sheet.unknown_headers:
-                    self.issues.append(Issue("warning", f"העמודה '{header}' בגיליון {title} לא מוכרת ותידלג"))
-        if self.raw.products is not None:
-            missing = [c.title for c in S.PRODUCT_COLUMNS if c.required and c.key not in self.raw.products.headers]
-            if missing:
-                self.issues.append(Issue("error", f"בגיליון הפריטים חסרות העמודות: {', '.join(missing)}"))
+                missing = [c.title for c in columns if c.required and c.key not in sheet.headers]
+                if missing:
+                    self.issues.append(Issue("error", f"בגיליון {title} חסרות העמודות: {', '.join(missing)}"))
         self.plan_categories()
         if not any(i.level == "error" for i in self.issues):
             self.plan_products()
         self.category_changes()
+        # The add-on layer, pictures and menu prices before the routing: a row they refuse
+        # (an unknown group, no permission) is routed by nobody either.
+        fatal = any(i.level == "error" for i in self.issues)
+        menu = MI.MenuPlanner(self).plan() if not fatal and self.ctx.menu is not None else None
         self.plan_routes()
         plan = Plan(
             ctx=self.ctx, categories=self.categories, products=self.products, routes=self.routes,
-            issues=self.issues, examples_skipped=self.examples, file_kind=self.raw.kind,
+            issues=self.issues, examples_skipped=self.examples, file_kind=self.raw.kind, menu=menu,
         )
         plan.fingerprint = fingerprint(plan)
         return plan
@@ -1139,6 +1170,8 @@ def fingerprint(plan: Plan) -> str:
     for r in plan.routes:
         items.append(["r", r.target_type, r.target_ref, str(r.shop_id),
                       sorted(r.after) if r.after is not None else None])
+    if plan.menu is not None:
+        items.extend(plan.menu.fingerprint_items())
     raw = json.dumps(items, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
@@ -1156,7 +1189,7 @@ def summary(plan: Plan) -> Dict[str, Any]:
     def count(rows, action):
         return sum(1 for r in rows if _status(r.action, r.issues) == action)
 
-    return {
+    out = {
         "productsNew": count(plan.products, "create"),
         "productsUpdated": count(plan.products, "update"),
         "productsUnchanged": count(plan.products, "unchanged"),
@@ -1169,6 +1202,22 @@ def summary(plan: Plan) -> Dict[str, Any]:
         "warnings": plan.warning_count(),
         "examplesSkipped": plan.examples_skipped,
     }
+    menu = plan.menu
+    out.update({
+        "groupsNew": count(menu.groups, "create") if menu else 0,
+        "groupsUpdated": count(menu.groups, "update") if menu else 0,
+        "groupsUnchanged": count(menu.groups, "unchanged") if menu else 0,
+        "optionsNew": count(menu.options, "create") if menu else 0,
+        "optionsUpdated": count(menu.options, "update") if menu else 0,
+        "optionsUnchanged": count(menu.options, "unchanged") if menu else 0,
+        "notesNew": count(menu.notes, "create") if menu else 0,
+        "notesUpdated": count(menu.notes, "update") if menu else 0,
+        "notesUnchanged": count(menu.notes, "unchanged") if menu else 0,
+        "linkChanges": len(menu.links) if menu else 0,
+        "imageChanges": len(menu.images) if menu else 0,
+        "menuPriceChanges": len(menu.menu_prices) if menu else 0,
+    })
+    return out
 
 
 def preview_out(plan: Plan) -> Dict[str, Any]:
@@ -1198,8 +1247,8 @@ def preview_out(plan: Plan) -> Dict[str, Any]:
             "changes": [ch.out() for ch in c.changes],
             "messages": [i.out() for i in c.issues],
         })
-    actionable = any(_status(x.action, x.issues) in ("create", "update") for x in [*plan.products, *plan.categories])
-    return {
+    actionable = any(_status(x.action, x.issues) in ("create", "update") for x in plan.all_rows())
+    out = {
         "companyId": str(plan.ctx.company.id),
         "companyName": plan.ctx.company.name,
         "fileKind": plan.file_kind,
@@ -1207,8 +1256,14 @@ def preview_out(plan: Plan) -> Dict[str, Any]:
         "issues": [i.out() for i in plan.issues],
         "products": products,
         "categories": categories,
+        "groups": [],
+        "options": [],
+        "notes": [],
         "canCommit": not plan.fatal and actionable,
     }
+    if plan.menu is not None:
+        out.update(plan.menu.preview_rows(_status))
+    return out
 
 
 # ── Applying ──────────────────────────────────────────────────────────────────
@@ -1225,6 +1280,21 @@ class ApplyResult:
     skipped_error_rows: int = 0
     catalog_changed: bool = False
     route_shop_ids: Set[str] = field(default_factory=set)
+    groups_created: int = 0
+    groups_updated: int = 0
+    options_created: int = 0
+    options_updated: int = 0
+    links_changed: int = 0
+    notes_created: int = 0
+    notes_updated: int = 0
+    images_stored: int = 0
+    images_removed: int = 0
+    #: Pictures that could not be taken: {sheet, row, name, message}.
+    image_failures: List[Dict[str, Any]] = field(default_factory=list)
+    menu_prices_changed: int = 0
+    #: The add-on layer / the catalog menus changed (their sync states were bumped).
+    menu_changed: bool = False
+    catalog_menus_changed: bool = False
 
     def out(self) -> Dict[str, Any]:
         return {
@@ -1235,6 +1305,17 @@ class ApplyResult:
             "costsUpdated": self.costs_updated,
             "routingChanges": self.routing_changes,
             "skippedErrorRows": self.skipped_error_rows,
+            "groupsCreated": self.groups_created,
+            "groupsUpdated": self.groups_updated,
+            "optionsCreated": self.options_created,
+            "optionsUpdated": self.options_updated,
+            "linksChanged": self.links_changed,
+            "notesCreated": self.notes_created,
+            "notesUpdated": self.notes_updated,
+            "imagesStored": self.images_stored,
+            "imagesRemoved": self.images_removed,
+            "imageFailures": list(self.image_failures),
+            "menuPricesChanged": self.menu_prices_changed,
         }
 
 
@@ -1312,6 +1393,10 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
         _check_catalog_placement(db, user, tenant_id, company_id=company_id)
     if new_products and ctx.scope_shop_ids:
         _require_shop_writes(db, user, ctx.scope_shop_ids)
+    # Pictures by link are fetched before anything is written: the network is the slow part.
+    pictures = MI.fetch_images(plan.menu, tenant_id)
+    #: The rows this import creates, by ref - a picture is set on them after.
+    objects: Dict[str, Any] = {}
 
     # Categories: every new one gets its id first, so a child can name a new parent; they
     # are inserted a level at a time, parents first.
@@ -1331,11 +1416,13 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
         levels.setdefault(depth(c), []).append(c)
     for level in sorted(levels):
         for c in levels[level]:
-            db.add(Category(
+            category = Category(
                 id=ids[c.ref], tenant_id=tenant_id, company_id=company_id, shop_id=None, pos_machine_id=None,
                 catalog_level=CategoryLevel.GLOBAL, name=c.name, parent_id=resolve(c.parent_ref),
                 is_active=True if c.active is None else c.active, sort_order=c.sort or 0,
-            ))
+            )
+            db.add(category)
+            objects[c.ref] = category
             result.categories_created += 1
         db.flush()
     for c in plan.categories:
@@ -1371,12 +1458,15 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
             tax_rate=None, voucher_id=None, ticket_mode=v.get("ticket_mode"), ticket_entries=v.get("ticket_entries"),
             track_stock=False, is_open_price=v["is_open_price"], is_weighed=v["is_weighed"],
             unit_label=v.get("unit_label"), no_discount=v["no_discount"], is_general=False,
+            dietary_tags=v.get("dietary_tags"),
+            sales_channel=v.get("sales_channel") or sales_channel.ALL,
         )
         db.add(product)
         # Sold in every active shop of the company: the product form's default rule.
         scope_svc.set_scope_fields(product, scope_svc.MODE_COMPANY, company_id, False)
         scope_svc.execute_plan(db, product, scope_svc.ScopePlan(create=list(ctx.scope_shop_ids)))
         ids[p.ref] = product.id
+        objects[p.ref] = product
         result.products_created += 1
         if p.cost is not None:
             costs.append((product.id, p.cost))
@@ -1434,9 +1524,13 @@ def apply_plan(db: Session, plan: Plan, user: User) -> ApplyResult:
         result.route_shop_ids |= {str(s.id) for s in ctx.shops if ctx.printers_by_shop.get(str(s.id))}
     db.flush()
 
+    # The add-on layer, quick notes, pictures and menu prices.
+    MI.apply(db, plan.menu, ctx, user, resolve, objects, pictures, result)
+
     result.catalog_changed = bool(
         result.products_created or result.categories_created or result.categories_updated
         or any(p.action == "update" and not p.has_error and p.values for p in plan.products)
+        or result.images_stored or result.images_removed or result.menu_changed or result.catalog_menus_changed
     )
     return result
 
@@ -1511,6 +1605,7 @@ def template_view(ctx: Context, *, with_data: bool, now: Optional[datetime] = No
             seen_names.add(S.normalize_name(printer.name))
             view.printer_choices.append(printer.name)
 
+    MI.export_sheets(ctx, view, with_data=with_data)
     for c in ctx.categories:
         parent = ctx.category_by_id.get(str(c.parent_id)) if c.parent_id else None
         printers, note = routing_cell(ctx, "category", str(c.id))
@@ -1524,6 +1619,7 @@ def template_view(ctx: Context, *, with_data: bool, now: Optional[datetime] = No
         if note:
             row["notes"] = {"printers": note}
             view.has_mixed_routing = True
+        MI.export_target(ctx, "category", c, row)
         view.categories.append(row)
 
     if with_data:
@@ -1546,10 +1642,13 @@ def template_view(ctx: Context, *, with_data: bool, now: Optional[datetime] = No
                 "entries": p.ticket_entries,
                 "active": _yes_no(p.is_available),
                 "description": p.description or "",
+                "dietary": ", ".join(dietary.labels(p.dietary_tags)),
+                "channel": sales_channel.label(p.sales_channel),
             }
             if note:
                 row["notes"] = {"printers": note}
                 view.has_mixed_routing = True
+            MI.export_target(ctx, "product", p, row)
             view.products.append(row)
     return view
 
@@ -1561,6 +1660,8 @@ def company_summary(ctx: Context) -> Dict[str, Any]:
         "companyName": ctx.company.name,
         "products": len(ctx.products),
         "categories": len(ctx.categories),
+        "groups": len(ctx.menu.groups) if ctx.menu is not None else 0,
+        "menus": [m.name for m in ctx.menu.menus] if ctx.menu is not None else [],
         "shops": len(ctx.shops),
         "printers": [
             {"name": p.name, "shopName": shop_names.get(str(p.shop_id), ""), "isActive": bool(p.is_active)}

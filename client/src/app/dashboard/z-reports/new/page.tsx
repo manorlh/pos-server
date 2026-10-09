@@ -40,6 +40,7 @@ import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FilePlus2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createZRun, fetchZCandidates } from '@/lib/api';
+import { ForceCloseOption } from '@/components/dashboard/z-wizard/force-close-option';
 import { splitCandidatesByZMode } from '@/lib/tillZ';
 import { usePageScope } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
@@ -66,6 +67,9 @@ import {
   type OpenTillsHold,
 } from '@/components/dashboard/z-wizard/open-tills';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { CloudDataConfirm, ZDataStateWarning } from '@/components/dashboard/z-data-state';
+import { needsCloudDataConfirmation, type TillDataState } from '@/lib/zDataState';
+import { LocalShopZWizardNotice } from '@/components/dashboard/local-shop-z-panel';
 import { useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -289,6 +293,18 @@ function ProduceZ() {
   });
 
   /**
+   * The state of every till the cloud runs take, as the cloud knows it (offline till Z
+   * §4.6.1): any warning — open shifts it cannot close, not seen, documents or Zs it
+   * reported unsent — is shown, and Start waits for the explicit confirmation.
+   */
+  const plannedStates: TillDataState[] = plannedRuns.flatMap((r) =>
+    r.machines
+      .map((sel) => loaded.find((c) => c.shopId === r.shopId)?.machines.find((m) => m.machineId === sel.machineId)?.dataState)
+      .filter((s): s is TillDataState => !!s),
+  );
+  const needCloudDataConfirm = needsCloudDataConfirmation(plannedStates);
+
+  /**
    * What one press of Start (and the confirmation that may follow it) achieved. A
    * confirmation re-sends only the runs it was asked for, so its results are added to
    * the press's rather than replacing them.
@@ -296,6 +312,10 @@ function ProduceZ() {
   const [session, setSession] = useState<StartSession>(EMPTY_SESSION);
   /** Runs refused until the operator confirms leaving tills out (`open_tills_need_confirmation`). */
   const [toConfirm, setToConfirm] = useState<OpenTillsHold<PlannedRun>[]>([]);
+  // "כפה סגירה (גם באמצע מכירה)" for the runs started from here.
+  const [force, setForce] = useState(false);
+  // "אני מאשר שהנתונים בענן הם הנתונים הקיימים" (offline till Z §4.6.1).
+  const [cloudDataConfirmed, setCloudDataConfirmed] = useState(false);
 
   const goToProgress = (started: ZRun[]) => {
     setOverrides({});
@@ -319,6 +339,8 @@ function ProduceZ() {
               machines: body.machines,
               ...(body.areaId ? { areaId: body.areaId } : {}),
               ...(confirmOpenTills ? { confirmOpenTills: true } : {}),
+              ...(force ? { force: true } : {}),
+              ...(cloudDataConfirmed && needCloudDataConfirm ? { confirmCloudData: true } : {}),
             }),
           );
         } catch (e) {
@@ -539,15 +561,18 @@ function ProduceZ() {
                           />
                         ) : null}
                         {!onlyTill && q.data.dashboardZBlocked ? (
-                          <Card className="border-amber-500/50">
-                            <CardContent className="py-3 text-sm">
-                              {t('onlyFromMainTill', {
-                                till: q.data.mainTill?.posNumber
-                                  ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
-                                  : (q.data.mainTill?.name ?? ''),
-                              })}
-                            </CardContent>
-                          </Card>
+                          // In local mode: "בקש מהקופה הראשית" instead of starting a run.
+                          <LocalShopZWizardNotice shopId={q.data.shopId}>
+                            <Card className="border-amber-500/50">
+                              <CardContent className="py-3 text-sm">
+                                {t('onlyFromMainTill', {
+                                  till: q.data.mainTill?.posNumber
+                                    ? t('mainTillNumber', { n: q.data.mainTill.posNumber })
+                                    : (q.data.mainTill?.name ?? ''),
+                                })}
+                              </CardContent>
+                            </Card>
+                          </LocalShopZWizardNotice>
                         ) : null}
                         {!onlyTill && q.data.zScope === 'shop' && q.data.openTillsRule && !q.data.dashboardZBlocked ? (
                           <OpenTillsNotice
@@ -617,6 +642,7 @@ function ProduceZ() {
             disabled={
               plannedRuns.length === 0 ||
               start.isPending ||
+              (needCloudDataConfirm && !cloudDataConfirmed) ||
               toConfirm.length > 0 ||
               (start.isSuccess && !partial && session.started.length > 0)
             }
@@ -634,6 +660,20 @@ function ProduceZ() {
               : t('startSummary', { runs: plannedRuns.length, tills: totalTills })}
             {waiting > 0 ? ` ${t('startWaits', { count: waiting })}` : ''}
           </span>
+          <ForceCloseOption checked={force} onChange={setForce} disabled={start.isPending} className="basis-full" />
+          {/* Tills off: "כבוי — סונכרן במלואו" listed; a real risk warns and needs the tick. */}
+          {plannedStates.some((s) => !s.online) ? (
+            <div className="basis-full space-y-2">
+              <ZDataStateWarning tills={plannedStates} />
+              {needCloudDataConfirm ? (
+                <CloudDataConfirm
+                  checked={cloudDataConfirmed}
+                  onChange={setCloudDataConfirmed}
+                  disabled={start.isPending}
+                />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

@@ -19,8 +19,9 @@ import { toast } from 'sonner';
 import { Check, ExternalLink, RefreshCw, RotateCcw, ShieldAlert, X } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
-import { formatCurrency, formatDateTime } from '@/lib/format';
+import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import {
   EXCEPTION_TYPES,
   fetchExceptionSummary,
@@ -53,11 +54,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { othExceptionLine } from '@/components/dashboard/discounts/oth-club-report';
+import { ZExceptionLink, ZMismatchTable } from '@/components/dashboard/z-report/z-exception-details';
 
 const PAGE_SIZE = 50;
 const ANY = '__any__';
@@ -80,6 +83,29 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   table_cancelled: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   reprint: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
   user_session_release: 'bg-cyan-100 text-cyan-900 dark:bg-cyan-950 dark:text-cyan-200',
+  attendance_manual: 'bg-indigo-200 text-indigo-950 dark:bg-indigo-900 dark:text-indigo-100',
+  oth: 'bg-pink-100 text-pink-900 dark:bg-pink-950 dark:text-pink-200',
+  offline_z_gap: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  z_transmission_failed: 'bg-yellow-200 text-yellow-950 dark:bg-yellow-900 dark:text-yellow-100',
+  forced_z_close: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
+  offline_z_conflict: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
+  support_z_produced: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  till_reset: 'bg-purple-200 text-purple-950 dark:bg-purple-900 dark:text-purple-100',
+  card_decision_override: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
+  till_replaced: 'bg-sky-200 text-sky-950 dark:bg-sky-900 dark:text-sky-100',
+  shop_z_producer_forced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  local_shop_z_mismatch: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
+  local_shop_z_till_unsynced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
+  kiosk_offline: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  // "מגירת מזומן" (the drawer spec §11): the drawer's colour family, the gravest darkest.
+  drawer_after_close: 'bg-orange-300 text-orange-950 dark:bg-orange-800 dark:text-orange-50',
+  drawer_manual_burst: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
+  drawer_manual_over_max: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',
+  cash_out_over_threshold: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+  drawer_count_variance: 'bg-fuchsia-200 text-fuchsia-950 dark:bg-fuchsia-900 dark:text-fuchsia-100',
+  drawer_open_near_variance: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
+  drawer_open_no_reason: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
+  drawer_open_denied: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
@@ -250,11 +276,11 @@ export default function ExceptionsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-1">
               <Label className="text-xs">{t('from')}</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <DatePicker value={from} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">{t('to')}</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DatePicker value={to} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
             </div>
             <FilterSelect
               label={t('type')}
@@ -317,7 +343,8 @@ export default function ExceptionsPage() {
           from={from}
           to={to}
           disabled={!items.length}
-          getSheets={() => ({
+          // Every exception of these filters, not just this page (the list's largest page is 500).
+          getSheets={async () => ({
             name: t('title'),
             columns: [
               { header: t('col.time'), kind: 'datetime' },
@@ -332,7 +359,9 @@ export default function ExceptionsPage() {
               { header: t('col.value'), kind: 'number' },
               { header: t('col.note') },
             ],
-            rows: items.map((r) => [
+            rows: (
+              await fetchAllPages((p, pageSize) => fetchExceptions(filters!, p, pageSize), { pageSize: 500 })
+            ).map((r) => [
               r.occurredAt,
               typeLabel(r.type),
               t(`status.${r.status}`),
@@ -571,6 +600,23 @@ function tableCancelLine(
     .join(' · ');
 }
 
+/** A kiosk offline: "קיוסק כניסה · לא מחובר מ-14:02 עד 14:31", or "… · עדיין לא חזר". */
+function kioskOfflineLine(
+  d: Record<string, unknown>,
+  t: ReturnType<typeof useTranslations<'exceptions'>>,
+): string | null {
+  const hhmm = (v: unknown) => {
+    if (typeof v !== 'string' || !v) return null;
+    const at = new Date(v);
+    return Number.isNaN(at.getTime()) ? null : formatTime(at);
+  };
+  const since = hhmm(d.offlineSince);
+  if (!since) return typeof d.kiosk === 'string' ? d.kiosk : null;
+  const back = hhmm(d.backAt);
+  const span = back ? t('kioskOffline.span', { from: since, to: back }) : t('kioskOffline.notBack', { from: since });
+  return [typeof d.kiosk === 'string' && d.kiosk ? d.kiosk : null, span].filter(Boolean).join(' · ');
+}
+
 function ExceptionRow({
   row,
   who,
@@ -588,7 +634,14 @@ function ExceptionRow({
 }) {
   const t = useTranslations('exceptions');
   const measure = useMeasure()(row);
-  const detail = row.type === 'table_cancelled' ? tableCancelLine(row.details ?? {}, t) : detailLine(row);
+  const detail =
+    row.type === 'table_cancelled'
+      ? tableCancelLine(row.details ?? {}, t)
+      : row.type === 'oth'
+        ? othExceptionLine(row.details ?? {}, (name) => t('tableCancel.approvedBy', { name }))
+        : row.type === 'kiosk_offline'
+          ? kioskOfflineLine(row.details ?? {}, t)
+          : detailLine(row);
   const till = [row.machineName, row.posNumber ? t('register', { n: row.posNumber }) : null]
     .filter(Boolean)
     .join(' · ');
@@ -624,7 +677,10 @@ function ExceptionRow({
             {[measure, detail].filter(Boolean).join(' · ')}
           </div>
         ) : null}
+        {/* A local shop Z stored as printed: what it printed beside the cloud's check. */}
+        {row.type === 'local_shop_z_mismatch' ? <ZMismatchTable details={row.details} /> : null}
         <div className="flex flex-wrap items-center gap-3 text-xs">
+          <ZExceptionLink details={row.details} />
           {row.transactionId ? (
             <Link
               href={`/dashboard/transactions?tx=${row.transactionId}`}

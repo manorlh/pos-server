@@ -1,0 +1,1894 @@
+{
+  "status": 200,
+  "body": {
+    "syncType": "full",
+    "serverTime": "2026-10-06T14:06:32.849007+00:00",
+    "products": [
+      {
+        "id": "e776951e-f629-4877-8142-fa336b8da873",
+        "globalProductId": "e776951e-f629-4877-8142-fa336b8da873",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "17b410c4-a324-4a54-89dc-01aada90525d",
+        "name": "אדממה",
+        "description": null,
+        "price": 24,
+        "sku": "1150",
+        "globalSku": "100147",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:33.111725+00:00",
+        "updatedAt": "2026-10-06T12:52:33.111725+00:00"
+      },
+      {
+        "id": "37952fbc-fcf5-4aca-8dd5-a9f32299101b",
+        "globalProductId": "37952fbc-fcf5-4aca-8dd5-a9f32299101b",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "אפרול שפריץ",
+        "description": null,
+        "price": 46,
+        "sku": "1139",
+        "globalSku": "100136",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.001441+00:00",
+        "updatedAt": "2026-10-06T12:52:32.001441+00:00"
+      },
+      {
+        "id": "9e7ecdd7-b025-4d92-a67f-94ce4c57ad70",
+        "globalProductId": "9e7ecdd7-b025-4d92-a67f-94ce4c57ad70",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "name": "בירה ללא־אלכוהול",
+        "description": null,
+        "price": 22,
+        "sku": "1137",
+        "globalSku": "100134",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.685059+00:00",
+        "updatedAt": "2026-10-06T12:52:31.685059+00:00"
+      },
+      {
+        "id": "b081212e-699b-4eff-a972-35ff575b57d5",
+        "globalProductId": "b081212e-699b-4eff-a972-35ff575b57d5",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "name": "גולדסטאר מהחבית",
+        "description": null,
+        "price": 28,
+        "sku": "1133",
+        "globalSku": "100130",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.086584+00:00",
+        "updatedAt": "2026-10-06T12:52:31.086584+00:00"
+      },
+      {
+        "id": "813f3af5-7303-4e91-ad8f-cb83e3d27782",
+        "globalProductId": "813f3af5-7303-4e91-ad8f-cb83e3d27782",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "ג׳יימסון",
+        "description": null,
+        "price": 34,
+        "sku": "1142",
+        "globalSku": "100139",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.334983+00:00",
+        "updatedAt": "2026-10-06T12:52:32.334983+00:00"
+      },
+      {
+        "id": "5161ffec-0aa6-4087-955a-6e67eeea0571",
+        "globalProductId": "5161ffec-0aa6-4087-955a-6e67eeea0571",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "ג׳ין טוניק",
+        "description": null,
+        "price": 46,
+        "sku": "1141",
+        "globalSku": "100138",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.227611+00:00",
+        "updatedAt": "2026-10-06T12:52:32.227611+00:00"
+      },
+      {
+        "id": "00053aa5-e2b9-4bbf-9c45-94977c6a2851",
+        "globalProductId": "00053aa5-e2b9-4bbf-9c45-94977c6a2851",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "name": "היינקן בקבוק",
+        "description": null,
+        "price": 30,
+        "sku": "1135",
+        "globalSku": "100132",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.354022+00:00",
+        "updatedAt": "2026-10-06T12:52:31.354022+00:00"
+      },
+      {
+        "id": "92245386-30ee-4e47-b50d-7bd36a6ff18e",
+        "globalProductId": "92245386-30ee-4e47-b50d-7bd36a6ff18e",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "וודקה",
+        "description": null,
+        "price": 30,
+        "sku": "1143",
+        "globalSku": "100140",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.439922+00:00",
+        "updatedAt": "2026-10-06T12:52:32.439922+00:00"
+      },
+      {
+        "id": "c7257820-61f4-4dee-9210-a44eb4aa13ee",
+        "globalProductId": "c7257820-61f4-4dee-9210-a44eb4aa13ee",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "17b410c4-a324-4a54-89dc-01aada90525d",
+        "name": "טבעות בצל",
+        "description": null,
+        "price": 22,
+        "sku": "1152",
+        "globalSku": "100149",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:33.278545+00:00",
+        "updatedAt": "2026-10-06T12:52:33.278545+00:00"
+      },
+      {
+        "id": "646649b0-20c6-4866-8033-734f540a652f",
+        "globalProductId": "646649b0-20c6-4866-8033-734f540a652f",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "17b410c4-a324-4a54-89dc-01aada90525d",
+        "name": "כנפיים חריפות",
+        "description": null,
+        "price": 46,
+        "sku": "1151",
+        "globalSku": "100148",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:33.195130+00:00",
+        "updatedAt": "2026-10-06T12:52:33.195130+00:00"
+      },
+      {
+        "id": "a6c26626-a8be-4763-8653-57f4b95db028",
+        "globalProductId": "a6c26626-a8be-4763-8653-57f4b95db028",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "0cf25f23-f702-4519-93b7-e54188a4fd5b",
+        "name": "לימונדה ״הבית״",
+        "description": null,
+        "price": 16,
+        "sku": "1148",
+        "globalSku": "100145",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.915746+00:00",
+        "updatedAt": "2026-10-06T12:52:32.915746+00:00"
+      },
+      {
+        "id": "fea92491-21b8-44c5-820b-d45d266970bc",
+        "globalProductId": "fea92491-21b8-44c5-820b-d45d266970bc",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "מוחיטו",
+        "description": null,
+        "price": 48,
+        "sku": "1138",
+        "globalSku": "100135",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.899109+00:00",
+        "updatedAt": "2026-10-06T12:52:31.899109+00:00"
+      },
+      {
+        "id": "a9de1b97-e8dc-415b-9caf-192b817641c8",
+        "globalProductId": "a9de1b97-e8dc-415b-9caf-192b817641c8",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "0cf25f23-f702-4519-93b7-e54188a4fd5b",
+        "name": "מים מינרלים",
+        "description": null,
+        "price": 12,
+        "sku": "1146",
+        "globalSku": "100143",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.685931+00:00",
+        "updatedAt": "2026-10-06T12:52:32.685931+00:00"
+      },
+      {
+        "id": "4c7aa6bf-d496-4306-9f94-1a565656ffcc",
+        "globalProductId": "4c7aa6bf-d496-4306-9f94-1a565656ffcc",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "נגרוני",
+        "description": null,
+        "price": 52,
+        "sku": "1140",
+        "globalSku": "100137",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.121310+00:00",
+        "updatedAt": "2026-10-06T12:52:32.121310+00:00"
+      },
+      {
+        "id": "67e26674-dc0d-4c21-87ab-ec15d278a384",
+        "globalProductId": "67e26674-dc0d-4c21-87ab-ec15d278a384",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "0cf25f23-f702-4519-93b7-e54188a4fd5b",
+        "name": "סודה",
+        "description": null,
+        "price": 12,
+        "sku": "1147",
+        "globalSku": "100144",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.783131+00:00",
+        "updatedAt": "2026-10-06T12:52:32.783131+00:00"
+      },
+      {
+        "id": "d1213d64-9319-41e5-a6fe-4cf2658eb331",
+        "globalProductId": "d1213d64-9319-41e5-a6fe-4cf2658eb331",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "name": "ערק",
+        "description": null,
+        "price": 26,
+        "sku": "1144",
+        "globalSku": "100141",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.519540+00:00",
+        "updatedAt": "2026-10-06T12:52:32.519540+00:00"
+      },
+      {
+        "id": "e417c0d3-6798-4587-b4a2-754ce712be6b",
+        "globalProductId": "e417c0d3-6798-4587-b4a2-754ce712be6b",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "8b76b5ca-427d-4c7a-bbf5-9a3d6231d36f",
+        "name": "פריט כללי",
+        "description": null,
+        "price": 0,
+        "sku": "1132",
+        "globalSku": null,
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": true,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": true,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:29.667210+00:00",
+        "updatedAt": "2026-10-06T12:52:30.576205+00:00"
+      },
+      {
+        "id": "dd0a31f3-5c84-448e-a99a-dacb956ca420",
+        "globalProductId": "dd0a31f3-5c84-448e-a99a-dacb956ca420",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "17b410c4-a324-4a54-89dc-01aada90525d",
+        "name": "צ׳יפס",
+        "description": null,
+        "price": 18,
+        "sku": "1149",
+        "globalSku": "100146",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:33.029975+00:00",
+        "updatedAt": "2026-10-06T12:52:33.029975+00:00"
+      },
+      {
+        "id": "c2559865-2d0f-4972-9a28-65a0e9e04b98",
+        "globalProductId": "c2559865-2d0f-4972-9a28-65a0e9e04b98",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "0cf25f23-f702-4519-93b7-e54188a4fd5b",
+        "name": "קוקה קולה – זירו",
+        "description": null,
+        "price": 14,
+        "sku": "1145",
+        "globalSku": "100142",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:32.617654+00:00",
+        "updatedAt": "2026-10-06T12:52:32.617654+00:00"
+      },
+      {
+        "id": "221a83f0-f000-43a4-8997-12d1767a0508",
+        "globalProductId": "221a83f0-f000-43a4-8997-12d1767a0508",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "name": "קורונה בקבוק",
+        "description": null,
+        "price": 30,
+        "sku": "1136",
+        "globalSku": "100133",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.503274+00:00",
+        "updatedAt": "2026-10-06T12:52:31.503274+00:00"
+      },
+      {
+        "id": "c3874cc6-1a18-40ad-baac-d7f55f40fe5b",
+        "globalProductId": "c3874cc6-1a18-40ad-baac-d7f55f40fe5b",
+        "catalogLevel": "global",
+        "isLocalOverride": false,
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "posMachineId": null,
+        "categoryId": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "name": "קרלסברג מהחבית",
+        "description": null,
+        "price": 32,
+        "sku": "1134",
+        "globalSku": "100131",
+        "imageUrl": null,
+        "inStock": true,
+        "isAvailable": true,
+        "availabilityLock": null,
+        "stockQuantity": 0,
+        "barcode": null,
+        "taxRate": null,
+        "voucherId": null,
+        "ticketMode": "off",
+        "ticketEntries": null,
+        "trackStock": false,
+        "isOpenPrice": false,
+        "isWeighed": false,
+        "unitLabel": null,
+        "noDiscount": false,
+        "allergens": [],
+        "dietaryTags": [],
+        "courseId": null,
+        "maxPerOrder": null,
+        "refillable": false,
+        "maxRefills": null,
+        "alerts": [],
+        "allergenAlert": false,
+        "allergenAlertRequireAck": true,
+        "companions": [],
+        "isGeneral": false,
+        "inMachineCatalog": false,
+        "shopListed": true,
+        "createdAt": "2026-10-06T12:52:31.258062+00:00",
+        "updatedAt": "2026-10-06T12:52:31.258062+00:00"
+      }
+    ],
+    "categories": [
+      {
+        "id": "d31df189-7bce-492d-ad85-8ca812f4856d",
+        "catalogLevel": "global",
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": null,
+        "posMachineId": null,
+        "name": "בירות",
+        "description": null,
+        "color": "#EAB308",
+        "imageUrl": null,
+        "parentId": null,
+        "ticketMode": "off",
+        "courseId": null,
+        "isActive": true,
+        "activeLock": null,
+        "sortOrder": 1,
+        "createdAt": "2026-10-06T12:52:31.059159+00:00",
+        "updatedAt": "2026-10-06T12:52:31.059159+00:00"
+      },
+      {
+        "id": "c7b8c436-9b5d-4874-a557-7aee8a314658",
+        "catalogLevel": "global",
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": null,
+        "posMachineId": null,
+        "name": "קוקטיילים ואלכוהול",
+        "description": null,
+        "color": "#DB2777",
+        "imageUrl": null,
+        "parentId": null,
+        "ticketMode": "off",
+        "courseId": null,
+        "isActive": true,
+        "activeLock": null,
+        "sortOrder": 2,
+        "createdAt": "2026-10-06T12:52:31.850944+00:00",
+        "updatedAt": "2026-10-06T12:52:31.850944+00:00"
+      },
+      {
+        "id": "0cf25f23-f702-4519-93b7-e54188a4fd5b",
+        "catalogLevel": "global",
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": null,
+        "posMachineId": null,
+        "name": "שתייה קלה",
+        "description": null,
+        "color": "#0EA5E9",
+        "imageUrl": null,
+        "parentId": null,
+        "ticketMode": "off",
+        "courseId": null,
+        "isActive": true,
+        "activeLock": null,
+        "sortOrder": 3,
+        "createdAt": "2026-10-06T12:52:32.592746+00:00",
+        "updatedAt": "2026-10-06T12:52:32.592746+00:00"
+      },
+      {
+        "id": "17b410c4-a324-4a54-89dc-01aada90525d",
+        "catalogLevel": "global",
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": null,
+        "posMachineId": null,
+        "name": "נשנושים",
+        "description": null,
+        "color": "#B45309",
+        "imageUrl": null,
+        "parentId": null,
+        "ticketMode": "off",
+        "courseId": null,
+        "isActive": true,
+        "activeLock": null,
+        "sortOrder": 4,
+        "createdAt": "2026-10-06T12:52:33.003464+00:00",
+        "updatedAt": "2026-10-06T12:52:33.003464+00:00"
+      },
+      {
+        "id": "8b76b5ca-427d-4c7a-bbf5-9a3d6231d36f",
+        "catalogLevel": "global",
+        "companyId": "55438d20-2afb-424a-86e5-b4bf6abdb4d2",
+        "shopId": null,
+        "posMachineId": null,
+        "name": "כללי",
+        "description": null,
+        "color": null,
+        "imageUrl": null,
+        "parentId": null,
+        "ticketMode": "off",
+        "courseId": null,
+        "isActive": true,
+        "activeLock": null,
+        "sortOrder": 905,
+        "createdAt": "2026-10-06T12:52:29.667210+00:00",
+        "updatedAt": "2026-10-06T12:52:29.667210+00:00"
+      }
+    ],
+    "vouchers": [],
+    "customers": [],
+    "machineCatalog": {
+      "mode": "all",
+      "updatedAt": null
+    },
+    "menu": {
+      "updatedAt": "2026-10-06T12:25:31.240653+00:00",
+      "groups": [],
+      "links": {
+        "categories": {
+          "42b83954-3121-4157-b65f-4ae1052f6d28": [],
+          "579e189d-25bb-457f-92eb-3d0399c16c57": [],
+          "78fafea2-7b08-4170-9ea2-c544723815f3": [],
+          "91a53446-6fd0-44b7-aa40-da7eef51d946": [],
+          "c680da45-e8d6-4f66-af70-a4ed8bac2792": [],
+          "ec60b1c4-8ab2-4706-9ff9-6c495d70ccf3": [],
+          "fe95310d-38b1-48c3-ab55-ca5cfdfa1e66": []
+        },
+        "products": {
+          "0940b5fe-28b1-4509-bd71-2b9f7797ac1d": [],
+          "1e10b372-ed0e-4be9-abba-f2325362c0ed": [],
+          "1fea30fb-c0d0-4f95-8a6b-e9a5d134bab1": [],
+          "3140a3bb-62b6-44c0-b8bb-2f581b78f048": [],
+          "39b598a4-9acf-41a4-b9cf-d5669b552760": [],
+          "48c2078f-4a06-402a-9cba-95ebb718ede0": [],
+          "4ffdd455-61a2-4dce-a8dc-7101705c0231": [],
+          "548f4536-098a-4753-aece-71548e751522": [],
+          "56ca3ce2-9ffa-4e22-9a57-4ade65456ac5": [],
+          "57af2060-9b70-42bf-99d6-c2f1a434a8d7": [],
+          "5a155adc-60ff-464f-8228-54246d977e7e": [],
+          "60b594a2-e3c1-4be5-a290-0d42ce7db2ca": [],
+          "70d3ffbf-7cc5-446a-be24-bb69ee23f6f9": [],
+          "9f763772-f757-40ed-baf1-61f2371af3de": [],
+          "a760c3ab-80a7-42a9-a7b2-d84cb3c1f358": [],
+          "b0ceab8d-1b9f-47dd-aee7-c92322943a0f": [],
+          "b32987ae-2ead-43ab-a173-949f1b7896ff": [],
+          "e1f31950-e997-470b-8b74-c9f490907277": [],
+          "e7ad37db-7429-4b31-b4ae-986be56510c9": [],
+          "f4632929-1928-4c15-a083-bbf1aacfc692": [],
+          "f8274e5b-4715-4d83-b070-b290e39672d9": [],
+          "fa35364b-f6a6-486f-8511-e984ac569b33": [],
+          "ff3bf0c1-f297-485b-b861-5e7934038252": []
+        }
+      },
+      "notes": {
+        "all": [],
+        "categories": {},
+        "products": {
+          "548f4536-098a-4753-aece-71548e751522": [
+            {
+              "text": "בכוס זכוכית",
+              "important": false
+            },
+            {
+              "text": "בכוס חד פעמית",
+              "important": false
+            },
+            {
+              "text": "לקחת",
+              "important": false
+            },
+            {
+              "text": "על קרח",
+              "important": false
+            },
+            {
+              "text": "חלב בצד",
+              "important": false
+            }
+          ],
+          "1d94b009-fc60-4fdc-b3f3-9bd41b9e5551": [
+            {
+              "text": "בלי קש",
+              "important": false
+            },
+            {
+              "text": "בכוס גבוהה",
+              "important": false
+            },
+            {
+              "text": "בלי מלח על השפה",
+              "important": false
+            }
+          ],
+          "57af2060-9b70-42bf-99d6-c2f1a434a8d7": [
+            {
+              "text": "בכוס זכוכית",
+              "important": false
+            },
+            {
+              "text": "בכוס חד פעמית",
+              "important": false
+            },
+            {
+              "text": "לקחת",
+              "important": false
+            },
+            {
+              "text": "על קרח",
+              "important": false
+            },
+            {
+              "text": "חלב בצד",
+              "important": false
+            }
+          ],
+          "48c2078f-4a06-402a-9cba-95ebb718ede0": [
+            {
+              "text": "בכוס זכוכית",
+              "important": false
+            },
+            {
+              "text": "בכוס חד פעמית",
+              "important": false
+            },
+            {
+              "text": "לקחת",
+              "important": false
+            },
+            {
+              "text": "על קרח",
+              "important": false
+            },
+            {
+              "text": "חלב בצד",
+              "important": false
+            }
+          ],
+          "bce1b05d-8fe2-42d6-8626-df7d5bfbc88e": [
+            {
+              "text": "בלי קש",
+              "important": false
+            },
+            {
+              "text": "בכוס גבוהה",
+              "important": false
+            },
+            {
+              "text": "בלי מלח על השפה",
+              "important": false
+            }
+          ],
+          "8e58dc38-06a9-4fd3-bd33-036545b8f241": [
+            {
+              "text": "בלי קש",
+              "important": false
+            },
+            {
+              "text": "בכוס גבוהה",
+              "important": false
+            },
+            {
+              "text": "בלי מלח על השפה",
+              "important": false
+            }
+          ],
+          "ee4aa92a-aa83-4005-bd0e-56023941f406": [
+            {
+              "text": "להכין ראשון",
+              "important": false
+            },
+            {
+              "text": "חתוך לחצי",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            },
+            {
+              "text": "בלי מלח",
+              "important": false
+            },
+            {
+              "text": "עשוי היטב",
+              "important": false
+            }
+          ],
+          "70d3ffbf-7cc5-446a-be24-bb69ee23f6f9": [
+            {
+              "text": "נענע טרייה",
+              "important": false
+            },
+            {
+              "text": "לימון בצד",
+              "important": false
+            }
+          ],
+          "2b0f1f6e-4156-4170-9f2d-40abe1f7d160": [
+            {
+              "text": "להכין ראשון",
+              "important": false
+            },
+            {
+              "text": "חתוך לחצי",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            },
+            {
+              "text": "בלי מלח",
+              "important": false
+            },
+            {
+              "text": "עשוי היטב",
+              "important": false
+            }
+          ],
+          "fa35364b-f6a6-486f-8511-e984ac569b33": [
+            {
+              "text": "בכוס זכוכית",
+              "important": false
+            },
+            {
+              "text": "קצר",
+              "important": false
+            },
+            {
+              "text": "ארוך",
+              "important": false
+            }
+          ],
+          "f4632929-1928-4c15-a083-bbf1aacfc692": [
+            {
+              "text": "חתוך לפרוסות",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            },
+            {
+              "text": "להגיש עם העיקריות",
+              "important": false
+            }
+          ],
+          "80f57372-868d-4e34-b0c8-b76e21505b84": [
+            {
+              "text": "להכין ראשון",
+              "important": false
+            },
+            {
+              "text": "חתוך לחצי",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            },
+            {
+              "text": "בלי מלח",
+              "important": false
+            },
+            {
+              "text": "עשוי היטב",
+              "important": false
+            }
+          ],
+          "39b598a4-9acf-41a4-b9cf-d5669b552760": [
+            {
+              "text": "בכוס זכוכית",
+              "important": false
+            },
+            {
+              "text": "קצר",
+              "important": false
+            },
+            {
+              "text": "ארוך",
+              "important": false
+            }
+          ],
+          "e1f31950-e997-470b-8b74-c9f490907277": [
+            {
+              "text": "בלי פירורים בצד",
+              "important": false
+            },
+            {
+              "text": "חתוך לרצועות",
+              "important": false
+            }
+          ],
+          "e7ad37db-7429-4b31-b4ae-986be56510c9": [
+            {
+              "text": "עשוי היטב",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            }
+          ],
+          "3140a3bb-62b6-44c0-b8bb-2f581b78f048": [
+            {
+              "text": "בלי פרמזן",
+              "important": false
+            },
+            {
+              "text": "חריף",
+              "important": false
+            }
+          ],
+          "0940b5fe-28b1-4509-bd71-2b9f7797ac1d": [
+            {
+              "text": "בלי פרמזן",
+              "important": false
+            },
+            {
+              "text": "חריף",
+              "important": false
+            }
+          ],
+          "ff3bf0c1-f297-485b-b861-5e7934038252": [
+            {
+              "text": "פריכה",
+              "important": false
+            },
+            {
+              "text": "חתוך ל-8",
+              "important": false
+            }
+          ],
+          "0bf0f65e-c4b3-45f3-a876-4cdd50586e70": [
+            {
+              "text": "להכין ראשון",
+              "important": false
+            },
+            {
+              "text": "חתוך לחצי",
+              "important": false
+            },
+            {
+              "text": "רוטב בצד",
+              "important": false
+            },
+            {
+              "text": "בלי מלח",
+              "important": false
+            },
+            {
+              "text": "עשוי היטב",
+              "important": false
+            }
+          ],
+          "5a155adc-60ff-464f-8228-54246d977e7e": [
+            {
+              "text": "פריכה",
+              "important": false
+            },
+            {
+              "text": "חתוך ל-8",
+              "important": false
+            }
+          ]
+        }
+      },
+      "meals": {
+        "b35778b4-aace-41b4-b840-31c3490610da": [
+          {
+            "id": "dcef18af-f4d3-4ea8-af56-c63c87833d23",
+            "name": "מנה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "e1f31950-e997-470b-8b74-c9f490907277",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "2b0f1f6e-4156-4170-9f2d-40abe1f7d160",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "71da66d2-fb1f-4115-92a6-caa4618503b4",
+            "name": "תוספת",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "b1f2d180-62e1-4143-a139-be0126ea1baa",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "89737f47-fd2f-42b7-9fff-4ffdd9fde31f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "8da821e1-508d-47fc-8e6b-3c4bb7e03b65",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "e9664a27-179e-4db4-8085-e3ec4ddd0771",
+            "name": "שתייה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "13338fad-e2ea-4ab8-a551-5d371eea9745",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "c72b38fc-f375-45f8-b19e-8047db81e3f3",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "2a5bcea9-6db2-4c5f-968b-d903e222e74f",
+                "upcharge": 2,
+                "isDefault": false
+              },
+              {
+                "productId": "b8843943-dd10-4229-9a3a-176136a8373f",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "8e620223-19f8-401d-8baf-27009c32383f",
+            "name": "קינוח",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "9f763772-f757-40ed-baf1-61f2371af3de",
+                "upcharge": 0,
+                "isDefault": true
+              }
+            ]
+          }
+        ],
+        "7ada12c9-c3d1-4b6e-8b34-ed8ddecabe72": [
+          {
+            "id": "4e5c2b7b-b877-4683-9c01-150cde1f61d3",
+            "name": "שתי תוספות",
+            "quantity": 2,
+            "minSelect": 2,
+            "maxSelect": 2,
+            "allowRepeat": true,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "b1f2d180-62e1-4143-a139-be0126ea1baa",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "89737f47-fd2f-42b7-9fff-4ffdd9fde31f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "8da821e1-508d-47fc-8e6b-3c4bb7e03b65",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "acc2d456-ef52-4f89-8b5a-e03043c4fb32",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "cf9fc1a6-72ef-470f-b623-f260f4c11653",
+            "name": "שתייה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "13338fad-e2ea-4ab8-a551-5d371eea9745",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "582d0a37-4a2f-44db-ba18-15554ec94156",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "c72b38fc-f375-45f8-b19e-8047db81e3f3",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "df58327b-a857-4449-9063-284abf14e59f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "b8843943-dd10-4229-9a3a-176136a8373f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "68139358-5907-4d86-bba7-fbb5c2b8a41d",
+                "upcharge": 2,
+                "isDefault": false
+              },
+              {
+                "productId": "56ca3ce2-9ffa-4e22-9a57-4ade65456ac5",
+                "upcharge": 12,
+                "isDefault": false
+              }
+            ]
+          }
+        ],
+        "4df3fb28-23e6-42b7-b4da-a796c1027262": [
+          {
+            "id": "84f13bb0-0caa-4878-8843-c744a50c94c0",
+            "name": "מאפה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "dd103cd8-fc50-488b-8e55-2172167c3813",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "1fea30fb-c0d0-4f95-8a6b-e9a5d134bab1",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "190e069f-3acd-44a9-b57c-032a7d20bdbf",
+            "name": "שתייה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "4ffdd455-61a2-4dce-a8dc-7101705c0231",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "1aa18a11-e710-4382-82ca-3c9b6dc40fd2",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "2635c9ed-1ab8-4ed4-8740-a98ed5986d25",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          }
+        ],
+        "1d43962f-4cf5-4829-a003-aac9b96bb981": [
+          {
+            "id": "450ac16b-2b4c-4442-9c8b-223bec4b0031",
+            "name": "שני המבורגרים",
+            "quantity": 2,
+            "minSelect": 2,
+            "maxSelect": 2,
+            "allowRepeat": true,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "2b0f1f6e-4156-4170-9f2d-40abe1f7d160",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "80f57372-868d-4e34-b0c8-b76e21505b84",
+                "upcharge": 6,
+                "isDefault": false
+              },
+              {
+                "productId": "0bf0f65e-c4b3-45f3-a876-4cdd50586e70",
+                "upcharge": 20,
+                "isDefault": false
+              },
+              {
+                "productId": "ee4aa92a-aa83-4005-bd0e-56023941f406",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "a666e1fb-1c14-4668-ad1d-8cedf97a2421",
+            "name": "שתי תוספות",
+            "quantity": 2,
+            "minSelect": 2,
+            "maxSelect": 2,
+            "allowRepeat": true,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "b1f2d180-62e1-4143-a139-be0126ea1baa",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "02cc3028-e100-4876-afca-7c5e414ad1da",
+                "upcharge": 4,
+                "isDefault": false
+              },
+              {
+                "productId": "dd863c1e-bd05-494d-aa38-899ee5687f81",
+                "upcharge": 4,
+                "isDefault": false
+              },
+              {
+                "productId": "acc2d456-ef52-4f89-8b5a-e03043c4fb32",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "83135c1a-db8e-47d4-9573-bfc349d63ea4",
+            "name": "שתי שתיות",
+            "quantity": 2,
+            "minSelect": 2,
+            "maxSelect": 2,
+            "allowRepeat": true,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "13338fad-e2ea-4ab8-a551-5d371eea9745",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "582d0a37-4a2f-44db-ba18-15554ec94156",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "c72b38fc-f375-45f8-b19e-8047db81e3f3",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "df58327b-a857-4449-9063-284abf14e59f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "b8843943-dd10-4229-9a3a-176136a8373f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "68139358-5907-4d86-bba7-fbb5c2b8a41d",
+                "upcharge": 2,
+                "isDefault": false
+              },
+              {
+                "productId": "56ca3ce2-9ffa-4e22-9a57-4ade65456ac5",
+                "upcharge": 12,
+                "isDefault": false
+              }
+            ]
+          }
+        ],
+        "de93584f-0883-4c7f-ae1b-00bea6915c06": [
+          {
+            "id": "4a1b9670-af62-4678-9b9f-93313916545d",
+            "name": "המבורגר",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "2b0f1f6e-4156-4170-9f2d-40abe1f7d160",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "80f57372-868d-4e34-b0c8-b76e21505b84",
+                "upcharge": 6,
+                "isDefault": false
+              },
+              {
+                "productId": "0bf0f65e-c4b3-45f3-a876-4cdd50586e70",
+                "upcharge": 20,
+                "isDefault": false
+              },
+              {
+                "productId": "ee4aa92a-aa83-4005-bd0e-56023941f406",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "72780d01-becb-4bcb-94e7-52809a0c295c",
+            "name": "תוספת",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "b1f2d180-62e1-4143-a139-be0126ea1baa",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "02cc3028-e100-4876-afca-7c5e414ad1da",
+                "upcharge": 4,
+                "isDefault": false
+              },
+              {
+                "productId": "dd863c1e-bd05-494d-aa38-899ee5687f81",
+                "upcharge": 4,
+                "isDefault": false
+              },
+              {
+                "productId": "acc2d456-ef52-4f89-8b5a-e03043c4fb32",
+                "upcharge": 0,
+                "isDefault": false
+              }
+            ]
+          },
+          {
+            "id": "94faba08-cd67-4ccc-af04-2cb5caf33bce",
+            "name": "שתייה",
+            "quantity": 1,
+            "minSelect": 1,
+            "maxSelect": 1,
+            "allowRepeat": false,
+            "deferred": false,
+            "refillable": false,
+            "maxRefills": null,
+            "options": [
+              {
+                "productId": "13338fad-e2ea-4ab8-a551-5d371eea9745",
+                "upcharge": 0,
+                "isDefault": true
+              },
+              {
+                "productId": "582d0a37-4a2f-44db-ba18-15554ec94156",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "c72b38fc-f375-45f8-b19e-8047db81e3f3",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "df58327b-a857-4449-9063-284abf14e59f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "b8843943-dd10-4229-9a3a-176136a8373f",
+                "upcharge": 0,
+                "isDefault": false
+              },
+              {
+                "productId": "68139358-5907-4d86-bba7-fbb5c2b8a41d",
+                "upcharge": 2,
+                "isDefault": false
+              },
+              {
+                "productId": "56ca3ce2-9ffa-4e22-9a57-4ade65456ac5",
+                "upcharge": 12,
+                "isDefault": false
+              }
+            ]
+          }
+        ]
+      },
+      "upsells": [],
+      "courses": [],
+      "productLimits": {}
+    },
+    "catalogMenus": {
+      "updatedAt": "2026-10-06T12:52:38.864945+00:00",
+      "fallback": "catalog",
+      "menus": [],
+      "assignments": []
+    }
+  }
+}

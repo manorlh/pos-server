@@ -9,7 +9,29 @@ from app.schemas.transmission import HeartbeatTransmission
 
 
 #: The hardware a till is (`app.models.pos_machine.DEVICE_MODELS`).
-DeviceModel = Literal["N55F", "MODO", "P18"]
+DeviceModel = Literal[
+    "N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID",
+    # SUNMI (`app.models.sunmi.SUNMI_MODEL_IDS`, docs/SPEC_SUNMI.md).
+    "SUNMI_V1", "SUNMI_V2", "SUNMI_V2_PRO", "SUNMI_V2S", "SUNMI_V2S_PLUS", "SUNMI_V3",
+    "SUNMI_P1", "SUNMI_P2", "SUNMI_P3", "SUNMI_L2", "SUNMI_M2",
+    "SUNMI_T1", "SUNMI_T2", "SUNMI_T2_MINI", "SUNMI_T2S", "SUNMI_T3",
+    "SUNMI_D2_MINI", "SUNMI_D2S", "SUNMI_D2S_PLUS", "SUNMI_D3", "SUNMI_D3_MINI",
+    "SUNMI_K2", "SUNMI",
+    # SynqPay terminals (`app.models.synqpay_devices.SYNQPAY_DEVICE_MODEL_IDS`, docs/SPEC_SYNQPAY.md).
+    "SYNQPAY_DX8000", "SYNQPAY_DX6000", "SYNQPAY_EX8000", "SYNQPAY_RX5000",
+    "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
+    # PAX A77 / Urovo i9100 (`app.models.vendor_devices.VENDOR_DEVICE_MODEL_IDS`): Agamento / TC.
+    "PAX_A77", "UROVO_I9100",
+]
+
+#: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
+#: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
+#: and not accounting systems (app/services/display_devices.py).
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
+
+#: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
+#: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
+DevicePlatform = Literal["android", "windows", "web"]
 
 
 class PairingStatus(str):
@@ -46,6 +68,10 @@ class POSMachineUpdate(BaseModel):
     #: Who produces this till's Z (docs/SHIFTS_API.md §5.1). A switch is refused while
     #: the till has shifts waiting for a Z of the old mode (409); the same value is a no-op.
     z_mode: Optional[Literal["cloud", "till"]] = Field(None, alias="zMode")
+    #: "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): digits, 1–3. An explicit null or ""
+    #: goes back to the default (the register number); omitted leaves it as it is. The
+    #: format and the uniqueness in the shop are checked by the route (400 / 409, Hebrew).
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix", max_length=10)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -57,6 +83,64 @@ INT64_MAX = 2**63 - 1
 
 #: What each heartbeat string is cut to — the width of the column it lands in.
 HEARTBEAT_STRING_LIMITS = {"app_version": 64, "serial_number": 64, "battery_status": 32}
+
+
+class HeartbeatOfflineTillZ(BaseModel):
+    """
+    The till's Zs closed with no connection that the cloud has not taken yet
+    (docs/SPEC_OFFLINE_TILL_Z.md §4.4): their count, whether one is held in a conflict,
+    and the last number of the till's run as it knows it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=100_000)
+    conflict: Optional[bool] = None
+    last_number: Optional[int] = Field(None, alias="lastNumber", ge=0)
+    #: The till's run `last_number` is in (docs/SPEC_INDEPENDENT_TILL.md §3.1): a report of
+    #: another run (sent before the till heard of a new one) says nothing of this run's.
+    epoch: Optional[int] = Field(None, ge=0)
+
+
+class HeartbeatLocalShopZ(BaseModel):
+    """
+    The shop Zs a main till made in local mode that the cloud has not taken yet
+    (docs/SPEC_INDEPENDENT_TILL.md §8.10): their count, whether one is held in a conflict,
+    and the last number it made. What a handover of the shop's Z production waits for.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=100_000)
+    conflict: Optional[bool] = None
+    last_number: Optional[int] = Field(None, alias="lastNumber", ge=0)
+    #: The tills the main till heard on the LAN lately (machine ids) — a hint for the card's
+    #: "מחובר ברשת המקומית / מרוחק (דרך הענן)" (docs/SPEC_INDEPENDENT_TILL.md §8.14).
+    lan_seen: Optional[List[str]] = Field(None, alias="lanSeen", max_length=200)
+
+
+class HeartbeatLanSyncSystem(BaseModel):
+    """One system's changes the LAN host holds that the cloud copy does not have yet."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=1_000_000)
+    oldest_age_ms: Optional[int] = Field(None, alias="oldestAgeMs", ge=0)
+
+
+class HeartbeatLanSync(BaseModel):
+    """
+    The local server's sync lag (docs/SPEC_LAN_MODE.md §6, "השרת מעדכן את הענן בזמן אמת"):
+    how many changes it holds that the cloud copy does not have yet, and the age of the
+    oldest — in total and per system (`tables` today; `kds`, `kiosk` as they move to the
+    main till). Sent by a device that serves a system to the shop's LAN.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pending: Optional[int] = Field(None, ge=0, le=1_000_000)
+    oldest_age_ms: Optional[int] = Field(None, alias="oldestAgeMs", ge=0)
+    systems: Optional[Dict[str, HeartbeatLanSyncSystem]] = None
 
 
 class MachineHeartbeatBody(BaseModel):
@@ -89,6 +173,15 @@ class MachineHeartbeatBody(BaseModel):
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")
 
     serial_number: Optional[str] = Field(None, alias="serialNumber")
+    #: Where `serialNumber` came from: ftpos | sunmi | build | ro.serialno
+    #: (app/services/device_identity.py). Anything else is dropped there.
+    serial_source: Optional[str] = Field(None, alias="serialSource")
+    #: The SIMs, the data path and the LAN address (pos-android CellularDtos.kt), cleaned field
+    #: by field in `device_identity.clean_cellular` — never a 422.
+    cellular: Optional[Dict[str, Any]] = None
+    #: Device owner and silent updates (pos-android system/DeviceManagement.kt), cleaned key by
+    #: key in `device_management.clean_block` — never a 422.
+    device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
     # No ge/le bound here deliberately: an out-of-range reading is clamped in the
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -113,6 +206,21 @@ class MachineHeartbeatBody(BaseModel):
     #: The till's card terminal (Agamento): its number, clearing server, offline mode and
     #: the till's last write into it. Absent or null leaves the stored reading as it was.
     terminal: Optional[HeartbeatTerminal] = None
+    #: "עקיפת בדיקת מספר מסוף" as the till applies it now (app/services/terminal_check_bypass.py).
+    #: Absent (an older build) leaves the stored reading as it was.
+    terminal_number_check_bypass: Optional[bool] = Field(None, alias="terminalNumberCheckBypass")
+    #: Zs closed at the till with no connection, not uploaded yet (§4.4 of the offline
+    #: till Z spec). Absent leaves the stored reading as it was.
+    offline_till_z: Optional[HeartbeatOfflineTillZ] = Field(None, alias="offlineTillZ")
+    #: The till's per-series document counters (`documentSequence.320/.330/.400`), so a
+    #: replacement device starts after them (offline till Z §4.6). Absent: as it was.
+    document_counters: Optional[Dict[str, int]] = Field(None, alias="documentCounters")
+    #: Shop Zs made on this main till in local mode, not in the cloud yet
+    #: (docs/SPEC_INDEPENDENT_TILL.md §8.10). Absent leaves the stored reading as it was.
+    local_shop_z: Optional[HeartbeatLocalShopZ] = Field(None, alias="localShopZ")
+    #: The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what it holds that the cloud
+    #: copy has not got yet. Sent only while it serves the LAN; absent leaves it as it was.
+    lan_sync: Optional[HeartbeatLanSync] = Field(None, alias="lanSync")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -178,11 +286,32 @@ class POSMachineResponse(POSMachineBase):
     #: The register number in its shop — "קופה 2". Null when the machine has no shop.
     #: Text, because documents copy it verbatim; it is always a plain integer when set.
     pos_number: Optional[str] = Field(None, alias="posNumber")
+    #: "קידומת מסמכים": the till's own (null = the default), and the one it issues under
+    #: now — its own, else the register number (docs/SPEC_DOCUMENT_PREFIX.md).
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    effective_document_prefix: Optional[str] = Field(None, alias="effectiveDocumentPrefix")
     #: Its shop's number in its company, and that company's in the tenant; null without a shop.
     shop_number: Optional[int] = Field(None, alias="shopNumber")
     company_number: Optional[int] = Field(None, alias="companyNumber")
     #: "cloud" (the shop's Z run builds its Z) or "till" (it produces its own, §5).
     z_mode: str = Field("cloud", alias="zMode")
+    #: Zs closed at the till with no connection not uploaded yet, as it last said; whether
+    #: one is held in a conflict for support (docs/SPEC_OFFLINE_TILL_Z.md §4.4).
+    offline_till_z_pending: Optional[int] = Field(None, alias="offlineTillZPending")
+    offline_till_z_conflict: Optional[bool] = Field(False, alias="offlineTillZConflict")
+    #: Support produced this till's Z from the cloud (offline till Z spec §4.6), or null.
+    support_z: Optional[Dict[str, Any]] = Field(None, alias="supportZ")
+    #: The last reset of the till's data support ordered from the cloud (§4.7), or null.
+    till_reset: Optional[Dict[str, Any]] = Field(None, alias="tillReset")
+    #: "הוחלפה קופה": every replacement of the till's device, oldest first (§4.6.2).
+    replacements: Optional[List[Dict[str, Any]]] = None
+    #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
+    independent_till: bool = Field(False, alias="independentTill")
+
+    @field_validator("independent_till", mode="before")
+    @classmethod
+    def _independent_default(cls, value):
+        return bool(value)
 
     @field_validator("z_mode", mode="before")
     @classmethod
@@ -194,12 +323,41 @@ class POSMachineResponse(POSMachineBase):
     mqtt_client_id: Optional[str] = Field(None, alias="mqttClientId")
     pairing_status: ModelPairingStatus = Field(..., alias="pairingStatus")
     device_info: Optional[Dict[str, Any]] = Field(None, alias="deviceInfo")
-    #: "N55F" | "MODO", null = unknown. `hasPrinter` is false for a Modo only.
+    #: One of `DeviceModel`, null = unknown (read as a 55F).
     device_model: Optional[str] = Field(None, alias="deviceModel")
     has_printer: bool = Field(True, alias="hasPrinter")
     #: False for a till with no card terminal of its own (a P18): it charges on a Nayax
     #: pinpad on the network (app/services/payment_terminal.py).
     has_builtin_terminal: bool = Field(True, alias="hasBuiltinTerminal")
+    # ── Role and model (docs/SPEC_DEVICE_ROLE_MODEL.md) ──────────────────────────
+    #: "till" | "kiosk" (a `kiosk_devices` row). Null where it was not computed (a plain
+    #: PUT answer); the machines list and the machine page always carry it.
+    device_role: Optional[str] = Field(None, alias="deviceRole")
+    #: For a kiosk: whether it is on (`enabled`). A disabled kiosk works as a till.
+    kiosk_enabled: Optional[bool] = Field(None, alias="kioskEnabled")
+    #: False for a display device (a KDS / the "מוכן / לא מוכן" board): not a till, not an
+    #: accounting system (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2). From the row on a plain PUT.
+    is_fiscal: bool = Field(True, alias="fiscal")
+    #: "android" | "windows" (null on a plain PUT answer of a machine paired before the column).
+    platform: Optional[str] = None
+    #: Its KDS screen (`role`, `name`, `isActive`, `shopId`), or null. On a fiscal till: a
+    #: screen paired on the KDS page before display devices existed — flagged.
+    kds_screen: Optional[Dict[str, Any]] = Field(None, alias="kdsScreen")
+
+    @field_validator("is_fiscal", mode="before")
+    @classmethod
+    def _unset_is_fiscal(cls, value):
+        # A row not flushed yet has no column default applied: a till.
+        return value is not False
+    #: The model the dashboard chose, and the one the device named itself at pairing (if
+    #: recognised). When they differ from `deviceModel` the machine page warns.
+    device_model_chosen: Optional[str] = Field(None, alias="deviceModelChosen")
+    device_model_reported: Optional[str] = Field(None, alias="deviceModelReported")
+    #: A cash drawer port the till drives itself (none today: drawers open through a
+    #: receipt printer).
+    has_cash_drawer_port: bool = Field(False, alias="hasCashDrawerPort")
+    #: A LANDI / Feitian tablet: built-in printer / drawer support "בקרוב".
+    device_driver_pending: bool = Field(False, alias="deviceDriverPending")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
     is_active: bool = Field(..., alias="isActive")
@@ -214,6 +372,19 @@ class POSMachineResponse(POSMachineBase):
     app_version: Optional[str] = Field(None, alias="appVersion")
     last_sync_at: Optional[datetime] = Field(None, alias="lastSyncAt")
     serial_number: Optional[str] = Field(None, alias="serialNumber")
+    #: Device identity (app/services/device_identity.py): the serial's source, the SIMs as the
+    #: last heartbeat said, the address it came from and the device's own LAN address.
+    serial_source: Optional[str] = Field(None, alias="serialSource")
+    cellular: Optional[Dict[str, Any]] = None
+    cellular_reported_at: Optional[datetime] = Field(None, alias="cellularReportedAt")
+    last_ip: Optional[str] = Field(None, alias="lastIp")
+    lan_ip: Optional[str] = Field(None, alias="lanIp")
+    #: "עדכון שקט" (app/services/device_management.py): the heartbeat's `deviceManagement` block
+    #: as last sent (device owner, update path, kiosk lock, a technician's release), when, and
+    #: the dashboard's "הפעל מחדש" request as it stands.
+    device_management: Optional[Dict[str, Any]] = Field(None, alias="deviceManagement")
+    device_management_reported_at: Optional[datetime] = Field(None, alias="deviceManagementReportedAt")
+    reboot_request: Optional[Dict[str, Any]] = Field(None, alias="rebootRequest")
     # Null means "the device could not read it", never "flat". The dashboard must
     # render it as unknown rather than as 0%.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
@@ -292,6 +463,20 @@ class POSMachineResponse(POSMachineBase):
     force_terminal_number_source: Optional[str] = Field(None, alias="forceTerminalNumberSource")
     #: "match" | "mismatch" | "unknown" (no report yet) | "not_required" (no expected number).
     terminal_status: Optional[str] = Field(None, alias="terminalStatus")
+    #: Where `expectedTerminalNumber` comes from ("machine", "shop"…; null = none sets it).
+    expected_terminal_number_source: Optional[str] = Field(None, alias="expectedTerminalNumberSource")
+    #: The till's card lock on its last report (docs/SPEC_KIOSK.md §20): "mismatch" |
+    #: "not_configured" | "unknown"; null = card payment not locked.
+    card_lock: Optional[str] = Field(None, alias="cardLock")
+    #: "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1, app/services/terminal_check_bypass.py):
+    #: on for this till (then `cardLock` is null), the level it comes from, who set it and when
+    #: ({userEmail, userRole, at, scopeType…}), what the till itself reported it applies (null:
+    #: never said), and the lock the check would have put on now.
+    terminal_number_check_bypass: Optional[bool] = Field(None, alias="terminalNumberCheckBypass")
+    terminal_number_check_bypass_source: Optional[str] = Field(None, alias="terminalNumberCheckBypassSource")
+    terminal_number_check_bypass_change: Optional[Dict[str, Any]] = Field(None, alias="terminalNumberCheckBypassChange")
+    terminal_number_check_bypass_reported: Optional[bool] = Field(None, alias="terminalNumberCheckBypassReported")
+    card_lock_bypassed: Optional[str] = Field(None, alias="cardLockBypassed")
     # ── The network pinpad (app/services/payment_terminal.py) ───────────────────
     #: The merged `nayaxEnabled`, and the merged address (`nayaxDeviceHost`, `nayaxDevicePort`).
     pinpad_enabled: Optional[bool] = Field(None, alias="pinpadEnabled")
@@ -301,6 +486,14 @@ class POSMachineResponse(POSMachineBase):
     pinpad_required: Optional[bool] = Field(None, alias="pinpadRequired")
     #: It does, and no level gives it an address: the machines page asks for one.
     pinpad_address_missing: Optional[bool] = Field(None, alias="pinpadAddressMissing")
+    # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ────────────
+    #: agamento | nayax_lan | nayax_usb | zcredit | synqpay: what the till charges on.
+    payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: The level that chose it ("tenant" … "machine"); null = automatic.
+    payment_integration_source: Optional[str] = Field(None, alias="paymentIntegrationSource")
+    payment_integration_automatic: Optional[bool] = Field(None, alias="paymentIntegrationAutomatic")
+    #: The fields it still needs ("zcreditTerminalNumber", "nayaxDeviceHost", …).
+    payment_integration_missing: List[str] = Field(default_factory=list, alias="paymentIntegrationMissing")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

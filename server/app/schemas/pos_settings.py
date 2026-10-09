@@ -69,6 +69,15 @@ class PosSettingsV1Patch(BaseModel):
     out_of_stock_policy: Optional[Literal["block", "warn", "allow"]] = Field(
         None, alias="outOfStockPolicy"
     )
+    #: "פתיחת פריטים אוטומטית אחרי Z" (docs/SPEC_AVAILABILITY.md): "off" (the default),
+    #: "day" — reopen what was locked or marked sold out during the day the Z closes —
+    #: or "all" — reopen every lock not marked "חסימה קבועה". `null` = inherit again.
+    auto_reopen_after_z: Optional[Literal["off", "day", "all"]] = Field(None, alias="autoReopenAfterZ")
+    #: Reopen an item that tracks stock even while it has none. Unset = false.
+    auto_reopen_ignore_stock: Optional[bool] = Field(None, alias="autoReopenIgnoreStock")
+    #: "אזל אוטומטי": a product that tracks stock is blocked "אזל" by itself when the stock its
+    #: devices sell from reaches 0 (app/services/sold_out.py). Unset = on.
+    auto_sold_out_at_zero: Optional[bool] = Field(None, alias="autoSoldOutAtZero")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).
@@ -92,6 +101,21 @@ class PosSettingsV1Patch(BaseModel):
     pay_installments_max: Optional[int] = Field(
         None, alias="payInstallmentsMax", ge=INSTALLMENTS_MIN, le=INSTALLMENTS_MAX
     )
+    #: "סדר אמצעי התשלום": the payment methods' ids in the order the till lists them
+    #: (DEFAULT_PAY_ORDER in app/services/payment_options.py) — known ids only, no repeats;
+    #: any left out follow in the default order. Unset = the default order; `null` in a
+    #: PATCH resets the layer to inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
+    pay_order: Optional[List[str]] = Field(None, alias="payOrder")
+
+    @field_validator("pay_order")
+    @classmethod
+    def _check_pay_order(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        from app.services.payment_options import validate_pay_order
+
+        return validate_pay_order(v)
+
     # ── Optional tools on the till's sell screen ──
     # Unset = shown. Resolution lives in app/services/sell_screen.py.
     sell_search_enabled: Optional[bool] = Field(None, alias="sellSearchEnabled")
@@ -136,6 +160,20 @@ class PosSettingsV1Patch(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("tip percentages must not repeat")
         return v
+    #: "חזרה אוטומטית לקיוסק" (app/services/desktop_idle_return.py): R2M POS for Windows back in
+    #: full screen after this many idle minutes on the desktop; 0 = never; unset = 10; `null` in
+    #: a PATCH resets the layer to inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
+    desktop_idle_return_minutes: Optional[int] = Field(None, alias="desktopIdleReturnMinutes")
+
+    @field_validator("desktop_idle_return_minutes", mode="before")
+    @classmethod
+    def _check_desktop_idle_return(cls, v: Any) -> Optional[int]:
+        if v is None:
+            return None
+        from app.services.desktop_idle_return import clean_minutes
+
+        return clean_minutes(v)
+
     receipt_printer_name: Optional[str] = Field(None, alias="receiptPrinterName")
     drawer_printer_name: Optional[str] = Field(None, alias="drawerPrinterName")
     business_info: Optional[Dict[str, Any]] = Field(None, alias="businessInfo")
@@ -168,6 +206,168 @@ class PosSettingsV1Patch(BaseModel):
     #: next sync (only while idle, with nothing left to transmit), reads it back and
     #: reports the result in its heartbeat. Unset = false; `null` in a PATCH = inherit.
     force_terminal_number: Optional[bool] = Field(None, alias="forceTerminalNumber")
+    # ── "סוג אינטגרציית אשראי" (app/services/payment_integration.py) ──
+    #: auto | agamento | nayax_lan | nayax_usb | zcredit | synqpay (tap_to_pay is reserved and
+    #: refused). "auto" or `null` in a PATCH = inherit again; `agamento` on a till without a
+    #: terminal of its own is a 422 (`agamento_needs_builtin_terminal`); `nayax_usb` beside a
+    #: SynqPay payment device on USB is a 422 (`usb_terminal_second`, one USB terminal per till).
+    payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: `nayax_usb`: the C4's USB ids, "VVVV:PPPP" (hex, stored upper-case); "" or `null` = this
+    #: layer names none (the till takes the first CDC-ACM device, or the value inherited).
+    nayax_usb_device: Optional[str] = Field(None, alias="nayaxUsbDevice")
+    #: Z-Credit's terminal number (digits, leading zeros kept), its PinPad id (with or
+    #: without the "PINPAD" prefix; stored without) and "test" | "production".
+    zcredit_terminal_number: Optional[str] = Field(None, alias="zcreditTerminalNumber")
+    zcredit_pinpad_id: Optional[str] = Field(None, alias="zcreditPinpadId")
+    zcredit_mode: Optional[str] = Field(None, alias="zcreditMode")
+    #: Write-only secrets: never dumped into the layer's settings JSON (`exclude`), stored
+    #: encrypted apart (app/services/payment_secrets.py). "" or `null` removes this
+    #: layer's; the dashboard's "••••" sent back unchanged keeps it.
+    zcredit_password: Optional[str] = Field(None, alias="zcreditPassword", exclude=True, repr=False)
+    zcredit_key: Optional[str] = Field(None, alias="zcreditKey", exclude=True, repr=False)
+    #: SynqPay (docs/SPEC_SYNQPAY.md): the terminal's model, how it is connected
+    #: (lan | usb — an external terminal) and where; the API key is write-only like the password.
+    synqpay_device_model: Optional[str] = Field(None, alias="synqpayDeviceModel")
+    synqpay_connection: Optional[str] = Field(None, alias="synqpayConnection")
+    synqpay_host: Optional[str] = Field(None, alias="synqpayHost")
+    synqpay_protocol: Optional[str] = Field(None, alias="synqpayProtocol")
+    synqpay_port: Optional[str] = Field(None, alias="synqpayPort")
+    synqpay_tls: Optional[bool] = Field(None, alias="synqpayTls")
+    synqpay_usb_device: Optional[str] = Field(None, alias="synqpayUsbDevice")
+    synqpay_serial_number: Optional[str] = Field(None, alias="synqpaySerialNumber")
+    synqpay_api_key: Optional[str] = Field(None, alias="synqpayApiKey", exclude=True, repr=False)
+    #: "מכשירי תשלום" (app/services/payment_devices.py): a till without built-in clearing
+    #: works with several payment devices of its shop. Set on a shop for all its tills, on a
+    #: till to override it; `null` in a PATCH = inherit again.
+    multi_payment_devices: Optional[bool] = Field(None, alias="multiPaymentDevices")
+    #: How a till picks its device: "fixed" ("מכשיר קבוע", `fixedPaymentDeviceId`) or "group"
+    #: ("קבוצת מכשירים לבחירה", `paymentDeviceGroup`). Shop (the default for its tills), area
+    #: and till only (422 on a tenant / company, and on a kiosk); `null` = inherit again; unset
+    #: everywhere = a group of all the shop's devices.
+    payment_device_mode: Optional[Literal["fixed", "group"]] = Field(None, alias="paymentDeviceMode")
+    #: The fixed device (a device id of that shop). "" or `null` = inherit again.
+    fixed_payment_device_id: Optional[str] = Field(None, alias="fixedPaymentDeviceId")
+    #: The devices a till chooses from (device ids of that shop); `[]` = every device of the
+    #: shop; `null` = inherit again.
+    payment_device_group: Optional[List[str]] = Field(None, alias="paymentDeviceGroup")
+
+    @field_validator("fixed_payment_device_id")
+    @classmethod
+    def _check_fixed_payment_device(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v.strip() == "":
+            return None
+        import uuid
+
+        try:
+            return str(uuid.UUID(v.strip()))
+        except ValueError:
+            raise ValueError("fixedPaymentDeviceId must be a payment device id") from None
+
+    @field_validator("payment_device_group")
+    @classmethod
+    def _check_payment_device_group(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        import uuid
+
+        out: List[str] = []
+        for item in v:
+            try:
+                ident = str(uuid.UUID(str(item).strip()))
+            except ValueError:
+                raise ValueError("paymentDeviceGroup must be a list of payment device ids") from None
+            if ident not in out:
+                out.append(ident)
+        if len(out) > 200:
+            raise ValueError("paymentDeviceGroup: at most 200 devices")
+        return out
+
+    @field_validator("payment_integration")
+    @classmethod
+    def _check_payment_integration(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_integration
+
+        return validate_integration(v)
+
+    @field_validator("nayax_usb_device")
+    @classmethod
+    def _check_nayax_usb_device(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_nayax_usb_device
+
+        return validate_nayax_usb_device(v)
+
+    @field_validator("zcredit_terminal_number")
+    @classmethod
+    def _check_zcredit_terminal(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_terminal_number
+
+        return validate_terminal_number(v)
+
+    @field_validator("zcredit_pinpad_id")
+    @classmethod
+    def _check_zcredit_pinpad(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import clean_pinpad_id
+
+        return clean_pinpad_id(v)
+
+    @field_validator("zcredit_mode")
+    @classmethod
+    def _check_zcredit_mode(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_mode
+
+        return validate_mode(v)
+
+    @field_validator("synqpay_device_model")
+    @classmethod
+    def _check_synqpay_model(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_model
+
+        return validate_synqpay_model(v)
+
+    @field_validator("synqpay_connection")
+    @classmethod
+    def _check_synqpay_connection(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_connection
+
+        return validate_synqpay_connection(v)
+
+    @field_validator("synqpay_host")
+    @classmethod
+    def _check_synqpay_host(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_host
+
+        return validate_synqpay_host(v)
+
+    @field_validator("synqpay_protocol")
+    @classmethod
+    def _check_synqpay_protocol(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_protocol
+
+        return validate_synqpay_protocol(v)
+
+    @field_validator("synqpay_port", mode="before")
+    @classmethod
+    def _check_synqpay_port(cls, v: Any) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_port
+
+        return validate_synqpay_port(v)
+
+    @field_validator("synqpay_usb_device")
+    @classmethod
+    def _check_synqpay_usb_device(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_usb_device
+
+        return validate_synqpay_usb_device(v)
+
+    @field_validator("synqpay_serial_number")
+    @classmethod
+    def _check_synqpay_serial(cls, v: Optional[str]) -> Optional[str]:
+        from app.services.payment_integration import validate_synqpay_serial
+
+        return validate_synqpay_serial(v)
+
+    # The secrets are checked in the router (payment_secrets.secret_patch), not here: a
+    # validation error would echo the value back in its `input`, and into the error log.
 
     @field_validator("clearing_server")
     @classmethod
@@ -222,6 +422,9 @@ class BusinessInfoSync(BaseModel):
     company_reg_number: Optional[str] = Field(None, alias="companyRegNumber")
     has_branches: bool = Field(False, alias="hasBranches")
     branch_id: Optional[str] = Field(None, alias="branchId")
+    #: "סוג עוסק" of the company (docs/SPEC_BUSINESS_TYPE.md): "company" | "licensed" |
+    #: "exempt". `vatNumber` above is then the ח.פ., the עוסק מורשה or the עוסק פטור number.
+    dealer_type: str = Field("company", alias="dealerType")
 
     class Config:
         populate_by_name = True
@@ -272,6 +475,11 @@ class SettingsSyncResponse(BaseModel):
     #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's flag, on every response,
     #: "unchanged" included (also `settings.trainingMode` on a full / delta pull).
     training_mode: bool = Field(False, alias="trainingMode")
+    #: Where each terminal-config key (`clearingServer`, `expectedTerminalNumber`,
+    #: `forceTerminalNumber`) comes from — "machine", "area", "shop", "company", "tenant" —
+    #: on a full / delta pull. A kiosk or a till on an external pinpad writes its terminal only
+    #: over a "machine" value (app/services/terminal_config_guard.py). Absent on "unchanged".
+    terminal_config_sources: Optional[Dict[str, str]] = Field(None, alias="terminalConfigSources")
 
     class Config:
         populate_by_name = True

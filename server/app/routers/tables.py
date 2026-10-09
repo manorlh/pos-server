@@ -33,7 +33,9 @@ same two ways as a catalog write from a till.
 
 Dashboard (Clerk): `/tables/layout`, zones and tables (create, edit, bulk add, the map's
 positions, archive), `/tables/cancel-reasons`, `/tables/live`, `/tables/report`, and a
-manager's cancel / forced release of a stuck table.
+manager's cancel / forced release of a stuck table. Table types ("סוגי שולחנות" —
+`/tables/types`: staff, managers, a discount) and the staff / managers' meals report
+(`/tables/meals-report`) — app/services/table_policies.py.
 """
 from __future__ import annotations
 
@@ -97,13 +99,19 @@ from app.schemas.tables import (
     TableRestoreIn,
     TakeOverIn,
     TableUpdate,
+    TableTypeIn,
+    TableTypeUpdate,
     TillLayoutIn,
     ZoneCreate,
     ZoneUpdate,
 )
 from app.services import tables as T
+from app.services import table_policies as TPOL
 from app.services.elevation import consume_per_action_use
 from app.services.permissions import Scope, requires_per_action_reauth
+
+# Display devices are not tills (app/services/display_devices.py).
+from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH
 
 router = APIRouter(tags=["tables"])
 
@@ -186,7 +194,7 @@ def get_tables_state(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/report")
+@router.post("/sync/{machine_id}/tables/report", dependencies=FISCAL_MACHINE_TOKEN)
 def report_local_tables(
     machine_id: str,
     body: TablesReportIn,
@@ -230,7 +238,7 @@ def get_closed_tables(
     return {"orders": T.closed_orders(db, machine)}
 
 
-@router.post("/sync/{machine_id}/tables/closed/{order_id}/restore")
+@router.post("/sync/{machine_id}/tables/closed/{order_id}/restore", dependencies=FISCAL_MACHINE_TOKEN)
 def restore_closed_table(
     machine_id: str,
     order_id: str,
@@ -260,7 +268,7 @@ def get_host_seed(
     return T.host_seed(db, machine)
 
 
-@router.post("/sync/{machine_id}/tables/take-over")
+@router.post("/sync/{machine_id}/tables/take-over", dependencies=FISCAL_MACHINE_TOKEN)
 def take_over_host(
     machine_id: str,
     body: TakeOverIn,
@@ -277,6 +285,11 @@ def take_over_host(
     from app.services import till_parameters as TP
 
     out = MT.take_over(db, machine, body.pos_user_name)
+    if out.get("previous") is not None:
+        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
+        from app.services.till_messages import send_server_switch_notice
+
+        send_server_switch_notice(db, machine.shop_id, out.get("mainTill"), out.get("previous"), body.pos_user_name)
     tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
     db.commit()
     # Every till re-reads its parameters and printers, and pulls the tables' new host.
@@ -285,7 +298,7 @@ def take_over_host(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/enter")
+@router.post("/sync/{machine_id}/tables/{table_id}/enter", dependencies=FISCAL_MACHINE_TOKEN)
 def enter_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -301,7 +314,7 @@ def enter_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/heartbeat")
+@router.post("/sync/{machine_id}/tables/{table_id}/heartbeat", dependencies=FISCAL_MACHINE_TOKEN)
 def table_heartbeat(
     machine_id: str,
     table_id: uuid.UUID,
@@ -314,7 +327,7 @@ def table_heartbeat(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/save")
+@router.post("/sync/{machine_id}/tables/{table_id}/save", dependencies=FISCAL_MACHINE_TOKEN)
 def save_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -340,7 +353,7 @@ def peek_table_order(
     return T.peek(db, machine, table_id)
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/bill-printed")
+@router.post("/sync/{machine_id}/tables/{table_id}/bill-printed", dependencies=FISCAL_MACHINE_TOKEN)
 def table_bill_printed(
     machine_id: str,
     table_id: uuid.UUID,
@@ -356,7 +369,7 @@ def table_bill_printed(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/pay")
+@router.post("/sync/{machine_id}/tables/{table_id}/pay", dependencies=FISCAL_MACHINE_TOKEN)
 def pay_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -371,7 +384,7 @@ def pay_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/cancel")
+@router.post("/sync/{machine_id}/tables/{table_id}/cancel", dependencies=FISCAL_MACHINE_TOKEN)
 def cancel_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -389,7 +402,7 @@ def cancel_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/move")
+@router.post("/sync/{machine_id}/tables/{table_id}/move", dependencies=FISCAL_MACHINE_TOKEN)
 def move_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -404,7 +417,7 @@ def move_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/merge/prepare")
+@router.post("/sync/{machine_id}/tables/{table_id}/merge/prepare", dependencies=FISCAL_MACHINE_TOKEN)
 def prepare_merge(
     machine_id: str,
     table_id: uuid.UUID,
@@ -423,7 +436,7 @@ def prepare_merge(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/merge")
+@router.post("/sync/{machine_id}/tables/{table_id}/merge", dependencies=FISCAL_MACHINE_TOKEN)
 def merge_tables(
     machine_id: str,
     table_id: uuid.UUID,
@@ -439,7 +452,7 @@ def merge_tables(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/cleaned")
+@router.post("/sync/{machine_id}/tables/{table_id}/cleaned", dependencies=FISCAL_MACHINE_TOKEN)
 def table_cleaned(
     machine_id: str,
     table_id: uuid.UUID,
@@ -455,7 +468,7 @@ def table_cleaned(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/rename")
+@router.post("/sync/{machine_id}/tables/{table_id}/rename", dependencies=FISCAL_SYNC_PATH)
 def rename_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -477,7 +490,7 @@ def rename_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/pay-part")
+@router.post("/sync/{machine_id}/tables/{table_id}/pay-part", dependencies=FISCAL_MACHINE_TOKEN)
 def pay_part(
     machine_id: str,
     table_id: uuid.UUID,
@@ -493,7 +506,7 @@ def pay_part(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/transfer")
+@router.post("/sync/{machine_id}/tables/{table_id}/transfer", dependencies=FISCAL_MACHINE_TOKEN)
 def transfer_items(
     machine_id: str,
     table_id: uuid.UUID,
@@ -509,7 +522,7 @@ def transfer_items(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/reservations")
+@router.post("/sync/{machine_id}/tables/reservations", dependencies=FISCAL_MACHINE_TOKEN)
 def till_create_reservation(
     machine_id: str,
     body: ReservationIn,
@@ -527,7 +540,7 @@ def till_create_reservation(
     return T.reservation_out(r)
 
 
-@router.post("/sync/{machine_id}/tables/reservations/{reservation_id}/status")
+@router.post("/sync/{machine_id}/tables/reservations/{reservation_id}/status", dependencies=FISCAL_MACHINE_TOKEN)
 def till_reservation_status(
     machine_id: str,
     reservation_id: uuid.UUID,
@@ -545,7 +558,7 @@ def till_reservation_status(
     return T.reservation_out(r)
 
 
-@router.post("/sync/{machine_id}/tables/adhoc")
+@router.post("/sync/{machine_id}/tables/adhoc", dependencies=FISCAL_MACHINE_TOKEN)
 def adhoc_table(
     machine_id: str,
     body: TableAdhocIn,
@@ -566,7 +579,7 @@ def adhoc_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/layout")
+@router.post("/sync/{machine_id}/tables/layout", dependencies=FISCAL_SYNC_PATH)
 def save_till_layout(
     machine_id: str,
     body: TillLayoutIn,
@@ -588,7 +601,7 @@ def save_till_layout(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/release")
+@router.post("/sync/{machine_id}/tables/{table_id}/release", dependencies=FISCAL_MACHINE_TOKEN)
 def release_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -606,7 +619,7 @@ def release_table(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/{table_id}/force-release")
+@router.post("/sync/{machine_id}/tables/{table_id}/force-release", dependencies=FISCAL_MACHINE_TOKEN)
 def force_release_table(
     machine_id: str,
     table_id: uuid.UUID,
@@ -964,3 +977,95 @@ def tables_report(
     """Revenue and seating time per table / zone, cancellations by reason and employee."""
     shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
     return T.report(db, shop, date_from, date_to)
+
+
+# ── Table types ("סוגי שולחנות") and the meals report ───────────────────────────
+
+
+def _live_type(db: Session, type_id, tenant_id):
+    from app.models.tables import TableType
+
+    t = db.query(TableType).filter(TableType.id == type_id).first()
+    if t is None or t.archived_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"code": "table_type_not_found"})
+    ensure_same_tenant(t.tenant_id, tenant_id)
+    return t
+
+
+@router.get("/tables/types")
+def list_table_types(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    return [TPOL.type_out(t) for t in TPOL.types_of_shop(db, shop.id)]
+
+
+@router.post("/tables/types", status_code=status.HTTP_201_CREATED)
+def create_table_type(
+    body: TableTypeIn,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    shop = _writable_shop(db, body.shop_id, current_user, active_tenant_id)
+    t = TPOL.create_type(db, shop, body)
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return TPOL.type_out(t)
+
+
+@router.patch("/tables/types/{type_id}")
+def update_table_type(
+    type_id: uuid.UUID,
+    body: TableTypeUpdate,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    t = _live_type(db, type_id, active_tenant_id)
+    shop = _writable_shop(db, t.shop_id, current_user, active_tenant_id)
+    TPOL.update_type(db, t, body)
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return TPOL.type_out(t)
+
+
+@router.post("/tables/types/{type_id}/archive")
+def archive_table_type(
+    type_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Its tables fall back to their own policy."""
+    t = _live_type(db, type_id, active_tenant_id)
+    shop = _writable_shop(db, t.shop_id, current_user, active_tenant_id)
+    TPOL.archive_type(db, t)
+    db.commit()
+    _wake_shop(background_tasks, db, shop.id)
+    return {"ok": True}
+
+
+@router.get("/tables/meals-report")
+def meals_report(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    date_from: date = Query(..., alias="from"),
+    date_to: date = Query(..., alias="to"),
+    employee: Optional[str] = Query(None, max_length=200),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Staff and managers' meals ("ארוחות עובדים / מנהלים"): count, before, discount — by employee."""
+    shop = _readable_shop(db, shop_id, current_user, active_tenant_id)
+    lo, hi = TPOL.report_window(db, shop, date_from, date_to)
+    out = TPOL.meals_report(db, shop, lo, hi, employee=employee)
+    out.update({"from": date_from.isoformat(), "to": date_to.isoformat()})
+    return out
+

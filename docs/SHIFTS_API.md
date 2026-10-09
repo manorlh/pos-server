@@ -86,25 +86,26 @@ Shift resolution per document:
 - `shiftId` known, a shift of **this** till → the document belongs to it (a re-push of an
   existing document with a different `shiftId` moves it, unless its current shift is already
   in a Z — then it stays).
-- `shiftId` known, a shift of **another** till (a till re-paired as a new machine, §1.1) →
-  treated exactly like an absent `shiftId`: stored as an **orphan** of the pushing till,
-  `accepted`, never a conflict. It is in no X and no Z, and is counted in `orphanDocuments`.
-  Never moved into, and never recomputing, the other till's shift.
+- `shiftId` known, a shift of **another** till → filed by §1.2c-bis: under that till when it
+  is the one this device was before a re-pair (the shift id identifies the issuing machine);
+  otherwise in this till's shift covering the document's time, else this till's "documents
+  waiting for a shift". `accepted`, never a conflict, never in no shift. A shift id alone
+  never files a document under an unlinked till.
 - `shiftId` unknown and **no** shift of this till is open → that shift is created `open`
   from the document (`businessDate`, `openedAt` = document `createdAt`).
-- `shiftId` unknown while **another** shift of this till is open → **the whole batch is
-  refused, nothing is written:**
-  ```json
-  409 {"detail": "another_shift_open", "openShiftId": "<id>", "unknownShiftIds": ["<id>", …]}
-  ```
-  Retryable: deliver the open shift's close (and the new shift's open) first, then resend.
-  The server never "adopts" the open shift any more — that is what silently put shift N+1's
-  sales into shift N.
-- `shiftId` absent → the document is stored with **no shift** (an orphan). The server never
-  guesses a shift for it and never creates one: a Z takes no orphan, and each till's orphan
-  count is shown (`orphanDocuments` on the machines list and on z-candidates). A re-push of a
-  known document without `shiftId` leaves it in the shift it is already in — unless that is
-  another till's shift not yet in a Z, which it leaves to become an orphan.
+- `shiftId` unknown while **another** shift of this till is open (or several unknown shifts
+  in one batch) → **since 2026-10-07 no longer a 409 for the batch.** The document is stored
+  `accepted` in the till's "documents waiting for a shift" with the shift it named
+  (`claimedShiftId`), a `warnings` entry and the note `waiting_for_shift`; the rest of the
+  batch lands as usual. When the named shift reaches the cloud (its open, or its close
+  creating it) the document moves into it. The server still never "adopts" the open shift —
+  that is what silently put shift N+1's sales into shift N. (A shift created by a racing
+  push may still answer `409 another_shift_open`; retryable.)
+- `shiftId` absent → filed by §1.2c-bis (the till's shift covering the document's time, else
+  its "documents waiting for a shift"). Never a guessed open shift by id and never a phantom
+  shift. A re-push of a known document without `shiftId` leaves it in the shift it is
+  already in. `orphanDocuments` now counts only documents stored before 2026-10-07 with no
+  shift (or under another till's shift).
 - A document whose `id` the cloud already holds for **another** machine (the same physical
   till pushed it before it was re-paired) is left untouched and answered
   `{"status": "duplicate", "reason": "held_by_another_machine"}`, so the till clears it.
@@ -145,16 +146,41 @@ applied (`"stockMovements[0].productId: unknown '…', movement not applied"`).
 
 **Links stay in the till's tenant.** An id of **another tenant's** product, voucher or
 customer is, to the till, an unknown one: the link is dropped with the same `unknown` warning
-(a customer link is dropped silently, as an unknown customer always was). Not dropped: a
-`refundOfTransactionId` naming another tenant's document refuses the document
-(`"refundOfTransactionId: names a document of another tenant"`), and an `approvedByUserId`
-of someone outside the till's tenant — not a member of it, a distributor of someone else's
-terminal — refuses it as `approver_unknown_or_inactive`.
+(a customer link is dropped silently, as an unknown customer always was).
 
-Not dropped, because each decides what the money is: `shiftId` (which X it is in),
-`refundOfTransactionId` (sale or refund), `approvedByUserId` (stripping a claim of approval
-would pass a false one off as ordinary). An unreadable one of these refuses the document, as
-does one whose own `id`, money or dates cannot be read.
+**כל מסמך שהופק בקופה נקלט (מ-2026-10-07).** בעל העסק: "כרגע אין הרשאות, כולם יכולים לעשות
+הכל. כל מסמך שבוצע במכשירים חייב לעלות לענן ולהיות חלק מהזד והאיקס/משמרת". לכן שום דבר
+בתוכן המסמך כבר לא דוחה אותו — המסמך נשמר במשמרת שלו (ובכך ב-X וב-Z), עם הערת קליטה
+שקטה ב-`ingestNotes` (מוצגת בפרטי המסמך בדשבורד, לא התראה) ואזהרה ב-`warnings` לקופה:
+
+| מה המסמך נשא | מה נשמר | `ingestNotes[].code` |
+|---|---|---|
+| `refundOfTransactionId` של מסמך בעסק אחר | המסמך, בלי הקישור (הקישור נשמר כפי שנשלח רק כשהוא מה שהופך את המסמך לזיכוי — מסמך בלי סוג זיכוי); מסמך של עסק אחר לעולם לא משתנה | `refund_of_other_tenant` |
+| אמצעי תשלום (`payments`) שאינם מסתכמים לסכום המסמך | המסמך ורגלי התשלום כפי שנשלחו | `tenders_do_not_reconcile` (עם `detail`) |
+| מאשר שאינו משתמש של העסק / לא קיים | ראו §1.2b | `approver_not_known` |
+| מסמך שהונפק לפני שהקופה שויכה לעסק, והמכשיר מקושר לקופה הקודמת (§1.2c-bis) | המסמך, **תחת הקופה שהנפיקה אותו** — העסק, הסניף והמשמרת שלה | `filed_under_issuing_till` |
+| מסמך שהונפק לפני שהקופה שויכה, בלי קישור לקופה קודמת (מכשיר בלי מספר סידורי) | המסמך, תחת הקופה ששלחה אותו (שורה בדוח ההתאמה לבירור) | `issued_before_pairing` |
+| בלי משמרת, או משמרת של קופה אחרת | המשמרת של הקופה שמכסה את מועד ההפקה | `filed_by_time` |
+| משמרת שעוד לא הגיעה לענן (בזמן שמשמרת אחרת פתוחה), או אין משמרת מכסה | "מסמכים שהמתינו למשמרת" — נכלל ב-Z הבא | `waiting_for_shift` |
+| מספר מסמך שכבר קיים בקופה במסמך אחר | שני המסמכים (§1.2d) | `numbering_conflict` |
+
+ייצוא המבנה האחיד קורא את ההערות: מסמך עם `tenders_do_not_reconcile` נרשם לפי סכומו (C100), ורשומות
+התשלום שלו (D120) נכתבות מרגלי התשלום בכיוון של המסמך בלבד (סכום חיובי), מחולקות לשדה 1223 — כך שתמיד
+Σ D120 = 1223 וכל רשומה חיובית (רגל של ‎-50 במכירה לא נכתבת כתשלום שלילי). בלי רגל כזו — רשומה אחת לכל
+המסמך. מסמך כזה מופיע ברשימה בתצוגה המקדימה של הייצוא (`flaggedDocuments`), ועותק כפול (§1.2d) לא נכלל
+בקובץ (`excludedDuplicateCopies`). פורמט הקובץ לא השתנה.
+
+Still refused, because the document cannot be read at all: an unreadable `shiftId` (which X
+it is in) or `refundOfTransactionId` (sale or refund), or an unreadable own `id`, money or
+dates; and a write the database refuses. An unreadable `approvedByUserId` /
+`approvedByPosUserId` no longer refuses anything — it is dropped with a warning
+(`"approvedByPosUserId: unreadable 'dana', stored without the approver"`).
+
+**"מסמך שנדחה בענן".** Every refusal that remains is recorded per till and document in
+`document_refusals` (the document's id or `batch-index:<n>`, number, type, reason, attempts,
+first / last seen, the payload as sent) and marked `landed_at` when the same document is later
+stored. It is listed in the reconciliation report (check `refused_documents`) and on the
+transmissions page, so a refusal can never stay silent again.
 
 **Each document is validated on its own.** Only the envelope (`{"transactions": [...]}`, a
 list) can make the request a `422`. A document that truly cannot be stored — a missing or
@@ -172,8 +198,7 @@ auto-opened shift, no stock movement) and is answered alongside the others, in t
   `unidentified: [{"index": <position in the batch>, "status": "rejected", "reason"}]`
   rather than in `results` (a shipped till decodes `results[].id` as a non-null string).
   `unidentified` is `null` otherwise.
-- The rest of the batch is written as if the refused document had not been in it. The
-  whole-batch `409 another_shift_open` above still applies to the documents that were valid.
+- The rest of the batch is written as if the refused document had not been in it.
 - Each refusal is logged and written to `sync_logs` (`status: failed`, the reason in
   `conflict_note`).
 
@@ -219,6 +244,86 @@ for a shift already in a Z:
   `amendedDocuments` of the shift and the Z (whose figures stay as built). A status change
   between two sale statuses (`completed` → `refunded` when its credit note is issued) is not
   an amendment.
+
+**תיקון למסמך שכבר נכלל ב-Z — התאמה ב-Z הבא (מ-07.10.2026).** עד עכשיו רק המונה
+`amendedDocuments` עלה, וההפרש לא נכלל באף Z. מעכשיו (`app/services/z_adjustments.py`):
+- ההפרש בין שתי הגרסאות של המסמך — בדיוק מה ש-`compute_totals` סופר (מכירות, זיכויים, הנחות,
+  מע״מ, טיפים, אמצעי תשלום, מספר מסמכים) — נשמר על הקופה שהנפיקה אותו
+  (`pos_machines.pending_z_adjustments`) עם המסמך, ה-Z שספר את הגרסה הקודמת והמועד;
+- ה-Z הבא של הקופה באותו סניף — הרצת Z בענן, Z קופה (מקוון או לא מקוון), Z של התמיכה — מוסיף
+  את ההפרשים לסכומים שלו ומציג אותם בסעיף משלהם: `header.adjustments` ("תיקונים למסמכים שנכללו
+  ב-Z קודם"), ובקטע הקופה `adjustments` (כמה, ומה ההפרש). כל תיקון נכלל ב-Z אחד בדיוק;
+- ה-Z שספר את הגרסה הקודמת אומר לאן הועבר התיקון: `header.adjustmentsCarried[].intoZReportId`;
+- דוח ההתאמה מוסיף את ההתאמות לצד המסמכים כשהוא משווה Z (§6 ב-SPEC_REPORTS), ומציג תיקון שעוד
+  ממתין ל-Z הבא;
+- קופה בסניף במצב רשת מקומית (Z סניפי שמודפס בקופה הראשית): הענן לא יכול להוסיף לנייר — התיקון
+  ממתין ל-Z הבא שהענן בונה לקופה (Z של התמיכה) ומוצג בדוח ההתאמה עד אז.
+
+### 1.2c-bis איפה כל מסמך מתויק — הקופה שהנפיקה אותו, משמרת, ו-Z מהסוג הנכון
+
+בעל העסק (07.10.2026): "כל מסמך שבוצע במכשירים חייב לעלות לענן ולהיות חלק מהזד והאיקס/משמרת
+וכל מה שמשתמע" · "הכוונה לאן שהוא צריך — אם למשמרת של הקופה, לזד עצמאי". מסמך שנקלט בלי משמרת,
+או במשמרת של קופה אחרת, לא היה בשום X ובשום Z. הכלל (`app/services/document_filing.py`):
+
+**1. הקופה שהנפיקה את המסמך.** מכשיר ששויך מחדש בקוד שיוך רגיל (לא קוד החלפה) הוא מכונה חדשה
+בענן, אבל תור השליחה שלו נשאר — הוא ממשיך לשלוח מסמכים שהנפיק כקופה הקודמת. בשיוך הענן מקשר את
+המכונה החדשה לקודמת לפי המספר הסידורי של המכשיר (`pos_machines.predecessor_machine_id`) ושומר מה
+הקודמת עוד הייתה חייבת (`repair_handover`: המשמרת הפתוחה, המסמכים שדיווחה כממתינים ומתי, המונים).
+מסמך שהמכשיר שולח שייך לקופה הקודמת כאשר הוא נושא משמרת שלה, או כשהופק לפני השיוך (יותר מ-10 דקות
+לפני) ואחרי השיוך שלה. הוא מתויק תחתיה — העסק, הסניף, מספר הקופה והמשמרת שלה — עם
+`pushedByMachineId` (מי שלח) והערה `filed_under_issuing_till`; המאשר מקושר מחדש בתוך העסק שלה.
+מזהה משמרת לבדו, בלי קישור מכשיר, לעולם לא מתייק מסמך תחת קופה אחרת. (גרסת הקופה הנוכחית שולחת
+מסמכים של משמרת "זרה" בלי `shiftId` — הענן מזהה אותם לפי מועד ההפקה.)
+
+**2. המשמרת**, לפי הסדר:
+- המשמרת שהמסמך נושא, כשהיא של הקופה שהנפיקה;
+- משמרת שהענן עוד לא ראה: נוצרת פתוחה מהמסמך כשאין משמרת פתוחה אחרת ורק היא לא ידועה (כמו
+  תמיד); אחרת המסמך ממתין (למטה) עם המשמרת שנשא (`claimedShiftId`);
+- בלי משמרת, או משמרת של קופה אחרת: משמרת של הקופה שתקופתה מכסה את מועד ההפקה (נפתחה לפניו,
+  נסגרה אחריו או עדיין פתוחה) — הערה `filed_by_time`;
+- אחרת: **"מסמכים שהמתינו למשמרת"** של הקופה — משמרת שהענן בונה (`reconstructionBasis.kind =
+  "awaiting_shift"`), סגורה ומאושרת, בלי מספר (ממוינת ראשונה), אחת לכל קופה וסוג Z. ה-Z הבא של
+  הקופה לוקח אותה כמו כל משמרת ומציג אותה בסעיף משלה (`header.documentsAwaitingShift`): "מסמכים
+  שהמתינו למשמרת (קופה N)", עם הסיבות, הכמות, הטווח והסכומים. הערה `waiting_for_shift` ואזהרה
+  לקופה. כשהמשמרת שהמסמך נשא מגיעה לענן (פתיחה, או סגירה שיוצרת אותה) המסמך עובר אליה — אלא אם
+  Z כבר לקח את הדלי, ואז הוא נספר שם, פעם אחת.
+
+**3. הסוג של ה-Z — לפי מצב הקופה בעת ההפקה.** קופה ב-Z סניפי (`zMode = cloud`): משמרת הקופה ← ה-Z
+הסניפי הבא. קופה שמפיקה Z משלה (`zMode = till` — Z לכל קופה, קופה עצמאית, קיוסק במצב זה): ה-Z
+העצמאי שלה. כל מעבר מצב נשמר (`pos_machines.z_mode_history`: מתי, ממה, למה), ומעבר דורש הפסקה
+נקייה (אין משמרת פתוחה ואין משמרת סגורה שמחכה ל-Z — `z_mode_policy`, `independent_till`), כך שכל
+משמרת של הקופה כולה במצב אחד. מה שהענן בונה — דלי "ממתין למשמרת", משמרת של מסמכים מאוחרים —
+מסומן במצב שבו הונפקו המסמכים (`reconstructionBasis.zMode`): Z קופה לוקח רק את מה שהונפק במצב Z
+קופה; Z סניפי לוקח את מה שהונפק במצב Z סניפי — גם של קופה שעברה מאז ל-Z משלה (בקטע משלה ב-Z
+הסניפי). קופה שהצטרפה ל-Z הסניפי אין לה עוד רצף Z משלה: מסמכים ממצב Z קופה שמגיעים אחרי כן
+נכללים ב-Z הסניפי, בסעיף משלהם (כמו קופה מתה שמוחזרת ל-Z הסניפי, §2.9). דוח ההתאמה אומר לכל
+מסמך לאן הוא שייך ומסמן מסמך שעוד לא שם (SPEC_REPORTS §6).
+
+**מה `check_clean_break` אוכף ולמה זה לא עצר את ה-F20.** הבדיקה (`device_profile.check_clean_break`)
+דורשת: אין Z בתהליך, אין משמרת פתוחה, אין מסמכים שהקופה דיווחה שטרם נשלחו, אין Z שנסגר ללא חיבור
+ולא הועלה. אבל היא רצה רק בשינוי תפקיד/דגם (ובמעבר לקופה עצמאית ובקוד החלפה דרך
+`may_be_producing_offline`) — לעולם לא כשמכשיר מממש קוד שיוך רגיל. הענן לא קישר בין שתי המכונות,
+ולכן ה-F20 שויך מחדש כשהמשמרת 37ac5627 פתוחה ו-8 מסמכים בתור. **השמירה החדשה:** בכל שיוך כמכונה
+חדשה הענן מזהה את המכונה הקודמת של המכשיר, מריץ את אותם תנאים וקורא אותם ל-`repair_handover`
+(`clean: false` כשמשהו פתוח), ומנתב את כל מה שהמכשיר עוד שולח מהשיוך הקודם אל הקופה שהנפיקה. השיוך
+עצמו לא נדחה: מכשיר שבוטל שיוכו יכול לשלוח את תור המסמכים שלו רק אחרי שיוך — דחייה הייתה משאירה
+אותם בקופה לתמיד. מה שנשאר פתוח בקופה הקודמת (משמרת פתוחה, משמרות בלי Z, מסמכים שדווחו וטרם
+הגיעו) מוצג בדוח ההתאמה (`repaired_tills`) עם הפעולה: סגירה מנהלית של המשמרת (שחזור קופה מתה,
+§2.9) ואז Z.
+
+### 1.2d אותו מספר, מזהה אחר באותה קופה — שניהם נשמרים
+
+עד 07.10.2026 המפתח הייחודי (קופה, סדרה, מספר) דחה את המסמך השני — מסמך שהופק ולא נקלט. מעכשיו
+המפתח הוא אינדקס ייחודי חלקי על המסמכים *שמחזיקים* במספר (`number_conflict_of IS NULL`), והמסמך
+השני נשמר תמיד, `accepted`, עם `numberConflictOf` (המסמך שמחזיק במספר), הערה `numbering_conflict`
+ואזהרה לקופה. **הכלל נגד ספירה כפולה:**
+- **עותק כפול** — אותו רגע הפקה (שנייה אחת סבולת) ואותו תוכן פיסקלי (סוג, סכומים, הנחה, מע״מ, טיפ,
+  אמצעי תשלום, קישור זיכוי): זו אותה מכירה שנשמרה פעמיים. `duplicateCopy: true` — לא נספר באף סכום
+  (X, Z, דוחות, דוח מלצרים, יומן חשבונאי, ייצוא המבנה האחיד); נספר פעם אחת דרך המסמך המקורי;
+- **מסמך אחר עם אותו מספר** (מונה שחזר אחורה — התקנה מחדש, שחזור גיבוי): מכירה נפרדת — נספרת
+  ב-X וב-Z. בקובץ המבנה האחיד שני מסמכים עם אותו סוג ומספר נחסמים כמו תמיד
+  (`duplicate_document_numbers`, 409 עם שניהם) עד בירור.
+שניהם מוצגים בשורה אדומה בדוח ההתאמה (`numbering_conflicts`, "חסר") עם הפעולה.
 
 ### 1.2a Mixed basket — sale lines and returned lines (זיכוי פריט) in one basket
 
@@ -288,7 +393,8 @@ What the server does with them:
   summary tender (so a basket's tip rides on its cash or card, not on the exchange).
 - **Settling originals per line** (below, "A credit note settles its original").
 - **OpenFormat**: an `exchange` leg is D120 payment type **6** (תלוש החלפה); card stays 3,
-  anything else 1. Each D110 line of a 330 names its base document (1256 type, 1257 number,
+  a prepaid / production voucher leg (`voucher`, `vouchers`, `production_voucher`) is **5**
+  (תווי קנייה), anything else 1. Each D110 line of a 330 names its base document (1256 type, 1257 number,
   1274 branch): the receipt of its `refundOfItemId` line, else the document's
   `refundOfTransactionId` — resolved within the tenant **even when the original is outside
   the export window**. A catalogue return names none.
@@ -329,21 +435,31 @@ The till copies it onto every document that grant authorised — **at most one**
 
 A shop manager acting on their own authority (no grant) sends their own till user id as `approvedByPosUserId`, so the document still records who authorised it. Sending neither is also accepted.
 
-Both are **claims, checked against the approver's standing permissions** when the document
-arrives (the grant itself is gone by the time the outbox drains, and an operator approving
-their own refund never took one — so the server does not require a matching grant). A claim
-that fails **refuses the document** (`rejected`, nothing stored), never a stripped copy:
+**מאשר — מידע בלבד, לעולם לא סיבה לדחות או לעכב מסמך (מ-2026-10-07).** בעל העסק: "כרגע
+אין הרשאות, כולם יכולים לעשות הכל". עד אז הענן בדק את הטענה מול ההרשאות הקבועות של המאשר
+ודחה את כל המסמך כשנכשלה (`approver_unknown_or_inactive`, `approver_lacks_scope:…`,
+`approver_not_permitted_at_machine`, `approver_ambiguous`) — וכך מסמך פיסקלי שהופק והודפס
+בקופה נשאר מחוץ לענן ונוצר חור במספור. מעכשיו (`app.services.approvals.resolve_document_approver_claim`):
 
-| reason | when |
+| מה נשלח | מה נשמר |
 |---|---|
-| `approver_unknown_or_inactive` | no such user, deactivated, or of another tenant (a till user's tenant is read from its shop) |
-| `approver_lacks_scope:<scopes>` | their role cannot grant what the document needed (`refund` for a credit note, `discount` for any discount); a till user's ceiling is its role's (`shop_manager`) |
-| `approver_not_permitted_at_machine` | a cloud user with no reach to this till; a till user of **another shop** |
-| `approver_ambiguous` | both fields sent |
+| כל מאשר | המזהה בדיוק כפי שנשלח: `claimedApproverUserId` / `claimedApproverPosUserId` (לא מפתח זר — גם מזהה שהענן לא מכיר נשמר) |
+| משתמש של העסק של הקופה (פעיל או לא, בכל תפקיד ובכל סניף) | גם מקושר: `approvedByUserId` / `approvedByPosUserId` — מי אישר אז |
+| מזהה שאינו של העסק (לא קיים, או של עסק אחר) | לא מקושר (שם של עסק אחר לא מוצג כאן); הערה שקטה אחת `approver_not_known`: "המאשר שנשלח מהקופה אינו משתמש מוכר בעסק — נשמר כפי שנשלח, לידיעה בלבד" |
+| שני השדות יחד | שניהם נשמרים כפי שנשלחו, הערה `approver_both` |
+| מזהה לא קריא | נשמט עם אזהרה; המסמך נקלט |
 
-An unreadable id in either field refuses the document too (`approvedByPosUserId: Input
-should be a valid UUID…`). The stored approver is returned on the transaction as
-`approvedByUserId` / `approvedByPosUserId`.
+The document is answered `accepted` (the till clears it from its outbox) and counts in its
+shift, X and Z like any other. No alert, exception or resolve flow is raised. The strict
+checks (`verify_document_approvers`) stay in the code for whoever needs the strict answer;
+nothing on the document path calls them. The transaction returns `approvedByUserId` /
+`approvedByPosUserId`, `claimedApproverUserId` / `claimedApproverPosUserId` and `ingestNotes`.
+
+**המקרה שבגללו זה שונה (F20, "קופה 2").** המסמך מס׳ 80 הופק ב-05/10 כשהמכשיר עוד היה משויך
+לעסק אחד (קופה 1 של "Ran Lahagani") ואושר ע״י מנהל הקופה של אותו עסק ("Default Cashier",
+`shop_manager`, פעיל). לפני שהמסמך עלה לענן המכשיר שויך מחדש כקופה חדשה בעסק אחר ("רויאל
+ספיריט"); הבדיקה השוותה את עסק המאשר לעסק של הקופה **החדשה** ודחתה את המסמך כל שעה
+(`approver_unknown_or_inactive`). האישור היה אמיתי בזמן שניתן — נכשל רק כי נבדק מול השיוך של היום.
 
 ### 1.2c Till settings for returns
 
@@ -372,7 +488,7 @@ Request
   "closedByUserId": "…", "closedByName": "…", // nullable
   "unattended": false,          // true = closed remotely with nobody at the drawer
   "countedCash": 1234.50,       // null/absent = not counted (always null when unattended; the server enforces it)
-  "expectedCash": 1210.00,      // the till's own expected drawer (opening + cash + cash tips)
+  "expectedCash": 1210.00,      // the till's own expected drawer (opening + cash + cash tips + cash movements − cardTipsFromDrawer)
   "transactionIds": ["…", "…"], // every document of this shift, required (may be empty)
   "lastTransactionNumber": "1043", // nullable
   "till": {                      // the till's X figures, stored verbatim for audit (§3.3 keys)
@@ -381,7 +497,8 @@ Request
     "totalRefunds": 50.00,
     "totalCash": 710.00, "totalCard": 2640.00,
     "totalTips": 20.00, "vatTotal": 510.93,
-    "transactionsCount": 41
+    "transactionsCount": 41,
+    "cardTipsFromDrawer": 10.00  // optional, see below
   },
   "closeRequestId": "…",         // the requestId of a remote close-shift instruction (a Z run's or a standalone one, §2.14), else null/absent
 
@@ -392,6 +509,16 @@ Request
   "openingCash": 500.00, "openedByUserId": "…", "openedByName": "…"
 }
 ```
+
+**`till.cardTipsFromDrawer`** ("טיפ באשראי משולם מהמזומן", till parameter
+`cashDrawer.cardTipsFromDrawer`, boolean, off by default): card tips handed to staff in cash
+out of the drawer, in shekels like the other till figures. Present (possibly `0`) only when the
+parameter was on for that till at the close; absent when off; never sent by kiosks. The till's
+own `expectedCash` already has it subtracted: `expectedCash = openingCash + totalCash +
+totalCashTips + cash movements − cardTipsFromDrawer`. Stored with `till` and **not** compared
+(§3.3). The cloud's drawer maths (§3.6) read this frozen amount, never the live parameter, so
+kiosks and older shifts are unaffected. Tips are no revenue: sales, VAT, the fiscal Z figures,
+cash / card takings and the tips totals do not change — only the drawer does.
 
 Optional header `X-Elevation-Token`: a grant with scope `shift:close` (a cashier may close
 alone, so this is never demanded). When presented it is checked strictly (401
@@ -424,6 +551,11 @@ Responses
   `409` (those documents are not this till's, so that loop could never end), and also for a
   shift the other machine has already closed (not `200 duplicate`).
 
+**An empty `transactionIds` is checked too (2026-10-07).** It names nothing missing, so the
+close is accepted — but what the till counted (`till.transactionsCount`) is held against the
+cloud's documents by every Z that takes the shift: while the till counted more, the Z waits
+(§2.6-bis). It used to skip every check and file an empty X.
+
 A `closeRequestId` the cloud does not know for this till is ignored (the close is still
 accepted). An accepted close also completes every pending instruction that named this
 shift, whichever `requestId` the close carried.
@@ -452,8 +584,11 @@ are read from any 200 (a duplicate included); an ack answered 404 or 410 is drop
 ```
 - `received`: the till has the instruction (item → `closing`).
 - `deferred`: the till cannot close yet; it will retry by itself. The till sends
-  `errorCode: "card_in_flight"` for a card payment in flight. The item becomes `closing`
-  and `errorCode`/`errorMessage` are shown to the operator.
+  `errorCode: "card_in_flight"` for a card payment in flight, and (2026-10-07)
+  `errorCode: "payment_in_progress"` while its payment screen is open — a close that is not
+  forced never runs in the middle of a payment; it runs on the next delivery once the payment
+  is done or cancelled (a forced close parks the basket instead, as before). The item becomes
+  `closing` and `errorCode`/`errorMessage` are shown to the operator.
 - `completed`: informational — the item only becomes ready when the **close** (§1.3) is
   accepted with all documents; an ack alone never makes it ready.
 - `failed`: the till gave up (item → `failed`).
@@ -516,10 +651,19 @@ Response
     {"shiftId": "…", "zReportId": "…", "zNumber": 7}
   ],
   "pendingCloseShift": {"requestId": "…", "shiftId": "…"},  // only when a remote close is waiting for this till
+  "closedOpenShift": {"shiftId": "…", "closedAt": "…", "reconstructed": true},  // only when the openShiftId sent is this till's and closed in the cloud (below)
   "zMode": "cloud",                  // or "till" (§5.1). Always present.
   "pendingTillZ": {"requestId": "…", "initiatedBy": "…", "createdAt": "…"}   // only while a dashboard asks this till for its Z (§5.3)
 }
 ```
+`closedOpenShift` (2026-10-07): the `openShiftId` this beat sent is this till's own shift and the
+cloud holds it `closed` — not by a close of the till's (that leaves the till's row closing, never
+reported open again) but administratively (§2.9) or by support. Repeated on every beat while
+the till still reports it. The till closes that shift on its side too — unattended, uncounted,
+only that shift, never in the middle of a payment (it waits for the next beat) — and goes to
+"קופה סגורה"; its close then answers `200 duplicate` (§1.3). Absent otherwise (an unknown, open
+or another till's shift).
+
 `recentShiftZs` is how the till learns the Z number of an older shift (for shift history and
 X reprints); the close response only carries it when the shift is already in a Z. A till Z
 (§5) is listed exactly like a cloud Z, its `zNumber` being its `machineSequenceNumber`, and it
@@ -692,6 +836,29 @@ building — logged on the server); nothing is written and no Z number is used. 
 new run. A failed build never fails the till's close that triggered it: the close is
 accepted and the run alone is marked `failed`.
 
+### 2.6-bis אין Z עם מסמכים חסרים (מ-07.10.2026)
+
+Z בענן נבנה מהמסמכים שהענן מחזיק, ולכן לא נבנה כשהענן *יודע* שחסרים מסמכים שהיו צריכים להיות בו
+(`app/services/z_completeness.py`). הענן יודע כש:
+- **הסגירה ספרה יותר** — משמרת שה-Z לוקח נסגרה עם ספירת הקופה (`till.transactionsCount`) גבוהה ממה
+  שבענן במשמרת (גם כש-`transactionIds` היה ריק);
+- **חסר מספר** — בסדרה של הקופה, מספר בין המספר האחרון שהיה לפני ה-Z לבין האחרון שב-Z שאין לאף מסמך
+  של הקופה (כל סטטוס; מספר שקיים בסדרה אחרת נחשב קיים — קופה ישנה מיספרה הכל במונה אחד). רצף של
+  יותר מ-100 מספרים חסרים הוא קפיצה של המונה, לא מסמכים בתור — מוצג בבדיקת רציפות המספרים בלבד;
+- **הקופה אמרה** — כשאין לה משמרת פתוחה וה-Z לוקח את המשמרת הסגורה האחרונה שלה: מסמכים שדיווחה
+  כממתינים (`pendingDocuments`) שלא הגיעו מאז הדיווח, ומספרים עד המונה שדיווחה שאין בענן;
+- **הענן דחה** — דחייה פתוחה של מסמך הקופה (`document_refusals`) שהופק בתקופת ה-Z.
+
+Z כזה **ממתין**: בפריט של הקופה `errorCode: "waiting_documents"` ו-`errorMessage` בעברית (כמה
+ולמה). הוא נבדק שוב בכל רענון של ההרצה ובכל פעם שמסמך של הקופה נקלט למשמרת סגורה, ונבנה מעצמו
+כשהמסמכים מגיעים. **`confirmCloudData` לא עוקף את זה** (הוא עדיין נדרש לאזהרות האחרות). כל הרצה —
+מהדשבורד ומהקופה הראשית — בודקת זאת לפני הבנייה. **ה-Z הממתין שומר על מספרו:** בזמן שהוא ממתין לא
+מתחילה הרצת Z אחרת לאותו סניף — `409 {"detail": {"code": "z_waiting_for_documents", "runId", "message"}}`.
+הדרכים קדימה: הקופה שולחת את המסמכים; "המשך בלי הקופה" (`POST /z-runs/{id}/proceed` — המשמרות שלה
+יחכו ל-Z הבא, שימתין באותו אופן); קופה שלא תחזור — Z מהענן ע״י התמיכה (SPEC_OFFLINE_TILL_Z §4.6),
+שרושם את הפערים; או ביטול ההרצה (לא נלקח מספר). דוח ההתאמה מציג Z ממתין וגם קופה שה-Z הבא שלה
+ימתין (`z_completeness`).
+
 ### 2.7 `POST /z-runs/{id}/cancel`
 `200` ZRun (`cancelled`; open items → `excluded`). A till that already received the instruction
 still closes its shift; that shift simply waits for the next Z. `409 run_not_waiting` when finished.
@@ -715,7 +882,8 @@ Dead-till recovery (replaces `trading-day/reconstruct-close`). Body `{"force": f
 Closes that open shift from the cloud's documents: `reconstructed`, `unattended`, uncounted.
 It then is an ordinary Z candidate, and a Z run or close request waiting for that shift is
 completed by it (the run builds if that was the last till), and the till's heartbeat claim of
-it is dropped. `reconstructionBasis.lastReportedPendingDocuments` is the status light's reading
+it is dropped. A till that still reports it open on a later beat is answered `closedOpenShift`
+(§1.6) and closes it on its side too. `reconstructionBasis.lastReportedPendingDocuments` is the status light's reading
 (`pendingDocuments`, else the outbox depth `pendingCount`). Guards: 409 `shift_not_open`, 409 `terminal_is_online…`,
 409 `terminal_recently_seen…` (silent < 2h) unless `force`. `200 {"created": true, "shift": Shift}`
 (`created: false` if already closed). `POST /machines/{id}/trading-day/reconstruct-close` → 410.
@@ -848,7 +1016,8 @@ Over the shift's documents with status `completed | refunded | partial_refund`:
 | `vatTotal` | Σ `vatAmount` of sales − Σ of credit notes; **null** if any document has none |
 | `firstTransactionNumber`, `lastTransactionNumber` | lowest / highest document number issued in the shift, cancelled documents included (numeric order when numeric), server only |
 
-Server expected cash = `openingCash + totalCash + totalCashTips` (`exchange` is never in it).
+Server expected cash = `openingCash + totalCash + totalCashTips − till.cardTipsFromDrawer` (the
+last only when the close carried it, §1.3; `exchange` is never in it).
 
 ### 3.3 The till's X (`till`) and what `totalsMismatch` compares
 
@@ -913,6 +1082,7 @@ it (`409 z_run_in_progress`).
   "paymentBreakdown": {"cash": "…", "card": "…", "exchange": "…", "<other method>": "…"},
   "openingCash", "expectedCash", "actualCash", "discrepancy",   // Σ of the per-till figures (§3.6); null if null for any till
   "betweenShiftAdjustments",               // Σ of the per-till figure (§3.6); null on a Z built before it existed, and on a legacy Z
+  "cardTipsFromDrawer", "drawerCash",      // card tips paid from the drawers and "מזומן במגירה" (§3.6); null when no included close carried the figure
   "unattended", "reconstructed",           // any included shift unattended / reconstructed
   "lateDocuments": 0,                      // documents of its shifts that arrived (or moved in) after it was built (not in its figures)
   "amendedDocuments": 0,                   // documents of its shifts rewritten after it was built (its figures are as built)
@@ -938,6 +1108,8 @@ it (`409 z_run_in_progress`).
   "openingCash", "expectedCash", "countedCash", "overShort", "uncountedShiftCount",
   "cashSalesNet",     // Σ cash takings of its shifts, net of cash refunds (Zs built from now on)
   "betweenShiftAdjustments",  // cash put into / taken out of the drawer between its shifts (Zs built from now on)
+  "cardTipsFromDrawer",       // Σ of its closes' till.cardTipsFromDrawer (§1.3) — only when any close carried it
+  "drawerCash",               // "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer — only with it
   "reconstructedShiftCount", "unattendedShiftCount",
   "transmission": {…}  // card transmission, informational (§4.11; Zs built from now on)
 }
@@ -947,14 +1119,21 @@ Money values are decimal strings.
 **The drawer figures across back-to-back shifts.** A till has one drawer, and consecutive
 shifts hand it on: the next shift's float is normally what the last one left in it. Per till,
 over the shifts the Z takes of it (1..n, oldest first), with each shift's server expected =
-its float + cash takings + cash tips, and its *closing* = its count, or its expected if it
-was not counted:
+its float + cash takings + cash tips − the card tips its till paid out of the drawer (the
+close's `till.cardTipsFromDrawer`, §1.3; 0 when absent), and its *closing* = its count, or its
+expected if it was not counted:
 - `openingCash` — the **first** shift's opening float: the drawer at the start of the period;
 - `cashSalesNet` — Σ cash takings of the shifts, net of cash refunds;
 - `betweenShiftAdjustments` — Σ over consecutive shifts of (float of shift i+1 − closing of
   shift i): cash put into (+) or taken out of (−) the drawer between shifts. Usually 0;
-- `expectedCash` — `openingCash + cashSalesNet + totalCashTips + betweenShiftAdjustments`:
-  the drawer at the end of the period;
+- `expectedCash` — `openingCash + cashSalesNet + totalCashTips − cardTipsFromDrawer +
+  betweenShiftAdjustments`: the drawer at the end of the period (the cash tips are the shifts'
+  own; `cardTipsFromDrawer` is 0 when no close carried it);
+- `cardTipsFromDrawer` — Σ of the closes' frozen `till.cardTipsFromDrawer`; only when any close
+  of the till's shifts carried it (else the key is absent and the section reads as before);
+- `drawerCash` ("מזומן במגירה") — `cashSalesNet + cash tips − cardTipsFromDrawer`, with it. The
+  owner's example: 50 cash sales and a 50 card sale with a 10 card tip → card tips from the
+  drawer 10, drawer cash 40, expected (no float) 40;
 - `countedCash` — the **last** shift's count; null if that shift was not counted;
 - `overShort` — the sum of every shift's own over/short (its count − its server expected);
   null if **any** shift was not counted — a partial count presented as the drawer's would
@@ -972,7 +1151,11 @@ shifts), taken +5 and counted 154: between shifts −42, expected 180 + 15 − 4
 +1 (= +2 − 1 = 154 − 153). A shift left uncounted closes at its expected, and withholds
 over/short. The Z's `openingCash` / `expectedCash` / `actualCash` /
 `discrepancy` / `betweenShiftAdjustments` are the sums of these over its tills (tills have a
-drawer each), null if null for any till. The day summary (§2.13) takes each cloud Z's variance
+drawer each), null if null for any till. Its `cardTipsFromDrawer` / `drawerCash` are frozen on
+its header at build time (Σ over the tills; a till without the figure adds its cash sales + cash
+tips to `drawerCash`), and read from the sections for a Z stored as a till printed it; null
+when no included close carried the figure. The print document shows them as the last two rows
+of the drawer block (Z, summary and per-till), only when present. The day summary (§2.13) takes each cloud Z's variance
 from its `discrepancy`. A Z keeps the figures it was built with: one built before this rule
 took the last shift's expected (so its over/short need not be counted − expected) and has no
 `betweenShiftAdjustments`. Sections are served as they were stored when the Z was built — except
@@ -1052,6 +1235,7 @@ One call per `doPeriodic` attempt, successful or not.
   "transactionCount": 3,        // number of transactions in the batch
   "amount": "412.50",           // sum of the batch, ₪ (number or decimal string); null if unknown
   "terminalTransactionIds": ["24071711405408830122531", "…"],   // result.queriedTransactions
+  "assumedTerminalTransactionIds": ["…"],  // success only: the till's sales assumed into a batch that named none (SPEC_REPORTS §7)
   "reportText": "…",            // result.report, the printable Z of the terminal (≤ 64 KB kept)
   "error": "…"                  // the till's own description of a failure (transport, timeout)
 }
@@ -1073,15 +1257,23 @@ One call per `doPeriodic` attempt, successful or not.
   `transmitted_batch` = `batchNumber`. A leg whose document reaches the cloud *after* the
   report (the till was offline) is marked when it lands. The ids themselves are kept per
   report whatever the status.
+- **Unnamed batches (docs/SPEC_REPORTS.md §7).** A terminal that confirms a batch without
+  listing its sales leaves the till to assume its pending card sales went in it. On a
+  `success` the till sends their uids in `assumedTerminalTransactionIds` (`[]` when none);
+  they are kept as items marked `assumed` and their legs are marked like named ones —
+  transmitted, not verified. Without the field (an older till) the cloud applies the till's
+  own rule: a successful, non-empty batch that named none of this till's pending card legs
+  takes every one of them taken before `startedAt` (after the tracking start).
 - With `requestId` of a pending request of this till (§4.4), a `success` report completes
   it and a `failed` one fails it (same as the §4.5 ack); `unknown` leaves it pending.
 - Also stamps the till's tracking start if it had none.
 
 `200` (first time: `201`)
 ```json
-{ "ok": true, "transmissionId": "…", "status": "success", "created": true, "legsMarked": 3 }
+{ "ok": true, "transmissionId": "…", "status": "success", "created": true, "legsMarked": 3, "legsAssumed": 0 }
 ```
-`legsMarked` = legs newly marked by this call (0 on a repeat).
+`legsMarked` = legs newly marked by this call (0 on a repeat); `legsAssumed` = of the items
+kept, how many the terminal never named.
 
 ### 4.2 Heartbeat `POST /machines/me/heartbeat` — the till's pending state
 
@@ -1317,7 +1509,11 @@ on 2026-10-01:
 - **Per till.** Each till is `zMode = "cloud"` (default, everything as today) or `"till"`.
 - **Online only.** A till Z needs the cloud: the cloud allocates the number and builds the
   figures from the documents it holds, so the till and the cloud can never disagree and two
-  Zs can never share a number. Without a connection the till says so and makes no Z.
+  Zs can never share a number. Without a connection the till says so and makes no Z —
+  unless the till parameter `tillZOffline` is on: then the till closes, numbers and prints
+  the Z itself and uploads it when the connection is back (docs/SPEC_OFFLINE_TILL_Z.md:
+  `POST till-z` with `offline`, `lastTillZNumber` on the heartbeat, the card transmission
+  at a Z, and the forced remote Z close).
 - **The till does the Z.** A cashier (any signed-in till user, no manager approval) presses
   "הפק Z", or the dashboard asks the till to. Either way the till closes its open shift
   first (a normal §1.3 close), then asks for the Z (§5.2), then prints it.

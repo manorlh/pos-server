@@ -173,6 +173,11 @@ def incompatible_values(
     return [v for v in values if not _is_valid(value_type, v.value, enum_options)]
 
 
+#: "מדפסת חשבוניות" = "אוטומטי" (the default): a USB receipt printer plugged into a regular till and
+#: approved prints the receipts by itself, else as "מובנית בקופה" (pos-android domain/UsbPrinterAuto.kt
+#: `tillReceiptOnUsb`, docs/SPEC_KIOSK.md §14.7). Migration e9a3c7f1b5d2 adds it to existing databases.
+RECEIPT_PRINTER_AUTO = "אוטומטי"
+
 # ── Image parameters ─────────────────────────────────────────────────────────
 
 #: The receipt logo, printed at the head of every receipt. Supersedes the branding
@@ -197,7 +202,10 @@ PRINTERS_PAGE_KEYS = (
 
 def managed_on(key: str) -> Optional[str]:
     """The dashboard tab that edits this parameter instead of the parameters page."""
-    return "printers" if key in PRINTERS_PAGE_KEYS else None
+    if key in PRINTERS_PAGE_KEYS:
+        return "printers"
+    # "תצורת עבודה לעמדה" (app/services/kds_workflow.py): the dashboard's workflow card.
+    return "workflow" if key in _WORKFLOW_KEYS else None
 
 #: String parameters whose value is an image URL. The dashboard edits them with an
 #: image picker (upload through `POST /images/branding?kind=<kind>`, preview, clear)
@@ -374,7 +382,26 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         for kind, ident in chain.scopes()
     ]
     values = db.query(TillParameterValue).filter(or_(*on_chain)).all() if on_chain else []
-    return resolve_till_parameters(parameters, values, chain)
+    resolved = resolve_till_parameters(parameters, values, chain)
+    if getattr(machine, "independent_till", False):
+        # "קופה עצמאית" (app/services/independent_till.py): never a host of the shop's LAN
+        # group, and tables only when set at its own level.
+        from app.services.independent_till import apply_to_resolved
+
+        resolved = apply_to_resolved(machine, parameters, values, resolved)
+    else:
+        # "לא משמש כשרת מקומי" (app/services/lan_server.py): never a host of the shop's LAN
+        # group either — but still in it, so its tables mode stays as the shop set it.
+        from app.services.lan_server import excluded_parameters, is_excluded
+
+        if is_excluded(db, machine):
+            resolved.parameters = excluded_parameters(resolved.parameters)
+    # "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): never sent in clear — the till
+    # gets the code's hash, salted with its own id.
+    from app.services.kiosk_technician import hash_for_machine
+
+    hash_for_machine(machine, resolved.parameters)
+    return resolved
 
 
 def resolve_for_shop(db: Session, shop: Shop) -> Dict[str, Any]:
@@ -401,6 +428,75 @@ def resolve_for_shop(db: Session, shop: Shop) -> Dict[str, Any]:
 SHOP_Z_OPEN_TILLS_KEY = "shopZOpenTills"
 SHOP_Z_OPEN_TILLS_BLOCK = "חובה לסגור את כל הקופות"
 SHOP_Z_OPEN_TILLS_CONFIRM = "מותר באישור העובד"
+
+#: "סגירת Z ללא חיבור לענן" — read by the till, only in `zMode = till`
+#: (docs/SPEC_OFFLINE_TILL_Z.md).
+TILL_Z_OFFLINE_KEY = "tillZOffline"
+
+#: "טיפ במסופון": the card terminal asks for the tip, the till records it
+#: (docs/SPEC_TERMINAL_TIP.md). Read by the till only.
+TERMINAL_TIP_PROMPT_KEY = "terminalTipPrompt"
+
+#: "סגנון מפת שולחנות": how the till draws its tables' floor map. Read by the till only
+#: (pos-android domain/Tables.kt `TablesMapStyle`, which reads these exact options; anything
+#: else is the classic look there).
+TABLES_MAP_STYLE_KEY = "tablesMapStyle"
+TABLES_MAP_STYLE_CLASSIC = "קלאסי — עץ וזהב"
+TABLES_MAP_STYLE_MODERN = "מודרני — נקי"
+TABLES_MAP_STYLE_OPTIONS = (TABLES_MAP_STYLE_CLASSIC, TABLES_MAP_STYLE_MODERN)
+
+#: "הצג כסאות": the chairs round each table on the till's floor map, in both looks — as
+#: many as the table seats (pos-android domain/Tables.kt `TablesConfig.showChairs`; the
+#: till's own "כסאות" toggle on the tables screen overrides it on that device).
+TABLES_SHOW_CHAIRS_KEY = "tablesShowChairs"
+
+#: "גודל שם שולחן": how large each table's name / number is written on the map (the till
+#: reads these exact words — domain/TablePolicy.kt `TableLabelSize`; anything else is normal).
+TABLES_LABEL_SIZE_KEY = "tablesLabelSize"
+TABLES_LABEL_SIZES = ("קטן", "רגיל", "גדול")
+
+#: "גודל ריבוע מוצר": the sizes, smallest first, and "as the size it falls back to".
+TILE_SIZES = ("קטן מאוד", "קטן", "בינוני", "גדול")
+TILE_SIZE_INHERIT = "ברירת מחדל"
+
+#: "מסופון ברשת ללא הצפנה (HTTP)": plain HTTP to a pinpad on a private network. Read by
+#: the till only (hardware/payment/net on Android).
+PINPAD_ALLOW_HTTP_KEY = "pinpadAllowHttp"
+
+#: "הזמנה מהירה — מתי לשאול": a new order starts with its details — "לקחת או לשבת?", then
+#: the name — before the first item; the default (ui/sell/MenuSheetState.kt; alembic e4f6a8b0c2d4).
+ORDER_DETAILS_DINING_FIRST = "בתחילת הזמנה (לשבת/לקחת ואז שם)"
+
+#: "כפתור תשלום מהיר 1 / 2": the two quick-pay buttons under the total of the tablet's quick
+#: order, in their order — the first at the start of the row (the right, in Hebrew). Read by
+#: the till only (pos-android domain/QuickCash.kt, quickPayButtons). Two enums rather than one
+#: ordered list: the parameter types have no ordered multi-choice.
+QUICK_PAY_BUTTON_1_KEY = "quickPayButton1"
+QUICK_PAY_BUTTON_2_KEY = "quickPayButton2"
+QUICK_PAY_FAST_CARD = "אשראי מהיר"
+QUICK_PAY_CASH_WITH_CHANGE = "מזומן עם עודף"
+QUICK_PAY_FAST_CASH = "מזומן מהיר"
+QUICK_PAY_CHOICES = (QUICK_PAY_FAST_CARD, QUICK_PAY_CASH_WITH_CHANGE, QUICK_PAY_FAST_CASH)
+
+#: "התקבל מזומן" (the cash box on the tablet's order panel) is gone; its switch with it.
+#: Not a built-in any more — alembic 3f8b6d2a9c41 retires an existing definition.
+RETIRED_CASH_CHANGE_IN_PANEL_KEY = "cashChangeInPanel"
+
+
+def _quick_pay_description(which: str) -> str:
+    return (
+        f"{which} "
+        "בהזמנה המהירה בטאבלט, מתחת לסה״כ, שני כפתורי תשלום מהיר זה לצד זה — כפתור 1 מימין, כפתור 2 "
+        "משמאלו — ומתחתיהם \"תשלום\": מסך התשלום עם כל אמצעי התשלום ופיצול. "
+        f"«{QUICK_PAY_FAST_CARD}» — חיוב האשראי מיד במסופון (תשלום אחד). "
+        f"«{QUICK_PAY_CASH_WITH_CHANGE}» — מסך המזומן: הסכום שהתקבל והעודף. "
+        f"«{QUICK_PAY_FAST_CASH}» — בדיוק הסכום לתשלום, והעסקה נסגרת מיד. "
+        "כפתור שאמצעי התשלום שלו לא מותר בקופה (באמצעי התשלום, או בפרמטרים \"אשראי מהיר\" / "
+        "\"מזומן מהיר\") לא מוצג, והכפתור השני תופס את כל הרוחב. אותה בחירה בשני הכפתורים — "
+        "הכפתור השני מתחלף באפשרות הראשונה שלא נבחרה (לפי הסדר: "
+        f"{QUICK_PAY_FAST_CARD}, {QUICK_PAY_CASH_WITH_CHANGE}, {QUICK_PAY_FAST_CASH}). "
+        "לא משפיע על קופה ניידת. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+    )
 
 
 @dataclass(frozen=True)
@@ -429,7 +525,23 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             f"«{SHOP_Z_OPEN_TILLS_BLOCK}» — ה-Z נדחה עד שכל הקופות נסגרות או נכללות בו. "
             f"«{SHOP_Z_OPEN_TILLS_CONFIRM}» — ה-Z מופק רק אחרי שהעובד מאשר את רשימת "
             "הקופות שנשארות בחוץ, והאישור (מי ואילו קופות) נרשם על ה-Z. "
-            "חל רק על Z ברמת סניף; Z לפי קופה אינו מושפע."
+            "חל רק על Z ברמת סניף; Z לפי קופה אינו מושפע. "
+            f"בסניף שעובד ברשת מקומית (קופה ראשית) — תמיד «{SHOP_Z_OPEN_TILLS_BLOCK}»: הקופה הראשית סוגרת "
+            "את כל הקופות ברשת, ואף קופה לא נשארת בחוץ (קופה עצמאית אינה חלק מה-Z הסניפי בכלל)."
+        ),
+    ),
+    # Read by the till (docs/SPEC_OFFLINE_TILL_Z.md); honoured only in `zMode = till`.
+    BuiltinParameter(
+        key=TILL_Z_OFFLINE_KEY,
+        label="סגירת Z ללא חיבור לענן (Z לכל קופה)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, קופה שעובדת במצב \"Z לכל קופה\" יכולה לסגור Z גם בלי חיבור לענן: ה-Z נבנה "
+            "וממוספר בקופה, מודפס עם הסימון \"ממתין לסנכרון לענן\", ועולה לענן אוטומטית כשהחיבור "
+            "חוזר. בענן הוא נבדק מול המסמכים, ופער נרשם כחריגה. שידור האשראי מתבצע לפני הסגירה "
+            "(דרך המסוף, לא דרך הענן). חל רק במצב \"Z לכל קופה\" — ב-Z סניפי וב-Z לפי נקודת "
+            "מכירה הפרמטר לא משפיע."
         ),
     ),
     # Read by the till, not the cloud; built in because the dashboard edits it with an
@@ -532,6 +644,26 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "הקופה ממתינה לחיבור ולא ננעלת, כדי לא לאבד את מה שלא נשמר."
         ),
     ),
+    # Read by the till only (pos-android system/KioskLock.kt, docs/KIOSK.md): Android's lock
+    # task mode while on. The cloud stays the authority — off releases the lock at the
+    # till's next sync, whatever a manager did there.
+    BuiltinParameter(
+        key="kioskMode",
+        label="נעילת קופה (מצב קיוסק)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, הקופה ננעלת בתוך האפליקציה: אי אפשר לצאת ממנה למסך הבית של Android, "
+            "לאפליקציות אחרות, לשורת ההתראות או להגדרות המכשיר, ו\"חזור\" במסך הראשי לא סוגר אותה. "
+            "במכשיר רגיל Android מבקש פעם אחת לאשר \"הצמדת אפליקציה\", ואת ההצמדה אפשר לבטל "
+            "במחווה של המערכת. נעילה מלאה ושקטה — בלי שאלה ובלי דרך יציאה, והקופה כמסך הבית — "
+            "דורשת הגדרה חד-פעמית של המכשיר: הגדרת הקופה כבעלת המכשיר (Device Owner) על ידי "
+            "טכנאי, או הוספת הקופה לרשימת הקיוסק בניהול המכשירים של הספק (Kozen / Nayax). "
+            "יציאה לתחזוקה: בתפריט הקופה \"יציאה מנעילת קופה\", באישור מנהל (קוד מנהל שנבדק בקופה, "
+            "עובד גם בלי אינטרנט) — עד ההפעלה הבאה של הקופה או עד \"נעילת הקופה מחדש\". "
+            "כיבוי הפרמטר משחרר את הנעילה בסנכרון הבא. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
     BuiltinParameter(
         key="screensaverAfterMinutes",
         label="שומר מסך — אחרי כמה דקות",
@@ -569,20 +701,43 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כבוי — הכפתור לא מוצג בקופה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
+    # The tablet quick order's two quick-pay buttons (read by the till only).
+    BuiltinParameter(
+        key=QUICK_PAY_BUTTON_1_KEY,
+        label="כפתור תשלום מהיר 1 (הזמנה מהירה בטאבלט)",
+        value_type="enum",
+        enum_options=QUICK_PAY_CHOICES,
+        default_value=QUICK_PAY_FAST_CARD,
+        description=_quick_pay_description("הכפתור הראשון (מימין)."),
+    ),
+    BuiltinParameter(
+        key=QUICK_PAY_BUTTON_2_KEY,
+        label="כפתור תשלום מהיר 2 (הזמנה מהירה בטאבלט)",
+        value_type="enum",
+        enum_options=QUICK_PAY_CHOICES,
+        default_value=QUICK_PAY_CASH_WITH_CHANGE,
+        description=_quick_pay_description("הכפתור השני (משמאל)."),
+    ),
     BuiltinParameter(
         key="receiptPrinter",
         label="מדפסת חשבוניות",
         value_type="enum",
-        enum_options=("מובנית בקופה", "רשת (IP)", "Bluetooth", "USB"),
-        default_value="מובנית בקופה",
+        enum_options=(RECEIPT_PRINTER_AUTO, "מובנית בקופה", "רשת (IP)", "Bluetooth", "USB"),
+        default_value=RECEIPT_PRINTER_AUTO,
         description=(
             "לאן הקופה מדפיסה חשבוניות, העתקים, שוברים, דוחות X / Z וחשבונות שולחן. "
-            "«מובנית בקופה» — המדפסת של הקופה (ברירת מחדל). "
+            "«אוטומטי» (ברירת מחדל) — מדפסת USB שמחוברת לקופה ומאושרת מדפיסה את הקבלות לבד; "
+            "בלעדיה — המדפסת של הקופה, ובקופה בלי מדפסת — מדפסת החשבוניות של הסניף "
+            "(docs/SPEC_KIOSK.md §14.7; קיוסק — כמו קודם). "
+            "«מובנית בקופה» — תמיד המדפסת של הקופה, גם כשמחוברת מדפסת USB. "
             "«רשת (IP)» / «Bluetooth» / «USB» — מדפסת חשבוניות חיצונית (ESC/POS), למשל SNBC BTP-880: "
             "את הכתובת קובעים ב\"מדפסת חשבוניות — כתובת\" ואת הדגם ב\"מדפסת חשבוניות — דגם\". "
             "גם קופה בלי מדפסת (MODO) מדפיסה כך. מגדירים בדרך כלל לקופה בודדת. "
             "מדפסות חשבוניות משותפות (למשל בדלפק, עם מגירה) מגדירים בדשבורד בדף \"מדפסות\" — שם אפשר גם "
             "לחבר מגירה ולקבוע לאילו קופות; בהדפסת חשבון הקופה שואלת לאן להדפיס."
+            " לכל מדפסת שם (חובה) — והקופה מציגה אותו: כשיש לקופה יותר ממדפסת חשבוניות אחת (כולל "
+            "המדפסת שלה), היא שואלת \"באיזו מדפסת להדפיס?\" במסמכים ובדוחות, וזוכרת את הבחירה "
+            "(\"זכור לקופה הזו\"; משנים במסך \"מדפסות\" בקופה)."
         ),
     ),
     BuiltinParameter(
@@ -618,15 +773,44 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "בכפתור \"טיפ\" במסך התשלום (שמופיע כל עוד אמצעי תשלום כלשהו מקבל טיפ)."
         ),
     ),
+    # Read by the till (docs/SPEC_TERMINAL_TIP.md): the card terminal asks for the tip.
+    BuiltinParameter(
+        key=TERMINAL_TIP_PROMPT_KEY,
+        label="טיפ במסופון (Agamento שואל את הלקוח)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: בתשלום באשראי המסופון (Agamento — המובנה ב-Nova 55F או מסופון Nayax ברשת) "
+            "שואל את הלקוח על הטיפ, והקופה רק רושמת את הטיפ שהמסופון גבה בפועל — כטיפ באשראי של "
+            "המלצר/הקופאי, ב-Z, בדוחות ובטיפים לעובד. שאלת הטיפ של הקופה (מסך הטיפ, הטיפ מראש "
+            "בכפתור \"טיפ\") לא מוצגת בתשלום באשראי; במזומן היא נשארת כמו שהיא. "
+            "חובה להפעיל את שאלת הטיפ גם בצד המסופון (הגדרות Nayax / המסופון) — אחרת המסופון לא "
+            "ישאל והעסקה תירשם בלי טיפ. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    # Read by the till (hardware/payment/net): plain HTTP to a pinpad on the LAN.
+    BuiltinParameter(
+        key=PINPAD_ALLOW_HTTP_KEY,
+        label="מסופון ברשת ללא הצפנה (HTTP)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: קופה שסולקת במסופון Nayax ברשת (Agamento, SPICy) רשאית לדבר איתו ב-HTTP "
+            "ללא הצפנה — רק כשכתובת המסופון ברשת פרטית (192.168.x.x, 10.x.x.x או 172.16–31.x.x). "
+            "HTTPS נשאר המועדף: הקופה מנסה קודם HTTPS ועוברת ל-HTTP רק כשהמסופון לא עונה ב-TLS "
+            "(או מיד, כשהכתובת נכתבה עם http://). כך עובדת גם הקופה השולחנית. כבוי (ברירת מחדל): "
+            "HTTPS בלבד. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
     BuiltinParameter(
         key="screenEditEnabled",
-        label="עריכת מסך בקופה (לחיצה ארוכה)",
+        label="עריכת מסך בקופה",
         value_type="boolean",
         default_value=True,
         description=(
-            "לחיצה ארוכה על פריט בקופה פותחת \"עריכת מסך\": סידור הפריטים והמחלקות בגרירה והפיכת פריט "
-            "ללא פעיל — מנהל או באישור מנהל. כשגם \"נעילת מוצר בלחיצה ארוכה\" פעיל, הלחיצה הארוכה פותחת "
-            "תפריט קטן עם שתי האפשרויות. כבוי — הלחיצה הארוכה כמו קודם (נעילת מוצר, אם הוגדרה)."
+            "\"עריכת מסך\" נפתחת מתפריט הקופה (ניהול ← עריכת מסך): סידור הפריטים והמחלקות בגרירה, "
+            "הפיכת פריט ללא פעיל ותמונת פריט — מנהל או באישור מנהל; השמירה כמו קודם. כבוי — הכניסה "
+            "לא מוצגת בתפריט. הלחיצה הארוכה על פריט נשארת לנעילת מוצר בלבד (7 שניות, אם הוגדרה)."
         ),
     ),
     BuiltinParameter(
@@ -769,6 +953,47 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "הטקסט בתוך השולחן גדל ומתכווץ איתו."
         ),
     ),
+    # "סגנון מפת שולחנות" — read by the till only (pos-android domain/Tables.kt, TablesMapStyle).
+    BuiltinParameter(
+        key=TABLES_MAP_STYLE_KEY,
+        label="סגנון מפת שולחנות",
+        value_type="enum",
+        enum_options=TABLES_MAP_STYLE_OPTIONS,
+        default_value=TABLES_MAP_STYLE_CLASSIC,
+        description=(
+            "איך מסך השולחנות בקופה נראה. «קלאסי — עץ וזהב» (ברירת המחדל): רצפת פרקט עץ, שולחנות "
+            "עם צל וכיסאות עץ, מצב השולחן בטבעת צבעונית ובתווית מתחת לשולחן, והילה זהובה סביב "
+            "שולחן שנבחר. «מודרני — נקי»: רצפה נקייה (אפורה עם רשת עדינה, כהה במצב לילה), שולחנות "
+            "חדים עם קו דק וכיסאות בהירים, והמצב בגוון עדין ובמילה בתוך השולחן. רק המראה משתנה — "
+            "כל הפעולות במסך זהות. רקע שנבחר לאזור (עץ, אריחים, נקי, בהיר, כהה או תמונה) נשמר בשני הסגנונות. "
+            "ניתן לקבוע לחברה, לסניף, לנקודת מכירה או לקופה בודדת."
+        ),
+    ),
+    # "הצג כסאות" — read by the till only (pos-android domain/Tables.kt, TablesConfig.showChairs).
+    BuiltinParameter(
+        key=TABLES_SHOW_CHAIRS_KEY,
+        label="הצג כסאות",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת המחדל): במפת השולחנות בקופה מצוירים כסאות סביב כל שולחן — כמספר "
+            "המקומות שהוגדר לשולחן (\"כסאות\" בעורך השולחנות) — בשני סגנונות המפה. כשכבוי: "
+            "השולחנות בלי כסאות. בקופה אפשר להחליף זמנית מ\"תצוגה\" במסך השולחנות (הקופה זוכרת). "
+            "ניתן לקבוע לחברה, לסניף, לנקודת מכירה או לקופה בודדת."
+        ),
+    ),
+    # "גודל שם שולחן" — read by the till only (pos-android domain/TablePolicy.kt, TableLabelSize).
+    BuiltinParameter(
+        key=TABLES_LABEL_SIZE_KEY,
+        label="גודל שם שולחן במפה",
+        value_type="enum",
+        enum_options=TABLES_LABEL_SIZES,
+        default_value="רגיל",
+        description=(
+            "כמה גדול נכתב שם השולחן (או מספרו, כשאין לו שם) על השולחן במסך השולחנות בקופה. "
+            "שם ארוך נחתך בשלוש נקודות."
+        ),
+    ),
     BuiltinParameter(
         key="tablesWarnMinutes",
         label="ניהול שולחנות — זמן ישיבה: אזהרה (דקות)",
@@ -868,12 +1093,68 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         key="orderDetailsAt",
         label="הזמנה מהירה — מתי לשאול (לקחת/לשבת, שם)",
         value_type="enum",
-        enum_options=("במעבר לתשלום", "בפתיחת הזמנה"),
-        default_value="במעבר לתשלום",
+        enum_options=(ORDER_DETAILS_DINING_FIRST, "במעבר לתשלום", "בפתיחת הזמנה"),
+        default_value=ORDER_DETAILS_DINING_FIRST,
         description=(
             "מתי הקופה שואלת את פרטי ההזמנה המהירה שהופעלו (\"לקחת / לשבת\", \"שם לקוח\"): "
-            "«במעבר לתשלום» — בלחיצה על תשלום; «בפתיחת הזמנה» — כשמוסיפים את הפריט הראשון להזמנה חדשה. "
-            "בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
+            f"«{ORDER_DETAILS_DINING_FIRST}» (ברירת המחדל) — הזמנה חדשה נפתחת בשאלות: קודם \"לקחת או "
+            "לשבת?\" ואז השם (כל אחת אם הופעלה), עוד לפני הפריט הראשון, ורק אז מתחילים להזמין; "
+            "«במעבר לתשלום» — הכול בלחיצה על תשלום; «בפתיחת הזמנה» — הכול כשמוסיפים את הפריט "
+            "הראשון להזמנה חדשה. בכל מקרה, הזמנה שהגיעה לתשלום בלי הפרטים נשאלת עליהם לפני התשלום."
+        ),
+    ),
+    # "גודל ריבוע מוצר": the product tiles on the till (domain/TileSize.kt, tileSizeFor) —
+    # the quick order's, and a tablet's when it has none of its own. A table's order has its
+    # own chain (tablet tables → tables → medium, the approved table layout), never this one.
+    BuiltinParameter(
+        key="productTileSize",
+        label="גודל ריבוע מוצר",
+        value_type="enum",
+        enum_options=TILE_SIZES,
+        default_value="בינוני",
+        description=(
+            "גודל ריבועי המוצרים במסך המכירה (הזמנה מהירה). \"קטן מאוד\" מכניס הכי הרבה מוצרים למסך, "
+            "\"גדול\" מציג את התמונה בגדול. חל גם על טאבלט, אלא אם נקבע לו גודל משלו. "
+            "הזמנת שולחן אינה מושפעת ממנו — לה יש \"גודל ריבוע מוצר — שולחנות\"."
+        ),
+    ),
+    # "צבע גופן": the till's text colour on the light theme (ui/theme/Theme.kt, textColorOfParam).
+    BuiltinParameter(
+        key="textColor",
+        label="צבע גופן",
+        value_type="enum",
+        enum_options=("ברירת מחדל", "שחור", "אפור כהה", "כחול כהה", "ירוק כהה", "חום כהה", "סגול כהה"),
+        default_value="ברירת מחדל",
+        description=(
+            "צבע הטקסט במסכי הקופה בערכת הצבע הבהירה. בערכה הכהה הקופה שומרת על הצבע שלה, "
+            "כדי שהטקסט ייקרא. «ברירת מחדל» — הצבע הרגיל של המערכת."
+        ),
+    ),
+    BuiltinParameter(
+        key="productTileSizeTables",
+        label="גודל ריבוע מוצר — שולחנות",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description="גודל ריבועי המוצרים בתוך הזמנת שולחן. «ברירת מחדל» — בינוני, העיצוב המאושר של הזמנת השולחן.",
+    ),
+    BuiltinParameter(
+        key="productTileSizeTablet",
+        label="גודל ריבוע מוצר בטאבלט — הזמנה מהירה",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description="גודל ריבועי המוצרים בהזמנה המהירה בטאבלט. «ברירת מחדל» — כמו \"גודל ריבוע מוצר\".",
+    ),
+    BuiltinParameter(
+        key="productTileSizeTabletTables",
+        label="גודל ריבוע מוצר בטאבלט — שולחנות",
+        value_type="enum",
+        enum_options=(TILE_SIZE_INHERIT,) + TILE_SIZES,
+        default_value=TILE_SIZE_INHERIT,
+        description=(
+            "גודל ריבועי המוצרים בתוך הזמנת שולחן בטאבלט. «ברירת מחדל» — כמו \"גודל ריבוע מוצר — שולחנות\", "
+            "ואם גם הוא לא נקבע — בינוני."
         ),
     ),
     BuiltinParameter(
@@ -913,7 +1194,43 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         description=(
             "כשמופעל: אחרי הוספת מנה שיש לה \"הגדלת מכירה\" (למשל צ'יפס ליד המבורגר, או \"להפוך לארוחה?\") "
             "מופיע בקופה כרטיס הצעה קטן שלא עוצר את העבודה — נגיעה אחת מוסיפה, ✕ סוגר. "
-            "את ההצעות מגדירים בדשבורד תחת \"הגדלות מכירה\". כבוי — לא מוצגות הצעות."
+            "כלל שהוגדר כ\"חלון בחירה\" (או \"בכל הזמנה\") מוצג בחלון במרכז המסך עם האפשרויות "
+            "(\"האם הצעת שתייה ללקוח?\"). "
+            "את ההצעות מגדירים בדשבורד תחת \"הגדלות מכירה\". כבוי — לא מוצגות הצעות, לא כרטיס ולא חלון."
+        ),
+    ),
+    BuiltinParameter(
+        key="upsellMaxPerOrder",
+        label="הגדלות מכירה — עד כמה הצעות בהזמנה",
+        value_type="integer",
+        default_value=0,
+        description=(
+            "כמה הצעות (כרטיס או חלון) הקופה מציגה לכל היותר בהזמנה אחת, מכל הכללים יחד — "
+            "בהזמנה מהירה ובשולחן. 0 (ברירת מחדל) — בלי הגבלה, כמו קודם; כל כלל עדיין מוצע לפי "
+            "ההגדרות שלו (פעם אחת בהזמנה, עדיפות, ימים ושעות). בקיוסק המגבלה נקבעת בהגדרות הקיוסק."
+        ),
+    ),
+    # "יעדים ותחרות" (app/services/sales_targets.py): the till's small leaderboard, off by default.
+    BuiltinParameter(
+        key="leaderboardEnabled",
+        label="לוח מובילים ויעד בקופה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, בראש מסך המכירה מוצג שבב קטן עם התקדמות יעד הסניף להיום, ובלחיצה — לוח מובילים "
+            "של העובדים בסניף היום (לפי הפרמטר \"לוח מובילים — מדד\"). היעדים נקבעים בדשבורד, בדף \"יעדים\". "
+            "מתעדכן כל דקה כשיש חיבור לענן."
+        ),
+    ),
+    BuiltinParameter(
+        key="leaderboardMetric",
+        label="לוח מובילים — מדד",
+        value_type="enum",
+        enum_options=("מכירות", "פריטי אפסייל"),
+        default_value="מכירות",
+        description=(
+            "לפי מה מדורגים העובדים בלוח המובילים בקופה: «מכירות» — סך המכירות נטו של כל עובד היום; "
+            "«פריטי אפסייל» — כמה פריטים כל עובד הוסיף מהצעות \"הגדלת מכירה\" היום."
         ),
     ),
     BuiltinParameter(
@@ -937,6 +1254,34 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כשמופעל: לחיצה על מנה שהוגדרו לה הערות מהירות משלה (או לקטגוריה שלה) פותחת מיד את חלון המנה "
             "עם ההערות לבחירה. הערות שהוגדרו לכל המנות לא פותחות חלון. כבוי (ברירת מחדל) — הערה למנה "
             "מוסיפים בלחיצה על השורה בהזמנה או בכפתור + שעל המנה."
+        ),
+    ),
+    # "הודעות לעובד על פריט" (app/services/product_alerts.py) — read by the till.
+    BuiltinParameter(
+        key="productAlertsEnabled",
+        label="הודעות לעובד על פריט",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): פריט שהוגדרו לו \"הודעות לעובד\" בטופס המוצר (למשל \"מכיל ביצים — "
+            "תעדכן לקוח!\", או אזהרת האלרגנים שלו) מציג אותן בחלון במרכז המסך כשמוסיפים אותו להזמנה, "
+            "לפני שהוא נכנס. הודעה שמסומנת \"חובה לאשר\" מוסיפה את הפריט רק אחרי \"עדכנתי את הלקוח\" "
+            "(\"ביטול\" לא מוסיף), והאישור — מי ומתי — נשמר על השורה ומגיע לענן. כבוי — לא מוצגות הודעות "
+            "והפריט נכנס כרגיל. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md) on the till's own sell screen. The kiosk
+    # shows them by its own settings, whatever this says.
+    BuiltinParameter(
+        key="showDietaryMarks",
+        label="הצג סימוני תזונה בקופה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: על ריבוע המוצר במסך המכירה ובחלון המנה מוצגים סמלים קטנים של סימוני התזונה "
+            "שהוגדרו בטופס המוצר (טבעוני, צמחוני, חלבי, בשרי, ללא גלוטן, חריף). כבוי (ברירת מחדל) — "
+            "לא מוצגים בקופה. בקיוסק הסימונים מוצגים לפי הגדרות הקיוסק. ניתן לקבוע לפי חברה, סניף, "
+            "נקודת מכירה או קופה."
         ),
     ),
     BuiltinParameter(
@@ -996,7 +1341,199 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "קופה פעילה מדווחת כל דקה."
         ),
     ),
+    # "נוכחות עובדים" (app/services/attendance.py, docs/SPEC_ATTENDANCE.md) — read by the
+    # till and the cloud. All four default to today's behaviour: nothing changes until set.
+    BuiltinParameter(
+        key="attendanceEnabled",
+        label="נוכחות עובדים (שעון נוכחות)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: אחרי הקשת קוד העובד הקופה מציגה את מצב הנוכחות שלו (\"לא במשמרת\" / \"במשמרת מ־17:02\" / "
+            "\"בהפסקה\") ומציעה \"התחל משמרת\", ובתפריט מופיע \"נוכחות\": התחל משמרת, יציאה להפסקה, חזרה "
+            "מהפסקה, סיום משמרת ובקשת תיקון נוכחות. הנוכחות נפרדת מההתחברות לקופה: החלפת עובד, התנתקות, "
+            "נעילה בחוסר שימוש או מעבר לקופה אחרת לא מסיימים משמרת — רק \"סיום משמרת\" או סגירה של מנהל. "
+            "עובד גם בלי אינטרנט (נשמר בקופה ונשלח כשהחיבור חוזר). בדשבורד: \"עובדים במשמרת\", דוח נוכחות "
+            "ותיקוני נוכחות. כבוי (ברירת מחדל) — אין שינוי בקופה."
+        ),
+    ),
+    BuiltinParameter(
+        key="requireClockInBeforeLogin",
+        label="נוכחות — חובה להתחיל משמרת לפני מכירה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל (יחד עם \"נוכחות עובדים\"): עובד שהקיש קוד ואינו במשמרת לא יכול למכור עד שיתחיל "
+            "משמרת — הקופה מציעה \"התחל משמרת\" מיד במסך הכניסה, או יציאה. כבוי — אפשר להמשיך בלי משמרת."
+        ),
+    ),
+    BuiltinParameter(
+        key="preventClockOutWithOpenTables",
+        label="נוכחות — חסימת סיום משמרת עם שולחנות פתוחים",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): מלצר שיש לו שולחנות פתוחים רואה \"לא ניתן לסיים משמרת\" עם רשימת "
+            "השולחנות והסכומים, ויכול להעביר אותם לעובד אחר או לסיים באישור מנהל (נרשם בחריגות). "
+            "חל גם על סגירת משמרת ע״י מנהל בדשבורד. כבוי — מוצגת אזהרה ואפשר לסיים."
+        ),
+    ),
+    BuiltinParameter(
+        key="requireManagerForClockOut",
+        label="נוכחות — סיום משמרת באישור מנהל",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: \"סיום משמרת\" דורש קוד מנהל (נבדק בקופה, עובד גם בלי אינטרנט); מנהל שמסיים "
+            "את המשמרת של עצמו מאשר בעצמו. המאשר נשמר עם המשמרת. כבוי (ברירת מחדל) — העובד מסיים לבד."
+        ),
+    ),
+    # OTH ("על חשבון הבית") and the club button ("מועדון לקוחות") on the order screens —
+    # read by the till; the documents carry them to the cloud (exception "oth", the
+    # discounts in the promotions report). All off by default: nothing changes until set.
+    BuiltinParameter(
+        key="othEnabled",
+        label="כפתור OTH — על חשבון הבית",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסך ההזמנה (הזמנה מהירה ושולחן) מופיע כפתור \"OTH\", וגם בפעולות של כל שורה. "
+            "בוחרים פריטים וסיבה (מהפרמטר \"OTH — סיבות\"), והפריט הופך לחינם: הנחה של 100% שמסומנת OTH, "
+            "עם הסיבה ומי אישר. הפריט עדיין יוצא למטבח, מודפס בחשבונית \"OTH — סיבה\" עם המחיר המקורי ו-₪0, "
+            "ואפשר לבטל אותו (באותו אישור). לא מצטבר עם הנחה אחרת על השורה ולא נספר במבצעים. "
+            "כל פריט OTH נרשם בענן כחריגה \"OTH — על חשבון הבית\" ומופיע בדוח המבצעים וההנחות."
+        ),
+    ),
+    BuiltinParameter(
+        key="othRequiresManager",
+        label="OTH — באישור מנהל",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): עובד שאין לו הרשאת הנחה צריך קוד מנהל כדי לתת פריט על חשבון הבית "
+            "(וכדי לבטל OTH). מנהל שמחובר בקופה מאשר בעצמו. כבוי — כל עובד נותן OTH בלי אישור."
+        ),
+    ),
+    BuiltinParameter(
+        key="othReasons",
+        label="OTH — סיבות",
+        value_type="string",
+        default_value="לקוח קבוע,פיצוי,טעימה,עובד,אחר",
+        description=(
+            "הסיבות שהעובד בוחר מהן כשהוא נותן פריט על חשבון הבית, מופרדות בפסיקים "
+            "(למשל: לקוח קבוע,פיצוי,טעימה,עובד,אחר). הסיבה מודפסת בחשבונית ונרשמת בחריגה ובדוח."
+        ),
+    ),
+    BuiltinParameter(
+        key="clubButtonEnabled",
+        label="כפתור מועדון לקוחות במסך ההזמנה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסך ההזמנה (הזמנה מהירה ושולחן) מופיע כפתור \"מועדון\". לחיצה נותנת על כל ההזמנה "
+            "את אחוז ההנחה הקבוע מהפרמטר \"מועדון — אחוז הנחה קבוע\" כהנחת סל \"הנחת מועדון X%\" — "
+            "בלי מוצרים שלא מקבלים הנחות, וגם על פריטים שנוספים אחר כך. לחיצה נוספת מסירה. "
+            "לא מצטברת עם הנחת סל ידנית (מחליפה אותה, באישור). מודפסת בחשבונית ונשלחת לענן כהנחת מועדון "
+            "(עם הלקוח, אם שויך) — בדוח המבצעים וההנחות."
+        ),
+    ),
+    BuiltinParameter(
+        key="clubDiscountPercent",
+        label="מועדון — אחוז הנחה קבוע",
+        value_type="decimal",
+        default_value=10,
+        description="אחוז ההנחה שכפתור המועדון נותן על ההזמנה (למשל 10 או 12.5; בין 0 ל-100).",
+    ),
+    BuiltinParameter(
+        key="clubRequiresCustomer",
+        label="מועדון — חובה לשייך לקוח",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: לחיצה על \"מועדון\" פותחת קודם את חיפוש הלקוחות (לפי טלפון או שם), וההנחה ניתנת "
+            "רק אחרי שיוך לקוח. כבוי — שיוך לקוח רשות."
+        ),
+    ),
 )
+
+
+# "תצורת עבודה לעמדה" and KDS (docs/SPEC_KDS.md): defined with their rules in
+# app/services/kds_workflow.py, registered here like the others.
+from app.services.kds_workflow import WORKFLOW_KEYS as _WORKFLOW_KEYS  # noqa: E402
+from app.services.kds_workflow import WORKFLOW_PARAMETER_SPECS as _WORKFLOW_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _WORKFLOW_SPECS)
+
+# "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): the kiosk technician screen's code.
+from app.services.kiosk_technician import TECHNICIAN_PARAMETER_SPECS as _TECHNICIAN_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _TECHNICIAN_SPECS)
+
+# "מעבר אוטומטי לנתונים ניידים" (app/services/device_identity.py): the till's cloud traffic over
+# mobile data while the Wi-Fi has no internet (pos-android system/NetworkFallback.kt).
+from app.services.device_identity import CELLULAR_PARAMETER_SPECS as _CELLULAR_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CELLULAR_SPECS)
+
+# "הדפסת עסקאות שלא הושלמו בדוחות" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
+from app.services.failed_payments import FAILED_PAYMENTS_PARAMETER_SPECS as _FAILED_PAYMENTS_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FAILED_PAYMENTS_SPECS)
+
+# "סוללה חלשה" (app/services/battery_alerts.py): the thresholds and the alarm, per device.
+from app.services.battery_alerts import BATTERY_PARAMETER_SPECS as _BATTERY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _BATTERY_SPECS)
+
+# "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): print on the till, and how long a prepared one waits.
+from app.services.remote_credits import REMOTE_CREDIT_PARAMETER_SPECS as _REMOTE_CREDIT_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_CREDIT_SPECS)
+
+# "התראת בון שלא הודפס" (pos-android domain/UnprintedBonAlert.kt): the owner, 08.10.2026 — off by
+# default; on shows the kiosk's "בון לא הודפס" pill and the till's kitchen-print banner.
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key="unprintedBonAlert",
+        label="התראת בון שלא הודפס",
+        value_type="boolean",
+        description="הצגת התראה כשבון לא הודפס (בקיוסק ובקופה). כבוי — לא מוצגת התראה; הבון נשאר בתור ויודפס כשהמדפסת תחזור.",
+        default_value=False,
+    ),
+)
+
+# "עקיפת בדיקת מספר מסוף" (docs/SPEC_KIOSK.md §20.1): the card lock's terminal-number check off.
+from app.services.terminal_check_bypass import BYPASS_PARAMETER_SPECS as _BYPASS_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _BYPASS_SPECS)
+
+# "שוברי פריט" (app/services/item_ticket.py): the device's item tickets, above each product's setting.
+from app.services.item_ticket import ITEM_TICKET_PARAMETER_SPECS as _ITEM_TICKET_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _ITEM_TICKET_SPECS)
+
+# "מגירת מזומן" (app/services/cash_drawer.py, docs/SPEC_ROLES_PERMISSIONS.md): the drawer's
+# management parameters (spec §17), edited on the roles page per company → shop → area → till.
+from app.services.cash_drawer import CASH_DRAWER_PARAMETER_SPECS as _CASH_DRAWER_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CASH_DRAWER_SPECS)
+
+# "חסימת אשראי כשיש תשלום לא מוכרע" (app/services/card_lock.py): what an unresolved card payment blocks.
+from app.services.card_lock import CARD_LOCK_PARAMETER_SPECS as _CARD_LOCK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CARD_LOCK_SPECS)
+
+
+def validate_keyed_value(key: str, value: Any) -> Any:
+    """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
+    from app.services import kiosk_technician
+
+    if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:
+        try:
+            return kiosk_technician.clean_code(value)
+        except kiosk_technician.TechnicianCodeError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    return value
 
 
 def ensure_builtin_parameters(db: Session) -> List[str]:

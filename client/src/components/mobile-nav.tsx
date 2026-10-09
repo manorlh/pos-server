@@ -3,8 +3,10 @@
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog';
 import { usePathname } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Menu, XIcon } from 'lucide-react';
+import Link from 'next/link';
+import { Menu, UserRound, XIcon } from 'lucide-react';
 import { Sidebar } from '@/components/sidebar';
+import { Wordmark } from '@/components/dashboard/control-board/board-ui';
 import { Button } from '@/components/ui/button';
 import { findNavEntry } from '@/lib/navigation';
 
@@ -16,8 +18,11 @@ import { findNavEntry } from '@/lib/navigation';
 export function MobileNav({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const t = useTranslations('nav');
   // The page's own name in the bar, as an iOS navigation bar titles the screen.
-  const entry = findNavEntry(usePathname());
+  const pathname = usePathname();
+  const entry = findNavEntry(pathname);
   const title = entry ? t(entry.labelKey) : 'R2M POS';
+  // The home (the control board) carries the wordmark and the way to the profile, as its mockup.
+  const home = pathname === '/dashboard';
   return (
     <>
       {/* iOS's navigation bar: translucent over the page, clear of the notch. */}
@@ -33,9 +38,25 @@ export function MobileNav({ open, onOpenChange }: { open: boolean; onOpenChange:
           >
             <Menu className="size-5" />
           </Button>
-          <span className="min-w-0 flex-1 truncate text-center text-[17px] font-semibold tracking-tight">{title}</span>
-          {/* Balances the menu button, so the title sits in the middle. */}
-          <span aria-hidden className="size-10 shrink-0" />
+          {home ? (
+            <span className="flex min-w-0 flex-1 justify-center">
+              <Wordmark />
+            </span>
+          ) : (
+            <span className="min-w-0 flex-1 truncate text-center text-[17px] font-semibold tracking-tight">{title}</span>
+          )}
+          {home ? (
+            <Link
+              href="/dashboard/profile"
+              aria-label={t('profile')}
+              className="flex size-10 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted"
+            >
+              <UserRound className="size-5" aria-hidden />
+            </Link>
+          ) : (
+            // Balances the menu button, so the title sits in the middle.
+            <span aria-hidden className="size-10 shrink-0" />
+          )}
         </div>
       </header>
 

@@ -20,7 +20,53 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 30
-    
+
+    # Card-integration secrets at rest (the Z-Credit terminal password,
+    # app/services/payment_secrets.py): a Fernet key or a passphrase. Empty = derived
+    # from jwt_secret_key; set it in production before rotating that key.
+    payment_secrets_key: str = ""
+
+    # "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds a
+    # Z-Credit card sale through Z-Credit's web API, and a till issues the credit note
+    # (remote-credit mode `card_refunded`). OFF by default: with it off the dashboard shows
+    # the option disabled and no request ever goes to Z-Credit. Turn it on only once the
+    # tills that will issue those credit notes run a version that knows the mode.
+    zcredit_cloud_refunds_enabled: bool = False
+
+    # Notifications / 019 SMS (docs/SPEC_NOTIFICATIONS_CLUB.md). Live sending is its own
+    # explicit switch, OFF by default: with it off no request ever goes to 019's live
+    # endpoint, whatever a provider config says (mock and 019's /api/test only).
+    notifications_live_sending_enabled: bool = False
+    # The background queue worker in the API process (lease-safe across processes).
+    notifications_worker_enabled: bool = True
+    # Dev only: a super admin may read the mock provider's in-process inbox (to finish
+    # an OTP sign-up locally). Never on in production.
+    notifications_mock_inbox: bool = False
+    # Base URL of the public club sign-up page (QR codes point to <base>/<token>).
+    # Empty = <pairing_mobile_app_base_url>/join.
+    club_join_base_url: str = ""
+
+    # "התראות SMS על חריגות" (app/services/exception_alerts). Which SMS provider the
+    # exception alerts use: "dry_run" (the default — nothing leaves the server; every
+    # message is recorded in the exceptions log and the process log only) or
+    # "notifications" (the 019 queue above, under ITS own mock / test / live gates).
+    # Anything else falls back to dry_run.
+    exception_alerts_sms_provider: str = "dry_run"
+    # Base URL of the dashboard for the SMS link (<base>/x/<code>). Empty =
+    # pairing_mobile_app_base_url (the dashboard's public URL).
+    exception_alerts_link_base_url: str = ""
+    # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
+    exception_alerts_worker_enabled: bool = True
+
+    # "התראות לטלפון" (Web Push, app/services/webpush.py): the VAPID key pair, base64url — the
+    # 65-byte public point and the 32-byte private scalar (`python -m scripts.generate_vapid_keys`).
+    # Set only in the environment; never committed. Both empty = phone alerts off.
+    webpush_vapid_public_key: str = ""
+    webpush_vapid_private_key: str = ""
+    # The contact the push services see ("mailto:…" or "https://…"). Empty = the dashboard's
+    # https URL when it has one.
+    webpush_vapid_subject: str = ""
+
     # Ably realtime notify (per-machine channel + token auth from GET /machines/me/ably-auth)
     ably_api_key: str = ""
     

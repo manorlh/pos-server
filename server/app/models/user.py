@@ -1,8 +1,8 @@
 import uuid
 import enum
 
-from sqlalchemy import Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, Column, String, Boolean, ForeignKey, Enum as SQLEnum, DateTime, Integer
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -20,6 +20,11 @@ class UserRole(str, enum.Enum):
     #: at all; its whole purpose is at the register, through elevation.
     SHIFT_SUPERVISOR = "shift_supervisor"
     CASHIER = "cashier"
+    #: "עמדת מפיק": an event's customer / producer — read-only, and only the events granted to
+    #: them (`producer_event_grants`): their sales, their production's vouchers, the settlement
+    #: when the owner opens it. Nothing else in the business; enforced in `get_current_user`
+    #: (app/services/dashboard_access.py) and by every /producer route.
+    PRODUCER_VIEW = "producer_view"
 
 
 class User(Base):
@@ -55,6 +60,10 @@ class User(Base):
     def has_till_pin(self) -> bool:
         """Whether this person can authorise anything at a till. Never the hash."""
         return bool(self.till_pin_hash)
+
+    #: What this person chose for themselves in their profile (`{"homePage": "board"}`),
+    #: read and written only through app/services/user_preferences.py. Null = the defaults.
+    preferences = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

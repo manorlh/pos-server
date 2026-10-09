@@ -2,6 +2,7 @@
 
 import { useTranslations } from 'next-intl';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { serverMessageOf } from '@/lib/localShopZ';
 
 /**
  * Hebrew for the Z run's error codes.
@@ -26,6 +27,8 @@ const KNOWN = new Set([
   'shift_already_in_z',
   'expired',
   'card_in_flight',
+  // The till's payment screen is open: a close that is not forced waits for it (SHIFTS_API §1.4).
+  'payment_in_progress',
   'deferred',
   'failed',
   'cancelled',
@@ -88,20 +91,51 @@ export function errorCodeOf(detail: unknown): string | null {
   return null;
 }
 
+/**
+ * Codes whose server text says more than ours (local mode, "חובה לסגור את כל הקופות" —
+ * the shop's own rule, in Hebrew): its `message` is shown first when it sends one.
+ */
+const SERVER_TEXT_FIRST = new Set([
+  'z_only_from_main_till',
+  'all_tills_required',
+  'local_mode_all_tills',
+  // The shop Z's one producer is the main till on the LAN (or a switch is waiting on it).
+  'shop_z_producer_local',
+  'shop_z_producer_busy',
+  // A till the run takes shows a warning: the operator confirms the cloud's data (§4.6.1).
+  'cloud_data_confirmation_required',
+]);
+
+/** Our own words for those of them not in `zErrors` (under `independentTill.zErrors`). */
+const LOCAL_KNOWN = new Set([
+  'all_tills_required',
+  'local_mode_all_tills',
+  // An offline till Z of an earlier run of the till: never filed into the new run.
+  'offline_z_other_sequence',
+]);
+
 export function useZErrorText() {
   const t = useTranslations('zErrors');
+  const ti = useTranslations('independentTill.zErrors');
   const tc = useTranslations('common');
 
   /** Words for a code, or null when there are none. */
   const forCode = (code: string | null | undefined): string | null =>
-    code && KNOWN.has(code) ? t(code) : null;
+    code && KNOWN.has(code) ? t(code) : code && LOCAL_KNOWN.has(code) ? ti(code) : null;
 
   return {
     forCode,
     /** A request that failed: its code in words, else the server's own message. */
     forError(err: unknown): string {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
-      return forCode(errorCodeOf(detail)) ?? axiosErrorToToastMessage(err, tc('error'));
+      const code = errorCodeOf(detail);
+      // `{detail: {code, message}}`: the server's Hebrew for a code we have no words for,
+      // or for one whose server text is the more exact.
+      const message = serverMessageOf(err);
+      if (message && (!code || SERVER_TEXT_FIRST.has(code) || !(KNOWN.has(code) || LOCAL_KNOWN.has(code)))) {
+        return message;
+      }
+      return forCode(code) ?? axiosErrorToToastMessage(err, tc('error'));
     },
     /** An item or run that carries `errorCode` / `errorMessage`. */
     forItem(code: string | null | undefined, message: string | null | undefined): string | null {

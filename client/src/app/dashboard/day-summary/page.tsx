@@ -45,7 +45,7 @@ import {
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { formatCurrency, formatQuantity } from '@/lib/format';
+import { formatCurrency, formatDate, formatQuantity } from '@/lib/format';
 import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import type { DaySummaryReport, DaySummaryRow, DaySummaryTotals } from '@/lib/types';
 import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
@@ -58,7 +58,7 @@ import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -71,6 +71,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { BranchCode, useZIdentityLabel, ZRun } from '@/components/dashboard/z-report/z-identity';
+import { zRunDate, zTillColumn } from '@/lib/zIdentity';
+import { useTenantTimeZone } from '@/lib/auth';
 
 /** Day row + the expander cell. */
 const COLS = 10;
@@ -145,6 +148,7 @@ function OfflineDeclined({ count, amount }: { count?: number; amount?: number })
 function DayRow({ row }: { row: DaySummaryRow }) {
   const t = useTranslations('daySummary');
   const tz = useTranslations('zReports');
+  const ti = useTranslations('independentTill.daySummary');
   // A till Z has no shop number: it reads "קופה 2 · Z 12", never "#null".
   const zNumberLabel = useZNumberLabel();
   const [open, setOpen] = useState(false);
@@ -156,7 +160,13 @@ function DayRow({ row }: { row: DaySummaryRow }) {
         <TableCell className="w-8">
           <Chevron className="text-muted-foreground h-4 w-4" aria-hidden />
         </TableCell>
-        <TableCell className="font-medium">{row.dayDate}</TableCell>
+        <TableCell className="font-medium">
+          {formatDate(row.dayDate)}
+          {/* What the day's Zs include: the shop Z's tills, and each independent till's own Z. */}
+          {row.includesNote ? (
+            <div className="text-muted-foreground max-w-md text-xs font-normal whitespace-normal">{row.includesNote}</div>
+          ) : null}
+        </TableCell>
         <TableCell className="text-end tabular-nums">
           {row.machineCount}
           {/* Several Zs in a day (a Z per till, or a second run) are ordinary, so the
@@ -219,9 +229,16 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                             {tz('originTill')}
                           </Badge>
                         ) : null}
+                        {/* One till can have two "Z 1": a later run says when it started. */}
+                        <ZRun z={c} className="block text-muted-foreground text-xs font-normal" />
                       </TableCell>
                       <TableCell className="font-medium">
                         {c.machineName ?? c.machineId}
+                        {c.independent ? (
+                          <Badge variant="secondary" className="ms-2 text-xs" title={ti('independentHint')}>
+                            {ti('independent')}
+                          </Badge>
+                        ) : null}
                         {c.reconstructed ? (
                           <Badge variant="outline" className="ms-2 text-xs">
                             {t('drill.reconstructed')}
@@ -232,7 +249,10 @@ function DayRow({ row }: { row: DaySummaryRow }) {
                           </Badge>
                         ) : null}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">{c.shopName ?? '—'}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {c.shopName ?? '—'}
+                        <BranchCode code={c.branchCode} className="block text-xs" />
+                      </TableCell>
                       <TableCell className="text-end tabular-nums">{formatCurrency(c.net)}</TableCell>
                       <TableCell className="text-end tabular-nums">
                         {formatCurrency(c.cashSales)}
@@ -282,6 +302,9 @@ function DayRow({ row }: { row: DaySummaryRow }) {
 export default function DaySummaryPage() {
   const t = useTranslations('daySummary');
   const tc = useTranslations('common');
+  const tExport = useTranslations('independentTill.export');
+  const zIdentity = useZIdentityLabel();
+  const timeZone = useTenantTimeZone();
 
   // The scope still applies — it decides what the multi-selects can even offer —
   // but the selection itself is explicit, because "these three branches" is not a
@@ -374,22 +397,22 @@ export default function DaySummaryPage() {
           <CardContent className="grid gap-4 pt-6 md:grid-cols-2 xl:grid-cols-5">
             <div className="space-y-1.5">
               <Label htmlFor="day-summary-from">{t('filters.from')}</Label>
-              <Input
+              <DatePicker
                 id="day-summary-from"
-                type="date"
                 value={from}
                 max={to}
                 onChange={(e) => setFrom(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="day-summary-to">{t('filters.to')}</Label>
-              <Input
+              <DatePicker
                 id="day-summary-to"
-                type="date"
                 value={to}
                 min={from}
                 onChange={(e) => setTo(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <EntityMultiSelect
@@ -456,7 +479,7 @@ export default function DaySummaryPage() {
               title={t('title')}
               from={data.window.from}
               to={data.window.to}
-              getSheets={() => ({
+              getSheets={() => [{
                 name: t('title'),
                 columns: [
                   { header: t('table.day'), kind: 'date' },
@@ -477,7 +500,29 @@ export default function DaySummaryPage() {
                   t('table.total'), null, data.totals.net, data.totals.refunds, data.totals.cashSales,
                   data.totals.cardSales, data.totals.vat, data.totals.tips, data.totals.variance,
                 ],
-              })}
+              }, {
+                // Each Z behind the days, with its branch code and till: a branch may run two
+                // Z sequences (the shop Z and an independent till's), told apart by the till.
+                name: tExport('zSheet'),
+                columns: [
+                  { header: t('table.day'), kind: 'date' },
+                  { header: tExport('z') },
+                  { header: tExport('branchCode') },
+                  { header: tExport('till') },
+                  { header: tExport('run') },
+                  { header: t('drill.shop') },
+                  { header: t('drill.net'), kind: 'money' },
+                  { header: t('drill.cash'), kind: 'money' },
+                  { header: t('drill.card'), kind: 'money' },
+                  { header: t('drill.tips'), kind: 'money' },
+                ],
+                rows: data.days.flatMap((d) =>
+                  d.contributors.map((c) => [
+                    d.dayDate, zIdentity(c), c.branchCode ?? '', zTillColumn(c), zRunDate(c, timeZone) ?? '', c.shopName ?? '',
+                    c.net, c.cashSales, c.cardSales, c.tips,
+                  ]),
+                ),
+              }]}
             />
             <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 

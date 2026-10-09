@@ -20,8 +20,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, UserRoundCheck, UserRoundX, KeyRound } from 'lucide-react';
+import { Plus, Pencil, UserRoundCheck, UserRoundX, KeyRound, ShieldCheck } from 'lucide-react';
 import { TillPinDialog } from '@/components/dashboard/till-pin-dialog';
+import { UserAccessDialog } from '@/components/dashboard/access/user-access-dialog';
+import { AccessTemplatesDialog } from '@/components/dashboard/access/access-templates-dialog';
+import { fetchAccessSummaries, type UserAccessSummary } from '@/lib/dashboardAccessApi';
 
 // A shift supervisor belongs to one shop, exactly like the cashiers they cover
 // for: leave it off these lists and the dialog hides both pickers, so the user is
@@ -41,7 +44,15 @@ interface UserForm {
   originalRole?: UserRole;
   companyId?: string;
   shopId?: string;
+  /**
+   * "מנהל ארגון" (the super admin's, on create): a company manager over the whole organization
+   * with the default sections — reports, products, Z ("הרשאות דשבורד").
+   */
+  orgManager?: boolean;
 }
+
+/** The role picker's value for "מנהל ארגון" — not a server role, see `UserForm.orgManager`. */
+const ORG_MANAGER = 'org_manager';
 
 const EMPTY: UserForm = {
   email: '', username: '', password: '', role: 'cashier',
@@ -83,7 +94,11 @@ export default function UsersPage() {
   const t = useTranslations('users');
   const tc = useTranslations('common');
   const tp = useTranslations('tillPin');
+  const ta = useTranslations('dashboardAccess');
   const [pinTarget, setPinTarget] = useState<User | null>(null);
+  // "הרשאות דשבורד" — the super admin's, per user and as templates.
+  const [accessTarget, setAccessTarget] = useState<User | null>(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const { user: me, authHydrated } = useAuth();
   // `GET /users` takes no scope filters — the server decides which staff a caller
   // may see from their own role. So the shared scope does not narrow this list,
@@ -98,6 +113,10 @@ export default function UsersPage() {
   // rule set lives in the server's users router and only it can be right.
   const canRead = me?.canReadUsers === true;
   const canManage = me?.canManageUsers === true;
+  const isSuperAdmin = me?.role === 'super_admin';
+  // "הרשאות דשבורד": whoever manages users sets the permissions of those they manage — the
+  // super admin anything, anyone else only what they hold (the server refuses more).
+  const canSetAccess = isSuperAdmin || canManage;
   const creatableRoles = useMemo<UserRole[]>(() => me?.creatableRoles ?? [], [me]);
 
   const {
@@ -125,6 +144,13 @@ export default function UsersPage() {
     enabled: canRead,
   });
 
+  const { data: accessRows = [] } = useQuery<UserAccessSummary[]>({
+    queryKey: ['dashboard-access', 'summaries'],
+    queryFn: fetchAccessSummaries,
+    enabled: canRead,
+  });
+  const accessByUser = useMemo(() => new Map(accessRows.map((r) => [r.userId, r])), [accessRows]);
+
   const filteredCompanies = companies;
 
   const filteredShops = editing.companyId
@@ -141,6 +167,13 @@ export default function UsersPage() {
         companyId: u.companyId,
         shopId: u.shopId,
       };
+      if (!u.id && u.orgManager) {
+        // The whole organization, with the default sections; the server picks its primary company.
+        payload.role = 'company_manager';
+        payload.companyId = undefined;
+        payload.shopId = undefined;
+        payload.access = { template: 'org_manager', orgWide: true };
+      }
       if (u.id) {
         // Update: only send password if changed
         if (u.password) payload.password = u.password;
@@ -151,6 +184,7 @@ export default function UsersPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-access', 'summaries'] });
       toast.success(isNew ? t('created') : t('updated'));
       setOpen(false);
     },
@@ -199,7 +233,12 @@ export default function UsersPage() {
   const openCreate = () => {
     // Lead with the least authority the caller can delegate — `creatableRoles`
     // arrives highest-first, so the last entry is the safest default.
-    setEditing({ ...EMPTY, role: creatableRoles[creatableRoles.length - 1] ?? 'cashier' });
+    // The super admin creates organization managers ("מנהל ארגון") by default.
+    setEditing(
+      isSuperAdmin
+        ? { ...EMPTY, role: 'company_manager', orgManager: true }
+        : { ...EMPTY, role: creatableRoles[creatableRoles.length - 1] ?? 'cashier' },
+    );
     setOpen(true);
   };
 
@@ -213,7 +252,14 @@ export default function UsersPage() {
    * the server would refuse.
    */
   const roleOptions = useMemo(() => {
-    const options = creatableRoles.map((r) => ({ value: r, label: t(`roles.${r}`), assignable: true }));
+    const options: { value: string; label: string; assignable: boolean }[] = creatableRoles.map((r) => ({
+      value: r,
+      label: t(`roles.${r}`),
+      assignable: true,
+    }));
+    if (isSuperAdmin && !editing.id) {
+      options.unshift({ value: ORG_MANAGER, label: ta('orgManagerRole'), assignable: true });
+    }
     const current = editing.originalRole;
     if (current && !creatableRoles.includes(current)) {
       options.push({
@@ -223,15 +269,32 @@ export default function UsersPage() {
       });
     }
     return options;
-  }, [creatableRoles, editing.originalRole, t]);
+  }, [creatableRoles, editing.originalRole, editing.id, isSuperAdmin, t, ta]);
 
-  const handleRoleChange = (role: UserRole) => {
+  const handleRoleChange = (value: string) => {
+    if (value === ORG_MANAGER) {
+      setEditing((prev) => ({ ...prev, role: 'company_manager', orgManager: true, companyId: undefined, shopId: undefined }));
+      return;
+    }
+    const role = value as UserRole;
     setEditing((prev) => ({
       ...prev,
       role,
+      orgManager: false,
       companyId: ROLE_NEEDS_COMPANY.includes(role) ? prev.companyId : undefined,
       shopId: ROLE_NEEDS_SHOP.includes(role) ? prev.shopId : undefined,
     }));
+  };
+
+  /** The permissions badge: the template's name, "גישה מלאה", or "מותאם". */
+  const accessBadge = (u: User) => {
+    if (u.role === 'super_admin') return null;
+    const row = accessByUser.get(u.id);
+    if (!row) return null;
+    if (row.fullAccess) return <Badge variant="outline">{ta('badgeFull')}</Badge>;
+    // No row: the default ("מנהל ארגון"), never more.
+    const name = row.templateName ?? ta('badgeCustom');
+    return <Badge variant="secondary">{row.hasProfile ? name : ta('badgeDefault', { name })}</Badge>;
   };
 
   const scopeName = (u: User) => {
@@ -256,11 +319,18 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        {canManage && creatableRoles.length > 0 && (
-          <Button onClick={openCreate} size="sm">
-            <Plus className="h-4 w-4 ms-1" /> {t('add')}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {isSuperAdmin && (
+            <Button variant="outline" size="sm" onClick={() => setTemplatesOpen(true)}>
+              <ShieldCheck className="h-4 w-4 ms-1" /> {ta('templatesButton')}
+            </Button>
+          )}
+          {canManage && creatableRoles.length > 0 && (
+            <Button onClick={openCreate} size="sm">
+              <Plus className="h-4 w-4 ms-1" /> {t('add')}
+            </Button>
+          )}
+        </div>
       </div>
 
       {resolution.status === 'ok' && resolution.ignoredDeeper ? (
@@ -286,6 +356,7 @@ export default function UsersPage() {
               <TableHead>{t('scope')}</TableHead>
               <TableHead>{tc('status')}</TableHead>
               <TableHead>{tp('column')}</TableHead>
+              {canRead && <TableHead>{ta('button')}</TableHead>}
               {canManage && <TableHead className="w-40" />}
             </TableRow>
           </TableHeader>
@@ -293,7 +364,7 @@ export default function UsersPage() {
             {listLoading
               ? Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: canManage ? 7 : 6 }).map((_, j) => (
+                    {Array.from({ length: (canManage ? 7 : 6) + (canRead ? 1 : 0) }).map((_, j) => (
                       <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                     ))}
                   </TableRow>
@@ -301,7 +372,7 @@ export default function UsersPage() {
               : users.length === 0
               ? (
                   <TableRow>
-                    <TableCell colSpan={canManage ? 7 : 6} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={(canManage ? 7 : 6) + (canRead ? 1 : 0)} className="text-center text-muted-foreground py-8">
                       {t('noUsers')}
                     </TableCell>
                   </TableRow>
@@ -332,6 +403,7 @@ export default function UsersPage() {
                         <span className="text-muted-foreground text-xs">{tp('stateNone')}</span>
                       )}
                     </TableCell>
+                    {canRead && <TableCell>{accessBadge(u)}</TableCell>}
                     {canManage && (
                       <TableCell>
                         <div className="flex items-center gap-1">
@@ -361,6 +433,11 @@ export default function UsersPage() {
                           <Button variant="ghost" size="icon" title={tc('edit')} onClick={() => openEdit(u)}>
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
+                          {canSetAccess && u.role !== 'super_admin' && me?.id !== u.id && (
+                            <Button variant="ghost" size="icon" title={ta('button')} onClick={() => setAccessTarget(u)}>
+                              <ShieldCheck className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           {me?.id !== u.id && (
                             u.isActive ? (
                               <Button
@@ -430,8 +507,8 @@ export default function UsersPage() {
               <div className="space-y-1">
                 <Label>{t('role')}</Label>
                 <Select
-                  value={editing.role}
-                  onValueChange={(v) => handleRoleChange(v as UserRole)}
+                  value={editing.orgManager ? ORG_MANAGER : editing.role}
+                  onValueChange={(v) => handleRoleChange(String(v))}
                   items={roleOptions.map(({ value, label }) => ({ value, label }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -448,13 +525,15 @@ export default function UsersPage() {
                   role actually buys — till authority, no desk. Roles whose name
                   already carries that get no hint and render nothing here.
                 */}
-                {t.has(`roleHints.${editing.role}`) && (
+                {editing.orgManager ? (
+                  <p className="text-muted-foreground text-xs">{ta('orgManagerHint')}</p>
+                ) : t.has(`roleHints.${editing.role}`) && (
                   <p className="text-muted-foreground text-xs">{t(`roleHints.${editing.role}`)}</p>
                 )}
               </div>
             </div>
 
-            {ROLE_NEEDS_COMPANY.includes(editing.role) && (
+            {!editing.orgManager && ROLE_NEEDS_COMPANY.includes(editing.role) && (
               <div className="space-y-1">
                 <Label>{t('company')}</Label>
                 <Select
@@ -497,6 +576,9 @@ export default function UsersPage() {
               it silently did nothing. Activation now has one control that works:
               the row's Deactivate/Activate switch.
             */}
+            {isNew && editing.role !== 'super_admin' && (
+              <p className="rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">{ta('newUserDefaultNote')}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
@@ -506,6 +588,15 @@ export default function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <UserAccessDialog
+        userId={accessTarget?.id ?? null}
+        username={accessTarget?.username ?? ''}
+        onOpenChange={(next) => {
+          if (!next) setAccessTarget(null);
+        }}
+      />
+      <AccessTemplatesDialog open={templatesOpen} onOpenChange={setTemplatesOpen} />
 
       <TillPinDialog
         open={pinTarget !== null}

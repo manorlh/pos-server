@@ -1,0 +1,76 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@kiosk-shared/*": [
+        "../client/src/kiosk-shared/*"
+      ],
+      "@dash-lib/*": [
+        "../client/src/lib/*"
+      ],
+      "@dash-messages/*": [
+        "../client/src/messages/*"
+      ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/*": [
+        "./node_modules/@types/react/*"
+      ],
+      "react-dom": [
+        "./node_modules/@types/react-dom"
+      ],
+      "react-dom/*": [
+        "./node_modules/@types/react-dom/*"
+      ],
+      "lucide-react": [
+        "./node_modules/lucide-react"
+      ],
+      "qrcode.react": [
+        "./node_modules/qrcode.react"
+      ],
+      "clsx": [
+        "./node_modules/clsx"
+      ],
+      "tailwind-merge": [
+        "./node_modules/tailwind-merge"
+      ],
+      "@/*": [
+        "../client/src/*"
+      ]
+    },
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src",
+    "test",
+    "scripts/*.ts",
+    "vite.config.mts",
+    "vitest.config.mts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "release"
+  ]
+}

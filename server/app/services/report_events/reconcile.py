@@ -107,7 +107,10 @@ def _load_docs(db: Session, query) -> List[Doc]:
     for chunk in chunks(ids):
         for leg in db.query(TransactionPayment).filter(TransactionPayment.transaction_id.in_(list(chunk))).all():
             legs.setdefault(leg.transaction_id, []).append(leg)
-    return [make_doc(t, legs.get(t.id, [])) for t in txs]
+    from app.services.shift_totals import production_deductions_of
+
+    deductions = production_deductions_of(db, [t.id for t in txs])
+    return [make_doc(t, legs.get(t.id, []), deductions.get(t.id, Decimal("0"))) for t in txs]
 
 
 def reconcile_z(
@@ -173,7 +176,7 @@ def reconcile_z(
                 db.query(Transaction).filter(
                     Transaction.shift_id.in_([_uuid(i) for i in shift_ids]),
                     Transaction.machine_id == machines[mid].id,
-                    Transaction.status.in_(SALE_STATUSES),
+                    Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
                     or_(Transaction.created_at < starts, Transaction.created_at >= ends),
                 ),
             )
@@ -260,7 +263,7 @@ def _legs_between(db: Session, machine: POSMachine, after: Optional[datetime], u
         .filter(
             Transaction.machine_id == machine.id,
             TransactionPayment.method == "card",
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             Transaction.created_at <= until,
         )
     )

@@ -1,11 +1,22 @@
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 import uuid
 from decimal import Decimal
 from datetime import datetime
 
 from app.services.item_ticket import ProductTicketMode
+from app.services import dietary
+from app.services import sales_channel as channels
 from app.schemas.kitchen_printers import KitchenPrintersPatch
+
+#: The product's `description` column (String(1000)); the dashboard recommends 300 for
+#: the kiosk card (docs/SPEC_PRODUCT_DIETARY.md).
+DESCRIPTION_MAX = 1000
+
+
+def _dietary_in(v):
+    """"סימוני תזונה" as sent: None is "not sent"; anything else cleaned or refused."""
+    return None if v is None else dietary.clean(v)
 
 
 class ShopScopeIn(BaseModel):
@@ -67,6 +78,77 @@ def _no_repeated_shop(prices):
     return prices
 
 
+class ProductAlertIn(BaseModel):
+    """
+    One "הודעה לעובד" (app/services/product_alerts.py): shown on the till when the product
+    is added, before it enters the order.
+    """
+
+    text: str = Field(..., min_length=1, max_length=200)
+    #: מידע / אזהרה / אלרגן.
+    kind: Literal["info", "warning", "allergen"] = "info"
+    #: "חובה לאשר": added only after "עדכנתי את הלקוח".
+    require_ack: bool = Field(False, alias="requireAck")
+    #: הזמנה מהירה / שולחנות / שניהם.
+    where_shown: Literal["quick", "tables", "both"] = Field("both", alias="whereShown")
+
+    @field_validator("text")
+    @classmethod
+    def _text(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("alert text cannot be empty")
+        return v.strip()
+
+    class Config:
+        populate_by_name = True
+
+
+class ProductCompanionIn(BaseModel):
+    """One "פריט נלווה": added by the till with the product, as a line of its own under it."""
+
+    product_id: uuid.UUID = Field(..., alias="productId")
+    #: Per unit of the product.
+    quantity: int = Field(1, ge=1, le=99)
+    #: מחיר הפריט / חינם (₪0) / מחיר מותאם.
+    price_mode: Literal["item", "free", "custom"] = Field("item", alias="priceMode")
+    #: The price of one, for "custom" only.
+    price: Optional[Decimal] = Field(None, ge=0, le=99999)
+    #: "הדפס במטבח": null — as the companion's own routing; true — with the product's;
+    #: false — not printed.
+    kitchen_print: Optional[bool] = Field(None, alias="kitchenPrint")
+    #: The name as the form shows it; ignored (the server names it).
+    name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _price_for_custom(self):
+        if self.price_mode == "custom":
+            if self.price is None:
+                raise ValueError("price is required when priceMode is 'custom'")
+        else:
+            self.price = None
+        return self
+
+    class Config:
+        populate_by_name = True
+
+
+def _alerts_limit(alerts):
+    if alerts is not None and len(alerts) > 10:
+        raise ValueError("at most 10 alerts")
+    return alerts
+
+
+def _companions_limit(companions):
+    if companions is None:
+        return companions
+    if len(companions) > 10:
+        raise ValueError("at most 10 companions")
+    ids = [c.product_id for c in companions]
+    if len(ids) != len(set(ids)):
+        raise ValueError("companions names the same product twice")
+    return companions
+
+
 class ShopScopeOut(BaseModel):
     """The stored scope. For ``shops`` mode the list itself is `GET /products/{id}/shops`."""
 
@@ -81,7 +163,7 @@ class ShopScopeOut(BaseModel):
 
 class ProductBase(BaseModel):
     name: str = Field(..., min_length=1)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     price: Decimal = Field(..., ge=0)
     sku: str = Field(..., min_length=1)
     category_id: uuid.UUID = Field(..., alias="categoryId")
@@ -114,6 +196,13 @@ class ProductBase(BaseModel):
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     # "לא מקבל הנחות": no line discount, no basket-discount share, no promotion at the till.
     no_discount: bool = Field(False, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py): a manager's code at the
+    # till, never on a kiosk. Its category (or one above it) may restrict it too.
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
+    # "סימוני תזונה" (app/services/dietary.py): codes, cleaned and ordered; omitted: none.
+    dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
+    # "היכן הפריט נמכר" (app/services/sales_channel.py); omitted: קופות וקיוסק.
+    sales_channel: channels.SalesChannel = Field(channels.ALL, alias="salesChannel")
 
     @field_validator("name", "sku")
     @classmethod
@@ -121,6 +210,11 @@ class ProductBase(BaseModel):
         if isinstance(v, str) and not v.strip():
             raise ValueError("Field cannot be empty")
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary(cls, v):
+        return _dietary_in(v)
 
     class Config:
         populate_by_name = True
@@ -141,16 +235,31 @@ class ProductCreate(ProductBase):
     # silently ignored: every company's one general item is built in (see
     # app/services/general_item.py).
     is_general: Optional[bool] = Field(None, alias="isGeneral")
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py). Omitted: none.
+    alerts: Optional[List[ProductAlertIn]] = None
+    allergen_alert: Optional[bool] = Field(None, alias="allergenAlert")
+    allergen_alert_require_ack: Optional[bool] = Field(None, alias="allergenAlertRequireAck")
+    companions: Optional[List[ProductCompanionIn]] = None
 
     @field_validator("shop_prices")
     @classmethod
     def _prices_name_each_shop_once(cls, v):
         return _no_repeated_shop(v)
 
+    @field_validator("alerts")
+    @classmethod
+    def _alerts_at_most(cls, v):
+        return _alerts_limit(v)
+
+    @field_validator("companions")
+    @classmethod
+    def _companions_valid(cls, v):
+        return _companions_limit(v)
+
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1)
-    description: Optional[str] = None
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX)
     price: Optional[Decimal] = Field(None, ge=0)
     sku: Optional[str] = Field(None, min_length=1)
     category_id: Optional[uuid.UUID] = Field(None, alias="categoryId")
@@ -170,6 +279,12 @@ class ProductUpdate(BaseModel):
     is_weighed: Optional[bool] = Field(None, alias="isWeighed")
     unit_label: Optional[str] = Field(None, max_length=16, alias="unitLabel")
     no_discount: Optional[bool] = Field(None, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה": omitted (or null) — left as it is.
+    requires_manager_approval: Optional[bool] = Field(None, alias="requiresManagerApproval")
+    # "סימוני תזונה": omitted — left as they are; `[]` or null clears.
+    dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
+    # "היכן הפריט נמכר": omitted (or null) — left as it is.
+    sales_channel: Optional[channels.SalesChannel] = Field(None, alias="salesChannel")
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -180,11 +295,28 @@ class ProductUpdate(BaseModel):
     # till's product PUT (app/routers/sync.py). Excluded from `model_dump`, so no handler
     # mistakes it for a column of the product.
     kitchen_printers: Optional[KitchenPrintersPatch] = Field(None, alias="kitchenPrinters", exclude=True)
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py): omitted — left as
+    # they are; `[]` clears. Applied by the products router, never as plain columns
+    # (excluded from `model_dump`).
+    alerts: Optional[List[ProductAlertIn]] = Field(None, exclude=True)
+    allergen_alert: Optional[bool] = Field(None, alias="allergenAlert", exclude=True)
+    allergen_alert_require_ack: Optional[bool] = Field(None, alias="allergenAlertRequireAck", exclude=True)
+    companions: Optional[List[ProductCompanionIn]] = Field(None, exclude=True)
 
     @field_validator("shop_prices")
     @classmethod
     def _prices_name_each_shop_once(cls, v):
         return _no_repeated_shop(v)
+
+    @field_validator("alerts")
+    @classmethod
+    def _alerts_at_most(cls, v):
+        return _alerts_limit(v)
+
+    @field_validator("companions")
+    @classmethod
+    def _companions_valid(cls, v):
+        return _companions_limit(v)
 
     @field_validator("name", "sku")
     @classmethod
@@ -192,6 +324,22 @@ class ProductUpdate(BaseModel):
         if v is not None and isinstance(v, str) and not v.strip():
             raise ValueError("Field cannot be empty")
         return v.strip() if v and isinstance(v, str) else v
+
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary(cls, v):
+        return _dietary_in(v)
+
+    @model_validator(mode="after")
+    def _channel_null_is_unchanged(self):
+        # The column is NOT NULL: an explicit null means "leave it", like an omitted key,
+        # so no handler's `model_dump(exclude_unset=True)` ever writes a null into it.
+        if self.sales_channel is None:
+            self.__pydantic_fields_set__.discard("sales_channel")
+        # The same for "מחייב אישור מנהל במכירה" (NOT NULL too).
+        if self.requires_manager_approval is None:
+            self.__pydantic_fields_set__.discard("requires_manager_approval")
+        return self
 
     class Config:
         populate_by_name = True
@@ -228,11 +376,56 @@ class ProductResponse(BaseModel):
     is_weighed: bool = Field(False, alias="isWeighed")
     unit_label: Optional[str] = Field(None, alias="unitLabel")
     no_discount: bool = Field(False, alias="noDiscount")
+    # "מחייב אישור מנהל במכירה", the product's own flag (its categories may add to it).
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
+    # "סימוני תזונה", in the fixed order; [] when none.
+    dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
+    # "היכן הפריט נמכר": all / kiosk_only / pos_only.
+    sales_channel: str = Field(channels.ALL, alias="salesChannel")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
+    # "הודעות לעובד" and "פריטים נלווים" (app/services/product_alerts.py), as stored.
+    alerts: List[Dict[str, Any]] = Field(default_factory=list)
+    allergen_alert: bool = Field(False, alias="allergenAlert")
+    allergen_alert_require_ack: bool = Field(True, alias="allergenAlertRequireAck")
+    companions: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+    @field_validator("alerts", mode="before")
+    @classmethod
+    def _alerts_out(cls, v):
+        from app.services.product_alerts import alerts_out
+
+        return alerts_out(v)
+
+    @field_validator("companions", mode="before")
+    @classmethod
+    def _companions_out(cls, v):
+        from app.services.product_alerts import companions_out
+
+        return companions_out(v)
+
+    @field_validator("dietary_tags", mode="before")
+    @classmethod
+    def _dietary_out(cls, v):
+        return dietary.tags_out(v)
+
+    @field_validator("sales_channel", mode="before")
+    @classmethod
+    def _channel_out(cls, v):
+        return channels.out(v)
+
+    @field_validator("allergen_alert", "requires_manager_approval", mode="before")
+    @classmethod
+    def _flag_off(cls, v):
+        return bool(v)
+
+    @field_validator("allergen_alert_require_ack", mode="before")
+    @classmethod
+    def _flag_on(cls, v):
+        return True if v is None else bool(v)
 
     class Config:
         from_attributes = True

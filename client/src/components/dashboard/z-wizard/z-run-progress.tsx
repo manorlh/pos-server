@@ -248,6 +248,13 @@ export function ZRunProgress({ runId }: { runId: string }) {
             <p className="text-muted-foreground basis-full text-xs">
               {notReady.length > 0 ? t('waitingHint') : t('buildingHint')}
             </p>
+            {/* A refused "proceed without" (e.g. "חובה לסגור את כל הקופות", local mode): the
+                server's Hebrew, kept on the card and not only in a passing toast. */}
+            {proceed.isError ? (
+              <p className="basis-full rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive">
+                {errors.forError(proceed.error)}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </CardContent>

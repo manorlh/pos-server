@@ -63,7 +63,7 @@ from app.schemas.kitchen_printers import (
     ProductRouteIn,
 )
 from app.services.areas import as_utc
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 
 #: The till parameters this module reads (and lets a shop's managers set).
 ON_SALE_KEY = "kitchenTicketsOnSale"
@@ -130,7 +130,7 @@ def can_edit(db: Session, user: User, shop: Shop) -> bool:
     if user.role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return True
     if user.role == UserRole.COMPANY_MANAGER:
-        return bool(user_covers_company(db, user, shop.company_id))
+        return bool(user_covers_shop(db, user, shop))
     return user.shop_id is not None and str(user.shop_id) == str(shop.id)
 
 
@@ -221,6 +221,7 @@ def printer_out(printer: KitchenPrinter, machines: Dict[uuid.UUID, POSMachine] |
         "machineId": str(printer.machine_id) if printer.machine_id else None,
         "machineName": machine_label(narrowed_till),
         "paperWidth": printer.paper_width,
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
@@ -262,6 +263,7 @@ def apply_printer(db: Session, shop: Shop, printer: KitchenPrinter, body: Printe
     printer.area_id = body.area_id
     printer.machine_id = body.machine_id
     printer.paper_width = body.paper_width
+    printer.print_width_dots = body.print_width_dots
     printer.copies = body.copies
     printer.cut_paper = body.cut_paper
     printer.beep = body.beep
@@ -304,6 +306,15 @@ def printer_applies_to(printer: KitchenPrinter, machine: POSMachine) -> bool:
     if printer.area_id is not None:
         return machine.area_id is not None and str(printer.area_id) == str(machine.area_id)
     return True
+
+
+def printer_scope(printer: KitchenPrinter) -> str:
+    """Where a printer is set: "machine" (one till), "area" (a point of sale) or "shop"."""
+    if printer.machine_id is not None:
+        return "machine"
+    if printer.area_id is not None:
+        return "area"
+    return "shop"
 
 
 def tills_using(db: Session, printer: KitchenPrinter) -> List[POSMachine]:
@@ -1201,11 +1212,13 @@ def print_secret(shop_id: Any) -> str:
 
 
 def printer_for_till(
-    printer: KitchenPrinter, machine: POSMachine, in_scope: bool, serves: bool = False
+    printer: KitchenPrinter, machine: POSMachine, in_scope: bool, serves: bool = False,
+    hosts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     # This till prints it for others: a cloud printer it hosts, or — as the shop's print
     # server — any network / Bluetooth kitchen printer.
     is_host = is_hosted_by(printer, machine) or (serves and is_served(printer))
+    host = (hosts or {}).get(str(printer.host_machine_id)) if printer.host_machine_id and not is_host else None
     return {
         "id": str(printer.id),
         "name": printer.name,
@@ -1213,6 +1226,10 @@ def printer_for_till(
         #: bills and receipts there when asked, and opens its drawer (`cashDrawer`).
         "purpose": printer.purpose or "kitchen",
         "cashDrawer": bool(printer.cash_drawer),
+        #: Where the shop set it: "machine" (this very till), "area" or "shop". A receipt printer
+        #: assigned to the till wins over one the shop shares (the till's receiptPrinterRank;
+        #: the owner, 07.10.2026 — the Royal kiosk's receipt went to the shop's printer).
+        "scope": printer_scope(printer),
         "type": printer.connection_type,
         "host": printer.host,
         "port": printer.port,
@@ -1220,11 +1237,19 @@ def printer_for_till(
         "btName": printer.bt_name,
         "hostMachineId": str(printer.host_machine_id) if printer.host_machine_id else None,
         "hostConnection": printer.host_connection,
+        #: The host till's name: the staff alert says which till did not answer (§16.9).
+        "hostMachineName": host.get("name") if host else None,
+        #: Where the host till takes jobs on the shop's LAN (its own report): a sender on the
+        #: LAN hands the job there first, else through the cloud relay — never both.
+        "hostLanAddress": host.get("lanAddress") if host else None,
+        "hostLanPort": host.get("port") if host and host.get("lanAddress") else None,
         #: This till prints the cloud / print-host printer's jobs itself, by `hostConnection`.
         "isHost": is_host,
         #: Lines of this till's tickets may route to it (false: listed only as a host).
         "inScope": in_scope,
         "paperWidth": printer.paper_width,
+        #: "רוחב הדפסה": the raster width in dots; null — by the paper.
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
@@ -1238,13 +1263,17 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     register number, so every till agrees on one. None marked: the shop's main till
     ("קופה ראשית", app/services/main_till.py), else none — off by default.
     """
+    from app.services.lan_server import server_candidates
     from app.services.main_till import main_till_of_shop
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server;
+    # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py). A printer hosted by
+    # such a device is still printed by it (`is_hosted_by`): a printer endpoint, not the server.
     hosts = [
-        m for m in shop_machines(db, shop_id)
+        m for m in server_candidates(db, shop_machines(db, shop_id))
         if till_parameters_for_machine(db, m).parameters.get(PRINT_HOST_KEY) is True
     ]
     if not hosts:
@@ -1259,9 +1288,29 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
 def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The shop's print server as `machine` needs it: who, and where on the LAN."""
+    from app.services.independent_till import is_independent
+
+    away_kiosk = False
+    if is_independent(machine):
+        # "קופה עצמאית": it never uses the shop's print server; it prints by itself — except a
+        # self-order kiosk, which may stand away from the shop's LAN (docs/SPEC_KIOSK.md §16.7):
+        # it gets the print server with no LAN address, so the shop's kitchen printers are
+        # tried directly (it may be on the shop's network after all) and else reached through
+        # the cloud relay, printed by the print server.
+        if not getattr(machine, "is_kiosk", False):
+            return None
+        away_kiosk = True
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
+    if away_kiosk:
+        return {
+            "machineId": str(host.id),
+            "name": machine_label(host),
+            "isSelf": False,
+            "lanAddress": None,
+            "port": DEFAULT_LAN_PORT,
+        }
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
     return {
         "machineId": str(host.id),
@@ -1287,26 +1336,83 @@ def report_print_host(db: Session, machine: POSMachine, lan_address: Optional[st
     return {"lanAddress": row.lan_address, "port": row.port, "reportedAt": _iso(row.reported_at)}
 
 
+def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[KitchenPrinter]) -> Dict[str, Dict[str, Any]]:
+    """
+    The host tills of the shop's `cloud` printers, as `machine` needs them: each one's name,
+    and where it takes jobs on the LAN (`KitchenPrintHost`, reported by any till that hosts a
+    printer, not only the print server). An independent till that is no kiosk is outside the
+    shop's LAN group: names only. A self-order kiosk may stand on the LAN or away from it —
+    it gets the address, tries it briefly, and else goes through the cloud.
+    """
+    from app.services.independent_till import is_independent
+
+    ids = {p.host_machine_id for p in printers if p.connection_type in HOSTED_TYPES and p.host_machine_id}
+    ids.discard(machine.id)
+    if not ids:
+        return {}
+    lan = not is_independent(machine) or bool(getattr(machine, "is_kiosk", False))
+    tills = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(list(ids))).all()}
+    rows = {
+        r.machine_id: r
+        for r in db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id.in_(list(ids))).all()
+    } if lan else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for ident in ids:
+        row = rows.get(ident)
+        address = row.lan_address if row is not None and row.lan_address else None
+        out[str(ident)] = {
+            "name": machine_label(tills.get(ident)),
+            "lanAddress": address,
+            "port": (row.port or DEFAULT_LAN_PORT) if address else None,
+        }
+    return out
+
+
+def kiosk_bon_printer_id(db: Session, machine: POSMachine) -> Optional[str]:
+    """A self-order kiosk's one bon printer ("הכל במדפסת אחת", `printing.bonPrinterId`), or None."""
+    if not getattr(machine, "is_kiosk", False):
+        return None
+    try:
+        from app.services.kiosk_config import effective_config
+
+        printing = effective_config(db, machine).get("printing") or {}
+    except Exception:  # pragma: no cover - a config that cannot be read names no printer
+        return None
+    if printing.get("bonMode") != "single":
+        return None
+    value = printing.get("bonPrinterId")
+    return str(value) if value else None
+
+
 def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
     """`GET /sync/{id}/printers` without the ETag fields."""
     printers: List[Dict[str, Any]] = []
     in_scope_ids: set = set()
     print_host = print_host_block(db, machine) if machine.shop_id is not None else None
     serves = bool(print_host and print_host["isSelf"])
+    all_printers = shop_printers(db, machine.shop_id) if machine.shop_id is not None else []
+    hosts = hosted_by_tills(db, machine, all_printers)
     if machine.shop_id is not None:
-        for printer in shop_printers(db, machine.shop_id):
+        for printer in all_printers:
             applies = printer_applies_to(printer, machine)
-            hosts = printer.is_active and (
+            hosting = printer.is_active and (
                 is_hosted_by(printer, machine)
                 # The print server prints every network / Bluetooth kitchen printer of the shop.
                 or (serves and is_served(printer))
             )
             # A receipt printer: listed for the tills it applies to; no ticket routes there.
             kitchen = is_kitchen(printer)
-            if applies or (hosts and kitchen):
-                printers.append(printer_for_till(printer, machine, applies and kitchen, serves))
+            if applies or (hosting and kitchen):
+                printers.append(printer_for_till(printer, machine, applies and kitchen, serves, hosts))
             if applies and kitchen:
                 in_scope_ids.add(str(printer.id))
+        # A kiosk's one bon printer prints its bons whatever the printer's scope — a till's own
+        # printer narrowed to that till included (docs/SPEC_KIOSK.md §16.9).
+        bon_id = kiosk_bon_printer_id(db, machine)
+        if bon_id and bon_id not in {p["id"] for p in printers}:
+            for printer in all_printers:
+                if str(printer.id) == bon_id and printer.is_active and is_kitchen(printer):
+                    printers.append(printer_for_till(printer, machine, False, serves, hosts))
 
     # "הפניה לפי אזור שולחנות": a table zone's redirect wins over the printer's scope, so
     # its targets are listed even when narrowed away from this till (docs/SPEC_PRINT_BY_ZONE.md).
@@ -1318,7 +1424,7 @@ def sync_payload(db: Session, machine: POSMachine) -> Dict[str, Any]:
         listed = {p["id"] for p in printers}
         for printer in targets:
             if str(printer.id) not in listed:
-                printers.append(printer_for_till(printer, machine, False, serves))
+                printers.append(printer_for_till(printer, machine, False, serves, hosts))
 
     category_routes: Dict[str, List[str]] = {}
     product_routes: Dict[str, List[str]] = {}
@@ -1443,6 +1549,7 @@ def _job_printer_block(printer: Optional[KitchenPrinter]) -> Optional[Dict[str, 
         "btAddress": printer.bt_address,
         "btName": printer.bt_name,
         "paperWidth": printer.paper_width,
+        "printWidthDots": printer.print_width_dots,
         "copies": printer.copies,
         "cutPaper": bool(printer.cut_paper),
         "beep": bool(printer.beep),
@@ -1660,6 +1767,179 @@ def job_statuses(db: Session, machine: POSMachine, ids: Sequence[str]) -> List[D
     return [job_out(job) for job in jobs]
 
 
+def cancel_job(db: Session, machine: POSMachine, job_id: Any) -> Dict[str, Any]:
+    """
+    The sender takes back a relayed job its host never picked up (the host till is off): a
+    person's "הדפס עכשיו" on a kiosk's unprinted bon queues it afresh only once the old one can
+    no longer print — never two bons. `cancelled`: true when it was still waiting (now failed,
+    "cancelled") or expired before any till took it; false once a till has it (it may still
+    print there). Only the sender may ask.
+    """
+    try:
+        ident = _uuid(job_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Print job not found")
+    job = db.query(KitchenPrintJob).filter(KitchenPrintJob.id == ident).first()
+    if job is None or str(job.source_machine_id) != str(machine.id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Print job not found")
+    expire_jobs(db, [job])
+    never_taken = not (job.deliveries or 0) and job.delivered_at is None
+    cancelled = False
+    if job.status == "pending" and never_taken:
+        job.status = "failed"
+        job.error = "cancelled"
+        job.completed_at = _now()
+        cancelled = True
+    elif job.status == "expired" and never_taken:
+        cancelled = True
+    elif job.status == "failed" and job.error == "cancelled":
+        cancelled = True
+    db.flush()
+    return {**job_out(job), "cancelled": cancelled}
+
+
+# ── "המדפסת המקומית של קופה": a kiosk's bon on a till's own printer (§16.9) ────
+
+#: How each kind of a till's local printer is named on the printers page and on the ticket.
+TILL_LOCAL_NAMES = {
+    "till": "המדפסת המובנית",
+    "usb": "מדפסת USB",
+    "bluetooth": "מדפסת Bluetooth",
+}
+
+
+def _receipt_param_connection(value: Any) -> Optional[str]:
+    """The till parameter `receiptPrinter` ("מובנית בקופה" | "רשת (IP)" | "Bluetooth" | "USB")."""
+    text = str(value or "").strip().lower()
+    if "usb" in text:
+        return "usb"
+    if "bluetooth" in text:
+        return "bluetooth"
+    return None
+
+
+def _paper_of_model(value: Any) -> int:
+    return 58 if "58" in str(value or "") else 80
+
+
+def _hosted_local(printers: Iterable[KitchenPrinter], machine_id: Any, connection: str) -> Optional[KitchenPrinter]:
+    """The shop's hosted kitchen printer for `machine_id`'s own `connection`, active first."""
+    found = [
+        p for p in printers
+        if p.connection_type in HOSTED_TYPES and is_kitchen(p) and str(p.host_machine_id) == str(machine_id)
+        and (p.host_connection or "till") == connection
+    ]
+    found.sort(key=lambda p: (not p.is_active, p.sort_order, p.name))
+    return found[0] if found else None
+
+
+def till_local_printers(db: Session, shop: Shop) -> List[Dict[str, Any]]:
+    """
+    The printers attached to the shop's tills, by name, for the kiosk's "מדפסת בונים": a
+    till's built-in head (its device profile: `device_has_printer`, and its last heartbeat's
+    reading), and the USB / Bluetooth printer it prints on (its `receiptPrinter` parameter,
+    or a receipt printer narrowed to it). Kiosks are left out — a kiosk prints its own. Each
+    with the hosted printer entry already behind it (`printerId`), if any.
+    """
+    from app.models.pos_machine import device_paper_width_mm
+    from app.services.printer_discovery import is_online
+    from app.services.till_parameters import till_parameters_for_machine
+
+    printers = shop_printers(db, shop.id)
+    receipts = [p for p in printers if not is_kitchen(p) and p.machine_id is not None and p.is_active]
+    out: List[Dict[str, Any]] = []
+    for m in shop_machines(db, shop.id):
+        if getattr(m, "is_kiosk", False):
+            continue
+        params = till_parameters_for_machine(db, m).parameters
+        found: Dict[str, Dict[str, Any]] = {}
+        if m.has_printer:
+            found["till"] = {
+                "deviceName": None, "btAddress": None,
+                "paperWidth": device_paper_width_mm(m.device_model) or 58,
+                "printerStatus": m.printer_status,
+            }
+        wired = _receipt_param_connection(params.get("receiptPrinter"))
+        if wired == "usb":
+            found["usb"] = {"deviceName": params.get("receiptPrinterModel") or None, "btAddress": None,
+                            "paperWidth": _paper_of_model(params.get("receiptPrinterModel"))}
+        elif wired == "bluetooth":
+            try:
+                from app.schemas.kitchen_printers import clean_mac
+
+                mac = clean_mac(params.get("receiptPrinterAddress"))
+            except ValueError:
+                mac = None
+            found["bluetooth"] = {"deviceName": params.get("receiptPrinterModel") or None, "btAddress": mac,
+                                  "paperWidth": _paper_of_model(params.get("receiptPrinterModel"))}
+        for r in receipts:
+            if str(r.machine_id) != str(m.id) or r.connection_type not in ("usb", "bluetooth"):
+                continue
+            found.setdefault(r.connection_type, {
+                "deviceName": r.name, "btAddress": r.bt_address, "paperWidth": r.paper_width,
+            })
+        for connection in ("till", "usb", "bluetooth"):
+            if connection not in found:
+                continue
+            info = found[connection]
+            entry = _hosted_local(printers, m.id, connection)
+            out.append({
+                "key": f"{m.id}:{connection}",
+                "machineId": str(m.id),
+                "machineName": machine_label(m),
+                "deviceModel": m.device_model,
+                "connection": connection,
+                "deviceName": info.get("deviceName"),
+                "btAddress": info.get("btAddress"),
+                "paperWidth": info.get("paperWidth"),
+                "printerStatus": info.get("printerStatus"),
+                "online": is_online(m),
+                "printerId": str(entry.id) if entry is not None else None,
+                "printerName": entry.name if entry is not None else None,
+                "printerActive": bool(entry.is_active) if entry is not None else None,
+            })
+    return out
+
+
+def ensure_till_local_printer(db: Session, shop: Shop, machine_id: Any, connection: str) -> KitchenPrinter:
+    """
+    The hosted kitchen printer behind a till's local printer: reused (and made active again)
+    when the shop has it, else made — narrowed to its own till, so no other till or kiosk
+    routes to it by itself (a kiosk printing on its own USB printer keeps doing so); the kiosk
+    that picks it as its one bon printer gets it all the same (`sync_payload`). No category
+    routes to it, so no till's own tickets change. `422 no_local_printer` when the till has no
+    such printer.
+    """
+    candidates = {c["key"]: c for c in till_local_printers(db, shop)}
+    found = candidates.get(f"{machine_id}:{connection}")
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="no_local_printer")
+    existing = _hosted_local(shop_printers(db, shop.id), machine_id, connection)
+    if existing is not None:
+        if not existing.is_active:
+            existing.is_active = True
+            existing.updated_at = _now()
+            db.flush()
+        return existing
+    name = f"{TILL_LOCAL_NAMES[connection]} — {found['machineName']}"[:100]
+    paper = found.get("paperWidth") if found.get("paperWidth") in (58, 80) else (58 if connection == "till" else 80)
+    body = PrinterIn.model_validate({
+        "name": name,
+        "purpose": "kitchen",
+        "connectionType": "cloud",
+        "hostMachineId": str(machine_id),
+        "hostConnection": connection,
+        "machineId": str(machine_id),
+        "btAddress": found.get("btAddress") if connection == "bluetooth" else None,
+        "btName": found.get("deviceName") if connection == "bluetooth" else None,
+        "paperWidth": paper,
+        # The F20's head has no cutter; an external printer cuts.
+        "cutPaper": connection != "till",
+        "sortOrder": 100,
+    })
+    return create_printer(db, shop, body)
+
+
 # ── Notify ────────────────────────────────────────────────────────────────────
 
 
@@ -1734,6 +2014,12 @@ def set_print_host(db: Session, shop: Shop, machine_id: Optional[uuid.UUID]) -> 
     tills = shop_machines(db, shop.id)
     if machine_id is not None and str(machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
+    chosen = next((m for m in tills if machine_id is not None and str(m.id) == str(machine_id)), None)
+    from app.services import lan_server
+
+    if chosen is not None and lan_server.is_excluded(db, chosen):
+        # "לא משמש כשרת מקומי" (app/services/lan_server.py): never the shop's print server.
+        raise lan_server.print_host_refusal(chosen)
     db.query(TillParameterValue).filter(
         TillParameterValue.parameter_id == parameter.id,
         TillParameterValue.scope_type == "machine",

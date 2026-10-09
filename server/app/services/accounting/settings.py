@@ -137,13 +137,19 @@ def merge(company: Optional[dict], shop: Optional[dict]) -> Dict[str, Any]:
 COMPANY_ONLY = ("exportLevel", "consolidate")
 
 
-def missing_core(effective: Dict[str, Any]) -> List[str]:
+#: An exempt dealer (עוסק פטור) never has VAT or taxable income: its receipts carry no
+#: VAT, so its entries are "הכנסות פטורות" (docs/SPEC_BUSINESS_TYPE.md).
+EXEMPT_CORE_ACCOUNT_KEYS = ("cash", "card", "incomeExempt")
+
+
+def missing_core(effective: Dict[str, Any], dealer_type: Optional[str] = None) -> List[str]:
     """What an export can never go without: the movement type and the core accounts."""
     missing: List[str] = []
     if not effective.get("movementType"):
         missing.append("movementType")
     accounts = effective.get("accounts") or {}
-    missing += [f"accounts.{k}" for k in CORE_ACCOUNT_KEYS if not accounts.get(k)]
+    core = EXEMPT_CORE_ACCOUNT_KEYS if dealer_type == "exempt" else CORE_ACCOUNT_KEYS
+    missing += [f"accounts.{k}" for k in core if not accounts.get(k)]
     return missing
 
 

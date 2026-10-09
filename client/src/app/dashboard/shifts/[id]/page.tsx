@@ -22,6 +22,7 @@ import { formatCurrency, formatDate, formatDateTimeInZone, moneyValue } from '@/
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
 import type { Shift } from '@/lib/types';
+import { cardTipsFromDrawerOf, shiftDrawerCash } from '@/lib/drawerTips';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { PeriodTransmissionSummary } from '@/components/dashboard/machines/card-transmission';
 import {
@@ -29,6 +30,7 @@ import {
   OfflineNotice,
   offlineOf,
 } from '@/components/dashboard/z-report/offline-summary';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import {
   CountedCash,
   Fact,
@@ -39,6 +41,9 @@ import {
   TipsSplit,
   useShiftLabel,
 } from '@/components/dashboard/shifts/shift-parts';
+import { useShiftExportSheets } from '@/components/dashboard/shifts/shift-export-sheets';
+import { ShiftCloseAction, useShiftCloseDialogs } from '@/components/dashboard/shifts/shift-close';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -75,8 +80,11 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const t = useTranslations('shifts');
   const tSend = useTranslations('transmission');
   const shiftLabel = useShiftLabel();
+  const shiftSheets = useShiftExportSheets();
   const canProduceZ = useCanProduceZ();
-  usePageScope({ maxLevel: 'machine', silent: true });
+  const { scope } = usePageScope({ maxLevel: 'machine', silent: true });
+  // "סגור משמרת" for an open shift: as on the list (the remote close, or a dead till's administrative one).
+  const closer = useShiftCloseDialogs(scope.machines);
   const tz = useTenantTimeZone();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -118,6 +126,8 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
   const late = shift.lateDocuments ?? 0;
   const basis = shift.reconstructionBasis ?? null;
   const till = shift.tillTotals ?? null;
+  // "טיפ באשראי משולם מהמזומן": what the till froze on the close (null when the parameter was off).
+  const tipsFromDrawer = open ? null : cardTipsFromDrawerOf(till);
   const offline = offlineOf(shift.offline);
 
   return (
@@ -143,6 +153,25 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ReportExportToolbar
+            title={t('detail.title', { shift: shiftLabel(shift) })}
+            from={shift.businessDate}
+            to={shift.businessDate}
+            scopeLabel={[shift.shopName, shift.machineName].filter(Boolean).join(' · ')}
+            getSheets={() =>
+              shiftSheets(
+                shift,
+                shift.totalsMismatch && till
+                  ? COMPARED.flatMap(({ till: keys, server }) => {
+                      const key = keys.find((k) => k in till);
+                      return key
+                        ? [{ label: t(`detail.tillKey.${keys[0]}`), till: till[key], cloud: server(shift) }]
+                        : [];
+                    })
+                  : [],
+              )
+            }
+          />
           {shift.zReportId ? (
             <Link
               href={`/dashboard/z-reports/${shift.zReportId}`}
@@ -159,11 +188,20 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
               {t('produceZ')}
             </Link>
           ) : null}
+          {/* "מגירת מזומן": the shift's drawer timeline — openings, movements, counts. */}
+          <Link
+            href={`/dashboard/cash-drawer?shiftId=${shift.id}`}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            {t('detail.drawerTimeline')}
+          </Link>
+          <ShiftCloseAction shift={shift} canClose={canProduceZ} closer={closer} size="sm" />
           <Link href={backHref} onClick={goBack} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             {t('detail.backToList')}
           </Link>
         </div>
       </div>
+      {closer.dialogs}
 
       {open ? (
         <div className="rounded-md border bg-muted/40 p-3 text-sm">{t('detail.openNotice')}</div>
@@ -240,6 +278,16 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
             <MoneyRow label={t('detail.overShort')}>
               {open ? '—' : <OverShort value={shift.discrepancy} />}
             </MoneyRow>
+            {tipsFromDrawer !== null ? (
+              <>
+                <MoneyRow label={t('detail.cardTipsFromDrawer')} value={tipsFromDrawer} />
+                <MoneyRow
+                  label={t('detail.drawerCash')}
+                  value={shiftDrawerCash(totals?.totalCash, totals?.totalCashTips, tipsFromDrawer)}
+                  strong
+                />
+              </>
+            ) : null}
             {!open && shift.countedCash == null ? (
               <p className="text-muted-foreground pt-1 text-xs">
                 {shift.unattended ? t('detail.uncountedUnattended') : t('detail.uncounted')}
@@ -326,6 +374,9 @@ export default function ShiftDetailPage({ params }: { params: Promise<{ id: stri
           <OfflineDeclinedList declined={shift.offline?.declined ?? []} />
         </div>
       ) : null}
+
+      {/* "עסקאות שלא הושלמו" / "מכירות שבוטלו": information only, not in the totals above. */}
+      <FailedPaymentsSection query={{ shiftId: shift.id }} />
 
       {shift.totalsMismatch && till ? (
         <Card>

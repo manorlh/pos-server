@@ -49,7 +49,7 @@ def build_tips_report(
         Transaction.shop_id == shop.id,
         # A sale refunded later is `refunded` / `partial_refund` once its credit note
         # arrives (`settle_credited_originals`); the tip it took was still taken.
-        Transaction.status.in_(SALE_STATUSES),
+        Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
     )
     if shift_id:
         q = q.filter(Transaction.shift_id == shift_id)

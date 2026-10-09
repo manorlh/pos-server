@@ -13,8 +13,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Copy, Pause, Pencil, Play, Plus, Search, Trash2 } from 'lucide-react';
+import { BadgePercent, Copy, Pause, Pencil, Play, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { formatDate } from '@/lib/format';
 import {
   deletePromotion,
   duplicatePromotion,
@@ -25,7 +26,9 @@ import {
   type PromotionStatus,
 } from '@/lib/promotionsApi';
 import { cn } from '@/lib/utils';
-import { PromotionFormDialog } from '@/components/dashboard/promotions/promotion-form';
+import { PromotionFormDialog, type PromotionPreset } from '@/components/dashboard/promotions/promotion-form';
+import { useActionSheets } from '@/components/dashboard/insights-actions/action-host';
+import { useCanAct } from '@/components/dashboard/insights-actions/sheet-parts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,7 +51,7 @@ function useWhenText() {
   return (p: Promotion): string => {
     const parts: string[] = [];
     if (p.validFrom || p.validTo) {
-      parts.push(t('dates', { from: p.validFrom ?? '…', to: p.validTo ?? '…' }));
+      parts.push(t('dates', { from: p.validFrom ? formatDate(p.validFrom) : '…', to: p.validTo ? formatDate(p.validTo) : '…' }));
     }
     if (p.weekdays?.length) parts.push(p.weekdays.map((d) => td(String(d))).join(' '));
     if (p.startTime && p.endTime) parts.push(t('hours', { from: p.startTime, to: p.endTime }));
@@ -78,7 +81,12 @@ export default function PromotionsPage() {
   const [status, setStatus] = useState<PromotionStatus | null>(null);
   const [editing, setEditing] = useState<Promotion | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [preset, setPreset] = useState<PromotionPreset | undefined>(undefined);
   const [deleting, setDeleting] = useState<Promotion | null>(null);
+  // "מבצע מזדמן": the insights' quick promotion sheet, for any product, category or everything.
+  const tA = useTranslations('insightsActions.promotionForm');
+  const sheets = useActionSheets({});
+  const canAct = useCanAct();
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(search), 300);
@@ -126,8 +134,9 @@ export default function PromotionsPage() {
     onError,
   });
 
-  const openNew = () => {
+  const openNew = (from?: PromotionPreset) => {
     setEditing(null);
+    setPreset(from);
     setFormOpen(true);
   };
 
@@ -138,12 +147,26 @@ export default function PromotionsPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-sm text-muted-foreground">{t('subtitle')}</p>
         </div>
-        {data?.canCreate ? (
-          <Button onClick={openNew}>
-            <Plus className="me-1 h-4 w-4" aria-hidden />
-            {t('list.new')}
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {canAct ? (
+            <Button variant="outline" onClick={() => sheets.open('quickPromo', undefined, { source: 'adhoc' })}>
+              <BadgePercent className="me-1 h-4 w-4" aria-hidden />
+              {tA('adhocButton')}
+            </Button>
+          ) : null}
+          {data?.canCreate ? (
+            <Button variant="outline" onClick={() => openNew('happy_hour')}>
+              <Sparkles className="me-1 h-4 w-4" aria-hidden />
+              {tA('happyHourButton')}
+            </Button>
+          ) : null}
+          {data?.canCreate ? (
+            <Button onClick={() => openNew()}>
+              <Plus className="me-1 h-4 w-4" aria-hidden />
+              {t('list.new')}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -247,7 +270,8 @@ export default function PromotionsPage() {
         </ul>
       )}
 
-      <PromotionFormDialog open={formOpen} onOpenChange={setFormOpen} promotion={editing} />
+      <PromotionFormDialog open={formOpen} onOpenChange={setFormOpen} promotion={editing} preset={editing ? undefined : preset} />
+      {sheets.element}
 
       <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent className="max-w-md">

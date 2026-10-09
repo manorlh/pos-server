@@ -48,7 +48,7 @@ import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -238,11 +238,11 @@ export default function AccountingExportPage() {
               <CardContent className="flex flex-wrap items-end gap-4 pt-6">
                 <div className="space-y-1">
                   <Label className="text-xs">{t('from')}</Label>
-                  <Input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} />
+                  <DatePicker value={from} max={to} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">{t('to')}</Label>
-                  <Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
+                  <DatePicker value={to} min={from} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
                 </div>
                 <label className="flex items-center gap-2 pb-2 text-sm">
                   <input

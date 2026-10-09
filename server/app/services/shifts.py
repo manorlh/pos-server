@@ -17,9 +17,11 @@ document in the wrong shift:
   for audit and compared, never trusted — a Z is built from what the cloud holds.
 * **A shift is one till's.** A shift id the cloud holds for another till (a till
   re-paired as a new machine while its shift was open) is never used for this one: its
-  documents are stored as orphans, its open and close are 403
-  `shift_belongs_to_another_machine`, its heartbeat claim is dropped, and an X or Z
-  counts only the documents of the shift's own till.
+  open and close are 403 `shift_belongs_to_another_machine`, its heartbeat claim is
+  dropped, and an X or Z counts only the documents of the shift's own till. Its
+  documents are filed by `app.services.document_filing`: under that other till when it
+  is the one this device was before a re-pair, else in this till's shift covering their
+  issue time, else in this till's "documents waiting for a shift" — never in no shift.
 * **Closing a shift creates no Z.** See `app.services.z_runs`.
 """
 from __future__ import annotations
@@ -28,7 +30,7 @@ import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import BigInteger, case, func, or_
@@ -256,6 +258,56 @@ def highest_transaction_number(db: Session, machine_id: uuid.UUID) -> Optional[i
     return max(numbers) if numbers else None
 
 
+def highest_transaction_numbers(db: Session, machine_id: uuid.UUID) -> Dict[str, int]:
+    """
+    The highest numeric document number the cloud holds from this machine **per series**
+    ("320", "330", "400" — -400 is in "400"; docs/SPEC_DOCUMENT_PREFIX.md), for a till
+    that numbers each type on its own counter. A series with no document is absent.
+    """
+    out: Dict[str, int] = {}
+    if db.get_bind().dialect.name == "postgresql":
+        rows = (
+            db.query(Transaction.document_series, func.max(Transaction.transaction_number.cast(BigInteger)))
+            .filter(
+                Transaction.machine_id == machine_id,
+                Transaction.transaction_number.op("~")(f"^[0-9]{{1,{DOCUMENT_NUMBER_MAX_DIGITS}}}$"),
+            )
+            .group_by(Transaction.document_series)
+            .all()
+        )
+        return {str(series): int(value) for series, value in rows if series is not None and value is not None}
+    for series, n in db.query(Transaction.document_series, Transaction.transaction_number).filter(
+        Transaction.machine_id == machine_id
+    ):
+        if series is None or not (n and n.isascii() and n.isdigit() and len(n) <= DOCUMENT_NUMBER_MAX_DIGITS):
+            continue
+        key = str(series)
+        out[key] = max(out.get(key, 0), int(n))
+    return out
+
+
+def with_reported_counters(
+    db: Session, machine_id: uuid.UUID, per_series: Optional[Dict[str, int]], highest: Optional[int]
+) -> tuple:
+    """`(per_series, highest)` raised to the till's last reported counters, never lowered."""
+    from app.models.pos_machine import POSMachine
+
+    machine = db.get(POSMachine, machine_id)
+    reported = getattr(machine, "reported_document_counters", None) if machine is not None else None
+    if not isinstance(reported, dict) or not reported:
+        return per_series, highest
+    merged = dict(per_series or {})
+    for series, value in reported.items():
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            continue
+        if series in ("320", "330", "400") and n > int(merged.get(series) or 0):
+            merged[series] = n
+    top = max(merged.values()) if merged else None
+    return (merged or None), (max(highest or 0, top or 0) or highest)
+
+
 def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
     """
     The till's last closed shift, and the highest document number the cloud holds from
@@ -263,16 +315,30 @@ def last_closed_shift(db: Session, machine_id: uuid.UUID) -> LastClosedShift:
     counter onto it, so it never reissues a number the machine already used).
     """
     highest = highest_transaction_number(db, machine_id)
-    shift = (
-        db.query(Shift)
-        .filter(Shift.machine_id == machine_id, Shift.status == ShiftStatus.CLOSED)
-        .order_by(Shift.closed_at.desc().nullslast(), Shift.opened_at.desc())
-        .first()
+    per_series = highest_transaction_numbers(db, machine_id) or None
+    # And the counters the till itself last reported (offline till Z §4.6): a replacement
+    # device never reissues a number the old one printed and never sent.
+    per_series, highest = with_reported_counters(db, machine_id, per_series, highest)
+    from app.services.document_filing import is_cloud_built
+
+    # The till's own last shift: never one the cloud built (late documents carried into
+    # the next Z, documents waiting for a shift) — those have no number and no count.
+    shift = next(
+        (
+            s for s in db.query(Shift)
+            .filter(Shift.machine_id == machine_id, Shift.status == ShiftStatus.CLOSED)
+            .order_by(Shift.closed_at.desc().nullslast(), Shift.opened_at.desc())
+            .limit(20)
+            .all()
+            if not is_cloud_built(s)
+        ),
+        None,
     )
     if shift is None:
-        return LastClosedShift(highest_transaction_number=highest)
+        return LastClosedShift(highest_transaction_number=highest, highest_transaction_numbers=per_series)
     return LastClosedShift(
         highest_transaction_number=highest,
+        highest_transaction_numbers=per_series,
         shift_id=shift.id,
         sequence_number=shift.sequence_number,
         business_date=shift.business_date,
@@ -311,29 +377,36 @@ def _new_shift(
     )
 
 
-def precheck_document_shifts(db: Session, machine: POSMachine, shift_ids: Iterable[Optional[uuid.UUID]]) -> None:
+def precheck_document_shifts(
+    db: Session, machine: POSMachine, shift_ids: Iterable[Optional[uuid.UUID]]
+) -> Tuple[set, Optional[uuid.UUID]]:
     """
-    Refuse a batch up front if it names a shift the cloud cannot accept yet.
+    (the unknown shifts of a batch whose documents must wait, the till's open shift).
 
-    Checked before anything is written so a refused batch leaves no trace. Several
-    unknown shifts in one batch are refused too: only one of them could be opened, and
-    which is not something to guess.
+    A shift the cloud has not seen can be created from a document only when nothing else
+    of the till is open and it is the only unknown one: creating it while another is open
+    is the adoption bug in reverse (two open shifts), and which of several to open is not
+    something to guess. Those documents are not refused — and the batch is not either (it
+    used to be a 409 for the whole batch): each is filed in the till's "documents waiting
+    for a shift" and moved into its shift when that shift reaches the cloud
+    (`app.services.document_filing`).
     """
     wanted = {sid for sid in shift_ids if sid is not None}
     if not wanted:
-        return
+        return set(), None
     # Known to the cloud, whichever till's: another till's shift is not a conflict — the
-    # document is taken as an orphan (see `resolve_shift_for_document`).
+    # document is filed by `document_filing` rule 2.
     known = {
         row[0]
         for row in db.query(Shift.id).filter(Shift.id.in_(list(wanted))).all()
     }
-    unknown = sorted(wanted - known, key=str)
+    unknown = wanted - known
     if not unknown:
-        return
+        return set(), None
     open_shift = find_open_shift(db, machine.id)
     if open_shift is not None or len(unknown) > 1:
-        raise ShiftConflict(open_shift.id if open_shift else None, unknown)
+        return set(unknown), (open_shift.id if open_shift else None)
+    return set(), None
 
 
 def resolve_shift_for_document(
@@ -387,6 +460,9 @@ def resolve_shift_for_document(
         # till retries and then finds the shift by id.
         raise ShiftConflict(None, [shift_id])
     link_claimed_shift(db, shift)
+    from app.services.document_filing import adopt_waiting_documents
+
+    adopt_waiting_documents(db, shift)
     return shift
 
 
@@ -420,10 +496,21 @@ def note_documents_after_close(
     machine_id: Optional[uuid.UUID] = None,
     moved_in: Optional[dict] = None,
     amended: Optional[dict] = None,
+    written: Optional[dict] = None,
     now: Optional[datetime] = None,
+    machine_ids: Optional[Iterable[uuid.UUID]] = None,
 ) -> None:
     """
     Documents were written into (or out of) shifts that are already closed.
+
+    `machine_ids`: every till the push filed documents under (the pushing till, and the
+    till this device was before a re-pair — `document_filing`); `machine_id` alone otherwise.
+    A till's "documents waiting for a shift" bucket is recomputed like any closed shift but
+    never counts its documents as late (waiting is what it is for), and is removed once a
+    move has emptied it.
+
+    `written` maps shift id → the documents this push wrote into it new or moved in: in a
+    shift a Z already took, exactly those are carried into the next Z (§4.6.3).
 
     `touched` maps shift id → how many of the written documents were *new* to the cloud.
     For each closed shift:
@@ -446,6 +533,11 @@ def note_documents_after_close(
     it — rather than recomputing the X of a shift a Z has just frozen, from a copy of
     the row this session read before the Z committed.
     """
+    from app.services.document_filing import is_waiting, refresh_bucket
+
+    allowed = {str(m) for m in (machine_ids or ())}
+    if machine_id is not None:
+        allowed.add(str(machine_id))
     recomputed_tills = set()
     for shift_id, new_count in touched.items():
         if shift_id is None:
@@ -453,11 +545,15 @@ def note_documents_after_close(
         shift = lock_shift(db, shift_id)
         if shift is None or shift.status != ShiftStatus.CLOSED:
             continue
-        if machine_id is not None and str(shift.machine_id) != str(machine_id):
+        if allowed and str(shift.machine_id) not in allowed:
             continue
-        if new_count:
-            shift.late_documents = int(shift.late_documents or 0) + new_count
+        if is_waiting(shift) and shift.z_report_id is None:
+            refresh_bucket(db, shift)
+            recomputed_tills.add(shift.machine_id)
+            continue
         if shift.z_report_id is None:
+            if new_count:
+                shift.late_documents = int(shift.late_documents or 0) + new_count
             totals = compute_totals(db, [shift.id])
             for column, value in totals.as_x().items():
                 setattr(shift, column, value)
@@ -466,14 +562,32 @@ def note_documents_after_close(
             continue
         late = new_count + int((moved_in or {}).get(shift_id, 0))
         rewritten = int((amended or {}).get(shift_id, 0))
+        z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
+        late_ids = (written or {}).get(shift_id) if written is not None else None
+        if z is not None and late_ids is not None:
+            # A document a local shop Z names in its manifest is that Z's whenever it
+            # arrives (SPEC_INDEPENDENT_TILL §8.12): neither late nor carried. Counting it
+            # late anyway (the bug) left the Z and its shift claiming documents "after Z"
+            # that the Z had on its paper.
+            from app.services.late_documents import named_in
+
+            named = named_in(z)
+            if named:
+                late_ids = [i for i in late_ids if str(i).lower() not in named]
+                late = len(late_ids)
         if not (late or rewritten):
             continue
-        shift.late_documents = int(shift.late_documents or 0) + (late - new_count)
+        shift.late_documents = int(shift.late_documents or 0) + late
         shift.amended_documents = int(shift.amended_documents or 0) + rewritten
-        z = db.query(ZReport).filter(ZReport.id == shift.z_report_id).first()
         if z is not None:
             z.late_documents = int(z.late_documents or 0) + late
             z.amended_documents = int(z.amended_documents or 0) + rewritten
+            # Documents a Z did not count (arrived, or moved in, after it): carried into the
+            # next Z — every document in exactly one Z (offline till Z §4.6.3).
+            from app.services import late_documents
+
+            if late:
+                late_documents.carry(db, shift, z, doc_ids=late_ids, now=now)
         logger.warning(
             "shift %s is in Z %s: %s document(s) arrived or moved in after it, %s rewritten",
             shift.id, shift.z_report_id, late, rewritten,
@@ -605,6 +719,10 @@ def report_shift_open(db: Session, machine: POSMachine, data: ShiftOpenIn) -> Sh
             detail=f"another_shift_open:{clash.id}" if clash else "another_shift_open",
         )
     link_claimed_shift(db, shift)
+    # Documents that named this shift before it reached the cloud waited for it: in now.
+    from app.services.document_filing import adopt_waiting_documents
+
+    adopt_waiting_documents(db, shift)
     return shift
 
 
@@ -621,9 +739,12 @@ def check_close_preconditions(
     different shift (or none) that is not already in a Z — re-pushing the document,
     which carries this shift's id, moves it. A document already inside another Z stays
     where it is and is not reported: moving it would change a filed Z.
+
+    An empty list is checked like any other (it used to return at once): it names nothing
+    missing, and what the till *counted* at the close (`till.transactionsCount`) is held
+    against the cloud's documents by every Z that takes the shift — a Z waits while the
+    till counted more than the cloud holds (`app.services.z_completeness`).
     """
-    if not transaction_ids:
-        return [], []
     rows = (
         db.query(Transaction.id, Transaction.shift_id, Shift.z_report_id)
         .outerjoin(Shift, Shift.id == Transaction.shift_id)
@@ -642,6 +763,12 @@ def check_close_preconditions(
         and present[tx_id][0] != shift_id
         and present[tx_id][1] is None
     ]
+    if stale:
+        # A late document carried out of a support Z's shift into its till's next Z stays
+        # there (offline till Z §4.6.3): never "stale" — re-pushing would not move it back.
+        from app.services.late_documents import is_carry_shift
+
+        stale = [tx_id for tx_id in stale if not is_carry_shift(db, present[tx_id][0])]
     return missing, stale
 
 
@@ -753,6 +880,10 @@ def apply_shift_close(
         return shift, "duplicate"
     else:
         _fill_open_fields_from_close(db, shift, body)
+    # Documents that named this shift and waited for it (`document_filing`): in its X now.
+    from app.services.document_filing import adopt_waiting_documents
+
+    adopt_waiting_documents(db, shift)
 
     totals = compute_totals(db, [shift.id])
     for column, value in totals.as_x().items():
@@ -831,12 +962,27 @@ def _stamped_area_name(shift: Shift) -> Optional[str]:
     return area.name if area is not None else None
 
 
+def register_number_of(shift: Shift) -> Optional[str]:
+    """
+    The shift's till's register number in its shop — the "2" of "קופה 2" — or None.
+
+    A register number belongs to one shop's run: once the till has moved to another shop
+    its number there is not the one it took this shift under, so none is given then.
+    """
+    machine = getattr(shift, "machine", None)
+    if machine is None or machine.shop_id is None or machine.shop_id != shift.shop_id:
+        return None
+    number = (machine.pos_number or "").strip()
+    return number or None
+
+
 def shift_to_out(
     shift: Shift,
     *,
     z_number: Optional[int] = None,
     machine_name: Optional[str] = None,
     shop_name: Optional[str] = None,
+    pos_number: Optional[str] = None,
     payment_breakdown: Optional[dict] = None,
 ) -> ShiftOut:
     status_val = shift.status.value if hasattr(shift.status, "value") else shift.status
@@ -872,6 +1018,7 @@ def shift_to_out(
         z_number=z_number,
         machine_name=machine_name,
         shop_name=shop_name,
+        pos_number=pos_number,
         area_id=getattr(shift, "area_id", None),
         # The stamped area's name as it is called now. What an area is called is not
         # fiscal content; which area the shift was taken under is, and that is the id.

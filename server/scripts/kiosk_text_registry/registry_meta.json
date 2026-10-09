@@ -1,0 +1,3800 @@
+{
+  "$comment": "The hand-made part of the kiosk text registry; gen_registry.py reads it with the sources and writes kiosk_text_registry.json + report.md. Per text: key, group, label (Hebrew, ≤ 40), max, kind (T title 60 / B button 30 / L short label 24 / S subtitle-hint 100 / D body 200 — the max's base; never below 1.5× the longest default, never above 200), placeholders (names in the Android resource's positional order), android (the resources this key overrides), web (m.t() / LIVE keys it replaces), shownWhen, en (only where no English exists), enOverride (+ why). sources.webScreens: the web screens scanned for m.t() / t() keys no text maps (warned unless in webIgnore). scope: the staff strings left out, the new strings taken though not referenced yet, leaveOut (referenced but left out by hand, with why). autoKeyPrefixes / autoGroups: for a referenced string with no entry here (NO META). notes: copied into report.md.",
+  "sources": {
+    "androidRoot": "P:/pos-android",
+    "androidRes": "app/src/main/res",
+    "androidFiles": [
+      "strings_kiosk_app.xml",
+      "strings_kiosk_keyboard.xml",
+      "strings_kiosk_pay.xml",
+      "strings_kiosk_scan.xml",
+      "strings_dietary.xml",
+      "strings_kiosk_layouts.xml"
+    ],
+    "codeGlobs": [
+      "app/src/main/java/il/co/runnersys/pos/ui/kiosk/*.kt",
+      "app/src/main/java/il/co/runnersys/pos/domain/Kiosk*.kt",
+      "app/src/main/java/il/co/runnersys/pos/data/repo/KioskBonService.kt",
+      "app/src/main/java/il/co/runnersys/pos/data/repo/KioskPayAtTill.kt",
+      "app/src/main/java/il/co/runnersys/pos/ui/common/DietaryMarks.kt"
+    ],
+    "serverRoot": "P:/pos-server",
+    "textKeysTs": "client/src/lib/kioskConfig.ts",
+    "textKeysPy": "server/app/services/kiosk_config.py",
+    "webMessages": "client/src/messages",
+    "windowsLive": "kiosk-desktop/src/renderer/i18n.ts",
+    "webScreens": [
+      "client/src/components/dashboard/kiosks/preview-*.tsx",
+      "kiosk-desktop/src/renderer/kiosk/*.tsx",
+      "kiosk-desktop/src/renderer/App.tsx"
+    ]
+  },
+  "webIgnore": {
+    "noLogo": "the preview's logo placeholder (editor)",
+    "untitledMessage": "the preview's name for a message without a title (editor)",
+    "skippedService": "the preview's note that the service screen is skipped (editor)",
+    "simulatePaid": "the preview's \"simulate an approved payment\" button (editor)",
+    "quickNote1": "sample quick note — the live kiosk passes the menu's own quick notes",
+    "quickNote2": "sample quick note — the live kiosk passes the menu's own quick notes",
+    "quickNote3": "sample quick note — the live kiosk passes the menu's own quick notes",
+    "poweredBy": "\"POWERED BY R2M POS\" — the product's mark, not a business text",
+    "waitingTitle": "the paired till waiting to become a kiosk (staff / setup)",
+    "waitingBody": "the paired till waiting to become a kiosk (staff / setup)"
+  },
+  "languages": [
+    "he",
+    "en",
+    "ar",
+    "ru"
+  ],
+  "placeholders": [
+    "total",
+    "count",
+    "price",
+    "name",
+    "number",
+    "time",
+    "day",
+    "seconds",
+    "max",
+    "amount",
+    "n"
+  ],
+  "scope": {
+    "excludePrefixes": [
+      "kapp_admin_",
+      "kapp_control_",
+      "kapp_bon_",
+      "kapp_menu_",
+      "kapp_terminal_",
+      "kapp_staff_",
+      "kapp_flow_",
+      "kapp_status_",
+      "kapp_alert_",
+      "kpay_till_",
+      "kpay_bon_",
+      "kscan_diag_",
+      "kscan_outcome_"
+    ],
+    "excludeNames": [
+      "kapp_kiosk_name"
+    ],
+    "includeUnreferencedPrefixes": [
+      "klay_"
+    ],
+    "leaveOut": {}
+  },
+  "autoKeyPrefixes": [
+    [
+      "kapp_",
+      ""
+    ],
+    [
+      "ktx_",
+      ""
+    ],
+    [
+      "kkb_",
+      "kb"
+    ],
+    [
+      "kpay_",
+      "pay"
+    ],
+    [
+      "kscan_",
+      "scan"
+    ],
+    [
+      "dietary_",
+      "diet"
+    ],
+    [
+      "klay_",
+      ""
+    ]
+  ],
+  "autoGroups": [
+    [
+      "kapp_attract_",
+      "attract"
+    ],
+    [
+      "kapp_help",
+      "help"
+    ],
+    [
+      "kapp_lang_",
+      "help"
+    ],
+    [
+      "kapp_pay_",
+      "pay"
+    ],
+    [
+      "kapp_success_",
+      "success"
+    ],
+    [
+      "kapp_receipt_",
+      "success"
+    ],
+    [
+      "kapp_idle_",
+      "idle"
+    ],
+    [
+      "kapp_leave_",
+      "leave"
+    ],
+    [
+      "kapp_rest_",
+      "rest"
+    ],
+    [
+      "kapp_day_",
+      "rest"
+    ],
+    [
+      "kapp_slip_",
+      "slip"
+    ],
+    [
+      "kpay_slip_",
+      "slip"
+    ],
+    [
+      "kpay_",
+      "payMethod"
+    ],
+    [
+      "kkb_",
+      "keyboard"
+    ],
+    [
+      "ktx_kb_",
+      "keyboard"
+    ],
+    [
+      "ktx_tip_",
+      "tip"
+    ],
+    [
+      "ktx_step_",
+      "checkout"
+    ],
+    [
+      "ktx_name_",
+      "details"
+    ],
+    [
+      "ktx_phone_",
+      "details"
+    ],
+    [
+      "ktx_service_",
+      "service"
+    ],
+    [
+      "kapp_upsell_",
+      "upsell"
+    ],
+    [
+      "kapp_meal_",
+      "meal"
+    ],
+    [
+      "kscan_",
+      "errors"
+    ],
+    [
+      "dietary_",
+      "dietary"
+    ],
+    [
+      "klay_step_",
+      "layoutGuided"
+    ],
+    [
+      "klay_guided_",
+      "layoutGuided"
+    ],
+    [
+      "klay_meal_",
+      "layoutMeal"
+    ],
+    [
+      "klay_basket_",
+      "layoutBasket"
+    ],
+    [
+      "klay_quick_add",
+      "layoutBasket"
+    ],
+    [
+      "klay_back_to_menu",
+      "layoutBasket"
+    ],
+    [
+      "klay_reach",
+      "layoutReach"
+    ],
+    [
+      "klay_",
+      "layoutLanding"
+    ]
+  ],
+  "groups": [
+    {
+      "id": "attract",
+      "kind": "screen",
+      "label": {
+        "he": "מסך פתיחה",
+        "en": "Attract screen"
+      }
+    },
+    {
+      "id": "help",
+      "kind": "screen",
+      "label": {
+        "he": "עזרה ושפה",
+        "en": "Help and language"
+      }
+    },
+    {
+      "id": "service",
+      "kind": "screen",
+      "label": {
+        "he": "לקחת / לשבת",
+        "en": "Take away / eat in"
+      }
+    },
+    {
+      "id": "menu",
+      "kind": "screen",
+      "label": {
+        "he": "תפריט ומחלקות",
+        "en": "Menu and categories"
+      }
+    },
+    {
+      "id": "search",
+      "kind": "screen",
+      "label": {
+        "he": "חיפוש",
+        "en": "Search"
+      }
+    },
+    {
+      "id": "item",
+      "kind": "screen",
+      "label": {
+        "he": "חלון מנה",
+        "en": "Item window"
+      }
+    },
+    {
+      "id": "meal",
+      "kind": "screen",
+      "label": {
+        "he": "ארוחה בשלבים",
+        "en": "Meal in steps"
+      }
+    },
+    {
+      "id": "upsell",
+      "kind": "screen",
+      "label": {
+        "he": "הגדלת מכירה",
+        "en": "Upsell"
+      }
+    },
+    {
+      "id": "basket",
+      "kind": "screen",
+      "label": {
+        "he": "סל",
+        "en": "Basket"
+      }
+    },
+    {
+      "id": "details",
+      "kind": "screen",
+      "label": {
+        "he": "שם, טלפון ושולחן",
+        "en": "Name, phone and table"
+      }
+    },
+    {
+      "id": "keyboard",
+      "kind": "screen",
+      "label": {
+        "he": "מקלדת",
+        "en": "Keyboard"
+      }
+    },
+    {
+      "id": "tip",
+      "kind": "screen",
+      "label": {
+        "he": "טיפ",
+        "en": "Tip"
+      }
+    },
+    {
+      "id": "checkout",
+      "kind": "screen",
+      "label": {
+        "he": "שלבי הקופה",
+        "en": "Checkout steps"
+      }
+    },
+    {
+      "id": "payMethod",
+      "kind": "screen",
+      "label": {
+        "he": "אמצעי תשלום",
+        "en": "Payment method"
+      }
+    },
+    {
+      "id": "pay",
+      "kind": "screen",
+      "label": {
+        "he": "תשלום",
+        "en": "Payment"
+      }
+    },
+    {
+      "id": "success",
+      "kind": "screen",
+      "label": {
+        "he": "סיום וקבלה",
+        "en": "Success and receipt"
+      }
+    },
+    {
+      "id": "slip",
+      "kind": "screen",
+      "label": {
+        "he": "פתק ללקוח",
+        "en": "Customer slip"
+      }
+    },
+    {
+      "id": "idle",
+      "kind": "screen",
+      "label": {
+        "he": "\"עדיין כאן?\"",
+        "en": "\"Still there?\""
+      }
+    },
+    {
+      "id": "leave",
+      "kind": "screen",
+      "label": {
+        "he": "ביטול הזמנה",
+        "en": "Cancel the order"
+      }
+    },
+    {
+      "id": "rest",
+      "kind": "screen",
+      "label": {
+        "he": "מנוחה / סגור",
+        "en": "Break / closed"
+      }
+    },
+    {
+      "id": "offline",
+      "kind": "screen",
+      "label": {
+        "he": "אין אינטרנט / תשלום",
+        "en": "No internet / payment"
+      }
+    },
+    {
+      "id": "errors",
+      "kind": "screen",
+      "label": {
+        "he": "שגיאות והודעות",
+        "en": "Errors and messages"
+      }
+    },
+    {
+      "id": "dietary",
+      "kind": "screen",
+      "label": {
+        "he": "סימוני תזונה",
+        "en": "Dietary marks"
+      }
+    },
+    {
+      "id": "layoutLanding",
+      "kind": "layout",
+      "label": {
+        "he": "מסך מחלקות",
+        "en": "Categories screen"
+      },
+      "shownWhen": {
+        "catalog": [
+          "landing"
+        ]
+      }
+    },
+    {
+      "id": "layoutBasket",
+      "kind": "layout",
+      "label": {
+        "he": "פס הזמנה",
+        "en": "Order bar"
+      },
+      "shownWhen": {
+        "basket": [
+          "summary"
+        ]
+      }
+    },
+    {
+      "id": "layoutMeal",
+      "kind": "layout",
+      "label": {
+        "he": "\"להפוך לארוחה?\"",
+        "en": "\"Make it a meal?\""
+      },
+      "shownWhen": {
+        "mealUpsell": [
+          "first",
+          "after"
+        ]
+      }
+    },
+    {
+      "id": "layoutGuided",
+      "kind": "layout",
+      "label": {
+        "he": "מסלול מודרך",
+        "en": "Guided flow"
+      },
+      "shownWhen": {
+        "flow": [
+          "guided"
+        ]
+      }
+    },
+    {
+      "id": "layoutReach",
+      "kind": "layout",
+      "label": {
+        "he": "נגיש",
+        "en": "Accessible"
+      },
+      "shownWhen": {
+        "any": [
+          {
+            "reach": [
+              "low"
+            ]
+          },
+          {
+            "reachToggle": [
+              true
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "texts": [
+    {
+      "key": "attractTitle",
+      "group": "attract",
+      "label": "כותרת מסך הפתיחה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_attract_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "attractSubtitle",
+      "group": "attract",
+      "label": "שורת משנה במסך הפתיחה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_attract_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "attractCta",
+      "group": "attract",
+      "label": "כפתור \"הזמינו כאן\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_attract_cta"
+      ],
+      "web": []
+    },
+    {
+      "key": "attractTouch",
+      "group": "attract",
+      "label": "\"גע במסך\" — מתחת לכפתור",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_attract_touch"
+      ],
+      "web": [
+        "tapToStart"
+      ]
+    },
+    {
+      "key": "clubTitle",
+      "group": "attract",
+      "label": "כרטיס המועדון — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_club_title"
+      ],
+      "web": [
+        "clubTitle"
+      ]
+    },
+    {
+      "key": "clubBody",
+      "group": "attract",
+      "label": "כרטיס המועדון — שורת הסבר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_club_body"
+      ],
+      "web": [
+        "clubScan"
+      ]
+    },
+    {
+      "key": "attractTouchHint",
+      "group": "attract",
+      "label": "\"געו במסך\" — כשהכפתור מוסתר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_attract_touch_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "help",
+      "group": "help",
+      "label": "כפתור \"עזרה\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_help"
+      ],
+      "web": [
+        "help"
+      ]
+    },
+    {
+      "key": "helpTitle",
+      "group": "help",
+      "label": "חלון העזרה — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_help_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "helpText",
+      "group": "help",
+      "label": "חלון העזרה — הטקסט",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kapp_help_body"
+      ],
+      "web": [],
+      "enOverride": "Need help? Ask our staff at the counter.",
+      "enOverrideWhy": "he.json builtin helpText is the short line (= kapp_help_short); values-en kapp_help_body is the long how-to, not its translation"
+    },
+    {
+      "key": "helpClose",
+      "group": "help",
+      "label": "חלון העזרה — כפתור סגירה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_help_close"
+      ],
+      "web": []
+    },
+    {
+      "key": "langHe",
+      "group": "help",
+      "label": "שם השפה: עברית",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_lang_he"
+      ],
+      "web": []
+    },
+    {
+      "key": "langEn",
+      "group": "help",
+      "label": "שם השפה: אנגלית",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_lang_en"
+      ],
+      "web": []
+    },
+    {
+      "key": "helpShort",
+      "group": "help",
+      "label": "חלון העזרה — שורה פותחת",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_help_short"
+      ],
+      "web": []
+    },
+    {
+      "key": "helpSent",
+      "group": "help",
+      "label": "\"קראנו לצוות\" — אחרי לחיצה על עזרה",
+      "max": 100,
+      "kind": "S",
+      "android": [],
+      "web": [
+        "helpSent"
+      ],
+      "en": "We called the staff — someone will be with you soon"
+    },
+    {
+      "key": "serviceCaption",
+      "group": "service",
+      "label": "כיתוב קטן מעל השאלה",
+      "max": 27,
+      "kind": "L",
+      "android": [
+        "ktx_service_caption"
+      ],
+      "web": []
+    },
+    {
+      "key": "serviceTitle",
+      "group": "service",
+      "label": "השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_service_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "serviceSubtitle",
+      "group": "service",
+      "label": "שורת משנה מתחת לשאלה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_service_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "takeAwayLabel",
+      "group": "service",
+      "label": "\"לקחת\" — כותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_take_away"
+      ],
+      "web": []
+    },
+    {
+      "key": "takeAwaySub",
+      "group": "service",
+      "label": "\"לקחת\" — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_take_away_sub"
+      ],
+      "web": []
+    },
+    {
+      "key": "eatInLabel",
+      "group": "service",
+      "label": "\"לשבת\" — כותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_eat_in"
+      ],
+      "web": []
+    },
+    {
+      "key": "eatInSub",
+      "group": "service",
+      "label": "\"לשבת\" — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_eat_in_sub"
+      ],
+      "web": []
+    },
+    {
+      "key": "serviceContinue",
+      "group": "service",
+      "label": "כפתור המשך",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_service_continue"
+      ],
+      "web": []
+    },
+    {
+      "key": "serviceHint",
+      "group": "service",
+      "label": "רמז: לבחור אפשרות כדי להמשיך",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_service_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepSkip",
+      "group": "service",
+      "label": "כפתור \"דלג\" כשהשלב רשות (ווב)",
+      "max": 30,
+      "kind": "B",
+      "android": [],
+      "web": [
+        "stepSkip"
+      ],
+      "en": "Skip"
+    },
+    {
+      "key": "catalogTitle",
+      "group": "menu",
+      "label": "כותרת התפריט",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_catalog_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "featured",
+      "group": "menu",
+      "label": "כותרת שורת המומלצים",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_featured"
+      ],
+      "web": [
+        "featured"
+      ]
+    },
+    {
+      "key": "soldOut",
+      "group": "menu",
+      "label": "תווית \"אזל\" על מנה או אפשרות",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_sold_out"
+      ],
+      "web": [
+        "soldOut"
+      ]
+    },
+    {
+      "key": "fromPrice",
+      "group": "menu",
+      "label": "מחיר \"החל מ-\" על כרטיס מנה",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "price"
+      ],
+      "android": [
+        "kapp_from_price"
+      ],
+      "web": []
+    },
+    {
+      "key": "added",
+      "group": "menu",
+      "label": "הודעה קצרה \"נוסף לסל\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_added"
+      ],
+      "web": [
+        "confirmTitle"
+      ]
+    },
+    {
+      "key": "viewCart",
+      "group": "menu",
+      "label": "כפתור \"לסל\" בפס התחתון",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_view_cart"
+      ],
+      "web": [
+        "viewCart"
+      ]
+    },
+    {
+      "key": "back",
+      "group": "menu",
+      "label": "כפתור חזרה בכותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_back"
+      ],
+      "web": [
+        "back"
+      ]
+    },
+    {
+      "key": "startOver",
+      "group": "menu",
+      "label": "כפתור \"התחלה מחדש\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_start_over"
+      ],
+      "web": [
+        "startOver"
+      ]
+    },
+    {
+      "key": "emptyCatalog",
+      "group": "menu",
+      "label": "תפריט ריק",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_empty_catalog"
+      ],
+      "web": [
+        "empty"
+      ]
+    },
+    {
+      "key": "searchTitle",
+      "group": "search",
+      "label": "חלון החיפוש — כותרת וכפתור",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_search_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "searchHint",
+      "group": "search",
+      "label": "שדה החיפוש — טקסט רמז",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_search_hint"
+      ],
+      "web": [
+        "search"
+      ]
+    },
+    {
+      "key": "searchNone",
+      "group": "search",
+      "label": "אין תוצאות לחיפוש",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_search_none"
+      ],
+      "web": []
+    },
+    {
+      "key": "required",
+      "group": "item",
+      "label": "תווית \"חובה\" לקבוצת אפשרויות",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_required"
+      ],
+      "web": [
+        "required"
+      ]
+    },
+    {
+      "key": "optional",
+      "group": "item",
+      "label": "תווית \"רשות\" לקבוצת אפשרויות",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_optional"
+      ],
+      "web": [
+        "optional"
+      ]
+    },
+    {
+      "key": "chooseOne",
+      "group": "item",
+      "label": "כלל בחירה: אחד",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_choose_one"
+      ],
+      "web": []
+    },
+    {
+      "key": "chooseUpTo",
+      "group": "item",
+      "label": "כלל בחירה: עד",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "n"
+      ],
+      "android": [
+        "kapp_choose_up_to"
+      ],
+      "web": [
+        "chooseUpTo"
+      ]
+    },
+    {
+      "key": "chooseAtLeast",
+      "group": "item",
+      "label": "כלל בחירה: לפחות",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "n"
+      ],
+      "android": [
+        "kapp_choose_at_least"
+      ],
+      "web": []
+    },
+    {
+      "key": "chooseBetween",
+      "group": "item",
+      "label": "כלל בחירה: בין … ל-…",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "n",
+        "max"
+      ],
+      "android": [
+        "kapp_choose_between"
+      ],
+      "web": []
+    },
+    {
+      "key": "maxReached",
+      "group": "item",
+      "label": "הגעתם למקסימום בקבוצה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_max_reached"
+      ],
+      "web": []
+    },
+    {
+      "key": "groupMissing",
+      "group": "item",
+      "label": "קבוצה שעוד לא נבחרה (גם בארוחה)",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_group_missing"
+      ],
+      "web": []
+    },
+    {
+      "key": "noteTitle",
+      "group": "item",
+      "label": "הערות למנה — כותרת (בחלון ובהקלדה)",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_note_title",
+        "kapp_notes"
+      ],
+      "web": []
+    },
+    {
+      "key": "noteHint",
+      "group": "item",
+      "label": "הערה — טקסט רמז בשדה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_note_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "noteSave",
+      "group": "item",
+      "label": "הערה — כפתור שמירה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_note_save"
+      ],
+      "web": []
+    },
+    {
+      "key": "allergensNote",
+      "group": "item",
+      "label": "הערה מתחת לאלרגנים",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_allergens_note"
+      ],
+      "web": []
+    },
+    {
+      "key": "addToOrder",
+      "group": "item",
+      "label": "כפתור הוספה להזמנה (גם בהצעות)",
+      "max": 33,
+      "kind": "B",
+      "placeholders": [
+        "price"
+      ],
+      "android": [
+        "kapp_add_to_order"
+      ],
+      "web": [
+        "addToCart",
+        "upsellAddToOrder"
+      ]
+    },
+    {
+      "key": "saveChanges",
+      "group": "item",
+      "label": "כפתור שמירת שינויים (עריכת מנה)",
+      "max": 35,
+      "kind": "B",
+      "placeholders": [
+        "price"
+      ],
+      "android": [
+        "kapp_save_changes"
+      ],
+      "web": []
+    },
+    {
+      "key": "addAndPay",
+      "group": "item",
+      "label": "כפתור \"להזמנה ולתשלום\"",
+      "max": 36,
+      "kind": "B",
+      "placeholders": [
+        "price"
+      ],
+      "android": [
+        "kapp_add_and_pay"
+      ],
+      "web": []
+    },
+    {
+      "key": "allergensChip",
+      "group": "item",
+      "label": "שבב האלרגנים ורשימתם",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "kapp_allergens_chip"
+      ],
+      "web": []
+    },
+    {
+      "key": "allergensLabel",
+      "group": "item",
+      "label": "\"אלרגנים\" לפני הרשימה (ווב)",
+      "max": 24,
+      "kind": "L",
+      "android": [],
+      "web": [
+        "allergens"
+      ],
+      "en": "Allergens"
+    },
+    {
+      "key": "mealStep",
+      "group": "meal",
+      "label": "\"שלב X מתוך Y\"",
+      "max": 30,
+      "kind": "L",
+      "placeholders": [
+        "n",
+        "count"
+      ],
+      "android": [
+        "kapp_meal_step"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealNext",
+      "group": "meal",
+      "label": "כפתור \"הבא\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_meal_next"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealSummary",
+      "group": "meal",
+      "label": "כותרת סיכום הארוחה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_meal_summary"
+      ],
+      "web": []
+    },
+    {
+      "key": "free",
+      "group": "meal",
+      "label": "\"ללא תוספת\" ליד אפשרות בחינם",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_free"
+      ],
+      "web": []
+    },
+    {
+      "key": "upsellTitle",
+      "group": "upsell",
+      "label": "כותרת חלון ההצעה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_upsell_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "upsellContinue",
+      "group": "upsell",
+      "label": "כפתור המשך (אחרי שהוסיפו)",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_upsell_continue"
+      ],
+      "web": [
+        "upsellContinue"
+      ]
+    },
+    {
+      "key": "upsellAddPlain",
+      "group": "upsell",
+      "label": "כפתור הוספה (בלי מחיר)",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_upsell_add_plain"
+      ],
+      "web": []
+    },
+    {
+      "key": "upsellSkip",
+      "group": "upsell",
+      "label": "כפתור \"לא תודה\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_upsell_skip"
+      ],
+      "web": [
+        "upsellSkip"
+      ]
+    },
+    {
+      "key": "cartTitle",
+      "group": "basket",
+      "label": "כותרת הסל",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_cart_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "cartEmpty",
+      "group": "basket",
+      "label": "סל ריק",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_cart_empty"
+      ],
+      "web": [
+        "cartEmpty"
+      ]
+    },
+    {
+      "key": "checkout",
+      "group": "basket",
+      "label": "כפתור לתשלום עם הסכום",
+      "max": 30,
+      "kind": "B",
+      "placeholders": [
+        "total"
+      ],
+      "android": [
+        "kapp_checkout"
+      ],
+      "web": []
+    },
+    {
+      "key": "remove",
+      "group": "basket",
+      "label": "כפתור הסרת שורה (לקורא מסך)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_remove"
+      ],
+      "web": []
+    },
+    {
+      "key": "edit",
+      "group": "basket",
+      "label": "כפתור עריכת שורה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_edit"
+      ],
+      "web": []
+    },
+    {
+      "key": "undo",
+      "group": "basket",
+      "label": "כפתור ביטול ההסרה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_undo"
+      ],
+      "web": []
+    },
+    {
+      "key": "removed",
+      "group": "basket",
+      "label": "\"… הוסר מהסל\"",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "kapp_removed"
+      ],
+      "web": []
+    },
+    {
+      "key": "discount",
+      "group": "basket",
+      "label": "שורת הנחה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_discount"
+      ],
+      "web": []
+    },
+    {
+      "key": "total",
+      "group": "basket",
+      "label": "שורת הסכום הכולל",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_total"
+      ],
+      "web": [
+        "total"
+      ]
+    },
+    {
+      "key": "confirmTitle",
+      "group": "basket",
+      "label": "כותרת הסל במצב אישור",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_confirm_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "minOrder",
+      "group": "basket",
+      "label": "הזמנה מינימלית",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "amount"
+      ],
+      "android": [
+        "kapp_min_order"
+      ],
+      "web": [
+        "minOrder"
+      ]
+    },
+    {
+      "key": "basketChangedTitle",
+      "group": "basket",
+      "label": "\"משהו השתנה\" — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_basket_changed_title"
+      ],
+      "web": [
+        "basketChangedTitle"
+      ]
+    },
+    {
+      "key": "basketRemoved",
+      "group": "basket",
+      "label": "\"משהו השתנה\" — מנה שאזלה",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "kapp_basket_removed"
+      ],
+      "web": [
+        "basketRemoved"
+      ]
+    },
+    {
+      "key": "basketRepriced",
+      "group": "basket",
+      "label": "\"משהו השתנה\" — מחיר שעודכן",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "kapp_basket_repriced"
+      ],
+      "web": [
+        "basketRepriced"
+      ]
+    },
+    {
+      "key": "basketChangedOk",
+      "group": "basket",
+      "label": "\"משהו השתנה\" — כפתור המשך",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_basket_changed_ok"
+      ],
+      "web": [
+        "basketOk"
+      ]
+    },
+    {
+      "key": "basketNewTotal",
+      "group": "basket",
+      "label": "\"משהו השתנה\" — הסכום החדש (ווב)",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "total"
+      ],
+      "android": [],
+      "web": [
+        "basketNewTotal"
+      ],
+      "en": "Total to pay now: {total}"
+    },
+    {
+      "key": "reviewHint",
+      "group": "basket",
+      "label": "סקירת ההזמנה — שורת הסבר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_review_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "reviewItems",
+      "group": "basket",
+      "label": "מספר הפריטים (כמה)",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "n"
+      ],
+      "android": [
+        "ktx_review_items"
+      ],
+      "web": []
+    },
+    {
+      "key": "reviewItemsOne",
+      "group": "basket",
+      "label": "מספר הפריטים (אחד)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_review_items_one"
+      ],
+      "web": []
+    },
+    {
+      "key": "reviewSubtotal",
+      "group": "basket",
+      "label": "שורת סכום ההזמנה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_review_subtotal"
+      ],
+      "web": []
+    },
+    {
+      "key": "reviewTotal",
+      "group": "basket",
+      "label": "שורת סה״כ לתשלום",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_review_total"
+      ],
+      "web": []
+    },
+    {
+      "key": "addMoreCta",
+      "group": "basket",
+      "label": "כפתור הוספת מנות",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_add_more_cta"
+      ],
+      "web": [
+        "addMore"
+      ]
+    },
+    {
+      "key": "checkoutCta",
+      "group": "basket",
+      "label": "כפתור לתשלום (הסכום נוסף אחריו)",
+      "max": 30,
+      "kind": "B",
+      "android": [],
+      "web": [],
+      "en": "Pay"
+    },
+    {
+      "key": "detailsTitle",
+      "group": "details",
+      "label": "כותרת מסך הפרטים",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_details_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "customerExplain",
+      "group": "details",
+      "label": "הסבר: למה השם והטלפון",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kapp_phone_explain"
+      ],
+      "web": []
+    },
+    {
+      "key": "customerTitle",
+      "group": "details",
+      "label": "כותרת \"פרטים לאיסוף\"",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_customer_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "detailsCaption",
+      "group": "details",
+      "label": "כיתוב קטן בחלון הפרטים",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_details_caption"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameTitle",
+      "group": "details",
+      "label": "שם — השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_name_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameSubtitle",
+      "group": "details",
+      "label": "שם — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_name_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameLabel",
+      "group": "details",
+      "label": "שם — תווית השדה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_name_label"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameHint",
+      "group": "details",
+      "label": "שם — טקסט רמז בשדה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_name_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameConfirm",
+      "group": "details",
+      "label": "שם — כפתור אישור",
+      "max": 44,
+      "kind": "B",
+      "android": [
+        "ktx_name_confirm"
+      ],
+      "web": []
+    },
+    {
+      "key": "nameSkip",
+      "group": "details",
+      "label": "שם — כפתור המשך בלי שם",
+      "max": 35,
+      "kind": "B",
+      "android": [
+        "ktx_name_skip"
+      ],
+      "web": []
+    },
+    {
+      "key": "phoneTitle",
+      "group": "details",
+      "label": "טלפון — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_phone_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "phoneHint",
+      "group": "details",
+      "label": "טלפון — טקסט רמז בשדה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_phone_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "tableTitle",
+      "group": "details",
+      "label": "שולחן / שלט — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_table_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "entryContinue",
+      "group": "details",
+      "label": "כפתור המשך בחלון ההקלדה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_entry_continue"
+      ],
+      "web": []
+    },
+    {
+      "key": "entrySkip",
+      "group": "details",
+      "label": "כפתור דילוג בחלון ההקלדה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_entry_skip"
+      ],
+      "web": []
+    },
+    {
+      "key": "fieldRequired",
+      "group": "details",
+      "label": "שגיאה: שדה חובה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_field_required"
+      ],
+      "web": []
+    },
+    {
+      "key": "phoneInvalid",
+      "group": "details",
+      "label": "שגיאה: טלפון לא תקין",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_phone_invalid"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbDelete",
+      "group": "keyboard",
+      "label": "מקש מחיקה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kkb_delete"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbShift",
+      "group": "keyboard",
+      "label": "מקש אות גדולה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kkb_shift"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbClose",
+      "group": "keyboard",
+      "label": "כפתור סגירת חלון (לקורא מסך)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kkb_close"
+      ],
+      "web": [
+        "close"
+      ]
+    },
+    {
+      "key": "kbSpace",
+      "group": "keyboard",
+      "label": "מקש רווח",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_space"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbToEnglish",
+      "group": "keyboard",
+      "label": "מקש מעבר לאנגלית",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_to_english"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbToHebrew",
+      "group": "keyboard",
+      "label": "מקש מעבר לעברית",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_to_hebrew"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbNumbers",
+      "group": "keyboard",
+      "label": "מקש מספרים",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_numbers"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbLettersHe",
+      "group": "keyboard",
+      "label": "מקש חזרה לאותיות (עברית)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_letters_he"
+      ],
+      "web": []
+    },
+    {
+      "key": "kbLettersEn",
+      "group": "keyboard",
+      "label": "מקש חזרה לאותיות (אנגלית)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_kb_letters_en"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipCaption",
+      "group": "tip",
+      "label": "כיתוב קטן מעל השאלה",
+      "max": 27,
+      "kind": "L",
+      "android": [
+        "ktx_tip_caption"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipTitle",
+      "group": "tip",
+      "label": "השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "ktx_tip_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipSubtitle",
+      "group": "tip",
+      "label": "שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_tip_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipOtherLabel",
+      "group": "tip",
+      "label": "\"סכום אחר\" — כפתור",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_tip_other_label"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipOtherHint",
+      "group": "tip",
+      "label": "\"סכום אחר\" — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_tip_other_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipOrderTotal",
+      "group": "tip",
+      "label": "שורת סכום ההזמנה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_tip_order_total"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipLine",
+      "group": "tip",
+      "label": "שורת הטיפ",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_tip_line"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipTotal",
+      "group": "tip",
+      "label": "שורת סה״כ לתשלום",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_tip_total"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipContinue",
+      "group": "tip",
+      "label": "כפתור המשך לתשלום",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "ktx_tip_continue"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipSkip",
+      "group": "tip",
+      "label": "כפתור המשך ללא טיפ",
+      "max": 33,
+      "kind": "B",
+      "android": [
+        "ktx_tip_skip"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipOtherError",
+      "group": "tip",
+      "label": "שגיאה בסכום אחר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "ktx_tip_other_error"
+      ],
+      "web": []
+    },
+    {
+      "key": "tipChooseHint",
+      "group": "tip",
+      "label": "רמז: לבחור טיפ כשהשלב חובה (ווב)",
+      "max": 100,
+      "kind": "S",
+      "android": [],
+      "web": [
+        "tipChooseHint"
+      ],
+      "en": "Choose a tip or \"No tip\" to continue"
+    },
+    {
+      "key": "stepReview",
+      "group": "checkout",
+      "label": "שלב: ההזמנה",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_step_review"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepTip",
+      "group": "checkout",
+      "label": "שלב: טיפ",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_step_tip"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepDetails",
+      "group": "checkout",
+      "label": "שלב: פרטים",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_step_details"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepPay",
+      "group": "checkout",
+      "label": "שלב: תשלום",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "ktx_step_pay"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepPayMethod",
+      "group": "checkout",
+      "label": "שלב: אמצעי תשלום (גם כותרת המסך)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kpay_step"
+      ],
+      "web": []
+    },
+    {
+      "key": "payMethodTitle",
+      "group": "payMethod",
+      "label": "השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kpay_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "payMethodSubtitle",
+      "group": "payMethod",
+      "label": "שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCardLabel",
+      "group": "payMethod",
+      "label": "אשראי — כותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_card"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCardSub",
+      "group": "payMethod",
+      "label": "אשראי — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_card_sub"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCardUnavailable",
+      "group": "payMethod",
+      "label": "אשראי — לא זמין כרגע",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_card_unavailable"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherLabel",
+      "group": "payMethod",
+      "label": "שובר — כותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_voucher"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherSub",
+      "group": "payMethod",
+      "label": "שובר — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_sub"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCashLabel",
+      "group": "payMethod",
+      "label": "מזומן בקופה — כותרת",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_cash"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCashSub",
+      "group": "payMethod",
+      "label": "מזומן בקופה — שורה קטנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_cash_sub"
+      ],
+      "web": []
+    },
+    {
+      "key": "remainingToPay",
+      "group": "payMethod",
+      "label": "\"נותר לתשלום\" אחרי שובר",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "amount"
+      ],
+      "android": [
+        "kpay_remaining"
+      ],
+      "web": []
+    },
+    {
+      "key": "payBackToMethods",
+      "group": "payMethod",
+      "label": "כפתור חזרה לאמצעי התשלום",
+      "max": 35,
+      "kind": "B",
+      "android": [
+        "kpay_back_to_methods"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherTitle",
+      "group": "payMethod",
+      "label": "שובר — כותרת החלון",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kpay_voucher_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherHint",
+      "group": "payMethod",
+      "label": "שובר — הסבר: לסרוק או להקליד",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_hint"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherType",
+      "group": "payMethod",
+      "label": "שובר — כפתור הקלדת קוד",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_voucher_type"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherApply",
+      "group": "payMethod",
+      "label": "שובר — כפתור אישור הקוד",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_voucher_apply"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherChecking",
+      "group": "payMethod",
+      "label": "שובר — \"בודקים…\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_checking"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherApplied",
+      "group": "payMethod",
+      "label": "שובר — נקלט, עם מספר וסכום",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "number",
+        "amount"
+      ],
+      "android": [
+        "kpay_voucher_applied"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherLine",
+      "group": "payMethod",
+      "label": "שובר — שורה ברשימה (מספר)",
+      "max": 26,
+      "kind": "L",
+      "placeholders": [
+        "number"
+      ],
+      "android": [
+        "kpay_voucher_line"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherRemove",
+      "group": "payMethod",
+      "label": "שובר — כפתור הסרה (לקורא מסך)",
+      "max": 27,
+      "kind": "L",
+      "android": [
+        "kpay_voucher_remove"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherNoMatch",
+      "group": "payMethod",
+      "label": "שובר — אינו כולל פריט מההזמנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_no_match"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherOffline",
+      "group": "payMethod",
+      "label": "שובר — אין חיבור",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_offline"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherInvalidCode",
+      "group": "payMethod",
+      "label": "שובר — קוד לא תקין",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_voucher_invalid_code"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherForfeit",
+      "group": "payMethod",
+      "label": "שובר חד-פעמי — השאלה",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kpay_voucher_forfeit"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherForfeitYes",
+      "group": "payMethod",
+      "label": "שובר חד-פעמי — כפתור \"כן\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_voucher_forfeit_yes"
+      ],
+      "web": []
+    },
+    {
+      "key": "payVoucherForfeitNo",
+      "group": "payMethod",
+      "label": "שובר חד-פעמי — כפתור \"לא\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kpay_voucher_forfeit_no"
+      ],
+      "web": []
+    },
+    {
+      "key": "voucherApplied",
+      "group": "payMethod",
+      "label": "שובר — נקלט (בלי פרטים)",
+      "max": 100,
+      "kind": "S",
+      "android": [],
+      "web": [],
+      "en": "Voucher applied"
+    },
+    {
+      "key": "payCashBody",
+      "group": "payMethod",
+      "label": "מזומן בקופה — הסבר",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kpay_cash_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCashConfirm",
+      "group": "payMethod",
+      "label": "מזומן בקופה — כפתור אישור וסכום",
+      "max": 59,
+      "kind": "B",
+      "placeholders": [
+        "amount"
+      ],
+      "android": [
+        "kpay_cash_confirm"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCashPlacing",
+      "group": "payMethod",
+      "label": "מזומן בקופה — \"שולחים…\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_cash_placing"
+      ],
+      "web": []
+    },
+    {
+      "key": "payCashFailed",
+      "group": "payMethod",
+      "label": "מזומן בקופה — השליחה נכשלה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_cash_failed"
+      ],
+      "web": []
+    },
+    {
+      "key": "cashDoneTitle",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kpay_done_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "cashDoneBody",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — שורת המספר",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "number"
+      ],
+      "android": [
+        "kpay_done_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "payDoneNumber",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — המילה \"מספר\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kpay_done_number"
+      ],
+      "web": []
+    },
+    {
+      "key": "payDoneAmount",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — הסכום לתשלום",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "amount"
+      ],
+      "android": [
+        "kpay_done_amount"
+      ],
+      "web": []
+    },
+    {
+      "key": "payDonePending",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — ממתין לסנכרון",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_done_pending"
+      ],
+      "web": []
+    },
+    {
+      "key": "payDoneNoSlip",
+      "group": "payMethod",
+      "label": "\"גשו לקופה\" — הפתק לא הודפס",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_done_no_slip"
+      ],
+      "web": []
+    },
+    {
+      "key": "payTitle",
+      "group": "pay",
+      "label": "כותרת מסך התשלום",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_pay_title"
+      ],
+      "web": [],
+      "enOverride": "Payment",
+      "enOverrideWhy": "he.json builtin payTitle is \"תשלום\"; values-en kapp_pay_title is \"Card payment\" (of \"תשלום באשראי\")"
+    },
+    {
+      "key": "payInstruction",
+      "group": "pay",
+      "label": "הוראה: להצמיד או להכניס כרטיס",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_pay_instruction"
+      ],
+      "web": []
+    },
+    {
+      "key": "payPreparing",
+      "group": "pay",
+      "label": "\"מכינים את התשלום…\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_pay_preparing"
+      ],
+      "web": [
+        "payPreparing"
+      ]
+    },
+    {
+      "key": "payCancel",
+      "group": "pay",
+      "label": "כפתור ביטול",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_pay_cancel"
+      ],
+      "web": [
+        "payCancel"
+      ]
+    },
+    {
+      "key": "payDeclined",
+      "group": "pay",
+      "label": "\"התשלום לא אושר\" — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_pay_declined"
+      ],
+      "web": [
+        "payDeclined"
+      ]
+    },
+    {
+      "key": "payRetry",
+      "group": "pay",
+      "label": "כפתור ניסיון נוסף",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_pay_retry"
+      ],
+      "web": [
+        "payRetry"
+      ]
+    },
+    {
+      "key": "payBack",
+      "group": "pay",
+      "label": "כפתור חזרה להזמנה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_pay_back"
+      ],
+      "web": [
+        "payBack"
+      ]
+    },
+    {
+      "key": "payUnknownTitle",
+      "group": "pay",
+      "label": "תשלום לא ברור — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_pay_unknown_title"
+      ],
+      "web": [
+        "payUnknownTitle"
+      ]
+    },
+    {
+      "key": "payUnknownBody",
+      "group": "pay",
+      "label": "תשלום לא ברור — הסבר",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kapp_pay_unknown_body"
+      ],
+      "web": [
+        "payUnknownBody"
+      ]
+    },
+    {
+      "key": "payCancelling",
+      "group": "pay",
+      "label": "\"מבטלים…\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_pay_cancelling"
+      ],
+      "web": [
+        "payCancelling"
+      ]
+    },
+    {
+      "key": "payCardOnly",
+      "group": "pay",
+      "label": "\"אשראי בלבד\" מתחת להוראה (ווב)",
+      "max": 24,
+      "kind": "L",
+      "android": [],
+      "web": [
+        "cardOnly"
+      ],
+      "en": "Card only"
+    },
+    {
+      "key": "successTitle",
+      "group": "success",
+      "label": "כותרת מסך הסיום",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_success_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "successBody",
+      "group": "success",
+      "label": "שורת הסבר: נקרא למספר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_success_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "pickupLabel",
+      "group": "success",
+      "label": "\"מספר ההזמנה שלך\" מעל המספר",
+      "max": 26,
+      "kind": "L",
+      "android": [
+        "kapp_pickup_label"
+      ],
+      "web": []
+    },
+    {
+      "key": "successPaid",
+      "group": "success",
+      "label": "\"שולם\" והסכום",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "amount"
+      ],
+      "android": [
+        "kapp_success_paid"
+      ],
+      "web": []
+    },
+    {
+      "key": "receiptQuestion",
+      "group": "success",
+      "label": "\"להדפיס קבלה?\" — השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_receipt_question"
+      ],
+      "web": [
+        "receiptAsk"
+      ]
+    },
+    {
+      "key": "receiptYes",
+      "group": "success",
+      "label": "קבלה — כפתור \"כן\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_receipt_yes"
+      ],
+      "web": [
+        "receiptYes"
+      ]
+    },
+    {
+      "key": "receiptNo",
+      "group": "success",
+      "label": "קבלה — כפתור \"לא\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_receipt_no"
+      ],
+      "web": [
+        "receiptNo"
+      ]
+    },
+    {
+      "key": "newOrder",
+      "group": "success",
+      "label": "כפתור \"הזמנה חדשה\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_new_order"
+      ],
+      "web": [
+        "newOrder"
+      ]
+    },
+    {
+      "key": "slipPrinted",
+      "group": "success",
+      "label": "\"פתק עם המספר מודפס\" (ווב)",
+      "max": 100,
+      "kind": "S",
+      "android": [],
+      "web": [
+        "pickupSlip"
+      ],
+      "en": "A slip with your number is printing"
+    },
+    {
+      "key": "receiptPrinted",
+      "group": "success",
+      "label": "\"הקבלה מודפסת\" (ווב)",
+      "max": 100,
+      "kind": "S",
+      "android": [],
+      "web": [
+        "receiptAlways"
+      ],
+      "en": "Your receipt is printing"
+    },
+    {
+      "key": "resetsIn",
+      "group": "success",
+      "label": "\"חוזר למסך הפתיחה בעוד…\" (ווב)",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "n"
+      ],
+      "android": [],
+      "web": [
+        "resetsIn"
+      ],
+      "en": "Back to the start screen in {n} seconds"
+    },
+    {
+      "key": "slipTitle",
+      "group": "slip",
+      "label": "פתק האיסוף — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_slip_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "slipWait",
+      "group": "slip",
+      "label": "פתק האיסוף — \"המתינו לקריאה\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_slip_wait"
+      ],
+      "web": []
+    },
+    {
+      "key": "slipItems",
+      "group": "slip",
+      "label": "פתק האיסוף — פריטים וסכום",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "count",
+        "total"
+      ],
+      "android": [
+        "kapp_slip_items"
+      ],
+      "web": []
+    },
+    {
+      "key": "cashSlipTitle",
+      "group": "slip",
+      "label": "פתק לתשלום בקופה — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kpay_slip_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "cashSlipFooter",
+      "group": "slip",
+      "label": "פתק לקופה — שורה תחתונה (גם במסך)",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_slip_footer"
+      ],
+      "web": []
+    },
+    {
+      "key": "cashSlipPending",
+      "group": "slip",
+      "label": "פתק לקופה — ממתין לסנכרון",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kpay_slip_pending"
+      ],
+      "web": []
+    },
+    {
+      "key": "paySlipAmount",
+      "group": "slip",
+      "label": "פתק לקופה — \"לתשלום\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kpay_slip_amount"
+      ],
+      "web": []
+    },
+    {
+      "key": "paySlipVoucher",
+      "group": "slip",
+      "label": "פתק לקופה — שורת שובר",
+      "max": 26,
+      "kind": "L",
+      "placeholders": [
+        "number"
+      ],
+      "android": [
+        "kpay_slip_voucher"
+      ],
+      "web": []
+    },
+    {
+      "key": "paySlipTip",
+      "group": "slip",
+      "label": "פתק לקופה — \"כולל טיפ\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kpay_slip_tip"
+      ],
+      "web": []
+    },
+    {
+      "key": "idleTitle",
+      "group": "idle",
+      "label": "השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_idle_title"
+      ],
+      "web": [
+        "idleTitle"
+      ]
+    },
+    {
+      "key": "idleBody",
+      "group": "idle",
+      "label": "\"ההזמנה תתבטל בעוד … שניות\"",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "n"
+      ],
+      "android": [
+        "kapp_idle_body"
+      ],
+      "web": [
+        "idleBody"
+      ]
+    },
+    {
+      "key": "idleContinue",
+      "group": "idle",
+      "label": "כפתור המשך הזמנה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_idle_continue"
+      ],
+      "web": [
+        "idleContinue"
+      ]
+    },
+    {
+      "key": "idleCancel",
+      "group": "idle",
+      "label": "כפתור ביטול ההזמנה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_idle_cancel"
+      ],
+      "web": [
+        "idleCancel"
+      ]
+    },
+    {
+      "key": "leaveTitle",
+      "group": "leave",
+      "label": "השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_leave_title"
+      ],
+      "web": [
+        "leaveTitle"
+      ]
+    },
+    {
+      "key": "leaveBody",
+      "group": "leave",
+      "label": "שורת הסבר",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_leave_body"
+      ],
+      "web": [
+        "leaveBody"
+      ]
+    },
+    {
+      "key": "leaveYes",
+      "group": "leave",
+      "label": "כפתור \"כן, לבטל\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_leave_yes"
+      ],
+      "web": [
+        "leaveYes"
+      ]
+    },
+    {
+      "key": "leaveNo",
+      "group": "leave",
+      "label": "כפתור \"להמשיך בהזמנה\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "kapp_leave_no"
+      ],
+      "web": [
+        "leaveNo"
+      ]
+    },
+    {
+      "key": "backBlocked",
+      "group": "leave",
+      "label": "אי אפשר לחזור בזמן תשלום",
+      "max": 200,
+      "kind": "D",
+      "android": [
+        "kapp_back_blocked"
+      ],
+      "web": []
+    },
+    {
+      "key": "pausedTitle",
+      "group": "rest",
+      "label": "הפסקה — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_paused_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "pausedBody",
+      "group": "rest",
+      "label": "הפסקה — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_paused_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "closedTitle",
+      "group": "rest",
+      "label": "מחוץ לשעות — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_closed_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "closedBody",
+      "group": "rest",
+      "label": "מחוץ לשעות — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_closed_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "restBackAt",
+      "group": "rest",
+      "label": "\"נחזור ב-\" שעה (היום)",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "time"
+      ],
+      "android": [
+        "kapp_rest_back_at"
+      ],
+      "web": [
+        "rest.backAt"
+      ]
+    },
+    {
+      "key": "restBackTomorrow",
+      "group": "rest",
+      "label": "\"נחזור מחר ב-\" שעה",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "time"
+      ],
+      "android": [
+        "kapp_rest_back_tomorrow"
+      ],
+      "web": [
+        "rest.backTomorrow"
+      ]
+    },
+    {
+      "key": "restBackOn",
+      "group": "rest",
+      "label": "\"נחזור ביום … ב-…\"",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "day",
+        "time"
+      ],
+      "android": [
+        "kapp_rest_back_on"
+      ],
+      "web": [
+        "rest.backOn"
+      ]
+    },
+    {
+      "key": "restOrderAtTill",
+      "group": "rest",
+      "label": "\"אפשר להזמין בקופה\"",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_rest_order_at_till"
+      ],
+      "web": [
+        "rest.orderAtTill"
+      ]
+    },
+    {
+      "key": "setupTitle",
+      "group": "rest",
+      "label": "\"מכינים את הקיוסק\" — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_setup_title"
+      ],
+      "web": [
+        "setupTitle"
+      ]
+    },
+    {
+      "key": "setupBody",
+      "group": "rest",
+      "label": "\"מכינים את הקיוסק\" — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_setup_body"
+      ],
+      "web": [
+        "setupBody"
+      ]
+    },
+    {
+      "key": "day0",
+      "group": "rest",
+      "label": "יום א׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_0"
+      ],
+      "web": [
+        "day0"
+      ]
+    },
+    {
+      "key": "day1",
+      "group": "rest",
+      "label": "יום ב׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_1"
+      ],
+      "web": [
+        "day1"
+      ]
+    },
+    {
+      "key": "day2",
+      "group": "rest",
+      "label": "יום ג׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_2"
+      ],
+      "web": [
+        "day2"
+      ]
+    },
+    {
+      "key": "day3",
+      "group": "rest",
+      "label": "יום ד׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_3"
+      ],
+      "web": [
+        "day3"
+      ]
+    },
+    {
+      "key": "day4",
+      "group": "rest",
+      "label": "יום ה׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_4"
+      ],
+      "web": [
+        "day4"
+      ]
+    },
+    {
+      "key": "day5",
+      "group": "rest",
+      "label": "יום ו׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_5"
+      ],
+      "web": [
+        "day5"
+      ]
+    },
+    {
+      "key": "day6",
+      "group": "rest",
+      "label": "יום ש׳ בקיצור (\"נחזור ביום…\")",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "kapp_day_6"
+      ],
+      "web": [
+        "day6"
+      ]
+    },
+    {
+      "key": "offlineTitle",
+      "group": "offline",
+      "label": "אין אינטרנט — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_offline_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "offlineBody",
+      "group": "offline",
+      "label": "אין אינטרנט — שורת משנה",
+      "max": 104,
+      "kind": "S",
+      "android": [
+        "kapp_offline_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "noPaymentTitle",
+      "group": "offline",
+      "label": "אין תשלום (מסופון) — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "kapp_no_payment_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "noPaymentBody",
+      "group": "offline",
+      "label": "אין תשלום (מסופון) — שורת משנה",
+      "max": 108,
+      "kind": "S",
+      "android": [
+        "kapp_no_payment_body"
+      ],
+      "web": []
+    },
+    {
+      "key": "payBlockedOffline",
+      "group": "offline",
+      "label": "במסך התשלום: אין אינטרנט",
+      "max": 131,
+      "kind": "S",
+      "android": [
+        "kapp_pay_blocked_offline"
+      ],
+      "web": []
+    },
+    {
+      "key": "payBlockedTerminal",
+      "group": "offline",
+      "label": "במסך התשלום: המסופון לא זמין",
+      "max": 101,
+      "kind": "S",
+      "android": [
+        "kapp_pay_blocked_terminal"
+      ],
+      "web": []
+    },
+    {
+      "key": "payNotReady",
+      "group": "offline",
+      "label": "במסך התשלום: הקיוסק לא מוכן",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kapp_pay_not_ready"
+      ],
+      "web": []
+    },
+    {
+      "key": "payBlockedTitle",
+      "group": "offline",
+      "label": "במסך התשלום: כותרת \"אינו זמין\" (ווב)",
+      "max": 60,
+      "kind": "T",
+      "android": [],
+      "web": [
+        "payBlockedTitle"
+      ],
+      "en": "Payment is not available right now"
+    },
+    {
+      "key": "scanNotFound",
+      "group": "errors",
+      "label": "סריקה: המוצר לא נמצא",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kscan_not_found"
+      ],
+      "web": []
+    },
+    {
+      "key": "scanVoucherAtTill",
+      "group": "errors",
+      "label": "סריקה: שובר — להציג בקופה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "kscan_voucher_at_till"
+      ],
+      "web": []
+    },
+    {
+      "key": "openProduct",
+      "group": "errors",
+      "label": "הודעה — כפתור \"להזמנת …\" (ווב)",
+      "max": 30,
+      "kind": "B",
+      "placeholders": [
+        "name"
+      ],
+      "android": [],
+      "web": [
+        "openProduct"
+      ],
+      "en": "Order {name}"
+    },
+    {
+      "key": "tickerLabel",
+      "group": "errors",
+      "label": "כיתוב רץ — תווית לקורא מסך (ווב)",
+      "max": 26,
+      "kind": "L",
+      "android": [],
+      "web": [
+        "tickerLabel"
+      ],
+      "en": "Scrolling message"
+    },
+    {
+      "key": "dietVegan",
+      "group": "dietary",
+      "label": "סימון: טבעוני",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_vegan"
+      ],
+      "web": [
+        "diet.vegan"
+      ]
+    },
+    {
+      "key": "dietVegetarian",
+      "group": "dietary",
+      "label": "סימון: צמחוני",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_vegetarian"
+      ],
+      "web": [
+        "diet.vegetarian"
+      ]
+    },
+    {
+      "key": "dietDairy",
+      "group": "dietary",
+      "label": "סימון: חלבי",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_dairy"
+      ],
+      "web": [
+        "diet.dairy"
+      ]
+    },
+    {
+      "key": "dietMeat",
+      "group": "dietary",
+      "label": "סימון: בשרי",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_meat"
+      ],
+      "web": [
+        "diet.meat"
+      ]
+    },
+    {
+      "key": "dietGlutenFree",
+      "group": "dietary",
+      "label": "סימון: ללא גלוטן",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_gluten_free"
+      ],
+      "web": [
+        "diet.gluten_free"
+      ]
+    },
+    {
+      "key": "dietSpicy",
+      "group": "dietary",
+      "label": "סימון: חריף",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "dietary_spicy"
+      ],
+      "web": [
+        "diet.spicy"
+      ]
+    },
+    {
+      "key": "dietMarksDescribed",
+      "group": "dietary",
+      "label": "הסימונים במנה (לקורא מסך)",
+      "max": 100,
+      "kind": "S",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "dietary_marks_described"
+      ],
+      "web": []
+    },
+    {
+      "key": "landingTitle",
+      "group": "layoutLanding",
+      "label": "מסך המחלקות — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "klay_landing_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "landingSubtitle",
+      "group": "layoutLanding",
+      "label": "מסך המחלקות — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "klay_landing_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "allCategories",
+      "group": "layoutLanding",
+      "label": "כפתור \"כל המחלקות\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_all_categories"
+      ],
+      "web": []
+    },
+    {
+      "key": "categoryCount",
+      "group": "layoutLanding",
+      "label": "מספר המנות במחלקה (כמה)",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "count"
+      ],
+      "android": [
+        "klay_category_count"
+      ],
+      "web": []
+    },
+    {
+      "key": "categoryCountOne",
+      "group": "layoutLanding",
+      "label": "מספר המנות במחלקה (אחת)",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_category_count_one"
+      ],
+      "web": []
+    },
+    {
+      "key": "breadcrumbMenu",
+      "group": "layoutLanding",
+      "label": "שביל הניווט: \"תפריט\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_breadcrumb_menu"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketMyOrder",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "klay_basket_my_order"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketItems",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — מספר פריטים (כמה)",
+      "max": 24,
+      "kind": "L",
+      "placeholders": [
+        "count"
+      ],
+      "android": [
+        "klay_basket_items"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketItemsOne",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — פריט אחד",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_basket_items_one"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketEmpty",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — ריק",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "klay_basket_empty"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketPay",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — כפתור לתשלום",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_basket_pay"
+      ],
+      "web": []
+    },
+    {
+      "key": "basketView",
+      "group": "layoutBasket",
+      "label": "פס ההזמנה — כפתור לסל",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_basket_view"
+      ],
+      "web": []
+    },
+    {
+      "key": "quickAdd",
+      "group": "layoutBasket",
+      "label": "כפתור הוספה מהירה על מנה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_quick_add"
+      ],
+      "web": []
+    },
+    {
+      "key": "backToMenu",
+      "group": "layoutBasket",
+      "label": "כפתור \"חזרה לתפריט\"",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_back_to_menu"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealTitle",
+      "group": "layoutMeal",
+      "label": "\"להפוך לארוחה?\" — השאלה",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "klay_meal_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealOnly",
+      "group": "layoutMeal",
+      "label": "כפתור \"רק …\" (בלי ארוחה)",
+      "max": 30,
+      "kind": "B",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "klay_meal_only"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealBest",
+      "group": "layoutMeal",
+      "label": "תווית \"הכי משתלם\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_meal_best"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealContinue",
+      "group": "layoutMeal",
+      "label": "כפתור המשך והמחיר",
+      "max": 30,
+      "kind": "B",
+      "placeholders": [
+        "price"
+      ],
+      "android": [
+        "klay_meal_continue"
+      ],
+      "web": []
+    },
+    {
+      "key": "mealCustomize",
+      "group": "layoutMeal",
+      "label": "כפתור התאמה אישית של המנה",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_meal_customize"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepService",
+      "group": "layoutGuided",
+      "label": "שלב: שירות",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_step_service"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepMenu",
+      "group": "layoutGuided",
+      "label": "שלב: תפריט",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_step_menu"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepBasket",
+      "group": "layoutGuided",
+      "label": "שלב: סל",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_step_basket"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepTipShort",
+      "group": "layoutGuided",
+      "label": "שלב: טיפ",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_step_tip"
+      ],
+      "web": []
+    },
+    {
+      "key": "stepPayGuided",
+      "group": "layoutGuided",
+      "label": "שלב: תשלום",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_step_pay"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedMenuTitle",
+      "group": "layoutGuided",
+      "label": "שלב התפריט — כותרת",
+      "max": 60,
+      "kind": "T",
+      "android": [
+        "klay_guided_menu_title"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedMenuSubtitle",
+      "group": "layoutGuided",
+      "label": "שלב התפריט — שורת משנה",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "klay_guided_menu_subtitle"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedToBasket",
+      "group": "layoutGuided",
+      "label": "כפתור המשך לסל, פריטים וסכום",
+      "max": 59,
+      "kind": "B",
+      "placeholders": [
+        "count",
+        "total"
+      ],
+      "android": [
+        "klay_guided_to_basket"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedNext",
+      "group": "layoutGuided",
+      "label": "כפתור \"הבא:\" ושם השלב",
+      "max": 30,
+      "kind": "B",
+      "placeholders": [
+        "name"
+      ],
+      "android": [
+        "klay_guided_next"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedSkip",
+      "group": "layoutGuided",
+      "label": "כפתור דילוג על שלב",
+      "max": 30,
+      "kind": "B",
+      "android": [
+        "klay_guided_skip"
+      ],
+      "web": []
+    },
+    {
+      "key": "guidedStepOf",
+      "group": "layoutGuided",
+      "label": "\"שלב X מתוך Y\"",
+      "max": 30,
+      "kind": "L",
+      "placeholders": [
+        "n",
+        "count"
+      ],
+      "android": [
+        "klay_guided_step_of"
+      ],
+      "web": []
+    },
+    {
+      "key": "reachOn",
+      "group": "layoutReach",
+      "label": "תווית \"מצב נגיש\"",
+      "max": 24,
+      "kind": "L",
+      "android": [
+        "klay_reach_on"
+      ],
+      "web": []
+    },
+    {
+      "key": "reachToggle",
+      "group": "layoutReach",
+      "label": "כפתור הנגישות (לקורא מסך)",
+      "max": 100,
+      "kind": "S",
+      "android": [
+        "klay_reach_toggle"
+      ],
+      "web": [],
+      "shownWhen": {
+        "reachToggle": [
+          true
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "en.json does not exist in client/src/messages (the dashboard is Hebrew-only): English comes from values-en, else from the meta (listed above). The script reads en.json `kiosks.builtin` / `kiosks.preview` first if it ever appears.",
+    "`checkoutCta` (\"לתשלום\") has no placeholder; Android's fallback `kapp_checkout` (\"לתשלום · %1$s\") has one, so it is its own key `checkout` ({total}). Both platforms build \"<checkoutCta> · <total>\" when checkoutCta is set (KioskOrderScreens.kt, Details.tsx); the side panel (KioskCatalogParts.kt) uses `kapp_checkout` alone. `checkoutCta` is `\"android\": []`.",
+    "`voucherApplied` (\"השובר נקלט\", no placeholder) is not used by Android; Android's `kpay_voucher_applied` (\"שובר #%1$d נקלט: %2$s\") is the separate key `payVoucherApplied` ({number}, {amount}).",
+    "`helpText` overrides `kapp_help_body` (the long how-to) on Android, but its he.json default is the short line (= `kapp_help_short`, kept as `helpShort`); its English is written to match the Hebrew default (see the table above).",
+    "`payTitle`: he.json \"תשלום\" vs Android \"תשלום באשראי\"; English written as \"Payment\" to match the Hebrew default.",
+    "`cashSlipPending` overrides two Android texts today (the slip's `kpay_slip_pending` and the screen's `kpay_done_pending`, which adds \"— הציגו את הפתק בקופה\"); they differ in content, so `kpay_done_pending` is its own key `payDonePending`. Android may keep reading a configured `cashSlipPending` first for the screen line.",
+    "Merged: `noteTitle` = `ktx_note_title` + `kapp_notes` (the same \"הערות למנה\" / \"Notes for the dish\" in the sheet and in the note window). No other merges: same-text pairs on different screens (e.g. `ktx_step_pay` / `klay_step_pay`, `kapp_meal_step` / `klay_guided_step_of`, `kapp_cart_title` / `klay_basket_my_order`) stay separate keys so each screen / layout group is complete. `klay_step_pay` → `stepPayGuided` (stepPay is legacy), `klay_step_tip` → `stepTipShort`.",
+    "`kapp_search_hint`, `kapp_note_hint`, `kapp_service_title` and the rest of \"Android strings left out\" are not referenced in code, so they are not in the registry (e.g. `searchHint` maps only `ktx_search_hint`).",
+    "Slip and dietary strings are referenced outside ui/kiosk + domain/Kiosk*: data/repo/KioskBonService.kt, data/repo/KioskPayAtTill.kt (slips) and ui/common/DietaryMarks.kt (dietary) are scanned too (`sources.codeGlobs`). The klay_* strings are not referenced yet (new) and are taken by `scope.includeUnreferencedPrefixes`.",
+    "`kapp_day_0..6` are also used by the staff's schedule panel (KioskControlPanels.kt); overriding them changes that panel too.",
+    "Web mapping covers only the web keys the screens actually look up: unused LIVE keys (payBlockedTerminal, detailsTitle, nameLabel, nameHint, phoneLabel, phoneInvalid, tableLabel, tipTitle, tipNone, continue, notePlaceholder) and unused kiosks.preview keys (askTable, bonSent, notePlaceholder, name, table, tip, noTip) are not mapped. Preview sample data (sample.*, quickNote1-3 — the live kiosk passes the menu's own quick notes) and the editor's labels are out.",
+    "Web keys mapped by meaning to an Android slot with different wording: `confirmTitle` (\"נוסף להזמנה\", the skipCart=confirm sheet) → `added` (\"נוסף לסל\"); `clubScan` → `clubBody`; `search` (the search pill's placeholder) → `searchHint`; `empty` → `emptyCatalog`; `addMore` → `addMoreCta`; `close` (aria-label of every close button) → `kbClose`; `addToCart` + `upsellAddToOrder` → `addToOrder` (Android uses kapp_add_to_order for both).",
+    "Web-only keys: `allergensLabel` (the web writes \"אלרגנים: \" + list itself — 0 placeholders, Android's `kapp_allergens_chip` has 1, so they cannot share a key), `payCardOnly`, `payBlockedTitle` (Android titles a blocked payment with kalert_card_unavailable / kapp_pay_declined), `slipPrinted`, `receiptPrinted`, `resetsIn`, `openProduct`, `tickerLabel` (aria-label), `helpSent`, and three that appeared in the web sources while this was built: `stepSkip` (kiosks.preview, \"דלג\" on an optional service step), `tipChooseHint` (kiosks.preview, a required tip step) and `basketNewTotal` (LIVE, the basket-changed sheet). Android has no string for these yet.",
+    "The web sources (he.json, preview-screens.tsx, i18n.ts, KioskApp.tsx) were being edited while this was built; re-run the generator after they settle — it warns \"WEB KEY NOT MAPPED\" for any new `m.t()` / `t()` key the screens look up.",
+    "Open: `helpSent` (\"קראנו לצוות…\") matches Android `kalert_help_called` in strings_kiosk_alerts.xml, and the pay screen's card-lock title is `kalert_card_unavailable` — the kalert_* help / card texts are customer-facing but outside the six source files, so they are not in the registry.",
+    "Max: every legacy key was `TEXT_MAX` = 200 in the cloud; the registry's max is lower for most of them (titles 60, buttons 30, short labels 24, hints 100, at least 1.5× the longest default) — a saved config text longer than its new max would be refused if the cloud validates by the registry.",
+    "The Hebrew defaults of the legacy keys come from he.json `kiosks.builtin`: if the integration drops `kiosks.builtin`, re-running the generator falls back to the Android texts (the differences are in the table above).",
+    "Open: the web keyboard's aria-labels are hard-coded 'backspace' / 'shift' (preview-entry.tsx) — they could use `kbDelete` / `kbShift`.",
+    "Open: `quickAdd` (klay_quick_add) sits in layoutBasket as asked, but the quick \"+\" shows with `layout.quickAdd` (no_required / always) under any basket; a text-level shownWhen was not added because how a text's shownWhen combines with its group's is not defined."
+  ]
+}

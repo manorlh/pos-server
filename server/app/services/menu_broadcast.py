@@ -76,6 +76,7 @@ from app.models.shop_product_override import ShopProductOverride
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.services import category_availability, machine_catalog
+from app.services import dietary
 from app.services import product_availability as availability
 
 logger = logging.getLogger(__name__)
@@ -414,7 +415,7 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
         frontier = nxt - visited
 
     menu = menu_service.menu_block(db, virtual) if tid is not None else None
-    return _jsonable({
+    snapshot = {
         "format": SNAPSHOT_FORMAT,
         "products": products,
         "productGates": gates,
@@ -422,15 +423,27 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
         "referencedCategories": referenced,
         "categoryGates": category_gates,
         "menu": menu,
-    })
+    }
+    # "תפריטים" (docs/SPEC_MENUS.md): the shop's menus, assignments and fallbacks are part of
+    # what is published. Only when there are any, so a shop without menus keeps its fingerprint.
+    from app.services import catalog_menus as catalog_menus_service
+
+    catalog_menus = catalog_menus_service.snapshot_block(db, shop) if tid is not None else None
+    if catalog_menus:
+        snapshot["catalogMenus"] = catalog_menus
+    return _jsonable(snapshot)
 
 
 #: Product fields that are not the menu: what is laid over live per till, and stamps.
 _PRODUCT_LIVE = frozenset({
     "id", "posMachineId", "catalogLevel", "isLocalOverride", "imageUrl", "inStock", "isAvailable",
     "stockQuantity", "inMachineCatalog", "createdAt", "updatedAt",
+    # The deciding lock, laid over live with the levels it comes from (SPEC_AVAILABILITY).
+    "availabilityLock",
+    # "אזל" / "חסום": the floor of the day, never part of a publication (app/services/sold_out.py).
+    "lockAvailable", "blocks",
 })
-_CATEGORY_LIVE = frozenset({"createdAt", "updatedAt"})
+_CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 
 
 def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -438,7 +451,7 @@ def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     snapshot = snapshot or {}
     menu = dict(snapshot.get("menu") or {})
     menu.pop("updatedAt", None)
-    return {
+    content = {
         "products": {
             k: {f: v for f, v in row.items() if f not in _PRODUCT_LIVE}
             for k, row in (snapshot.get("products") or {}).items()
@@ -453,6 +466,12 @@ def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         },
         "menu": menu,
     }
+    # "תפריטים" — only when the shop has any, so a fingerprint taken before menus existed holds.
+    if snapshot.get("catalogMenus"):
+        from app.services import catalog_menus as catalog_menus_service
+
+        content["catalogMenus"] = catalog_menus_service.content_of(snapshot["catalogMenus"])
+    return content
 
 
 def fingerprint(snapshot: Optional[Dict[str, Any]]) -> str:
@@ -667,6 +686,10 @@ def _products_for_till(
     items = machine_catalog.catalog_items(db, machine.id) if ids else {}
     moved = getattr(machine, "area_changed_at", None)
     moved = S._aware_utc(moved) if isinstance(moved, datetime) else None
+    # "אזל" / "חסום" — live, as on a till pulling the live catalog (S._serialize_merged_product).
+    from app.services import sold_out
+
+    blocks_by = sold_out.blocks_for_machine(db, machine, ids, since=since) if ids else {}
 
     out: List[Dict[str, Any]] = []
     for key, published in sorted(rows.items(), key=lambda kv: ((kv[1].get("name") or ""), kv[0])):
@@ -687,18 +710,24 @@ def _products_for_till(
             eff = max([s for s in stamps if s is not None], default=_now())
         if moved is not None and moved > eff:
             eff = moved
+        blocks = blocks_by.get(key)
+        blocked_at = S._aware_utc(getattr(blocks, "changed_at", None))
+        if blocked_at is not None and blocked_at > S._aware_utc(eff):
+            eff = blocked_at
         if since is not None and S._aware_utc(eff) <= S._aware_utc(since):
             continue
+        active_blocks = list(getattr(blocks, "active", None) or [])
 
         gate = gates.get(key) or {}
         listed = bool(published.get("shopListed", True))
-        resolved = availability.resolve(
+        levels = availability.resolve_levels(
             gate.get("product", True),
             gate.get("company"),
             ovr.is_available if ovr is not None else gate.get("shop"),
             None if mine is None else mine.is_available,
             area=None if area is None else area.is_available,
         )
+        resolved = levels[availability.Level.MACHINE]
         if loc is not None:
             base_in_stock = loc.in_stock
         elif g is not None:
@@ -718,7 +747,14 @@ def _products_for_till(
         elif g is not None:
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
-        row["isAvailable"] = bool(listed and resolved.available)
+        row["lockAvailable"] = bool(listed and resolved.available)
+        row["isAvailable"] = row["lockAvailable"] and not sold_out.manual_in_force(active_blocks)
+        row["blocks"] = [sold_out.block_out(b) for b in active_blocks]
+        # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
+        row["availabilityLock"] = availability.lock_info(
+            levels,
+            {availability.Level.SHOP: ovr, availability.Level.AREA: area, availability.Level.MACHINE: mine},
+        ) if listed else None
         if loc is not None:
             row["stockQuantity"] = loc.stock_quantity
         elif g is not None:
@@ -801,6 +837,9 @@ def _categories_for_till(
             level(rows, category_availability.AREA),
             level(rows, category_availability.MACHINE),
         )
+        row["activeLock"] = category_availability.lock_info(
+            gates.get(key, published.get("isActive", True)), rows
+        )
         if updated is not None:
             row["updatedAt"] = updated.isoformat()
             stamps[key] = _utc(updated)
@@ -866,6 +905,9 @@ def _dropped(
             row["shopListed"] = False
             row["inStock"] = False
             row["isAvailable"] = False
+            row["lockAvailable"] = False
+            row["blocks"] = []
+            row["availabilityLock"] = None
             row["inMachineCatalog"] = bool(item is not None and item.is_included)
             row["updatedAt"] = stamp
             products.append(row)
@@ -875,6 +917,7 @@ def _dropped(
             continue
         row = dict(published)
         row["isActive"] = False
+        row["activeLock"] = None
         row["updatedAt"] = stamp
         categories.append(row)
     return products, categories
@@ -925,14 +968,21 @@ _PRODUCT_FIELDS = (
     "ticketMode", "ticketEntries", "trackStock", "isOpenPrice", "isWeighed", "unitLabel",
     "noDiscount", "allergens", "courseId", "maxPerOrder", "refillable", "maxRefills",
 )
+#: Compared only when both snapshots carry them: a publication made before the field
+#: existed has none, and that is not a change the merchant made.
+_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel", "requiresManagerApproval")
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
 )
+#: Compared only when both snapshots carry them (as _PRODUCT_NEW_FIELDS).
+_CATEGORY_NEW_FIELDS = ("requiresManagerApproval",)
 _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQuantity", "allowPre")
 _OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
 _UPSELL_FIELDS = ("name", "triggerType", "triggerIds", "action", "productId", "message", "showPrice", "priority")
+#: "חלון בחירה": compared only when both snapshots carry them (an older one does not).
+_UPSELL_NEW_FIELDS = ("options", "prompt", "display", "where", "skipIfPresent", "oncePerOrder")
 
 
 def _item(kind: str, ident: Any, name: Any, changes=None, detail: Optional[str] = None) -> Dict[str, Any]:
@@ -1005,6 +1055,8 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return courses.get(value, value) if value else None
         if field_name == "voucherId":
             return bool(value)
+        if field_name == "dietaryTags":
+            return dietary.labels(value)
         return value
 
     def by_name(keys, *maps):
@@ -1037,6 +1089,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             for f in _PRODUCT_FIELDS
             if not _same(a.get(f), b.get(f))
         ]
+        changes += [
+            _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
+            for f in _PRODUCT_NEW_FIELDS
+            if f in a and f in b and not _same(a.get(f), b.get(f))
+        ]
         if changes:
             out["products"].append(_item("changed", key, name, changes))
         before, after = _gate_available(og.get(key)), _gate_available(ng.get(key))
@@ -1057,6 +1114,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
                 for f in _CATEGORY_FIELDS
                 if not _same(a.get(f), b.get(f))
+            ]
+            changes += [
+                _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
+                for f in _CATEGORY_NEW_FIELDS
+                if f in a and f in b and not _same(a.get(f), b.get(f))
             ]
             if changes:
                 out["categories"].append(_item("changed", key, name, changes))
@@ -1182,6 +1244,18 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 ))
             else:
                 others.append(_change(f, shown(f, a.get(f), True), shown(f, b.get(f))))
+        for f in _UPSELL_NEW_FIELDS:
+            if f not in a or f not in b or _same(a.get(f), b.get(f)):
+                continue
+            if f == "options":
+                def option_names(opts, old_side=False):
+                    return [
+                        (category_name if (o or {}).get("type") == "category" else product_name)((o or {}).get("id"), old_side)
+                        for o in opts or []
+                    ]
+                others.append(_change(f, option_names(a.get(f), True), option_names(b.get(f))))
+            else:
+                others.append(_change(f, a.get(f), b.get(f)))
         if others:
             out["menu"].append(_item("changed", key, b.get("name"), others, detail="upsell"))
 
@@ -1198,6 +1272,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             changes = [_change(f, a.get(f), b.get(f)) for f in ("name", "sortOrder") if not _same(a.get(f), b.get(f))]
             if changes:
                 out["menu"].append(_item("changed", key, b.get("name"), changes, detail="course"))
+    # "תפריטים" (docs/SPEC_MENUS.md): menus, their assignments and fallbacks.
+    if old.get("catalogMenus") or new.get("catalogMenus"):
+        from app.services import catalog_menus as catalog_menus_service
+
+        out["menu"].extend(catalog_menus_service.diff(old.get("catalogMenus"), new.get("catalogMenus")))
     return out
 
 
@@ -1314,13 +1393,13 @@ def history(db: Session, shop: Shop, limit: int = 50) -> List[Dict[str, Any]]:
 
 def check_read(db: Session, user: User, shop: Shop) -> None:
     """Those in charge of the shop: the super admin, a distributor, its company's managers, its own."""
-    from app.services.company_hierarchy import user_covers_company
+    from app.services.company_hierarchy import user_covers_shop
     from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
     role = getattr(user, "role", None)
     if role in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
         return
-    if role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if role in SHOP_SCOPED_ROLES and str(getattr(user, "shop_id", None)) == str(shop.id):
         return
@@ -1340,13 +1419,13 @@ def shops_in_scope(
     db: Session, user: User, tenant_id, *, company_id=None, shop_id=None
 ) -> List[Shop]:
     """The active shops of the tenant this user sees, narrowed to a company (and its subsidiaries) or a shop."""
-    from app.services.company_hierarchy import company_scope_ids, descendant_company_ids
+    from app.services.company_hierarchy import descendant_company_ids, visible_shop_ids
     from app.services.permission_matrix import SHOP_SCOPED_ROLES
 
     q = db.query(Shop).filter(Shop.tenant_id == tenant_id)
     role = getattr(user, "role", None)
     if role == UserRole.COMPANY_MANAGER:
-        q = q.filter(Shop.company_id.in_(company_scope_ids(db, user)))
+        q = q.filter(Shop.id.in_(visible_shop_ids(db, user)))
     elif role in SHOP_SCOPED_ROLES:
         q = q.filter(Shop.id == user.shop_id)
     elif role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):

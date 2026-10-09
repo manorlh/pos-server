@@ -46,10 +46,13 @@ from app.models.shift import Shift, ShiftStatus
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.transaction import Transaction, TransactionStatus
+from app.services.document_prefix import document_number_from
 
 logger = logging.getLogger(__name__)
 
 CREDIT_NOTE = 330
+#: An exempt dealer's receipt refund (app/services/tenders.RECEIPT_REFUND_DOCUMENT_TYPE).
+RECEIPT_REFUND = -400
 
 # ── The catalog ──────────────────────────────────────────────────────────────
 
@@ -79,6 +82,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # Any manual discount on a line or the whole sale. Both thresholds 0 = any discount;
     # a threshold set must be met (≥ X% of the price and ≥ ₪X).
     RuleSpec("discount", True, (ParamSpec("minPercent", 0, 0, 100), ParamSpec("minAmount", 0)), "low", "document"),
+    # OTH ("על חשבון הבית", till parameter `othEnabled`): a line given free, with its reason
+    # and approver — one per line, at its list price. Not counted as a "discount" above.
+    RuleSpec("oth", True, (), "medium", "document"),
     # A credit note (זיכוי / החזר), ≥ ₪X.
     RuleSpec("refund", True, (ParamSpec("minAmount", 0),), "medium", "document"),
     # The drawer opened without a sale. Reported by the till (no drawer on the current
@@ -98,6 +104,10 @@ RULES: Tuple[RuleSpec, ...] = (
     # sign in at this one ("עובד מחובר בקופה אחת בלבד"; app/services/user_sessions.py
     # records it as a till event).
     RuleSpec("user_session_release", True, (), "medium", "till_event"),
+    # "שינוי נוכחות ידני" (spec §28): a manager's correction or close of an employee's
+    # attendance, or a clock-out a manager approved over open tables
+    # (app/services/attendance.py records it, with the old and the new times).
+    RuleSpec("attendance_manual", True, (), "medium", "attendance"),
     # From the first line to payment, ≥ X minutes.
     RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event"),
     # A tip above X% of what the sale collected.
@@ -106,6 +116,56 @@ RULES: Tuple[RuleSpec, ...] = (
     RuleSpec("high_amount", False, (ParamSpec("amount", 1000),), "low", "document"),
     # Counted − expected at shift close, |difference| ≥ ₪X.
     RuleSpec("cash_difference", True, (ParamSpec("amount", 20),), "high", "shift"),
+    # A till Z closed with no connection to the cloud whose figures, document range, shifts
+    # or number differ from what the cloud built from the documents on upload
+    # ("Z שנסגר ללא חיבור — פער מול הענן", docs/SPEC_OFFLINE_TILL_Z.md §6.1).
+    RuleSpec("offline_z_gap", True, (), "high", "z"),
+    # The shop's Z production moved by force by a super admin, although the main till
+    # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
+    # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
+    RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    # A shop Z the main till printed in local mode that does not verify against the cloud's
+    # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
+    # §8.12): every document its tills' manifests name has arrived, and the same computation
+    # disagrees — a bug, never a till still syncing. The Z is stored as printed.
+    RuleSpec("local_shop_z_mismatch", True, (), "high", "z"),
+    # A till's part of a local shop Z that will not complete ("קופה N לא השלימה סנכרון",
+    # §8.12): its documents or shifts never reached the cloud — it died, was removed, support
+    # closed it, or a day went by. The only allowed gap: support closes it, recording what is
+    # missing. Never a mismatch.
+    RuleSpec("local_shop_z_till_unsynced", True, (), "medium", "z"),
+    # A Z closed at the till with no connection that the cloud could not take as it is —
+    # a number out of sequence or taken, a shift in another Z, a till no longer in its
+    # mode. Never renumbered: the till keeps it as printed, held for support
+    # ("התנגשות — פנו לתמיכה", docs/SPEC_OFFLINE_TILL_Z.md §4.5). Supposed to be impossible.
+    RuleSpec("offline_z_conflict", True, (), "high", "z"),
+    # Support produced a dead till's Z from the cloud ("הפקת Z מהענן ע״י התמיכה",
+    # docs/SPEC_OFFLINE_TILL_Z.md §4.6): who, when, why, the basis, the Z, the numbers the
+    # device printed and never sent, the document counters' gaps, and what came later.
+    RuleSpec("support_z_produced", True, (), "high", "z"),
+    # Support ordered a reset of a till's data from the cloud — the only way there is
+    # ("איפוס נתוני קופה (תמיכה)", docs/SPEC_OFFLINE_TILL_Z.md §4.7): who, when, why, what
+    # the cloud saw before, and what the till did or why it refused.
+    RuleSpec("till_reset", True, (), "high", "z"),
+    # "תשלום לא מוכרע": a manager decided an unknown card from the cloud against what the terminal
+    # said on a check — or with no check at all — on an explicit confirmation: who, when, the
+    # verdict, the decision (app/services/card_attempt_commands.py).
+    RuleSpec("card_decision_override", True, (), "high", "document"),
+    # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
+    # device, who, when, why, and whether support produced its Z first.
+    RuleSpec("till_replaced", True, (), "medium", "z"),
+    # A till Z closed although the card batch transmission before it failed — on the
+    # cashier's explicit confirmation, or unattended ("שידור אשראי נכשל בסגירת Z", §7.3).
+    RuleSpec("z_transmission_failed", True, (), "high", "z"),
+    # A remote Z close forced "even mid-sale": who forced it, and the basket the till
+    # parked for it ("סגירת Z כפויה", §9; a till event).
+    RuleSpec("forced_z_close", True, (), "high", "till_event"),
+    # A self-order kiosk out of touch with the cloud for ≥ X minutes during its opening hours
+    # ("קיוסק לא מחובר"; app/services/kiosk_offline.py records it, and when it came back).
+    RuleSpec("kiosk_offline", True, (ParamSpec("offlineMinutes", 5, 1, 240, integer=True),), "high", "kiosk"),
+    # A till with an open shift that stopped talking to the cloud for ≥ X minutes ("קופה לא
+    # מחוברת"; app/services/exception_alerts/till_watch.py records it, and when it came back).
+    RuleSpec("till_offline", True, (ParamSpec("offlineMinutes", 10, 2, 240, integer=True),), "high", "till_event"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",
@@ -120,11 +180,23 @@ RULES: Tuple[RuleSpec, ...] = (
     RuleSpec("card_failures", False, (ParamSpec("count", 3, 1, 100, integer=True),), "medium", "till_event", available=False),
 )
 
+# "מגירת מזומן" (the drawer spec §11, app/services/cash_drawer_exceptions.py): detected from the
+# tills' drawer events and cash movements (app/services/cash_drawer.py); their thresholds are
+# the drawer's till parameters, so each rule here is on / off only.
+from app.services.cash_drawer_exceptions import DRAWER_EXCEPTION_KINDS as _DRAWER_KINDS  # noqa: E402
+
+RULES = RULES + tuple(RuleSpec(k.key, True, (), k.severity, "cash_drawer") for k in _DRAWER_KINDS)
+
 RULES_BY_TYPE: Dict[str, RuleSpec] = {r.type: r for r in RULES}
 EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 
 #: Till event types this server accepts, and the rule each one feeds.
-TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint")
+TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close",
+                    # The Windows app left to the desktop (and back): recorded, feeds no rule.
+                    "desktop_exit",
+                    # A product that needs a manager's code, sold on one (or by someone who holds
+                    # SELL_RESTRICTED_ITEMS): recorded, feeds no rule.
+                    "restricted_item")
 
 
 class RuleValueError(ValueError):
@@ -337,9 +409,12 @@ def _hour_in_window(hour: int, from_hour: int, to_hour: int) -> bool:
 
 
 def detect_transaction(
-    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None
+    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None, deduction: Decimal = Decimal("0")
 ) -> List[Found]:
-    """The exceptions one document raises under `rules`. Pure: no database."""
+    """
+    The exceptions one document raises under `rules`. Pure: no database. [deduction]: the document's
+    production vouchers' deductions (out of the cashier's discount, review 09.10).
+    """
     found: List[Found] = []
     status = _status(tx)
     occurred = _utc(tx.created_at) or datetime.now(timezone.utc)
@@ -361,7 +436,8 @@ def detect_transaction(
         return found
 
     items = list(tx.items or [])
-    if tx.document_type == CREDIT_NOTE:
+    # A credit note, or an exempt dealer's receipt refund (-400, SPEC_BUSINESS_TYPE.md).
+    if tx.document_type in (CREDIT_NOTE, RECEIPT_REFUND):
         rule = rules.get("refund")
         amount = abs(_money(tx.total_amount))
         if rule and rule.enabled and amount > 0 and _meets(amount, rule.params.get("minAmount", 0)):
@@ -383,8 +459,11 @@ def detect_transaction(
 
     # ── A sale ──
     total = _money(tx.total_amount)
+    # OTH lines ("על חשבון הבית") are an exception of their own (below).
+    oth_items = [it for it in items if getattr(it, "oth_reason", None)]
     line_discounts = [
-        (it, abs(_money(it.discount))) for it in items if it.discount is not None and _dec(it.discount) != 0
+        (it, abs(_money(it.discount))) for it in items
+        if it.discount is not None and _dec(it.discount) != 0 and not getattr(it, "oth_reason", None)
     ]
     line_sum = sum((d for _, d in line_discounts), Decimal("0"))
     document_discount = abs(_money(tx.document_discount))
@@ -392,7 +471,18 @@ def detect_transaction(
     # Promotions ("מבצעים") are inside `document_discount` but are no one's decision at
     # the till: what is left without them is the discount the cashier gave.
     promotion_sum = sum((abs(_money(getattr(it, "promotion_discount", None))) for it in items), Decimal("0"))
-    document_discount = max(document_discount - promotion_sum, Decimal("0"))
+    # Nor are discount vouchers ("שוברי הנחה"): the customer's voucher, checked by the cloud.
+    promotion_sum += sum((abs(_money(getattr(it, "voucher_discount", None))) for it in items), Decimal("0"))
+    # Nor a production voucher's deduction ("קיזוז שוברי הפקה"): a voucher paid for, never a discount.
+    promotion_sum += abs(_money(deduction))
+    # Nor are the OTH lines (reported as "oth"), nor the club button's fixed rate ("הנחת
+    # מועדון", till parameter `clubButtonEnabled`) — the shop's own policy, in its report.
+    oth_sum = sum((abs(_money(it.discount)) for it in oth_items), Decimal("0"))
+    club_sum = (
+        abs(_money(getattr(tx, "basket_discount", None)))
+        if getattr(tx, "basket_discount_kind", None) == "club" else Decimal("0")
+    )
+    document_discount = max(document_discount - promotion_sum - oth_sum - club_sum, Decimal("0"))
     discount = max(document_discount, line_sum)
 
     rule = rules.get("discount")
@@ -417,6 +507,30 @@ def detect_transaction(
                     "approvedBy": approver,
                 },
                 **common,
+            ))
+
+    rule = rules.get("oth")
+    if rule and rule.enabled:
+        for it in oth_items:
+            # At its list price: what the shop gave away, whatever the line was rung at.
+            value = abs(_money(_dec(it.unit_price) * _dec(it.quantity)))
+            found.append(Found(
+                type="oth", key=f"oth:{it.id}", amount=value,
+                details={
+                    "transactionNumber": tx.transaction_number,
+                    "productName": it.product_name,
+                    "productId": str(it.product_id) if it.product_id else None,
+                    "quantity": float(_dec(it.quantity)),
+                    "unitPrice": float(_money(it.unit_price)),
+                    "reason": it.oth_reason,
+                    "othBy": getattr(it, "oth_by", None),
+                    "approvedBy": getattr(it, "oth_approved_by", None),
+                },
+                occurred_at=occurred,
+                # Who gave it (a table line may be given by its waiter, paid at another till).
+                pos_user_id=getattr(it, "oth_by", None) or tx.cashier_id,
+                transaction_id=tx.id,
+                shift_id=tx.shift_id,
             ))
 
     rule = rules.get("high_tip")
@@ -493,7 +607,7 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
     amount = abs(_money(event.amount)) if event.amount is not None else None
     kind = event.event_type
 
-    if kind in ("drawer_open", "reprint", "user_session_release"):
+    if kind in ("drawer_open", "reprint", "user_session_release", "forced_z_close"):
         rule = rules.get(kind)
         if rule and rule.enabled:
             return [Found(type=kind, key=f"{kind}:{event.id}", amount=amount, details=details, **common)]
@@ -513,6 +627,34 @@ def detect_event(event: TillEvent, rules: Dict[str, EffectiveRule]) -> List[Foun
                 return [Found(type="long_order", key=f"long_order:{event.id}", amount=amount, value=minutes,
                               threshold=limit, details=details, **common)]
     return []
+
+
+def record_z_exception(
+    db: Session,
+    machine: POSMachine,
+    *,
+    exception_type: str,
+    key: str,
+    occurred_at: datetime,
+    details: Dict[str, Any],
+    amount: Any = None,
+    pos_user_id: Optional[str] = None,
+) -> bool:
+    """
+    Record an exception about a Z (`offline_z_gap`, `z_transmission_failed`), unless the
+    till's rules switch it off. Idempotent by `key`; the caller commits. True if written
+    or refreshed.
+    """
+    detector = Detector(db)
+    rule = detector.rules(machine).get(exception_type)
+    if rule is None or not rule.enabled:
+        return False
+    detector._record(machine, Found(
+        type=exception_type, key=key[:200], amount=None if amount is None else _money(amount),
+        occurred_at=_utc(occurred_at) or datetime.now(timezone.utc), pos_user_id=pos_user_id,
+        details=details,
+    ))
+    return bool(detector.created or detector.updated)
 
 
 # ── Writing ──────────────────────────────────────────────────────────────────
@@ -569,11 +711,25 @@ class Detector:
             ident = _uuid(pos_user_id)
             pu = self.db.get(PosUser, ident) if ident else None
             if pu is None:
-                self._names[pos_user_id] = None
+                # A self-order kiosk's own operator reads as the kiosk's name.
+                from app.services import kiosk_identity
+
+                self._names[pos_user_id] = kiosk_identity.name_of(self.db, pos_user_id)
             else:
                 full = " ".join(p for p in (pu.first_name or "", pu.last_name or "") if p).strip()
                 self._names[pos_user_id] = full or pu.username
         return self._names[pos_user_id]
+
+    def approver_name(self, ident: Optional[str]) -> Optional[str]:
+        """A till user's name, else a cloud account's (an approver may be either)."""
+        name = self.name(ident)
+        if name or not ident:
+            return name
+        from app.models.user import User
+
+        key = _uuid(ident)
+        user = self.db.get(User, key) if key else None
+        return (user.username or user.email) if user is not None else None
 
     def shift_area(self, shift_id) -> Optional[uuid.UUID]:
         key = _uuid(shift_id)
@@ -635,7 +791,12 @@ class Detector:
         machine = self.machine(tx.machine_id)
         if machine is None:
             return
-        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id)):
+        from app.services.shift_totals import production_deductions_of
+
+        deduction = production_deductions_of(self.db, [tx.id]).get(tx.id, Decimal("0"))
+        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id), deduction):
+            if found.type == "oth" and found.details.get("approvedBy"):
+                found.details["approverName"] = self.approver_name(found.details["approvedBy"])
             self._record(machine, found)
 
     def shift(self, shift: Shift) -> None:
@@ -652,7 +813,57 @@ class Detector:
         for found in detect_event(event, self.rules(machine)):
             if found.type == "long_order" and found.transaction_id is None:
                 found.transaction_id = _nearest_document(self.db, event)
+            if found.type == "forced_z_close":
+                # Who forced it is the cloud's to say, from the request the till answered.
+                found.details.update(forced_close_initiator(self.db, machine, found.details.get("requestId")))
+                found.details["summary"] = forced_close_summary(found.details)
             self._record(machine, found, area_id=event.area_id)
+
+
+def forced_close_summary(details: Dict[str, Any]) -> str:
+    """"כפה: דנה · הושהתה: <שם> (3 שורות)" — the line the exceptions list shows."""
+    parts = [f"כפה: {details.get('forcedBy') or 'לא ידוע'}"]
+    parked = details.get("parked") if isinstance(details.get("parked"), dict) else None
+    if parked and parked.get("heldSaleId"):
+        parts.append(f"הושהתה: {parked.get('name') or ''} ({parked.get('lines') or 0} שורות)".strip())
+    elif parked and parked.get("notParkedReason"):
+        parts.append(f"לא הושהתה ({parked.get('notParkedReason')})")
+    else:
+        parts.append("לא הייתה הזמנה פתוחה")
+    return " · ".join(parts)
+
+
+def forced_close_initiator(db: Session, machine: POSMachine, request_id: Any) -> Dict[str, Any]:
+    """
+    `{forcedBy, forcedByUserId, requestKind}` for a forced remote Z close, from the request
+    the till names: a dashboard till-Z request, or a Z run's item. Empty when neither is
+    this till's.
+    """
+    from app.models.till_z_request import TillZRequest
+    from app.models.user import User
+    from app.models.z_run import ZRun, ZRunItem
+
+    key = _uuid(request_id)
+    if key is None:
+        return {}
+    req = db.query(TillZRequest).filter(TillZRequest.id == key, TillZRequest.machine_id == machine.id).first()
+    if req is not None:
+        return {
+            "requestKind": "till_z",
+            "forcedBy": req.initiated_by,
+            "forcedByUserId": str(req.created_by_user_id) if req.created_by_user_id else None,
+        }
+    item = db.query(ZRunItem).filter(ZRunItem.id == key, ZRunItem.machine_id == machine.id).first()
+    if item is not None:
+        run = db.get(ZRun, item.run_id)
+        user = db.get(User, run.created_by_user_id) if run is not None and run.created_by_user_id else None
+        return {
+            "requestKind": "z_run",
+            "zRunId": str(item.run_id),
+            "forcedBy": (user.username or user.email) if user is not None else None,
+            "forcedByUserId": str(user.id) if user is not None else None,
+        }
+    return {}
 
 
 def _nearest_document(db: Session, event: TillEvent) -> Optional[uuid.UUID]:
@@ -786,9 +997,17 @@ def labels_for(db: Session, rows: Sequence[AuditException]) -> Dict[str, Dict[An
         "shops": {s.id: s.name for s in db.query(Shop).filter(Shop.id.in_(shop_ids))} if shop_ids else {},
         "areas": {a.id: a.name for a in db.query(ShopArea).filter(ShopArea.id.in_(area_ids))} if area_ids else {},
         "machines": {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(machine_ids))} if machine_ids else {},
+        # As printed, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
         "documents": {
-            t.id: t.transaction_number
-            for t in db.query(Transaction.id, Transaction.transaction_number).filter(Transaction.id.in_(tx_ids))
+            t.id: document_number_from(t.transaction_number, t.document_prefix, t.pos_number)
+            for t in db.query(
+                Transaction.id, Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
+            ).filter(Transaction.id.in_(tx_ids))
+        } if tx_ids else {},
+        # A number names a document only with its type (one series per type).
+        "documentTypes": {
+            t.id: t.document_type
+            for t in db.query(Transaction.id, Transaction.document_type).filter(Transaction.id.in_(tx_ids))
         } if tx_ids else {},
         "shifts": {
             s.id: s.sequence_number

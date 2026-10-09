@@ -30,7 +30,9 @@ export type SketchKind =
   | 'line'
   | 'polyline'
   | 'freehand'
-  | 'rect';
+  | 'rect'
+  // The business's logo, placed on the floor: its own picture (`src`), else the business's.
+  | 'logo';
 
 export interface SketchElement {
   id: string;
@@ -53,11 +55,16 @@ export interface SketchElement {
   stroke?: number | null;
   /** A drawn rectangle: filled, or its outline only. */
   filled?: boolean | null;
+  /** A logo's own picture (an uploaded image's URL); none — the business's logo. */
+  src?: string | null;
 }
 
-/** The floor under the plan. Null: wood, or the uploaded image when the zone has one. */
-export type SketchBackground = 'wood' | 'tiles' | 'light' | 'dark' | 'image';
-export const SKETCH_BACKGROUNDS: SketchBackground[] = ['wood', 'tiles', 'light', 'dark', 'image'];
+/**
+ * The floor under the plan. Null: the clean floor (flat and neutral, a faint grid), or the
+ * uploaded image when the zone has one. Wood, tiles, light and dark stay for whoever chose them.
+ */
+export type SketchBackground = 'clean' | 'wood' | 'tiles' | 'light' | 'dark' | 'image';
+export const SKETCH_BACKGROUNDS: SketchBackground[] = ['clean', 'wood', 'tiles', 'light', 'dark', 'image'];
 
 export interface Sketch {
   template?: string | null;
@@ -67,15 +74,15 @@ export interface Sketch {
 
 export const SKETCH_KINDS: SketchKind[] = [
   'wall', 'door', 'window', 'counter', 'bar', 'kitchen', 'restroom', 'plant', 'column',
-  'stairs', 'cashier', 'host', 'exit', 'stage', 'sofa', 'label',
+  'stairs', 'cashier', 'host', 'exit', 'stage', 'sofa', 'label', 'logo',
 ];
 
-/** The background a zone is drawn on: an explicit choice, else its image, else wood. */
+/** The background a zone is drawn on: an explicit choice, else its image, else the clean floor. */
 export function backgroundOf(sketch: Sketch | null | undefined, hasImage: boolean): SketchBackground {
   const chosen = sketch?.background;
-  if (chosen === 'image') return hasImage ? 'image' : 'wood';
+  if (chosen === 'image') return hasImage ? 'image' : 'clean';
   if (chosen) return chosen;
-  return hasImage ? 'image' : 'wood';
+  return hasImage ? 'image' : 'clean';
 }
 
 /** A bar counter's parts, in canvas units before its rotation (the till computes the same). */
@@ -133,12 +140,14 @@ export const WOOD = {
 };
 export const TILE = { size: 90, fill: '#eceae6', grout: '#d4d0c8' };
 export const PLAIN = { light: '#f8fafc', dark: '#334155' };
+/** The clean floor: flat grey with a faint grid every 50 units (the till draws the same). */
+export const CLEAN = { fill: '#eef1f4', grid: '#e2e6eb', step: 50 };
 
-/** Table colours on the floor: off-white objects, the state as a ring, gold when picked. */
+/** Table colours on the floor: crisp white shapes, a thin slate edge, gold when picked. */
 export const TABLE_LOOK = {
-  fill: '#fffdf8',
-  border: '#b8b2a7',
-  number: '#57534e',
+  fill: '#ffffff',
+  border: '#94a3b8',
+  number: '#1e293b',
   gold: '#f59e0b',
 };
 
@@ -165,6 +174,7 @@ export const SKETCH_STYLE: Record<SketchKind, { fill: string; stroke: string; ro
   polyline: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
   freehand: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
   rect: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
+  logo: { fill: 'transparent', stroke: '#94a3b8', text: '#64748b' },
 };
 
 /** The word drawn on a shape with no text of its own (the till draws the same). */
@@ -219,6 +229,7 @@ export function newElement(kind: SketchKind, cw: number, ch: number): SketchElem
     polyline: [s * 0.3, 0],
     freehand: [s * 0.1, s * 0.1],
     rect: [s * 0.2, s * 0.12],
+    logo: [s * 0.2, s * 0.12],
   };
   const [w, h] = size[kind];
   return {
@@ -317,7 +328,8 @@ const TEMPLATE_BOXES: Record<SketchTemplate, Box[]> = {
 export function templateSketch(template: SketchTemplate, cw: number, ch: number): Sketch {
   return {
     template,
-    background: 'wood',
+    // The floor stays whatever was chosen (the editor keeps it); a template draws no floor.
+    background: null,
     elements: TEMPLATE_BOXES[template].map(([kind, x, y, w, h, text, extra]) => ({
       id: newElementId(),
       kind,
@@ -420,7 +432,8 @@ export function chairLayout(round: boolean, w: number, h: number, seats: number)
   return out;
 }
 
-export const CHAIR_LOOK = { wood: '#d8b68a', back: '#b88a5c', edge: '#9c7448' };
+/** Chairs, quiet: a pale seat, a darker back, a thin edge (the till draws the same). */
+export const CHAIR_LOOK = { wood: '#e5e7eb', back: '#cbd5e1', edge: '#94a3b8' };
 
 export const TABLE_SIZE_MIN = 30;
 export const TABLE_SIZE_MAX = 600;

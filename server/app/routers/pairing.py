@@ -1,6 +1,7 @@
 from typing import List
 import uuid as uuid_mod
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.pairing_code import (
@@ -16,7 +17,8 @@ from app.models.shop import Shop
 from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
-from app.services import access
+from app.services import access, device_profile, display_devices
+from app.services import work_config as WC
 from app.services.pairing import (
     AdoptionRefused,
     PairingAssignmentError,
@@ -69,6 +71,32 @@ def generate_pairing_code(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
         ensure_same_tenant(company.tenant_id, active_tenant_id)
 
+    # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk needs a shop and valid
+    # controlling tills; a KDS / board a shop and its screen — said now, while the dialog is
+    # open (400 / 422, Hebrew `message`).
+    try:
+        device_role, options = device_profile.check_pairing_request(
+            db, role=body.device_role, shop_id=shop_id, kiosk=body.kiosk, kds=body.kds,
+        )
+    except device_profile.DeviceProfileRefused as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    # "דפדפן (Web)": the browser kiosk at `/k` (docs/SPEC_KIOSK.md §27), the KDS at `/kds` and the
+    # board at `/board` (docs/SPEC_KDS.md §13) — never a till.
+    web_refused = display_devices.web_platform_refusal(body.platform, device_role)
+    if web_refused is not None:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
+    kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
+    # "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): checked now, as for a new device of that
+    # role in that shop — the same refusals the device page answers, while the dialog is open.
+    try:
+        work_config = WC.check_pairing_request(
+            db, current_user, shop_id=shop_id, role=device_role, platform=body.platform,
+            plan=body.work_config.plan() if body.work_config is not None else None,
+        )
+    except WC.WorkConfigRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+
     try:
         pairing_code = create_pairing_code(
             db,
@@ -77,6 +105,12 @@ def generate_pairing_code(
             company_id=company_id,
             shop_id=shop_id,
             device_model=body.device_model,
+            device_role=device_role,
+            kiosk_options=kiosk_options,
+            # "Android / Windows": the device that redeems it must be one (422 otherwise).
+            platform=body.platform or display_devices.PLATFORM_ANDROID,
+            kds_options=kds_options,
+            work_config=work_config,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(
@@ -104,6 +138,11 @@ def validate_pairing(
         # card sales it never transmitted (docs/SHIFTS_API.md §4.9). The code stays unused.
         db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except display_devices.PlatformMismatch as exc:
+        # A Windows code on an Android device, or the other way round: nothing was created
+        # and the code stays unused (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
+        db.rollback()
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=exc.body)
 
     if not machine:
         raise HTTPException(

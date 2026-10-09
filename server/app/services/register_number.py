@@ -19,9 +19,14 @@ document exists. Three rules follow, and each one is easy to lose:
 
 A replacement for a dead till is the *same register*. `adopt_machine` hands the new
 device the existing row, so the number survives without being copied anywhere.
+
+A display device — a KDS screen or the "מוכן / לא מוכן" board — is not a register at all
+(`pos_machines.is_fiscal` false, app/services/display_devices.py): it never draws a
+number, nor a document prefix, in any shop.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Optional, Union
 
@@ -35,6 +40,8 @@ from app.models.shop_register_sequence import (
     ShopRegisterSequence,
 )
 from app.models.transaction import Transaction
+
+logger = logging.getLogger(__name__)
 
 ShopId = Union[uuid.UUID, str, None]
 
@@ -135,10 +142,10 @@ def assign_register_number(db: Session, machine: POSMachine) -> Optional[str]:
     is only sound because `set_machine_shop` clears the number whenever the shop
     changes — a number that is present always belongs to the current shop.
 
-    A machine with no shop has no number. Must be called inside the transaction that
-    persists the machine; the caller commits.
+    A machine with no shop has no number, nor has a display device (not a till). Must be
+    called inside the transaction that persists the machine; the caller commits.
     """
-    if machine.shop_id is None:
+    if machine.shop_id is None or getattr(machine, "is_fiscal", True) is False:
         machine.pos_number = None
         return None
     if machine.pos_number is not None:
@@ -164,13 +171,55 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
     The till's area goes with its old shop for the same reason: an area is one shop's,
     so a till that leaves the shop leaves the area (`area.shop_id == machine.shop_id`).
     Its past shifts keep their stamped area.
+
+    So does its "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): one chosen in the old shop
+    is given up, and the till starts from the new shop's default — its new register
+    number, or the lowest free prefix when that number is already held there
+    (`document_prefix.settle_default`). Its documents keep the prefix frozen on them.
     """
-    if not _same_shop(machine.shop_id, shop_id):
+    moved = not _same_shop(machine.shop_id, shop_id)
+    if moved:
         machine.shop_id = shop_id
         machine.pos_number = None
+        if getattr(machine, "document_prefix", None) is not None:
+            machine.document_prefix = None
         if getattr(machine, "area_id", None) is not None:
             from app.services.areas import set_machine_area
 
             set_machine_area(machine, None)
-    return assign_register_number(db, machine)
+    number = assign_register_number(db, machine)
+    if getattr(machine, "is_fiscal", True) is False:
+        # A display device issues no documents: no prefix either.
+        machine.document_prefix = None
+    else:
+        from app.services.document_prefix import settle_default
+
+        settle_default(db, machine)
+    if moved:
+        _release_offline_assignments(db, machine)
+    return number
+
+
+def _release_offline_assignments(db: Session, machine: POSMachine) -> None:
+    """
+    A till holding a voucher batch offline (the production vouchers contract §7) loses it with its
+    shop — it never downloads vouchers it may no longer redeem (review 09.10). Never a reason to
+    fail the move:
+
+    * it runs once the machine is settled in its new shop (register number, prefix): the release
+      flushes, and a flush of a half-moved machine — the new shop with the old shop's number —
+      could break uq_pos_machines_shop_pos_number;
+    * the move itself is flushed first, outside the guard: its own errors stay the move's;
+    * the release runs in a SAVEPOINT: a failure rolls back to it, and the move's transaction stays
+      usable (on Postgres a failed statement aborts the whole transaction otherwise). The device's
+      next download / sync drops the assignments too.
+    """
+    db.flush()
+    try:
+        from app.services.prepaid_voucher_offline import released_on_machine_move
+
+        with db.begin_nested():
+            released_on_machine_move(db, machine)
+    except Exception:  # noqa: BLE001 - never fails the move (see above)
+        logger.exception("machine %s moved: its offline assignments were not released now", getattr(machine, "id", None))
 

@@ -31,6 +31,13 @@ class ZRunCreateIn(BaseModel):
     #: The operator confirms producing a shop Z without the tills a 409
     #: `open_tills_need_confirmation` listed (`shopZOpenTills`). Recorded on the Z.
     confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
+    #: "כפה סגירה (גם באמצע מכירה)": each till parks an open basket and closes; only a
+    #: card charge in flight is waited for (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
+    #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים": required while a till the run takes
+    #: shows a warning — open shifts it cannot close, not seen, unsent documents or Zs
+    #: (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else `409 cloud_data_confirmation_required`.
+    confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
 
 
 class ZRunProceedIn(BaseModel):
@@ -97,6 +104,8 @@ class ZRunOut(BaseModel):
     open_tills_left_out: Optional[Dict[str, Any]] = Field(None, alias="openTillsLeftOut")
     #: Started from the shop's master till: built only once the cloud verifies every till.
     strict_cloud_check: bool = Field(False, alias="strictCloudCheck")
+    #: Asked "even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9).
+    force: bool = False
     #: The cloud's clock when this was read (a till times its waits against it).
     server_time: Optional[datetime] = Field(None, alias="serverTime")
     items: List[ZRunItemOut] = Field(default_factory=list)
@@ -134,6 +143,10 @@ class ZCandidateMachineOut(BaseModel):
     #: The till's area now (not its shifts' stamps).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     area_name: Optional[str] = Field(None, alias="areaName")
+    #: The till as the cloud knows it before the Z (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1):
+    #: last seen, open shifts, unsent documents and Zs, and `warnings` — any of which the
+    #: operator confirms explicitly before a cloud run takes the till.
+    data_state: Optional[Dict[str, Any]] = Field(None, alias="dataState")
 
 
 class ZCandidatesOut(BaseModel):

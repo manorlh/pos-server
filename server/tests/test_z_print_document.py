@@ -149,7 +149,7 @@ class TestDocument:
         assert _rows(doc, "מע״מ")["מע״מ"] == "₪167.09"
         assert _rows(doc, "מע״מ")["נטו ללא מע״מ"] == "₪982.91"
         pay = _rows(doc, "אמצעי תשלום")
-        assert (pay["מזומן"], pay["אשראי"], pay["שוברים"], pay["אחר"]) == (
+        assert (pay["מזומן"], pay["אשראי"], pay["שוברי הפקה"], pay["אחר"]) == (
             "₪400.00", "₪700.00", "₪50.00", "₪0.00",
         )
         tips = _rows(doc, "תשר")
@@ -394,3 +394,72 @@ def test_routes_are_mounted():
     paths = [r.path for r in app.routes]
     # Before `/{z_report_id}`, or the id route would answer it with a 422.
     assert paths.index("/api/v1/z-reports/print-documents") < paths.index("/api/v1/z-reports/{z_report_id}")
+
+
+# ── "טיפ באשראי משולם מהמזומן": two rows at the bottom of the drawer, only with the figure ──
+
+
+def _labels(doc, title):
+    for s in doc["sections"]:
+        if s["title"] == title:
+            return [r["label"] for r in s["rows"]]
+    return None
+
+
+TIPS_LABEL = z_print.CARD_TIPS_FROM_DRAWER_LABEL
+DRAWER_LABEL = z_print.DRAWER_CASH_LABEL
+
+
+def _with_drawer_tips(w, seq=12, **extra):
+    section = _section(w.tills[0], expectedCash="40.00", cardTipsFromDrawer="10.00", drawerCash="40.00")
+    header = {"businessName": "Acme Ltd", "shopName": "Center", "cardTipsFromDrawer": "10.00", "drawerCash": "40.00"}
+    return _z(w, seq, per_machine=[section], header=header, expected_cash=Decimal("40.00"), **extra)
+
+
+class TestCardTipsPaidFromTheDrawer:
+    def test_nothing_new_without_the_figure(self, w):
+        z = _z(w, 12)
+        for doc in (
+            z_print.build_print_document(z, _tz()),
+            z_print.build_summary_document(z, _tz()),
+            z_print.build_till_document(z, w.tills[0].id, _tz()),
+        ):
+            for s in doc["sections"]:
+                labels = [r["label"] for r in s["rows"]]
+                assert TIPS_LABEL not in labels and DRAWER_LABEL not in labels, s["title"]
+        assert z_print.drawer_tips_of(z) is None
+
+    def test_the_z_the_summary_and_the_till_print_them_at_the_bottom(self, w):
+        z = _with_drawer_tips(w)
+        for doc in (z_print.build_print_document(z, _tz()), z_print.build_summary_document(z, _tz())):
+            assert _labels(doc, "קופה")[-2:] == [TIPS_LABEL, DRAWER_LABEL]
+            cash = _rows(doc, "קופה")
+            assert (cash[TIPS_LABEL], cash[DRAWER_LABEL]) == ("₪10.00", "₪40.00")
+            assert cash["מזומן צפוי"] == "₪40.00"
+        till = _rows(z_print.build_print_document(z, _tz()), "קופה 1 · Till 1")
+        assert (till[TIPS_LABEL], till[DRAWER_LABEL]) == ("₪10.00", "₪40.00")
+        part = z_print.build_till_document(z, w.tills[0].id, _tz())
+        assert _labels(part, "קופה")[-2:] == [TIPS_LABEL, DRAWER_LABEL]
+        assert _rows(part, "קופה")[DRAWER_LABEL] == "₪40.00"
+
+    def test_the_labels_fit_80mm(self, w):
+        doc = z_print.build_print_document(_with_drawer_tips(w), _tz())
+        for s in doc["sections"]:
+            for r in s["rows"]:
+                assert len(r["label"]) <= z_print.LABEL_MAX and not r["label"].endswith("…"), r["label"]
+
+    def test_the_tips_themselves_are_untouched(self, w):
+        tips = _rows(z_print.build_print_document(_with_drawer_tips(w), _tz()), "תשר")
+        assert (tips["תשר מזומן"], tips["תשר אשראי"], tips["סה״כ תשר"]) == ("₪10.00", "₪20.00", "₪30.00")
+
+    def test_a_z_stored_as_printed_reads_them_from_its_sections(self, w):
+        # No header figure (a local shop Z kept as the main till printed it): Σ of the sections,
+        # a till without the figure counted whole (its cash + cash tips).
+        with_tips = _section(w.tills[0], cardTipsFromDrawer="10.00", drawerCash="40.00")
+        without = _section(w.tills[1], cashSalesNet="25.00", totalCashTips="5.00")
+        z = _z(w, 12, per_machine=[with_tips, without])
+        assert z_print.drawer_tips_of(z) == {"cardTipsFromDrawer": Decimal("10.00"), "drawerCash": Decimal("70.00")}
+        cash = _rows(z_print.build_print_document(z, _tz()), "קופה")
+        assert (cash[TIPS_LABEL], cash[DRAWER_LABEL]) == ("₪10.00", "₪70.00")
+        out = zr_router.z_to_out(z).model_dump(by_alias=True, mode="json")
+        assert (Decimal(out["cardTipsFromDrawer"]), Decimal(out["drawerCash"])) == (Decimal("10"), Decimal("70"))

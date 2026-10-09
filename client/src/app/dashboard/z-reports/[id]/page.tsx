@@ -18,6 +18,8 @@
 import { use, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { zShowsExempt } from '@/lib/dealerType';
+import { hasDrawerTips } from '@/lib/drawerTips';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
@@ -42,8 +44,14 @@ import {
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { OfflineZPanel } from '@/components/dashboard/z-report/offline-z-panel';
+import { ZVerificationPanel } from '@/components/dashboard/z-report/z-verification-panel';
+import { latePartTitleOf, sectionKeyOf, sectionShiftsOf } from '@/lib/localShopZ';
+import { AsPrintedBadge, ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
+import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { OpenTillsRecord } from '@/components/dashboard/z-wizard/open-tills';
 import { ZPrintDocument } from '@/components/dashboard/z-report/z-print-document';
+import { FailedPaymentsSection } from '@/components/dashboard/failed-payments/failed-payments-section';
 import { CardBrandSummaryCard } from '@/components/dashboard/z-report/card-brand-summary';
 import { WaiterSummaryCard } from '@/components/dashboard/z-report/waiter-summary';
 import {
@@ -59,6 +67,8 @@ import {
   offlineOfZ,
 } from '@/components/dashboard/z-report/offline-summary';
 import { useZTitle, ZProducedBy, zNumberSourceOf } from '@/components/dashboard/z-report/z-number';
+import { useZExportSheets } from '@/components/dashboard/z-report/z-export-sheets';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -138,9 +148,12 @@ interface SalesFigures {
  * only in the net line. A server that does not send gross yet gets the same sales line,
  * with the discounts marked as already deducted.
  */
-function SalesRows({ x }: { x: SalesFigures }) {
+function SalesRows({ x, dealerType }: { x: SalesFigures; dealerType?: string | null }) {
   const t = useTranslations('zReports');
+  const tb = useTranslations('businessType');
   const hasGross = x.grossSales != null;
+  // An exempt dealer's Z has no VAT to split (docs/SPEC_BUSINESS_TYPE.md).
+  const exempt = zShowsExempt(dealerType, x.vatTotal);
   return (
     <>
       {hasGross ? (
@@ -154,7 +167,9 @@ function SalesRows({ x }: { x: SalesFigures }) {
       <MoneyRow label={t('refundsAndCredits')} value={x.totalRefunds} />
       {x.netSales != null ? <MoneyRow label={t('netSales')} value={x.netSales} strong /> : null}
       <MoneyRow label={t('vatNetOfCredits')}>
-        {x.vatTotal == null ? (
+        {exempt ? (
+          <span className="text-muted-foreground text-xs">{tb('zExemptNoVat')}</span>
+        ) : x.vatTotal == null ? (
           <span className="text-muted-foreground text-xs">{t('vatMissing')}</span>
         ) : (
           <>
@@ -173,9 +188,22 @@ function SalesRows({ x }: { x: SalesFigures }) {
   );
 }
 
-function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) {
+function TillCard({
+  s,
+  shifts,
+  dealerType,
+  zId,
+}: {
+  s: ZReportMachineSection;
+  shifts: Shift[];
+  dealerType?: string | null;
+  /** The Z, for this till's "עסקאות שלא הושלמו" (docs/SPEC_FAILED_PAYMENTS.md). */
+  zId?: string;
+}) {
   const t = useTranslations('zReports');
   const heading = useTillHeading()(s);
+  // A local shop Z's "late documents" part of a till: its label, not a second "קופה N".
+  const lateTitle = latePartTitleOf(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
   const offline = offlineOf(s.offline);
   return (
@@ -184,9 +212,9 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <CardTitle className="text-base">
             <Link href={`/dashboard/machines/${s.machineId}`} className="hover:underline">
-              {heading.title}
+              {lateTitle ?? heading.title}
             </Link>
-            {heading.name ? (
+            {heading.name && !lateTitle ? (
               <span className="text-muted-foreground ms-2 text-sm font-normal">{heading.name}</span>
             ) : null}
           </CardTitle>
@@ -233,7 +261,7 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
         </div>
         <div className="grid gap-4 md:grid-cols-3 text-sm">
           <div className="space-y-1 rounded border bg-muted/30 p-3">
-            <SalesRows x={s} />
+            <SalesRows x={s} dealerType={dealerType} />
           </div>
           <div className="rounded border bg-muted/30 p-3">
             <PaymentBreakdownRows breakdown={s.paymentBreakdown} />
@@ -258,6 +286,13 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
             <MoneyRow label={t('discrepancy')}>
               <OverShort value={uncounted ? null : s.overShort} uncountedLabel={t('discrepancyWithheld')} />
             </MoneyRow>
+            {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
+            {hasDrawerTips(s.cardTipsFromDrawer) ? (
+              <>
+                <MoneyRow label={t('cardTipsFromDrawer')} value={s.cardTipsFromDrawer} />
+                <MoneyRow label={t('drawerCash')} value={s.drawerCash} strong />
+              </>
+            ) : null}
           </div>
         </div>
         {offline ? (
@@ -265,6 +300,10 @@ function TillCard({ s, shifts }: { s: ZReportMachineSection; shifts: Shift[] }) 
             <OfflineNotice figures={offline} />
             <OfflineDeclinedList declined={s.offline?.declined ?? []} />
           </div>
+        ) : null}
+        {/* This till's failed payment attempts and cancelled sales — information only. */}
+        {zId && s.machineId && !lateTitle ? (
+          <FailedPaymentsSection query={{ zReportId: zId, machineId: s.machineId }} bare />
         ) : null}
       </CardContent>
       {shifts.length > 0 ? (
@@ -306,6 +345,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const t = useTranslations('zReports');
   const zTitle = useZTitle();
+  const zSheets = useZExportSheets();
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
@@ -341,7 +381,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const offline = offlineOfZ(z);
   // Frozen in the header when the Z was built, so a later rename does not rewrite it.
   const areaName = z.business?.areaName ?? z.areaName ?? null;
-  const shiftsOf = (machineId: string) => z.shifts.filter((s) => s.machineId === machineId);
+  // A till with two parts (regular + "late documents") splits its shifts by each part's ids.
+  const sectionShifts = (s: ZReportMachineSection) => sectionShiftsOf(s, z.perMachine, z.shifts);
 
   const title = zPrintTitle([(z.zNumber ?? z.shopSequenceNumber)]);
   const print = (pdf = false) => {
@@ -371,16 +412,31 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <FileBarChart className="h-5 w-5 text-muted-foreground me-1" aria-hidden />
               <h1 className="text-2xl font-bold">{zTitle(zNumberSourceOf(z))}</h1>
               <ZBadges z={z} />
+              {/* A local shop Z: the printed Z is the Z. A till Z of a later run: its start. */}
+              <AsPrintedBadge z={z} />
+              <ZRun z={z} className="ms-2 text-sm text-muted-foreground" />
             </div>
             <p className="text-muted-foreground text-sm">
               <NumberPill n={z.shopNumber} className="me-1" />
               {z.shopName ?? z.business?.shopName ?? '—'} ·{' '}
+              {/* On every Z: two Z sequences of one branch are told apart by the till. */}
+              {z.branchCode ? <><BranchCode code={z.branchCode} /> · </> : null}
               {areaName ? <>{t('areaValue', { area: areaName })} · </> : null}
               {t('businessDateValue', { date: formatDate(z.businessDate) })}
             </p>
             <ZProducedBy z={z} className="text-muted-foreground text-xs" />
+            <ZScopeLine z={z} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {/* Excel only: the Z prints its own fiscal document (A4 or the till's paper) below. */}
+            <ReportExportToolbar
+              title={zTitle(zNumberSourceOf(z))}
+              from={z.businessDate}
+              to={z.businessDate}
+              scopeLabel={[z.shopName ?? z.business?.shopName, areaName].filter(Boolean).join(' · ')}
+              getSheets={() => zSheets(z)}
+              className="[&>button:not(:first-child)]:hidden"
+            />
             <ZPrintViewToggle value={view} onChange={setView} />
             <Button size="sm" onClick={() => print()} disabled={printDisabled}>
               <Printer className="h-4 w-4 me-1" aria-hidden />
@@ -402,6 +458,10 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             {t('totalsMismatchNotice')}
           </div>
         ) : null}
+        {/* Closed at the till with no connection, and the card transmission before it. */}
+        <OfflineZPanel z={z} />
+        {/* A local shop Z: its check against the cloud's documents, and support's close. */}
+        <ZVerificationPanel z={z} />
         {z.reconstructed ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950">
             {t('reconstructedNotice')}
@@ -460,7 +520,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <CardTitle className="text-sm font-medium text-muted-foreground">{t('totalsTitle')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
-              <SalesRows x={z} />
+              <SalesRows x={z} dealerType={z.business?.dealerType} />
               <MoneyRow label={t('documentsSalesAndCredits')}>{z.transactionsCount ?? '—'}</MoneyRow>
               <p className="text-muted-foreground pt-1 text-xs">{t('salesNetHint')}</p>
             </CardContent>
@@ -497,6 +557,12 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
               <MoneyRow label={t('discrepancy')}>
                 <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
               </MoneyRow>
+              {hasDrawerTips(z.cardTipsFromDrawer) ? (
+                <>
+                  <MoneyRow label={t('cardTipsFromDrawer')} value={z.cardTipsFromDrawer} />
+                  <MoneyRow label={t('drawerCash')} value={z.drawerCash} strong />
+                </>
+              ) : null}
               {withheld ? <p className="text-muted-foreground pt-1 text-xs">{t('cashWithheldHint')}</p> : null}
             </CardContent>
           </Card>
@@ -510,7 +576,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           <div className="space-y-3">
             <h2 className="text-lg font-semibold">{t('tillsTitle')}</h2>
             {z.perMachine.map((s) => (
-              <TillCard key={s.machineId} s={s} shifts={shiftsOf(s.machineId)} />
+              <TillCard key={sectionKeyOf(s)} s={s} shifts={sectionShifts(s)} dealerType={z.business?.dealerType} zId={z.id} />
             ))}
           </div>
         ) : z.shifts.length > 0 ? (

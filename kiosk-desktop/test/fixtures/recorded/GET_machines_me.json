@@ -1,0 +1,35 @@
+{
+  "status": 200,
+  "body": {
+    "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+    "machineCode": "MACHINE-8308801B",
+    "machineName": "קיוסק Windows (בדיקת עשן)",
+    "posNumber": "4",
+    "documentPrefix": "4",
+    "shopName": "סניף 2",
+    "companyName": "רויאל בר",
+    "shopNumber": 2,
+    "companyNumber": 4,
+    "tenantId": "7e84399f-f5b1-4095-9dee-3ec2af4c6921",
+    "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+    "area": null,
+    "pairingStatus": "assigned",
+    "mqttClientId": "pos-719690f0284c",
+    "deviceModel": "GENERIC_ANDROID",
+    "hasPrinter": false,
+    "hasBuiltinTerminal": false,
+    "hasCashDrawerPort": false,
+    "deviceRole": "kiosk",
+    "license": {
+      "type": "permanent",
+      "expiresOn": null,
+      "source": null,
+      "name": null,
+      "warnDays": 3
+    },
+    "trainingMode": false,
+    "trainingStartedAt": null,
+    "ablyAuthUrl": "/api/v1/machines/me/ably-auth",
+    "realtimeChannel": "pos:7e84399f-f5b1-4095-9dee-3ec2af4c6921:549e903c-4aba-4528-bc4a-c61b4019a64e"
+  }
+}

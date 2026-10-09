@@ -5,6 +5,7 @@
  */
 import { api } from './api';
 import type { Sketch } from './tableSketch';
+import type { MealsReport, StaffMode, TableKind, TablePolicy, TableType } from './tablePolicy';
 
 export type ZoneLayout = 'map' | 'grid';
 export type TableShape = 'round' | 'square' | 'rect';
@@ -40,12 +41,21 @@ export interface DiningTable {
   rotation: number;
   /** "לניקוי": paid, and not marked clean since (ISO); null when laid. */
   cleaningSince?: string | null;
+  /** "סוג שולחן" (lib/tablePolicy.ts): its own kind and discount, or a type — and what the till applies. */
+  kind?: TableKind;
+  discountPercent?: number | null;
+  typeId?: string | null;
+  policy?: TablePolicy;
 }
 
 export interface TablesLayout {
   shopId: string;
   zones: TableZone[];
   tables: DiningTable[];
+  /** The business's logo — what a "logo" shape of a map shows when it has no picture of its own. */
+  logoUrl?: string | null;
+  /** "סוגי שולחנות": the shop's live table types. */
+  tableTypes?: TableType[];
 }
 
 export interface TableOrderSummary {
@@ -205,7 +215,10 @@ export const updateZone = (
 
 export const archiveZone = (zoneId: string) => api.post(`/tables/zones/${zoneId}/archive`).then((r) => r.data);
 
-export const bulkAddTables = (zoneId: string, body: { from: number; to: number; seats: number; shape: TableShape }) =>
+export const bulkAddTables = (
+  zoneId: string,
+  body: { from: number; to: number; seats: number; shape: TableShape; typeId?: string | null },
+) =>
   api
     .post<{ created: number[]; skipped: number[] }>(`/tables/zones/${zoneId}/bulk`, body)
     .then((r) => r.data);
@@ -225,12 +238,48 @@ export const createTable = (body: {
   height?: number;
   x?: number;
   y?: number;
+  kind?: TableKind;
+  discountPercent?: number | null;
+  typeId?: string | null;
 }) => api.post<DiningTable>('/tables/tables', body).then((r) => r.data);
 
 export const updateTable = (
   tableId: string,
-  body: Partial<Pick<DiningTable, 'zoneId' | 'number' | 'name' | 'seats' | 'shape' | 'x' | 'y' | 'width' | 'height' | 'rotation'>>,
+  body: Partial<
+    Pick<
+      DiningTable,
+      'zoneId' | 'number' | 'name' | 'seats' | 'shape' | 'x' | 'y' | 'width' | 'height' | 'rotation' | 'kind' | 'discountPercent' | 'typeId'
+    >
+  >,
 ) => api.patch<DiningTable>(`/tables/tables/${tableId}`, body).then((r) => r.data);
+
+// ── Table types ("סוגי שולחנות") and the meals report ─────────────────────────
+
+export interface TableTypeBody {
+  name: string;
+  kind: TableKind;
+  discountPercent: number;
+  requireApproval: boolean;
+  requireReason: boolean;
+  staffMode: StaffMode;
+  staffAllowance: number | null;
+}
+
+export const fetchTableTypes = (shopId: string) =>
+  api.get<TableType[]>('/tables/types', { params: { shopId } }).then((r) => r.data);
+
+export const createTableType = (shopId: string, body: TableTypeBody) =>
+  api.post<TableType>('/tables/types', { ...body, shopId }).then((r) => r.data);
+
+export const updateTableType = (typeId: string, body: Partial<TableTypeBody>) =>
+  api.patch<TableType>(`/tables/types/${typeId}`, body).then((r) => r.data);
+
+export const archiveTableType = (typeId: string) => api.post(`/tables/types/${typeId}/archive`).then((r) => r.data);
+
+export const fetchMealsReport = (shopId: string, from: string, to: string, employee?: string | null) =>
+  api
+    .get<MealsReport>('/tables/meals-report', { params: { shopId, from, to, ...(employee ? { employee } : {}) } })
+    .then((r) => r.data);
 
 export const archiveTable = (tableId: string) => api.post(`/tables/tables/${tableId}/archive`).then((r) => r.data);
 

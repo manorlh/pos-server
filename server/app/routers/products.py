@@ -37,6 +37,7 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.services import general_item
 from app.services import item_ticket
+from app.services import product_alerts
 from app.services import product_list_filters as list_filters
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
@@ -462,11 +463,19 @@ def create_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
+        requires_manager_approval=data.requires_manager_approval,
+        # "סימוני תזונה", already cleaned by the schema (app/services/dietary.py).
+        dietary_tags=data.dietary_tags or None,
+        # "היכן הפריט נמכר", validated by the schema (app/services/sales_channel.py).
+        sales_channel=data.sales_channel,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
     # An explicit id so the shop rows below can reference it before the insert.
     product.id = uuid_mod.uuid4()
+    # "הודעות לעובד" / "פריטים נלווים": only what the request sent.
+    product_alerts.apply(db, product, data, active_tenant_id)
     db.add(product)
     if data.shop_scope is not None:
         _apply_shop_scope(db, current_user, product, data.shop_scope, active_tenant_id)
@@ -563,9 +572,14 @@ def update_product(
     if "ticket_mode" in updates:
         # "inherit" is stored as NULL.
         updates["ticket_mode"] = item_ticket.normalize(updates["ticket_mode"])
+    if "dietary_tags" in updates:
+        # Cleaned by the schema; none at all is stored as NULL, like the allergens.
+        updates["dietary_tags"] = updates["dietary_tags"] or None
 
     for field, value in updates.items():
         setattr(product, field, value)
+    # "הודעות לעובד" / "פריטים נלווים" (not in `updates`): what the request sent, validated.
+    product_alerts.apply(db, product, data, active_tenant_id)
 
     # The general item's scope can only be restated (checked above), and restating it
     # has nothing to apply — so it never asks for write access to every shop.

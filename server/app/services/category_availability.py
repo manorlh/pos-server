@@ -108,6 +108,38 @@ def resolve_rows(category, rows: Optional[Dict[str, CategoryAvailabilityOverride
     return resolve(category.is_active, value(SHOP), value(AREA), value(MACHINE))
 
 
+def lock_info(category_active, rows: Optional[Dict[str, CategoryAvailabilityOverride]]) -> Optional[Dict]:
+    """
+    The switch-off that decides a category on a till, as the till is sent it
+    (`activeLock`, docs/SPEC_AVAILABILITY.md): its level, "חסימה קבועה", when it began and
+    what the till gets without it. None when the category is active, or when the tenant's
+    own flag is what switched it off (no Z reopens that).
+    """
+    if not category_active:
+        return None
+    rows = rows or {}
+
+    def value(level):
+        row = rows.get(level)
+        return None if row is None else row.is_active
+
+    for i, level in enumerate((MACHINE, AREA, SHOP)):
+        if value(level) is None:
+            continue
+        if value(level):
+            return None
+        row = rows[level]
+        above = [value(lv) for lv in (MACHINE, AREA, SHOP)[i + 1:]]
+        inherited = next((bool(v) for v in above if v is not None), True)
+        return {
+            "level": level,
+            "permanent": bool(getattr(row, "block_permanent", False)),
+            "blockedAt": row.blocked_at.isoformat() if getattr(row, "blocked_at", None) else None,
+            "inherited": inherited,
+        }
+    return None
+
+
 def latest_change(rows: Optional[Dict[str, CategoryAvailabilityOverride]]) -> Optional[datetime]:
     """The newest `updated_at` among a category's rows for one till."""
     stamps = [r.updated_at for r in (rows or {}).values() if r.updated_at is not None]
@@ -147,13 +179,24 @@ def last_change(db: Session, machine) -> Optional[datetime]:
 
 
 def set_override(
-    db: Session, level: str, target_id, category_id, value: Optional[bool]
+    db: Session,
+    level: str,
+    target_id,
+    category_id,
+    value: Optional[bool],
+    permanent: Optional[bool] = None,
+    at: Optional[datetime] = None,
 ) -> CategoryAvailabilityOverride:
     """
     Set (True / False) or clear (None) one level. Clearing keeps the row with a NULL and
     a fresh `updated_at`: the delta pull and the watermark cannot see a deleted row.
     Stamped explicitly so re-sending the same value still counts as a change.
+
+    A switch-off also carries "חסימה קבועה" and when it began (`mark_lock`): temporary
+    unless `permanent` says otherwise, for "פתיחת פריטים אוטומטית אחרי Z".
     """
+    from app.services.product_availability import mark_lock
+
     if level not in LEVELS:
         raise ValueError(f"unknown category level {level!r}")
     row = (
@@ -168,6 +211,7 @@ def set_override(
     if row is None:
         row = CategoryAvailabilityOverride(level=level, target_id=target_id, category_id=category_id)
         db.add(row)
+    mark_lock(row, row.is_active is False, value, permanent, at)
     row.is_active = value
     row.updated_at = datetime.now(timezone.utc)
     return row

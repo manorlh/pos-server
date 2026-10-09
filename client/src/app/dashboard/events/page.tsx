@@ -27,6 +27,7 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { Card, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
 import { EventFormDialog } from '@/components/dashboard/events/event-form-dialog';
 import { StatusChip, money } from '@/components/dashboard/events/event-parts';
+import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 import { Button } from '@/components/ui/button';
 
 const WRITE_ROLES = new Set(['super_admin', 'distributor', 'company_manager', 'shop_manager']);
@@ -159,7 +160,7 @@ export default function EventsPage() {
                     <StatusChip status={e.status} />
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[14px]">
-                    <span>{t('tills', { count: e.machineIds.length })}</span>
+                    <span>{t('tillsCount', { count: e.machineIds.length })}</span>
                     {e.producerName ? <span className="text-[#8E8E93]">{t('producer', { name: e.producerName })}</span> : null}
                   </div>
                   <div className="text-[13px] text-[#8E8E93]">
@@ -200,6 +201,7 @@ export default function EventsPage() {
                           </Button>
                         </>
                       ) : null}
+                      <LiveEventLink eventId={e.id} />
                       <Link
                         href={`/dashboard/events/${e.id}`}
                         className="flex items-center gap-0.5 rounded-lg px-2 py-1 text-[15px] font-medium text-[#007AFF] hover:bg-[#007AFF]/10"

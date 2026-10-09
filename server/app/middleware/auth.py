@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import uuid
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -24,6 +24,7 @@ from app.services.elevation import (
 )
 from app.services.permissions import Scope, pos_user_till_scopes, requires_per_action_reauth
 from app.observability.context import set_request_context
+from app.services import dashboard_access
 
 security = HTTPBearer()
 pairing_session_security = HTTPBearer(auto_error=True)
@@ -42,10 +43,17 @@ def _bind_machine_context(machine: POSMachine) -> None:
 
 
 def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
-    """Authenticate via Clerk JWT. Falls back to legacy username token (not machine JWT)."""
+    """
+    Authenticate via Clerk JWT. Falls back to legacy username token (not machine JWT).
+
+    Also where "הרשאות דשבורד" is enforced: every dashboard route identifies its user here,
+    so this is the one place a restricted user's section grant is checked against the route
+    (app/services/dashboard_access.py `enforce_route`, 403 `section_forbidden`).
+    """
     token = credentials.credentials
     payload = decode_jwt_payload(token)
     if payload and payload.get("type") == "machine":
@@ -60,7 +68,9 @@ def get_current_user(
             detail="Use mobile pairing endpoints with this token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return _resolve_user_from_bearer_token(token, db)
+    user = _resolve_user_from_bearer_token(token, db)
+    dashboard_access.enforce_route(request, db, user)
+    return user
 
 
 def get_current_super_admin(current_user: User = Depends(get_current_user)) -> User:
@@ -170,6 +180,7 @@ def _check_sync_user_tenancy(db: Session, user: User, machine: POSMachine) -> No
 
 def get_pos_machine_for_sync_path(
     machine_id: str,
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> POSMachine:
@@ -185,6 +196,8 @@ def get_pos_machine_for_sync_path(
         return _machine_from_sync_token(payload, machine_id, db)
 
     current_user = _resolve_user_from_bearer_token(token, db)
+    # A till's path with a dashboard token: a restricted dashboard user has no business here.
+    dashboard_access.enforce_route(request, db, current_user)
     machine = db.query(POSMachine).filter(POSMachine.id == machine_id).first()
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
@@ -216,6 +229,39 @@ def get_pos_machine_from_sync_machine_token(
     if not payload or payload.get("type") != "machine":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=MACHINE_TOKEN_REQUIRED)
     return _machine_from_sync_token(payload, machine_id, db)
+
+
+# ── "מכשיר תצוגה אינו קופה" (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2) ──────────────────────
+# A KDS screen / the "מוכן / לא מוכן" board (`pos_machines.is_fiscal` false) sells nothing:
+# every fiscal till endpoint — documents, shifts, Z, transmissions, payments, vouchers,
+# tables, kiosk orders — carries one of these (`dependencies=FISCAL_SYNC_PATH` /
+# `FISCAL_MACHINE_TOKEN`, matching the route's own machine dependency, which FastAPI then
+# resolves once). 403 `{"detail": "device_not_fiscal", "message": <Hebrew>}`.
+# tests/test_display_devices.py walks `app.routes`: a new till write must be classified.
+
+
+def require_fiscal_machine(machine: POSMachine = Depends(get_pos_machine_for_sync_path)) -> POSMachine:
+    """`get_pos_machine_for_sync_path`, refusing a display device (403 `device_not_fiscal`)."""
+    from app.services.display_devices import refuse_unless_fiscal
+
+    refuse_unless_fiscal(machine)
+    return machine
+
+
+def require_fiscal_machine_token(
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+) -> POSMachine:
+    """`get_pos_machine_from_sync_machine_token`, refusing a display device (403 `device_not_fiscal`)."""
+    from app.services.display_devices import refuse_unless_fiscal
+
+    refuse_unless_fiscal(machine)
+    return machine
+
+
+#: For a route whose machine comes from `get_pos_machine_for_sync_path`.
+FISCAL_SYNC_PATH = [Depends(require_fiscal_machine)]
+#: For a route whose machine comes from `get_pos_machine_from_sync_machine_token`.
+FISCAL_MACHINE_TOKEN = [Depends(require_fiscal_machine_token)]
 
 
 def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
@@ -252,11 +298,39 @@ def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
 
 
 def get_current_user_flexible(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> User:
     """Same as get_current_user but delegates to _resolve_user_from_bearer_token."""
-    return _resolve_user_from_bearer_token(credentials.credentials, db)
+    user = _resolve_user_from_bearer_token(credentials.credentials, db)
+    dashboard_access.enforce_route(request, db, user)
+    return user
+
+
+def require_section(section: str, level: Optional[str] = None):
+    """
+    "הרשאות דשבורד", stated on the route itself: `Depends(require_section("products", "edit"))`.
+
+    Every dashboard route is already checked by `get_current_user` against the route table in
+    app/services/dashboard_sections.py; this is for a route that wants its section written next
+    to it (or that the table cannot express). It wins over the table for that route, and the
+    route-registry test reads it. `level` None = by method (GET view, anything else edit).
+    """
+    from app.services import dashboard_sections as DS
+
+    rule = DS.S(section, level=level)
+
+    def dependency(
+        request: Request,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> User:
+        dashboard_access.enforce_section(db, current_user, section, rule.needed_level(request.method))
+        return current_user
+
+    dependency._dashboard_section = rule  # type: ignore[attr-defined]
+    return dependency
 
 
 def get_pos_machine_from_machine_token(
@@ -409,7 +483,9 @@ def _operator_with_authority(
         )
         .first()
     )
-    if operator is None or scope not in pos_user_till_scopes(operator.role):
+    from app.services.till_roles import pos_user_scopes
+
+    if operator is None or scope not in pos_user_scopes(operator):
         return None
     return operator
 

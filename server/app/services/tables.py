@@ -383,7 +383,15 @@ def zone_out(zone: TableZone) -> dict:
     }
 
 
-def table_out(table: DiningTable) -> dict:
+def table_out(table: DiningTable, types: Optional[Dict[Any, Any]] = None) -> dict:
+    """
+    A table as the till and the dashboard read it — with its policy ("סוג שולחן": its
+    own `kind` / `discountPercent` / `typeId`, and the resolved `policy` the till applies,
+    app/services/table_policies.py). [types]: the shop's types by id, when the caller
+    has them (one query for a whole floor).
+    """
+    from app.services.table_policies import policy_fields
+
     return {
         "id": str(table.id),
         "zoneId": str(table.zone_id),
@@ -397,6 +405,7 @@ def table_out(table: DiningTable) -> dict:
         "height": table.height,
         "rotation": table.rotation,
         "cleaningSince": _iso(table.cleaning_since),
+        **policy_fields(table, types),
     }
 
 
@@ -590,10 +599,13 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
         ):
             orders[order.table_id] = order
     out["zones"] = [zone_out(z) for z in zones]
+    from app.services.table_policies import types_by_id
+
+    types = types_by_id(db, machine.shop_id) if tables else {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now, viewer=machine)
-        row = table_out(table)
+        row = table_out(table, types)
         row["order"] = order_summary(order) if order is not None else None
         row["lock"] = lock
         row["state"] = table_state(order, lock)
@@ -618,14 +630,19 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
     else the shop's print server, else the shop's only till, else none.
     """
+    from app.services.lan_server import server_candidates
     from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its host;
+    # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py) — not even as the
+    # shop's one possible host below.
+    members = server_candidates(db, shop_machines(db, shop_id))
     hosts = [
-        m for m in shop_machines(db, shop_id)
+        m for m in members
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
     if not hosts:
@@ -635,8 +652,7 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         # A shop with one till: it holds the tables, there being no other. Without this a
         # one-till shop in the LAN mode had no host at all, and its till — the main one by
         # any reading — said the main till was out of reach and refused every table.
-        tills = shop_machines(db, shop_id)
-        return tills[0] if len(tills) == 1 else None
+        return members[0] if len(members) == 1 else None
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()
@@ -648,8 +664,12 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The tables host as `machine` needs it: who, and where on the LAN it last said it listens."""
     from app.models.printers import DEFAULT_LAN_PORT, KitchenPrintHost
+    from app.services.independent_till import is_independent
     from app.services.printers import machine_label
 
+    if is_independent(machine):
+        # "קופה עצמאית": it never uses the shop's tables host.
+        return None
     host = tables_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
@@ -1734,7 +1754,47 @@ def layout(db: Session, shop: Shop) -> dict:
         row = zone_out(z)
         row["areaName"] = area_names.get(z.area_id) if z.area_id else None
         zone_rows.append(row)
-    return {"shopId": str(shop.id), "zones": zone_rows, "tables": [table_out(t) for t in tables]}
+    from app.services.table_policies import type_out, types_by_id
+
+    types = types_by_id(db, shop.id)
+    return {
+        "shopId": str(shop.id),
+        "zones": zone_rows,
+        "tables": [table_out(t, types) for t in tables],
+        # "סוגי שולחנות": the shop's live table types, for the editor's picker.
+        "tableTypes": [type_out(t) for t in types.values() if t.archived_at is None],
+        # What a "logo" shape of the map shows when it has no picture of its own.
+        "logoUrl": business_logo_url(db, shop),
+    }
+
+
+def business_logo_url(db: Session, shop: Shop) -> Optional[str]:
+    """
+    The business's logo, as the shop's tills print it: the till parameter "לוגו בקבלה"
+    (`receiptLogoUrl`, the shop's own or its company's), else the branding's receipt logo,
+    else its logo. None when the business has none.
+    """
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+    from app.services.settings_merge import merge_settings
+    from app.services.till_parameters import resolve_for_shop
+
+    try:
+        param = resolve_for_shop(db, shop).get("receiptLogoUrl")
+    except Exception:  # noqa: BLE001 - a logo is never worth failing the layout
+        param = None
+    if isinstance(param, str) and param.strip():
+        return param.strip()
+    company = db.get(Company, shop.company_id) if shop.company_id else None
+    if company is None:
+        return None
+    tenant = db.get(Tenant, company.tenant_id) if getattr(company, "tenant_id", None) else None
+    merged = merge_settings(company, shop, tenant)
+    for key in ("brandReceiptLogoUrl", "brandLogoUrl"):
+        value = merged.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def create_zone(db: Session, shop: Shop, body) -> TableZone:
@@ -1780,6 +1840,8 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["stroke"] = e.stroke
         if e.filled is not None:
             out["filled"] = e.filled
+        if e.kind == "logo" and getattr(e, "src", None):
+            out["src"] = e.src
         return out
 
     return {
@@ -1930,6 +1992,10 @@ def create_table(db: Session, zone: TableZone, body) -> DiningTable:
         height=body.height,
         rotation=body.rotation,
     )
+    # "סוג שולחן": its kind, discount and type — validated before it is added.
+    from app.services.table_policies import apply_table_policy
+
+    apply_table_policy(db, table, body, creating=True)
     try:
         with db.begin_nested():
             db.add(table)
@@ -1952,6 +2018,12 @@ def bulk_create(db: Session, zone: TableZone, body) -> dict:
     }
     width, height = default_table_size(zone, body.shape)
     index = len(tables_in(db, [zone.id]))
+    # "סוג שולחן": every table added of the type named, when one is.
+    type_id = getattr(body, "type_id", None)
+    if type_id is not None:
+        from app.services.table_policies import live_type
+
+        type_id = live_type(db, zone.shop_id, type_id).id
     created, skipped = [], []
     for number in range(low, high + 1):
         if number in taken:
@@ -1962,6 +2034,7 @@ def bulk_create(db: Session, zone: TableZone, body) -> dict:
         table = DiningTable(
             id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id,
             number=number, seats=body.seats, shape=body.shape, x=x, y=y, width=width, height=height,
+            kind="regular", type_id=type_id,
         )
         db.add(table)
         created.append(number)
@@ -1986,6 +2059,10 @@ def update_table(db: Session, table: DiningTable, body, tenant_id: Any) -> Dinin
         value = getattr(body, attr)
         if value is not None:
             setattr(table, attr, value)
+    # "סוג שולחן": the kind, discount and type sent (a null discount / type clears it).
+    from app.services.table_policies import apply_table_policy
+
+    apply_table_policy(db, table, body, creating=False)
     table.updated_at = _now()
     try:
         with db.begin_nested():
@@ -2270,10 +2347,13 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
                 orders[order.table_id] = order
     rows = []
     open_count, open_total, guests = 0, Decimal("0"), 0
+    from app.services.table_policies import types_by_id
+
+    types = types_by_id(db, shop.id) if tables else {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
-        row = table_out(table)
+        row = table_out(table, types)
         row["zoneName"] = zone_names.get(table.zone_id)
         row["order"] = order_summary(order) if order is not None else None
         row["lock"] = lock

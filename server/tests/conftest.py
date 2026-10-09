@@ -2,6 +2,19 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.compiler import compiles
+
+
+@compiles(UUID, "sqlite")
+def _uuid_as_text_on_sqlite(type_, compiler, **kw):
+    """
+    SQLite gives a column declared "UUID" numeric affinity: a uuid4 whose hex happens to be
+    all digits (or digits and one "e") is stored as a number and read back as a float, and
+    the test dies in `uuid.UUID(float)` once in a few full runs. CHAR(32) has text affinity;
+    the stored hex is the same. Postgres (production) is not affected.
+    """
+    return "CHAR(32)"
 
 
 @pytest.fixture

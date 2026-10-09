@@ -5,6 +5,8 @@
 import { create } from 'zustand';
 import { api } from './api';
 import type { UserCapabilities, UserRole } from './types';
+import { parseDashboardAccess } from './dashboardAccess';
+import { parseHomePage, type HomePageId } from './homePage';
 
 /**
  * `role` is the server's enum, not a free string, so a typo in a comparison at a
@@ -22,6 +24,11 @@ interface InternalUser extends UserCapabilities {
   shopId?: string;
   /** Whether this person holds a till PIN. Never the PIN or its hash. */
   hasTillPin?: boolean;
+  /** "דף פתיחה": where a sign-in lands (kept on the server, `preferences.homePage`). */
+  homePage: HomePageId;
+  /** "תצוגת מנהל פשוטה": the short manager menu (the server's default for the role / template). */
+  simpleMode: boolean;
+  simpleModeDefault: boolean;
 }
 
 export interface TenantSummary {
@@ -113,6 +120,13 @@ export const useAuth = create<AuthState>((set) => ({
           // only at a till, so for them that card is the whole feature.
           hasTillPin: data.hasTillPin === true,
           tillScopes: Array.isArray(data.tillScopes) ? data.tillScopes : [],
+          // "הרשאות דשבורד": absent (an older server) reads as unrestricted — the server
+          // still enforces whatever it enforces; the menu just does not narrow.
+          dashboardAccess: parseDashboardAccess(data.dashboardAccess),
+          // An older server sends no preferences: the board.
+          homePage: parseHomePage(data.preferences?.homePage),
+          simpleMode: data.preferences?.simpleMode === true,
+          simpleModeDefault: data.preferences?.simpleModeDefault === true,
         },
         tenants,
         activeTenantId,

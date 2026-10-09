@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -63,6 +63,9 @@ class ShiftCloseRequest(Base):
     error_code = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    #: Asked from remote control ("שליטה מרחוק", app/services/remote_till_z.py): the till waits until
+    #: it is at rest — no sale, no payment, no card in flight — and never closes mid-sale.
+    wait_for_rest = Column(Boolean, nullable=False, default=False, server_default="false")
     sent_at = Column(DateTime(timezone=True), nullable=True)
     received_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)

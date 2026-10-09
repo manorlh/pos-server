@@ -9,10 +9,12 @@
  * shift then waits for the shop's next Z like any other. Producing the Z stays a separate
  * action (the wizard), offered here once the shift is closed.
  *
- * The dialog polls `GET /shift-close-requests/{id}` while the till has not answered.
- * Closing the dialog does not cancel anything: the row keeps showing the close as
- * pending, and asking again returns the same request (the server answers 200 with it),
- * which is how the progress is picked up again.
+ * Non-blocking ("פקודות שנשלחו", lib/deviceCommandsStore.ts): once sent, the dialog closes
+ * and the close is followed in the background (the tray, the till's chip). Closing the dialog
+ * does not cancel anything: the row keeps showing the close as pending, and asking again
+ * returns the same request (the server answers 200 with it) — opened for a till whose close
+ * already waits, the dialog then shows its progress (polling `GET /shift-close-requests/{id}`)
+ * and its cancel.
  */
 
 import { useEffect, useState } from 'react';
@@ -26,6 +28,8 @@ import {
   fetchShiftCloseRequest,
   requestShiftClose,
 } from '@/lib/api';
+import { phaseOfRequest } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { formatCurrency } from '@/lib/format';
 import { zWizardHref } from '@/lib/zAccess';
 import type { PosMachine, ShiftCloseRequest, ShiftCloseRequestStatus } from '@/lib/types';
@@ -45,19 +49,26 @@ import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 const PENDING = new Set<ShiftCloseRequestStatus>(['waiting_close', 'closing']);
 
 /**
- * Whether this till has a shift the cloud can be asked to close.
- *
- * Not while a Z run is already waiting for that close: the run owns it, and a second,
- * standalone request would only race it. The row links to the run instead.
+ * Whether this till has a shift the cloud can be asked to close — one rule for the devices
+ * page and the shifts page (lib/shiftsPage.ts): not while a Z run already waits for that close.
  */
-export function canCloseShiftRemotely(m: PosMachine): boolean {
-  return (
-    m.isActive !== false &&
-    m.pairingStatus === 'assigned' &&
-    !!m.shopId &&
-    (m.shiftStatus === 'open' || !!m.reportedOpenShiftId) &&
-    !(m.closeShiftPending && m.pendingCloseSource === 'z_run')
-  );
+export { canCloseShiftRemotely } from '@/lib/shiftsPage';
+
+/**
+ * Follow a remote close in "פקודות שנשלחו" (lib/deviceCommandsStore.ts): the tray reads
+ * `GET /shift-close-requests/{id}` in the background and the till's row shows a chip.
+ */
+export function trackShiftClose(r: ShiftCloseRequest, machineName: string | null): void {
+  const p = phaseOfRequest(r.status, r.errorMessage);
+  trackCommand({
+    kind: 'shift_close',
+    id: r.id,
+    action: 'close_shift',
+    machineId: r.machineId,
+    machineName,
+    phase: p.phase,
+    detail: p.detail,
+  });
 }
 
 /** The HTTP status of a failed request, if it has one. */
@@ -122,19 +133,33 @@ export function RemoteShiftCloseDialog({
     qc.setQueryData(['shift-close-request', next.id], next);
     setRequestId(next.id);
   };
+  // A remote close already waits for this till (not a Z run's): reopening shows its progress.
+  const reopenedPending = !!machine?.closeShiftPending && machine?.pendingCloseSource !== 'z_run';
 
   const create = useMutation({
     mutationFn: () => requestShiftClose(machine!.id),
     onSuccess: (next) => {
-      settle(next);
       qc.invalidateQueries({ queryKey: ['machines'] });
       qc.invalidateQueries({ queryKey: ['machine', next.machineId] });
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): the close is followed in the background
+      // (its popup, the tray, the till's chip) — nothing waits for the till here.
+      trackShiftClose(next, machine?.name ?? next.machineName ?? null);
+      if (reopenedPending) {
+        // Opened for a till whose remote close already waits: asking again returned that
+        // request — show its progress (and its cancel), as before.
+        settle(next);
+        return;
+      }
+      handleOpenChange(false);
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
   const cancel = useMutation({
     mutationFn: () => cancelShiftCloseRequest(requestId!),
-    onSuccess: settle,
+    onSuccess: (next) => {
+      settle(next);
+      trackShiftClose(next, machine?.name ?? next.machineName ?? null);
+    },
     onError: (e) => {
       toast.error(errors.forError(e));
       // A refused cancel usually means the request moved on (closed, expired): show

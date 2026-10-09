@@ -25,6 +25,7 @@ from app.schemas.z_report import (
 )
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services import card_brands, offline_authorizations, z_print
+from app.services.failed_payments import with_print_sections as _with_failed_payments
 from app.services.shift_totals import compute_totals
 from app.services.z_waiters import waiter_breakdown
 from app.services.reports import _load_zoneinfo, resolve_report_timezone
@@ -103,6 +104,15 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
         if z.discounts_total is not None:
             item.gross_sales = Decimal(z.total_sales) + Decimal(z.discounts_total)
     item.between_shift_adjustments = _between_shift_adjustments(z.per_machine)
+    # Card tips paid to staff out of the drawers, and the drawer cash — only when frozen.
+    drawer_tips = z_print.drawer_tips_of(z)
+    if drawer_tips is not None:
+        item.card_tips_from_drawer = drawer_tips["cardTipsFromDrawer"]
+        item.drawer_cash = drawer_tips["drawerCash"]
+    item.produced_by_support = (z.header or {}).get("producedBySupport")
+    item.late_from_earlier = (z.header or {}).get("lateFromEarlier")
+    item.late_carried_out = (z.header or {}).get("lateCarriedOut")
+    item.devices_replaced = (z.header or {}).get("devicesReplaced")
     offline = offline_authorizations.z_totals(z.per_machine)
     if offline is not None:
         item.offline_authorization_count = offline["authorization_count"]
@@ -114,6 +124,35 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     item.shop_number = z.shop.shop_number if z.shop else None
     # The frozen name, never the area's name today: a Z keeps what it was filed as.
     item.area_name = (z.header or {}).get("areaName") if z.area_id is not None else None
+    # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md §7): what it includes, as frozen.
+    item.scope = (z.header or {}).get("scope")
+    # The branch code on every Z, and the till number on a till Z (§11).
+    from app.services.z_print import branch_code_of, till_number_of
+
+    item.branch_code = branch_code_of(z)
+    # A till Z's run and when it began (SPEC_INDEPENDENT_TILL §3.1).
+    item.machine_sequence_epoch = int(getattr(z, "machine_sequence_epoch", 0) or 0)
+    item.sequence_started_at = ((z.header or {}).get("sequence") or {}).get("startedAt")
+    # A local shop Z against the cloud's documents (§8.12) — never its figures.
+    verification = (z.offline_report or {}).get("verification") if isinstance(z.offline_report, dict) else None
+    if isinstance(verification, dict):
+        item.verification = {
+            **{k: verification.get(k) for k in ("state", "message", "checkedAt")},
+            "tills": [
+                {
+                    **{k: t.get(k) for k in (
+                        "machineId", "posNumber", "state", "message", "named", "arrived", "missing", "shiftsAwaited",
+                        "reason",
+                    ) if k in t},
+                    **({"closedBySupport": {
+                        k: v for k, v in t["closedBySupport"].items() if k != "missingDocumentIds"
+                    }} if isinstance(t.get("closedBySupport"), dict) else {}),
+                }
+                for t in verification.get("tills") or [] if isinstance(t, dict)
+            ],
+        }
+    if item.pos_number is None:
+        item.pos_number = till_number_of(z)
     if tzinfo is not None and z.closed_at is not None:
         closed = z.closed_at if z.closed_at.tzinfo else z.closed_at.replace(tzinfo=timezone.utc)
         item.production_date = closed.astimezone(tzinfo).date()
@@ -145,6 +184,12 @@ def list_z_reports(
     ),
     origin: Optional[str] = Query(
         None, pattern="^(cloud|till)$", description="`till`: the tills' own Zs (§5); `cloud`: Z runs'."
+    ),
+    z_types: Optional[List[str]] = Query(
+        None,
+        alias="zTypes",
+        description="shop (Z סניפי) | independent (Z עצמאי) | till (Z לכל קופה) | kiosk | legacy — "
+        "any of them, repeated or comma-separated (docs/SPEC_REPORTS.md §4).",
     ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
@@ -187,6 +232,9 @@ def list_z_reports(
     query = filter_on_column(query, ZReport.area_id, area_filter)
     if isinstance(origin, str):  # (a direct call leaves the Query default in place)
         query = query.filter(ZReport.origin == origin)
+    from app.services import z_table
+
+    query = z_table.filter_z_types(query, z_table.parse_z_types(z_types))
 
     # A direct call (the tests) leaves the Query defaults in place: read them as unset.
     if not isinstance(date_basis, str):
@@ -243,11 +291,16 @@ def list_z_reports(
         .limit(page_size)
         .all()
     )
+    items = [z_to_out(r, tzinfo=tzinfo) for r in rows]
+    # "סוג Z" on every row: one lookup of the page's kiosks, not one per Z.
+    kiosks = z_table.kiosk_machine_ids(db, {r.machine_id for r in rows if r.machine_id is not None})
+    for item, r in zip(items, rows):
+        item.z_type = z_table.z_type_of(r, kiosks)
     return ZReportListResponse(
         page=page,
         page_size=page_size,
         total=total,
-        items=[z_to_out(r, tzinfo=tzinfo) for r in rows],
+        items=items,
         window=window,
     )
 
@@ -368,7 +421,9 @@ def get_z_print_documents(
                 "id": str(z.id),
                 "number": z.z_number,
                 "shopId": str(z.shop_id) if z.shop_id else None,
-                "document": z_print.build_print_document(z, tzinfo, printed_at=printed_at),
+                "document": _with_failed_payments(
+                    db, z, z_print.build_print_document(z, tzinfo, printed_at=printed_at), tzinfo
+                ),
             }
             for z in rows
         ],
@@ -390,7 +445,8 @@ def get_z_print_document(
     if not z:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Z-report not found")
     tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, None))
-    return z_print.build_print_document(z, tzinfo)
+    # With "עסקאות שלא הושלמו" (informational, docs/SPEC_FAILED_PAYMENTS.md), as the till prints it.
+    return _with_failed_payments(db, z, z_print.build_print_document(z, tzinfo), tzinfo)
 
 
 def _with_derived_sales(section: dict) -> dict:
@@ -445,6 +501,9 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
     body a till gets back for its own Z (docs/SHIFTS_API.md §5.2), so both print one thing.
     """
     out = z_to_out(z, ZReportDetailOut)
+    from app.services import z_table
+
+    out.z_type = z_table.z_type_of(z, z_table.kiosk_machine_ids(db, [z.machine_id] if z.machine_id else []))
     out.per_machine = [_with_derived_sales(section) for section in (z.per_machine or [])]
     shifts = (
         db.query(Shift)
@@ -477,4 +536,5 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
         out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
         out.by_waiter_source = "documents"
     out.till_totals = z.till_totals
+    out.offline_report = z.offline_report
     return out

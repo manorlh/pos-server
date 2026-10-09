@@ -1,0 +1,3782 @@
+{
+ "about": "Generated from pos-server app/services/till_design.py by gen_till_design_fixture.py. Same bytes in pos-server tests/fixtures and pos-android app/src/test/resources.",
+ "schemaVersion": 1,
+ "defaults": {
+  "schemaVersion": 1,
+  "template": "clean",
+  "layout": {
+   "tileSize": "auto",
+   "tileStyle": "auto",
+   "density": "comfortable",
+   "billPosition": "auto",
+   "categoryBar": "auto",
+   "images": "auto",
+   "columns": 0,
+   "textSize": "normal"
+  },
+  "profiles": {
+   "handheld": {
+    "template": null,
+    "tileSize": null,
+    "tileStyle": null,
+    "density": null,
+    "billPosition": null,
+    "categoryBar": null,
+    "columns": null
+   },
+   "tabletLandscape": {
+    "template": null,
+    "tileSize": null,
+    "tileStyle": null,
+    "density": null,
+    "billPosition": null,
+    "categoryBar": null,
+    "columns": null
+   },
+   "tabletPortrait": {
+    "template": null,
+    "tileSize": null,
+    "tileStyle": null,
+    "density": null,
+    "billPosition": null,
+    "categoryBar": null,
+    "columns": null
+   },
+   "ipadPortrait": {
+    "template": null,
+    "tileSize": null,
+    "tileStyle": null,
+    "density": null,
+    "billPosition": null,
+    "categoryBar": null,
+    "columns": null
+   },
+   "ipadLandscape": {
+    "template": null,
+    "tileSize": null,
+    "tileStyle": null,
+    "density": null,
+    "billPosition": null,
+    "categoryBar": null,
+    "columns": null
+   }
+  },
+  "actionBar": {
+   "table": [],
+   "quick": []
+  },
+  "quickCash": {
+   "notes": [],
+   "count": 3
+  },
+  "bar": {
+   "quantityPresets": [
+    1,
+    2,
+    3,
+    5
+   ],
+   "favorites": [],
+   "repeatRound": true
+  },
+  "menu": {
+   "categoryOrder": [],
+   "productOrder": [],
+   "hiddenCategories": []
+  },
+  "colors": {
+   "accent": null,
+   "mode": "auto"
+  },
+  "texts": {},
+  "fields": {
+   "customerName": "auto",
+   "serviceType": "auto",
+   "guests": "auto"
+  },
+  "behavior": {
+   "summary": "auto",
+   "lineStatus": true
+  },
+  "tables": {
+   "mapStyle": "auto",
+   "showChairs": "auto"
+  }
+ },
+ "defaultsVersion": "614ff69ca827f46f",
+ "catalog": {
+  "schemaVersion": 1,
+  "templates": [
+   "clean",
+   "touch",
+   "professional",
+   "seated",
+   "fast",
+   "mobile"
+  ],
+  "phase2Templates": [
+   "courses",
+   "payDock",
+   "night",
+   "visual"
+  ],
+  "templateAliases": {
+   "classic": "clean",
+   "photo": "touch",
+   "list": "professional",
+   "keypad": "professional",
+   "seats": "seated",
+   "speed": "fast",
+   "nightBar": "fast",
+   "handheld": "mobile"
+  },
+  "profiles": [
+   "handheld",
+   "tabletLandscape",
+   "tabletPortrait",
+   "ipadPortrait",
+   "ipadLandscape"
+  ],
+  "profileSizes": {
+   "handheld": [
+    360,
+    640
+   ],
+   "tabletLandscape": [
+    1280,
+    800
+   ],
+   "tabletPortrait": [
+    800,
+    1280
+   ],
+   "ipadPortrait": [
+    768,
+    1024
+   ],
+   "ipadLandscape": [
+    1024,
+    768
+   ]
+  },
+  "androidProfiles": [
+   "handheld",
+   "tabletLandscape",
+   "tabletPortrait"
+  ],
+  "templateDefaults": {
+   "clean": {
+    "tileStyle": "card",
+    "billStyle": "lines",
+    "billPosition": {
+     "table": {
+      "handheld": "sheet",
+      "tabletLandscape": "sheet",
+      "tabletPortrait": "sheet",
+      "ipadPortrait": "sheet",
+      "ipadLandscape": "sheet"
+     },
+     "quick": {
+      "handheld": "sheet",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send"
+    ],
+    "features": [],
+    "summaryCollapsible": false
+   },
+   "touch": {
+    "tileStyle": "photo",
+    "billStyle": "cards",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill"
+    ],
+    "features": [],
+    "summaryCollapsible": false
+   },
+   "professional": {
+    "tileStyle": "row",
+    "billStyle": "lines",
+    "billPosition": {
+     "table": {
+      "handheld": "sheet",
+      "tabletLandscape": "end",
+      "tabletPortrait": "end",
+      "ipadPortrait": "end",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "sheet",
+      "tabletLandscape": "end",
+      "tabletPortrait": "end",
+      "ipadPortrait": "end",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill"
+    ],
+    "features": [
+     "searchField"
+    ],
+    "summaryCollapsible": false
+   },
+   "seated": {
+    "tileStyle": "card",
+    "billStyle": "seats",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill",
+     "split"
+    ],
+    "features": [
+     "seatCards"
+    ],
+    "summaryCollapsible": false
+   },
+   "fast": {
+    "tileStyle": "key",
+    "billStyle": "compact",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "repeatRound",
+     "bill"
+    ],
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "summaryCollapsible": false
+   },
+   "mobile": {
+    "tileStyle": "card",
+    "billStyle": "lines",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "bottom",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "bottom"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "bottom",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "bottom"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill"
+    ],
+    "features": [
+     "seatPicker"
+    ],
+    "summaryCollapsible": true
+   }
+  },
+  "quickActions": [
+   "pay",
+   "fastCard",
+   "cashWithChange",
+   "fastCash",
+   "cashNotes",
+   "hold",
+   "discount",
+   "customer",
+   "orderDetails",
+   "clear"
+  ],
+  "tableActions": [
+   "send",
+   "bill",
+   "pay",
+   "split",
+   "move",
+   "guests",
+   "notes",
+   "discount",
+   "repeatRound"
+  ],
+  "requiredAction": {
+   "quick": "pay",
+   "table": "send"
+  },
+  "actionLabels": {
+   "send": "שדר למטבח",
+   "bill": "מעבר לחשבון",
+   "pay": "תשלום",
+   "split": "פיצול",
+   "move": "העבר",
+   "guests": "סועדים",
+   "notes": "הערות",
+   "discount": "הנחה",
+   "repeatRound": "עוד סבב",
+   "fastCard": "אשראי מהיר",
+   "cashWithChange": "מזומן עם עודף",
+   "fastCash": "מזומן מהיר",
+   "cashNotes": "שטרות",
+   "hold": "השהה",
+   "customer": "לקוח",
+   "orderDetails": "פרטי הזמנה",
+   "clear": "נקה הזמנה"
+  },
+  "actionBarMax": 6,
+  "actionLabelMax": 24,
+  "cashNoteValues": [
+   10,
+   20,
+   50,
+   100,
+   200
+  ],
+  "textDefaults": {
+   "sendToKitchen": "שדר למטבח",
+   "newSuffix": "חדש",
+   "allSent": "הכול שודר",
+   "goToBill": "מעבר לחשבון",
+   "pay": "תשלום",
+   "orderTitle": "הזמנה",
+   "summary": "סיכום ההזמנה",
+   "emptyOrder": "ההזמנה ריקה",
+   "serviceType": "סוג שירות",
+   "takeAway": "לקחת",
+   "eatIn": "לשבת",
+   "customerName": "שם לקוח",
+   "addToSeat": "הוספה לסועד",
+   "seatGeneral": "כללי",
+   "nextQuantity": "כמות לפריט הבא",
+   "otherQuantity": "כמות אחרת",
+   "favorites": "מועדפים",
+   "repeatRound": "עוד סבב"
+  },
+  "textMax": 40,
+  "favoritesMax": 24,
+  "legacyMap": {
+   "layout.tileSize": [
+    "productTileSize",
+    "productTileSizeTablet",
+    "productTileSizeTables",
+    "productTileSizeTabletTables"
+   ],
+   "actionBar.quick": [
+    "quickPayButton1",
+    "quickPayButton2",
+    "fastCard",
+    "fastCash"
+   ],
+   "fields.customerName": [
+    "askOrderName"
+   ],
+   "fields.serviceType": [
+    "askEatInTakeAway"
+   ],
+   "fields.guests": [
+    "tablesAskGuests"
+   ],
+   "tables.mapStyle": [
+    "tablesMapStyle"
+   ],
+   "tables.showChairs": [
+    "tablesShowChairs"
+   ],
+   "colors.accent": [
+    "brandPrimaryColor"
+   ],
+   "menu.categoryOrder": [
+    "categoryOrder"
+   ],
+   "menu.productOrder": [
+    "productOrder"
+   ]
+  },
+  "vocab": {
+   "tileSize": [
+    "auto",
+    "xs",
+    "s",
+    "m",
+    "l"
+   ],
+   "tileStyle": [
+    "auto",
+    "card",
+    "photo",
+    "row",
+    "key"
+   ],
+   "density": [
+    "compact",
+    "comfortable",
+    "spacious"
+   ],
+   "billPosition": [
+    "auto",
+    "end",
+    "start",
+    "bottom",
+    "sheet"
+   ],
+   "categoryBar": [
+    "auto",
+    "top",
+    "side"
+   ],
+   "images": [
+    "auto",
+    "show",
+    "hide"
+   ],
+   "textSize": [
+    "normal",
+    "large"
+   ],
+   "colorMode": [
+    "auto",
+    "light",
+    "dark"
+   ],
+   "fieldMode": [
+    "auto",
+    "off",
+    "optional",
+    "required"
+   ],
+   "summary": [
+    "auto",
+    "open",
+    "closed"
+   ],
+   "mapStyle": [
+    "auto",
+    "classic",
+    "modern"
+   ],
+   "showChairs": [
+    "auto",
+    "show",
+    "hide"
+   ],
+   "columns": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ]
+  }
+ },
+ "forProfile": [
+  {
+   "name": "default",
+   "layers": [
+    {}
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "sheet"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "default",
+   "layers": [
+    {}
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "default",
+   "layers": [
+    {}
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "default",
+   "layers": [
+    {}
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "default",
+   "layers": [
+    {}
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "touch",
+   "layers": [
+    {
+     "template": "touch"
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "touch",
+   "layers": [
+    {
+     "template": "touch"
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "touch",
+   "layers": [
+    {
+     "template": "touch"
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "touch",
+   "layers": [
+    {
+     "template": "touch"
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "touch",
+   "layers": [
+    {
+     "template": "touch"
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "professionalStart",
+   "layers": [
+    {
+     "template": "professional",
+     "layout": {
+      "billPosition": "start",
+      "density": "compact"
+     },
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "compact",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "professionalStart",
+   "layers": [
+    {
+     "template": "professional",
+     "layout": {
+      "billPosition": "start",
+      "density": "compact"
+     },
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "professional",
+    "tileSize": "auto",
+    "tileStyle": "row",
+    "density": "compact",
+    "billPosition": {
+     "table": "start",
+     "quick": "start"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "searchField"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "professionalStart",
+   "layers": [
+    {
+     "template": "professional",
+     "layout": {
+      "billPosition": "start",
+      "density": "compact"
+     },
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "professional",
+    "tileSize": "auto",
+    "tileStyle": "row",
+    "density": "compact",
+    "billPosition": {
+     "table": "start",
+     "quick": "start"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "searchField"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "professionalStart",
+   "layers": [
+    {
+     "template": "professional",
+     "layout": {
+      "billPosition": "start",
+      "density": "compact"
+     },
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "professional",
+    "tileSize": "auto",
+    "tileStyle": "row",
+    "density": "compact",
+    "billPosition": {
+     "table": "start",
+     "quick": "start"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "searchField"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "professionalStart",
+   "layers": [
+    {
+     "template": "professional",
+     "layout": {
+      "billPosition": "start",
+      "density": "compact"
+     },
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "professional",
+    "tileSize": "auto",
+    "tileStyle": "row",
+    "density": "compact",
+    "billPosition": {
+     "table": "start",
+     "quick": "start"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "searchField"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "seatedCustomBars",
+   "layers": [
+    {
+     "template": "seated",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": "חשבון לסועד"
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "cashWithChange",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": "לתשלום"
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "seated",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "seats",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": "חשבון לסועד"
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "cashWithChange",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": "לתשלום"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "seatedCustomBars",
+   "layers": [
+    {
+     "template": "seated",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": "חשבון לסועד"
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "cashWithChange",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": "לתשלום"
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "seated",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "seats",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": "חשבון לסועד"
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "cashWithChange",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": "לתשלום"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "seatedCustomBars",
+   "layers": [
+    {
+     "template": "seated",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": "חשבון לסועד"
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "cashWithChange",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": "לתשלום"
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "seated",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "seats",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": "חשבון לסועד"
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "cashWithChange",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": "לתשלום"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "seatedCustomBars",
+   "layers": [
+    {
+     "template": "seated",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": "חשבון לסועד"
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "cashWithChange",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": "לתשלום"
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "seated",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "seats",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": "חשבון לסועד"
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "cashWithChange",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": "לתשלום"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "seatedCustomBars",
+   "layers": [
+    {
+     "template": "seated",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": "חשבון לסועד"
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "cashWithChange",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": "לתשלום"
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "seated",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "seats",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": "חשבון לסועד"
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "cashWithChange",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": "לתשלום"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "fastPortraitEnd",
+   "layers": [
+    {
+     "template": "fast",
+     "layout": {
+      "tileStyle": "row",
+      "tileSize": "s"
+     },
+     "profiles": {
+      "tabletPortrait": {
+       "billPosition": "end",
+       "columns": 4
+      },
+      "handheld": {
+       "tileSize": "l"
+      }
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "fast",
+    "tileSize": "l",
+    "tileStyle": "row",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "fastPortraitEnd",
+   "layers": [
+    {
+     "template": "fast",
+     "layout": {
+      "tileStyle": "row",
+      "tileSize": "s"
+     },
+     "profiles": {
+      "tabletPortrait": {
+       "billPosition": "end",
+       "columns": 4
+      },
+      "handheld": {
+       "tileSize": "l"
+      }
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "fast",
+    "tileSize": "s",
+    "tileStyle": "row",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "fastPortraitEnd",
+   "layers": [
+    {
+     "template": "fast",
+     "layout": {
+      "tileStyle": "row",
+      "tileSize": "s"
+     },
+     "profiles": {
+      "tabletPortrait": {
+       "billPosition": "end",
+       "columns": 4
+      },
+      "handheld": {
+       "tileSize": "l"
+      }
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "fast",
+    "tileSize": "s",
+    "tileStyle": "row",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 4,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "fastPortraitEnd",
+   "layers": [
+    {
+     "template": "fast",
+     "layout": {
+      "tileStyle": "row",
+      "tileSize": "s"
+     },
+     "profiles": {
+      "tabletPortrait": {
+       "billPosition": "end",
+       "columns": 4
+      },
+      "handheld": {
+       "tileSize": "l"
+      }
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "fast",
+    "tileSize": "s",
+    "tileStyle": "row",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "fastPortraitEnd",
+   "layers": [
+    {
+     "template": "fast",
+     "layout": {
+      "tileStyle": "row",
+      "tileSize": "s"
+     },
+     "profiles": {
+      "tabletPortrait": {
+       "billPosition": "end",
+       "columns": 4
+      },
+      "handheld": {
+       "tileSize": "l"
+      }
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "fast",
+    "tileSize": "s",
+    "tileStyle": "row",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "mobileSide",
+   "layers": [
+    {
+     "template": "mobile",
+     "layout": {
+      "categoryBar": "side"
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "mobileSide",
+   "layers": [
+    {
+     "template": "mobile",
+     "layout": {
+      "categoryBar": "side"
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "side",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "mobileSide",
+   "layers": [
+    {
+     "template": "mobile",
+     "layout": {
+      "categoryBar": "side"
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "side",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "mobileSide",
+   "layers": [
+    {
+     "template": "mobile",
+     "layout": {
+      "categoryBar": "side"
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "side",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "mobileSide",
+   "layers": [
+    {
+     "template": "mobile",
+     "layout": {
+      "categoryBar": "side"
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "mobile",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": true,
+    "categoryBar": "side",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "seatPicker"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "aliasClassic",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "classic",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "sheet"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "aliasClassic",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "classic",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "aliasNightBar",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "nightBar",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "aliasNightBar",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "nightBar",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "phase2Courses",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "courses",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "sheet"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "phase2Courses",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "courses",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "clean",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "sheet",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  }
+ ],
+ "merge": [
+  {
+   "name": "shopOverCompany_listsReplace_nullInherits",
+   "layers": [
+    {
+     "template": "touch",
+     "layout": {
+      "density": "spacious"
+     },
+     "bar": {
+      "favorites": [
+       "p1",
+       "p2"
+      ]
+     },
+     "texts": {
+      "pay": "לתשלום"
+     }
+    },
+    {
+     "layout": {
+      "tileSize": "l"
+     },
+     "bar": {
+      "favorites": [
+       "p3"
+      ]
+     },
+     "texts": {
+      "summary": "החשבון"
+     }
+    },
+    {},
+    {
+     "template": "fast",
+     "profiles": {
+      "handheld": {
+       "template": "mobile"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "schemaVersion": 1,
+    "template": "fast",
+    "layout": {
+     "tileSize": "l",
+     "tileStyle": "auto",
+     "density": "spacious",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": "mobile",
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [
+      "p3"
+     ],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {
+     "pay": "לתשלום",
+     "summary": "החשבון"
+    },
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "expectedVersion": "ef5ad2e2c5bb7858"
+  },
+  {
+   "name": "machineResetsBarToAuto",
+   "layers": [
+    {
+     "actionBar": {
+      "quick": [
+       {
+        "action": "fastCash"
+       },
+       {
+        "action": "pay"
+       }
+      ]
+     }
+    },
+    {},
+    {},
+    {
+     "actionBar": {
+      "quick": []
+     }
+    }
+   ],
+   "expected": {
+    "schemaVersion": 1,
+    "template": "clean",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    }
+   },
+   "expectedVersion": "614ff69ca827f46f"
+  }
+ ],
+ "quickCash": [
+  {
+   "totalAgorot": 11720,
+   "notes": [],
+   "count": 3,
+   "expected": [
+    120,
+    150,
+    200
+   ]
+  },
+  {
+   "totalAgorot": 12000,
+   "notes": [],
+   "count": 3,
+   "expected": [
+    130,
+    140,
+    150
+   ]
+  },
+  {
+   "totalAgorot": 4800,
+   "notes": [],
+   "count": 3,
+   "expected": [
+    50,
+    60,
+    100
+   ]
+  },
+  {
+   "totalAgorot": 950,
+   "notes": [],
+   "count": 4,
+   "expected": [
+    10,
+    20,
+    50,
+    100
+   ]
+  },
+  {
+   "totalAgorot": 19990,
+   "notes": [],
+   "count": 2,
+   "expected": [
+    200
+   ]
+  },
+  {
+   "totalAgorot": 0,
+   "notes": [],
+   "count": 3,
+   "expected": []
+  },
+  {
+   "totalAgorot": 4800,
+   "notes": [
+    20,
+    50,
+    100,
+    200
+   ],
+   "count": 3,
+   "expected": [
+    50,
+    100,
+    200
+   ]
+  },
+  {
+   "totalAgorot": 11720,
+   "notes": [
+    50,
+    100,
+    200
+   ],
+   "count": 3,
+   "expected": [
+    200
+   ]
+  },
+  {
+   "totalAgorot": 25000,
+   "notes": [
+    20,
+    50,
+    100,
+    200
+   ],
+   "count": 3,
+   "expected": []
+  },
+  {
+   "totalAgorot": 1500,
+   "notes": [
+    20,
+    50
+   ],
+   "count": 1,
+   "expected": [
+    20
+   ]
+  }
+ ],
+ "legacyQuickActions": [
+  {
+   "parameters": {},
+   "expected": [
+    {
+     "action": "fastCard",
+     "label": ""
+    },
+    {
+     "action": "cashWithChange",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  },
+  {
+   "parameters": {
+    "quickPayButton1": "מזומן עם עודף"
+   },
+   "expected": [
+    {
+     "action": "cashWithChange",
+     "label": ""
+    },
+    {
+     "action": "fastCard",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  },
+  {
+   "parameters": {
+    "quickPayButton1": "מזומן מהיר",
+    "quickPayButton2": "מזומן מהיר"
+   },
+   "expected": [
+    {
+     "action": "fastCash",
+     "label": ""
+    },
+    {
+     "action": "fastCard",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  },
+  {
+   "parameters": {
+    "quickPayButton1": "אשראי מהיר",
+    "quickPayButton2": "מזומן מהיר",
+    "fastCash": false
+   },
+   "expected": [
+    {
+     "action": "fastCard",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  },
+  {
+   "parameters": {
+    "quickPayButton1": "fastCash",
+    "quickPayButton2": "cash"
+   },
+   "expected": [
+    {
+     "action": "fastCash",
+     "label": ""
+    },
+    {
+     "action": "cashWithChange",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  },
+  {
+   "parameters": {
+    "fastCard": false
+   },
+   "expected": [
+    {
+     "action": "cashWithChange",
+     "label": ""
+    },
+    {
+     "action": "pay",
+     "label": ""
+    }
+   ]
+  }
+ ],
+ "validation": [
+  {
+   "name": "phase2Template",
+   "layer": {
+    "template": "courses"
+   },
+   "errors": [
+    {
+     "path": "template",
+     "code": "template_not_available"
+    }
+   ]
+  },
+  {
+   "name": "unknownTemplate",
+   "layer": {
+    "template": "fancy"
+   },
+   "errors": [
+    {
+     "path": "template",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "quickBarWithoutPay",
+   "layer": {
+    "actionBar": {
+     "quick": [
+      {
+       "action": "fastCard"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.quick",
+     "code": "action_bar_missing_pay"
+    }
+   ]
+  },
+  {
+   "name": "tableBarWithoutSend",
+   "layer": {
+    "actionBar": {
+     "table": [
+      {
+       "action": "bill"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.table",
+     "code": "action_bar_missing_send"
+    }
+   ]
+  },
+  {
+   "name": "duplicateAction",
+   "layer": {
+    "actionBar": {
+     "table": [
+      {
+       "action": "send"
+      },
+      {
+       "action": "send"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.table[1]",
+     "code": "duplicate"
+    }
+   ]
+  },
+  {
+   "name": "quickActionOnTable",
+   "layer": {
+    "actionBar": {
+     "table": [
+      {
+       "action": "send"
+      },
+      {
+       "action": "fastCash"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.table[1].action",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "tooManyButtons",
+   "layer": {
+    "actionBar": {
+     "quick": [
+      {
+       "action": "pay"
+      },
+      {
+       "action": "fastCard"
+      },
+      {
+       "action": "cashWithChange"
+      },
+      {
+       "action": "fastCash"
+      },
+      {
+       "action": "cashNotes"
+      },
+      {
+       "action": "hold"
+      },
+      {
+       "action": "discount"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.quick",
+     "code": "too_many"
+    }
+   ]
+  },
+  {
+   "name": "presetsWithoutOne",
+   "layer": {
+    "bar": {
+     "quantityPresets": [
+      2,
+      3
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "bar.quantityPresets",
+     "code": "quantity_presets_need_one"
+    }
+   ]
+  },
+  {
+   "name": "badNote",
+   "layer": {
+    "quickCash": {
+     "notes": [
+      30
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "quickCash.notes[0]",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "badColumns",
+   "layer": {
+    "layout": {
+     "columns": 1
+    }
+   },
+   "errors": [
+    {
+     "path": "layout.columns",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "badColor",
+   "layer": {
+    "colors": {
+     "accent": "blue"
+    }
+   },
+   "errors": [
+    {
+     "path": "colors.accent",
+     "code": "invalid_color"
+    }
+   ]
+  },
+  {
+   "name": "unknownKey",
+   "layer": {
+    "layout": {
+     "fancy": true
+    }
+   },
+   "errors": [
+    {
+     "path": "layout.fancy",
+     "code": "unknown_key"
+    }
+   ]
+  },
+  {
+   "name": "unknownText",
+   "layer": {
+    "texts": {
+     "hello": "x"
+    }
+   },
+   "errors": [
+    {
+     "path": "texts.hello",
+     "code": "unknown_key"
+    }
+   ]
+  },
+  {
+   "name": "longLabel",
+   "layer": {
+    "actionBar": {
+     "quick": [
+      {
+       "action": "pay",
+       "label": "xxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.quick[0].label",
+     "code": "too_long"
+    }
+   ]
+  },
+  {
+   "name": "valid",
+   "layer": {
+    "template": "fast",
+    "actionBar": {
+     "quick": [
+      {
+       "action": "cashNotes"
+      },
+      {
+       "action": "pay"
+      }
+     ]
+    },
+    "colors": {
+     "accent": "#1663D6",
+     "mode": "dark"
+    }
+   },
+   "errors": []
+  }
+ ]
+}

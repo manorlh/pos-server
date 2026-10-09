@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -79,6 +79,12 @@ class ZRun(Base):
     #: till counted (`app.services.z_runs.verify_item`) — or the till was deferred by the
     #: operator's typed "סגור". False for the dashboard's runs.
     strict_cloud_check = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "כפה סגירה (גם באמצע מכירה)": the tills park an open basket and close (only a card
+    #: charge in flight is waited for). Handed to the till as `force` with the close.
+    force_close = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1): who
+    #: confirmed, when, and the state of the tills the run took. Null when nothing warned.
+    cloud_data_confirmation = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
