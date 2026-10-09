@@ -68,8 +68,30 @@ export interface ShopCloseRun {
   waitForRest: boolean;
   leaveOutAllowed: boolean;
   leaveOutWhyNot: string | null;
+  /** Support's force past "חסימת Z כשיש משמרות פתוחות": the super admin only (the server decides). */
+  forceAllowed: boolean;
   items: ShopCloseRunItem[];
   commands: ShopCloseCommand[];
+}
+
+export interface ShiftGuardBlocker {
+  machineId: string;
+  name: string;
+  posNumber: string | null;
+  status: 'open_shift' | 'pending_acceptance';
+  online: boolean;
+  words: string;
+}
+
+export interface ShiftGuard {
+  label: string;
+  required: boolean;
+  blockers: ShiftGuardBlocker[];
+}
+
+/** The force's reason, as the server takes it: typed, at least 5 characters. */
+export function forceReasonOk(reason: string): boolean {
+  return reason.trim().length >= 5;
 }
 
 export interface ShopClosePreview {
@@ -82,6 +104,8 @@ export interface ShopClosePreview {
   lastShopZNumber: number;
   nextShopZNumber: number;
   run: ShopCloseRun | null;
+  /** "חסימת Z כשיש משמרות פתוחות": on here, and the tills holding the Z now (מנותקת / משמרת פתוחה / ממתין לקבלה). */
+  shiftGuard: ShiftGuard;
   shopClose: { label: string; available: boolean; whyNot: string | null };
   totalsKey: string;
 }

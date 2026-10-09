@@ -16,14 +16,16 @@ import { toast } from 'sonner';
 import { CalendarCheck, Wifi, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
-import { cancelShopClose, fetchShopClosePreview, fetchShopCloseRun, proceedShopClose, requestShopClose } from '@/lib/liveControlApi';
+import { cancelShopClose, fetchShopClosePreview, fetchShopCloseRun, forceShopClose, proceedShopClose, requestShopClose } from '@/lib/liveControlApi';
 import { money, tenderLabel } from '@/lib/remoteTillZ';
 import {
   confirmationAsked,
+  forceReasonOk,
   itemTone,
   notClosedIds,
   runActive,
@@ -225,6 +227,16 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
     },
     onError: (e) => toast.error(errorDetail(e)?.message ?? axiosErrorToToastMessage(e, 'ההפקה נכשלה')),
   });
+  const [forceReason, setForceReason] = useState('');
+  const force = useMutation({
+    mutationFn: ({ runId, ids, reason }: { runId: string; ids: string[]; reason: string }) => forceShopClose(runId, ids, reason),
+    onSuccess: () => {
+      toast.success('ה-Z הסניפי הופק בכפייה — הקופות שלא נסגרו רשומות עליו, והמשמרות שלהן ייכנסו ל-Z הבא');
+      setForceReason('');
+      refresh();
+    },
+    onError: (e) => toast.error(errorDetail(e)?.message ?? axiosErrorToToastMessage(e, 'הכפייה נכשלה')),
+  });
 
   if (preview.isPending) return <Skeleton className="h-20 w-full rounded-xl" />;
   // Not this user's (no Z section, or some of the shop's points of sale only) or off: nothing shown.
@@ -254,6 +266,20 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
         )}
       </div>
       {!run && !p.shopClose.available && p.shopClose.whyNot ? <p className="text-sm text-muted-foreground">{p.shopClose.whyNot}</p> : null}
+      {p.shiftGuard.required && p.shiftGuard.blockers.length > 0 ? (
+        <div className="space-y-1 text-sm">
+          <p className="text-amber-700 dark:text-amber-400">{p.shiftGuard.label}: ה-Z ימתין לכל הקופות האלה</p>
+          <ul className="space-y-0.5">
+            {p.shiftGuard.blockers.map((b) => (
+              <li key={b.machineId} className="flex flex-wrap gap-1.5">
+                <span>{b.name}</span>
+                {b.posNumber ? <span className="text-xs text-muted-foreground">#{b.posNumber}</span> : null}
+                <span className="ms-auto text-amber-700 dark:text-amber-400">{b.words}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {run ? (
         <div className="space-y-2 text-sm">
           <p className="font-medium">
@@ -289,6 +315,27 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
               {!run.leaveOutAllowed && run.leaveOutWhyNot && waiting.length > 0 ? (
                 <p className="w-full text-xs text-muted-foreground">{run.leaveOutWhyNot} — אי אפשר להפיק בלי קופה.</p>
               ) : null}
+            </div>
+          ) : null}
+          {run.status === 'waiting' && run.forceAllowed && !run.leaveOutAllowed && waiting.length > 0 ? (
+            <div className="w-full space-y-2 rounded-lg border border-destructive/40 p-2">
+              <p className="text-xs font-medium">כפיית הפקה (תמיכה) — המשמרות של הקופות שלא נסגרו ייכנסו ל-Z הבא</p>
+              <Input
+                value={forceReason}
+                onChange={(e) => setForceReason(e.target.value)}
+                placeholder="סיבת הכפייה (חובה) — למשל: המכשיר לא נדלק"
+                maxLength={300}
+                className="min-h-10"
+              />
+              <Button
+                size="sm"
+                variant="destructive"
+                className="min-h-10"
+                disabled={!forceReasonOk(forceReason) || force.isPending}
+                onClick={() => force.mutate({ runId: run.id, ids: waiting, reason: forceReason.trim() })}
+              >
+                כפה הפקה בלי הקופות שלא נסגרו
+              </Button>
             </div>
           ) : null}
         </div>

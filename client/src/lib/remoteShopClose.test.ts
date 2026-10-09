@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { confirmationAsked, itemTone, notClosedIds, runActive, runCounts, shopConfirmLabel } from './remoteShopClose';
+import { confirmationAsked, forceReasonOk, itemTone, notClosedIds, runActive, runCounts, shopConfirmLabel } from './remoteShopClose';
 
 const item = (machineId: string, status: string, errorCode: string | null = null) => ({
   id: `i-${machineId}`, machineId, machineName: machineId, posNumber: null, status, errorCode, words: '', online: true,
@@ -34,6 +34,11 @@ describe('remote shop close', () => {
     assert.equal(confirmationAsked('open_tills_block_z'), null);
     assert.equal(confirmationAsked('totals_changed'), null);
     assert.equal(confirmationAsked(undefined), null);
+  });
+  it("takes the force's reason only when typed", () => {
+    assert.equal(forceReasonOk(''), false);
+    assert.equal(forceReasonOk('   x   '), false);
+    assert.equal(forceReasonOk('המכשיר לא נדלק'), true);
   });
   it('names the act with the next shop Z number', () => {
     assert.equal(shopConfirmLabel({ nextShopZNumber: 42 }), 'סגור את היום · Z 42');

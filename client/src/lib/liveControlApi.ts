@@ -113,6 +113,11 @@ export async function proceedShopClose(runId: string, excludeMachineIds: string[
   return (await api.post(`/device-commands/shop-close/${runId}/proceed`, { excludeMachineIds })).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
 
+/** Support's force past "חסימת Z כשיש משמרות פתוחות": a super admin, a typed reason (403 / 422 otherwise). */
+export async function forceShopClose(runId: string, excludeMachineIds: string[], reason: string) {
+  return (await api.post(`/device-commands/shop-close/${runId}/force`, { excludeMachineIds, reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
 export async function fetchDevices(s: { companyId?: string | null; shopId?: string | null; machineIds?: string[] }): Promise<DeviceRow[]> {
   const params = new URLSearchParams();
   if (s.companyId) params.set('companyId', s.companyId);
