@@ -103,9 +103,32 @@ export function forceReasonOk(reason: string): boolean {
   return reason.trim().length >= 5;
 }
 
+export interface AreaShiftPreview {
+  shopId: string;
+  areaId: string;
+  label: string;
+  available: boolean;
+  tills: {
+    machineId: string;
+    name: string;
+    posNumber: string | null;
+    kind: string | null;
+    canRequest: boolean;
+    whyNot: string | null;
+    totalsKey?: string;
+    totals?: { net: number } | null;
+    openBasket?: string;
+  }[];
+}
+
 export interface ShopClosePreview {
   shopId: string;
   shopName: string;
+  /** A point of sale's day close ("סגירת יום לנקודת מכירה"), or null for the whole shop. */
+  areaId?: string | null;
+  areaName?: string | null;
+  /** On the shop-wide preview: the points of sale that can be closed on their own. */
+  areas?: { areaId: string; name: string; tills: number; inShopZ: number }[];
   source: { kind: 'cloud' | 'main_till'; label: string; machineId: string | null; available: boolean; whyNot: string | null };
   inShopZ: ShopCloseRow[];
   ownZ: ShopCloseRow[];

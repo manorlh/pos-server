@@ -156,6 +156,21 @@ control, keep their current behaviour — their held sales survive the close.
 | Kiosk in the shop Z | Offered, allowed; never held by the kiosk's version | "יופק בענן" | "קיוסק — מלשונית הקיוסקים" |
 | Kiosk with its own Z | Offered, allowed; "close with the shop Z" shown | "יופק בענן" | "קיוסק — מלשונית הקיוסקים" |
 
+**By point of sale** ("סגירה לפי נקודת מכירה", `tests/test_remote_area_close.py`) — the existing area Z
+(`z_runs` with `area_id`: the shop's own numbering, the same remote close), from the same panel, by the
+same rules (`waitForRest`, held sales, the open basket, each till's own rules, the offline
+classification, support's force, the capability gate):
+
+| Case | "סגירת יום לנקודת מכירה" | "סגירת משמרות לנקודת מכירה" |
+| --- | --- | --- |
+| A point of sale with tills in the shop Z, cloud producer | Offered per area ("לפי נקודת מכירה"); takes only that area's shop-Z tills; next shop Z number | Each till its own remote shift close, at rest; one till's changed totals never stop the others |
+| An area day close running | The shop day close refused ("סגירת יום כבר בתהליך") — and the reverse: an area close while the shop's runs ("… (של כל הסניף)"); another area is not concerned | — |
+| Mixed area (a shop-Z till + an own-Z / independent till) | Takes only the shop-Z till; the other listed apart ("Z משלה") | The own-Z till is not in it ("Z משלה — מ\"סגירה / Z\" בשורת הקופה") |
+| An area with a kiosk in the shop Z | Offered; the kiosk is in the run ("קיוסק — מלשונית הקיוסקים" per till) | The kiosk is not in it |
+| An area-level override of `zRequireAllShiftsClosed` | That area's tills by their own value (bar on: holds; kitchen off: not) | — |
+| Local mode / `shopZFrom` main till online / `zScope = machine` | "לא זמין עדיין: …" (no areas listed in local mode) | Shift close: "לא זמין עדיין" in local mode |
+| A manager of some points of sale only | Their own areas only (403 for others; the whole shop's close stays the whole shop's manager's) | Their own areas only |
+
 **Each till's state** (all-cloud shop, `zRequireAllShiftsClosed` on):
 
 | Till state | Day close | Shown |

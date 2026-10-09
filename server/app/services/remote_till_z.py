@@ -384,6 +384,10 @@ def request(db: Session, user: Any, machine: POSMachine, *, totals_key: str, now
 # till producer (its LAN round closes tills by itself) — shown "לא זמין עדיין" with why.
 
 SHOP_CLOSE_LABEL = "סגירת יום סניפית"
+#: The owner: "סגירה לפי נקודת מכירה / אזור" — the existing area Z (z_runs `area_id`: the shop's
+#: numbering, the same remote close), from remote control.
+AREA_CLOSE_LABEL = "סגירת יום לנקודת מכירה"
+AREA_SHIFTS_LABEL = "סגירת משמרות לנקודת מכירה"
 
 
 def _kiosk_ids(db: Session, machines: List[POSMachine]) -> set:
@@ -586,7 +590,49 @@ def item_words(status_value: str, error_code: Optional[str], online: Optional[bo
     return ITEM_WORDS.get(status_value, status_value)
 
 
-def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user: Any = None) -> Dict[str, Any]:
+def current_run_for(db: Session, shop_id: Any, area_id: Any = None):
+    """
+    The run under way that concerns this close: for the whole shop, any of the shop's; for an area,
+    the area's own or a shop-wide one (another area's run takes other tills and does not concern it).
+    """
+    from app.models.z_run import ZRun, ZRunStatus
+
+    runs = (
+        db.query(ZRun)
+        .filter(ZRun.shop_id == shop_id, ZRun.status.in_([ZRunStatus.WAITING, ZRunStatus.BUILDING]))
+        .order_by(ZRun.created_at.desc())
+        .all()
+    )
+    if area_id is None:
+        return runs[0] if runs else None
+    return next((r for r in runs if r.area_id is None or str(r.area_id) == str(area_id)), None)
+
+
+def shop_areas(db: Session, shop: Any) -> List[Dict[str, Any]]:
+    """The shop's live points of sale with a till in the shop Z — each may be closed on its own."""
+    from app.models.shop_area import ShopArea
+    from app.models.tenant import Tenant
+    from app.services import z_runs as ZR
+
+    tenant = db.get(Tenant, shop.tenant_id) if getattr(shop, "tenant_id", None) is not None else None
+    tills = [m for m in ZR.shop_tills(db, shop.id) if ZR.is_seated_in(m, shop.id)]
+    own = ZR.per_till_ids(db, tills, tenant, shop)
+    out = []
+    for area in (
+        db.query(ShopArea)
+        .filter(ShopArea.shop_id == shop.id, ShopArea.archived_at.is_(None))
+        .order_by(ShopArea.sort_order, ShopArea.name)
+        .all()
+    ):
+        members = [m for m in tills if str(m.area_id) == str(area.id)]
+        in_z = [m for m in members if m.id not in own]
+        if in_z:
+            out.append({"areaId": str(area.id), "name": area.name, "tills": len(members), "inShopZ": len(in_z)})
+    return out
+
+
+def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user: Any = None,
+                 area_id: Any = None) -> Dict[str, Any]:
     """
     What the manager sees for the shop: where its Z is produced, every device by its
     configuration (in the shop Z / its own Z / a kiosk), the figures the shop Z would take, the
@@ -607,6 +653,9 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
     # Exactly the tills the wizard's run takes: the seated ones, and any that left the shop with
     # closed shifts of it still awaiting a Z (z_runs.shop_tills) — their shifts are this shop's.
     tills = ZR.shop_tills(db, shop.id)
+    if area_id is not None:
+        # A point of sale's day close: the area Z takes the tills in that area now (z_runs).
+        tills = [m for m in tills if str(m.area_id) == str(area_id) and ZR.is_seated_in(m, shop.id)]
     kiosks = _kiosk_ids(db, tills)
     own_ids = ZR.per_till_ids(db, tills, tenant, shop)
     in_shop_z: List[Dict[str, Any]] = []
@@ -664,7 +713,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         leftovers.append({"machineId": str(m.id), "name": m.name, "posNumber": m.pos_number, "shifts": len(extra),
                           "net": _totals_out(compute_totals(db, [s.id for s in extra]))["net"]})
     totals = _totals_out(compute_totals(db, shop_shift_ids))
-    live = current_run(db, shop.id)
+    live = current_run_for(db, shop.id, area_id)
     run = run_progress(db, live, now=now, user=user) if live is not None else None
     if run is not None:
         by_machine = {str(r["machineId"]): r for r in in_shop_z}
@@ -676,7 +725,8 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
                                                       item.get("errorMessage"))}
     why = None
     if not in_shop_z:
-        why = "אין בסניף קופות ב-Z הסניפי (כל הקופות מפיקות Z משלהן)"
+        why = ("אין בנקודת המכירה קופות ב-Z הסניפי" if area_id is not None
+               else "אין בסניף קופות ב-Z הסניפי (כל הקופות מפיקות Z משלהן)")
     elif ZR.z_scope_of(tenant) == ZR.Z_SCOPE_MACHINE and len(in_shop_z) > 1:
         # The business makes a Z per till (`zScope = machine`): one shop-wide close can't be one
         # Z. Not yet from remote control — the wizard does it till by till.
@@ -687,21 +737,31 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         names = ", ".join(r["name"] or "" for r in in_shop_z if r.get("needsUpdate"))
         why = f"{TOO_OLD_TEXT}: {names}"
     elif run is not None:
-        why = "סגירת יום של הסניף כבר בתהליך"
+        why = ("סגירת יום כבר בתהליך" + (" (של כל הסניף)" if area_id is not None and run.get("areaId") is None else ""))
     elif not shop_shift_ids:
         why = "אין משמרות שעוד לא נכללו ב-Z הסניפי"
-    guard = _guard_out(db, shop, now=now)
+    guard = _guard_out(db, shop, now=now, area_id=area_id)
     unknown = [b for b in guard["blockers"] if b["status"] == "unknown"]
     # A till the cloud cannot see holds the start (the run itself refuses it): a super admin may
     # start anyway with a typed reason.
     force_start = bool(why is None and unknown and _super_admin(user))
     if why is None and unknown:
         why = "ממתין לקופות במצב לא ידוע: " + ", ".join(b["name"] or "" for b in unknown)
-    raw = "|".join([str(shop.id), ",".join(sorted(str(x) for x in shop_shift_ids)), str(totals["transactions"]),
+    raw = "|".join([str(shop.id), str(area_id or ""), ",".join(sorted(str(x) for x in shop_shift_ids)), str(totals["transactions"]),
                     f'{totals["totalSales"]:.2f}', f'{totals["totalRefunds"]:.2f}', str(totals["lastDocument"] or "")])
+    area_name = None
+    if area_id is not None:
+        from app.models.shop_area import ShopArea
+
+        area_row = db.get(ShopArea, uuid.UUID(str(area_id)))
+        area_name = area_row.name if area_row is not None else None
     return {
         "shopId": str(shop.id),
         "shopName": shop.name,
+        "areaId": str(area_id) if area_id is not None else None,
+        "areaName": area_name,
+        # The shop's points of sale that can be closed on their own (only on the shop-wide preview).
+        "areas": shop_areas(db, shop) if area_id is None and local["available"] else [],
         "source": local,
         "inShopZ": in_shop_z,
         "ownZ": own_z,
@@ -713,21 +773,22 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         # "חסימת Z כשיש משמרות פתוחות": on here? and which tills hold the Z now (the close waits
         # for every one of them; only a super admin forces past one that never comes back).
         "shiftGuard": guard,
-        "shopClose": {"label": SHOP_CLOSE_LABEL, "available": why is None, "whyNot": why, "forceStartAllowed": force_start},
+        "shopClose": {"label": AREA_CLOSE_LABEL if area_id is not None else SHOP_CLOSE_LABEL,
+                      "available": why is None, "whyNot": why, "forceStartAllowed": force_start},
         "totalsKey": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20],
     }
 
 
-def _guard_out(db: Session, shop: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def _guard_out(db: Session, shop: Any, *, now: Optional[datetime] = None, area_id: Any = None) -> Dict[str, Any]:
     from app.services import z_shift_guard as G
 
-    required = G.required(db, shop)
+    required = G.required(db, shop, area_id=area_id)
     return {
         "label": G.LABEL,
         "required": required,
-        "blockers": G.shop_blockers(db, shop, now=now) if required else [],
+        "blockers": G.shop_blockers(db, shop, area_id=area_id, now=now) if required else [],
         # Offline since a report of no shift open: shown ("לא מחובר — המשמרת האחרונה סגורה"), never blocking.
-        "offlineClosed": G.shop_offline_closed(db, shop, now=now) if required else [],
+        "offlineClosed": G.shop_offline_closed(db, shop, area_id=area_id, now=now) if required else [],
     }
 
 
@@ -741,6 +802,7 @@ def shop_request(
     confirm_open_tills: bool = False,
     confirm_cloud_data: bool = False,
     force_reason: Optional[str] = None,
+    area_id: Any = None,
     now: Optional[datetime] = None,
 ):
     """
@@ -753,7 +815,7 @@ def shop_request(
     from app.schemas.z_run import ZRunCreateIn, ZRunMachineIn
     from app.services import z_runs as ZR
 
-    current = shop_preview(db, shop, now=now, user=user)
+    current = shop_preview(db, shop, now=now, user=user, area_id=area_id)
     if not current["shopClose"]["available"] and not (force_reason and current["shopClose"].get("forceStartAllowed")):
         raise HTTPException(status_code=409, detail={"code": "shop_close_unavailable",
                                                      "message": current["shopClose"]["whyNot"], "preview": current})
@@ -765,9 +827,70 @@ def shop_request(
         })
     body = ZRunCreateIn(
         shopId=shop.id,
+        areaId=uuid.UUID(str(area_id)) if area_id is not None else None,
         machines=[ZRunMachineIn(machineId=uuid.UUID(r["machineId"])) for r in current["inShopZ"]],
         confirmOpenTills=confirm_open_tills,
         confirmCloudData=confirm_cloud_data,
         forceReason=force_reason,
     )
     return create_run_from_body(db, user, tenant_id, body, wait_for_rest=True)
+
+# ── "סגירת משמרות לנקודת מכירה": every till of an area, each its own remote shift close ─────
+
+
+def area_shift_preview(db: Session, shop: Any, area_id: Any, *, user: Any = None,
+                       now: Optional[datetime] = None) -> Dict[str, Any]:
+    """Each till of the area as its own remote close would show it (the same rules, per till)."""
+    from app.services import z_runs as ZR
+
+    tills = [m for m in ZR.shop_tills(db, shop.id) if str(m.area_id) == str(area_id) and ZR.is_seated_in(m, shop.id)]
+    kiosks = _kiosk_ids(db, tills)
+    rows = []
+    for m in tills:
+        if m.id in kiosks:
+            rows.append({"machineId": str(m.id), "name": m.name, "posNumber": m.pos_number, "kind": None,
+                         "canRequest": False, "whyNot": "קיוסק — מלשונית הקיוסקים"})
+            continue
+        try:
+            p = preview(db, m, now=now, user=user)
+        except HTTPException as refused:
+            detail = refused.detail if isinstance(refused.detail, dict) else {}
+            rows.append({"machineId": str(m.id), "name": m.name, "posNumber": m.pos_number, "kind": None,
+                         "canRequest": False, "whyNot": detail.get("message") or "לא זמין"})
+            continue
+        if p["kind"] != KIND_CLOSE_SHIFT:
+            p = {**p, "canRequest": False, "whyNot": "Z משלה — מ\"סגירה / Z\" בשורת הקופה"}
+        rows.append({k: p.get(k) for k in ("machineId", "name", "posNumber", "kind", "online", "openShift", "totals",
+                                            "pending", "openBasket", "totalsKey", "canRequest", "whyNot")})
+    return {"shopId": str(shop.id), "areaId": str(area_id), "label": AREA_SHIFTS_LABEL, "tills": rows,
+            "available": any(r["canRequest"] for r in rows)}
+
+
+def area_shift_request(db: Session, user: Any, shop: Any, area_id: Any, totals_keys: Dict[str, str],
+                       *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    Each confirmed till of the area gets its own remote shift close (its totals as confirmed, at rest,
+    never forced); one that can't (its totals changed, nothing open, …) says why — the others go on.
+    The caller commits.
+    """
+    from app.services import z_runs as ZR
+
+    in_area = {str(m.id): m for m in ZR.shop_tills(db, shop.id)
+               if str(m.area_id) == str(area_id) and ZR.is_seated_in(m, shop.id)}
+    results = []
+    for machine_id, key in totals_keys.items():
+        m = in_area.get(str(machine_id))
+        if m is None:
+            results.append({"machineId": str(machine_id), "ok": False, "message": "הקופה אינה בנקודת המכירה"})
+            continue
+        try:
+            with db.begin_nested():
+                if kind_of(m) != KIND_CLOSE_SHIFT:
+                    raise HTTPException(status_code=409, detail={"code": "own_z", "message": "Z משלה — לא בסגירת משמרות"})
+                out = request(db, user, m, totals_key=key, now=now)
+            results.append({"machineId": str(m.id), "ok": True, "command": out["command"]})
+        except HTTPException as refused:
+            detail = refused.detail if isinstance(refused.detail, dict) else {"message": str(refused.detail)}
+            results.append({"machineId": str(m.id), "ok": False, "code": detail.get("code"),
+                            "message": detail.get("message") or "לא נשלח"})
+    return {"areaId": str(area_id), "results": results, "commands": [r["command"] for r in results if r["ok"]]}

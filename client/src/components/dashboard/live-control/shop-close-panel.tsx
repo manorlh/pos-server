@@ -17,6 +17,7 @@ import { CalendarCheck, Wifi, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { AreaShiftsDialog } from './area-shifts-dialog';
 import { HeldSalesDialog } from './held-sales-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -44,7 +45,7 @@ const TONE: Record<string, string> = {
   muted: 'text-muted-foreground',
 };
 
-const key = (shopId: string) => ['device-commands', 'shop-close', shopId] as const;
+const key = (shopId: string, areaId?: string | null) => ['device-commands', 'shop-close', shopId, areaId ?? 'shop'] as const;
 
 function errorDetail(e: unknown): { code?: string; message?: string } | undefined {
   const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
@@ -88,10 +89,16 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
   const [askedChecked, setAskedChecked] = useState(false);
   const send = useMutation({
     mutationFn: (extra: { confirmCloudData?: boolean; confirmOpenTills?: boolean }) =>
-      requestShopClose({ shopId: p.shopId, totalsKey: p.totalsKey, ...extra, ...(forceReason ? { forceReason } : {}) }),
+      requestShopClose({
+        shopId: p.shopId,
+        totalsKey: p.totalsKey,
+        ...extra,
+        ...(forceReason ? { forceReason } : {}),
+        ...(p.areaId ? { areaId: p.areaId } : {}),
+      }),
     onSuccess: () => {
       toast.success('נשלח לקופות — כל קופה תיסגר כשאין בה מכירה או תשלום פתוחים');
-      qc.invalidateQueries({ queryKey: key(p.shopId) });
+      qc.invalidateQueries({ queryKey: key(p.shopId, p.areaId) });
       onClose();
     },
     onError: (e: unknown) => {
@@ -99,7 +106,7 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
       if (detail?.code === 'totals_changed') {
         toast.error('הסכומים בסניף השתנו מאז — בדקו שוב ואשרו');
         setChecked(null);
-        qc.invalidateQueries({ queryKey: key(p.shopId) });
+        qc.invalidateQueries({ queryKey: key(p.shopId, p.areaId) });
         onClose();
         return;
       }
@@ -123,7 +130,7 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{p.shopClose.label} · {p.shopName}</DialogTitle>
+          <DialogTitle>{p.shopClose.label} · {p.areaName ?? p.shopName}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <p className="text-muted-foreground">
@@ -198,12 +205,13 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
 }
 
 /** Inline in the remote control panel: the shop's day close, its source and its live progress. */
-export function ShopClosePanel({ shopId }: { shopId: string }) {
+export function ShopClosePanel({ shopId, areaId }: { shopId: string; areaId?: string | null }) {
   const qc = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  const [areaShifts, setAreaShifts] = useState(false);
   const preview = useQuery({
-    queryKey: key(shopId),
-    queryFn: () => fetchShopClosePreview(shopId),
+    queryKey: key(shopId, areaId),
+    queryFn: () => fetchShopClosePreview(shopId, areaId),
     retry: (count, e) => ![403, 404].includes((e as { response?: { status?: number } })?.response?.status ?? 0) && count < 2,
     // Live while a run goes on; otherwise as the device rows.
     refetchInterval: (q) =>
@@ -219,11 +227,11 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
   // Adjusted while rendering (react.dev "storing information from previous renders"), not in an effect.
   if (liveRunId && liveRunId !== lastRunId) setLastRunId(liveRunId);
   const finished = useQuery({
-    queryKey: [...key(shopId), 'run', lastRunId],
+    queryKey: [...key(shopId, areaId), 'run', lastRunId],
     queryFn: () => fetchShopCloseRun(lastRunId!),
     enabled: !!lastRunId && !liveRunId && !!preview.data,
   });
-  const refresh = () => qc.invalidateQueries({ queryKey: key(shopId) });
+  const refresh = () => qc.invalidateQueries({ queryKey: key(shopId, areaId) });
   const cancel = useMutation({
     mutationFn: (runId: string) => cancelShopClose(runId),
     onSuccess: () => {
@@ -269,7 +277,10 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
     <section className="space-y-2 rounded-xl border bg-card p-3 shadow-sm" aria-label={p.shopClose.label}>
       <div className="flex flex-wrap items-center gap-2">
         <CalendarCheck className="size-4 text-muted-foreground" aria-hidden />
-        <h3 className="font-semibold">{p.shopClose.label}</h3>
+        <h3 className="font-semibold">
+          {p.shopClose.label}
+          {p.areaName ? ` · ${p.areaName}` : ''}
+        </h3>
         <Badge variant="outline">{p.source.label}</Badge>
         {p.run ? null : run ? (
           <Button size="sm" variant="ghost" className="ms-auto min-h-10" onClick={() => setLastRunId(null)}>
@@ -415,6 +426,24 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
           />
         ) : null;
       })() : null}
+      {areaId ? (
+        <Button size="sm" variant="outline" className="min-h-10" onClick={() => setAreaShifts(true)}>
+          סגירת משמרות לנקודת מכירה…
+        </Button>
+      ) : null}
+      {areaShifts && areaId ? (
+        <AreaShiftsDialog shopId={shopId} areaId={areaId} areaName={p.areaName ?? ''} onClose={() => setAreaShifts(false)} />
+      ) : null}
+      {!areaId && (p.areas ?? []).length > 0 ? (
+        <details className="text-sm">
+          <summary className="min-h-10 cursor-pointer py-2 text-muted-foreground">לפי נקודת מכירה ({(p.areas ?? []).length})</summary>
+          <div className="space-y-2">
+            {(p.areas ?? []).map((a) => (
+              <ShopClosePanel key={a.areaId} shopId={shopId} areaId={a.areaId} />
+            ))}
+          </div>
+        </details>
+      ) : null}
       {confirming ? (
         <ShopCloseDialog
           p={p}

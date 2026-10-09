@@ -13,12 +13,14 @@ Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
 GET  /device-commands/features
 GET  /device-commands/{machine_id}/close-preview      → a till's close / Z preview
 POST /device-commands/close                           {machineId, totalsKey}
-GET  /device-commands/shop-close-preview ?shopId=     → "סגירת יום סניפית": by the shop's configuration
+GET  /device-commands/shop-close-preview ?shopId=&areaId= → "סגירת יום סניפית" (or "סגירת יום לנקודת מכירה")
 POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?} → the Z run
 GET  /device-commands/shop-close/{run_id}             → its progress (builds the Z when every till is ready)
 POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
 POST /device-commands/shop-close/{run_id}/cancel
 POST /device-commands/shop-close/{run_id}/force       {excludeMachineIds, reason} — a super admin only
+GET  /device-commands/area-shift-close-preview ?shopId=&areaId= → "סגירת משמרות לנקודת מכירה": each till
+POST /device-commands/area-shift-close                {shopId, areaId, totalsKeys: {machineId: key}}
 POST /device-commands/keep-held-sales                 {machineId, runId?, reason?} — "סגור בכל זאת — המכירות המושהות יישמרו"
 POST /device-commands/cancel-held-sales               {machineId, runId?, saleIds, reason} — "בטל מכירות מושהות וסגור"
 
@@ -31,7 +33,7 @@ POST /sync/{machine_id}/device-commands/unlocked       {posUserId?, posUserName?
 from __future__ import annotations
 
 import uuid
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -217,6 +219,8 @@ class ShopCloseIn(BaseModel):
     confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
     #: A super admin starting past tills in "מצב לא ידוע" ("חסימת Z כשיש משמרות פתוחות").
     force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
+    #: "סגירת יום לנקודת מכירה": the area Z of that point of sale (z_runs `area_id`).
+    area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
 
 
 class ShopCloseProceedIn(BaseModel):
@@ -246,17 +250,46 @@ def _remote_z_shop(db: Session, user: User, tenant_id, shop_id) -> Shop:
     return shop
 
 
+def _remote_z_area(db: Session, user: User, tenant_id, shop_id, area_id) -> Shop:
+    """
+    The shop and a live area of it, for a point of sale's day close or its tills' shift close: the
+    Z wizard's shop access and distributor rule, the Z section at edit; a manager of some points of
+    sale only for one of theirs.
+    """
+    from app.routers.z_runs import _check_tills, _shop_for
+    from app.services import areas
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+    from app.services import z_runs as ZR
+
+    get_current_machine_admin(user)
+    shop = _shop_for(db, shop_id, user, tenant_id)
+    area = areas.area_in_shop(db, area_id, shop.id)
+    areas.refuse_archived(area)
+    narrow = _narrowing(db, user)
+    if narrow is not None and area.id not in narrow.area_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
+    if not DA.effective_access(db, user).allows("z", DS.EDIT):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "section_forbidden", "section": "z", "level": DS.EDIT})
+    _check_tills(db, user, [m for m in ZR.shop_tills(db, shop.id) if str(m.area_id) == str(area.id)], tenant_id)
+    return shop
+
+
 def _shop_close_run(db: Session, user: User, tenant_id, run_id: uuid.UUID):
     from app.routers.z_runs import _run_or_404
 
     run = _run_or_404(db, run_id, user, tenant_id)
-    _remote_z_shop(db, user, tenant_id, run.shop_id)
+    if run.area_id is not None and _narrowing(db, user) is not None:
+        _remote_z_area(db, user, tenant_id, run.shop_id, run.area_id)
+    else:
+        _remote_z_shop(db, user, tenant_id, run.shop_id)
     return run
 
 
 @router.get("/shop-close-preview")
 def get_shop_close_preview(
     shop_id: uuid.UUID = Query(..., alias="shopId"),
+    area_id: Optional[uuid.UUID] = Query(None, alias="areaId"),
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -267,13 +300,17 @@ def get_shop_close_preview(
     from app.services import z_runs as ZR
 
     remote_till_z.require_enabled()
-    shop = _remote_z_shop(db, current_user, active_tenant_id, shop_id)
+    area_id = area_id if isinstance(area_id, uuid.UUID) else None  # called directly: the Query default
+    if area_id is not None:
+        shop = _remote_z_area(db, current_user, active_tenant_id, shop_id, area_id)
+    else:
+        shop = _remote_z_shop(db, current_user, active_tenant_id, shop_id)
     # As the wizard's progress read: expired runs swept, a run whose tills are all ready built.
     ZR.expire_overdue_runs(db)
-    current = remote_till_z.current_run(db, shop.id)
+    current = remote_till_z.current_run_for(db, shop.id, area_id)
     if current is not None:
         ZR.finalise_if_ready(db, current)
-    out = remote_till_z.shop_preview(db, shop, user=current_user)
+    out = remote_till_z.shop_preview(db, shop, user=current_user, area_id=area_id)
     db.commit()
     return out
 
@@ -292,7 +329,10 @@ def post_shop_close(
     from app.services import z_runs as ZR
 
     remote_till_z.require_enabled()
-    shop = _remote_z_shop(db, current_user, active_tenant_id, body.shop_id)
+    if body.area_id is not None:
+        shop = _remote_z_area(db, current_user, active_tenant_id, body.shop_id, body.area_id)
+    else:
+        shop = _remote_z_shop(db, current_user, active_tenant_id, body.shop_id)
     try:
         out = remote_till_z.shop_request(
             db, current_user, active_tenant_id, shop,
@@ -300,6 +340,7 @@ def post_shop_close(
             confirm_open_tills=body.confirm_open_tills,
             confirm_cloud_data=body.confirm_cloud_data,
             force_reason=body.force_reason,
+            area_id=body.area_id,
         )
     except HTTPException:
         db.rollback()
@@ -398,6 +439,53 @@ def post_shop_close_cancel(
     db.commit()
     db.refresh(run)
     return remote_till_z.run_progress(db, run, user=current_user)
+
+
+class AreaShiftCloseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    area_id: uuid.UUID = Field(..., alias="areaId")
+    #: Each till the manager confirmed, with the totals key it saw.
+    totals_keys: Dict[str, str] = Field(default_factory=dict, alias="totalsKeys")
+
+
+@router.get("/area-shift-close-preview")
+def get_area_shift_close_preview(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    area_id: uuid.UUID = Query(..., alias="areaId"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"סגירת משמרות לנקודת מכירה": each till of the area as its own remote close shows it."""
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    shop = _remote_z_area(db, current_user, active_tenant_id, shop_id, area_id)
+    out = remote_till_z.area_shift_preview(db, shop, area_id, user=current_user)
+    db.commit()
+    return out
+
+
+@router.post("/area-shift-close", status_code=status.HTTP_201_CREATED)
+def post_area_shift_close(
+    body: AreaShiftCloseIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Each confirmed till: its own remote shift close (at rest, never forced); per-till results."""
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    shop = _remote_z_area(db, current_user, active_tenant_id, body.shop_id, body.area_id)
+    for machine_id in body.totals_keys:
+        # Each till by the machine admins' own scope rules, as its single remote close.
+        _remote_z_machine(db, current_user, active_tenant_id, uuid.UUID(str(machine_id)))
+    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, body.totals_keys)
+    db.commit()
+    return out
 
 
 class KeepHeldSalesIn(BaseModel):

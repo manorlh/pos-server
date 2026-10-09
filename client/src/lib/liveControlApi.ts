@@ -90,8 +90,20 @@ export async function requestRemoteClose(machineId: string, totalsKey: string) {
 }
 
 /** "סגירת יום סניפית": the shop by its configuration, the run under way (lib/remoteShopClose.ts). */
-export async function fetchShopClosePreview(shopId: string): Promise<import('@/lib/remoteShopClose').ShopClosePreview> {
-  return (await api.get('/device-commands/shop-close-preview', { params: { shopId } })).data;
+export async function fetchShopClosePreview(shopId: string, areaId?: string | null): Promise<import('@/lib/remoteShopClose').ShopClosePreview> {
+  return (await api.get('/device-commands/shop-close-preview', { params: areaId ? { shopId, areaId } : { shopId } })).data;
+}
+
+/** "סגירת משמרות לנקודת מכירה": each till of the area as its own remote close shows it. */
+export async function fetchAreaShiftPreview(shopId: string, areaId: string): Promise<import('@/lib/remoteShopClose').AreaShiftPreview> {
+  return (await api.get('/device-commands/area-shift-close-preview', { params: { shopId, areaId } })).data;
+}
+
+/** Each confirmed till its own remote shift close; per-till results (one failing never stops the others). */
+export async function requestAreaShiftClose(body: { shopId: string; areaId: string; totalsKeys: Record<string, string> }) {
+  return (await api.post('/device-commands/area-shift-close', body)).data as {
+    results: { machineId: string; ok: boolean; code?: string; message?: string }[];
+  };
 }
 
 /** The confirmed day close: sent at once — each till closes at rest; progress in the preview. */
@@ -102,6 +114,8 @@ export async function requestShopClose(body: {
   confirmCloudData?: boolean;
   /** A super admin starting past tills in "מצב לא ידוע". */
   forceReason?: string;
+  /** "סגירת יום לנקודת מכירה": that point of sale's area Z. */
+  areaId?: string;
 }) {
   return (await api.post('/device-commands/shop-close', body)).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
