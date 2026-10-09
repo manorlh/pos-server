@@ -23,6 +23,8 @@ import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { actionLabelOf, newKey, phaseOfCard } from '@/lib/deviceCommands';
+import { idempotencyHeaders, trackCommand } from '@/lib/deviceCommandsStore';
 import { useAuth } from '@/lib/auth';
 import { canAccess } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
@@ -64,8 +66,18 @@ export function CardCommandPanel({ a, compact = false }: { a: FailedPaymentAttem
   const refresh = () => qc.invalidateQueries({ queryKey: ['failed-payments'] });
   const verdictText = (v: CheckVerdict) => t(`cardCommand.verdict.${v}`);
 
+  // Fire-and-forget: the till answers later, in the background ("פקודות שנשלחו" reads it and
+  // refreshes this row). Each request its own Idempotency-Key — a retry of the same request never
+  // makes a second command; the confirmed decision after a mismatch is another request (a new key).
+  // Every safety rule stays the server's (one pending command, the mismatch confirmation, who may act).
   const post = (action: CardCommandAction, confirmMismatch: boolean) =>
-    api.post(`/failed-payments/${a.id}/card-commands`, { action, confirmMismatch }).then((r) => r.data);
+    api
+      .post<{ id?: string; action?: string; status?: string; deliveredAt?: string | null }>(
+        `/failed-payments/${a.id}/card-commands`,
+        { action, confirmMismatch },
+        idempotencyHeaders(newKey()),
+      )
+      .then((r) => r.data);
 
   const send = useMutation({
     mutationFn: async ({ action, confirmMismatch }: { action: CardCommandAction; confirmMismatch: boolean }) => {
@@ -86,9 +98,23 @@ export function CardCommandPanel({ a, compact = false }: { a: FailedPaymentAttem
         throw err;
       }
     },
-    onSuccess: (out) => {
+    onSuccess: (out, { action }) => {
       if (out === null) return;
-      toast.success(t('cardCommand.sentOk'));
+      // The feedback is the small centred popup ("נשלחה פקודה: בדיקה במסוף → קופה 1"), live.
+      if (!out?.id) toast.success(t('cardCommand.sentOk'));
+      if (out?.id) {
+        const p = phaseOfCard({ status: out.status ?? 'pending', deliveredAt: out.deliveredAt ?? null });
+        trackCommand({
+          kind: 'card',
+          id: out.id,
+          action,
+          label: t.has(`cardCommand.action.${action}`) ? t(`cardCommand.action.${action}`) : actionLabelOf(action),
+          machineId: a.machineId,
+          machineName: a.machineName ?? null,
+          phase: p.phase,
+          ref: { attemptId: a.id },
+        });
+      }
       void refresh();
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),

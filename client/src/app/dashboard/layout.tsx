@@ -19,6 +19,8 @@ import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { SectionDenied } from '@/components/dashboard/access/my-access-card';
 import { ProducerShell } from '@/components/dashboard/event-live/producer-shell';
 import { isProducer } from '@/lib/producer';
+import { DeviceCommandsTray } from '@/components/dashboard/device-commands/commands-tray';
+import { DeviceCommandPopup } from '@/components/dashboard/device-commands/command-popup';
 
 function ShellSkeleton() {
   return (
@@ -131,6 +133,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <ShellSkeleton />
           )}
         </main>
+        {/* "פקודות שנשלחו": every command sent to a device, followed in the background (never blocking). */}
+        {isLoaded && isSignedIn && authHydrated && activeTenantId ? (
+          <>
+            <DeviceCommandPopup />
+            <DeviceCommandsTray />
+          </>
+        ) : null}
       </div>
     </div>
   );
