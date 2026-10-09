@@ -55,10 +55,13 @@ BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
 #: the whole value again.
 PARTLY_VALUED = "prepaid_voucher_replacement_partly_valued"
 #: A sale held the voucher and never ended (a reservation neither confirmed nor released, live or
-#: expired): its document may still reach the cloud and redeem the original. Cleared first, or `force`.
+#: expired): its document may still reach the cloud. The core keeps a cancelled original cancelled now
+#: (its redemption recorded and flagged, 8da78de), but the entitlement would still be used twice — once
+#: by that sale, once by the replacement holding everything left. Cleared first, or `force`.
 HELD = "prepaid_voucher_replacement_held"
 #: The batch is assigned to a device for redemption without the internet: that device redeems the
-#: original and never learns of a replacement. Released first.
+#: original (synced as a flagged sale of a cancelled voucher) and never learns of the replacement, which
+#: the cloud's tills refuse while the batch is assigned. Released first.
 ASSIGNED_OFFLINE = "prepaid_voucher_assigned_offline"
 
 REASON_TEXT = {"lost": "אבד", "damaged": "ניזוק", "cancelled": "בוטל", "other": "אחר"}
