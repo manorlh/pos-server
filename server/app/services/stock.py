@@ -81,6 +81,51 @@ def level_at(db: Session, loc: Location, product_id: Any) -> Optional[StockLevel
     )
 
 
+def add_to_level(
+    db: Session,
+    *,
+    tenant_id: Any,
+    company_id: Any,
+    shop_id: Any,
+    loc: Location,
+    product_id: Any,
+    delta: Decimal,
+) -> Tuple[StockLevel, Decimal]:
+    """
+    The location's quantity moved by `delta` in ONE statement — `INSERT … ON CONFLICT (level,
+    target_id, product_id) DO UPDATE SET quantity = stock_levels.quantity + EXCLUDED.quantity
+    RETURNING …` — so two documents moving the same product at once never lose an update, and two
+    tills making the first sale at a fresh location never collide on the insert (the second waits
+    and adds). The row stays locked until the caller's commit. Returns the row (reloaded) and its
+    quantity after.
+    """
+    db.flush()  # nothing pending on that row may be overwritten by the reload below
+    now = utc_now()
+    ins = pg_insert(StockLevel).values(
+        id=uuid.uuid4(), tenant_id=tenant_id, company_id=company_id, shop_id=shop_id, level=loc.level,
+        target_id=loc.target_id, product_id=product_id, quantity=delta, updated_at=now,
+    )
+    stmt = ins.on_conflict_do_update(
+        index_elements=[StockLevel.level, StockLevel.target_id, StockLevel.product_id],
+        set_={"quantity": StockLevel.__table__.c.quantity + ins.excluded.quantity, "updated_at": ins.excluded.updated_at},
+    ).returning(StockLevel.__table__.c.id, StockLevel.__table__.c.quantity)
+    row_id, after = db.execute(stmt).one()
+    level = db.get(StockLevel, row_id, populate_existing=True)
+    return level, _dec(after)
+
+
+def lock_level(db: Session, loc: Location, product_id: Any) -> Optional[StockLevel]:
+    """The location's row, locked (`FOR UPDATE`) and read fresh: set-to and resets compute from it."""
+    db.flush()
+    return (
+        db.query(StockLevel)
+        .filter(StockLevel.level == loc.level, StockLevel.target_id == loc.target_id, StockLevel.product_id == product_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def level_of(db: Session, shop_id: Any, area_id: Any, product_id: Any) -> Optional[StockLevel]:
     """The shop's own row (`area_id` None) or one point of sale's row."""
     loc = Location("area", area_id) if area_id is not None else Location("shop", shop_id)
@@ -176,25 +221,11 @@ def apply_movement(
     if result.rowcount == 0:
         return False
 
-    level = level_at(db, loc, global_pid)
-    before = _dec(level.quantity) if level else Decimal("0")
-    if level:
-        level.quantity = _dec(level.quantity) + _dec(delta)
-        level.updated_at = utc_now()
-    else:
-        level = StockLevel(
-            tenant_id=tenant_id,
-            company_id=company_id,
-            shop_id=loc_shop_id,
-            level=loc.level,
-            target_id=loc.target_id,
-            product_id=global_pid,
-            quantity=_dec(delta),
-            updated_at=utc_now(),
-        )
-        db.add(level)
-        db.flush()
-    after = before + _dec(delta)
+    level, after = add_to_level(
+        db, tenant_id=tenant_id, company_id=company_id, shop_id=loc_shop_id, loc=loc, product_id=global_pid,
+        delta=_dec(delta),
+    )
+    before = after - _dec(delta)
     # "איפוס יומי": a sale of a day the reset already closed (a till that was offline) belongs to
     # that day's leftover, never to today's opening stock (app/services/stock_reset.py).
     if reason in (StockMovementReason.SALE, StockMovementReason.REFUND) and level.last_reset_at is not None:
@@ -284,7 +315,8 @@ def set_quantity(
     if not global_pid:
         raise ValueError("Product not found")
     loc = location or Location("shop", shop_id)
-    level = level_at(db, loc, global_pid)
+    # Locked: a sale arriving meanwhile waits, so the count is exactly what is set.
+    level = lock_level(db, loc, global_pid)
     current = _dec(level.quantity) if level else Decimal("0")
     delta = _dec(target_quantity) - current
     if delta == 0 and level:

@@ -120,6 +120,9 @@ def run_key(loc: Location, day: date, manual_at: Optional[datetime] = None) -> s
 
 
 def _rows(db: Session, loc: Location) -> List[StockLevel]:
+    """The location's rows that reset, locked (`FOR UPDATE`) and read fresh: a sale arriving during
+    the reset waits for it, then lands on the opening stock (or into the closed day, if older)."""
+    db.flush()
     return (
         db.query(StockLevel)
         .filter(
@@ -128,6 +131,9 @@ def _rows(db: Session, loc: Location) -> List[StockLevel]:
             StockLevel.daily_reset.is_(True),
             StockLevel.opening_quantity.isnot(None),
         )
+        .order_by(StockLevel.product_id)
+        .with_for_update()
+        .populate_existing()
         .all()
     )
 
@@ -221,7 +227,9 @@ def run(
             if need > 0:
                 managed = book.managed(company_id=path.company_id, shop_id=path.shop_id, product=product)
                 for parent in L.parents_managed(path, managed):
-                    have = stock_service.quantity_at(db, parent, row.product_id)
+                    # The store's row locked too: a sale there meanwhile cannot make it give twice.
+                    held = stock_service.lock_level(db, parent, row.product_id)
+                    have = _dec(held.quantity) if held is not None else Decimal("0")
                     if have <= 0:
                         continue
                     take = min(need - taken, have)
@@ -312,7 +320,11 @@ def absorb_late(db: Session, level: StockLevel, movement_id: Any, delta: Decimal
             note=f"איפוס יומי — מכירה מאוחרת של {reset.business_day.isoformat()}",
         )
     )
-    level.quantity = _dec(level.quantity) - delta
+    # The row is the caller's, locked by its own write (stock.add_to_level): read fresh, then undone.
+    locked = (
+        db.query(StockLevel).filter(StockLevel.id == level.id).with_for_update().populate_existing().one()
+    )
+    locked.quantity = _dec(locked.quantity) - delta
     item.before_quantity = _dec(item.before_quantity) + delta
     item.delta = _dec(item.delta) - delta
     db.flush()

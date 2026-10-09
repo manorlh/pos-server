@@ -159,6 +159,43 @@ def _sell(w, machine, qty="1", when=None):
     return loc
 
 
+class TestAtomicWrites:
+    """The review's scenario: two documents moving the same product, and two tills' first sale."""
+
+    @staticmethod
+    def _behind_the_session(s, qty):
+        """Another till's write committed meanwhile, outside this session's identity map."""
+        from sqlalchemy import update
+
+        s.db.execute(
+            update(StockLevel).where(StockLevel.product_id == s.P.id).values(quantity=D(qty)),
+            execution_options={"synchronize_session": False},
+        )
+
+    def test_a_write_from_another_session_is_never_lost(self, s):
+        _set(s, s.shop_loc, 5)
+        assert stock_service.level_at(s.db, s.shop_loc, s.P.id).quantity == 5  # this session's copy: 5
+        self._behind_the_session(s, 10)
+        _sell(s, s.h1)
+        assert _qty(s, s.shop_loc) == 9, "added in the database (10 − 1), never on a stale copy (5 − 1)"
+
+    def test_the_first_sale_at_a_fresh_location_twice_makes_one_row(self, s):
+        _sell(s, s.h1)
+        _sell(s, s.h2)
+        rows = s.db.query(StockLevel).filter(StockLevel.product_id == s.P.id, StockLevel.level == "shop").all()
+        assert len(rows) == 1 and rows[0].quantity == -2
+
+    def test_a_count_is_exact_on_the_fresh_row(self, s):
+        _set(s, s.shop_loc, 5)
+        assert stock_service.level_at(s.db, s.shop_loc, s.P.id).quantity == 5
+        self._behind_the_session(s, 7)
+        stock_service.set_quantity(s.db, tenant_id=s.tid, shop_id=s.h_shop.id, product_id=s.P.id, target_quantity=D(3))
+        s.db.commit()
+        assert _qty(s, s.shop_loc) == 3
+        last = s.db.query(StockMovement).order_by(StockMovement.created_at.desc()).first()
+        assert last.delta == -4, "the difference from what is really there (7), not from a stale 5"
+
+
 class TestSales:
     def test_shop_only_is_todays_behaviour(self, s):
         _set(s, s.shop_loc, 5)
