@@ -5,15 +5,19 @@ touching their settings:
 * **A banner** ("הודעה על המסך") on one kiosk's screens while it keeps selling, until a time or
   until removed (`kiosk_devices.banner_*`).
 * **Quick hides** — a product or a category hidden on every kiosk of a shop, "הגריל סגור", until
-  a time or until shown again (`kiosk_quick_hides`).
+  a time or until shown again. Since specs/item-blocks-targets.md a quick hide IS a block
+  (`sold_out_marks`, app/services/sold_out.py): shop level, target "kiosks", kind "חסום", look
+  "hide" — one list with every other block. Its rows from before (`kiosk_quick_hides`) were copied
+  by the migration under the same ids and are no longer read. The panel lists every hand block in
+  force of the shop that reaches its kiosks.
 
 Both reach every kiosk the same way, with no change on any of them: `overlay` adds them to the
 effective config (app/services/kiosk_config.py `effective_config`) — the banner as one more
-`messages` entry of kind "banner" (with its `endsAt`), the hides to `catalog.hiddenProducts` /
-`catalog.hiddenCategories` — which the Android, web and Windows kiosks already apply. The config's
-version changes with them, so each kiosk takes them on its next kiosk sync (every ~15 s), and an
-end is applied by the server on the first sync after it (the banner's `endsAt` also by the kiosk's
-own clock).
+`messages` entry of kind "banner" (with its `endsAt`), and every block in force reaching this kiosk
+that asks to hide (`sold_out.kiosk_hidden`) to `catalog.hiddenProducts` / `catalog.hiddenCategories`
+— which the Android, web and Windows kiosks already apply. The config's version changes with them,
+so each kiosk takes them on its next kiosk sync (every ~15 s), and an end is applied by the server
+on the first sync after it (the banner's `endsAt` also by the kiosk's own clock).
 """
 from __future__ import annotations
 
@@ -22,11 +26,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.kiosk import KioskDevice
-from app.models.kiosk_live import KIOSK_HIDE_KINDS, KioskQuickHide
+from app.models.kiosk_live import KIOSK_HIDE_KINDS
+from app.models.sold_out import SoldOutMark
 
 BANNER_ID = "live-banner"
 BANNER_SCREENS = ["attract", "service", "catalog", "cart", "pay", "success"]
@@ -92,94 +96,84 @@ def set_banner(device: KioskDevice, message: Optional[str], until: Optional[date
     device.banner_until = until
 
 
-# ── Quick hides ──────────────────────────────────────────────────────────────
+# ── Quick hides: blocks that reach the kiosks ─────────────────────────────────
 
 
-def _in_force(now: datetime):
-    return (KioskQuickHide.cleared_at.is_(None)) & (or_(KioskQuickHide.until.is_(None), KioskQuickHide.until > now))
+def active_hides(db: Session, shop_ids: Sequence[Any], now: Optional[datetime] = None) -> List[SoldOutMark]:
+    """The hand blocks in force of these shops that reach their kiosks (target all or kiosks), newest first."""
+    from app.services import sold_out
 
-
-def active_hides(db: Session, shop_ids: Sequence[Any], now: Optional[datetime] = None) -> List[KioskQuickHide]:
     now = now or utc_now()
     ids = [s for s in shop_ids if s is not None]
-    if not ids:
+    if not ids or not sold_out.tables_ready(db):
         return []
-    return (
-        db.query(KioskQuickHide)
-        .filter(KioskQuickHide.shop_id.in_(ids), _in_force(now))
-        .order_by(KioskQuickHide.created_at.desc())
+    marks = (
+        db.query(SoldOutMark)
+        .filter(SoldOutMark.shop_id.in_(ids), SoldOutMark.source == "manual", sold_out.in_force_filter(now))
+        .order_by(SoldOutMark.created_at.desc())
         .all()
     )
+    return [m for m in marks if sold_out.target_of(m) in ("all", "kiosks")]
 
 
-def hide_out(row: KioskQuickHide, now: Optional[datetime] = None) -> Dict[str, Any]:
+def hides_out(db: Session, rows: Sequence[SoldOutMark], now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """The panel's rows: the old shape (kind = product / category, itemId, itemName) and the block's own."""
+    from app.services import sold_out
+
     now = now or utc_now()
-    until = _aware(row.until)
-    return {
-        "id": str(row.id),
-        "shopId": str(row.shop_id),
-        "kind": row.kind,
-        "itemId": str(row.item_id),
-        "itemName": row.item_name,
-        "until": _iso(row.until),
-        "secondsLeft": int((until - now).total_seconds()) if until is not None else None,
-        "note": row.note,
-        "by": row.created_by_name,
-        "createdAt": _iso(row.created_at),
-    }
+    out = []
+    for view in sold_out.views(db, list(rows), now):
+        is_category = view.get("itemType") == "category"
+        out.append({
+            **view,
+            "kind": "category" if is_category else "product",
+            "itemId": view["categoryId"] if is_category else view["productId"],
+            "itemName": view.get("itemName"),
+            "blockKind": view.get("kind"),
+        })
+    return out
+
+
+def hide_out(db: Session, row: SoldOutMark, now: Optional[datetime] = None) -> Dict[str, Any]:
+    return hides_out(db, [row], now)[0]
 
 
 def hide(
     db: Session, *, tenant_id: Any, shop_id: Any, kind: str, item_id: Any, until: Optional[datetime],
     note: Optional[str], user: Any = None, now: Optional[datetime] = None,
-) -> KioskQuickHide:
-    """Hide a product / category on the shop's kiosks (an active hide of the same item is updated). The caller commits."""
-    from app.models.category import Category
-    from app.models.product import Product
+) -> SoldOutMark:
+    """
+    "מוסתר בקיוסקים": hide a product / category on the shop's kiosks — a shop-level, kiosks-only
+    "חסום" that hides (an active one of the same item is updated). The caller commits.
+    """
+    from app.services import sold_out
 
     now = now or utc_now()
     if kind not in KIOSK_HIDE_KINDS:
         raise _bad("invalid_kind", "סוג לא מוכר")
-    until = _aware(until)
-    if until is not None and until <= now:
-        raise _bad("until_passed", "שעת הסיום כבר עברה")
-    model = Product if kind == "product" else Category
     try:
         ident = uuid.UUID(str(item_id))
     except (TypeError, ValueError):
         raise _bad("item_not_found", "הפריט לא נמצא", status.HTTP_404_NOT_FOUND)
-    item = db.get(model, ident)
-    if item is None or str(item.tenant_id) != str(tenant_id):
+    try:
+        if kind == "product":
+            product, category = sold_out.global_product(db, ident, tenant_id), None
+        else:
+            product, category = None, sold_out.tenant_category(db, ident, tenant_id)
+    except HTTPException:
         raise _bad("item_not_found", "הפריט לא נמצא", status.HTTP_404_NOT_FOUND)
-    who = getattr(user, "username", None) or getattr(user, "email", None)
-    row = (
-        db.query(KioskQuickHide)
-        .filter(KioskQuickHide.shop_id == shop_id, KioskQuickHide.kind == kind, KioskQuickHide.item_id == ident, _in_force(now))
-        .first()
+    target = sold_out.resolve_target(db, "shop", shop_id, tenant_id)
+    return sold_out.block(
+        db, tenant_id=tenant_id, product=product, category=category, target=target, kind="blocked",
+        until=until, note=note, user=user, now=now, reach="kiosks", display="hide", origin="dashboard",
     )
-    if row is None:
-        row = KioskQuickHide(
-            id=uuid.uuid4(), tenant_id=tenant_id, shop_id=shop_id, kind=kind, item_id=ident,
-            item_name=getattr(item, "name", None), created_by_user_id=getattr(user, "id", None),
-            created_by_name=(who or None) and who[:200], created_at=now,
-        )
-        db.add(row)
-    row.until = until
-    row.note = (note or "").strip()[:200] or None
-    row.updated_at = now
-    db.flush()
-    return row
 
 
-def show(db: Session, row: KioskQuickHide, *, user: Any = None, now: Optional[datetime] = None) -> KioskQuickHide:
-    now = now or utc_now()
-    if row.cleared_at is None:
-        who = getattr(user, "username", None) or getattr(user, "email", None)
-        row.cleared_at = now
-        row.cleared_by_name = (who or None) and who[:200]
-        row.updated_at = now
-        db.flush()
-    return row
+def show(db: Session, row: SoldOutMark, *, user: Any = None, now: Optional[datetime] = None) -> SoldOutMark:
+    """"הצג שוב": the block removed (the caller commits)."""
+    from app.services import sold_out
+
+    return sold_out.clear(db, row, user=user, now=now)
 
 
 # ── What the kiosks get ──────────────────────────────────────────────────────
@@ -187,21 +181,22 @@ def show(db: Session, row: KioskQuickHide, *, user: Any = None, now: Optional[da
 
 def overlay(db: Session, machine: Any, cfg: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, Any]:
     """The effective config with the shop's quick hides and the kiosk's banner in (a new dict)."""
+    from app.services import sold_out
+
     now = now or utc_now()
-    shop_id = getattr(machine, "shop_id", None)
     try:
-        hides = active_hides(db, [shop_id], now) if shop_id is not None else []
+        hidden_products, hidden_categories = sold_out.kiosk_hidden(db, machine, now)
         device = db.get(KioskDevice, machine.id) if getattr(machine, "id", None) is not None else None
     except Exception:  # noqa: BLE001 - a missing table (an older test world) changes nothing
         return cfg
     banner = device is not None and banner_active(device, now)
+    hides = hidden_products or hidden_categories
     if not hides and not banner:
         return cfg
     out = dict(cfg)
     if hides:
         catalog = dict(out.get("catalog") or {})
-        for kind, key in (("product", "hiddenProducts"), ("category", "hiddenCategories")):
-            extra = [str(h.item_id) for h in hides if h.kind == kind]
+        for extra, key in ((hidden_products, "hiddenProducts"), (hidden_categories, "hiddenCategories")):
             if extra:
                 have = list(catalog.get(key) or [])
                 catalog[key] = have + [i for i in extra if i not in have]

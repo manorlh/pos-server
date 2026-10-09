@@ -193,6 +193,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
                    scope="catalog:write"),
+    # specs/item-blocks-targets.md: from the till (a long press, the catalog, "חסומים כעת"), a kiosk's
+    # staff screen and a controlling till's kiosk panel. The cloud checks the approver named by the
+    # device against this (app/routers/item_blocks.py) — no elevation scope.
+    PermissionSpec("ITEM_BLOCK", "חסימת פריט / אזל", "admin",
+                   "חסימה או סימון \"אזל\" של פריט או מחלקה — לקופות, לקיוסקים או לשניהם, בסניף, "
+                   "בנקודת המכירה או במכשיר — וביטול חסימה, מהקופה ומהקיוסק."),
     PermissionSpec("ATTENDANCE_MANAGE", "נוכחות — אישור מנהל", "admin",
                    "יציאה ממשמרת עם שולחנות פתוחים / סיום משמרת שדורש אישור מנהל.",
                    scope="attendance:manage"),
@@ -271,6 +277,7 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
+    "ITEM_BLOCK",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -330,6 +337,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.VIEW_LOG":              (D, D, A, A),
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
+    # "חסימת פריט / אזל": the shift supervisor and the manager alone; a cashier on a manager's code.
+    "ITEM_BLOCK":                        (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
     "USER_SESSION_RELEASE":              (P, P, A, A),
     "CARD_UNRESOLVED":                   (P, P, A, A),

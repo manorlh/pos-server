@@ -4,8 +4,10 @@
  * "שליטה מרחוק בקיוסקים" (pos-server app/routers/kiosk_live.py, kiosks.py): each kiosk's live state
  * — online, flow, paused, its banner, today's orders — with pause / resume (a message and an end),
  * a banner on the screen without pausing, and quick hides of a product or a category on the shop's
- * kiosks ("הגריל סגור") until a time. `KioskControlPanel` is the body (the kiosks page's tab);
- * `KioskControlSheet` the same in a sheet.
+ * kiosks ("הגריל סגור") until a time. A quick hide is a block — the shop, "קיוסקים בלבד", "הסתר"
+ * (specs/item-blocks-targets.md §7) — and "מוסתר עכשיו" lists every hand block in force that reaches
+ * the shop's kiosks, with its kind, level, target and look. `KioskControlPanel` is the body (the
+ * kiosks page's tab); `KioskControlSheet` the same in a sheet.
  *
  * Pause / resume are fire-and-forget ("פקודות שנשלחו", lib/deviceCommandsStore.ts): the pause
  * dialog closes at once, the answer is followed in the background (the tray, the kiosk row's
@@ -15,7 +17,7 @@
 import { useState } from 'react';
 import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { EyeOff, Loader2, Megaphone, Pause, Play, Wifi, WifiOff, X } from 'lucide-react';
+import { Ban, EyeOff, Loader2, Megaphone, PackageX, Pause, Play, Wifi, WifiOff, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +30,20 @@ import { phaseOfKiosk } from '@/lib/deviceCommands';
 import { trackCommand } from '@/lib/deviceCommandsStore';
 import type { KioskCommandOut } from '@/lib/kioskApi';
 import { cn } from '@/lib/utils';
-import { EXTEND_BY, durationValid, formatLeft, formatUntil, parseHhmm, secondsLeft, type DurationChoice } from '@/lib/liveControl';
+import {
+  EXTEND_BY,
+  KIOSK_LOOK_BADGES,
+  TARGET_LABELS,
+  durationValid,
+  formatLeft,
+  formatUntil,
+  kindLabel,
+  levelLabel,
+  parseHhmm,
+  secondsLeft,
+  targetOf,
+  type DurationChoice,
+} from '@/lib/liveControl';
 import {
   clearKioskBanner,
   clearKioskHide,
@@ -197,6 +212,8 @@ function HideDialog({ shopId, context, onClose }: { shopId: string; context?: Li
       const until = formatUntil(h.until, Date.now());
       toast.success(`${h.itemName ?? ''} מוסתר בקיוסקים${until ? ` עד ${until}` : ''}`);
       qc.invalidateQueries({ queryKey: ['kiosks'] });
+      // A hide is a block ("קיוסקים בלבד" + "הסתר"): "חסומים כעת" shows it too.
+      qc.invalidateQueries({ queryKey: ['item-blocks'] });
       onClose();
     },
     onError: (e) => toast.error(axiosErrorToToastMessage(e, 'ההסתרה נכשלה')),
@@ -221,6 +238,7 @@ function HideDialog({ shopId, context, onClose }: { shopId: string; context?: Li
             ))}
           </div>
           <ItemPicker kind={kind} value={item} onChange={setItem} shopId={shopId} />
+          <p className="text-xs text-muted-foreground">נשמר כחסימה של כל קיוסקי הסניף (קיוסקים בלבד, &quot;הסתר&quot;) — הקופות ממשיכות למכור.</p>
           <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="הערה (לא חובה) — הגריל סגור" className="h-11" />
           <Label>לכמה זמן</Label>
           <DurationPicker value={duration} onChange={setDuration} shopId={shopId} verb="מוסתר עד" />
@@ -239,7 +257,11 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
   const now = useTick(15_000);
   const live = useKioskLive(scope);
   const [dialog, setDialog] = useState<Dialogs>(null);
-  const refresh = () => qc.invalidateQueries({ queryKey: ['kiosks'] });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['kiosks'] });
+    // The hides are blocks: "חסומים כעת" moves with them.
+    qc.invalidateQueries({ queryKey: ['item-blocks'] });
+  };
   const command = useKioskLiveCommand(() => void refresh());
   const dropBanner = useMutation({
     mutationFn: (k: KioskLiveRow) => clearKioskBanner(k.machineId),
@@ -337,21 +359,41 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
           </select>
         ) : null}
         {!shopId ? <p className="text-sm text-muted-foreground">בחרו סניף כדי להסתיר בקיוסקים שלו.</p> : null}
+        <p className="text-xs text-muted-foreground">
+          כל חסימה בתוקף שמגיעה לקיוסקים של הסניף. &quot;הסתר מוצר / מחלקה&quot; כאן = חסימה של קיוסקים בלבד עם &quot;הסתר&quot;.
+        </p>
         {(live.data?.hides ?? []).length === 0 ? (
           <p className="rounded-xl border border-dashed p-3 text-center text-sm text-muted-foreground">אין הסתרות פעילות</p>
         ) : (
           <ul className="space-y-2">
             {(live.data?.hides ?? []).map((h) => {
               const left = formatLeft(secondsLeft(h.until, now));
+              // A block of any level / target that reaches the kiosks: say which, when the server sends it.
+              const reach = h.scope ? targetOf({ scope: h.scope, target: h.target }) : null;
+              const where = h.scope ? levelLabel({ scope: h.scope, scopeName: h.scopeName ?? null, level: h.level }) : null;
               return (
                 <li key={h.id} className="rounded-xl border bg-card p-3">
                   <div className="flex items-center gap-2">
-                    <EyeOff className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    {h.kioskDisplay === 'hide' || !h.blockKind ? (
+                      <EyeOff className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    ) : h.blockKind === 'blocked' ? (
+                      <Ban className="size-4 shrink-0 text-destructive" aria-hidden />
+                    ) : (
+                      <PackageX className="size-4 shrink-0 text-amber-600" aria-hidden />
+                    )}
                     <span className="min-w-0 flex-1 truncate font-medium">
-                      {h.kind === 'category' ? 'מחלקה · ' : ''}{h.itemName}
+                      {h.kind === 'category' ? `מחלקה · ${h.itemName ?? ''}` : h.itemName}
                     </span>
-                    <span className="shrink-0 text-sm">{h.until ? `עד ${formatUntil(h.until, now)}` : 'עד שאציג'}{left ? ` · ${left}` : ''}</span>
+                    <span className="shrink-0 text-sm">{h.until ? `עד ${formatUntil(h.until, now)}` : 'עד ביטול'}{left ? ` · ${left}` : ''}</span>
                   </div>
+                  {h.blockKind || where || reach ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                      {h.blockKind ? <Badge variant={h.blockKind === 'blocked' ? 'destructive' : 'secondary'}>{kindLabel(h.blockKind)}</Badge> : null}
+                      {reach ? <Badge variant="outline">{TARGET_LABELS[reach]}</Badge> : null}
+                      {h.kioskDisplay ? <Badge variant="outline">{KIOSK_LOOK_BADGES[h.kioskDisplay]}</Badge> : null}
+                      {where ? <span className="text-muted-foreground">{where}</span> : null}
+                    </div>
+                  ) : null}
                   {h.note ? <p className="text-sm text-muted-foreground">“{h.note}”</p> : null}
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {h.until ? EXTEND_BY.map((m) => (

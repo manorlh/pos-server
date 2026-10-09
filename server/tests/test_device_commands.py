@@ -24,7 +24,7 @@ from fastapi import HTTPException
 from app.database import Base
 from app.models.device_command import DeviceCommand
 from app.models.kiosk import KioskDevice
-from app.models.kiosk_live import KioskQuickHide
+from app.models.sold_out import SoldOutMark
 from app.routers import device_commands as R
 from app.services import device_commands as svc
 from app.services import kiosk_config as cfgsvc
@@ -37,7 +37,7 @@ from test_product_availability import world  # noqa: F401
 def d(world, monkeypatch):  # noqa: F811
     db = world.db
     for name in ("device_commands", "device_remote_states", "kiosk_devices", "kiosk_settings", "kiosk_quick_hides",
-                 "machine_groups", "machine_group_members"):
+                 "machine_groups", "machine_group_members", "sold_out_marks", "report_events", "report_event_machines"):
         if not db.get_bind().dialect.has_table(db.connection(), name):
             Base.metadata.tables[name].create(db.get_bind())
     world.woken = []
@@ -287,7 +287,8 @@ class TestKioskLive:
         during = cfgsvc.effective_config(k.db, k.h2)
         assert str(k.P.category_id) in during["catalog"]["hiddenCategories"]
         assert cfgsvc.config_version(during) != before
-        k.db.query(KioskQuickHide).update({KioskQuickHide.until: datetime.now(timezone.utc) - timedelta(seconds=1)})
+        # A quick hide is a block now (specs/item-blocks-targets.md): its end is the block's.
+        k.db.query(SoldOutMark).update({SoldOutMark.until: datetime.now(timezone.utc) - timedelta(seconds=1)})
         k.db.commit()
         assert cfgsvc.config_version(cfgsvc.effective_config(k.db, k.h2)) == before
 

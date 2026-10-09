@@ -193,8 +193,20 @@ def quick_view(
         db, tenant_id=tenant_id, shop_ids=[s.id for s in shops], company_ids=[s.company_id for s in shops if s.company_id],
     ) if sold_out.tables_ready(db) else []
     blocks_by_product: Dict[str, List[Dict[str, Any]]] = {}
+    category_blocks: List[Dict[str, Any]] = []
     for b in blocks:
-        blocks_by_product.setdefault(b["productId"], []).append(b)
+        if b.get("itemType") == "category":
+            category_blocks.append(b)
+        else:
+            blocks_by_product.setdefault(b["productId"], []).append(b)
+    if category_blocks:
+        # A category's block covers every product in it or below it (app/services/sold_out.py).
+        chains = sold_out.product_category_chains(db, [p.id for p in products])
+        for p in products:
+            chain = chains.get(str(p.id), [])
+            hit = [b for b in category_blocks if b["categoryId"] in chain]
+            if hit:
+                blocks_by_product.setdefault(str(p.id), []).extend(hit)
     setting_on = sold_out.auto_setting_on(db, path.shop_id) if path.shop_id else True
 
     rows = []
@@ -241,8 +253,9 @@ def quick_view(
             )
             sell = L.sell_from(path, managed_here) if path.node_level == "machine" else (target if target_out else None)
             sell_row = by_key.get((sell.level, str(sell.target_id), p.id)) if sell is not None else None
+            # What a till here sees: the kiosks-only blocks (and the older kiosk scopes) never reach it.
             decision = rules.decide(
-                [b for b in p_blocks if b["scope"] not in ("kiosk", "kiosks")], now, till=till,
+                [b for b in p_blocks if b["scope"] not in ("kiosk", "kiosks") and b.get("target") != "kiosks"], now, till=till,
                 setting=None if setting_on else False, track_stock=True,
                 stock=float(sell_row.quantity) if sell_row is not None else 0.0,
             )

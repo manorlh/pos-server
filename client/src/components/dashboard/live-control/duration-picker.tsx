@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * "לכמה זמן": presets (15 דק׳ … 4 שעות), "עד סוף היום", custom minutes, "עד שעה", "עד שאבטל" —
+ * "לכמה זמן": presets (15 דק׳ … 4 שעות), "עד סוף היום", custom minutes, "עד שעה", "עד ביטול" —
  * and the end the server computes in the shop's zone ("חסום עד 14:35"), with a clear warning
  * when a passed "עד שעה" rolled to tomorrow.
  */
@@ -92,10 +92,10 @@ export function DurationPicker({
           דקות
         </button>
         <button type="button" className={chip(pick.kind === 'time')} onClick={() => emit({ kind: 'time' }, minutesText, timeText)}>
-          עד שעה
+          עד שעה…
         </button>
         <button type="button" className={chip(pick.kind === 'none')} onClick={() => emit({ kind: 'none' }, minutesText, timeText)}>
-          עד שאבטל
+          עד ביטול
         </button>
       </div>
       {pick.kind === 'custom' ? (
@@ -122,7 +122,7 @@ export function DurationPicker({
       <p className="flex items-center gap-1.5 text-sm text-muted-foreground" aria-live="polite">
         <Clock className="size-4" aria-hidden />
         {value.mode === 'none'
-          ? 'עד שאבטל'
+          ? 'עד ביטול'
           : !ready
             ? 'בחרו משך'
             : preview.data?.until

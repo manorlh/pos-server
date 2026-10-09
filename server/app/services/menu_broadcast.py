@@ -750,6 +750,7 @@ def _products_for_till(
         row["lockAvailable"] = bool(listed and resolved.available)
         row["isAvailable"] = row["lockAvailable"] and not sold_out.manual_in_force(active_blocks)
         row["blocks"] = [sold_out.block_out(b) for b in active_blocks]
+        row["kioskDisplay"] = sold_out.kiosk_display(active_blocks)
         # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
         row["availabilityLock"] = availability.lock_info(
             levels,

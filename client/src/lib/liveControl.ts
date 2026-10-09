@@ -8,6 +8,14 @@
 
 export type BlockScope = 'company' | 'shop' | 'kiosks' | 'area' | 'group' | 'event' | 'machine' | 'kiosk';
 export type BlockKind = 'sold_out' | 'blocked';
+/** Whom at the level: "קופות וקיוסקים" (the default) · "קיוסקים בלבד" · "קופות בלבד" (specs/item-blocks-targets.md §2). */
+export type BlockTarget = 'all' | 'kiosks' | 'tills';
+/** The kiosks' look for one block; null = the kiosk's own `general.soldOutMode`. */
+export type KioskDisplay = 'hide' | 'grey';
+/** The level a block is at (the older scopes `kiosks` / `kiosk` read as shop / machine). */
+export type BlockLevel = 'company' | 'shop' | 'area' | 'group' | 'event' | 'machine';
+/** Where it was set from. */
+export type BlockOrigin = 'dashboard' | 'till' | 'kiosk' | 'controller' | 'kiosk_hide' | 'stock';
 
 export interface ItemBlock {
   id: string;
@@ -20,7 +28,8 @@ export interface ItemBlock {
   createdAt: string | null;
   by: string | null;
   note: string | null;
-  productId: string;
+  /** Null for a block of a whole category. */
+  productId: string | null;
   productName: string | null;
   imageUrl?: string | null;
   shopId: string | null;
@@ -28,6 +37,16 @@ export interface ItemBlock {
   scopeName: string | null;
   secondsLeft: number | null;
   inForce: boolean;
+  target?: BlockTarget;
+  level?: BlockLevel;
+  itemType?: 'product' | 'category';
+  /** The product's name, or the category's. */
+  itemName?: string | null;
+  /** A category block: the category; a product block: the product's category. */
+  categoryId?: string | null;
+  categoryName?: string | null;
+  kioskDisplay?: KioskDisplay | null;
+  origin?: BlockOrigin | null;
 }
 
 export type DurationMode = 'none' | 'minutes' | 'time' | 'end_of_day';
@@ -39,7 +58,10 @@ export interface DurationChoice {
   at?: string;
 }
 
-/** The quick presets: 15 דק׳, 30 דק׳, שעה, שעתיים, 4 שעות. */
+/**
+ * The quick presets: 15 דק׳, 30 דק׳, שעה, שעתיים, 4 שעות — next to "עד שעה…", "עד סוף היום" and
+ * "עד ביטול" in the duration picker.
+ */
 export const DURATION_PRESETS = [15, 30, 60, 120, 240] as const;
 /** "הארך". */
 export const EXTEND_BY = [15, 30, 60] as const;
@@ -82,7 +104,7 @@ export function secondsLeft(until: string | null | undefined, nowMs: number): nu
   return Math.floor((end - nowMs) / 1000);
 }
 
-/** "עוד 47 דק׳", "עוד 2 ש׳ 5 דק׳", "עוד פחות מדקה", "הסתיים"; null with no end ("עד שאבטל"). */
+/** "עוד 47 דק׳", "עוד 2 ש׳ 5 דק׳", "עוד פחות מדקה", "הסתיים"; null with no end ("עד ביטול"). */
 export function formatLeft(seconds: number | null): string | null {
   if (seconds == null) return null;
   if (seconds <= 0) return 'הסתיים';
@@ -132,12 +154,95 @@ export function kindLabel(kind: BlockKind): string {
   return kind === 'blocked' ? 'חסום' : 'אזל';
 }
 
-/** One line about a block: "אזל · נקודת מכירה · בר · עד 14:35 (עוד 47 דק׳)". */
-export function blockSummary(b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'>, nowMs: number, timeZone?: string): string {
-  const parts = [kindLabel(b.kind), scopeLabel(b.scope, b.scopeName)];
+export const LEVEL_LABELS: Record<BlockLevel, string> = {
+  company: 'חברה',
+  shop: 'סניף',
+  area: 'נקודת מכירה',
+  group: 'קבוצת מכשירים',
+  event: 'אירוע',
+  machine: 'מכשיר',
+};
+
+export const TARGET_LABELS: Record<BlockTarget, string> = {
+  all: 'קופות וקיוסקים',
+  kiosks: 'קיוסקים בלבד',
+  tills: 'קופות בלבד',
+};
+
+/** "תצוגה בקיוסק" — the key `null` is the kiosk's own setting. */
+export const KIOSK_DISPLAY_LABELS: Record<'null' | KioskDisplay, string> = {
+  null: 'לפי הגדרת הקיוסק',
+  hide: 'הסתר',
+  grey: 'הצג כאזל',
+};
+
+/** The row's badge for a block's own kiosk look. */
+export const KIOSK_LOOK_BADGES: Record<KioskDisplay, string> = {
+  hide: 'מוסתר בקיוסק',
+  grey: 'באפור בקיוסק',
+};
+
+export const ORIGIN_LABELS: Record<BlockOrigin, string> = {
+  dashboard: 'דשבורד',
+  till: 'קופה',
+  kiosk: 'קיוסק',
+  controller: 'קופה שולטת',
+  kiosk_hide: 'מוסתר בקיוסקים',
+  stock: 'מלאי',
+};
+
+export function kioskDisplayLabel(d: KioskDisplay | null | undefined): string {
+  return KIOSK_DISPLAY_LABELS[d ?? 'null'];
+}
+
+export function originLabel(origin: string | null | undefined): string | null {
+  if (!origin) return null;
+  return ORIGIN_LABELS[origin as BlockOrigin] ?? origin;
+}
+
+const LEGACY_KIOSK_SCOPES: readonly BlockScope[] = ['kiosks', 'kiosk'];
+
+/** Whom the block reaches: its `target`, an older kiosks / kiosk scope (written before targets) the kiosks. */
+export function targetOf(b: Pick<ItemBlock, 'scope'> & { target?: BlockTarget | null }): BlockTarget {
+  if (LEGACY_KIOSK_SCOPES.includes(b.scope) && (!b.target || b.target === 'all')) return 'kiosks';
+  return b.target ?? 'all';
+}
+
+/** The level the block is at: its `level`, an older kiosks / kiosk scope as shop / machine. */
+export function levelOf(b: Pick<ItemBlock, 'scope'> & { level?: BlockLevel | null }): BlockLevel {
+  if (b.level) return b.level;
+  if (b.scope === 'kiosks') return 'shop';
+  if (b.scope === 'kiosk') return 'machine';
+  return b.scope;
+}
+
+/** "סניף · הרצליה", "נקודת מכירה · בר", "קיוסק · קיוסק 2" (an older kiosk scope), "מכשיר · קופה 3". */
+export function levelLabel(b: Pick<ItemBlock, 'scope' | 'scopeName'> & { level?: BlockLevel | null }): string {
+  const base = b.scope === 'kiosk' ? 'קיוסק' : LEVEL_LABELS[levelOf(b)] ?? b.scope;
+  return b.scopeName ? `${base} · ${b.scopeName}` : base;
+}
+
+/** The product's name, or "מחלקה · שתייה" for a block of a whole category. */
+export function itemLabel(
+  b: Pick<ItemBlock, 'productId' | 'productName'> & { itemType?: 'product' | 'category'; itemName?: string | null; categoryName?: string | null },
+): string {
+  const isCategory = b.itemType === 'category' || (b.itemType == null && !b.productId);
+  if (isCategory) return `מחלקה · ${b.itemName ?? b.categoryName ?? ''}`.trim();
+  return b.itemName ?? b.productName ?? '';
+}
+
+/** One line about a block: "אזל · נקודת מכירה · בר · קיוסקים בלבד · עד 14:35 (עוד 47 דק׳)" (the target only when not all). */
+export function blockSummary(
+  b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'> & { target?: BlockTarget | null; level?: BlockLevel | null },
+  nowMs: number,
+  timeZone?: string,
+): string {
+  const parts = [kindLabel(b.kind), levelLabel(b)];
+  const target = targetOf(b);
+  if (target !== 'all') parts.push(TARGET_LABELS[target]);
   const until = formatUntil(b.until, nowMs, timeZone);
   const left = formatLeft(secondsLeft(b.until, nowMs));
-  parts.push(until ? `עד ${until}${left ? ` (${left})` : ''}` : 'עד שאבטל');
+  parts.push(until ? `עד ${until}${left ? ` (${left})` : ''}` : 'עד ביטול');
   return parts.join(' · ');
 }
 
@@ -253,7 +358,7 @@ export function liveItemsFrom(blocks: ItemBlock[], devices: DeviceRow[], nowMs: 
     out.push({
       id: `block:${b.id}`,
       severity: b.kind === 'blocked' ? 'warning' : 'info',
-      title: `${kindLabel(b.kind)} · ${b.productName ?? ''}`.trim(),
+      title: `${kindLabel(b.kind)} · ${itemLabel(b)}`.trim(),
       body: blockSummary(b, nowMs),
       actions: [
         ...(b.until ? EXTEND_BY.map((m) => ({ labelKey: `liveControl.extend${m}`, actionId: 'block.extend', context: { blockId: b.id, minutes: m } })) : []),

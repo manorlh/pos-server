@@ -63,7 +63,7 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX } from 'lucide-react';
 // "חסום / אזל" on a product (components/dashboard/live-control).
-import { BlockItemSheet } from '@/components/dashboard/live-control';
+import { BlockItemSheet, ProductBlocksSection } from '@/components/dashboard/live-control';
 import { useScope } from '@/lib/scope';
 import { useAuth } from '@/lib/auth';
 import { ProductPrintersSection } from '@/components/dashboard/kitchen-printers/product-printers-section';
@@ -901,6 +901,13 @@ export default function ProductsPage() {
             ) : null}
             {isGlobal && !isNew && editing.id ? (
               <ProductAvailabilitySection productId={editing.id} />
+            ) : null}
+            {/* "חסימות": the product's blocks in force and "חסום / אזל" (the page's scope, like the row's). */}
+            {!isNew && editing.id ? (
+              <ProductBlocksSection
+                productId={editing.id}
+                scope={{ companyId: scopeSel.companyId ?? null, shopId: scopeSel.shopId ?? null }}
+              />
             ) : null}
             {/* "הודעות לעובד" and "פריטים נלווים": fields of the product, saved with the form. */}
             <ProductAlertsSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
