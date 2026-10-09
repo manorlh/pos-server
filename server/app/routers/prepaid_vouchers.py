@@ -545,10 +545,22 @@ def add_prepaid_vouchers(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
-    batch = PV.add_vouchers(db, current_user, active_tenant_id, batch_id, body.count, body.group_size)
-    db.commit()
-    return PV.batch_out(db, batch, user=current_user)
+    """
+    More vouchers (the next serials) in one transaction, the answer built before the commit.
+    `Idempotency-Key`: a retry adds them once (200 + `Idempotent-Replayed` with the batch as it is
+    now); the same key with another body or batch → 422 (app/services/prepaid_batch_create.py).
+    """
+    from app.services import command_idempotency as idem
+    from app.services import prepaid_batch_create as PBC
+
+    out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=idempotency_key)
+    if replayed and response is not None:
+        response.status_code = status.HTTP_200_OK
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return out
 
 
 @router.post("/prepaid-vouchers/batches/{batch_id}/cancel")

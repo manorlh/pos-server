@@ -622,10 +622,22 @@ export async function previewPrepaidBatchEdit(id: string, body: PrepaidBatchEdit
 }
 
 /** More vouchers; a grouped batch issues them in new groups (of [groupSize], else its own size). */
-export async function addPrepaidVouchers(id: string, count: number, groupSize?: number | null): Promise<PrepaidVoucherBatch> {
+/**
+ * More vouchers for a batch. `idempotencyKey` (one per submission, lib/prepaidBatchSubmit.ts): a
+ * retry with the same key adds them once (200 with the batch); `timeoutMs` as in createPrepaidBatch.
+ */
+export async function addPrepaidVouchers(
+  id: string,
+  count: number,
+  groupSize?: number | null,
+  opts: { idempotencyKey?: string; timeoutMs?: number } = {},
+): Promise<PrepaidVoucherBatch> {
   const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, {
     count,
     ...(groupSize ? { groupSize } : {}),
+  }, {
+    headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    timeout: opts.timeoutMs,
   });
   return data;
 }

@@ -56,6 +56,7 @@ import {
 import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepaidVoucherGroups';
 import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
 import {
+  addRequest,
   ATTEMPT_TIMEOUT_MS,
   batchKeys,
   duplicateOf,
@@ -1204,9 +1205,27 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
     onSuccess: (v) => { toast.success(t('voucherCancelled', { serial: v.serial })); refresh(); },
     onError: (err) => toast.error(errorText(err)),
   });
+  // "הוסף שוברים" exactly once (lib/prepaidBatchSubmit.ts): one Idempotency-Key per submission, a
+  // lost answer re-checked ("בודק אם השוברים נוספו…") and "נסה שוב" with the same key.
+  const [addKeys] = useState(() => batchKeys(sessionStore()));
+  const [addPhase, setAddPhase] = useState<SubmitPhase>('idle');
+  const [addLost, setAddLost] = useState(false);
   const addMore = useMutation({
-    mutationFn: () => addPrepaidVouchers(batch.id, parseInt(addCount, 10)),
-    onSuccess: (b) => { toast.success(t('added', { total: b.stats.total })); refresh(); },
+    mutationFn: async () => {
+      const count = parseInt(addCount, 10);
+      setAddLost(false);
+      const res = await submitWithKey(
+        addKeys, addRequest(batch.id, count),
+        (key) => addPrepaidVouchers(batch.id, count, null, { idempotencyKey: key, timeoutMs: ATTEMPT_TIMEOUT_MS }),
+        { onPhase: setAddPhase },
+      );
+      if (!res.ok) {
+        setAddLost(res.retryable);
+        throw res.error;
+      }
+      return res.value;
+    },
+    onSuccess: (b) => { setAddLost(false); toast.success(t('added', { total: b.stats.total })); refresh(); },
     onError: (err) => toast.error(errorText(err)),
   });
 
@@ -1511,8 +1530,12 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             <Input id="pv-add" type="number" min={1} max={5000} className="h-9 w-28" value={addCount} onChange={(e) => setAddCount(e.target.value)} />
           </div>
           <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)} onClick={() => addMore.mutate()}>
-            <Plus className="h-4 w-4" /> {t('add')}
+            {addMore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{' '}
+            {addMore.isPending && addPhase === 'checking' ? t('addChecking') : addLost && !addMore.isPending ? t('addRetry') : t('add')}
           </Button>
+          {addLost && !addMore.isPending ? (
+            <span role="status" aria-live="polite" className="basis-full text-xs text-amber-800 dark:text-amber-200">{t('addLostAnswer')}</span>
+          ) : null}
           {batch.groupSize ? (
             <span className="text-xs text-muted-foreground">{t('production.addHint', { size: batch.groupSize })}</span>
           ) : null}

@@ -17,7 +17,8 @@ is rolled back, and it answers with the winner's response.
 Kinds: `device_command` (POST /device-commands), `card_command`
 (POST /failed-payments/{id}/card-commands — the money rules of app/services/card_attempt_commands.py
 untouched), `till_message` (POST /till-messages), `printer_test` (POST /printers/{id}/test),
-`prepaid_batch_create` (POST /prepaid-vouchers/batches — app/services/prepaid_batch_create.py).
+`prepaid_batch_create` (POST /prepaid-vouchers/batches) and `prepaid_batch_add`
+(POST /prepaid-vouchers/batches/{id}/vouchers) — app/services/prepaid_batch_create.py.
 A kiosk command (POST /kiosks/{m}/commands) needs none: pause / resume set a state, and its close
 and Z reuse the till's pending request.
 
@@ -54,7 +55,9 @@ REPLAY_HEADER = "Idempotent-Replayed"
 #: A key answers its retries this long; older rows are pruned on the way.
 KEEP_FOR = timedelta(hours=24)
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,100}$")
-KINDS = ("device_command", "card_command", "till_message", "printer_test", "prepaid_batch_create")
+KINDS = (
+    "device_command", "card_command", "till_message", "printer_test", "prepaid_batch_create", "prepaid_batch_add",
+)
 
 
 def _now(now: Optional[datetime] = None) -> datetime:

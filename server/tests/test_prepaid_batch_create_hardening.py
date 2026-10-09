@@ -14,6 +14,9 @@ What each test pins:
   first one's key, answers with `possibleDuplicate`; not for another count / customer / user, a
   cancelled one, or one older than the window. The dashboard cancels it with the existing cancel
   and its reason.
+* **"הוסף שוברים"** — the same for more vouchers on an existing batch (kind `prepaid_batch_add`):
+  a retry with the same key adds once (same serials and codes), another body or batch with the
+  same key → 422, a forced failure adds nothing (no vouchers, no serials, no key).
 * **Performance** — the statements of a creation do not grow with the count (bulk insert, one
   batched uniqueness check), and 500 vouchers take well under the 2 s budget.
 
@@ -38,7 +41,7 @@ from app.models.prepaid_voucher import (
 )
 from app.models.user import User, UserRole
 from app.routers import prepaid_vouchers as R
-from app.schemas.prepaid_voucher import PrepaidVoucherBatchCreate, PrepaidVoucherCancelIn
+from app.schemas.prepaid_voucher import PrepaidVoucherAddIn, PrepaidVoucherBatchCreate, PrepaidVoucherCancelIn
 from app.services import command_idempotency as idem
 from app.services import prepaid_batch_create as PBC
 from app.services import prepaid_vouchers as PV
@@ -350,3 +353,100 @@ def test_statements_do_not_grow_with_the_count(w):
     assert large <= small + 3, (small, large)
     assert large < 60, large
     assert elapsed < 2.0, elapsed
+
+
+# ── "הוסף שוברים": more vouchers on an existing batch, exactly once ──────────────
+
+
+def _add(w, batch_id, body, *, key=None, user=None):
+    response = Response()
+    response.status_code = None
+    out = R.add_prepaid_vouchers(
+        str(batch_id), body, current_user=user or w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        response=response, idempotency_key=key,
+    )
+    return out, response
+
+
+def _keys_of(w, kind):
+    return w.db.query(CommandRequestKey).filter(CommandRequestKey.kind == kind).count()
+
+
+def test_a_retried_add_adds_once_with_the_same_serials_and_codes(w):
+    batch, _ = _create(w, _body(w, count=10, group_size=5))
+    first, r1 = _add(w, batch["id"], PrepaidVoucherAddIn(count=6), key="batch-add-retry-0001")
+    assert r1.status_code is None and first["stats"]["total"] == 16  # 201
+    codes = _codes(w, batch["id"])
+    again, r2 = _add(w, batch["id"], PrepaidVoucherAddIn(count=6), key="batch-add-retry-0001")
+    assert r2.status_code == 200 and r2.headers.get(idem.REPLAY_HEADER) == "true"
+    assert again["id"] == batch["id"] and again["stats"]["total"] == 16
+    assert _codes(w, batch["id"]) == codes
+    assert [s for s, _, _ in codes] == list(range(1, 17))
+    row = w.db.get(PrepaidVoucherBatch, uuid.UUID(batch["id"]))
+    assert row.next_serial == 17
+    adds = w.db.query(PrepaidVoucherEvent).filter(PrepaidVoucherEvent.action == "add").count()
+    assert adds == 1
+
+
+def test_a_retry_racing_the_first_add_adds_once(w, monkeypatch):
+    batch, _ = _create(w, _body(w, count=3))
+    _add(w, batch["id"], PrepaidVoucherAddIn(count=4), key="batch-add-race-00001")
+    real_find = idem.find
+    seen = {"n": 0}
+
+    def late_find(*a, **k):
+        seen["n"] += 1
+        return None if seen["n"] == 1 else real_find(*a, **k)
+
+    monkeypatch.setattr(idem, "find", late_find)
+    again, resp = _add(w, batch["id"], PrepaidVoucherAddIn(count=4), key="batch-add-race-00001")
+    assert resp.status_code == 200 and again["stats"]["total"] == 7
+    assert w.db.query(PrepaidVoucher).count() == 7
+
+
+def test_the_same_add_key_with_another_body_or_batch_is_refused(w):
+    batch, _ = _create(w, _body(w, count=3))
+    other, _ = _create(w, _body(w, count=3, name="אצווה שנייה"))
+    _add(w, batch["id"], PrepaidVoucherAddIn(count=5), key="batch-add-reuse-0001")
+    for target, body in ((batch["id"], PrepaidVoucherAddIn(count=6)),
+                         (batch["id"], PrepaidVoucherAddIn(count=5, groupSize=5)),
+                         (other["id"], PrepaidVoucherAddIn(count=5))):
+        with pytest.raises(HTTPException) as e:
+            _add(w, target, body, key="batch-add-reuse-0001")
+        assert e.value.status_code == 422 and e.value.detail["code"] == "idempotency_key_reused"
+    assert w.db.query(PrepaidVoucher).count() == 3 + 3 + 5
+
+
+@pytest.mark.parametrize("key", [None, "batch-add-fail-00001"])
+@pytest.mark.parametrize("stage", ["event", "answer"])
+def test_a_failed_add_adds_nothing(w, monkeypatch, key, stage):
+    batch, _ = _create(w, _body(w, count=4, group_size=2))
+    before = _codes(w, batch["id"])
+
+    def boom(*_a, **_k):
+        raise RuntimeError(f"forced failure ({stage})")
+
+    monkeypatch.setattr(PV, "_event" if stage == "event" else "batch_out", boom)
+    with pytest.raises(RuntimeError):
+        _add(w, batch["id"], PrepaidVoucherAddIn(count=6), key=key)
+    monkeypatch.undo()
+    assert _codes(w, batch["id"]) == before
+    row = w.db.get(PrepaidVoucherBatch, uuid.UUID(batch["id"]))
+    assert row.next_serial == 5
+    assert w.db.query(PrepaidVoucherEvent).filter(PrepaidVoucherEvent.action == "add").count() == 0
+    assert _keys_of(w, PBC.ADD_KIND) == 0
+    # The same key after the failure adds them, once.
+    out, _ = _add(w, batch["id"], PrepaidVoucherAddIn(count=6), key=key)
+    assert out["stats"]["total"] == 10
+
+
+def test_another_add_key_adds_again_and_the_endpoint_reads_the_header(w):
+    batch, _ = _create(w, _body(w, count=2))
+    _add(w, batch["id"], PrepaidVoucherAddIn(count=2), key="batch-add-one-000001")
+    out, _ = _add(w, batch["id"], PrepaidVoucherAddIn(count=2), key="batch-add-two-000001")
+    assert out["stats"]["total"] == 6  # two deliberate adds are two adds
+    assert "prepaid_batch_add" in idem.KINDS
+    app = FastAPI()
+    app.include_router(R.router)
+    op = app.openapi()["paths"]["/prepaid-vouchers/batches/{batch_id}/vouchers"]["post"]
+    assert "Idempotency-Key" in {p["name"] for p in op.get("parameters", []) if p["in"] == "header"}

@@ -14,12 +14,17 @@
  * - a refusal (a 4xx: the form is wrong) is shown as it is and not retried;
  * - `idempotency_key_reused` (the key belongs to another request): a fresh key, sent once.
  *
+ * "הוסף שוברים" (more vouchers on an existing batch) goes the same way: `addRequest` is what its
+ * key is kept for, and "בודק אם השוברים נוספו…" is said while it re-checks.
+ *
  * Pure (no React, no axios): the dialog in app/dashboard/prepaid-vouchers/page.tsx uses it.
  */
 import { isKeyReused, newKey, retryableSendError } from './deviceCommands';
 
 /** What the dialog shows while it re-checks after a lost answer (also in messages/he.json). */
 export const CHECKING_TEXT = 'בודק אם האצווה נוצרה…';
+/** The same for "הוסף שוברים" on an existing batch (POST …/batches/{id}/vouchers). */
+export const ADD_CHECKING_TEXT = 'בודק אם השוברים נוספו…';
 export const RETRY_TEXT = 'נסה שוב';
 export const DUPLICATE_TEXT = 'נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?';
 
@@ -166,6 +171,11 @@ export async function submitWithKey<T>(
       return { ok: false, error, key, attempts, retryable };
     }
   }
+}
+
+/** What an add's key is kept for: this batch, this many (never mistaken for a new batch's form). */
+export function addRequest(batchId: string, count: number, groupSize: number | null = null) {
+  return { addTo: batchId, count, groupSize };
 }
 
 /** The earlier identical batch the server names (`possibleDuplicate`), as the dialog shows it. */

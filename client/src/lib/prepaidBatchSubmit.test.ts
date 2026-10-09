@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  ADD_CHECKING_TEXT,
+  addRequest,
   batchKeys,
   CHECKING_TEXT,
   DUPLICATE_TEXT,
@@ -160,4 +162,35 @@ test('the dialog sends the key, disables the button and says the words', () => {
   assert.match(page, /cancelPrepaidBatch\(dup\.id, dup\.cancelReason\)/);
   const he = src('messages/he.json');
   for (const words of [CHECKING_TEXT, RETRY_TEXT, DUPLICATE_TEXT]) assert.ok(he.includes(`"${words}"`), words);
+});
+
+test('"הוסף שוברים": a retry adds once (same key), a second deliberate add gets a new key', async () => {
+  const keys = batchKeys(memoryStorage(), counter());
+  const sent: string[] = [];
+  const phases: SubmitPhase[] = [];
+  const add = (key: string) => {
+    sent.push(key);
+    if (sent.length === 1) return Promise.reject(networkError());
+    return Promise.resolve({ id: 'b1', stats: { total: 60 } });
+  };
+  const first = await submitWithKey(keys, addRequest('b1', 10), add, { sleep: noWait, onPhase: (p) => phases.push(p) });
+  assert.equal(first.ok, true);
+  assert.deepEqual(sent, ['key-1', 'key-1']);
+  assert.deepEqual(phases, ['sending', 'checking', 'idle']);
+  // The add went through: the next "הוסף" of the same count is a new add, with a new key.
+  await submitWithKey(keys, addRequest('b1', 10), add, { sleep: noWait });
+  assert.equal(sent[2], 'key-2');
+  // An add is never mistaken for another batch's, nor for another count.
+  assert.notEqual(requestId(addRequest('b1', 10)), requestId(addRequest('b2', 10)));
+  assert.notEqual(requestId(addRequest('b1', 10)), requestId(addRequest('b1', 11)));
+});
+
+test('the add button sends the key and says "בודק אם השוברים נוספו…"', () => {
+  const api = src('lib/prepaidVouchersApi.ts');
+  assert.match(api, /export async function addPrepaidVouchers\([\s\S]*?'Idempotency-Key': opts\.idempotencyKey/);
+  const page = src('app/dashboard/prepaid-vouchers/page.tsx');
+  assert.match(page, /submitWithKey\(\s*addKeys, addRequest\(batch\.id, count\)/);
+  assert.match(page, /disabled=\{addMore\.isPending \|\|/);
+  const he = src('messages/he.json');
+  assert.ok(he.includes(`"addChecking": "${ADD_CHECKING_TEXT}"`));
 });

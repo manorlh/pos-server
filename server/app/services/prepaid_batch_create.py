@@ -22,6 +22,9 @@ machine that was starting), so the second click made a second batch with other c
   [DUPLICATE_WINDOW] — same company, name, customer, event, count, goods, terms and prices, not
   cancelled — answers with `possibleDuplicate` (that earlier batch), and the dashboard offers to
   cancel it ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). Never blocks.
+* **"הוסף שוברים"** (POST /prepaid-vouchers/batches/{id}/vouchers, `add`) the same way: one
+  transaction with the answer built before the commit, and an `Idempotency-Key` of kind
+  `prepaid_batch_add` (the batch id is part of the fingerprint) — a retry adds once.
 """
 from __future__ import annotations
 
@@ -142,5 +145,43 @@ def create(db: Session, user: User, tenant_id, body, key: Optional[str] = None) 
         )
     except BaseException:
         # Nothing of a failed creation survives in this session: no batch, no vouchers, no key.
+        db.rollback()
+        raise
+
+
+# ── "הוסף שוברים" — more vouchers for an existing batch, exactly once ─────────────────────────
+
+ADD_KIND = "prepaid_batch_add"
+
+
+def add_request_of(batch_id, body) -> Dict[str, Any]:
+    """The fingerprint of an add: the batch it is for, and the body (a key is never another batch's)."""
+    return {"batchId": str(PV._as_uuid(batch_id) or batch_id), **body.model_dump(mode="json", by_alias=True)}
+
+
+def add(db: Session, user: User, tenant_id, batch_id, body, key: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+    """
+    POST /prepaid-vouchers/batches/{id}/vouchers: the vouchers, their serials and groups, the audit
+    line, the key and the answer in one transaction, committed once — or nothing. A retry with the
+    same key (a lost answer) gets the batch back without adding again (replayed True); the same key
+    with another count, group size or batch → 422.
+    """
+
+    def run() -> Dict[str, Any]:
+        batch = PV.add_vouchers(db, user, tenant_id, batch_id, body.count, body.group_size)
+        return jsonable_encoder(PV.batch_out(db, batch, user=user))
+
+    def reread(first: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not first or not first.get("id"):
+            return first
+        return jsonable_encoder(PV.batch_out(db, PV.get_batch(db, user, tenant_id, first["id"]), user=user))
+
+    try:
+        return idem.once(
+            db, tenant_id=tenant_id, kind=ADD_KIND, key=key, user=user, request=add_request_of(batch_id, body),
+            run=run, refresh=reread, status_code=201, claim_first=True,
+        )
+    except BaseException:
+        # Nothing of a failed add survives in this session: no vouchers, no serials, no key.
         db.rollback()
         raise
