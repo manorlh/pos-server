@@ -247,14 +247,14 @@ class TestTillPicture:
     def test_the_till_uploads_with_the_dashboards_validation_and_storage(self, tw, monkeypatch) -> None:
         seen = {}
 
-        async def fake_store(contents, tenant_id, resource, keep_background):
-            seen.update(resource=resource, keep=keep_background, tenant=tenant_id, size=len(contents))
+        async def fake_store(contents, tenant_id, resource, keep_background, enhance=False):
+            seen.update(resource=resource, keep=keep_background, tenant=tenant_id, size=len(contents), enhance=enhance)
             return images_router.ImageUploadResponse(url="https://img/p.jpg", publicId="p1")
 
         monkeypatch.setattr(images_router, "store_upload", fake_store)
         out = _upload(tw, tw.Q)
-        assert out == {"url": "https://img/p.jpg", "originalUrl": None, "backgroundRemoved": False}
-        assert seen == {"resource": "products", "keep": True, "tenant": tw.tid, "size": 8}
+        assert out == {"url": "https://img/p.jpg", "originalUrl": None, "backgroundRemoved": False, "processed": False}
+        assert seen == {"resource": "products", "keep": True, "tenant": tw.tid, "size": 8, "enhance": True}
         assert tw.db.get(Product, tw.Q.id).image_url == "https://img/p.jpg"
         # Every till (and kiosk) of the tenant is told to pull.
         assert "tenant" in tw.woken
