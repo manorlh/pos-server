@@ -17,7 +17,7 @@ import { idOf, NayaxUsbProvider, nayaxUsbFactory, withId } from '../src/main/pay
 import { PayService } from '../src/main/payment/payService';
 import type { PaymentProvider, ProviderContext } from '../src/main/payment/provider';
 import { PROVIDERS } from '../src/main/payment/registry';
-import { serialChannel, type LinkChannel } from '../src/main/payment/synqpay/transport';
+import { loadSerialport, serialChannel, type LinkChannel } from '../src/main/payment/synqpay/transport';
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
@@ -365,5 +365,14 @@ describe('the C4 on USB: a link that never opens is "not sent", never "unknown"'
     if (out.kind === 'approved') expect(out.recovered).toBe(true);
     expect(c4.count('doTransaction')).toBe(1);
     expect(c4.count('getTransactionByVuid')).toBe(1);
+  });
+});
+
+describe('the serialport package (a dependency from 0.4.1)', () => {
+  it('resolves for both USB links (nayax_usb and SynqPay USB load it through serialChannel) — no port opened', async () => {
+    const mod = await loadSerialport();
+    expect(mod).not.toBeNull();
+    expect(typeof mod?.SerialPort).toBe('function');
+    expect(typeof mod?.SerialPort.list).toBe('function');
   });
 });

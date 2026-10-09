@@ -321,8 +321,8 @@ InvalidParams (103) = קוד שגוי, IllegalState (201) = אין צימוד פ
   `src/main/payment/registry.ts` (`PROVIDERS = [nayaxLanFactory, synqpayFactory]`, לפי ההוראה שבקובץ).
 - LAN: ‏`net`/`tls` (TCP) או `http`/`https` של Node — בלי חבילות.
 - USB: CDC-ACM מקבל COM ב-Windows 10/11 (usbser.sys מובנה); זיהוי אוטומטי = ה-COM היחיד מסוג USB. דרוש
-  **`serialport`** (npm ציבורי) — נטען דינמית; לא הוסף ל-`package.json` — צריך `npm i serialport` אצל
-  בעלי החבילה. בלעדיו: "חבילת serialport אינה מותקנת" (לא נשלח, לא חויב).
+  **`serialport`** (npm ציבורי) — נטען דינמית; מ-0.4.1 ב-`dependencies` (`12.0.0`, נעוץ) ונארז במתקין.
+  בלעדיו: "חבילת serialport אינה מותקנת" (לא נשלח, לא חויב).
 - זהות המסוף (§2.1) נבדקת לפני כל מכירה ובכל בדיקת מסוף.
 
 ## 5. קבצים
@@ -398,7 +398,9 @@ InvalidParams (103) = קוד שגוי, IllegalState (201) = אין צימוד פ
 - **שינוי IP** מחליף את תעודת ה-TLS — pin לפי host:port; אם ה-Root CA לא נשלח בשרשרת, נדרש איפוס pin.
 - **USB באנדרואיד**: רק CDC-ACM; מסנן ה-USB תופס כל התקן CDC-ACM (אין VID/PID מתועדים) — ה-trampoline
   רק מעלה את הקופה, בלי השפעה אחרת.
-- **ווינדוס**: `serialport` היא חבילה עם רכיב native — צריך rebuild ל-Electron.
+- **ווינדוס**: `serialport` היא חבילה עם רכיב native — `@serialport/bindings-cpp` מגיע עם prebuild של
+  N-API (`prebuilds/win32-x64/node.napi.node`), כך שאין rebuild ל-Electron; הקובץ נפרש מה-asar (`asarUnpack`
+  `**/*.node`).
 - **מובנה**: תלוי ב-Local Mode מופעל ובהרשאת התקנה על המסוף; זיהוי לפי חבילה — מכשיר בלי `com.synqpay.pos`
   נשאר F20/Agamento כרגיל. אין הדפסת קבלות קופה על המסוף עד ה-SDK.
 - **שובר אשראי**: נתוני הקבלה נשמרים במטא של התשלום (`result.customerReceipt`), כמו Z-Credit; הדפסת שובר
