@@ -18,6 +18,7 @@ POST /device-commands/shop-close                      {shopId, totalsKey, confir
 GET  /device-commands/shop-close/{run_id}             → its progress (builds the Z when every till is ready)
 POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
 POST /device-commands/shop-close/{run_id}/cancel
+POST /device-commands/shop-close/{run_id}/force       {excludeMachineIds, reason} — a super admin only
 
 Till (`get_pos_machine_for_sync_path`):
 
@@ -265,7 +266,7 @@ def get_shop_close_preview(
     current = remote_till_z.current_run(db, shop.id)
     if current is not None:
         ZR.finalise_if_ready(db, current)
-    out = remote_till_z.shop_preview(db, shop)
+    out = remote_till_z.shop_preview(db, shop, user=current_user)
     db.commit()
     return out
 
@@ -321,7 +322,7 @@ def get_shop_close(
     if changed:
         db.commit()
         db.refresh(run)
-    return remote_till_z.run_progress(db, run)
+    return remote_till_z.run_progress(db, run, user=current_user)
 
 
 @router.post("/shop-close/{run_id}/proceed")
@@ -342,7 +343,34 @@ def post_shop_close_proceed(
     ZR.proceed_without(db, run, body.exclude_machine_ids)
     db.commit()
     db.refresh(run)
-    return remote_till_z.run_progress(db, run)
+    return remote_till_z.run_progress(db, run, user=current_user)
+
+
+class ShopCloseForceIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    exclude_machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeMachineIds", max_length=500)
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/shop-close/{run_id}/force")
+def post_shop_close_force(
+    run_id: uuid.UUID,
+    body: ShopCloseForceIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Support's force past "חסימת Z כשיש משמרות פתוחות": a super admin, a typed reason (z_shift_guard)."""
+    from app.services import remote_till_z
+    from app.services import z_shift_guard
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
+    db.commit()
+    db.refresh(run)
+    return remote_till_z.run_progress(db, run, user=current_user)
 
 
 @router.post("/shop-close/{run_id}/cancel")
@@ -361,7 +389,7 @@ def post_shop_close_cancel(
     ZR.cancel_run(db, run)
     db.commit()
     db.refresh(run)
-    return remote_till_z.run_progress(db, run)
+    return remote_till_z.run_progress(db, run, user=current_user)
 
 
 @router.get("/devices")

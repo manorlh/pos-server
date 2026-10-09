@@ -225,6 +225,8 @@ def test_the_wizards_confirmations_are_asked_as_the_wizard_asks_them(z):
 
 
 def test_an_offline_till_is_waited_for_and_left_out_only_where_the_flow_allows(z):
+    # "חסימת Z כשיש משמרות פתוחות" off: today's rules (on: tests/test_z_shift_guard.py).
+    set_param(z, "zRequireAllShiftsClosed", "shop", z.shop.id, False)
     s1 = selling(z, z.t1, 1, "10.00")
     selling(z, z.t2, 1, "20.00")
     z.t2.last_heartbeat_at = NOW - timedelta(hours=3)

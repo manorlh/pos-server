@@ -364,7 +364,13 @@ def current_run(db: Session, shop_id: Any):
     )
 
 
-def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def _super_admin(user: Any) -> bool:
+    from app.models.user import UserRole
+
+    return getattr(user, "role", None) == UserRole.SUPER_ADMIN
+
+
+def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user: Any = None) -> Dict[str, Any]:
     """The run as the wizard reads it, each till's state in the owner's words, and its outcome."""
     from app.models.z_run import ZRunStatus
     from app.services import z_runs as ZR
@@ -393,9 +399,12 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None) -> Di
     out["leaveOutAllowed"] = run.status == ZRunStatus.WAITING and required is None
     out["leaveOutWhyNot"] = (
         "במצב רשת מקומית ה-Z הסניפי כולל את כל הקופות" if required == "local"
+        else "בסניף מופעל \"חסימת Z כשיש משמרות פתוחות\"" if required == "shifts"
         else "בסניף מוגדר \"חובה לסגור את כל הקופות\"" if required
         else None
     )
+    # Support's force past it (app/services/z_shift_guard.py): the super admin only, never local mode.
+    out["forceAllowed"] = bool(required) and required != "local" and _super_admin(user)
     st = out["status"]
     out["words"] = (
         f"הושלם — Z סניפי מס' {out['zNumber']}" if st == ZRunStatus.COMPLETED and out.get("zNumber") is not None
@@ -437,7 +446,7 @@ def item_words(status_value: str, error_code: Optional[str], online: Optional[bo
     return ITEM_WORDS.get(status_value, status_value)
 
 
-def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user: Any = None) -> Dict[str, Any]:
     """
     What the manager sees for the shop: where its Z is produced, every device by its
     configuration (in the shop Z / its own Z / a kiosk), the figures the shop Z would take, the
@@ -501,7 +510,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None) -> D
             in_shop_z.append(row)
     totals = _totals_out(compute_totals(db, shop_shift_ids))
     live = current_run(db, shop.id)
-    run = run_progress(db, live, now=now) if live is not None else None
+    run = run_progress(db, live, now=now, user=user) if live is not None else None
     if run is not None:
         by_machine = {str(r["machineId"]): r for r in in_shop_z}
         for item in run["items"]:
@@ -534,9 +543,19 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None) -> D
         "lastShopZNumber": last_shop_z_number(db, shop.id),
         "nextShopZNumber": last_shop_z_number(db, shop.id) + 1,
         "run": run,
+        # "חסימת Z כשיש משמרות פתוחות": on here? and which tills hold the Z now (the close waits
+        # for every one of them; only a super admin forces past one that never comes back).
+        "shiftGuard": _guard_out(db, shop, now=now),
         "shopClose": {"label": SHOP_CLOSE_LABEL, "available": why is None, "whyNot": why},
         "totalsKey": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20],
     }
+
+
+def _guard_out(db: Session, shop: Any, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    from app.services import z_shift_guard as G
+
+    required = G.required(db, shop)
+    return {"label": G.LABEL, "required": required, "blockers": G.shop_blockers(db, shop, now=now) if required else []}
 
 
 def shop_request(

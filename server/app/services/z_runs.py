@@ -489,7 +489,7 @@ def tills_left_out(
     return left
 
 
-def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Optional[str]:
+def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop, *, area_id: Optional[uuid.UUID] = None) -> Optional[str]:
     """
     `shopZOpenTills` for this shop: "block" or "confirm"; None when it does not apply —
     one till per Z (the tenant's `zScope`), or the parameter missing or deactivated by a
@@ -507,6 +507,11 @@ def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop) -> Option
         # Local mode (a main till on the LAN, docs/SPEC_INDEPENDENT_TILL.md §8): every
         # participating till is in the shop Z — never left out on a confirmation.
         return "block"
+    from app.services import z_shift_guard
+
+    if z_shift_guard.required(db, shop, area_id=area_id):
+        # "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): no till left out.
+        return "block"
     value = TP.resolve_for_shop(db, shop).get(TP.SHOP_Z_OPEN_TILLS_KEY)
     if value is None:
         return None
@@ -520,6 +525,7 @@ def check_open_tills(
     left_out: Sequence[LeftOutTill],
     *,
     confirmed: bool,
+    area_id: Optional[uuid.UUID] = None,
 ) -> bool:
     """
     Refuse a shop Z the rule does not allow (409); True when it goes ahead on the
@@ -527,7 +533,7 @@ def check_open_tills(
     """
     if not left_out:
         return False
-    rule = open_tills_rule(db, tenant, shop)
+    rule = open_tills_rule(db, tenant, shop, area_id=area_id)
     if rule is None:
         return False
     tills = [t.to_json() for t in left_out]
@@ -803,7 +809,9 @@ def create_z_run(
 
     by_id = {sel.machine_id: sel for sel in selections}
     left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
-    record_left_out = check_open_tills(db, tenant, shop, left_out, confirmed=confirm_open_tills)
+    record_left_out = check_open_tills(
+        db, tenant, shop, left_out, confirmed=confirm_open_tills, area_id=area.id if area is not None else None
+    )
 
     run = ZRun(
         id=uuid.uuid4(),
@@ -1294,7 +1302,7 @@ def _require_waiting(run: ZRun) -> None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="run_not_waiting")
 
 
-def _deferred_marker(run: ZRun, item: ZRunItem, operator: str, now: datetime) -> ZRunItem:
+def _deferred_marker(run: ZRun, item: ZRunItem, operator: str, now: datetime, *, forced_reason: Optional[str] = None) -> ZRunItem:
     """
     A left-out marker (`LEFT_OUT_CODE`) for a till the operator deferred with "סגור"
     while the run waited for it: frozen into the Z's header (`openTillsLeftOut`) with who
@@ -1312,6 +1320,10 @@ def _deferred_marker(run: ZRun, item: ZRunItem, operator: str, now: datetime) ->
         "confirmedBy": operator,
         "confirmedAt": now.isoformat(),
     }
+    if forced_reason:
+        # A super admin's force past "חסימת Z כשיש משמרות פתוחות": why, on the Z itself.
+        data["forced"] = True
+        data["forcedReason"] = forced_reason
     return ZRunItem(
         id=uuid.uuid4(),
         run_id=run.id,
@@ -1330,9 +1342,14 @@ def proceed_without(
     *,
     now: Optional[datetime] = None,
     deferred_by: Optional[str] = None,
+    forced_reason: Optional[str] = None,
 ) -> ZRun:
     """
     Build now without the listed tills; their shifts wait for the next Z (no gap).
+
+    `forced_reason`: a super admin's force past "every till" (app/services/z_shift_guard.py
+    `force_without`, which checks who and the reason) — never past local mode. Each till left
+    out is recorded with who, when and that reason.
 
     Only a till that is **not** ready is left out: a ready till named in the list stays
     in (the list is "the tills I am giving up on waiting for", and a stale screen must
@@ -1348,7 +1365,11 @@ def proceed_without(
     _require_waiting(run)
     strict = bool(getattr(run, "strict_cloud_check", False))
     excluded = set(exclude_machine_ids)
+    from app.services import z_shift_guard
+
     required = _all_tills_required(db, run) if excluded else None
+    if required and forced_reason and required != "local":
+        required = None  # the super admin's force, recorded on each till left out below
     if required:
         # "חובה לסגור את כל הקופות" (and always in local mode, docs/SPEC_INDEPENDENT_TILL.md §8):
         # neither "סגור" nor the dashboard's proceed leaves a till behind — its sales would
@@ -1362,13 +1383,19 @@ def proceed_without(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
-                    "code": "local_mode_all_tills" if required == "local" else "all_tills_required",
+                    "code": (
+                        "local_mode_all_tills" if required == "local"
+                        else z_shift_guard.REFUSED_CODE if required == "shifts"
+                        else "all_tills_required"
+                    ),
                     "machineIds": leaving,
                     "message": (
                         "במצב רשת מקומית ה-Z הסניפי כולל את כל הקופות — אי אפשר להפיק אותו בלי קופה. סגרו אותה ונסו שוב."
                         if required == "local" else
+                        z_shift_guard.REFUSED_MESSAGE if required == "shifts" else
                         "בסניף מוגדר \"חובה לסגור את כל הקופות\": אי אפשר להפיק את ה-Z בלי קופה. סגרו אותה ונסו שוב."
                     ),
+                    "canForce": required != "local",
                 },
             )
     from app.services.z_completeness import WAITING_DOCUMENTS
@@ -1383,7 +1410,7 @@ def proceed_without(
         ):
             continue
         if deferred_by:
-            run.items.append(_deferred_marker(run, item, deferred_by, now))
+            run.items.append(_deferred_marker(run, item, deferred_by, now, forced_reason=forced_reason))
         item.status = ZRunItemStatus.EXCLUDED
         if not item.error_code or item.error_code in VERIFY_CODES or item.error_code == WAITING_DOCUMENTS:
             item.error_code = DEFERRED_BY_OPERATOR
@@ -1418,7 +1445,11 @@ def _all_tills_required(db: Session, run: ZRun) -> Optional[str]:
     if _local_mode_run(db, run):
         return "local"
     try:
+        from app.services import z_shift_guard
+
         shop = db.get(Shop, run.shop_id)
+        if shop is not None and z_shift_guard.required(db, shop, area_id=run.area_id):
+            return "shifts"
         tenant = db.get(Tenant, run.tenant_id) if run.tenant_id else None
         return "block" if shop is not None and open_tills_rule(db, tenant, shop) == "block" else None
     except Exception:  # noqa: BLE001 - a rule read must never break an expiry sweep

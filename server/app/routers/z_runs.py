@@ -7,9 +7,10 @@ company manager, shop manager, distributor, super admin), and access to the shop
 from __future__ import annotations
 
 import uuid
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -303,6 +304,36 @@ def post_z_run_proceed(
     """Build now without the listed tills; their shifts wait for the next Z."""
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
     ZR.proceed_without(db, run, body.exclude_machine_ids)
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+class ZRunForceIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    exclude_machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeMachineIds", max_length=500)
+    #: Typed by the super admin: why the Z goes without these tills (on the Z and the record).
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/z-runs/{run_id}/force", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_force(
+    run_id: uuid.UUID,
+    body: ZRunForceIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force ("חסימת Z כשיש משמרות פתוחות", app/services/z_shift_guard.py): a super
+    admin builds the Z without the listed tills, with a typed reason — recorded on the Z and
+    as an exception; their shifts go into the next Z. 403 for anyone else, 422 without a reason.
+    """
+    from app.services import z_shift_guard
+
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
