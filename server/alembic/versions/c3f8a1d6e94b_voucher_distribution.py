@@ -1,8 +1,12 @@
 """voucher distribution over WhatsApp ("הפצה בוואטסאפ"): recipients, assignments, links, audit, Cloud API config
 
 Revision ID: c3f8a1d6e94b
-Revises: 6b1e9d4f2a87
+Revises: 0a4df5f5984e
 Create Date: 2026-10-09
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 6b1e9d4f2a87, now
+after the integration head 0a4df5f5984e (event-live's producer view) so the chain stays linear.
+New tables only; the upgrade itself is unchanged.
 
 New tables only (app/models/voucher_distribution.py) — nothing existing changes:
 
@@ -23,7 +27,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'c3f8a1d6e94b'
-down_revision: Union[str, Sequence[str], None] = '6b1e9d4f2a87'
+down_revision: Union[str, Sequence[str], None] = '0a4df5f5984e'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

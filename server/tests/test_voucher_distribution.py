@@ -726,7 +726,8 @@ class TestMigration:
         config.set_main_option("script_location", str(ROOT / "alembic"))
         script = ScriptDirectory.from_config(config)
         assert len(script.get_heads()) == 1
-        assert script.get_revision(self.REVISION).down_revision == "6b1e9d4f2a87"
+        # Written on 6b1e9d4f2a87; re-chained after the integration head at the merge (09.10.2026).
+        assert script.get_revision(self.REVISION).down_revision == "0a4df5f5984e"
 
     def test_idempotent_and_the_models_tables(self):
         import sqlalchemy as sa
