@@ -33,3 +33,25 @@ Branch `feat/live-control` (pos-server + dashboard) and the till's `feat/live-co
   totals, `wait_for_rest`, never forced); migration `c6d2e8f4a1b7`.
 - Dashboard: "סגירה / Z" per till in "שליטה מרחוק", only while the server says it is on.
 - Till: honours `waitForRest` on `pendingTillZ` / `pendingCloseShift` and the pushes.
+
+## Saturday — decided at the Friday integration (09.10)
+
+The coordinator's decisions on the `integration/fri` merge; event-live's and the vouchers' items
+are kept here too, as this is the release's progress file.
+
+- [ ] **Event targets: one owner.** live-control's `sales_targets` becomes the single source of an
+      event's target, through event-live's `register_target_provider`
+      (`app/services/report_events/targets.py`; nothing registers it yet). The live screen's own
+      typed target (`report_events.live_target`) is used only when the event has no sales target,
+      and `target_reached` gets one alert source. Today two places can raise it: live-control's
+      sales-target hits (`app/services/sales_targets.py`) and event-live's live-screen target
+      (`exception_alerts/external.py` `report_target_reached`). `exception_alerts/catalog.py` has
+      the one kind.
+- [ ] **Producer settlement by the production's billing basis.** event-live's "עמדת מפיק"
+      settlement (`app/services/report_events/producer.py` `settlement`) bills every batch by
+      redemption. It should follow the production's `billing_basis` (`prepaid_productions`:
+      `redemption` / `delivery`), ideally by reading voucher-extras' settlement service
+      (`app/services/prepaid_voucher_settlement.py`) instead of computing its own amounts. No
+      exposure today: an event's settlement for its producer is off by default, and switching it
+      on takes `prepaid_voucher_prices`. The producer is shown a batch's own production price only
+      while the owner who switched it on holds that section.
