@@ -254,7 +254,10 @@ def _serialize_merged_product(
         "imageUrl": image_url,
         "inStock": effective_in_stock,
         # Not locked and not blocked: what a till or kiosk that reads only this field sells.
-        "isAvailable": bool(is_avail) and not active_blocks,
+        # A till that predates blocks reads only `isAvailable`: a block set by hand reaches it there;
+        # an automatic "אזל" (the stock ran out) only through `blocks`, which updated tills and kiosks
+        # read with their own stock policy (sold_out.manual_in_force).
+        "isAvailable": bool(is_avail) and not sold_out.manual_in_force(active_blocks),
         # The catalog lock alone ("זמינות למכירה"), and the blocks in force that cover this device
         # ("אזל" / "חסום", app/services/sold_out.py) — a current till decides between them with its
         # own clock (app/services/sold_out_rules.py).

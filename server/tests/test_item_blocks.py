@@ -273,6 +273,18 @@ class TestDelivery:
         b.db.commit()
         assert {m for m, _ in b.signals} == {str(b.h1.id)}
 
+    def test_an_automatic_sold_out_never_reaches_a_till_that_predates_blocks(self, b):
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, by_name="אזל אוטומטי", source="auto")
+        b.db.commit()
+        row = _row(b, b.h1)
+        # An older till reads only isAvailable: it keeps selling under its own stock policy.
+        assert row["isAvailable"] is True and row["lockAvailable"] is True
+        # An updated till or kiosk reads the block.
+        assert [x["source"] for x in row["blocks"]] == ["auto"]
+        _block(b, "shop", b.h_shop.id)  # a block set by hand reaches every till
+        assert _row(b, b.h1)["isAvailable"] is False
+
     def test_a_block_and_its_removal_reach_a_till_that_pulls_deltas(self, b):
         since = datetime.now(timezone.utc) - timedelta(seconds=1)
         mark = _block(b, "shop", b.h_shop.id)
@@ -323,10 +335,13 @@ class TestAutomatic:
         self._stock(b, "1")
         self._move(b, "-1")
         assert [(m.scope, m.kind) for m in self._auto(b)] == [("shop", "sold_out")]
-        assert _sells(b, b.h2) is False, "the kiosk stops at once"
+        # The kiosk (an updated device) reads the block at once; an older till's isAvailable is
+        # left to its own stock policy.
+        assert [x["source"] for x in _row(b, b.h2)["blocks"]] == ["auto"]
+        assert _sells(b, b.h2) is True
         self._move(b, "5")
         assert self._auto(b) == []
-        assert _sells(b, b.h2) is True
+        assert _row(b, b.h2)["blocks"] == []
 
     def test_a_hand_block_is_never_touched_by_stock(self, b):
         self._stock(b, "1")

@@ -748,7 +748,7 @@ def _products_for_till(
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
         row["lockAvailable"] = bool(listed and resolved.available)
-        row["isAvailable"] = row["lockAvailable"] and not active_blocks
+        row["isAvailable"] = row["lockAvailable"] and not sold_out.manual_in_force(active_blocks)
         row["blocks"] = [sold_out.block_out(b) for b in active_blocks]
         # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
         row["availabilityLock"] = availability.lock_info(

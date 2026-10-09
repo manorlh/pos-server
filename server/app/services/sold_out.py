@@ -284,6 +284,11 @@ def _sells_from(db: Session, machine: POSMachine, mark: SoldOutMark, cache: Dict
     return loc is not None and loc.level == mark.scope and str(loc.target_id) == str(mark.scope_id)
 
 
+def manual_in_force(blocks: Iterable[Any]) -> bool:
+    """Any block set by hand among these (an automatic "אזל" is never folded into `isAvailable`)."""
+    return any((getattr(b, "source", None) or "manual") != "auto" for b in blocks)
+
+
 def block_out(mark: SoldOutMark) -> Dict[str, Any]:
     """One block as a device gets it (and the shared rule reads it)."""
     return {
