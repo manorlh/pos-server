@@ -86,7 +86,13 @@ from starlette.middleware.gzip import GZipMiddleware
 
 settings = get_settings()
 
-Base.metadata.create_all(bind=engine)
+# Local dev: the schema follows the models at start (DB_CREATE_ALL, on by default). Production
+# (Fly): off — `alembic upgrade head` runs as the release command, and create_all only slowed
+# every start (P:/specs/performance-review-2026-10.md #2).
+from app.config import create_all_on_startup  # noqa: E402
+
+if create_all_on_startup(settings):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="POS Cloud",
@@ -111,7 +117,8 @@ app.add_middleware(RequestContextMiddleware)
 # Compressed answers: a till pulls the tables' state (≈140 KB at 200 tables) every few
 # seconds, and the catalog on every sync — gzip takes them to a tenth. OkHttp asks for it
 # and unpacks it by itself; small answers are left as they are.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Level 6, not the default 9: nearly the same size for a fraction of the CPU (review #2).
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 _prefix = settings.api_v1_prefix
 
@@ -472,3 +479,21 @@ def root():
 def health_check():
     body = {"status": "healthy", "ably_enabled": ably_enabled()}
     return body
+
+
+@app.get("/health/ready")
+def readiness_check():
+    """
+    The process AND its database: one `SELECT 1` (fly.toml's machine check — a deploy goes on
+    only once the new machine reaches the database). 503 when it cannot.
+    """
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:  # noqa: BLE001 - the answer is the check
+        logger.warning("readiness: database unreachable", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "unavailable", "database": False})
+    return {"status": "ready", "database": True}
