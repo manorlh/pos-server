@@ -397,6 +397,7 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
         str(named_shift_id(item)) if named_shift_id(item) else None,
         _initiator(user),
         force=bool(getattr(item.run, "force_close", False)),
+        wait_for_rest=bool(getattr(item.run, "wait_for_rest", False)),
     )
     # "Sent" only when realtime really carried it: without Ably the publish is skipped, and
     # the heartbeat that hands the close over stamps it (`take_pending_close_shift`) — so a
@@ -683,10 +684,14 @@ def create_z_run(
     confirm_open_tills: bool = False,
     strict_cloud_check: bool = False,
     force: bool = False,
+    wait_for_rest: bool = False,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
     Start a run (and build at once when nothing needs closing). Raises HTTPException.
+
+    `wait_for_rest` ("סגירת יום סניפית" from remote control): each till closes only once no sale,
+    payment or card is open on it (`waitForRest` on its close-shift). Never with `force`.
 
     `strict_cloud_check` (a shop Z from the master till): the Z is built only once the
     cloud has verified every till (`verify_item`), whenever that happens.
@@ -812,6 +817,7 @@ def create_z_run(
         strict_cloud_check=bool(strict_cloud_check),
         # "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9).
         force_close=bool(force),
+        wait_for_rest=bool(wait_for_rest) and not force,
     )
     db.add(run)
     db.flush()
@@ -1593,6 +1599,9 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
     if item.run is not None and item.run.force_close:
         # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
         out["force"] = True
+    if item.run is not None and getattr(item.run, "wait_for_rest", False):
+        # "סגירת יום סניפית" from remote control: only at rest — never mid-sale.
+        out["waitForRest"] = True
     return out
 
 
@@ -1687,6 +1696,7 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         "openTillsLeftOut": open_tills_left_out(db, run),
         "strictCloudCheck": strict,
         "force": bool(getattr(run, "force_close", False)),
+        "waitForRest": bool(getattr(run, "wait_for_rest", False)),
         # For a till's elapsed-seconds display: the cloud's clock, not the till's.
         "serverTime": now or datetime.now(timezone.utc),
         "items": [

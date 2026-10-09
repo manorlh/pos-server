@@ -8,6 +8,17 @@ POST /device-commands           {action, message?, machineIds? | shopId? | group
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
 POST /device-commands/{id}/cancel
 
+Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
+
+GET  /device-commands/features
+GET  /device-commands/{machine_id}/close-preview      → a till's close / Z preview
+POST /device-commands/close                           {machineId, totalsKey}
+GET  /device-commands/shop-close-preview ?shopId=     → "סגירת יום סניפית": by the shop's configuration
+POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?} → the Z run
+GET  /device-commands/shop-close/{run_id}             → its progress (builds the Z when every till is ready)
+POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
+POST /device-commands/shop-close/{run_id}/cancel
+
 Till (`get_pos_machine_for_sync_path`):
 
 GET  /sync/{machine_id}/device-commands                → {state, commands} (pending → delivered)
@@ -24,7 +35,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import FISCAL_SYNC_PATH, get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path
+from app.middleware.auth import (
+    FISCAL_SYNC_PATH,
+    get_active_tenant_id,
+    get_current_machine_admin,
+    get_current_user,
+    get_pos_machine_for_sync_path,
+)
 from app.models.device_command import DEVICE_ACTIONS, DeviceCommand
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
@@ -182,6 +199,169 @@ def post_remote_close(
         raise
     db.commit()
     return out
+
+
+class ShopCloseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    shop_id: uuid.UUID = Field(..., alias="shopId")
+    #: The shop preview's `totalsKey` the manager confirmed: any sale since refuses (409).
+    totals_key: str = Field(..., alias="totalsKey", min_length=1, max_length=64)
+    #: The wizard's own confirmations, passed on as they are (`shopZOpenTills`, cloud data).
+    confirm_open_tills: bool = Field(False, alias="confirmOpenTills")
+    confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
+
+
+class ShopCloseProceedIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    exclude_machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeMachineIds", max_length=500)
+
+
+def _remote_z_shop(db: Session, user: User, tenant_id, shop_id) -> Shop:
+    """The shop for "סגירת יום סניפית": the Z wizard's own shop access and distributor rule, the Z
+    section at edit — and the whole shop: a manager of some of its points of sale only is refused."""
+    from app.routers.z_runs import _check_tills, _shop_for
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+    from app.services import z_runs as ZR
+
+    shop = _shop_for(db, shop_id, user, tenant_id)
+    if _narrowing(db, user) is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
+            "code": "shop_close_needs_whole_shop",
+            "message": "סגירת יום סניפית — למנהל הסניף כולו בלבד",
+        })
+    if not DA.effective_access(db, user).allows("z", DS.EDIT):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "section_forbidden", "section": "z", "level": DS.EDIT})
+    _check_tills(db, user, ZR.shop_tills(db, shop.id), tenant_id)
+    return shop
+
+
+def _shop_close_run(db: Session, user: User, tenant_id, run_id: uuid.UUID):
+    from app.routers.z_runs import _run_or_404
+
+    run = _run_or_404(db, run_id, user, tenant_id)
+    _remote_z_shop(db, user, tenant_id, run.shop_id)
+    return run
+
+
+@router.get("/shop-close-preview")
+def get_shop_close_preview(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"סגירת יום סניפית": where the shop Z is produced, every device by its configuration, the
+    totals, the next shop Z number, the run under way and which actions are allowed (why not)."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    shop = _remote_z_shop(db, current_user, active_tenant_id, shop_id)
+    # As the wizard's progress read: expired runs swept, a run whose tills are all ready built.
+    ZR.expire_overdue_runs(db)
+    current = remote_till_z.current_run(db, shop.id)
+    if current is not None:
+        ZR.finalise_if_ready(db, current)
+    out = remote_till_z.shop_preview(db, shop)
+    db.commit()
+    return out
+
+
+@router.post("/shop-close", status_code=status.HTTP_201_CREATED)
+def post_shop_close(
+    body: ShopCloseIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The confirmed day close: the shop's existing Z run, every till closing at rest only."""
+    from fastapi.responses import JSONResponse
+
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    shop = _remote_z_shop(db, current_user, active_tenant_id, body.shop_id)
+    try:
+        out = remote_till_z.shop_request(
+            db, current_user, active_tenant_id, shop,
+            totals_key=body.totals_key,
+            confirm_open_tills=body.confirm_open_tills,
+            confirm_cloud_data=body.confirm_cloud_data,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    if isinstance(out, JSONResponse):
+        db.rollback()
+        return out
+    db.commit()
+    db.refresh(out)
+    return ZR.run_to_out(db, out)
+
+
+@router.get("/shop-close/{run_id}")
+def get_shop_close(
+    run_id: uuid.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The day close's progress, per till in the owner's words; the Z built once every till is ready."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    changed = ZR.expire_overdue_runs(db)
+    changed = ZR.finalise_if_ready(db, run) or changed
+    if changed:
+        db.commit()
+        db.refresh(run)
+    return remote_till_z.run_progress(db, run)
+
+
+@router.post("/shop-close/{run_id}/proceed")
+def post_shop_close_proceed(
+    run_id: uuid.UUID,
+    body: ShopCloseProceedIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Build without the listed tills — the existing `proceed_without`, with all its refusals
+    (local mode needs every till; `shopZOpenTills`); their shifts wait for the next Z."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    ZR.proceed_without(db, run, body.exclude_machine_ids)
+    db.commit()
+    db.refresh(run)
+    return remote_till_z.run_progress(db, run)
+
+
+@router.post("/shop-close/{run_id}/cancel")
+def post_shop_close_cancel(
+    run_id: uuid.UUID,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Cancel while waiting — the existing cancel: tills not yet closed are no longer asked to."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    ZR.cancel_run(db, run)
+    db.commit()
+    db.refresh(run)
+    return remote_till_z.run_progress(db, run)
 
 
 @router.get("/devices")

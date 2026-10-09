@@ -129,6 +129,11 @@ POST /device-commands -> device_control:edit
 POST /device-commands/close -> device_control:edit
 GET /device-commands/devices -> device_control:view
 GET /device-commands/features -> device_control:view
+POST /device-commands/shop-close -> device_control:edit
+GET /device-commands/shop-close-preview -> device_control:view
+GET /device-commands/shop-close/{run_id} -> device_control:view
+POST /device-commands/shop-close/{run_id}/cancel -> device_control:edit
+POST /device-commands/shop-close/{run_id}/proceed -> device_control:edit
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
 POST /device-management/provisioning-qr -> devices:edit

@@ -82,6 +82,9 @@ class ZRun(Base):
     #: "כפה סגירה (גם באמצע מכירה)": the tills park an open basket and close (only a card
     #: charge in flight is waited for). Handed to the till as `force` with the close.
     force_close = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "סגירת יום סניפית" from remote control (app/services/remote_till_z.py): each till closes
+    #: only once it is at rest — no sale, no payment, no card in flight (`waitForRest`).
+    wait_for_rest = Column(Boolean, nullable=False, default=False, server_default="false")
     #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1): who
     #: confirmed, when, and the state of the tills the run took. Null when nothing warned.
     cloud_data_confirmation = Column(JSONB, nullable=True)
