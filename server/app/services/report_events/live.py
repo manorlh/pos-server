@@ -480,13 +480,16 @@ def build_live(db: Session, event: ReportEvent, *, now: Optional[datetime] = Non
     target_block = None
     if target is not None:
         amount = float(target.amount)
-        net = float(totals["net"])
+        progress_net, target_id = _target_actual(db, event, target, machine_ids, starts, window_end, totals["net"])
+        net = float(progress_net)
         eta = eta_minutes(net, amount, pace["ratePerHour"]) if phase == PHASE_LIVE else (0.0 if net >= amount else None)
         target_block = {
             "amount": money(target.amount),
             "source": target.source,
+            "targetId": target_id,
+            "actual": money(progress_net),
             "progressPct": progress_pct(net, amount),
-            "remaining": money(max(Decimal("0"), target.amount - totals["net"])),
+            "remaining": money(max(Decimal("0"), target.amount - progress_net)),
             "reached": net >= amount,
             "etaMinutes": eta,
             "etaAt": iso(now + timedelta(minutes=eta)) if eta not in (None, 0.0) and phase == PHASE_LIVE else None,
@@ -527,6 +530,25 @@ def build_live(db: Session, event: ReportEvent, *, now: Optional[datetime] = Non
         "kds": kds_summary(db, event, starts, now) if phase != PHASE_UPCOMING else None,
         "vouchers": voucher_summary(db, machine_ids, starts, window_end, now),
     }
+
+
+def _target_actual(db: Session, event: ReportEvent, target, machine_ids, start: datetime, end: datetime,
+                   live_net: Decimal) -> Tuple[Decimal, Optional[str]]:
+    """
+    What counts toward the target: for the event's target in "יעדים ותחרות", that module's own net
+    (sales_targets.actual_of — the figure its "יעד הושג" is decided on), so the screen says
+    "reached" exactly when the alert does; otherwise the screen's own net.
+    """
+    if target.source != "targets":
+        return live_net, None
+    from app.services import sales_targets
+
+    row = sales_targets.event_target(db, event)
+    if row is None or Decimal(str(row.amount)).quantize(Decimal("0.01")) != target.amount:
+        return live_net, None  # another provider's target: the screen's net
+    if end <= start:
+        return Decimal("0.00"), str(row.id)
+    return sales_targets.actual_of(db, row, start, end, list(machine_ids)), str(row.id)
 
 
 def current_events(db: Session, events: Sequence[ReportEvent], now: datetime) -> List[Dict[str, Any]]:

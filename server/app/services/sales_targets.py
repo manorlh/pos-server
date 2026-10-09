@@ -364,6 +364,63 @@ def progress(db: Session, shop_ids: Sequence[Any], *, day: Optional[date] = None
     return out
 
 
+def event_target(db: Session, event: ReportEvent) -> Optional[SalesTarget]:
+    """
+    The event's own sales target — the shop's (`scope = "shop"`) target of `period = "event"` for this
+    event, not archived (the latest changed when there are several). Area and cashier targets of an
+    event are partial targets, not the event's. "מצב אירוע חי" reads it through
+    app/services/report_events/targets.py, and its "הגדרת יעד" writes it (`set_event_target`).
+    """
+    return (
+        db.query(SalesTarget)
+        .filter(
+            SalesTarget.event_id == event.id,
+            SalesTarget.period == "event",
+            SalesTarget.scope == "shop",
+            SalesTarget.archived_at.is_(None),
+        )
+        .order_by(SalesTarget.updated_at.desc(), SalesTarget.created_at.desc())
+        .first()
+    )
+
+
+def event_target_amount(db: Session, event: ReportEvent) -> Optional[Decimal]:
+    target = event_target(db, event)
+    return _dec(target.amount) if target is not None else None
+
+
+def set_event_target(db: Session, event: ReportEvent, amount: Optional[Decimal], *, user: Any = None,
+                     now: Optional[datetime] = None) -> Optional[SalesTarget]:
+    """
+    "הגדרת יעד" on the live screen: the event's shop target set to [amount] (made when missing, its
+    fields validated like the targets page's), or archived when [amount] is None. Its "יעד הושג" is
+    then this module's, like every target's (one alert source). The caller commits.
+    """
+    now = now or utc_now()
+    current = event_target(db, event)
+    if amount is None:
+        if current is not None:
+            current.archived_at = now
+            db.flush()
+        return None
+    if current is not None:
+        current.amount = amount
+        current.updated_at = now
+        db.flush()
+        return current
+    shop = db.get(Shop, event.shop_id)
+    if shop is None:
+        raise _bad("shop_not_found", "הסניף לא נמצא", status.HTTP_404_NOT_FOUND)
+    fields = validate(db, shop, {"scope": "shop", "period": "event", "eventId": str(event.id), "amount": str(amount)})
+    row = SalesTarget(
+        id=uuid.uuid4(), tenant_id=shop.tenant_id, company_id=shop.company_id, shop_id=shop.id,
+        created_by_user_id=getattr(user, "id", None), **fields,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def evaluate_due(db: Session, *, now: Optional[datetime] = None) -> int:
     """The background pass: today's targets of every shop that has any, their hits recorded. Commits."""
     now = now or utc_now()

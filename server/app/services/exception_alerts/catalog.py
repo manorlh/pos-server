@@ -102,11 +102,9 @@ KINDS: Tuple[Kind, ...] = (
     # Stock locations (app/services/stock_alerts.py): a product low or out at a location.
     Kind("stock_low", "מלאי נמוך", "low", "stock_alert", link="none"),
     Kind("stock_out", "אזל מהמלאי", "medium", "stock_alert", link="none"),
-    # "יעד מכירות הושג" — one kind, two detection points (the integration merge, 09.10.2026; which of
-    # them owns an event's target is the coordinator's open decision): "יעדים ותחרות"
-    # (app/services/sales_targets.py, source `sales_target`: once per target and period) and the live
-    # screen's typed event target (feat/event-live, external.py `report_target_reached`, source
-    # `event`: once per event and amount). `source` here is descriptive only (the catalogue's JSON).
+    # "יעד מכירות הושג" — one detection point (the coordinator, 09.10.2026): "יעדים ותחרות"
+    # (app/services/sales_targets.py, source `sales_target`: once per target and period). An event's
+    # target is its shop target there — the live screen writes it there too — so it is never alerted twice.
     Kind("target_reached", "יעד מכירות הושג", "low", "sales_target", amount=True),
 )
 

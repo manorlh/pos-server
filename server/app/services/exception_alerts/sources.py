@@ -556,6 +556,13 @@ def _stock_alert(ctx: Ctx, a) -> Optional[EntrySpec]:
 
 
 def _target_hit(ctx: Ctx, h) -> Optional[EntrySpec]:
+    details = {"targetId": str(h.target_id), "periodKey": h.period_key}
+    from app.models.sales_target import SalesTarget
+
+    target = ctx.db.get(SalesTarget, h.target_id) if h.target_id else None
+    if target is not None and target.period == "event" and target.event_id:
+        # An event's target: the alert leads to its live screen ("מצב אירוע חי").
+        details["eventId"] = str(target.event_id)
     return EntrySpec(
         source="sales_target",
         source_id=str(h.id),
@@ -572,7 +579,7 @@ def _target_hit(ctx: Ctx, h) -> Optional[EntrySpec]:
         amount=h.actual,
         threshold=h.amount,
         summary=f"{h.label or 'יעד'} הושג: ₪{h.actual} מתוך ₪{h.amount}",
-        details={"targetId": str(h.target_id), "periodKey": h.period_key},
+        details=details,
     )
 
 

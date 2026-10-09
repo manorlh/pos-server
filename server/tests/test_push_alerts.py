@@ -338,20 +338,34 @@ def test_the_till_offline_rule_can_be_switched_off(w, monkeypatch):
     assert TW.scan(w.db, now=NOW) == 0
 
 
-def test_a_target_reached_is_recorded_once_and_alerts(w):
-    device(w, w.admin)
+def test_a_target_reached_is_recorded_once_and_alerts(w, monkeypatch):
+    """The event's target is "יעדים ותחרות"'s: its hit is the one entry, and the phone opens the live screen."""
+    from app.models.sales_target import SalesTarget
+    from app.services import sales_targets
+    from app.services.exception_alerts import hooks
+
+    phone = device(w, w.admin)
     P.save_preferences(w.db, w.admin, w.tenant.id, {"categories": ["target_reached"]})
-    event = make_event(w, target=500)
+    event = make_event(w)
+    w.db.add(SalesTarget(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=w.shop.id,
+                         scope="shop", period="event", event_id=event.id, amount=Decimal("500")))
     sale(w, w.tills[0], 10, "300")
-    assert X.check_event_targets(w.db, now=at(20)) == 0
+    keys = []
+    monkeypatch.setattr(hooks, "process", lambda bind, k, provider=None: keys.extend(k) or [])
+    assert sales_targets.evaluate_due(w.db, now=at(20)) == 0
     sale(w, w.tills[1], 30, "250")
-    assert X.check_event_targets(w.db, now=at(40)) == 1
-    assert X.check_event_targets(w.db, now=at(41)) == 0
+    assert sales_targets.evaluate_due(w.db, now=at(40)) == 1
+    assert sales_targets.evaluate_due(w.db, now=at(41)) == 1      # reached, recorded once
+    assert [name for name, _ in keys] == ["sales_target"]
+    monkeypatch.setattr(E, "now_fn", lambda: at(41))
+    for entry_id in hooks.record_rows(w.db, keys):
+        E.process_entry(w.db, w.db.get(ExceptionLogEntry, entry_id), now=at(41))
     reached = w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == "target_reached").one()
     assert reached.details["eventId"] == str(event.id) and reached.amount == Decimal("550.00")
     sent = pushes(w, status="sent")
-    assert len(sent) == 1
-    assert sent[0].entry_id == reached.id
+    assert len(sent) == 1 and sent[0].entry_id == reached.id
+    payload = json.loads(W.decrypt(w.push.calls[-1].content, phone._key, phone._auth))
+    assert payload["url"] == f"/dashboard/live-event/{event.id}"
 
 
 def test_the_insights_hook_for_a_till_barely_selling_once_a_day(w):

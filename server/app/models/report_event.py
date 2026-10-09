@@ -69,8 +69,9 @@ class ReportEvent(Base):
     #: The report as it was at confirmation. Later syncs or edits never change it.
     snapshot = Column(JSONB, nullable=True)
 
-    #: "מצב אירוע חי": the sales target typed on the live screen (₪, net), when no targets
-    #: module supplies one (app/services/report_events/targets.py). Not part of the report.
+    #: "מצב אירוע חי": a target typed on the live screen before "יעדים ותחרות" (₪, net). Read only
+    #: as a last fallback (app/services/report_events/targets.py) — the screen now writes the
+    #: event's sales target, and migration 7f2e55223360 moved every typed one there. Never alerted.
     live_target = Column(Numeric(12, 2), nullable=True)
     #: "עמדת מפיק": what the event's producer sees beyond the sales —
     #: `{"settlementEnabled": bool, "batchIds": [...], "productionPrices": {batchId: ₪}}`

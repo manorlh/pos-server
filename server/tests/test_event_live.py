@@ -271,7 +271,8 @@ def test_setting_the_target_takes_a_managing_role_and_a_positive_amount(w):
     event = make_event(w)
     out = R.put_event_live_target(event.id, {"target": "1234.5"}, current_user=w.admin,
                                   active_tenant_id=w.tenant.id, db=w.db)
-    assert out["liveTarget"] == 1234.5 and out["target"] == {"amount": 1234.5, "source": "event"}
+    # Written as the event's target in "יעדים ותחרות" — the one source.
+    assert out["targetId"] and out["target"] == {"amount": 1234.5, "source": "targets"}
     with pytest.raises(HTTPException) as e:
         R.put_event_live_target(event.id, {"target": -3}, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
     assert e.value.status_code == 422 and e.value.detail["code"] == "target_invalid"
@@ -281,7 +282,7 @@ def test_setting_the_target_takes_a_managing_role_and_a_positive_amount(w):
     assert e.value.status_code == 403
     cleared = R.put_event_live_target(event.id, {"target": None}, current_user=w.admin,
                                       active_tenant_id=w.tenant.id, db=w.db)
-    assert cleared == {"liveTarget": None, "target": None}
+    assert cleared == {"targetId": None, "target": None}
 
 
 def test_current_events_are_live_soon_or_just_over(w, monkeypatch):
@@ -343,3 +344,135 @@ def test_live_push_hands_a_subscribe_only_token(w, monkeypatch):
     channel = f"dash:{w.tenant.id}:event:{event.id}"
     assert out["enabled"] is True and out["token"] == "tok" and out["channel"] == channel
     assert seen["capability"] == {channel: ["subscribe"]}
+
+
+# ── One source: "יעדים ותחרות" (feat/event-followups) ────────────────────────
+
+
+def _sales_target(w, event, amount, *, scope="shop", archived=False, when=None):
+    from app.models.sales_target import SalesTarget
+
+    t = SalesTarget(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, shop_id=w.shop.id, scope=scope,
+        period="event", event_id=event.id, amount=Decimal(str(amount)),
+        area_id=None, pos_user_id=None,
+        archived_at=at(0) if archived else None,
+    )
+    if when is not None:
+        t.created_at = t.updated_at = when
+    w.db.add(t)
+    w.db.flush()
+    return t
+
+
+def test_the_events_sales_target_wins_over_the_typed_one(w, monkeypatch):
+    event = make_event(w, target=999)                    # typed on the screen before targets
+    t1 = w.tills[0]
+    sale(w, t1, 10, "300")
+    sale(w, t1, 20, "50", credit_note=True)
+    freeze(monkeypatch, at(60))
+    assert call_live(w, event)["target"]["source"] == "event"          # no sales target: the typed one
+    _sales_target(w, event, 777, archived=True)                         # archived: not the event's
+    assert call_live(w, event)["target"]["amount"] == 999
+    target = _sales_target(w, event, 500)
+    out = call_live(w, event)["target"]
+    assert out["source"] == "targets" and out["amount"] == 500 and out["targetId"] == str(target.id)
+    assert out["actual"] == 250 and out["progressPct"] == 50.0 and out["reached"] is False
+
+
+def test_partial_targets_are_not_the_events_and_the_latest_wins(w, monkeypatch):
+    from app.services import sales_targets
+
+    event = make_event(w)
+    freeze(monkeypatch, at(30))
+    old = _sales_target(w, event, 400, when=at(-120))
+    new = _sales_target(w, event, 600, when=at(-60))
+    assert sales_targets.event_target(w.db, event).id == new.id and old.id != new.id
+    w.db.delete(new)
+    w.db.delete(old)
+    w.db.flush()
+    from app.models.shop_area import ShopArea
+
+    area = ShopArea(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name="בר")
+    w.db.add(area)
+    w.db.flush()
+    t = _sales_target(w, event, 300, scope="area")
+    t.area_id = area.id
+    w.db.flush()
+    assert sales_targets.event_target(w.db, event) is None and call_live(w, event)["target"] is None
+
+
+def test_setting_the_target_on_the_screen_writes_the_events_target(w, monkeypatch):
+    from app.models.sales_target import SalesTarget
+    from app.services import sales_targets
+
+    event = make_event(w, target=999)
+    freeze(monkeypatch, at(30))
+    first = R.put_event_live_target(event.id, {"target": "1500"}, current_user=w.admin,
+                                    active_tenant_id=w.tenant.id, db=w.db)
+    row = w.db.get(SalesTarget, uuid.UUID(first["targetId"]))
+    assert (row.scope, row.period, row.event_id, float(row.amount)) == ("shop", "event", event.id, 1500.0)
+    assert w.db.get(type(event), event.id).live_target is None          # never two targets
+    again = R.put_event_live_target(event.id, {"target": 1800}, current_user=w.admin,
+                                    active_tenant_id=w.tenant.id, db=w.db)
+    assert again["targetId"] == first["targetId"] and float(sales_targets.event_target(w.db, event).amount) == 1800
+    assert w.db.query(SalesTarget).filter(SalesTarget.event_id == event.id).count() == 1
+    R.put_event_live_target(event.id, {"target": None}, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert sales_targets.event_target(w.db, event) is None and w.db.get(SalesTarget, row.id).archived_at is not None
+    north = _user(w, UserRole.SHOP_MANAGER, w.other_shop)
+    with pytest.raises(HTTPException) as e:
+        R.put_event_live_target(event.id, {"target": 10}, current_user=north, active_tenant_id=w.tenant.id, db=w.db)
+    assert e.value.status_code == 403
+
+
+def test_target_reached_has_one_source(w, monkeypatch):
+    """"יעד הושג" for an event comes from "יעדים ותחרות" only: one log entry, whoever looks."""
+    from app.models.exception_alerts import ExceptionLogEntry
+    from app.services import sales_targets
+    from app.services.exception_alerts import hooks, worker
+
+    event = make_event(w)
+    sale(w, w.tills[0], 10, "300")
+    R.put_event_live_target(event.id, {"target": 250}, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    freeze(monkeypatch, at(30))
+    assert call_live(w, event)["target"]["reached"] is True             # the screen does not record it
+    assert w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == "target_reached").count() == 0
+    recorded = []
+    monkeypatch.setattr(hooks, "process", lambda bind, keys, provider=None: recorded.extend(keys) or [])
+    assert sales_targets.evaluate_due(w.db, now=at(30)) == 1
+    assert sales_targets.evaluate_due(w.db, now=at(31)) == 1            # reached, already recorded
+    assert [name for name, _id in recorded] == ["sales_target"]          # one hit, one log source
+    entry_ids = hooks.record_rows(w.db, recorded)
+    entry = w.db.get(ExceptionLogEntry, entry_ids[0])
+    assert entry.kind == "target_reached" and entry.details["eventId"] == str(event.id)
+    # The alerts' minute pass no longer checks event targets (no second source).
+    worker.run_watches(lambda: w.db)
+    assert w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == "target_reached").count() == 1
+
+
+def test_the_migration_moves_typed_targets_into_sales_targets(w):
+    import importlib.util
+    import pathlib
+
+    from alembic.operations import Operations
+    from alembic.runtime.migration import MigrationContext
+
+    from app.models.sales_target import SalesTarget
+
+    typed = make_event(w, name="typed", target=1200)
+    both = make_event(w, name="both", tills=[], target=900)
+    _sales_target(w, both, 2000)
+    w.db.commit()
+    path = next(pathlib.Path(__file__).parents[1].glob("alembic/versions/7f2e55223360_*.py"))
+    spec = importlib.util.spec_from_file_location("event_targets_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    conn = w.db.connection()
+    with Operations.context(MigrationContext.configure(conn)):
+        module.upgrade()
+        module.upgrade()  # idempotent
+    w.db.expire_all()
+    moved = w.db.query(SalesTarget).filter(SalesTarget.event_id == typed.id).all()
+    assert [(t.scope, t.period, float(t.amount)) for t in moved] == [("shop", "event", 1200.0)]
+    assert [float(t.amount) for t in w.db.query(SalesTarget).filter(SalesTarget.event_id == both.id)] == [2000.0]
+    assert typed.live_target is None and both.live_target is None
