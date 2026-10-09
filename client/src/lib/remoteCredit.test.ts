@@ -7,6 +7,7 @@ import {
   isCreditableDocument,
   isPendingRemoteCredit,
   newCommandId,
+  remoteCreditPollMs,
   remoteCreditStatusVariant,
   selectedLines,
   selectionAmount,
@@ -154,6 +155,18 @@ describe('documents and statuses', () => {
     assert.equal(isPendingRemoteCredit(null), false);
     assert.equal(remoteCreditStatusVariant('failed'), 'destructive');
     assert.equal(remoteCreditStatusVariant('completed'), 'default');
+  });
+  it('polls fast at first, slower while the till stays silent, never once it ended', () => {
+    const at = Date.parse('2026-10-10T18:00:00Z');
+    const req = (status: 'queued' | 'completed', agoMs: number) => ({
+      status, createdAt: new Date(at - agoMs).toISOString(),
+    });
+    assert.equal(remoteCreditPollMs(undefined, at), 2000); // nothing read yet
+    assert.equal(remoteCreditPollMs(req('queued', 5_000), at), 2000);
+    assert.equal(remoteCreditPollMs(req('queued', 60_000), at), 5000);
+    assert.equal(remoteCreditPollMs(req('queued', 600_000), at), 15_000);
+    assert.equal(remoteCreditPollMs(req('completed', 5_000), at), false);
+    assert.equal(remoteCreditPollMs({ status: 'queued', createdAt: 'not a date' }, at), 2000);
   });
   it('command ids are unique v4 uuids', () => {
     const a = newCommandId();
