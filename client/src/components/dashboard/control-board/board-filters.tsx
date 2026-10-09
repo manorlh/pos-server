@@ -6,7 +6,8 @@
  *
  * Everything lives in the URL — the levels as the shared scope's `?company=&shop=&machine=`
  * (so every other page keeps the position), the board's own as `?area=&date=&cmp=&cmpDate=`
- * — so a refresh or a shared link opens the same view. One change is one URL write (a
+ * and the event as `?event=&vsEvent=` (lib/periodCompare.ts) — so a refresh or a shared
+ * link opens the same view. An event is one shop's: choosing another company or shop drops it. One change is one URL write (a
  * `push`, so Back undoes it): the levels and the board's params go through the scope
  * provider together.
  *
@@ -14,7 +15,7 @@
  * one bar ("סינון" + where you are) that opens all of it as a bottom sheet.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronLeft, Filter, RotateCcw } from 'lucide-react';
 import { useScope } from '@/lib/scope';
@@ -26,6 +27,7 @@ import {
   type BoardParams,
   type CompareMode,
 } from '@/lib/controlBoard';
+import { COMPARE_PARAM } from '@/lib/periodCompare';
 import { numberedLabel } from '@/lib/orgNumber';
 import { registerNumberOf } from '@/lib/registerNumber';
 import { findBySameId, sameId } from '@/lib/entityLookup';
@@ -65,13 +67,16 @@ export function useBoardFilters(board: BoardParams) {
     extra: Record<string, string | null>,
   ) => scope.setScope(levels, 'push', extra);
 
+  // An event is one shop's: another company or shop is no longer that event.
+  const noEvent = { [COMPARE_PARAM.event]: null, [COMPARE_PARAM.vsEvent]: null };
+
   return {
-    setCompany: (companyId: string | null) => write({ companyId }, { [BOARD_PARAM.area]: null }),
+    setCompany: (companyId: string | null) => write({ companyId }, { [BOARD_PARAM.area]: null, ...noEvent }),
     setShop: (shopId: string | null) => {
       const shop = shopId ? findBySameId(scope.shops, shopId) : undefined;
       write(
         { companyId: shop?.companyId ?? sel.companyId, shopId },
-        { [BOARD_PARAM.area]: null },
+        { [BOARD_PARAM.area]: null, ...(shopId === sel.shopId ? {} : noEvent) },
       );
     },
     setArea: (areaId: string | null) => {
@@ -114,6 +119,7 @@ export function useBoardFilters(board: BoardParams) {
           [BOARD_PARAM.date]: null,
           [BOARD_PARAM.cmp]: null,
           [BOARD_PARAM.cmpDate]: null,
+          ...noEvent,
         },
       ),
   };
@@ -180,41 +186,64 @@ function useScopeOptions({ areas, areaId }: ScopeFilterProps) {
   };
 }
 
-/** Company, shop, point of sale, till: four boxes in a row (or a column, in the sheet). */
-export function ScopeBoxes({ className, ...props }: ScopeFilterProps & { className?: string }) {
+export type ScopeField = 'company' | 'shop' | 'area' | 'machine';
+const ALL_FIELDS: ScopeField[] = ['company', 'shop', 'area', 'machine'];
+
+/**
+ * Company, shop, point of sale, till: four boxes in a row (or a column, in the sheet) — or only
+ * `fields` (the cockpit: the shop up front, the rest under "מתקדם").
+ */
+export function ScopeBoxes({
+  className,
+  fields = ALL_FIELDS,
+  boxClassName,
+  ...props
+}: ScopeFilterProps & { className?: string; fields?: ScopeField[]; boxClassName?: string }) {
   const t = useTranslations('controlBoard.filters');
   const scope = useScope();
   const o = useScopeOptions(props);
   const f = useBoardFilters(props.board);
   return (
     <div className={cn('grid gap-3', className)}>
-      <FilterBox
-        label={t('company')}
-        value={o.values.company}
-        options={o.companies}
-        onChange={(v) => f.setCompany(v || null)}
-      />
-      <FilterBox
-        label={t('shop')}
-        value={o.values.shop}
-        options={o.shops}
-        onChange={(v) => f.setShop(v || null)}
-      />
-      <FilterBox
-        label={t('area')}
-        value={o.values.area}
-        options={o.areas}
-        onChange={(v) => f.setArea(v || null)}
-        disabled={!scope.shopId || o.noAreas}
-        display={o.noAreas ? t('noAreas') : undefined}
-      />
-      <FilterBox
-        label={t('machine')}
-        value={o.values.machine}
-        options={o.machines}
-        onChange={(v) => f.setMachine(v || null)}
-        disabled={o.machines.length <= 1 && !scope.machineId}
-      />
+      {fields.includes('company') ? (
+        <FilterBox
+          label={t('company')}
+          value={o.values.company}
+          options={o.companies}
+          onChange={(v) => f.setCompany(v || null)}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('shop') ? (
+        <FilterBox
+          label={t('shop')}
+          value={o.values.shop}
+          options={o.shops}
+          onChange={(v) => f.setShop(v || null)}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('area') ? (
+        <FilterBox
+          label={t('area')}
+          value={o.values.area}
+          options={o.areas}
+          onChange={(v) => f.setArea(v || null)}
+          disabled={!scope.shopId || o.noAreas}
+          display={o.noAreas ? t('noAreas') : undefined}
+          className={boxClassName}
+        />
+      ) : null}
+      {fields.includes('machine') ? (
+        <FilterBox
+          label={t('machine')}
+          value={o.values.machine}
+          options={o.machines}
+          onChange={(v) => f.setMachine(v || null)}
+          disabled={o.machines.length <= 1 && !scope.machineId}
+          className={boxClassName}
+        />
+      ) : null}
     </div>
   );
 }
@@ -370,17 +399,30 @@ export function PhoneFilterBar({
   areas,
   areaId,
   dark,
-}: ScopeFilterProps & { today: string; dayA: string; dayB: string | null; dark: boolean }) {
+  eventLine,
+  eventSlot,
+}: ScopeFilterProps & {
+  today: string;
+  dayA: string;
+  dayB: string | null;
+  dark: boolean;
+  /** With an event chosen: what the bar says instead of the days ("אירוע: …"). */
+  eventLine?: string | null;
+  /** The event filter, in the sheet; with an event chosen it replaces the days. */
+  eventSlot?: ReactNode;
+}) {
   const t = useTranslations('controlBoard');
   const names = useDayNames(today);
   const o = useScopeOptions({ board, areas, areaId });
   const f = useBoardFilters(board);
   const [open, setOpen] = useState(false);
   const crumbs = o.crumbs.join(' › ');
-  const when = [
-    names.relative(dayA),
-    dayB ? t('compare.versus', { day: names.compared(dayA, dayB, board.cmp) }) : t('compare.none'),
-  ].join(' · ');
+  const when =
+    eventLine ??
+    [
+      names.relative(dayA),
+      dayB ? t('compare.versus', { day: names.compared(dayA, dayB, board.cmp) }) : t('compare.none'),
+    ].join(' · ');
 
   return (
     <>
@@ -407,7 +449,8 @@ export function PhoneFilterBar({
             <DialogTitle className="text-lg font-semibold">{t('filters.title')}</DialogTitle>
           </DialogHeader>
           <ScopeBoxes board={board} areas={areas} areaId={areaId} className="grid-cols-1" />
-          <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="grid-cols-1" />
+          {eventSlot}
+          {eventLine ? null : <DayBoxes board={board} today={today} dayA={dayA} dayB={dayB} className="grid-cols-1" />}
           <DialogFooter className="bg-cb-soft">
             <Button type="button" variant="outline" onClick={() => f.reset()}>
               <RotateCcw aria-hidden />

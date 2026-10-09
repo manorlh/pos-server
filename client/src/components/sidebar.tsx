@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCanProduceZ } from '@/lib/zAccess';
 import { useRoleAccess } from '@/lib/accessApi';
-import { canAccess, navHrefAllowed } from '@/lib/dashboardAccess';
+import { canAccess, isHomePath, navHrefAllowed } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { useScopeQuery } from '@/lib/scope';
 import { api } from '@/lib/api';
@@ -26,6 +26,7 @@ import {
 import { TenantLicenseDialog } from '@/components/dashboard/tenant-license-dialog';
 import {
   NAV_SECTIONS,
+  SIMPLE_NAV_SECTIONS,
   filterNavSections,
   findNavEntry,
   findNavSectionId,
@@ -173,8 +174,9 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
   const allows = (item: NavItem): boolean => {
-    // "הרשאות": an entry the super admin hid from this role.
-    if (roleAccess.hidden.has(item.href)) return false;
+    // "הרשאות": an entry the super admin hid from this role — never the home page (the
+    // control board), where every sign-in lands and which shows each user what they may see.
+    if (!isHomePath(item.href) && roleAccess.hidden.has(item.href)) return false;
     // "הרשאות דשבורד": a section this user was not given.
     if (!navHrefAllowed(dashboardAccess, item.href)) return false;
     if (item.gate === 'canReadUsers') return canReadUsers;
@@ -186,15 +188,18 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
     return true;
   };
 
+  // "תצוגת מנהל פשוטה": the manager's short menu (their profile's switch; on by default for a
+  // manager who runs one place).
+  const simpleMode = authHydrated && internalUser?.simpleMode === true;
   const sections = useMemo(
     () =>
-      NAV_SECTIONS.map((section) => ({
+      (simpleMode ? SIMPLE_NAV_SECTIONS : NAV_SECTIONS).map((section) => ({
         ...section,
         items: section.items.filter(allows),
       })).filter((section) => section.items.length > 0),
     // `allows` closes over the three capability flags; recompute when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden, dashboardAccess],
+    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden, dashboardAccess, simpleMode],
   );
 
   const activeEntry = findNavEntry(pathname);

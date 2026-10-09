@@ -738,6 +738,9 @@ export async function fetchDashboardStats(params: {
 export async function fetchOverview(params: {
   /** `YYYY-MM-DD`; the server's today when omitted. */
   date?: string;
+  /** A range instead of one day (the comparisons' breakdown of a week or a month). */
+  from?: string;
+  to?: string;
   companyId?: string;
   shopId?: string;
   machineId?: string;

@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
+from app.schemas.user import (
+    CurrentUserResponse,
+    UserCreate,
+    UserPreferencesResponse,
+    UserPreferencesUpdate,
+    UserResponse,
+    UserUpdate,
+)
 from app.schemas.elevation import TillPinAssign, TillPinSet, TillPinState
 from app.services.elevation import PinPolicyError, clear_till_pin, set_till_pin
 from app.services.permission_matrix import Action, Resource, may
@@ -17,6 +24,7 @@ from app.models.shop import Shop
 from app.services.auth import get_password_hash, get_user_by_username
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
 from app.services import dashboard_access
+from app.services import user_preferences
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -157,8 +165,40 @@ def get_current_user_info(current_user: User = Depends(get_current_user), db: Se
             # "הרשאות דשבורד": the sections the dashboard shows, the same grant the
             # routes enforce.
             "dashboard_access": dashboard_access.summary_for(db, current_user),
+            # "דף פתיחה" and whatever else the user chose for themselves, defaults filled in.
+            "preferences": user_preferences.read_preferences(current_user, db),
         }
     )
+
+
+def _preferences_out(prefs: dict) -> UserPreferencesResponse:
+    return UserPreferencesResponse(
+        home_page=prefs[user_preferences.HOME_PAGE_KEY],
+        home_pages=list(user_preferences.HOME_PAGES),
+        simple_mode=prefs[user_preferences.SIMPLE_MODE_KEY],
+        simple_mode_default=prefs["simpleModeDefault"],
+    )
+
+
+@router.get("/me/preferences", response_model=UserPreferencesResponse, response_model_by_alias=True)
+def get_my_preferences(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The signed-in user's own preferences ("דף פתיחה", "תצוגת מנהל פשוטה"), and the choices offered."""
+    return _preferences_out(user_preferences.read_preferences(current_user, db))
+
+
+@router.put("/me/preferences", response_model=UserPreferencesResponse, response_model_by_alias=True)
+def update_my_preferences(
+    data: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Choose for yourself — the opening page ("דף פתיחה") and the simple manager view ("תצוגת
+    מנהל פשוטה"). Only the keys sent change;
+    null puts one back to its default. About the caller only: nobody sets another's.
+    """
+    patch = data.model_dump(by_alias=True, exclude_unset=True)
+    return _preferences_out(user_preferences.update_preferences(db, current_user, patch))
 
 
 # ── Till PIN ──────────────────────────────────────────────────────────────────
