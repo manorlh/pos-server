@@ -471,6 +471,11 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
             {"productionVoucherDeductionsTotal": _money(totals.production_voucher_deductions_total)}
             if totals.production_voucher_deductions_total else {}
         ),
+        # Staff test vouchers that reached real sales: inside the discounts, shown apart — only when any.
+        **(
+            {"testVoucherDeductionsTotal": _money(totals.test_voucher_deductions_total)}
+            if totals.test_voucher_deductions_total else {}
+        ),
         "vatTotal": _money(totals.vat_total),
         "vatMissingCount": totals.vat_missing_count,
         "totalCash": _money(totals.total_cash),
@@ -743,6 +748,9 @@ def build_z(
                 **z.header,
                 "productionVoucherDeductionsTotal": _money(overall.production_voucher_deductions_total),
             }
+        # Staff test vouchers ("שוברי בדיקה") on real sales: no production's — inside the discounts.
+        if overall.test_voucher_deductions_total:
+            z.header = {**z.header, "testVoucherDeductionsTotal": _money(overall.test_voucher_deductions_total)}
         # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).

@@ -778,6 +778,8 @@ export interface PrepaidBatchUsage {
 
 export interface PrepaidBatchReport {
   batchId: string;
+  /** A staff test batch ("שוברי בדיקה"): out of the settlements and the commercial reports. */
+  isTest?: boolean;
   timezone: string;
   generatedAt: string;
   kind?: PrepaidVoucherKind;
@@ -960,6 +962,8 @@ export interface PrepaidTillReport {
   totals: { redemptions: number; vouchers: number; items: number; value: PrepaidValueByMode };
   series: PrepaidSeriesPoint[];
   bucket: 'hour' | 'day';
+  /** How many of the scope's batches were left out as staff test batches. */
+  testBatchesExcluded?: number;
 }
 
 export interface PrepaidRedemptionRow {

@@ -31,6 +31,7 @@ import { ReportExportToolbar } from '@/components/dashboard/report-export-toolba
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { RedemptionFlags, useFlagTexts } from './redemption-flags';
 
 const PAGE = 100;
 const MODES = ['discount', 'payment', 'zero'] as const;
@@ -45,6 +46,7 @@ function itemsText(r: PrepaidRedemptionRow): string {
 
 export function TillsReport({ filters, onTill }: { filters: VoucherFilters; onTill?: (machineId: string) => void }) {
   const t = useTranslations('prepaidVouchers.tills');
+  const flagTexts = useFlagTexts();
   const [bucket, setBucket] = useState<'day' | 'hour'>('day');
   const [openTill, setOpenTill] = useState<PrepaidTillRow | null>(null);
   const query = filtersToQuery(filters);
@@ -92,10 +94,11 @@ export function TillsReport({ filters, onTill }: { filters: VoucherFilters; onTi
         { header: t('itemsCol'), width: 36 },
         { header: t('employee'), width: 16 },
         { header: t('valueCol'), kind: 'money' },
+        { header: t('flagsCol'), width: 26 },
       ],
       rows: all.map((r) => [
         r.redeemedAt, r.machineName ?? '', r.serial ? `#${r.serial} ${r.displayCode ?? ''}` : '', r.batch.name, itemsText(r),
-        r.employeeName ?? '', shekels(r.value),
+        r.employeeName ?? '', shekels(r.value), flagTexts(r.flags).join(', '),
       ]),
     };
     return [tills, redemptions];
@@ -105,6 +108,9 @@ export function TillsReport({ filters, onTill }: { filters: VoucherFilters; onTi
     <div className="space-y-3">
       <ReportExportToolbar title={t('title')} from={filters.from || undefined} to={filters.to || undefined} getSheets={getSheets}
         disabled={!report.data || rows.length === 0} />
+      {report.data?.testBatchesExcluded ? (
+        <p className="text-xs text-muted-foreground">{t('testExcluded', { count: report.data.testBatchesExcluded })}</p>
+      ) : null}
       {report.isPending ? (
         <Skeleton className="h-48 w-full rounded-xl" />
       ) : report.isError ? (
@@ -233,7 +239,7 @@ function TillRedemptions({ till, filters, onClose }: { till: PrepaidTillRow; fil
                     <span dir="ltr" className="font-mono text-xs text-muted-foreground">{r.displayCode}</span>
                   </td>
                   <td className="px-2 py-1.5">{r.batch.name}{r.batch.customerName ? <span className="text-muted-foreground"> · {r.batch.customerName}</span> : null}</td>
-                  <td className="px-2 py-1.5">{itemsText(r)}</td>
+                  <td className="px-2 py-1.5">{itemsText(r)}<RedemptionFlags flags={r.flags} /></td>
                   <td className="px-2 py-1.5">{r.employeeName ?? ''}</td>
                   <td className="px-2 py-1.5 text-end tabular-nums" title={t(`basis.${r.valueBasis}`)}>{agorotText(r.value)}</td>
                 </tr>

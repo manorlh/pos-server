@@ -186,6 +186,10 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
         voucher_discounts = _dec((z.header or {}).get("voucherDiscountsTotal"))
         if voucher_discounts:
             rows.append(row("הנחות שוברים (כלולות)", credit(voucher_discounts)))
+        # Staff test vouchers that reached real sales: no production pays them — a discount.
+        test_vouchers = _dec((z.header or {}).get("testVoucherDeductionsTotal"))
+        if test_vouchers:
+            rows.append(row("שוברי בדיקה (כלולים)", credit(test_vouchers)))
     else:
         rows.append(row("מכירות", money(sales)))
     rows.append(row("זיכויים", credit(refunds)))

@@ -16,6 +16,10 @@ Prepaid voucher ("שוברי הפקה") reports: one batch, over its whole life.
   issued = used + remaining + void. A goods batch: its units the same way (no ₪ figure —
   the goods were paid outside the till).
 
+A staff **test batch** ("שוברי בדיקה", the helper's §18.5) is reported like any other — it is the
+batch asked for — and marked `isTest`: out of every settlement and of the commercial reports
+("מימושים לפי קופה", the board's card); its value is no production's.
+
 A **reversed** redemption (its payment was abandoned at the till and the goods went back
 on the voucher) counts nowhere: it did not happen. Hours and days are the tenant's
 local time (`resolve_report_timezone`). For a discount batch a redemption is one use
@@ -232,8 +236,12 @@ def batch_report(db: Session, user: User, tenant_id, batch_id, tz: Optional[str]
         rows = [{"key": k or None, **label(k), **b.out(money)} for k, b in buckets.items()]
         return sorted(rows, key=lambda x: (-x["units"], -x["redemptions"], str(x.get("name") or "")))
 
+    from app.services.prepaid_voucher_controls import test_batch_ids
+
     return {
         "batchId": str(batch.id),
+        # A staff test batch: the screen says it is out of the settlements and the commercial reports.
+        "isTest": str(batch.id) in test_batch_ids(db, tenant_id),
         "timezone": tz_name,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "kind": batch.kind or "items",
