@@ -1607,6 +1607,9 @@ def ready_orders(db: Session, machine: POSMachine) -> Dict[str, Any]:
             KitchenOrder.tenant_id == machine.tenant_id,
             KitchenOrder.workflow_mode == WF.ORDER_PROCESS,
             KitchenOrder.status.in_(("open", "ready", "handed_over")),
+            # The window below, in SQL: not every order the shop ever handed over
+            # (ix_kds_orders_shop_created).
+            KitchenOrder.created_at >= now - BOARD_WINDOW,
         )
         .all()
     )

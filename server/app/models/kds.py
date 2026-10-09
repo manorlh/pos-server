@@ -168,6 +168,10 @@ class KitchenOrder(Base):
         CheckConstraint("workflow_mode IN ('DIRECT_SALE', 'ORDER_PROCESS')", name="ck_kds_orders_workflow_mode"),
         Index("uq_kds_orders_source", "tenant_id", "source", "source_ref", unique=True),
         Index("ix_kds_orders_shop_status", "shop_id", "status"),
+        # The board's orders handed over a moment ago, and the till's "הזמנות להכנה" of the last
+        # day (app/services/kds.py) — by time, not by every order the shop ever had.
+        Index("ix_kds_orders_shop_updated", "shop_id", "updated_at"),
+        Index("ix_kds_orders_shop_created", "shop_id", "created_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -305,7 +309,18 @@ class KitchenTask(Base):
 
 class KitchenChange(Base):
     __tablename__ = "kds_changes"
-    __table_args__ = (Index("ix_kds_changes_order", "order_id"),)
+    __table_args__ = (
+        Index("ix_kds_changes_order", "order_id"),
+        # "מוכן" reads the task's last cancellation (`_last_cancel_at`) on every bump.
+        Index("ix_kds_changes_task", "task_id"),
+        # The board's changes still waiting for an acknowledgement, per shop.
+        Index(
+            "ix_kds_changes_shop_unacked",
+            "shop_id",
+            postgresql_where=text("acked_at IS NULL AND requires_ack IS true"),
+            sqlite_where=text("acked_at IS NULL AND requires_ack IS true"),
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
