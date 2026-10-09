@@ -57,6 +57,8 @@ class UnlockedIn(BaseModel):
 
     pos_user_id: Optional[str] = Field(None, alias="posUserId")
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    #: The lock the till released (its `lockedAt`): a newer lock is never released by an old report.
+    locked_at: Optional[str] = Field(None, alias="lockedAt", max_length=64)
 
 
 def _devices(db: Session, user: User, tenant_id, *, machine_ids=None, shop_id=None, company_id=None, group_id=None) -> List[POSMachine]:
@@ -191,9 +193,9 @@ def till_unlocked(
     db: Session = Depends(get_db),
 ):
     """A manager code on the till released its lock (checked on the till against its roster)."""
-    row = svc.unlock_from_till(db, machine, manager_name=body.pos_user_name)
+    row = svc.unlock_from_till(db, machine, manager_name=body.pos_user_name, locked_at=body.locked_at)
     db.commit()
-    return {"state": svc.state_out(svc.state_of(db, machine.id)), "command": svc.command_out(row)}
+    return {"state": svc.state_out(svc.state_of(db, machine.id)), "command": svc.command_out(row) if row is not None else None}
 
 
 @till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=FISCAL_SYNC_PATH)

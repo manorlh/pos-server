@@ -107,6 +107,9 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
     }
 
 
+#: What a kiosk never takes (its own pause is the kiosks' tab).
+KIOSK_REFUSES = ("lock", "unlock", "sign_out")
+
 #: A pending lock / unlock remembers the lock state before it (`detail`), for a cancel to restore it.
 WAS_LOCKED, WAS_UNLOCKED = "was_locked", "was_unlocked"
 
@@ -160,6 +163,14 @@ def create(
         raise _bad("invalid_action", "פעולה לא מוכרת")
     if not machines:
         raise _bad("no_devices", "לא נבחרו מכשירים")
+    if action in KIOSK_REFUSES:
+        # A kiosk is paused from the kiosks' tab, never locked or signed out (a batch skips them).
+        from app.models.kiosk import KioskDevice
+
+        kiosks = {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()}
+        machines = [m for m in machines if m.id not in kiosks]
+        if not machines:
+            raise _bad("kiosk_use_pause", "קיוסק לא ננעל ולא מנותק מרחוק — עוצרים אותו בלשונית הקיוסקים")
     now = now or utc_now()
     who = by_name or getattr(user, "username", None) or getattr(user, "email", None)
     batch_id = uuid.uuid4() if len(machines) > 1 else None
@@ -294,9 +305,23 @@ def ack(
     return row
 
 
-def unlock_from_till(db: Session, machine: POSMachine, *, manager_name: Optional[str], now: Optional[datetime] = None) -> DeviceCommand:
-    """A manager code on the till released its lock: the state, and an audited command (done)."""
+def unlock_from_till(
+    db: Session,
+    machine: POSMachine,
+    *,
+    manager_name: Optional[str],
+    locked_at: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Optional[DeviceCommand]:
+    """
+    A manager code on the till released its lock: the state, and an audited command (done).
+    `locked_at`: the lock the till released (its `lockedAt`); a report that arrives after a newer
+    lock (the till was offline) releases nothing — None, and the till locks again on its pull.
+    """
     now = now or utc_now()
+    state = state_of(db, machine.id)
+    if locked_at and state is not None and state.locked and _iso(state.locked_at) != locked_at:
+        return None
     _set_lock(db, machine, False, message=None, by=manager_name, now=now)
     for old in (
         db.query(DeviceCommand)

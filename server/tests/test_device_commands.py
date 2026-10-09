@@ -85,6 +85,19 @@ class TestCommands:
         rows = {(r.action, r.status, r.source) for r in d.db.query(DeviceCommand).all()}
         assert ("unlock", "done", "till") in rows and ("lock", "done", "dashboard") in rows
 
+    def test_a_late_release_never_unlocks_a_newer_lock(self, d):
+        _send(d, "lock", machineIds=[d.h1.id])
+        first = svc.pull(d.db, d.h1)["state"]["lockedAt"]
+        # The till released the first lock offline; the dashboard locked it again before the report came.
+        later = datetime.now(timezone.utc) + timedelta(seconds=5)
+        svc.create(d.db, [d.h1], "lock", user=d.users.admin, now=later)
+        d.db.commit()
+        out = R.till_unlocked(str(d.h1.id), R.UnlockedIn(posUserName="דנה", lockedAt=first), machine=d.h1, db=d.db)
+        assert out["state"]["locked"] is True and out["command"] is None
+        current = out["state"]["lockedAt"]
+        out = R.till_unlocked(str(d.h1.id), R.UnlockedIn(posUserName="דנה", lockedAt=current), machine=d.h1, db=d.db)
+        assert out["state"]["locked"] is False
+
     def test_a_whole_shop_in_one_batch(self, d):
         out = _send(d, "refresh_catalog", shopId=d.h_shop.id)
         assert {c["machineId"] for c in out} == {str(d.h1.id), str(d.h2.id)}
@@ -144,6 +157,14 @@ class TestKioskLive:
         d.db.add(KioskDevice(machine_id=d.h2.id, tenant_id=d.tid, shop_id=d.h_shop.id, name="Kiosk", enabled=True))
         d.db.commit()
         return d
+
+    def test_a_kiosk_is_never_locked_or_signed_out_remotely(self, k):
+        with pytest.raises(HTTPException) as refused:
+            _send(k, "lock", machineIds=[k.h2.id])
+        assert refused.value.detail["code"] == "kiosk_use_pause"
+        # A whole shop's lock reaches its tills only; a sync reaches the kiosk too.
+        assert {c["machineId"] for c in _send(k, "lock", shopId=k.h_shop.id)} == {str(k.h1.id)}
+        assert {c["machineId"] for c in _send(k, "sync_now", shopId=k.h_shop.id)} == {str(k.h1.id), str(k.h2.id)}
 
     def test_a_quick_hide_reaches_the_kiosks_of_the_shop_through_their_config(self, k):
         row = kiosk_live.hide(k.db, tenant_id=k.tid, shop_id=k.h_shop.id, kind="product", item_id=k.P.id, until=None, note="הגריל סגור")
