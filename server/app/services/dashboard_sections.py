@@ -358,8 +358,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/club*", S("customers")),
     (_ALL, "/customers*", S("customers")),
     (_ALL, "/notifications*", S("notifications")),
-    # The cockpit's "הודעה לקופות" is a quick action: a manager sends one without the section.
-    ("POST", "/till-messages", S("till_messages", "quick_actions")),
+    # "הודעות לקופות" only — a message here may be full screen. A manager with only "פעולות מהירות"
+    # sends banners through POST /insights/quick-actions/messages (the cockpit's same button).
     (_ALL, "/till-messages*", S("till_messages")),
     # ── Companies (the look-ups are above) ──
     (_GET, "/companies/parent-options", S("organization")),

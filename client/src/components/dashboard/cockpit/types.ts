@@ -52,8 +52,20 @@ export interface CockpitAction {
    * the cockpit mounts it as it is, without wrapping it in its own dialog.
    */
   ownDialog?: boolean;
+  /**
+   * One button, its sheet by what the user holds: the first variant whose gate the user passes
+   * (lib/cockpitGates.ts `pickVariant`) gives `Sheet` and `ownDialog`; none = not shown. `gate`
+   * stays the button's own — the union of the variants'.
+   */
+  variants?: CockpitActionVariant[];
   /** In the quick-actions bar (else only from an item's buttons). */
   bar: boolean;
+}
+
+export interface CockpitActionVariant {
+  gate: CockpitGate;
+  Sheet: ComponentType<CockpitActionProps>;
+  ownDialog?: boolean;
 }
 
 export interface AttentionAction {

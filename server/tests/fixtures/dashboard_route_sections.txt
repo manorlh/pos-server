@@ -592,7 +592,7 @@ GET /till-design/settings -> till_design:view
 PUT /till-design/settings -> till_design:edit
 GET /till-design/targets -> till_design:view
 GET /till-messages -> till_messages:view
-POST /till-messages -> till_messages|quick_actions:edit
+POST /till-messages -> till_messages:edit
 PATCH /till-messages/{message_id} -> till_messages:edit
 POST /till-messages/{message_id}/cancel -> till_messages:edit
 POST /till-messages/{message_id}/pause -> till_messages:edit

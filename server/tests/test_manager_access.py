@@ -150,8 +150,10 @@ class TestSimpleManagerMode:
         ("GET", "/reports/prepaid-vouchers", {"reports", "prepaid_vouchers", "cockpit"}),
         ("GET", "/app-releases/rollout", {"devices", "reports", "cockpit"}),
         ("GET", "/failed-payments", {"reports", "z", "cockpit"}),
-        # The cockpit's quick message, remote control, live event and alerts.
-        ("POST", "/till-messages", {"till_messages", "quick_actions"}),
+        # The cockpit's till message (full sheet: "הודעות לקופות" only — a quick-actions-only manager
+        # sends banners through the quick actions), remote control, live event and alerts.
+        ("POST", "/till-messages", {"till_messages"}),
+        ("POST", "/insights/quick-actions/messages", {"quick_actions"}),
         ("POST", "/machines/{machine_id}/reboot", {"devices", "device_control"}),
         ("DELETE", "/machines/{machine_id}/reboot", {"devices", "device_control"}),
         ("POST", "/machines/{machine_id}/sync", {"devices", "device_control"}),

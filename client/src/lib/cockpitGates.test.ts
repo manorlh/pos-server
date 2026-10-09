@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UNRESTRICTED, type DashboardAccess } from './dashboardAccess';
-import { MACHINE_ADMIN_ROLES, OPEN_GATE, allowedEntries, gateAllows, sortAttention } from './cockpitGates';
+import { MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, allowedEntries, gateAllows, pickVariant, sortAttention } from './cockpitGates';
 
 /** "מנהל סניף / אירוע" as the server's template gives it. */
 const BRANCH_MANAGER: DashboardAccess = {
@@ -67,5 +67,54 @@ describe('the attention feed', () => {
       { id: 'e', severity: 'warning' as const },
     ]);
     assert.deepEqual(items.map((i) => i.id), ['d', 'b', 'c', 'e', 'a']);
+  });
+});
+
+describe('"הודעה לקופות": one button, the sheet by what the user holds', () => {
+  // The registry's own gates (components/dashboard/cockpit/registry.ts), in its order.
+  const VARIANTS = [
+    { sheet: 'full', gate: TILL_MESSAGE_GATES.full },
+    { sheet: 'banner', gate: TILL_MESSAGE_GATES.banner },
+  ];
+  const access = (sections: DashboardAccess['sections']): DashboardAccess => ({ restricted: true, sections });
+  const pick = (a: DashboardAccess, role: string | null = 'shop_manager') => pickVariant(VARIANTS, a, role)?.sheet;
+
+  it('till messages at edit: the full sheet (full screen allowed)', () => {
+    assert.equal(pick(access({ till_messages: 'edit' })), 'full');
+    assert.equal(pick(access({ till_messages: 'edit', quick_actions: 'edit' })), 'full');
+    assert.equal(pick(BRANCH_MANAGER), 'full');
+  });
+
+  it('only the quick actions at edit: the banner sheet', () => {
+    assert.equal(pick(access({ quick_actions: 'edit' })), 'banner');
+    // Viewing the till messages opens nothing on POST /till-messages: still the banner.
+    assert.equal(pick(access({ quick_actions: 'edit', till_messages: 'view' })), 'banner');
+  });
+
+  it('neither at edit, or a role the routes refuse: no sheet', () => {
+    assert.equal(pick(access({ quick_actions: 'view', till_messages: 'view' })), undefined);
+    assert.equal(pick(REPORTS_ONLY), undefined);
+    assert.equal(pick(access({ till_messages: 'edit', quick_actions: 'edit' }), 'shift_supervisor'), undefined);
+    assert.equal(pick(access({ quick_actions: 'edit' }), null), undefined); // signed out / no role
+  });
+
+  it('an unrestricted machine admin gets the full sheet', () => {
+    assert.equal(pick(UNRESTRICTED, 'company_manager'), 'full');
+  });
+
+  it('the button shows exactly when one of its sheets does', () => {
+    const cases: [DashboardAccess, string | undefined][] = [
+      [access({ till_messages: 'edit' }), 'shop_manager'],
+      [access({ quick_actions: 'edit' }), 'shop_manager'],
+      [access({ quick_actions: 'edit', till_messages: 'view' }), 'company_manager'],
+      [access({ quick_actions: 'view' }), 'shop_manager'],
+      [REPORTS_ONLY, 'company_manager'],
+      [BRANCH_MANAGER, 'shift_supervisor'],
+      [UNRESTRICTED, 'cashier'],
+      [UNRESTRICTED, 'distributor'],
+    ];
+    for (const [a, role] of cases) {
+      assert.equal(gateAllows(TILL_MESSAGE_GATES.button, a, role), pickVariant(VARIANTS, a, role) !== undefined, JSON.stringify([a, role]));
+    }
   });
 });

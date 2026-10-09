@@ -38,6 +38,35 @@ export function gateAllows(
   return gate.sections.some((section) => canAccess(access, section, gate.level));
 }
 
+/**
+ * The first of `variants` (in order) whose gate the user passes, or undefined — one action whose
+ * sheet depends on what the user holds (`CockpitAction.variants`).
+ */
+export function pickVariant<T extends { gate: CockpitGate }>(
+  variants: readonly T[],
+  access: DashboardAccess,
+  role: string | null | undefined,
+  now: Date = new Date(),
+): T | undefined {
+  return variants.find((v) => gateAllows(v.gate, access, role, now));
+}
+
+/**
+ * "הודעה לקופות" — one button, the sheet by what the user holds (the coordinator, 09.10.2026):
+ *
+ * * `full`: "הודעות לקופות" at edit — the till messages' own sheet, full screen allowed
+ *   (`POST /till-messages`, that section only);
+ * * `banner`: only "פעולות מהירות" at edit — a banner through the quick actions
+ *   (`POST /insights/quick-actions/messages`; full screen refused there without till_messages).
+ *
+ * Both routes also check the machine-admin roles. The button's gate is the union (`button`).
+ */
+export const TILL_MESSAGE_GATES: Record<'full' | 'banner' | 'button', CockpitGate> = {
+  full: { sections: ['till_messages'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  banner: { sections: ['quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  button: { sections: ['till_messages', 'quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+};
+
 /** Those of `entries` the user may use — and, for an action, that has its sheet registered. */
 export function allowedEntries<T extends { gate: CockpitGate }>(
   entries: readonly T[],

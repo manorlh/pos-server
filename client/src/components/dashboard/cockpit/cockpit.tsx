@@ -15,7 +15,7 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, CheckCircle2, Info, OctagonAlert } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
-import { allowedEntries, sortAttention } from '@/lib/cockpitGates';
+import { allowedEntries, pickVariant, sortAttention } from '@/lib/cockpitGates';
 import { formatCurrency } from '@/lib/format';
 import type { TillNode } from '@/lib/overview';
 import { cn } from '@/lib/utils';
@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Skeleton } from '@/components/ui/skeleton';
 import { BoardCard, CardTitle, boardSurface } from '@/components/dashboard/control-board/board-ui';
 import { ATTENTION_PROVIDERS, QUICK_ACTIONS, TILL_DETAILS_ACTION, actionById } from './registry';
-import type { AttentionItem, AttentionProvider, CockpitActionContext, CockpitScope } from './types';
+import type { AttentionItem, AttentionProvider, CockpitAction, CockpitActionContext, CockpitScope } from './types';
 
 // ── The host ─────────────────────────────────────────────────────────────────
 
@@ -41,11 +41,20 @@ export function useCockpit(): CockpitContextValue {
   return ctx;
 }
 
-/** The actions this user may use, now (gates: sections, roles, days); with `bar`, the bar's. */
-export function useAllowedActions(barOnly: boolean) {
+/**
+ * The actions this user may use, now (gates: sections, roles, days); with `bar`, the bar's. An
+ * action with `variants` takes the sheet of the first variant the user passes (none: not shown).
+ */
+export function useAllowedActions(barOnly: boolean): CockpitAction[] {
   const access = useDashboardAccess();
   const role = useAuth((s) => s.user?.role);
-  return allowedEntries(QUICK_ACTIONS, access, role).filter((a) => a.Sheet !== null && (!barOnly || a.bar));
+  return allowedEntries(QUICK_ACTIONS, access, role)
+    .map((a): CockpitAction => {
+      if (!a.variants) return a;
+      const v = pickVariant(a.variants, access, role);
+      return v ? { ...a, Sheet: v.Sheet, ownDialog: v.ownDialog } : { ...a, Sheet: null };
+    })
+    .filter((a) => a.Sheet !== null && (!barOnly || a.bar));
 }
 
 export function CockpitProvider({

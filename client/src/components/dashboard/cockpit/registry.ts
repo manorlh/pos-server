@@ -9,7 +9,8 @@
  * * `CockpitActionProps` = `{ scope, context?: { productId?, machineId?, categoryId?, prefillText? }, onDone }`
  *   (`prefillText`: the text a sheet starts with, e.g. an anomaly's line for a till message);
  * * a quick action = `{ id, labelKey, icon, gate, Sheet }` (+ `bar`: in the quick-actions bar;
- *   + `ownDialog` when the sheet is a whole dialog of its own, like the insights' sheets);
+ *   + `ownDialog` when the sheet is a whole dialog of its own, like the insights' sheets; + `variants`
+ *   when the sheet depends on what the user holds — "הודעה לקופות");
  * * an attention provider = `{ id, gate, useItems(scope) → { items: AttentionItem[], loading } }`,
  *   `AttentionItem` = `{ id, severity, title, body, actions: { labelKey, actionId, context }[] }`.
  *
@@ -37,7 +38,7 @@ import {
   TicketCheck,
 } from 'lucide-react';
 import { QuickMessageSheet, QuickPromoSheet } from '@/components/dashboard/insights-actions';
-import { MACHINE_ADMIN_ROLES, OPEN_GATE, type CockpitGate } from '@/lib/cockpitGates';
+import { MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, type CockpitGate } from '@/lib/cockpitGates';
 import { useAnomalyAttentionItems } from './insights-slots';
 import { useFailedPaymentItems, useNoItems, useTillAlertItems } from './providers';
 import { FailedPaymentsSheet } from './sheets/failed-payments-sheet';
@@ -68,12 +69,6 @@ export const TILL_DETAILS_ACTION = 'tillDetails';
 const INSIGHT_ACTION_GATE: CockpitGate = { sections: ['quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES };
 
 /**
- * `POST /till-messages` (server dashboard_sections: `till_messages|quick_actions:edit`, and
- * `get_current_machine_admin`): "הודעות לקופות" or "פעולות מהירות" at edit, a machine-admin role.
- */
-const TILL_MESSAGE_GATE: CockpitGate = { sections: ['till_messages', 'quick_actions'], level: 'edit', roles: MACHINE_ADMIN_ROLES };
-
-/**
  * The LIST, `GET /failed-payments` (`reports|z|cockpit:view`, no role check): the feed and its
  * review sheet read only it. A payment's own routes are not the cockpit's — reading its decision
  * commands (`GET /failed-payments/*`) is `reports|z`, deciding is a reports edit — and stay on the
@@ -84,12 +79,22 @@ const FAILED_PAYMENTS_GATE: CockpitGate = { sections: ['reports', 'z', 'cockpit'
 /** The quick actions, in the bar's order. */
 export const QUICK_ACTIONS: CockpitAction[] = [
   // ── Built here ──
+  /**
+   * "הודעה לקופות" — the one message button (the coordinator, 09.10.2026): with "הודעות לקופות"
+   * at edit, the till messages' own sheet (`POST /till-messages`, full screen allowed); with only
+   * "פעולות מהירות", the insights' banner sheet (`POST /insights/quick-actions/messages`, cancelled
+   * through the quick actions). lib/cockpitGates.ts `TILL_MESSAGE_GATES`, tested there.
+   */
   {
     id: 'tillMessage',
     labelKey: 'tillMessage',
     icon: Megaphone,
-    gate: TILL_MESSAGE_GATE,
+    gate: TILL_MESSAGE_GATES.button,
     Sheet: TillMessageSheet,
+    variants: [
+      { gate: TILL_MESSAGE_GATES.full, Sheet: TillMessageSheet },
+      { gate: TILL_MESSAGE_GATES.banner, Sheet: QuickMessageSheet, ownDialog: true },
+    ],
     bar: true,
   },
   {
@@ -102,8 +107,11 @@ export const QUICK_ACTIONS: CockpitAction[] = [
     bar: false,
   },
   // ── feat/insights-actions: its sheets are whole dialogs of their own (`ownDialog`) ──
-  /** "הודעה מהירה". */
-  { id: 'quickMessage', labelKey: 'quickMessage', icon: MessageSquareText, gate: INSIGHT_ACTION_GATE, Sheet: QuickMessageSheet, ownDialog: true, bar: true },
+  /**
+   * "הודעה מהירה" — from an attention item only (an anomaly's till, with its line; a slow product):
+   * not in the bar, where "הודעה לקופות" is the one message button.
+   */
+  { id: 'quickMessage', labelKey: 'quickMessage', icon: MessageSquareText, gate: INSIGHT_ACTION_GATE, Sheet: QuickMessageSheet, ownDialog: true, bar: false },
   /**
    * "מבצע מהיר | Happy hour" — one button, one sheet with two modes (the owner: "בלי מיליון
    * לשוניות"). On an item's product, the quick promotion; from the bar, ad hoc (a product, a
