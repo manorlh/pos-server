@@ -114,6 +114,17 @@ def add_to_level(
     return level, _dec(after)
 
 
+def ensure_level(db: Session, *, tenant_id: Any, loc: Location, product_id: Any) -> StockLevel:
+    """The location's row for the product — created at 0 by the same upsert when missing."""
+    company_id, shop_id = _owners(db, loc)
+    if loc.level == "shop":
+        shop_id = loc.target_id
+    level, _after = add_to_level(
+        db, tenant_id=tenant_id, company_id=company_id, shop_id=shop_id, loc=loc, product_id=product_id, delta=Decimal("0"),
+    )
+    return level
+
+
 def lock_level(db: Session, loc: Location, product_id: Any) -> Optional[StockLevel]:
     """The location's row, locked (`FOR UPDATE`) and read fresh: set-to and resets compute from it."""
     db.flush()
@@ -155,9 +166,10 @@ def refund_location(db: Session, original_transaction_id: Any, product_id: Any) 
     """
     Where the original sale took the product from — a refund puts it back there (a sale at the bar
     refunded at the lobby's till returns to the bar), while that location still holds the product's
-    stock; else None (the refunding till's own location then).
+    stock; else None (the refunding till's own location then). With stock locations off: always None —
+    a refund is the refunding till's shop's, as before (never another shop's sale credited back there).
     """
-    if original_transaction_id is None or product_id is None:
+    if not L.locations_enabled() or original_transaction_id is None or product_id is None:
         return None
     global_pid = _resolve_global_product_id(db, product_id)
     if global_pid is None:
@@ -347,7 +359,9 @@ def set_quantity(
     if not global_pid:
         raise ValueError("Product not found")
     loc = location or Location("shop", shop_id)
-    # Locked: a sale arriving meanwhile waits, so the count is exactly what is set.
+    # The row made sure of first (a zero upsert: two first counts never collide on the insert), then
+    # locked: a sale arriving meanwhile waits, so the count is exactly what is set.
+    ensure_level(db, tenant_id=tenant_id, loc=loc, product_id=global_pid)
     level = lock_level(db, loc, global_pid)
     current = _dec(level.quantity) if level else Decimal("0")
     delta = _dec(target_quantity) - current

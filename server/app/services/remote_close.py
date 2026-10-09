@@ -93,7 +93,11 @@ def take_pending_close_shift(
     if req.sent_at is None:
         req.sent_at = now
     named = close_requests.named_shift_id(req)
-    return {"requestId": str(req.id), "shiftId": str(named) if named else None}
+    out = {"requestId": str(req.id), "shiftId": str(named) if named else None}
+    if getattr(req, "wait_for_rest", False):
+        # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
+        out["waitForRest"] = True
+    return out
 
 
 def pending_close_sources(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]]:

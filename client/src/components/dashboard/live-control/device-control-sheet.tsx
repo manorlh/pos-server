@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Lock, Megaphone, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { Lock, Megaphone, ReceiptText, RefreshCw, Wifi, WifiOff } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,7 +22,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { DEVICE_ACTIONS, actionLabel, commandStatusLabel, commandTone, type DeviceAction, type DeviceRow } from '@/lib/liveControl';
-import { fetchDevices, liveKeys, sendDeviceCommand } from '@/lib/liveControlApi';
+import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose, sendDeviceCommand } from '@/lib/liveControlApi';
+import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
 
 const TONE: Record<string, string> = {
@@ -43,9 +44,117 @@ export function useDevices(scope: LiveControlScope, enabled = true) {
   });
 }
 
+/**
+ * "סגירת משמרת / הפקת Z מרחוק" for one till: its current totals, confirmed by the manager; the till
+ * closes (or makes its Z, numbered in sequence) once no sale or card payment is open — never forced.
+ */
+function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose: () => void }) {
+  const qc = useQueryClient();
+  const preview = useQuery({ queryKey: ['device-commands', 'close-preview', machineId], queryFn: () => fetchClosePreview(machineId) });
+  const [checked, setChecked] = useState<string | null>(null);
+  const p: RemoteClosePreview | undefined = preview.data;
+  const send = useMutation({
+    mutationFn: () => requestRemoteClose(machineId, p!.totalsKey),
+    onSuccess: () => {
+      toast.success('נשלח לקופה — ייסגר כשאין בה מכירה או תשלום פתוחים');
+      qc.invalidateQueries({ queryKey: ['device-commands'] });
+      onClose();
+    },
+    onError: (e: unknown) => {
+      const detail = (e as { response?: { data?: { detail?: { code?: string } } } })?.response?.data?.detail;
+      if (detail?.code === 'totals_changed') {
+        toast.error('הסכומים בקופה השתנו מאז — בדקו שוב ואשרו');
+        setChecked(null);
+        qc.invalidateQueries({ queryKey: ['device-commands', 'close-preview', machineId] });
+        return;
+      }
+      toast.error(axiosErrorToToastMessage(e, 'השליחה נכשלה'));
+    },
+  });
+  const confirmed = !!p && checked === p.totalsKey;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{p ? `${p.kindLabel} מרחוק · ${p.name}` : 'סגירת משמרת / Z מרחוק'}</DialogTitle>
+        </DialogHeader>
+        {preview.isPending ? (
+          <Skeleton className="h-40 w-full rounded-xl" />
+        ) : preview.isError || !p ? (
+          <p className="text-sm text-destructive">{axiosErrorToToastMessage(preview.error, 'הטעינה נכשלה')}</p>
+        ) : (
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              {p.kind === 'till_z'
+                ? 'הקופה תסגור את המשמרת, תשדר את עסקאות האשראי ותפיק Z לפי הרצף שלה — רק כשאין בה מכירה או תשלום פתוחים.'
+                : 'הקופה תסגור את המשמרת — רק כשאין בה מכירה או תשלום פתוחים. המשמרת תיכנס ל-Z של הסניף.'}
+            </p>
+            {!p.online ? <p className="rounded-lg bg-amber-50 p-2 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">הקופה לא מחוברת כרגע — הבקשה תגיע אליה כשתתחבר.</p> : null}
+            {p.openShift ? (
+              <p>
+                משמרת פתוחה{p.openShift.openedBy ? ` · ${p.openShift.openedBy}` : ''}
+                {p.openShift.openedAt ? ` · מ-${new Date(p.openShift.openedAt).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
+              </p>
+            ) : null}
+            <dl className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border p-3">
+              <dt className="text-muted-foreground">מסמכים</dt>
+              <dd className="tabular-nums">{p.totals.transactions}</dd>
+              <dt className="text-muted-foreground">מכירות</dt>
+              <dd className="tabular-nums">{money(p.totals.totalSales)}</dd>
+              <dt className="text-muted-foreground">זיכויים</dt>
+              <dd className="tabular-nums">{money(p.totals.totalRefunds)}</dd>
+              <dt className="font-medium">נטו</dt>
+              <dd className="font-semibold tabular-nums">{money(p.totals.net)}</dd>
+              {Object.entries(p.totals.byTender).map(([method, amount]) => (
+                <div key={method} className="contents">
+                  <dt className="text-muted-foreground">{tenderLabel(method)}</dt>
+                  <dd className="tabular-nums">{money(amount)}</dd>
+                </div>
+              ))}
+              {p.kind === 'till_z' && p.nextZNumber != null ? (
+                <>
+                  <dt className="text-muted-foreground">Z הבא</dt>
+                  <dd className="tabular-nums">{p.nextZNumber}</dd>
+                </>
+              ) : null}
+            </dl>
+            {p.pending ? (
+              <p className="text-amber-700 dark:text-amber-400">
+                כבר יש בקשה פתוחה לקופה: {requestStateLabel(p.pending.status, p.pending.errorCode)}
+              </p>
+            ) : null}
+            {!p.canRequest ? <p className="text-muted-foreground">{p.whyNot}</p> : (
+              <label className="flex min-h-11 items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1 size-4 accent-primary"
+                  checked={confirmed}
+                  onChange={(e) => setChecked(e.target.checked ? p.totalsKey : null)}
+                />
+                <span>בדקתי את הסכומים ואני מאשר/ת {p.kind === 'till_z' ? 'הפקת Z' : 'סגירת משמרת'} בקופה הזו</span>
+              </label>
+            )}
+          </div>
+        )}
+        <DialogFooter className="gap-2">
+          <Button variant="outline" className="min-h-11" onClick={onClose}>
+            ביטול
+          </Button>
+          <Button className="min-h-11" disabled={!p || !p.canRequest || !confirmed || send.isPending} onClick={() => send.mutate()}>
+            {send.isPending ? 'שולח…' : p ? confirmLabel(p) : 'אישור'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlScope; preselect?: string | null }) {
   const qc = useQueryClient();
   const devices = useDevices(scope);
+  // Off on the server (the default): no remote close / Z offered at all.
+  const features = useQuery({ queryKey: ['device-commands', 'features'], queryFn: fetchDeviceFeatures, staleTime: 5 * 60_000 });
+  const [closing, setClosing] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(preselect ? [preselect] : []));
   const [confirming, setConfirming] = useState<DeviceAction | null>(null);
   const [lockMessage, setLockMessage] = useState('הקופה נעולה — פנו למנהל');
@@ -137,11 +246,27 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
                     </p>
                   ) : null}
                 </div>
+                {features.data?.remoteTillZ ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="min-h-10 shrink-0 gap-1"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setClosing(d.machineId);
+                    }}
+                  >
+                    <ReceiptText className="size-4" aria-hidden /> סגירה / Z
+                  </Button>
+                ) : null}
               </label>
             </li>
           );
         })}
       </ul>
+
+      {closing ? <RemoteCloseDialog machineId={closing} onClose={() => setClosing(null)} /> : null}
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {DEVICE_ACTIONS.map((a) => (

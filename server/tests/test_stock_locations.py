@@ -183,6 +183,18 @@ class TestFlagOff:
         assert mine[s.P.id].quantity == 4 and mine[s.P.id].reset_at is None
         assert s.db.query(StockAlert).count() == 0, "no low-stock alerts while off"
 
+    def test_a_refund_at_another_shop_stays_with_the_refunding_shop(self, s):
+        # The review's scenario: a sale at shop A refunded at shop B must not credit shop A.
+        sale_tx = uuid.uuid4()
+        stock_service.apply_movement(
+            s.db, movement_id=uuid.uuid4(), tenant_id=s.tid, shop_id=s.a_shop.id, product_id=s.P.id, delta=-D(1),
+            reason=StockMovementReason.SALE, occurred_at=datetime.now(timezone.utc), machine_id=s.a1.id,
+            transaction_id=sale_tx, location=stock_service.sale_location(s.db, s.a1, s.P.id),
+        )
+        s.db.commit()
+        assert stock_service.refund_location(s.db, sale_tx, s.P.id) is None
+        assert stock_service.sale_location(s.db, s.h1, s.P.id) == s.shop_loc
+
     def test_its_screens_say_off(self, s):
         user = s.users.admin
         for call in (
@@ -275,6 +287,19 @@ class TestAtomicWrites:
         _sell(s, s.h2)
         rows = s.db.query(StockLevel).filter(StockLevel.product_id == s.P.id, StockLevel.level == "shop").all()
         assert len(rows) == 1 and rows[0].quantity == -2
+
+    def test_a_count_and_an_opening_at_a_fresh_location_make_one_row(self, s):
+        _levels(s, ["shop", "area"])
+        stock_service.set_quantity(s.db, tenant_id=s.tid, shop_id=None, product_id=s.P.id, target_quantity=D(6), location=s.bar_loc)
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.lobby_loc, [{"productId": str(s.P.id), "openingQuantity": 4}])
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.bar_loc, [{"productId": str(s.P.id), "openingQuantity": 9}])
+        s.db.commit()
+        rows = s.db.query(StockLevel).filter(StockLevel.product_id == s.P.id, StockLevel.level == "area").all()
+        assert sorted((str(r.target_id), float(r.quantity), float(r.opening_quantity)) for r in rows) == sorted(
+            [(str(s.bar.id), 6.0, 9.0), (str(s.lobby.id), 0.0, 4.0)]
+        )
+        moved = s.db.query(StockMovement).filter(StockMovement.target_id == s.bar.id).all()
+        assert [m.delta for m in moved] == [6], "the count's movement is the full difference from 0"
 
     def test_a_count_is_exact_on_the_fresh_row(self, s):
         _set(s, s.shop_loc, 5)

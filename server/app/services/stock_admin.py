@@ -680,13 +680,10 @@ def set_opening(
             raise _bad("invalid_item", "שורה לא תקינה")
         # The tenant's own product (its catalog row), never another tenant's.
         product = sold_out.global_product(db, it.get("productId"), tenant_id)
-        row = stock_service.level_at(db, loc, product.id)
-        if row is None:
-            row = StockLevel(
-                tenant_id=tenant_id, company_id=path.company_id, shop_id=path.shop_id, level=loc.level,
-                target_id=loc.target_id, product_id=product.id, quantity=Decimal("0"),
-            )
-            db.add(row)
+        # Created (at 0) by the same upsert as every stock write: never a second row, never a
+        # collision with a sale arriving at a fresh location; then locked for these settings.
+        stock_service.ensure_level(db, tenant_id=tenant_id, loc=loc, product_id=product.id)
+        row = stock_service.lock_level(db, loc, product.id)
         if "openingQuantity" in it:
             row.opening_quantity = None if it["openingQuantity"] is None else _wizard_qty(it["openingQuantity"], positive=False)
         if "dailyReset" in it and it["dailyReset"] is not None:

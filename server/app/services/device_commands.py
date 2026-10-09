@@ -272,6 +272,10 @@ def create(
 ANSWER_WITHIN = {"restart_app": timedelta(minutes=10), "sign_out": timedelta(minutes=10)}
 
 
+#: An answer that arrives this soon after the command expired is still kept (the device did it).
+ANSWER_GRACE = timedelta(minutes=15)
+
+
 def answer_window(action: str) -> timedelta:
     return ANSWER_WITHIN.get(action, EXPIRES_AFTER)
 
@@ -312,6 +316,12 @@ def cancel(db: Session, command: DeviceCommand, *, now: Optional[datetime] = Non
     if command.action in ("lock", "unlock") and command.prev_state is not None:
         # Exactly as before it: locked or not, the same message, the same `lockedAt` the device knows.
         _restore(db, command.machine_id, command.tenant_id, command.prev_state, now)
+    elif command.action in ("lock", "unlock") and command.detail in (WAS_LOCKED, WAS_UNLOCKED):
+        # A pending lock / unlock written by the previous build: its word in `detail`.
+        state = state_of(db, command.machine_id)
+        if state is not None:
+            state.locked = command.detail == WAS_LOCKED
+            state.updated_at = now
     command.status = "cancelled"
     command.updated_at = now
     return command
@@ -360,7 +370,10 @@ def ack(
     row = db.get(DeviceCommand, ident)
     if row is None or row.machine_id != machine.id:
         raise _bad("command_not_found", "command not found", status.HTTP_404_NOT_FOUND)
-    if row.status in FINAL_STATUSES:
+    if row.status == "expired" and _aware(row.updated_at) is not None and now - _aware(row.updated_at) <= ANSWER_GRACE:
+        # The device did it and its answer came just after the cloud gave up waiting: what happened.
+        pass
+    elif row.status in FINAL_STATUSES:
         return row
     row.status = ack_status
     row.detail = (detail or None) and str(detail)[:300]

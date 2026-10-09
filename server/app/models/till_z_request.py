@@ -54,6 +54,9 @@ class TillZRequest(Base):
     #: "כפה סגירה (גם באמצע מכירה)": the till parks an open basket and produces the Z
     #: (only a card charge in flight is waited for). Handed to the till as `force`.
     force_close = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: Asked from remote control ("שליטה מרחוק", app/services/remote_till_z.py): the till waits until
+    #: it is at rest — no sale, no payment, no card in flight — and never closes mid-sale.
+    wait_for_rest = Column(Boolean, nullable=False, default=False, server_default="false")
     #: The Z that answered it; NULL until then, and on one completed with nothing to report.
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

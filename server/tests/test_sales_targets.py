@@ -44,15 +44,18 @@ def test_the_trading_window_is_local_and_dst_safe():
     assert b - a == timedelta(hours=8), "a bar's night runs past midnight"
 
 
-def test_a_night_past_midnight_counts_to_its_end_and_is_still_that_trading_day():
+def test_a_targets_day_is_the_business_day_four_to_four_and_a_long_night_counts_once():
     z, day, utc = "Asia/Jerusalem", date(2026, 10, 9), timezone.utc
-    # 18:00–02:00: the money runs to 02:00 on the 10th (IDT, UTC+3); an ordinary day is the calendar day.
-    # The 9th's money starts where the 8th's night ended (02:00 on the 9th), never again at midnight.
-    assert svc.trading_range(day, "18:00", "02:00", z) == (datetime(2026, 10, 8, 23, 0, tzinfo=utc), datetime(2026, 10, 9, 23, 0, tzinfo=utc))
-    assert svc.trading_range(day, "08:00", "23:00", z) == (datetime(2026, 10, 8, 21, 0, tzinfo=utc), datetime(2026, 10, 9, 21, 0, tzinfo=utc))
-    assert svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc))  # 01:30 local
-    assert not svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 23, 30, tzinfo=utc))  # 02:30
-    assert not svc.still_open_from(day, "08:00", "23:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc))
+    # The business day (IDT, UTC+3): 04:00 on the 9th to 04:00 on the 10th — for every window,
+    # crossing midnight or not (a sale at 00:30 after an ordinary day is still that day's).
+    four_to_four = (datetime(2026, 10, 9, 1, 0, tzinfo=utc), datetime(2026, 10, 10, 1, 0, tzinfo=utc))
+    assert svc.trading_range(day, "08:00", "23:00", z) == four_to_four
+    assert svc.trading_range(day, "18:00", "02:00", z) == four_to_four
+    # A night past 04:00 (20:00–05:00): the money runs to 05:00, and the next day starts there.
+    assert svc.trading_range(day, "20:00", "05:00", z) == (datetime(2026, 10, 9, 2, 0, tzinfo=utc), datetime(2026, 10, 10, 2, 0, tzinfo=utc))
+    assert svc.still_open_from(day, "20:00", "05:00", z, datetime(2026, 10, 10, 1, 30, tzinfo=utc))  # 04:30 local
+    assert not svc.still_open_from(day, "20:00", "05:00", z, datetime(2026, 10, 10, 2, 30, tzinfo=utc))  # 05:30
+    assert not svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc)), "the business day covers it"
 
 
 def _target(w, amount, **kw):

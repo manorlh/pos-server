@@ -184,6 +184,37 @@ class TestCommands:
         much_later = datetime.now(timezone.utc) + svc.EXPIRES_AFTER + timedelta(minutes=1)
         assert svc.pull(d.db, d.h1, now=much_later)["commands"] == []
 
+    def test_an_answer_just_after_expiry_is_kept_a_late_one_not(self, d):
+        cmd = _send(d, "restart_app", machineIds=[d.h1.id])[0]
+        svc.pull(d.db, d.h1)
+        expired_at = datetime.now(timezone.utc) + timedelta(minutes=11)
+        svc.expire_old(d.db, machine_id=d.h1.id, now=expired_at)
+        row = d.db.get(DeviceCommand, uuid.UUID(cmd["id"]))
+        assert row.status == "expired"
+        # The till restarted and said so 5 minutes later: what happened is kept.
+        svc.ack(d.db, d.h1, cmd["id"], "done", None, now=row.updated_at + timedelta(minutes=5))
+        assert row.status == "done"
+        other = _send(d, "sign_out", machineIds=[d.h1.id])[0]
+        svc.pull(d.db, d.h1)
+        svc.expire_old(d.db, machine_id=d.h1.id, now=expired_at + timedelta(minutes=11))
+        late = d.db.get(DeviceCommand, uuid.UUID(other["id"]))
+        svc.ack(d.db, d.h1, other["id"], "done", None, now=late.updated_at + timedelta(hours=1))
+        assert late.status == "expired", "an hour late: still expired"
+
+    def test_an_old_builds_pending_lock_cancels_by_its_detail(self, d):
+        _send(d, "lock", machineIds=[d.h1.id])
+        svc.pull(d.db, d.h1)  # locked, delivered
+        row = DeviceCommand(
+            id=uuid.uuid4(), tenant_id=d.tid, shop_id=d.h_shop.id, machine_id=d.h1.id, action="unlock",
+            status="pending", detail=svc.WAS_LOCKED, source="dashboard", created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        d.db.add(row)
+        svc.state_of(d.db, d.h1.id).locked = False  # what that unlock had set
+        d.db.commit()
+        R.cancel_command(row.id, current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
+        assert svc.pull(d.db, d.h1)["state"]["locked"] is True
+
     def test_a_command_nobody_picked_up_expires(self, d):
         _send(d, "install_update", machineIds=[d.h1.id])
         later = datetime.now(timezone.utc) + svc.EXPIRES_AFTER + timedelta(minutes=1)
