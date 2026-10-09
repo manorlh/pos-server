@@ -39,6 +39,8 @@ from test_prepaid_voucher_types import company_manager
 from test_prepaid_vouchers import _ctx, redeem, refused, vouchers, w  # noqa: F401 — `w` is the fixture
 
 FEATURES = ["accounting", "override"]
+#: A fixed-value voucher is redeemed by reserve → confirm (the core's review, 09.10).
+GOODS_FEATURES = ["accounting", "groups", "reserve_goods", "override"]
 
 
 def meal_batch(w, *, count=100, name="ארוחות", customer="קייטרינג אלון", event="פסטיבל הקיץ", price=60, value=80, **extra):
@@ -55,8 +57,29 @@ def codes(w, b):
     return [v["code"] for v in vouchers(w, b)]
 
 
+def _unit(product, price, ref):
+    return {"ref": ref, "productId": str(product.id), "productName": product.name, "groupKey": None, "quantity": 1,
+            "listPriceAgorot": price, "listValueAgorot": price, "categoryIds": [str(product.category_id)],
+            "noDiscount": False}
+
+
+def take(w, code, units, *, till=None):
+    """Reserve [units] on the voucher for a sale of their own and confirm it (the document was written)."""
+    from app.schemas.prepaid_voucher import PrepaidVoucherConfirmIn, PrepaidVoucherReserveIn
+
+    till = till or w.tills[0]
+    held = R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
+        code=code, clientRequestId=str(uuid.uuid4()), saleRef=str(uuid.uuid4()), units=units,
+        features=GOODS_FEATURES, posUserId=7, posUserName="דנה"), machine=till, db=w.db)
+    out = R.confirm_prepaid_reservation(str(till.id), held["reservationId"], PrepaidVoucherConfirmIn(
+        transactionId=str(uuid.uuid4()), amountAgorot=int(held.get("coveredAgorot") or 0)), machine=till, db=w.db)
+    w.db.commit()
+    return out
+
+
 def redeem_all(w, code):
-    return redeem(w, code, [(w.hotdog, 1), (w.drink, 2)], features=FEATURES)
+    """The whole meal: a hot dog and two drinks."""
+    return take(w, code, [_unit(w.hotdog, 2500, "a"), _unit(w.drink, 1200, "b"), _unit(w.drink, 1200, "c")])
 
 
 def agreement(w, user=None, **kw):
@@ -164,6 +187,49 @@ class TestTheSpecsExample:
         assert a["invoices"][1]["lines"][0] == {**a["invoices"][1]["lines"][0], "amountAgorot": 7_000, "unitPriceAgorot": 7_000}
         assert a["totals"]["invoicedAmountAgorot"] == 32_000
 
+    def test_mixed_prices_invoiced_out_of_serial_order(self, w):
+        """Review: serials 4–5 (₪70) redeemed and invoiced first, then 1–3 (₪60) — ₪140 + ₪180 = ₪320, never ₪340."""
+        from app.models.prepaid_voucher import PrepaidVoucherBatch
+        from app.schemas.prepaid_voucher import PrepaidVoucherAddIn
+
+        b = meal_batch(w, count=3)
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(b["id"])).one()
+        row.production_price = 7000
+        row.production_price_history = [{"fromSerial": 1, "priceAgorot": 6000}, {"fromSerial": 4, "priceAgorot": 7000}]
+        w.db.commit()
+        R.add_prepaid_vouchers(b["id"], PrepaidVoucherAddIn(count=2), **_ctx(w))
+        serial_of = {v["code"]: v["serial"] for v in vouchers(w, b)}
+        for c in [c for c, sr in serial_of.items() if sr >= 4]:
+            redeem_all(w, c)
+        a = agreement(w)
+        assert (a["totals"]["uninvoiced"], a["totals"]["uninvoicedAmountAgorot"]) == (2, 14_000)
+        a = invoice(w, a, "INV-1", 140, [(b["id"], 2)])
+        first = a["invoices"][0]["lines"][0]
+        assert (first["amountAgorot"], first["serials"]) == (14_000, [4, 5])
+        for c in [c for c, sr in serial_of.items() if sr <= 3]:
+            redeem_all(w, c)
+        a = get(w, a)
+        assert (a["totals"]["amountAgorot"], a["totals"]["uninvoiced"], a["totals"]["uninvoicedAmountAgorot"]) == (32_000, 3, 18_000)
+        assert a["batches"][0]["uninvoicedSerials"] == [1, 2, 3]
+        a = invoice(w, a, "INV-2", 180, [(b["id"], 3)])
+        second = a["invoices"][1]["lines"][0]
+        assert (second["amountAgorot"], second["serials"], second["unitPriceAgorot"]) == (18_000, [1, 2, 3], 6_000)
+        assert first["amountAgorot"] + second["amountAgorot"] == a["totals"]["amountAgorot"] == 32_000
+        assert (a["totals"]["invoicedAmountAgorot"], a["totals"]["uninvoiced"], a["totals"]["gapAgorot"]) == (32_000, 0, 0)
+
+    def test_voiding_returns_the_very_vouchers(self, w):
+        b = meal_batch(w, count=4)
+        for c in codes(w, b):
+            redeem_all(w, c)
+        a = agreement(w)
+        a = invoice(w, a, "INV-1", 120, [(b["id"], 2)])
+        a = invoice(w, a, "INV-2", 120, [(b["id"], 2)])
+        assert [ln["serials"] for i in a["invoices"] for ln in i["lines"]] == [[1, 2], [3, 4]]
+        a = X.void_settlement_invoice(a["invoices"][0]["id"], ReasonIn(reason="טעות"), **_ctx(w))
+        assert a["batches"][0]["uninvoicedSerials"] == [1, 2]
+        a = invoice(w, a, "INV-3", 120, [(b["id"], 2)])
+        assert a["invoices"][2]["lines"][0]["serials"] == [1, 2]
+
     def test_a_redeemed_voucher_counts_in_the_period_of_its_first_redemption(self, w):
         b = meal_batch(w, count=3)
         out = [redeem_all(w, c) for c in codes(w, b)]
@@ -200,7 +266,7 @@ class TestCancelledAndReplaced:
     def test_a_redeemed_then_cancelled_voucher_stays_charged(self, w):
         b = meal_batch(w, count=2, splitAllowed=True)
         code = codes(w, b)[0]
-        redeem(w, code, [(w.hotdog, 1)], features=FEATURES)
+        take(w, code, [_unit(w.hotdog, 2500, "a")])
         R.cancel_prepaid_voucher(vouchers(w, b)[0]["id"], **_ctx(w))
         assert agreement(w)["totals"]["chargeable"] == 1
 

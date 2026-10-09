@@ -33,8 +33,11 @@ take a batch's chargeable vouchers first in, first out (serial order), each line
 The redemptions' value at the till (`redemption_rows`) is shown beside it, never added to it.
 
 **Invoices** (`prepaid_settlement_invoices` + lines per batch): partial invoices and several per
-agreement; a line never takes more vouchers of a batch than are charged and not yet invoiced (every
-non-voided invoice of the tenant counted, the agreement row locked) — `prepaid_settlement_over_invoiced`.
+agreement. A line names the vouchers it covers (`voucher_ids`, `serials`): the next chargeable ones on no
+live invoice of anyone, in serial order, each at its own production price. "Not yet invoiced" is the
+chargeable set less every live invoice's vouchers — so a voucher is never invoiced twice, whatever the
+agreement or period, and the amounts add up to the agora when the price changed mid-batch. More than is
+left: `prepaid_settlement_over_invoiced:<batch>:<left>` (under the tenant's settlement lock).
 An invoice is voided, never deleted. **Gap**: each invoice's own amount against its lines (quantity ×
 price), and the agreement's invoices against the report, with an explanation field on both.
 **Corrections** ("דוח תיקונים", §16): batches invoiced beyond what is charged now, and vouchers cancelled
@@ -291,25 +294,47 @@ class BatchFigures:
     redemptions: int = 0
     invoiced: int = 0
     invoiced_amount: int = 0
-    chargeable_ids: List[str] = field(default_factory=list)
-    #: The serial each chargeable voucher is priced by (a chain: its original's), then their prices in
-    #: serial order — what the invoices take, first in first out.
-    chargeable_serials: List[int] = field(default_factory=list)
-    prices: List[Optional[int]] = field(default_factory=list)
+    #: The chargeable vouchers, in serial order: (voucher id, serial, production price at issue —
+    #: a replacement chain's at its original's serial). Invoices cover them by id.
+    items: List[Tuple[str, int, Optional[int]]] = field(default_factory=list)
+    #: Voucher ids on this agreement's live invoice lines, and on every live invoice of the tenant.
+    covered_own: Set[str] = field(default_factory=set)
+    covered_all: Set[str] = field(default_factory=set)
 
-    def amount(self, start: int = 0, count: Optional[int] = None) -> Optional[int]:
-        """Agorot of the chargeable vouchers [start, start + count) in serial order; None: one has no price."""
-        part = self.prices[start:] if count is None else self.prices[start:start + count]
-        if any(p is None for p in part):
-            return None
-        return sum(int(p) for p in part)
+    @property
+    def chargeable_ids(self) -> Set[str]:
+        return {i for i, _s, _p in self.items}
 
-    def uniform_price(self, start: int = 0, count: Optional[int] = None) -> Optional[int]:
-        part = self.prices[start:] if count is None else self.prices[start:start + count]
-        seen = {p for p in part}
-        if not part:
-            return self.batch.production_price
-        return next(iter(seen)) if len(seen) == 1 else None
+    @property
+    def uninvoiced_items(self) -> List[Tuple[str, int, Optional[int]]]:
+        """Chargeable and on no live invoice of anyone, in serial order — what an invoice takes next."""
+        return [it for it in self.items if it[0] not in self.covered_all]
+
+    @property
+    def over_invoiced(self) -> int:
+        """This agreement's invoiced vouchers that are no longer chargeable (reversed, cancelled …)."""
+        return len(self.covered_own - self.chargeable_ids)
+
+    @property
+    def invoiced_elsewhere(self) -> int:
+        return len(self.chargeable_ids & (self.covered_all - self.covered_own))
+
+
+def _sum_prices(items: Sequence[Tuple[str, int, Optional[int]]]) -> Optional[int]:
+    """Agorot of [items], each at its own price; None when one has no price."""
+    if any(p is None for _i, _s, p in items):
+        return None
+    return sum(int(p) for _i, _s, p in items)
+
+
+def _one_price(items: Sequence[Tuple[str, int, Optional[int]]], default: Optional[int]) -> Optional[int]:
+    """The single price of [items] (the default when none); None when they differ."""
+    seen = {p for _i, _s, p in items}
+    if not seen:
+        return default
+    return next(iter(seen)) if len(seen) == 1 else None
+
+
 
 
 def _in(moment: Optional[datetime], start: Optional[datetime], end: Optional[datetime]) -> bool:
@@ -330,22 +355,33 @@ def _deliveries(db: Session, batch_ids: Sequence[uuid.UUID]) -> Dict[str, List[P
     return out
 
 
-def invoiced_by_batch(db: Session, tenant_id, batch_ids: Sequence[uuid.UUID], agreement_id=None) -> Dict[str, Tuple[int, int]]:
+def coverage(db: Session, tenant_id, batch_ids: Sequence[uuid.UUID], agreement_id=None
+             ) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, int]]:
     """
-    batch id → (vouchers, agorot) on the non-voided invoices of [agreement_id] — or, without it, on every
-    non-voided invoice of the tenant (the guard against the same vouchers on two agreements' invoices).
+    Per batch, the voucher ids on live invoice lines — every agreement's (`all`) and [agreement_id]'s
+    (`own`) — and the agorot of [agreement_id]'s live lines. Lines name their vouchers (`voucher_ids`):
+    no voucher is ever on two live invoices, whatever the period or agreement.
     """
+    out_all: Dict[str, Set[str]] = defaultdict(set)
+    out_own: Dict[str, Set[str]] = defaultdict(set)
+    amount_own: Dict[str, int] = defaultdict(int)
     if not batch_ids:
-        return {}
+        return out_all, out_own, amount_own
     L, I = PrepaidSettlementInvoiceLine, PrepaidSettlementInvoice
-    q = (
-        db.query(L.batch_id, func.sum(L.quantity), func.sum(L.amount))
+    rows = (
+        db.query(L.batch_id, L.voucher_ids, L.amount, I.agreement_id)
         .join(I, I.id == L.invoice_id)
         .filter(I.tenant_id == tenant_id, I.voided_at.is_(None), L.batch_id.in_(batch_ids))
+        .all()
     )
-    if agreement_id is not None:
-        q = q.filter(I.agreement_id == agreement_id)
-    return {str(b): (int(n or 0), int(a or 0)) for b, n, a in q.group_by(L.batch_id).all()}
+    for bid, ids, amount, aid in rows:
+        key = str(bid)
+        vids = {str(v) for v in (ids or [])}
+        out_all[key] |= vids
+        if agreement_id is not None and str(aid) == str(agreement_id):
+            out_own[key] |= vids
+            amount_own[key] += int(amount or 0)
+    return out_all, out_own, amount_own
 
 
 def batch_figures(
@@ -360,7 +396,7 @@ def batch_figures(
     charge_replacements = (agreement.replacement_policy or "free") == "charge"
     ids = [b.id for b in batches]
     deliveries = _deliveries(db, ids)
-    invoiced = invoiced_by_batch(db, agreement.tenant_id, ids, getattr(agreement, "id", None))
+    covered_all, covered_own, amount_own = coverage(db, agreement.tenant_id, ids, getattr(agreement, "id", None))
     R = PrepaidVoucherRedemption
     out: List[BatchFigures] = []
     for b in batches:
@@ -428,8 +464,7 @@ def batch_figures(
                     hit = bool(delivered) and _in(min(delivered), start, end) and (not dead or charge_cancelled)
                 if hit:
                     f.chargeable += 1
-                    f.chargeable_ids.append(root)
-                    f.chargeable_serials.append(members[0].serial)
+                    f.items.append((root, members[0].serial, price_at_issue(b, members[0].serial)))
                     if dead:
                         f.cancelled_charged += 1
                 continue
@@ -446,15 +481,17 @@ def batch_figures(
                     hit = _in(when, start, end) and (not m_dead or charge_cancelled)
                 if hit:
                     f.chargeable += 1
-                    f.chargeable_ids.append(m.id)
-                    f.chargeable_serials.append(m.serial)
+                    # Its own voucher, at its chain's original's price (contract H.8).
+                    f.items.append((m.id, m.serial, price_at_issue(b, members[0].serial)))
                     if is_repl:
                         f.replacements_charged += 1
                     if m_dead:
                         f.cancelled_charged += 1
-        f.invoiced, f.invoiced_amount = invoiced.get(str(b.id), (0, 0))
-        f.chargeable_serials.sort()
-        f.prices = [price_at_issue(b, s) for s in f.chargeable_serials]
+        f.items.sort(key=lambda it: it[1])
+        f.covered_all = set(covered_all.get(str(b.id), set()))
+        f.covered_own = set(covered_own.get(str(b.id), set()))
+        f.invoiced = len(f.covered_own)
+        f.invoiced_amount = amount_own.get(str(b.id), 0)
         out.append(f)
 
     # The redemptions' value at the till and the units — the analytics' own rows, the same period.
@@ -487,10 +524,10 @@ def _batch_row(f: BatchFigures, prices: bool) -> Dict[str, Any]:
     b = f.batch
     # One price for every chargeable voucher, else null (`pricesMixed`): the amount is their sum, each at
     # the price it was issued at.
-    price = f.uniform_price() if prices else None
-    amount = f.amount() if prices else None
-    left = f.chargeable - f.invoiced
-    mixed = len({p for p in f.prices}) > 1
+    price = _one_price(f.items, b.production_price) if prices else None
+    amount = _sum_prices(f.items) if prices else None
+    uninvoiced = f.uninvoiced_items
+    mixed = len({p for _i, _s, p in f.items}) > 1
     return {
         "batchId": str(b.id),
         "batchName": b.name,
@@ -514,14 +551,16 @@ def _batch_row(f: BatchFigures, prices: bool) -> Dict[str, Any]:
         "tillValueAgorot": f.till_value,
         "productionPriceAgorot": price,
         "amountAgorot": amount,
-        "missingPrice": (any(p is None for p in f.prices) if f.prices else b.production_price is None),
+        "missingPrice": (any(p is None for _i, _s, p in f.items) if f.items else b.production_price is None),
         "pricesMixed": mixed if prices else None,
         "invoiced": f.invoiced,
         "invoicedAmountAgorot": f.invoiced_amount if prices else None,
-        "uninvoiced": left,
-        # First in, first out: the vouchers not yet invoiced are the later ones in serial order.
-        "uninvoicedAmountAgorot": (f.amount(max(0, f.invoiced), max(0, left)) if prices else None),
-        "overInvoiced": max(0, -left),
+        # Chargeable and on no live invoice of anyone — each voucher at its own price.
+        "uninvoiced": len(uninvoiced),
+        "uninvoicedAmountAgorot": _sum_prices(uninvoiced) if prices else None,
+        "uninvoicedSerials": [sr for _i, sr, _p in uninvoiced][:200],
+        "invoicedElsewhere": f.invoiced_elsewhere,
+        "overInvoiced": f.over_invoiced,
     }
 
 
@@ -538,7 +577,7 @@ def _sum(rows: Iterable[Dict[str, Any]], key: str) -> Optional[int]:
 _SUMMED = (
     "issued", "replacements", "delivered", "deliveredFree", "redeemed", "cancelled", "cancelledCharged",
     "replacementsCharged", "chargeable", "redemptions", "tillValueAgorot", "amountAgorot", "invoiced",
-    "invoicedAmountAgorot", "uninvoiced", "uninvoicedAmountAgorot", "overInvoiced",
+    "invoicedAmountAgorot", "uninvoiced", "uninvoicedAmountAgorot", "overInvoiced", "invoicedElsewhere",
 )
 
 
@@ -595,6 +634,7 @@ def invoice_out(db: Session, inv: PrepaidSettlementInvoice, prices: bool, batch_
                 "batchId": str(ln.batch_id),
                 "batchName": batch_names.get(str(ln.batch_id)),
                 "quantity": int(ln.quantity),
+                "serials": list(ln.serials or []),
                 "unitPriceAgorot": ln.unit_price if prices else None,
                 "amountAgorot": ln.amount if prices else None,
             }
@@ -630,9 +670,9 @@ def _corrections(db: Session, agreement, figures: Sequence[BatchFigures], invoic
             if at is not None and (key not in first_invoiced or at < first_invoiced[key]):
                 first_invoiced[key] = at
     for f in figures:
-        if f.invoiced > f.chargeable:
+        if f.over_invoiced:
             out.append({"kind": "over_invoiced", "batchId": str(f.batch.id), "batchName": f.batch.name,
-                        "quantity": f.invoiced - f.chargeable})
+                        "quantity": f.over_invoiced})
         since = first_invoiced.get(str(f.batch.id))
         if since is None:
             continue
@@ -650,39 +690,12 @@ def _corrections(db: Session, agreement, figures: Sequence[BatchFigures], invoic
     return out
 
 
-def _cap_by_other_invoices(db: Session, a, batches, figures: Sequence[BatchFigures], rows: List[Dict[str, Any]]) -> None:
-    """
-    A batch another agreement already invoiced (a closed month, say): what this agreement may still invoice
-    is also capped by what the batch was charged over all time less every live invoice of it — the very
-    rule `add_invoice` enforces — so the balance shown is the balance the invoice form takes.
-    """
-    everywhere = invoiced_by_batch(db, a.tenant_id, [b.id for b in batches])
-    elsewhere = {k: n - next((f.invoiced for f in figures if str(f.batch.id) == k), 0) for k, (n, _amt) in everywhere.items()}
-    touched = [b for b in batches if elsewhere.get(str(b.id), 0) > 0]
-    if not touched:
-        return
-    ever = {str(f.batch.id): f for f in batch_figures(db, _all_time(a), touched)}
-    for r in rows:
-        key = r["batchId"]
-        if key not in ever:
-            continue
-        overall = ever[key].chargeable - everywhere.get(key, (0, 0))[0]
-        left = min(r["uninvoiced"], max(0, overall))
-        r["invoicedElsewhere"] = elsewhere[key]
-        if left != r["uninvoiced"]:
-            r["uninvoiced"] = left
-            f = next(x for x in figures if str(x.batch.id) == key)
-            if r["uninvoicedAmountAgorot"] is not None or r["productionPriceAgorot"] is not None:
-                r["uninvoicedAmountAgorot"] = f.amount(len(f.prices) - left, left)
-
-
 def agreement_out(db: Session, user: User, a: PrepaidSettlementAgreement, *, full: bool = True) -> Dict[str, Any]:
     PV = _pv()
     prices = ACC.prices_visible(db, user)
     batches = agreement_batches(db, a)
     figures = batch_figures(db, a, batches)
     rows = [_batch_row(f, prices) for f in figures]
-    _cap_by_other_invoices(db, a, batches, figures, rows)
     totals = _totals(rows, prices)
     invoices = (
         db.query(PrepaidSettlementInvoice)
@@ -962,20 +975,6 @@ def candidates(db: Session, user: User, tenant_id, *, company_id, production_nam
 # ── Invoices ──────────────────────────────────────────────────────────────────
 
 
-class _AllTime:
-    """An agreement's terms with no period and no id — what its batches are charged over all time."""
-
-    def __init__(self, a: PrepaidSettlementAgreement):
-        self.tenant_id, self.id = a.tenant_id, None
-        self.billing_basis, self.cancelled_policy, self.replacement_policy = (
-            a.billing_basis, a.cancelled_policy, a.replacement_policy)
-        self.period_from = self.period_to = None
-
-
-def _all_time(a: PrepaidSettlementAgreement) -> "_AllTime":
-    return _AllTime(a)
-
-
 def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> PrepaidSettlementInvoice:
     """
     Link an external invoice. Under the agreement's lock: each line's vouchers of a batch never more
@@ -1005,6 +1004,7 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
         if key not in batches:
             raise ACC.http(status.HTTP_400_BAD_REQUEST, f"{BATCH_NOT_IN_AGREEMENT}:{key}")
         wanted[key] = wanted.get(key, 0) + int(line.quantity)
+    figures: Dict[str, BatchFigures] = {}
     if wanted:
         # Each batch's row too, in a fixed order: another agreement's invoice never races this one.
         db.query(PrepaidVoucherBatch.id).filter(
@@ -1012,16 +1012,11 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
         ).order_by(PrepaidVoucherBatch.id).with_for_update().all()
         chosen = [batches[k] for k in wanted]
         figures = {str(f.batch.id): f for f in batch_figures(db, a, chosen)}
-        # The same vouchers never twice, whatever agreement (and period) invoiced them: what is charged
-        # over all time, less every live invoice of the tenant for the batch.
-        ever = {str(f.batch.id): f for f in batch_figures(db, _all_time(a), chosen)}
-        everywhere = invoiced_by_batch(db, tenant_id, [b.id for b in chosen])
+        # The vouchers it takes: the next ones chargeable here and on no live invoice of anyone.
         for key, q in wanted.items():
-            here = figures[key].chargeable - figures[key].invoiced
-            overall = ever[key].chargeable - everywhere.get(key, (0, 0))[0]
-            left = min(here, overall)
+            left = len(figures[key].uninvoiced_items)
             if q > left:
-                raise ACC.http(status.HTTP_409_CONFLICT, f"{OVER_INVOICED}:{key}:{max(0, left)}")
+                raise ACC.http(status.HTTP_409_CONFLICT, f"{OVER_INVOICED}:{key}:{left}")
     inv = PrepaidSettlementInvoice(
         id=uuid.uuid4(), tenant_id=tenant_id, agreement_id=a.id, number=number, invoice_date=body.invoice_date,
         system=system, amount=_agorot(body.amount), currency="ILS", note=(body.note or "").strip() or None,
@@ -1031,10 +1026,12 @@ def add_invoice(db: Session, user: User, tenant_id, agreement_id, body) -> Prepa
     db.flush()
     for key, q in wanted.items():
         f = figures[key]
-        # The next q chargeable vouchers of the batch (serial order), each at the price it was issued at.
+        # The next q of its vouchers on no invoice (serial order), each at the price it was issued at.
+        taken = f.uninvoiced_items[:q]
         db.add(PrepaidSettlementInvoiceLine(
             id=uuid.uuid4(), invoice_id=inv.id, batch_id=batches[key].id, quantity=q,
-            unit_price=f.uniform_price(f.invoiced, q), amount=f.amount(f.invoiced, q),
+            unit_price=_one_price(taken, batches[key].production_price), amount=_sum_prices(taken),
+            voucher_ids=[i for i, _s, _p in taken], serials=[sr for _i, sr, _p in taken],
         ))
     ACC.audit(db, tenant_id, "invoice_add", user, ref_id=inv.id, details={
         "agreementId": str(a.id), "number": number, "system": system, "amountAgorot": inv.amount,

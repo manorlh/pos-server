@@ -28,6 +28,7 @@ prepaid_voucher_controls.py, prepaid_voucher_replacement.py.
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -128,7 +129,7 @@ class PrepaidSettlementInvoice(Base):
     #: The external system it was issued in ("חשבשבת", "ריווחית" …).
     system = Column(String(100), nullable=True)
     #: The invoice's own amount, agorot — compared with the quantities it covers (the gap).
-    amount = Column(Integer, nullable=False)
+    amount = Column(BigInteger, nullable=False)
     currency = Column(String(3), nullable=False, default="ILS", server_default="ILS")
     note = Column(Text, nullable=True)
     gap_note = Column(Text, nullable=True)
@@ -159,9 +160,13 @@ class PrepaidSettlementInvoiceLine(Base):
     )
     batch_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_voucher_batches.id"), nullable=False)
     quantity = Column(Integer, nullable=False)
-    #: Agorot per voucher — the batch's production price when the invoice was linked.
-    unit_price = Column(Integer, nullable=True)
-    amount = Column(Integer, nullable=True)
+    #: Agorot per voucher when they all were issued at one price; null when they differ.
+    unit_price = Column(BigInteger, nullable=True)
+    #: Agorot: Σ the covered vouchers' production prices at issue.
+    amount = Column(BigInteger, nullable=True)
+    #: The vouchers it covers (ids) and their serials — a voucher is on one live invoice at most.
+    voucher_ids = Column(JSON, nullable=True)
+    serials = Column(JSON, nullable=True)
 
 
 class PrepaidSettlementInvoiceFile(Base):
@@ -334,3 +339,12 @@ class PrepaidVoucherExtraEvent(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     user_name = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# On the core's reservations: what a redemption quota counts at every check (migration e4b9d2a7c6f1).
+from app.models.prepaid_voucher import PrepaidVoucherReservation as _Reservation  # noqa: E402
+
+Index(
+    "ix_prepaid_voucher_reservations_batch_held",
+    _Reservation.__table__.c.batch_id, _Reservation.__table__.c.status, _Reservation.__table__.c.expires_at,
+)
