@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   autoOpen,
+  chargedLabelKey,
   hourlyBars,
   isProducer,
   producerRedirect,
@@ -86,5 +87,13 @@ describe('the hourly bars', () => {
       { at: 'y', hour: '00:00', date: '2026-09-28', net: -10, docs: 1 },
     ]);
     assert.deepEqual(two.map((b) => [b.label, b.pct]), [['27/09 23:00', 0], ['28/09 00:00', 0]]);
+  });
+});
+
+describe('the settlement', () => {
+  it('counts in the column of its basis', () => {
+    assert.equal(chargedLabelKey('delivery'), 'chargedDelivered');
+    assert.equal(chargedLabelKey('redemption'), 'chargedRedeemed');
+    assert.equal(chargedLabelKey('mixed'), 'charged');
   });
 });

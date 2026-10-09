@@ -39,7 +39,9 @@ Branch `feat/live-control` (pos-server + dashboard) and the till's `feat/live-co
 The coordinator's decisions on the `integration/fri` merge; event-live's and the vouchers' items
 are kept here too, as this is the release's progress file.
 
-- [ ] **Event targets: one owner.** live-control's `sales_targets` becomes the single source of an
+- [x] **Event targets: one owner.** (feat/event-followups — the live screen reads the event's shop
+      sales target first, its "הגדרת יעד" writes that target, migration `7f2e55223360` moves every
+      typed `live_target` into one, and `target_reached` comes from the sales-target hits only.) live-control's `sales_targets` becomes the single source of an
       event's target, through event-live's `register_target_provider`
       (`app/services/report_events/targets.py`; nothing registers it yet). The live screen's own
       typed target (`report_events.live_target`) is used only when the event has no sales target,
@@ -47,7 +49,9 @@ are kept here too, as this is the release's progress file.
       sales-target hits (`app/services/sales_targets.py`) and event-live's live-screen target
       (`exception_alerts/external.py` `report_target_reached`). `exception_alerts/catalog.py` has
       the one kind.
-- [ ] **Producer settlement by the production's billing basis.** event-live's "עמדת מפיק"
+- [x] **Producer settlement by the production's billing basis.** (feat/event-followups — through
+      `prepaid_voucher_settlement.batch_figures`: an active agreement written for the event, else
+      each batch's production's `billing_basis` over the event; the price rule kept.) event-live's "עמדת מפיק"
       settlement (`app/services/report_events/producer.py` `settlement`) bills every batch by
       redemption. It should follow the production's `billing_basis` (`prepaid_productions`:
       `redemption` / `delivery`), ideally by reading voucher-extras' settlement service

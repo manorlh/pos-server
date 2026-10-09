@@ -21,7 +21,7 @@ What a user receives (`entry_matches`):
     exceptions);
   * `till_low_sales` — a till barely selling against its peers (the insights' anomaly rules
     report it through external.py);
-  * `target_reached` — an event reached its sales target (external.py);
+  * `target_reached` — a sales target reached ("יעדים ותחרות", an event's target included);
 * only from what the user may see in the exceptions log (the same scoping), and only with the
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
@@ -103,7 +103,8 @@ CATEGORIES: Tuple[Category, ...] = (
               "drawer_open_near_variance", "drawer_open_no_reason")),
     Category("till_low_sales", "קופה כמעט לא מוכרת", "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות).",
              ("till_low_sales",)),
-    Category("target_reached", "יעד הושג", "אירוע שהגיע ליעד המכירות שלו.", ("target_reached",)),
+    Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
+             ("target_reached",)),
 )
 CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)

@@ -57,7 +57,12 @@ export interface LiveItem {
 
 export interface LiveTarget {
   amount: number;
+  /** `targets`: the event's target in "יעדים ותחרות" (also what the screen sets); `event`: typed before it. */
   source: 'targets' | 'event';
+  /** The "יעדים ותחרות" target it is (null for an old typed one). */
+  targetId?: string | null;
+  /** What counts toward it: that module's own net, so "reached" here is when its alert goes. */
+  actual?: number;
   progressPct: number | null;
   remaining: number;
   reached: boolean;

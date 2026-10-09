@@ -251,7 +251,7 @@ function TargetPanel({ live, onEdit }: { live: EventLive; onEdit: (() => void) |
           style={{ borderColor: C.line, color: C.ink }}
         >
           <Pencil className="size-4" aria-hidden />
-          {target?.source === 'targets' ? t('editTargetOverride') : target ? t('editTarget') : t('setTarget')}
+          {target ? t('editTarget') : t('setTarget')}
         </button>
       ) : null}
     </Panel>
@@ -485,7 +485,7 @@ function KitchenPanel({ live }: { live: EventLive }) {
 
 function TargetEditor({ live, onClose, onSaved }: { live: EventLive; onClose: () => void; onSaved: () => void }) {
   const t = useTranslations('eventLive');
-  const [text, setText] = useState(live.target?.source === 'event' ? String(live.target.amount) : '');
+  const [text, setText] = useState(live.target ? String(live.target.amount) : '');
   const [saving, setSaving] = useState(false);
   const parsed = parseTargetInput(text);
   const save = async (value: number | null) => {
@@ -524,7 +524,7 @@ function TargetEditor({ live, onClose, onSaved }: { live: EventLive; onClose: ()
         />
         {parsed === undefined ? <p className="text-sm" style={{ color: C.red }}>{t('targetInvalid')}</p> : null}
         <div className="flex flex-wrap justify-end gap-2">
-          {live.target?.source === 'event' ? (
+          {live.target ? (
             <button type="button" disabled={saving} onClick={() => void save(null)} className="min-h-11 rounded-full px-4" style={{ color: C.red }}>
               {t('clearTarget')}
             </button>

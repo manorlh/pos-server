@@ -9,8 +9,9 @@ GET /report-events/live/current?shopId=   → the events worth a live screen now
                                              starting within 12 h or ended within 3 h
 GET /report-events/{id}/live?bucket=1|5   → the live view (totals, chart, target, pace,
                                              top items, tills, KDS, vouchers)
-PUT /report-events/{id}/live-target       → `{target: ₪ | null}` — the target typed on the
-                                             screen (used when no targets module gives one)
+PUT /report-events/{id}/live-target       → `{target: ₪ | null}` — the event's target in "יעדים
+                                             ותחרות" (its shop target for the event), made, changed
+                                             or archived; its "יעד הושג" is that module's
 GET /report-events/{id}/live/push         → Ably push for the screen: a subscribe-only token
                                              for the event's channel, or `enabled: false`
 """
@@ -86,9 +87,14 @@ def get_event_live(
     out = L.build_live(db, event, now=_now(), bucket=bucket)
     from app.services import dashboard_access
 
-    out["canSetTarget"] = current_user.role in C.WRITE_ROLES and dashboard_access.effective_access(
-        db, current_user
-    ).allows("live_event", "edit")
+    from app.services.kiosk_control import KIOSK_ROLES
+
+    # Setting the target writes the event's target in "יעדים ותחרות": its roles too.
+    out["canSetTarget"] = (
+        current_user.role in C.WRITE_ROLES
+        and current_user.role in KIOSK_ROLES
+        and dashboard_access.effective_access(db, current_user).allows("live_event", "edit")
+    )
     return out
 
 
@@ -100,19 +106,27 @@ def put_event_live_target(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    from app.models.shop import Shop
+    from app.services import kiosk_control, sales_targets
+
     event = C.load_event(db, current_user, active_tenant_id, event_id, write=True)
     try:
-        event.live_target = clean_target(body.get("target"))
+        amount = clean_target(body.get("target"))
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "target_invalid", "message": "יעד המכירות חייב להיות סכום חיובי"},
         ) from None
+    # The event's target lives in "יעדים ותחרות" (one source, one "יעד הושג"): the targets page's rule too.
+    shop = db.get(Shop, event.shop_id)
+    kiosk_control.check_shop_scope(db, current_user, shop, active_tenant_id)
+    row = sales_targets.set_event_target(db, event, amount, user=current_user, now=_now())
+    event.live_target = None  # the old place of a typed target: never two of them
     db.commit()
     db.refresh(event)
     target = target_for_event(db, event)
     return {
-        "liveTarget": money(event.live_target) if event.live_target is not None else None,
+        "targetId": str(row.id) if row is not None else None,
         "target": {"amount": money(target.amount), "source": target.source} if target else None,
     }
 

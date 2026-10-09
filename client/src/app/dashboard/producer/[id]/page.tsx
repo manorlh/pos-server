@@ -11,7 +11,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
-import { hourlyBars, type ProducerSettlement, type ProducerSummary, type ProducerVouchers } from '@/lib/producer';
+import { chargedLabelKey, hourlyBars, type ProducerSettlement, type ProducerSummary, type ProducerVouchers } from '@/lib/producer';
 import { fetchMyEvent, fetchMyEventSettlement, fetchMyEventVouchers } from '@/lib/producerApi';
 import { formatCurrency, formatQuantity, formatShortDateTime } from '@/lib/format';
 import { Card, Muted, Segmented, SkeletonCard } from '@/components/dashboard/insights/ios';
@@ -127,18 +127,19 @@ function Vouchers({ data }: { data: ProducerVouchers }) {
 
 function Settlement({ data }: { data: ProducerSettlement }) {
   const t = useTranslations('producer');
+  const charged = t(chargedLabelKey(data.basis));
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Tile label={t('totalDue')} value={formatCurrency(data.totalAmount)} sub={data.missingPrices ? t('missingPrices') : null} />
-        <Tile label={t('vouchersRedeemed')} value={String(data.redeemedVouchers)} />
+        <Tile label={charged} value={String(data.chargeableVouchers)} />
       </div>
       <Card className="p-0">
         <table className="w-full text-sm">
           <thead className="text-[#8E8E93]">
             <tr>
               <th className="px-4 py-2 text-start font-normal">{t('batch')}</th>
-              <th className="px-4 py-2 text-end font-normal">{t('vouchersRedeemed')}</th>
+              <th className="px-4 py-2 text-end font-normal">{charged}</th>
               <th className="px-4 py-2 text-end font-normal">{t('productionPrice')}</th>
               <th className="px-4 py-2 text-end font-normal">{t('amount')}</th>
             </tr>
@@ -146,8 +147,15 @@ function Settlement({ data }: { data: ProducerSettlement }) {
           <tbody>
             {data.rows.map((r) => (
               <tr key={r.batchId} className="border-t border-black/5 dark:border-white/10">
-                <td className="px-4 py-2">{r.name}</td>
-                <td className="px-4 py-2 text-end tabular-nums">{r.redeemedVouchers}</td>
+                <td className="px-4 py-2">
+                  {r.name}
+                  {data.basis === 'mixed' || r.origin === 'agreement' ? (
+                    <span className="block text-xs text-[#8E8E93]">
+                      {[t(`basis.${r.basis}`), r.agreementName].filter(Boolean).join(' · ')}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-4 py-2 text-end tabular-nums">{r.chargeable}</td>
                 <td className="px-4 py-2 text-end tabular-nums">{r.productionPrice !== null ? formatCurrency(r.productionPrice) : '—'}</td>
                 <td className="px-4 py-2 text-end tabular-nums">{r.amount !== null ? formatCurrency(r.amount) : '—'}</td>
               </tr>
@@ -155,7 +163,7 @@ function Settlement({ data }: { data: ProducerSettlement }) {
           </tbody>
         </table>
       </Card>
-      <Muted className="text-xs">{t('settlementBasis')}</Muted>
+      <Muted className="text-xs">{data.basisText ?? t('settlementMixed')}</Muted>
     </div>
   );
 }

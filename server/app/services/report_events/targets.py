@@ -1,14 +1,19 @@
 """
-The event's sales target, for "מצב אירוע חי" (the live screen) and the "target reached" alert.
+The event's sales target, for "מצב אירוע חי" (the live screen).
 
-One hook, `target_for_event`: a targets module (another branch builds shop / event targets)
-registers a provider with `register_target_provider`; the first provider that answers wins.
-Until one does, the target is the one typed on the live screen and saved with the event
-(`report_events.live_target`).
+One source: "יעדים ותחרות" (app/services/sales_targets.py). Its event target — the shop's
+target of `period = "event"` for the event — is registered here as the first provider
+(`register_target_provider`); "הגדרת יעד" on the live screen writes that same target
+(`sales_targets.set_event_target`), so it shows on the targets page too and its "יעד הושג" is
+sales_targets' own: the one alert source for `target_reached` (the exceptions log's
+`sales_target` source), never a second one from here.
 
-A provider is `(db, event) -> Decimal | None` (net ₪, the same money as the live total). It
-must be cheap — the live screen asks on every refresh — and must never raise: a failing
-provider is skipped.
+Only when no provider answers does the screen fall back to the target typed on it before
+targets existed (`report_events.live_target` — migration 7f2e55223360 moved every one of
+them into an event target; nothing writes it any more). Such a target is shown, never alerted.
+
+A provider is `(db, event) -> Decimal | None` (net ₪). It must be cheap — the live screen asks
+on every refresh — and must never raise: a failing provider is skipped.
 """
 from __future__ import annotations
 
@@ -34,7 +39,7 @@ MAX_TARGET = Decimal("100000000")
 @dataclass(frozen=True)
 class EventTarget:
     amount: Decimal
-    #: "targets" (a registered provider) | "event" (typed on the live screen).
+    #: "targets" (a registered provider — "יעדים ותחרות") | "event" (typed on the screen before targets).
     source: str
 
 
@@ -88,3 +93,14 @@ def clean_target(value: Any) -> Optional[Decimal]:
     if amount.is_nan() or amount.is_infinite() or amount <= 0 or amount > MAX_TARGET:
         raise ValueError("target_invalid")
     return amount.quantize(Decimal("0.01"))
+
+
+def _sales_targets_provider(db: Session, event: ReportEvent) -> Optional[Decimal]:
+    """"יעדים ותחרות": the event's shop target (app/services/sales_targets.py `event_target`)."""
+    from app.services import sales_targets
+
+    return sales_targets.event_target_amount(db, event)
+
+
+# The single source of an event's target, first in line.
+register_target_provider(_sales_targets_provider)
