@@ -231,7 +231,10 @@ def get_movements(
 
 
 def _check_setting_scope(db: Session, user: User, tenant_id, scope_level: str, scope_id) -> None:
-    path = L.path_of(db, scope_level, scope_id)
+    try:
+        path = L.path_of(db, scope_level, scope_id)
+    except LookupError:  # an unknown company / shop: 404, never a 500
+        raise HTTPException(status_code=404, detail="scope_not_found")
     svc._check_org(db, user, path, tenant_id)
     if stock_scope.scope_of(db, user).narrowed:
         raise HTTPException(status_code=403, detail="outside_your_points_of_sale")

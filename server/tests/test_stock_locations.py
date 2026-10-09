@@ -352,6 +352,18 @@ class TestPermissions:
             KL._shop_checked(s.db, user, s.h_shop.id, s.tid)
         assert refused.value.status_code == 403
 
+    def test_an_unknown_scope_or_target_is_a_404_never_a_500(self, s):
+        from app.routers import item_blocks as IB
+
+        with pytest.raises(HTTPException) as missing:
+            R._check_setting_scope(s.db, s.users.admin, s.tid, "shop", uuid.uuid4())
+        assert missing.value.status_code == 404
+        user = self._bar_manager(s)
+        gone = sold_out.Target("area", uuid.uuid4(), "", s.H.id, s.h_shop.id)
+        with pytest.raises(HTTPException) as missing:
+            IB._check_target(s.db, user, gone, s.tid)
+        assert missing.value.status_code == 404
+
     def test_their_resets_and_leftovers_are_their_points_of_sale_only(self, s):
         user = self._bar_manager(s)
         rows = [{"location": {"level": "area", "targetId": str(t)}} for t in (s.bar.id, s.lobby.id)]

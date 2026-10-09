@@ -152,7 +152,13 @@ def _check_target(db: Session, user: User, target: svc.Target, tenant_id) -> Non
     kiosk_control.check_shop_scope(db, user, shop, tenant_id)
     if narrowed.narrowed:
         level = {"area": "area", "machine": "machine", "kiosk": "machine"}.get(target.scope)
-        if level is None or not narrowed.covers_path(SL.path_of(db, level, target.scope_id)):
+        if level is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
+        try:
+            path = SL.path_of(db, level, target.scope_id)
+        except LookupError:  # the point of sale / device is gone (archived, deleted): 404, never a 500
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target_not_found")
+        if not narrowed.covers_path(path):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
 
 
