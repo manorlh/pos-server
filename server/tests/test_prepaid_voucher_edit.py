@@ -225,6 +225,13 @@ class TestContents:
         assert refused(edit, w, b, kind="order_discount").detail == PVE.KIND_FIXED
         assert edit(w, b, kind="items")["kind"] == "items"
 
+    def test_a_product_that_became_unusable_blocks_only_an_edit_of_the_goods(self, w):
+        b = make_batch(w, count=1)
+        w.hotdog.is_open_price = True  # since the batch was made: an open price has no value for a goods voucher
+        w.db.commit()
+        assert edit(w, b, stacking="unlimited", redemptionAccounting="discount")["stacking"] == "unlimited"
+        assert refused(edit, w, b, items=[{"productId": w.hotdog.id, "quantity": 2}]).status_code in (400, 422)
+
     def test_the_goods_are_checked_as_at_setup(self, w):
         b = make_batch(w, count=1)
         assert refused(edit, w, b, items=[{"productId": w.general.id, "quantity": 1}]).status_code in (400, 422)

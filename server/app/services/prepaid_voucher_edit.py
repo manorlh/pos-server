@@ -332,31 +332,38 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
             _check_prices(m, one_off=False)
         except ValueError as exc:
             raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+        # The goods, the targets and the groups are checked again only when they (or the shops)
+        # change: a product that became unusable since never blocks an unrelated edit (the rules,
+        # the accounting) — the redemption refuses it as ever (`prepaid_voucher_item_unusable`).
+        was_groups = (batch.selection or "items") == "groups"
         if not discount and m.selection != "groups":
-            products = PV._validate_products(db, tenant_id, batch.company_id, m.items, shop_ids=shop_ids)
-            items = [
-                SimpleNamespace(product_id=p.id, product_name=p.name, quantity=PV.qty(i.quantity),
-                                weighed=bool(p.is_weighed),
-                                unit_label=((p.unit_label or PV.DEFAULT_WEIGHT_UNIT) if p.is_weighed else None))
-                for i, p in zip(m.items, products)
-            ]
-        elif not discount:
-            items = []
-        targets = None
-        if batch.kind == "item_discount" and m.targets is not None:
-            targets = PV._validate_targets(db, tenant_id, batch.company_id, m.targets, shop_ids=shop_ids)
+            if {"items", "shop_ids", "selection"} & given:
+                products = PV._validate_products(db, tenant_id, batch.company_id, m.items, shop_ids=shop_ids)
+                items = [
+                    SimpleNamespace(product_id=p.id, product_name=p.name, quantity=PV.qty(i.quantity),
+                                    weighed=bool(p.is_weighed),
+                                    unit_label=((p.unit_label or PV.DEFAULT_WEIGHT_UNIT) if p.is_weighed else None))
+                    for i, p in zip(m.items, products)
+                ]
+        elif not discount and not was_groups:
+            items = []  # from a fixed list to groups: the list goes
         for f in _TERMS:
             v = getattr(m, f)
             cols[f] = _agorot(v) if f in _MONEY else v
-        cols["targets"] = targets if batch.kind == "item_discount" else None
+        if batch.kind == "item_discount":
+            if m.targets is not None and {"targets", "shop_ids"} & given:
+                cols["targets"] = PV._validate_targets(db, tenant_id, batch.company_id, m.targets, shop_ids=shop_ids)
+        else:
+            cols["targets"] = None
         if not discount and m.selection == "groups":
-            from app.services import production_voucher_groups as PG
+            if {"groups", "catalog_mode", "selection", "shop_ids"} & given:
+                from app.services import production_voucher_groups as PG
 
-            stored = PG.stored(m.groups) if "groups" in given else list(batch.groups or [])
-            PG.validate(db, tenant_id, batch.company_id, stored or [])
-            if "groups" in given or "catalog_mode" in given:
-                stored = PG.freeze(db, tenant_id, batch.company_id, stored) if m.catalog_mode == "frozen" else stored
-            cols["groups"] = stored
+                stored = PG.stored(m.groups) if "groups" in given else list(batch.groups or [])
+                PG.validate(db, tenant_id, batch.company_id, stored or [])
+                if {"groups", "catalog_mode", "selection"} & given:
+                    stored = PG.freeze(db, tenant_id, batch.company_id, stored) if m.catalog_mode == "frozen" else stored
+                cols["groups"] = stored
         else:
             cols["groups"] = None
         if discount:
