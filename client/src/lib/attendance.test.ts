@@ -2,17 +2,20 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  actionLog,
   adjustmentTimes,
   cardAlerts,
   cardStatus,
   decimalHours,
   formatHours,
   isoToLocalInput,
+  KNOWN_FLAGS,
   liveSeconds,
   localInputToIso,
   noteKeys,
   reportExportRows,
   REPORT_HEADER_KEYS,
+  verifiedByKey,
   type AttendanceAdjustment,
   type AttendanceShift,
 } from './attendance';
@@ -99,5 +102,39 @@ describe('attendance — corrections', () => {
       adjustmentTimes({ ...base, status: 'approved', approvedTime: '2026-10-06T14:10:00Z' }),
       { before: '2026-10-06T14:40:00Z', after: '2026-10-06T14:10:00Z' },
     );
+  });
+});
+
+describe('attendance — code per action', () => {
+  it('shows the new flags on the card and in the notes', () => {
+    assert.deepEqual(cardAlerts({ flags: ['on_behalf', 'no_code'], openTables: 0 }), ['on_behalf', 'no_code']);
+    assert.deepEqual(noteKeys({ notes: ['no_code', 'open', 'on_behalf'] }), ['open', 'on_behalf', 'no_code']);
+    assert.ok(KNOWN_FLAGS.includes('approval_unverified'));
+  });
+
+  it('reads the action log, oldest first, skipping what is malformed', () => {
+    const log = actionLog({
+      actionLog: [
+        { id: 'b', type: 'clock_out', at: '2026-10-06T22:00:00+00:00', machineId: 'm1', verifiedBy: 'manager', origin: 'session',
+          onBehalf: { posUserId: 'boss', name: 'רותי', verified: true } },
+        { id: 'a', type: 'clock_in', at: '2026-10-06T14:00:00+00:00', machineId: 'm2', verifiedBy: 'code', origin: 'clock' },
+        { id: 'c', type: 'dance' },
+        'junk',
+        null,
+      ],
+    });
+    assert.deepEqual(log.map((e) => e.id), ['a', 'b']);
+    assert.equal(log[0].origin, 'clock');
+    assert.deepEqual(log[1].onBehalf, { name: 'רותי', verified: true });
+    assert.deepEqual(actionLog({}), []);
+    assert.deepEqual(actionLog(undefined), []);
+    assert.deepEqual(actionLog({ actionLog: 'x' }), []);
+  });
+
+  it('names how an action was confirmed', () => {
+    assert.equal(verifiedByKey({ verifiedBy: 'code' }), 'code');
+    assert.equal(verifiedByKey({ verifiedBy: 'session' }), 'session');
+    assert.equal(verifiedByKey({ verifiedBy: 'card' }), 'unknown');
+    assert.equal(verifiedByKey({ verifiedBy: null }), 'unknown');
   });
 });

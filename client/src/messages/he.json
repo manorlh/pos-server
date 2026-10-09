@@ -5740,7 +5740,9 @@
       "overlap": "שתי משמרות פתוחות",
       "open_tables": "יצא עם שולחנות פתוחים",
       "approval_unverified": "מאשר לא מזוהה כמנהל",
-      "late_event": "התקבל באיחור (ללא חיבור)"
+      "late_event": "התקבל באיחור (ללא חיבור)",
+      "on_behalf": "פעולה באישור מנהל",
+      "no_code": "פעולה בלי קוד עובד"
     },
     "notes": {
       "open": "משמרת פתוחה",
@@ -5750,7 +5752,26 @@
       "clock_skew": "פער שעון בקופה",
       "overlap": "חפיפה למשמרת אחרת",
       "approval_unverified": "מאשר לא מזוהה",
-      "late_event": "התקבל באיחור"
+      "late_event": "התקבל באיחור",
+      "on_behalf": "מנהל פעל בשם העובד",
+      "no_code": "פעולה בלי קוד עובד"
+    },
+    "actions": {
+      "clock_in": "כניסה",
+      "break_start": "יציאה להפסקה",
+      "break_end": "חזרה מהפסקה",
+      "clock_out": "יציאה",
+      "correction_request": "בקשת תיקון"
+    },
+    "verifiedBy": {
+      "code": "בקוד העובד",
+      "manager": "באישור מנהל",
+      "session": "בלי קוד (מחובר בקופה)",
+      "unknown": "—"
+    },
+    "origin": {
+      "clock": "שעון נוכחות",
+      "session": "תפריט הקופה"
     },
     "live": {
       "total": "במשמרת: {n}",
@@ -5846,7 +5867,11 @@
       "reason": "סיבה (חובה)",
       "save": "שמירת התיקון",
       "saved": "התיקון נשמר",
-      "saveFailed": "שמירת התיקון נכשלה"
+      "saveFailed": "שמירת התיקון נכשלה",
+      "actionLog": "פעולות מהקופה",
+      "actionLine": "{action} · {at} · {origin} · {verified}",
+      "onBehalfBy": "פעל: {name}",
+      "onBehalfUnverified": "(לא מזוהה כמנהל)"
     },
     "kind": {
       "missing_in": "כניסה חסרה",
