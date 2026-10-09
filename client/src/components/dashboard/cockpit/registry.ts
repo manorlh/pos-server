@@ -17,7 +17,8 @@
  * the routes it calls — a manager sees only what they may do. An action whose `Sheet` is null is a
  * slot another branch fills at merge (`blockItem`, `deviceControl`, `liveEvent`, `vouchers`,
  * `stockUpdate`; provider `pushAlerts` — feat/insights-actions filled `quickMessage`,
- * `quickPromo`, `happyHour` and `anomalies` at the 09.10 integration merge): replace the null
+ * `quickPromo` (with Happy hour as its second mode) and `anomalies` at the 09.10 integration
+ * merge): replace the null
  * (or `useNoItems`) with the feature's component — nothing else changes. Section ids: the
  * catalogue's (lib/dashboardAccess.ts) — `cockpit`, `quick_actions`, `item_blocks`,
  * `device_control`, `live_event`, `alerts`.
@@ -33,10 +34,9 @@ import {
   MessageSquareText,
   MonitorCog,
   Radio,
-  Sparkles,
   TicketCheck,
 } from 'lucide-react';
-import { HappyHourSheet, QuickMessageSheet, QuickPromoSheet } from '@/components/dashboard/insights-actions';
+import { QuickMessageSheet, QuickPromoSheet } from '@/components/dashboard/insights-actions';
 import { MACHINE_ADMIN_ROLES, OPEN_GATE, type CockpitGate } from '@/lib/cockpitGates';
 import { useAnomalyAttentionItems } from './insights-slots';
 import { useFailedPaymentItems, useNoItems, useTillAlertItems } from './providers';
@@ -90,10 +90,12 @@ export const QUICK_ACTIONS: CockpitAction[] = [
   // ── feat/insights-actions: its sheets are whole dialogs of their own (`ownDialog`) ──
   /** "הודעה מהירה". */
   { id: 'quickMessage', labelKey: 'quickMessage', icon: MessageSquareText, gate: INSIGHT_ACTION_GATE, Sheet: QuickMessageSheet, ownDialog: true, bar: true },
-  /** "מבצע מהיר" — on an item's product; from the bar, "מבצע מזדמן" (ad hoc: a product, a category or the basket). */
+  /**
+   * "מבצע מהיר | Happy hour" — one button, one sheet with two modes (the owner: "בלי מיליון
+   * לשוניות"). On an item's product, the quick promotion; from the bar, ad hoc (a product, a
+   * category or the basket) or a scheduled happy hour.
+   */
   { id: 'quickPromo', labelKey: 'quickPromo', icon: BadgePercent, gate: INSIGHT_ACTION_GATE, Sheet: QuickPromoSheet, ownDialog: true, bar: true },
-  /** "Happy hour" — a scheduled promotion on chosen weekdays and hours. */
-  { id: 'happyHour', labelKey: 'happyHour', icon: Sparkles, gate: INSIGHT_ACTION_GATE, Sheet: HappyHourSheet, ownDialog: true, bar: true },
   // ── Slots: registered at merge by their branches ──
   /** "חסום / אזל". */
   { id: 'blockItem', labelKey: 'blockItem', icon: Ban, gate: { sections: ['item_blocks'], level: 'edit' }, Sheet: null, bar: true },

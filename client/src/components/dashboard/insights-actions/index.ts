@@ -4,8 +4,8 @@
  * block and tabs.
  */
 export { QuickMessageSheet, type QuickMessageSheetProps } from './quick-message-sheet';
-export { QuickPromoSheet, type QuickPromoSheetProps } from './quick-promo-sheet';
-export { HappyHourSheet, type HappyHourSheetProps } from './happy-hour-sheet';
+/** The promotion sheet: "מבצע מהיר | Happy hour" (Happy hour is its second mode, not a sheet of its own). */
+export { QuickPromoSheet, type PromoMode, type QuickPromoSheetProps } from './quick-promo-sheet';
 export { useAnomalyItems, useAnomalyFeed, type AttentionItem } from './use-anomaly-items';
 export { useActionSheets, type SheetKind } from './action-host';
 export { BoardInsightsBlock } from './board-block';

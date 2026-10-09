@@ -6,7 +6,7 @@
  * ("לאן"), the duration picker ("עד מתי"), and who may act.
  */
 
-import { useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/lib/auth';
@@ -40,19 +40,11 @@ export function useCanAct(): boolean {
   return !!role && ACTION_ROLES.has(role) && canAccess(access, 'quick_actions', 'edit');
 }
 
-export function ActionSheet({
-  title,
-  subtitle,
-  children,
-  footer,
-  onClose,
-}: {
-  title: string;
-  subtitle?: ReactNode;
-  children: ReactNode;
-  footer?: ReactNode;
-  onClose: () => void;
-}) {
+/** Inside an `ActionSheetFrame`: a sheet renders its content only, in the frame's one dialog. */
+const InSheetFrame = createContext(false);
+
+/** The iOS sheet's dialog: a bottom sheet on a phone, a centred card on a wide screen. */
+function SheetDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
   const dark = useSystemDark();
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
@@ -63,19 +55,57 @@ export function ActionSheet({
         )}
         style={{ fontFamily: SF_FONT }}
       >
-        <DialogHeader className="px-5 pt-5 pb-3 text-start">
-          <DialogTitle className="text-[20px] font-bold tracking-tight">{title}</DialogTitle>
-          {subtitle ? <DialogDescription className="text-[13px] text-[#8E8E93]">{subtitle}</DialogDescription> : null}
-        </DialogHeader>
-        <div className="space-y-4 px-4 pb-4">{children}</div>
-        {footer ? (
-          <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-[#3C3C4349] bg-[#F2F2F7]/95 px-4 py-3 backdrop-blur dark:border-[#54545899] dark:bg-[#1C1C1E]/95">
-            {footer}
-          </div>
-        ) : null}
+        {children}
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * One dialog around sheets that take turns in place (the promotion sheet's "מבצע מהיר | Happy
+ * hour"): the dialog stays open while its content changes — no close-and-reopen between them.
+ */
+export function ActionSheetFrame({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  return (
+    <SheetDialog onClose={onClose}>
+      <InSheetFrame.Provider value>{children}</InSheetFrame.Provider>
+    </SheetDialog>
+  );
+}
+
+export function ActionSheet({
+  title,
+  subtitle,
+  header,
+  children,
+  footer,
+  onClose,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  /** Under the title, above the groups (the promotion sheet's mode control). */
+  header?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose: () => void;
+}) {
+  const framed = useContext(InSheetFrame);
+  const content = (
+    <>
+      <DialogHeader className="px-5 pt-5 pb-3 text-start">
+        <DialogTitle className="text-[20px] font-bold tracking-tight">{title}</DialogTitle>
+        {subtitle ? <DialogDescription className="text-[13px] text-[#8E8E93]">{subtitle}</DialogDescription> : null}
+      </DialogHeader>
+      {header ? <div className="px-4 pb-3">{header}</div> : null}
+      <div className="space-y-4 px-4 pb-4">{children}</div>
+      {footer ? (
+        <div className="sticky bottom-0 flex flex-wrap items-center justify-end gap-2 border-t border-[#3C3C4349] bg-[#F2F2F7]/95 px-4 py-3 backdrop-blur dark:border-[#54545899] dark:bg-[#1C1C1E]/95">
+          {footer}
+        </div>
+      ) : null}
+    </>
+  );
+  return framed ? content : <SheetDialog onClose={onClose}>{content}</SheetDialog>;
 }
 
 /** A grouped block: a small grey header and a white rounded card. */

@@ -6,8 +6,9 @@
  * * the `anomalies` provider — the insights' attention feed (`useAnomalyItems` /
  *   `useAnomalyFeed`: today's till anomalies of the scope, then a few slow products), in the
  *   cockpit's `AttentionItem` shape;
- * * the sheets (`QuickMessageSheet`, `QuickPromoSheet`, `HappyHourSheet`) are registered as they
- *   are (registry.ts): their props are the registry's `CockpitActionProps` — checked below.
+ * * the sheets (`QuickMessageSheet`, `QuickPromoSheet` — "מבצע מהיר | Happy hour") are
+ *   registered as they are (registry.ts): their props are the registry's `CockpitActionProps` —
+ *   checked below.
  *
  * The insights' feed speaks its own words: five severities (the cockpit has three), full
  * message keys for its buttons, `openMachine` for the till's own sheet. Mapped here, nothing

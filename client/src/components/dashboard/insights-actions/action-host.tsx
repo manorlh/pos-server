@@ -2,16 +2,15 @@
 
 /**
  * One sheet at a time, opened from anywhere on a page: `open('quickPromo', { productId })`.
- * The insights page, the board's block and the promotions page use it; the cockpit can mount
- * the sheets itself.
+ * The insights page and the promotions page use it; the cockpit mounts the sheets itself.
+ * `happyHour` is the promotion sheet opened in its Happy hour mode ("מבצע מהיר | Happy hour").
  */
 
 import { useCallback, useState, type ReactNode } from 'react';
 import type { ActionContext, ActionScope } from '@/lib/insightsActions';
 import type { HappyHourSuggestion } from '@/lib/insightsActionsApi';
-import { HappyHourSheetBody } from './happy-hour-sheet';
 import { QuickMessageSheetBody } from './quick-message-sheet';
-import { QuickPromoSheetBody } from './quick-promo-sheet';
+import { QuickPromoSheet } from './quick-promo-sheet';
 
 export type SheetKind = 'quickMessage' | 'quickPromo' | 'happyHour';
 
@@ -37,10 +36,17 @@ export function useActionSheets(scope: ActionScope): {
   let element: ReactNode = null;
   if (current?.kind === 'quickMessage') {
     element = <QuickMessageSheetBody scope={scope} context={current.context} onDone={close} initialText={current.initialText} source={current.source} />;
-  } else if (current?.kind === 'quickPromo') {
-    element = <QuickPromoSheetBody scope={scope} context={current.context} onDone={close} source={current.source} />;
-  } else if (current?.kind === 'happyHour') {
-    element = <HappyHourSheetBody scope={scope} context={current.context} onDone={close} initial={current.suggestion} />;
+  } else if (current?.kind === 'quickPromo' || current?.kind === 'happyHour') {
+    element = (
+      <QuickPromoSheet
+        scope={scope}
+        context={current.context}
+        onDone={close}
+        initialMode={current.kind === 'happyHour' ? 'happyHour' : 'quick'}
+        source={current.source}
+        suggestion={current.suggestion}
+      />
+    );
   }
   return { open, element };
 }

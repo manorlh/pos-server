@@ -1118,7 +1118,6 @@
         "failedPayments": "תשלומים לא מוכרעים",
         "quickMessage": "הודעה מהירה",
         "quickPromo": "מבצע מהיר",
-        "happyHour": "Happy hour",
         "blockItem": "חסום / אזל",
         "deviceControl": "שליטה בקופות וקיוסקים",
         "liveEvent": "מצב אירוע חי",
@@ -15289,6 +15288,11 @@
       "announceLabel": "הודעה לעובדים",
       "announce": "שלח הודעה לעובדים",
       "announceHint": "באנר בקופות המבצע כשהוא מתחיל."
+    },
+    "promoModes": {
+      "label": "סוג המבצע",
+      "quick": "מבצע מהיר",
+      "happyHour": "Happy hour"
     },
     "promo": {
       "title": "מבצע מהיר",

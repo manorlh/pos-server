@@ -7,9 +7,12 @@
  * (10% without a cost) and refuses any that sells a unit below cost; a confirmation shows
  * what will run before it does, and "בטל מבצע" stops it afterwards. Optionally announced to
  * the cashiers. Server: /insights/quick-actions/promotions.
+ *
+ * `QuickPromoSheet` is the one promotion sheet: "מבצע מהיר | Happy hour" on top of its form
+ * (the owner: "בלי מיליון לשוניות" — one button, two modes), both in one dialog.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -34,6 +37,7 @@ import {
   createQuickPromotion,
   fetchPromotionSuggestion,
   fetchQuickActions,
+  type HappyHourSuggestion,
   type Offer,
   type QuickAction,
   type SubjectParams,
@@ -43,8 +47,10 @@ import { cn } from '@/lib/utils';
 import { Segmented, Switch } from '@/components/dashboard/insights/ios';
 import { ProductListPicker, useCategoryOptions } from '@/components/dashboard/promotions/group-picker';
 import { Input } from '@/components/ui/input';
+import { HappyHourSheetBody } from './happy-hour-sheet';
 import {
   ActionSheet,
+  ActionSheetFrame,
   DurationPicker,
   NoPermission,
   PrimaryButton,
@@ -56,12 +62,46 @@ import {
   useTargets,
 } from './sheet-parts';
 
-export type QuickPromoSheetProps = ActionSheetProps;
+export type PromoMode = 'quick' | 'happyHour';
+
+export type QuickPromoSheetProps = ActionSheetProps & {
+  /** The mode it opens in (the insights page's Happy hour opens `happyHour`); default `quick`. */
+  initialMode?: PromoMode;
+  /** A happy-hour window already chosen (the insights page's suggestion). */
+  suggestion?: HappyHourSuggestion;
+  /** Where a quick promotion came from (`slow`, `adhoc`…); else from the context. */
+  source?: string;
+};
 
 type SubjectKind = 'product' | 'category' | 'all';
 
-export function QuickPromoSheet(props: QuickPromoSheetProps) {
-  return <QuickPromoSheetBody {...props} />;
+/**
+ * The promotion sheet — the cockpit's "מבצע מהיר" and the insights' and promotions pages':
+ * "מבצע מהיר | Happy hour" at the top of the form, one dialog for both (a switch keeps it open).
+ */
+export function QuickPromoSheet({ initialMode = 'quick', suggestion, source, ...props }: QuickPromoSheetProps) {
+  const t = useTranslations('insightsActions.promoModes');
+  const [mode, setMode] = useState<PromoMode>(initialMode);
+  const modeSwitch = (
+    <Segmented
+      value={mode}
+      onChange={setMode}
+      label={t('label')}
+      options={[
+        { id: 'quick', label: t('quick') },
+        { id: 'happyHour', label: t('happyHour') },
+      ]}
+    />
+  );
+  return (
+    <ActionSheetFrame onClose={props.onDone}>
+      {mode === 'quick' ? (
+        <QuickPromoSheetBody {...props} source={source} modeSwitch={modeSwitch} />
+      ) : (
+        <HappyHourSheetBody {...props} initial={suggestion} modeSwitch={modeSwitch} />
+      )}
+    </ActionSheetFrame>
+  );
 }
 
 /** An offer as a promotion's config, for the announcement's text. */
@@ -73,7 +113,14 @@ function offerAsPromotion(name: string, offer: Offer) {
   return { name, type: 'discount', config: { discountKind: 'percent', discountValue: offer.value ?? 0 } };
 }
 
-export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPromoSheetProps & { source?: string }) {
+/** The quick / ad-hoc promotion mode; `modeSwitch`: the sheet's mode control, on the form. */
+function QuickPromoSheetBody({
+  scope,
+  context,
+  onDone,
+  source,
+  modeSwitch,
+}: ActionSheetProps & { source?: string; modeSwitch?: ReactNode }) {
   const t = useTranslations('insightsActions.promo');
   const tm = useTranslations('insightsActions.message');
   const tc = useTranslations('common');
@@ -257,6 +304,7 @@ export function QuickPromoSheetBody({ scope, context, onDone, source }: QuickPro
     <ActionSheet
       title={fixedSubject ? t('title') : t('adhocTitle')}
       subtitle={subjectName ? t('subtitle', { name: subjectName }) : t('adhocSubtitle')}
+      header={modeSwitch}
       onClose={onDone}
       footer={
         <>

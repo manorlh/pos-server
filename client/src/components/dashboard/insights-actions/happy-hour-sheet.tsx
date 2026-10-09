@@ -6,9 +6,12 @@
  * windows from the weakest weekday × hour slots; one is applied in a tap after a
  * confirmation that says what it overlaps. Optionally announced to the cashiers at its first
  * start. Server: GET /insights/happy-hours/suggestions, POST /insights/quick-actions/happy-hours.
+ *
+ * Not a sheet of its own: the promotion sheet's second mode ("מבצע מהיר | Happy hour",
+ * quick-promo-sheet.tsx `QuickPromoSheet`), in the same dialog.
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -55,15 +58,16 @@ import {
   useTargets,
 } from './sheet-parts';
 
-export type HappyHourSheetProps = ActionSheetProps;
-
-export function HappyHourSheet(props: HappyHourSheetProps) {
-  return <HappyHourSheetBody {...props} />;
-}
-
 const WEEKS = ['2', '4', '8'] as const;
 
-export function HappyHourSheetBody({ scope, context, onDone, initial }: HappyHourSheetProps & { initial?: HappyHourSuggestion }) {
+/** `initial`: a suggestion already chosen (the insights page's); `modeSwitch`: the sheet's mode control, on the form. */
+export function HappyHourSheetBody({
+  scope,
+  context,
+  onDone,
+  initial,
+  modeSwitch,
+}: ActionSheetProps & { initial?: HappyHourSuggestion; modeSwitch?: ReactNode }) {
   const t = useTranslations('insightsActions.happy');
   const tp = useTranslations('insightsActions.promo');
   const tm = useTranslations('insightsActions.message');
@@ -232,6 +236,7 @@ export function HappyHourSheetBody({ scope, context, onDone, initial }: HappyHou
     <ActionSheet
       title={t('title')}
       subtitle={t('subtitle')}
+      header={modeSwitch}
       onClose={onDone}
       footer={
         <>
