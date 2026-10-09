@@ -57,6 +57,7 @@ import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
 import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
+import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import {
   BATCH_SORTS,
   EMPTY_FILTERS,
@@ -1637,6 +1638,8 @@ function BatchToggles({ batch, onSaved }: { batch: PrepaidVoucherBatch; onSaved:
             {t('togglesSavePolicy')}
           </Button>
         ) : null}
+        {/* "מימוש ללא אינטרנט": the assignment to a till or the shop's LAN host (§7). */}
+        {batch.offlineAllowed ? <OfflineAssignmentPanel batch={batch} /> : null}
         {edit.dialog}
       </CardContent>
     </Card>

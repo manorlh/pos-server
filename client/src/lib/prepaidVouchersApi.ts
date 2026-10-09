@@ -215,6 +215,61 @@ export async function fetchPrepaidEventOptions(companyId?: string): Promise<Prep
   return data.items;
 }
 
+// ── "מימוש ללא אינטרנט" — the batch assigned to a device (§7) ────────────────────
+
+export interface PrepaidOfflineAssignment {
+  id: string;
+  batchId: string;
+  target: 'machine' | 'lan_host';
+  machineId: string;
+  machineName: string | null;
+  shopId: string | null;
+  status: 'active' | 'released';
+  version: number;
+  assignedAt: string | null;
+  lastDownloadAt: string | null;
+  lastSyncAt: string | null;
+  /** What the device said it still had to send at its last sync. */
+  lastSyncPending: number | null;
+  releasedAt: string | null;
+  forced: boolean;
+  releaseReason: string | null;
+}
+
+export interface PrepaidOfflineTargets {
+  offlineAllowed: boolean;
+  shops: {
+    shopId: string;
+    shopName: string;
+    /** The shop's main till, which serves its LAN; null when it has none. */
+    lanHost: { machineId: string; name: string } | null;
+    machines: { machineId: string; name: string; posNumber: string | null }[];
+  }[];
+}
+
+export async function fetchPrepaidOffline(batchId: string): Promise<{ assignment: PrepaidOfflineAssignment | null; history: PrepaidOfflineAssignment[] }> {
+  const { data } = await api.get(`/prepaid-vouchers/batches/${batchId}/offline`);
+  return data;
+}
+
+export async function fetchPrepaidOfflineTargets(batchId: string): Promise<PrepaidOfflineTargets> {
+  const { data } = await api.get<PrepaidOfflineTargets>(`/prepaid-vouchers/batches/${batchId}/offline/targets`);
+  return data;
+}
+
+export async function assignPrepaidOffline(
+  batchId: string, body: { target: 'machine' | 'lan_host'; machineId?: string; shopId?: string },
+): Promise<PrepaidOfflineAssignment> {
+  const { data } = await api.post<PrepaidOfflineAssignment>(`/prepaid-vouchers/batches/${batchId}/offline/assign`, body);
+  return data;
+}
+
+/** Released once the device synced everything; `force` (with a reason) before that — audited. */
+export async function releasePrepaidOffline(batchId: string, body: { force?: boolean; reason?: string }): Promise<{ assignment: PrepaidOfflineAssignment | null }> {
+  const { data } = await api.post(`/prepaid-vouchers/batches/${batchId}/offline/release`, body);
+  return data;
+}
+
 /** One group of a batch of groups (₪ for its value). */
 export interface PrepaidBatchGroup {
   key: string;
