@@ -205,9 +205,12 @@ export function isHomePath(pathname: string | null | undefined): boolean {
   return pathname === HOME_PATH || pathname === `${HOME_PATH}/`;
 }
 
-/** Whether the board may show sales figures (the overview, the comparisons): "דוחות" at view. */
+/**
+ * Whether the board may show sales figures (the overview, the comparisons): "דוחות" — or "הניהול
+ * שלי" (the cockpit), whose routes the server opens to it as well — at view.
+ */
 export function canSeeSales(access: DashboardAccess): boolean {
-  return canAccess(access, 'reports', 'view');
+  return canAccess(access, 'reports', 'view') || canAccess(access, 'cockpit', 'view');
 }
 
 /** Whether a menu entry (by its href) is shown: its section must be granted at the page's level. */

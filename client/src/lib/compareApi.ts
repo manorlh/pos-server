@@ -58,6 +58,8 @@ export interface CompareItem {
 export interface PeriodCompareReport {
   window: ReportWindowOut;
   compareWindow?: ReportWindowOut | null;
+  /** While the current period runs: the compared one's figures stop here (like for like). */
+  compareCutAt?: string | null;
   granularity: 'hour' | 'day';
   alignment: 'clock' | 'elapsed';
   generatedAt: string;
@@ -120,7 +122,11 @@ export async function fetchSideBySide(params: {
   from?: string;
   to?: string;
   eventId?: string;
+  /** The board's scope: cashiers compared on shop A count shop A's sales only. */
   companyId?: string;
+  shopId?: string;
+  areaId?: string;
+  machineId?: string;
 }): Promise<SideBySideReport> {
   const { data } = await api.get<SideBySideReport>('/reports/side-by-side', {
     params,
@@ -130,8 +136,12 @@ export async function fetchSideBySide(params: {
   return data;
 }
 
-export async function fetchEventOptions(params: { q?: string; shopId?: string } = {}): Promise<EventBrief[]> {
-  const { data } = await api.get<{ events: EventBrief[] }>('/reports/event-options', { params });
+export async function fetchEventOptions(params: { q?: string; shopId?: string; ids?: string[] } = {}): Promise<EventBrief[]> {
+  const { data } = await api.get<{ events: EventBrief[] }>('/reports/event-options', {
+    params,
+    // `ids=a&ids=b`, as FastAPI reads a repeated list.
+    paramsSerializer: { indexes: null },
+  });
   return data.events ?? [];
 }
 

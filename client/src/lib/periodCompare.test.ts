@@ -11,6 +11,8 @@ import {
   defaultVs,
   delta,
   orderedRange,
+  pollsLive,
+  withEntries,
   parseCompareParams,
   pctText,
   peakIndex,
@@ -347,5 +349,33 @@ describe("the board's own shapes", () => {
     assert.equal(f.cash, 9);
     const [p] = toHourPoints(curvePoints([{ index: 2, label: '20:00', current: 5, previous: 1 }], false));
     assert.deepEqual(p, { hour: 2, label: '20:00', a: 5, b: 1, ca: 5, cb: 1 });
+  });
+});
+
+describe('live refresh and events by id', () => {
+  const NOW = new Date('2026-10-08T07:00:00Z').getTime();
+
+  it('a running period polls; a past one, or one longer than 31 days, is refreshed by hand', () => {
+    assert.equal(pollsLive({ range: { from: '2026-10-08', to: '2026-10-08' } }, TODAY, NOW), true);
+    assert.equal(pollsLive({ range: { from: '2026-09-10', to: '2026-10-08' } }, TODAY, NOW), true);
+    assert.equal(pollsLive({ range: { from: '2026-09-01', to: '2026-10-08' } }, TODAY, NOW), false);
+    assert.equal(pollsLive({ range: { from: '2026-10-01', to: '2026-10-07' } }, TODAY, NOW), false);
+    assert.equal(pollsLive({ range: null }, TODAY, NOW), false);
+  });
+
+  it('an event polls while it runs, if it is short enough', () => {
+    const running = { startDate: '2026-10-08', endDate: '2026-10-08', endsAt: '2026-10-08T20:00:00Z' };
+    assert.equal(pollsLive({ range: null, event: running }, TODAY, NOW), true);
+    assert.equal(pollsLive({ range: null, event: { ...running, endsAt: '2026-10-08T06:00:00Z' } }, TODAY, NOW), false);
+    assert.equal(
+      pollsLive({ range: null, event: { ...running, startDate: '2026-08-01', endDate: '2026-10-08' } }, TODAY, NOW),
+      false,
+    );
+  });
+
+  it('an event fetched by its id joins the list once', () => {
+    const list = [{ id: 'a' }, { id: 'b' }];
+    assert.deepEqual(withEntries(list, [{ id: 'c' }, { id: 'a' }]).map((x) => x.id), ['a', 'b', 'c']);
+    assert.deepEqual(withEntries(list, []), list);
   });
 });

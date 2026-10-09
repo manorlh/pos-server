@@ -56,6 +56,7 @@ import {
   curvePoints,
   defaultVs,
   parseCompareParams,
+  pollsLive,
   toHourPoints,
   toSalesFigures,
   type HomeView,
@@ -269,7 +270,7 @@ export default function DashboardPage() {
   // ── Who may see what ─────────────────────────────────────────────────────────
   // Every sign-in lands here; the figures need "דוחות" (and the board not hidden from the
   // role). Without them the board shows the tills' state only.
-  const { salesAllowed, compareAllowed, insightsAllowed, vouchersAllowed } = useHomeAccess();
+  const { salesAllowed, reportsAllowed, compareAllowed, insightsAllowed, vouchersAllowed, vouchersModule } = useHomeAccess();
   const cmp = useMemo(() => parseCompareParams((key) => searchParams.get(key)), [searchParams]);
   const view: HomeView = compareAllowed ? cmp.view : 'board';
 
@@ -320,10 +321,21 @@ export default function DashboardPage() {
     refetchOnWindowFocus: isToday,
     staleTime: isToday ? undefined : PAST_DAY_STALE_MS,
   });
+  // Today against another day: like for like — the compared day's figures and best sellers up
+  // to the same hour (`/reports/compare` cuts it, server side); its curve stays whole (hrB).
+  const todayVs = dayMode && isToday && !!dayB;
+  const dayCompareParams = { ...narrow, from: dayA, to: dayA, cmpFrom: dayB ?? undefined, cmpTo: dayB ?? undefined };
+  const dayCompare = useQuery({
+    queryKey: ['board-day-compare', dayCompareParams],
+    queryFn: () => fetchPeriodCompare({ ...dayCompareParams, items: BEST_SELLERS }),
+    enabled: todayVs,
+    placeholderData: keepPreviousData,
+    refetchInterval: liveA,
+  });
   const ovB = useQuery({
     queryKey: ['overview', { ...base, date: dayB }],
     queryFn: () => fetchOverview({ ...base, date: dayB ?? undefined }),
-    enabled: dayMode && !!dayB,
+    enabled: dayMode && !!dayB && !todayVs,
     placeholderData: keepPreviousData,
     staleTime: PAST_DAY_STALE_MS,
   });
@@ -355,7 +367,7 @@ export default function DashboardPage() {
   const itB = useQuery({
     queryKey: ['cb-items', itemParams(dayB ?? '')],
     queryFn: () => fetchLiveItems(itemParams(dayB ?? '')),
-    enabled: dayMode && !!dayB,
+    enabled: dayMode && !!dayB && !todayVs,
     placeholderData: keepPreviousData,
     staleTime: PAST_DAY_STALE_MS,
   });
@@ -370,7 +382,8 @@ export default function DashboardPage() {
     queryFn: () => fetchPeriodCompare({ ...eventParams, items: BEST_SELLERS }),
     enabled: !!eventId && view === 'board',
     placeholderData: keepPreviousData,
-    refetchInterval: event && new Date(event.endsAt).getTime() > now ? REFRESH_MS * 2 : false,
+    // A running event of up to 31 days polls; a longer one is refreshed by hand.
+    refetchInterval: pollsLive({ range: null, event }, today, now) ? REFRESH_MS * 2 : false,
   });
   // "שוברים": the day (or the event) and what it is compared with.
   const voucherParams = eventId
@@ -491,16 +504,21 @@ export default function DashboardPage() {
     ? ev?.previous && vsEventId
       ? toSalesFigures(ev.previous)
       : null
-    : dayB
-      ? scopeFigures(ovB.data, figureScope)
-      : null;
+    : todayVs
+      ? dayCompare.data?.previous
+        ? toSalesFigures(dayCompare.data.previous)
+        : ZERO_FIGURES
+      : dayB
+        ? scopeFigures(ovB.data, figureScope)
+        : null;
   const nowHour = isToday ? new Date(now).getHours() : null;
   // Cheap enough per render (a day has 24 hours and 200 items at most).
   const points = eventId
     ? toHourPoints(curvePoints(ev?.series ?? [], false))
     : mergeHourly(hrA.data?.byHour ?? [], dayB ? (hrB.data?.byHour ?? []) : null, nowHour);
-  const items = eventId
-    ? (ev?.topItems ?? []).map((i) => ({
+  const comparedItems = eventId ? ev?.topItems : todayVs ? dayCompare.data?.topItems : undefined;
+  const items = comparedItems
+    ? comparedItems.map((i) => ({
         key: i.key,
         name: i.name ?? '—',
         qtyA: i.qty,
@@ -508,7 +526,9 @@ export default function DashboardPage() {
         qtyB: i.previousQty ?? 0,
         netB: i.previousNet ?? 0,
       }))
-    : compareItems(itA.data?.rows ?? [], dayB ? (itB.data?.rows ?? []) : null, BEST_SELLERS);
+    : eventId
+      ? []
+      : compareItems(itA.data?.rows ?? [], dayB ? (itB.data?.rows ?? []) : null, BEST_SELLERS);
   const labelA = event ? event.name : eventId ? '…' : names.relative(dayA);
   const labelB = eventId ? (vsEventId ? (vsEvent?.name ?? '…') : null) : dayB ? names.compared(dayA, dayB, board.cmp) : null;
   const salesLoading = eventId ? evReport.isPending : ovA.isPending;
@@ -572,7 +592,7 @@ export default function DashboardPage() {
   const refreshAll = () => {
     // Only what has run: `refetch` ignores `enabled`, and a query this view (or this user)
     // does not run must stay off.
-    for (const q of [ovA, ovB, hrA, hrB, itA, itB, evReport, vouchers, machines, rollout]) {
+    for (const q of [ovA, ovB, hrA, hrB, itA, itB, dayCompare, evReport, vouchers, machines, rollout]) {
       if (q.isFetched || q.isFetching) void q.refetch();
     }
   };
@@ -677,7 +697,7 @@ export default function DashboardPage() {
 
         {/* ── Shortcuts the old overview had ── */}
         <div className="flex flex-wrap gap-2">
-          {salesAllowed ? (
+          {reportsAllowed ? (
             <Link href={`/dashboard/live-items${scopeQuery}`} className={chip}>
               <Activity className="size-4 text-cb-muted" aria-hidden />
               {tO('liveItems')}
@@ -689,7 +709,7 @@ export default function DashboardPage() {
               {tO('tillMessages')}
             </Link>
           ) : null}
-          {salesAllowed ? (
+          {reportsAllowed ? (
             <ExceptionsTodayChip
               companyId={effective.companyId ?? undefined}
               shopId={effective.shopId ?? undefined}
@@ -710,6 +730,7 @@ export default function DashboardPage() {
               areaId={areaId}
               dark={dark}
               canSeeVouchers={vouchersAllowed}
+              canOpenVouchers={vouchersModule}
               now={now}
               events={events}
               eventsLoading={eventsLoading}
@@ -744,7 +765,13 @@ export default function DashboardPage() {
               b={figB}
               isToday={isToday && !eventId}
               salesLoading={salesLoading}
-              compareLoading={eventId ? evReport.isPlaceholderData : !!dayB && (ovB.isPending || ovB.isPlaceholderData)}
+              compareLoading={
+                eventId
+                  ? evReport.isPlaceholderData
+                  : todayVs
+                    ? dayCompare.isPending || dayCompare.isPlaceholderData
+                    : !!dayB && (ovB.isPending || ovB.isPlaceholderData)
+              }
               tills={tillStats}
               liveLoading={structureLoading || machines.isPending}
               versusTitle={labelB ? t('compare.versus', { day: labelB }) : ''}
@@ -873,7 +900,12 @@ export default function DashboardPage() {
 
             {/* ── שוברים ── */}
             {vouchersAllowed ? (
-              <BoardVouchers report={vouchers.data} loading={vouchers.isPending && vouchers.fetchStatus !== 'idle'} labelB={labelB} />
+              <BoardVouchers
+                report={vouchers.data}
+                loading={vouchers.isPending && vouchers.fetchStatus !== 'idle'}
+                labelB={labelB}
+                canOpen={vouchersModule}
+              />
             ) : null}
 
             {/* ── Best sellers ── */}

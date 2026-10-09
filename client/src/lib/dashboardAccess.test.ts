@@ -134,6 +134,8 @@ describe('pageAccess — a page reached by its address', () => {
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard'), 'ok');
     assert.equal(canSeeSales(ORG_MANAGER), true);
     assert.equal(canSeeSales(UNRESTRICTED), true);
+    // The cockpit reads the board's figures too (the server maps its routes to `cockpit`).
+    assert.equal(canSeeSales({ restricted: true, sections: { cockpit: 'view' } }), true);
     assert.equal(pageAccess(UNRESTRICTED, '/dashboard/users'), 'ok');
   });
 });

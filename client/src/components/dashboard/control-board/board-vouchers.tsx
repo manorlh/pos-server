@@ -16,6 +16,22 @@ import type { VoucherBoardReport } from '@/lib/compareApi';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BoardCard, CardTitle, Delta, DeltaPill } from './board-ui';
 
+const ROW = '-mx-2 flex min-h-14 items-center gap-3 rounded-lg px-2 py-2';
+
+/** A row that opens the batch — or, without the vouchers module, just the row. */
+function RowLink({ href, label, children }: { href: string | null; label: string; children: React.ReactNode }) {
+  if (!href) return <div className={ROW}>{children}</div>;
+  return (
+    <Link
+      href={href}
+      aria-label={label}
+      className={`${ROW} hover:bg-cb-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cb-blue/40`}
+    >
+      {children}
+    </Link>
+  );
+}
+
 /** Whether there is anything to show: a redemption in the period or the compared one. */
 export function hasVoucherActivity(report: VoucherBoardReport | undefined): boolean {
   if (!report) return false;
@@ -26,12 +42,15 @@ export function BoardVouchers({
   report,
   loading,
   labelB,
+  canOpen,
   className,
 }: {
   report: VoucherBoardReport | undefined;
   loading: boolean;
   /** "מול ראשון שעבר"; null with no comparison. */
   labelB: string | null;
+  /** May open the vouchers module ("שוברי הפקה"): the rows and "all" link there; else plain rows. */
+  canOpen: boolean;
   className?: string;
 }) {
   const t = useTranslations('controlBoard.vouchers');
@@ -53,13 +72,15 @@ export function BoardVouchers({
         id="cb-vouchers-title"
         icon={TicketCheck}
         trailing={
-          <Link
-            href="/dashboard/prepaid-vouchers"
-            className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-sm font-medium text-cb-blue-ink hover:bg-cb-soft"
-          >
-            {t('all')}
-            <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
-          </Link>
+          canOpen ? (
+            <Link
+              href="/dashboard/prepaid-vouchers"
+              className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2 text-sm font-medium text-cb-blue-ink hover:bg-cb-soft"
+            >
+              {t('all')}
+              <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
+            </Link>
+          ) : null
         }
       >
         {t('title')}
@@ -90,10 +111,9 @@ export function BoardVouchers({
       <ul className="divide-y divide-cb-line">
         {report.rows.map((row) => (
           <li key={row.batchId}>
-            <Link
-              href={`/dashboard/prepaid-vouchers?batch=${encodeURIComponent(row.batchId)}`}
-              aria-label={t('open', { name: row.name })}
-              className="-mx-2 flex min-h-14 items-center gap-3 rounded-lg px-2 py-2 hover:bg-cb-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cb-blue/40"
+            <RowLink
+              href={canOpen ? `/dashboard/prepaid-vouchers?batch=${encodeURIComponent(row.batchId)}` : null}
+              label={t('open', { name: row.name })}
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-cb-ink">{row.name}</p>
@@ -114,8 +134,8 @@ export function BoardVouchers({
                 ) : null}
               </div>
               {comparing && row.previous ? <DeltaPill a={row.current.vouchers} b={row.previous.vouchers} /> : null}
-              <ChevronLeft className="size-4 shrink-0 text-cb-muted ltr:rotate-180" aria-hidden />
-            </Link>
+              {canOpen ? <ChevronLeft className="size-4 shrink-0 text-cb-muted ltr:rotate-180" aria-hidden /> : null}
+            </RowLink>
           </li>
         ))}
       </ul>
