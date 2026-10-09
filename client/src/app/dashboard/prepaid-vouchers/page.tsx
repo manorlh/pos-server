@@ -56,6 +56,7 @@ import { groupPlan, groupSizeOf, serialRange, type GroupMode } from '@/lib/prepa
 import { batchFormProblems, issueTotals } from '@/lib/prepaidBatchForm';
 import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
+import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import {
   BATCH_SORTS,
   EMPTY_FILTERS,
@@ -298,6 +299,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const [barcodeType, setBarcodeType] = useState<PrepaidBarcodeType>(ed?.barcodeType ?? 'qr');
   const [customerName, setCustomerName] = useState(ed?.customerName ?? '');
   const [orderRef, setOrderRef] = useState(ed?.orderRef ?? '');
+  // The production it is made for and its event (§13): picked from lists; their names are printed.
+  const [productionId, setProductionId] = useState(ed?.production?.id ?? '');
+  const [reportEventId, setReportEventId] = useState(ed?.reportEvent?.id ?? '');
   // Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
   const [kind, setKind] = useState<PrepaidVoucherKind>(ed?.kind ?? 'items');
   const [terms, setTerms] = useState<DiscountTermsState>(() => (ed
@@ -382,6 +386,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setBarcodeType('qr');
     setCustomerName('');
     setOrderRef('');
+    setProductionId('');
+    setReportEventId('');
     setKind('items');
     setTerms(EMPTY_DISCOUNT_TERMS);
     setRules(DEFAULT_RULES);
@@ -431,6 +437,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     barcodeType,
     customerName: customerName.trim() || null,
     orderRef: orderRef.trim() || null,
+    productionId: productionId || null,
+    reportEventId: reportEventId || null,
   };
   // "ערוך סדרה": the settings as the PATCH reads them — sent only where they differ from how the
   // form opened (lib/prepaidBatchEdit.ts changedFields), the cloud plans and confirms the rest.
@@ -447,6 +455,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       validUntil: dayBoundIso(validUntil, true),
       shopIds: shopIds.length ? [...shopIds].sort() : null,
       count: n,
+      productionId: productionId || null,
+      reportEventId: reportEventId || null,
       ...stackingBody(rules),
     };
     if (pricesVisible) out.productionPrice = decimal(productionPrice);
@@ -600,6 +610,20 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               <Label htmlFor="pv-event">{t('eventName')}</Label>
               <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
             </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
+              onChange={(id, pname) => {
+                setProductionId(id);
+                // "עבור מי" is the production's name (the cloud keeps them in step).
+                if (id && pname) setCustomerName(pname);
+              }} />
+            <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
+              onChange={(id, ename) => {
+                setReportEventId(id);
+                // The printed event name: the event's, unless one was typed.
+                if (id && ename && !eventName.trim()) setEventName(ename);
+              }} />
           </div>
 
           {ed ? null : (
@@ -764,7 +788,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="pv-customer">{t('customerName')}</Label>
-              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)} placeholder={t('customerPlaceholder')} />
+              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
+                placeholder={t('customerPlaceholder')} disabled={!!productionId} />
             </div>
             <div className="space-y-1">
               <Label htmlFor="pv-order">{t('orderRef')}</Label>
@@ -824,6 +849,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
                 onValueChange={(v) => {
                   setCompanyId(String(v ?? ''));
                   setShopIds([]);
+                  // A production and an event are a company's: they go with it.
+                  setProductionId('');
+                  setReportEventId('');
                   // What another company may carry is another list: the picks go with the company.
                   setItems([]);
                   setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
@@ -1254,11 +1282,12 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
               ].filter(Boolean).join(' · ')}
             </p>
           ) : null}
-          {batch.customerName || batch.orderRef ? (
+          {batch.customerName || batch.orderRef || batch.reportEvent ? (
             <p className="text-xs text-muted-foreground">
               {[
                 batch.customerName ? t('production.customer', { name: batch.customerName }) : null,
                 batch.orderRef ? t('production.order', { ref: batch.orderRef }) : null,
+                batch.reportEvent ? t('productions.eventLine', { name: batch.reportEvent.name }) : null,
               ].filter(Boolean).join(' · ')}
             </p>
           ) : null}
@@ -1674,7 +1703,7 @@ export default function PrepaidVouchersPage() {
         </div>
       ) : null}
 
-      {!selected && view !== 'types' ? (
+      {!selected && view !== 'types' && view !== 'productions' ? (
         <VoucherFilterBar view={view} value={filters} onChange={setFilters} facets={facets.data} />
       ) : null}
 
@@ -1682,6 +1711,8 @@ export default function PrepaidVouchersPage() {
         <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} />
       ) : view === 'types' ? (
         <PrepaidTypesView />
+      ) : view === 'productions' ? (
+        <PrepaidProductionsView />
       ) : view === 'vouchers' ? (
         <VoucherRowsTable filters={filters} onQuery={(q) => setFilters({ ...filters, q })} />
       ) : view === 'tills' ? (

@@ -129,6 +129,10 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   printTillValue?: boolean;
   /** Issued so far (the next serial less one): "ערוך סדרה" never goes below it. */
   issuedCount?: number;
+  /** The production it was made for (§13); its name is `customerName`. */
+  production?: { id: string; name: string; billingBasis: PrepaidBillingBasis } | null;
+  /** The event (the existing report events); `eventName` is the printed text. */
+  reportEvent?: PrepaidEventRef | null;
   /** "ערוך סדרה": the production price by serial once it was changed (prices section only). */
   productionPriceHistory?: { fromSerial: number; price: number | null; at?: string | null; by?: string | null }[] | null;
   /** "items" (a fixed list) or "groups" (a package / one of several, the production vouchers contract §1). */
@@ -140,6 +144,75 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   figures?: PrepaidBatchFigures;
   /** Every status the list filters by, at once. */
   state?: PrepaidBatchState;
+}
+
+// ── Productions ("הפקות") and the events a batch may name (§13) ──────────────
+
+/** By what was redeemed (the default) or by what was handed over. */
+export type PrepaidBillingBasis = 'redemption' | 'delivery';
+
+export interface PrepaidProduction {
+  id: string;
+  companyId: string;
+  name: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  billingBasis: PrepaidBillingBasis;
+  notes: string | null;
+  active: boolean;
+  batchCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface PrepaidProductionBody {
+  companyId?: string;
+  name?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  billingBasis?: PrepaidBillingBasis;
+  notes?: string | null;
+  active?: boolean;
+}
+
+export interface PrepaidEventRef {
+  id: string;
+  name: string;
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+export interface PrepaidEventOption extends PrepaidEventRef {
+  shopId: string;
+  shopName: string | null;
+  status: string;
+}
+
+export async function fetchPrepaidProductions(params: { companyId?: string; includeInactive?: boolean } = {}): Promise<PrepaidProduction[]> {
+  const { data } = await api.get<{ items: PrepaidProduction[] }>('/prepaid-vouchers/productions', {
+    params: { companyId: params.companyId || undefined, includeInactive: params.includeInactive || undefined },
+  });
+  return data.items;
+}
+
+export async function createPrepaidProduction(body: PrepaidProductionBody): Promise<PrepaidProduction> {
+  const { data } = await api.post<PrepaidProduction>('/prepaid-vouchers/productions', body);
+  return data;
+}
+
+export async function updatePrepaidProduction(id: string, body: PrepaidProductionBody): Promise<PrepaidProduction> {
+  const { data } = await api.patch<PrepaidProduction>(`/prepaid-vouchers/productions/${id}`, body);
+  return data;
+}
+
+/** The events a batch may name: the report events of the shops the user sees, newest first. */
+export async function fetchPrepaidEventOptions(companyId?: string): Promise<PrepaidEventOption[]> {
+  const { data } = await api.get<{ items: PrepaidEventOption[] }>('/prepaid-vouchers/events', {
+    params: { companyId: companyId || undefined },
+  });
+  return data.items;
 }
 
 /** One group of a batch of groups (₪ for its value). */
@@ -400,6 +473,10 @@ export interface PrepaidBatchCreate {
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
+  /** The production (§13): its name becomes the batch's `customerName`. */
+  productionId?: string | null;
+  /** The event (a report event): the printed `eventName` defaults to its name. */
+  reportEventId?: string | null;
   kind?: PrepaidVoucherKind;
   discountType?: PrepaidDiscountType | null;
   discountValue?: number | null;

@@ -135,6 +135,10 @@ export function editValueText(field: string, value: unknown, f: EditValueFormat)
       return `${row.name ?? ''} (${row.minQty ?? 0}–${row.maxQty ?? 0})`;
     }).join(', ');
   }
+  // A production's / an event's reference (the cloud sends `{id, name}`).
+  if ((field === 'productionId' || field === 'reportEventId') && value && typeof value === 'object') {
+    return (value as { name?: string | null }).name ?? f.none(field);
+  }
   if (field === 'discountBlockPolicy' && value && typeof value === 'object') {
     const mode = String((value as { mode?: string }).mode ?? 'honour');
     return f.choice(field, mode) ?? mode;

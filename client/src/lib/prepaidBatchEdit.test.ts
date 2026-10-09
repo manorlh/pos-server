@@ -82,5 +82,7 @@ describe('editValueText', () => {
     assert.equal(editValueText('targets', { productIds: ['p'], categoryIds: [], names: ['קפה'] }, f), 'קפה');
     assert.equal(editValueText('groups', [{ name: 'מנה', minQty: 1, maxQty: 2 }], f), 'מנה (1–2)');
     assert.equal(editValueText('count', 5, f), '5');
+    assert.equal(editValueText('productionId', { id: 'p1', name: 'הפקות כהן' }, f), 'הפקות כהן');
+    assert.equal(editValueText('reportEventId', null, f), '—');
   });
 });
