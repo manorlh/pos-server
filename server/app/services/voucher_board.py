@@ -21,8 +21,8 @@ services changed for it:
 * while the period is still running, the compared one is cut like for like
   (`period_compare.like_for_like`).
 
-The name shown is `voucher_display_name` — today the batch's name. Voucher *types* are being
-added on another branch; at that merge, that one function switches to the type's name.
+The name shown is `voucher_display_name`: the voucher's type (fix/voucher-print's types — the
+batch keeps the name of the type it was issued as), else the batch's own name.
 """
 from __future__ import annotations
 
@@ -55,12 +55,13 @@ _UUID_RE = "^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-
 
 def voucher_display_name(batch: PrepaidVoucherBatch) -> str:
     """
-    The name the board shows for a voucher.
-
-    TODO(voucher-types): the voucher-types branch adds a type to the batch; at that merge
-    return the type's name here (falling back to the batch's name), and nothing else changes.
+    The name the board shows for a voucher: its type's (the vouchers core's types, wired at the
+    integration merge — `type_name`, the type's name the batch was issued as), else the batch's own
+    name. A batch made before types has no `type_name` (the migration gave it a legacy type named
+    after it), so it shows its own name, as before.
     """
-    return batch.name or "—"
+    type_name = (getattr(batch, "type_name", None) or "").strip()
+    return type_name or batch.name or "—"
 
 
 def _uuid(raw) -> Optional[uuid_mod.UUID]:

@@ -36,10 +36,18 @@ YESTERDAY = TODAY - timedelta(days=1)
 _codes = itertools.count(1)
 
 
-def batch(w, name, kind="items", tenant_id=None, company=None):
+def batch(w, name, kind="items", tenant_id=None, company=None, type_name=None):
+    """A batch of its own type (the vouchers core: every batch has one) — named like the batch unless told."""
+    from app.models.prepaid_voucher import PrepaidVoucherType
+
+    tenant = tenant_id or w.tenant.id
+    owner = (company or w.company).id
+    vtype = PrepaidVoucherType(id=uuid.uuid4(), tenant_id=tenant, company_id=owner, name=type_name or name, kind=kind)
+    w.db.add(vtype)
+    w.db.flush()
     b = PrepaidVoucherBatch(
-        id=uuid.uuid4(), tenant_id=tenant_id or w.tenant.id, company_id=(company or w.company).id,
-        name=name, kind=kind,
+        id=uuid.uuid4(), tenant_id=tenant, company_id=owner, name=name, kind=kind,
+        type_id=vtype.id, type_name=vtype.name,
     )
     w.db.add(b)
     w.db.flush()
@@ -289,3 +297,12 @@ def test_aggregated_in_a_fixed_number_of_queries(w, festival):
     w.db.commit()
     count()  # warm again: the commit expired the user and tenant rows
     assert count() == before
+
+
+def test_the_card_names_a_voucher_by_its_type_else_by_its_batch():
+    """The vouchers core's types (wired at the integration merge): the type's name the batch was
+    issued as wins; a batch without one (blank) keeps its own name."""
+    typed = PrepaidVoucherBatch(name="סדרה 7", type_name="שובר צוות")
+    assert VB.voucher_display_name(typed) == "שובר צוות"
+    assert VB.voucher_display_name(PrepaidVoucherBatch(name="סדרה 7", type_name="  ")) == "סדרה 7"
+    assert VB.voucher_display_name(PrepaidVoucherBatch(name=None, type_name=None)) == "—"
