@@ -216,12 +216,15 @@ class TestBlock:
         body = MachineHeartbeatBody.model_validate({"deviceManagement": "junk"})
         assert body.device_management is None
 
-    def test_a_release_by_the_technician_is_kept_and_logged(self, w, caplog):
+    def test_a_release_by_the_technician_is_kept_and_logged(self, w, caplog, monkeypatch):
         till = w.tills[0]
         beat(w, till, {"deviceManagement": BLOCK})
         released = {"deviceOwner": False, "updatePath": "tap", "sdk": 29, "kioskLock": "pinned",
                     "ownerReleasedAt": "2026-10-07T08:00:00Z", "ownerReleasedBy": "טכנאי"}
-        with caplog.at_level("WARNING"):
+        # An earlier test's alembic env.py (fileConfig) disables every existing logger,
+        # this one included (tests/test_machine_catalog.py, test_general_item.py, ...).
+        monkeypatch.setattr(DM.logger, "disabled", False)
+        with caplog.at_level("WARNING", logger=DM.logger.name):
             beat(w, till, {"deviceManagement": released})
         assert till.device_management["ownerReleasedBy"] == "טכנאי"
         assert till.device_management["silentUpdate"] is False
