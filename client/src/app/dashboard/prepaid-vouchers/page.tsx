@@ -84,6 +84,7 @@ import {
   type PrintLayout,
 } from '@/components/dashboard/prepaid-vouchers/voucher-print';
 import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/batch-report';
+import { VoucherDistributionView } from '@/components/dashboard/prepaid-vouchers/distribution/distribution-view';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
@@ -888,7 +889,8 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
-  const [view, setView] = useState<'vouchers' | 'groups' | 'report'>('vouchers');
+  const [view, setView] = useState<'vouchers' | 'groups' | 'report' | 'distribution'>('vouchers');
+  const td = useTranslations('voucherDistribution');
   const [addCount, setAddCount] = useState('10');
   const [busy, setBusy] = useState<string | null>(null);
   const [groupText, setGroupText] = useState('');
@@ -1085,15 +1087,15 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       <StatsBar b={batch} />
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
-        {(['vouchers', 'groups', 'report'] as const).map((v) => (
+        {(['vouchers', 'groups', 'report', 'distribution'] as const).map((v) => (
           <Button key={v} role="tab" aria-selected={view === v} size="sm"
             variant={view === v ? 'default' : 'outline'} onClick={() => setView(v)}>
-            {t(`view.${v}`)}
+            {v === 'distribution' ? td('tab') : t(`view.${v}`)}
           </Button>
         ))}
       </div>
 
-      {view === 'report' ? <PrepaidBatchReportView batch={batch} /> : view === 'groups' ? (
+      {view === 'distribution' ? <VoucherDistributionView batch={batch} /> : view === 'report' ? <PrepaidBatchReportView batch={batch} /> : view === 'groups' ? (
         <PrepaidBatchGroupsView batch={batch} busy={!!busy} onGroupPdf={(g, r) => void groupPdf(g, r)} />
       ) : (<>
       <Card>
