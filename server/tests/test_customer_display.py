@@ -404,6 +404,33 @@ def test_a_pairing_code_checks_its_till_and_marks_the_device(world):
         DD.check_pairing_request(w.db, role="customer_display", shop_id=None, kds=None)
 
 
+def test_a_device_paired_with_a_customer_display_code_becomes_one(world):
+    from app.models.pos_machine import PairingStatus
+
+    w = world
+    fresh = POSMachine(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, distributor_id=uuid.uuid4(), name="Galaxy Tab",
+        machine_code="M-new", is_active=True, is_fiscal=False, pairing_status=PairingStatus.ASSIGNED, settings={},
+    )
+    w.db.add(fresh)
+    w.db.commit()
+    code = SimpleNamespace(id=uuid.uuid4(), device_role="customer_display", target_machine_id=None,
+                           kds_options={"name": "מסך קופה 2", CD.MIRROR_KEY: str(w.till2.id)})
+    assert DD.apply_on_pairing(w.db, code, fresh) is True
+    assert fresh.name == "מסך קופה 2"
+    assert CD.is_display_device(fresh) and CD.mirrored_till_id(fresh) == str(w.till2.id)
+    assert DD.role_of_display(w.db, fresh) == "customer_display"
+    payload = CD.device_payload(w.db, fresh)
+    assert payload["role"] == "display" and payload["config"]["enabled"] is True
+    assert CD.device_payload(w.db, w.till2)["serve"] is True
+    # A customer display and a KDS do not trade places: a new pairing.
+    from app.services.device_profile import DeviceProfileRefused
+
+    with pytest.raises(DeviceProfileRefused) as err:
+        DD.change_display_role(w.db, fresh, "kds")
+    assert err.value.body["detail"] == DD.ROLE_CHANGE_REQUIRES_PAIRING
+
+
 def test_the_routes_are_mounted_and_guarded():
     from app.main import app
     from app.services.dashboard_sections import rule_for
