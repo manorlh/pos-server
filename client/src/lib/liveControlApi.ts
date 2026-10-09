@@ -73,6 +73,21 @@ export async function clearProductBlocks(productId: string, shopId?: string | nu
 
 // ── Devices ──────────────────────────────────────────────────────────────────
 
+/** What of remote control is on (`remoteTillZ`: the server's REMOTE_TILL_Z_ENABLED). */
+export async function fetchDeviceFeatures(): Promise<{ remoteTillZ: boolean }> {
+  return (await api.get('/device-commands/features')).data;
+}
+
+/** "סגירת משמרת / הפקת Z מרחוק": what the manager confirms (lib/remoteTillZ.ts). */
+export async function fetchClosePreview(machineId: string): Promise<import('@/lib/remoteTillZ').RemoteClosePreview> {
+  return (await api.get(`/device-commands/${machineId}/close-preview`)).data;
+}
+
+/** The confirmed close / Z: refused (409 totals_changed) when the till's totals moved since. */
+export async function requestRemoteClose(machineId: string, totalsKey: string) {
+  return (await api.post('/device-commands/close', { machineId, totalsKey })).data as { kind: string; created: boolean };
+}
+
 export async function fetchDevices(s: { companyId?: string | null; shopId?: string | null; machineIds?: string[] }): Promise<DeviceRow[]> {
   const params = new URLSearchParams();
   if (s.companyId) params.set('companyId', s.companyId);
