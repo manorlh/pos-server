@@ -21,7 +21,8 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import Link from 'next/link';
-import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send } from 'lucide-react';
+import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send, Layers } from 'lucide-react';
+import { MachineGroupsPanel } from '@/components/dashboard/machines/machine-groups';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
 import { formatDistanceToNow } from 'date-fns';
@@ -165,6 +166,12 @@ export default function MachinesPage() {
   const canProduceZ = useCanProduceZ();
   const showAssignHelp =
     authHydrated && (me?.role === 'super_admin' || me?.role === 'distributor');
+  // "קבוצות מכשירים", the page's second tab: a catalog writer over a company makes them (the
+  // server decides per company).
+  const [pageTab, setPageTab] = useState<'devices' | 'groups'>('devices');
+  const tGroups = useTranslations('machineGroups');
+  const canCreateGroups =
+    authHydrated && (me?.role === 'super_admin' || me?.role === 'distributor' || me?.role === 'company_manager');
 
   const { data: machines = [], isLoading } = useQuery<PosMachine[]>({
     queryKey: ['machines'],
@@ -645,6 +652,40 @@ export default function MachinesPage() {
         </div>
       </div>
 
+      {/* "מכשירים" | "קבוצות מכשירים" (the groups a catalog menu can be assigned to). */}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('title')}>
+        <Button
+          role="tab"
+          aria-selected={pageTab === 'devices'}
+          variant={pageTab === 'devices' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setPageTab('devices')}
+        >
+          <Monitor className="h-4 w-4 ms-1" aria-hidden /> {tGroups('devicesTab')}
+        </Button>
+        <Button
+          role="tab"
+          aria-selected={pageTab === 'groups'}
+          variant={pageTab === 'groups' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setPageTab('groups')}
+        >
+          <Layers className="h-4 w-4 ms-1" aria-hidden /> {tGroups('tab')}
+        </Button>
+      </div>
+
+      {pageTab === 'groups' ? (
+        <ScopeGate resolution={resolution}>
+          <MachineGroupsPanel
+            machines={machines}
+            shops={shops}
+            companies={companies}
+            companyId={effective.companyId ?? null}
+            canCreate={canCreateGroups}
+          />
+        </ScopeGate>
+      ) : (
+      <>
       {showAssignHelp ? (
         <div
           className="rounded-lg border border-primary/25 bg-primary/5 p-4 text-sm"
@@ -828,6 +869,8 @@ export default function MachinesPage() {
         </>
       )}
       </ScopeGate>
+      </>
+      )}
 
       <Dialog
         open={pairOpen}

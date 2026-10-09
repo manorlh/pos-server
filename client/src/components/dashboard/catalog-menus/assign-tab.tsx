@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * "שיוך" — where the menus apply: the tree of companies, shops, points of sale and tills
- * (kiosks marked), each with the menus assigned to it and their priorities, and what to
+ * "שיוך" — where the menus apply: the tree of companies, their device groups ("קבוצות מכשירים"),
+ * shops, points of sale and tills (kiosks marked), each with the menus assigned to it and their priorities, and what to
  * sell when none of them is active ("ירושה" / "הקטלוג המלא" / "לא למכור"). Saving a node
  * replaces its menus and fallback (`PUT /catalog-menus-targets`). A node is offered only
  * the menus of its own company or a company above it (or the whole organization's).
@@ -12,7 +12,8 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Building2, ChevronDown, ChevronLeft, MapPin, Monitor, MonitorSmartphone, Pencil, Store, X } from 'lucide-react';
+import Link from 'next/link';
+import { Building2, ChevronDown, ChevronLeft, Layers, MapPin, Monitor, MonitorSmartphone, Pencil, Store, X } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
 import {
   fetchMenuTargets,
@@ -36,7 +37,7 @@ interface TreeNode {
 
 const keyOf = (t: { level: string; id: string }) => `${t.level}:${t.id}`;
 
-/** Companies → (child companies, shops) → (points of sale, tills) → tills. */
+/** Companies → (child companies, device groups, shops) → (points of sale, tills) → tills. */
 function buildTree(targets: MenuTarget[], focusCompanyId: string | null, scoped: boolean): TreeNode[] {
   const nodes = new Map<string, TreeNode>();
   for (const t of targets) nodes.set(keyOf(t), { target: t, children: [] });
@@ -46,12 +47,12 @@ function buildTree(targets: MenuTarget[], focusCompanyId: string | null, scoped:
   for (const t of targets) {
     const node = nodes.get(keyOf(t))!;
     if (t.level === 'company') attach(get('company', t.parentId), node);
-    else if (t.level === 'shop') attach(get('company', t.parentId), node);
+    else if (t.level === 'shop' || t.level === 'group') attach(get('company', t.parentId), node);
     else if (t.level === 'area') attach(get('shop', t.parentId), node);
     else attach(get('area', t.parentId) ?? get('shop', t.parentId) ?? get('shop', t.shopId), node);
   }
-  // Within a parent: companies, shops, points of sale, then tills (each as the server sent them).
-  const order: Record<string, number> = { company: 0, shop: 1, area: 2, machine: 3 };
+  // Within a parent: companies, device groups, shops, points of sale, then tills (each as the server sent them).
+  const order: Record<string, number> = { company: 0, group: 1, shop: 2, area: 3, machine: 4 };
   const sortRec = (list: TreeNode[]) => {
     list.sort((a, b) => order[a.target.level] - order[b.target.level]);
     list.forEach((n) => sortRec(n.children));
@@ -79,7 +80,7 @@ function companyChain(targets: MenuTarget[], node: MenuTarget): Set<string> {
   const byKey = new Map(targets.map((t) => [keyOf(t), t]));
   let companyId: string | null | undefined = null;
   if (node.level === 'company') companyId = node.id;
-  else if (node.level === 'shop') companyId = node.parentId;
+  else if (node.level === 'shop' || node.level === 'group') companyId = node.parentId;
   else if (node.level === 'area') companyId = byKey.get(`shop:${node.parentId}`)?.parentId;
   else companyId = byKey.get(`shop:${node.shopId ?? ''}`)?.parentId ?? byKey.get(`shop:${node.parentId}`)?.parentId;
   const out = new Set<string>();
@@ -149,6 +150,9 @@ export function AssignTab() {
       <IosCard className="space-y-1 p-4">
         <p className="text-[14px] font-medium">{t('precedence')}</p>
         <p className="text-[13px] text-[#6D6D72]">{t('fallbackHint')}</p>
+        <Link href="/dashboard/machines" className="inline-flex items-center gap-1 text-[13px] text-[#007AFF] hover:underline">
+          <Layers className="h-3.5 w-3.5" aria-hidden /> {t('manageGroups')}
+        </Link>
       </IosCard>
       <div className="mt-3">
         {isLoading ? (
@@ -194,7 +198,17 @@ function NodeRow({
     .sort((a, b) => b.priority - a.priority || (menus.get(a.menuId)?.name ?? '').localeCompare(menus.get(b.menuId)?.name ?? '', 'he'));
   const fallback = data.fallbacks.find((f) => f.level === node.level && f.targetId === node.id)?.mode ?? null;
   const Icon =
-    node.level === 'company' ? Building2 : node.level === 'shop' ? Store : node.level === 'area' ? MapPin : node.isKiosk ? MonitorSmartphone : Monitor;
+    node.level === 'company'
+      ? Building2
+      : node.level === 'group'
+        ? Layers
+        : node.level === 'shop'
+          ? Store
+          : node.level === 'area'
+            ? MapPin
+            : node.isKiosk
+              ? MonitorSmartphone
+              : Monitor;
   const name = node.level === 'machine' && node.posNumber ? `${t('till', { number: node.posNumber })} · ${node.name}` : node.name;
 
   return (
@@ -218,6 +232,11 @@ function NodeRow({
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={cn('text-[15px]', node.level === 'company' || node.level === 'shop' ? 'font-semibold' : '')}>{name}</span>
             {node.isKiosk ? <IosTag tone="orange">{t('kiosk')}</IosTag> : null}
+            {node.level === 'group' ? (
+              <IosTag>
+                {t('groupTag')} · {t('groupTills', { count: node.machineIds?.length ?? 0 })}
+              </IosTag>
+            ) : null}
             {fallback ? <IosTag tone={fallback === 'none' ? 'red' : 'grey'}>{t('fallbackTag', { mode: tf(fallback) })}</IosTag> : null}
           </div>
           {assigned.length ? (

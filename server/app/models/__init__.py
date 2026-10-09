@@ -110,6 +110,8 @@ from app.models.catalog_menu import (
     CatalogMenuProduct,
     CatalogMenuSyncState,
 )
+# "קבוצות מכשירים": named groups of tills, a menu assignment level of their own.
+from app.models.machine_group import MachineGroup, MachineGroupMember
 from app.models.payment_secret import PaymentIntegrationSecret
 # "מכשירי תשלום": the card terminals a till without its own works with (app/services/payment_devices.py).
 from app.models.payment_device import PaymentDevice
@@ -220,6 +222,7 @@ __all__ = [
     "CatalogPublication", "ShopWorkTypes",
     "CatalogMenu", "CatalogMenuAssignment", "CatalogMenuCategory", "CatalogMenuFallback",
     "CatalogMenuProduct", "CatalogMenuSyncState",
+    "MachineGroup", "MachineGroupMember",
     "PaymentIntegrationSecret",
     "PaymentDevice",
     "CardAttemptCommand",
