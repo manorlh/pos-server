@@ -41,9 +41,9 @@ POST   /sync/{machine_id}/prepaid-vouchers/reservations/{id}/release → give it
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -478,10 +478,23 @@ def create_prepaid_voucher_batch(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
-    batch = PV.create_batch(db, current_user, active_tenant_id, body)
-    db.commit()
-    return PV.batch_out(db, batch, user=current_user)
+    """
+    The batch and all its vouchers in one transaction, its answer built before the commit
+    (app/services/prepaid_batch_create.py). `Idempotency-Key`: a retry gets the same batch back
+    (200, `Idempotent-Replayed: true`), never a second one; the same key with another body → 422.
+    `possibleDuplicate`: an identical batch the same user made a moment ago (a warning only).
+    """
+    from app.services import command_idempotency as idem
+    from app.services import prepaid_batch_create as PBC
+
+    out, replayed = PBC.create(db, current_user, active_tenant_id, body, key=idempotency_key)
+    if replayed and response is not None:
+        response.status_code = status.HTTP_200_OK
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return out
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}")

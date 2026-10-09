@@ -16,9 +16,15 @@ is rolled back, and it answers with the winner's response.
 
 Kinds: `device_command` (POST /device-commands), `card_command`
 (POST /failed-payments/{id}/card-commands — the money rules of app/services/card_attempt_commands.py
-untouched), `till_message` (POST /till-messages), `printer_test` (POST /printers/{id}/test).
+untouched), `till_message` (POST /till-messages), `printer_test` (POST /printers/{id}/test),
+`prepaid_batch_create` (POST /prepaid-vouchers/batches — app/services/prepaid_batch_create.py).
 A kiosk command (POST /kiosks/{m}/commands) needs none: pause / resume set a state, and its close
 and Z reuse the till's pending request.
+
+`claim_first` (slow work, e.g. a batch of thousands of vouchers): the key row is written BEFORE
+the work, so a retry that arrives while the first request is still running waits on that row
+and then answers with the first request's response, instead of doing the whole work again only
+to throw it away.
 
 A replay answers with the same rows re-read by id (their status now), not a stale copy. Old keys
 are pruned after the command's own commit, in a transaction of their own.
@@ -48,7 +54,7 @@ REPLAY_HEADER = "Idempotent-Replayed"
 #: A key answers its retries this long; older rows are pruned on the way.
 KEEP_FOR = timedelta(hours=24)
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,100}$")
-KINDS = ("device_command", "card_command", "till_message", "printer_test")
+KINDS = ("device_command", "card_command", "till_message", "printer_test", "prepaid_batch_create")
 
 
 def _now(now: Optional[datetime] = None) -> datetime:
@@ -182,6 +188,7 @@ def once(
     after_commit: Optional[Callable[[Any], None]] = None,
     refresh: Optional[Callable[[Any], Any]] = None,
     status_code: int = 201,
+    claim_first: bool = False,
 ) -> Tuple[Any, bool]:
     """
     Runs [run] (it makes the command(s) and returns the JSON answer, without committing) once per
@@ -189,6 +196,10 @@ def once(
     with the same key gets the first answer and `replayed` True — [run] is not called again; with
     [refresh], that answer is re-read (the same rows by id, as they are now). Without a key (or
     without a tenant): as before (run, commit, wake).
+
+    [claim_first]: the key row is written (flushed) before [run], in the same transaction, and
+    the answer filled in before the one commit — a twin arriving meanwhile blocks on the unique
+    key until this request commits (then gets its answer) or rolls back (then runs itself).
     """
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind}")
@@ -214,6 +225,27 @@ def once(
     prior = find(db, tenant_id=tenant_id, kind=kind, key=key, user=user, request_fp=request_fp)
     if prior is not None:
         return replayed(prior)
+    if claim_first:
+        try:
+            claim = remember(
+                db, tenant_id=tenant_id, kind=kind, key=key, user=user, request_fp=request_fp,
+                response=None, status_code=status_code,
+            )
+        except IntegrityError:
+            # A twin with the same key was running and has committed: answer with its response.
+            db.rollback()
+            prior = find(db, tenant_id=tenant_id, kind=kind, key=key, user=user, request_fp=request_fp)
+            if prior is None:
+                raise
+            logger.info("%s key %s: a retry while the first ran, answered with its response", kind, key)
+            return replayed(prior)
+        out = run()
+        claim.response = out
+        db.commit()
+        _prune_after_commit(db)
+        if after_commit is not None:
+            after_commit(out)
+        return out, False
     out = run()
     try:
         remember(
