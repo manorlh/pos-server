@@ -193,6 +193,9 @@ class KitchenOrder(Base):
     contact_phone = Column(String(30), nullable=True)
     order_note = Column(String(300), nullable=True)
     pickup_number = Column(Integer, nullable=True)
+    #: A kiosk order's pickup label as its slip printed it — "A-17", or "17" with the kiosk's
+    #: "מספר בלבד" (`pickup.labelFormat`); the cards and the pickup screen show it. Null otherwise.
+    pickup_label = Column(String(32), nullable=True)
     transaction_number = Column(String(50), nullable=True)
     #: Locked at the first release: a later change of the till's configuration applies
     #: to new orders only.

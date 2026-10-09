@@ -155,6 +155,7 @@ def post_pickup_number(
             max_number=pickup["max"],
             prefix=pickup["prefix"],
             machine_id=machine.id,
+            label_format=pickup.get("labelFormat"),
         )
 
     try:
@@ -558,10 +559,16 @@ def get_kiosk_commands(
 def get_kiosk_orders(
     machine_id: uuid.UUID,
     day: Optional[date] = Query(None, alias="date"),
+    q: Optional[str] = Query(None, max_length=40, description='A pickup number ("17", "A17", "A-17") or a document number'),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The kiosk's orders of a business date (default today); the phone masked but for a super admin / company manager."""
+    """
+    The kiosk's orders of a business date (default today); the phone masked but for a super
+    admin / company manager. With `q`: the orders of that pickup number or document number over
+    the 30 business days up to `date`, newest first, each with its date and `matchedBy`.
+    """
     machine, _device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    return svc.list_orders(db, current_user, machine, day)
+    # Called directly (the tests), an unset `q` is its `Query(...)` default: not text, not given.
+    return svc.list_orders(db, current_user, machine, day, q=q if isinstance(q, str) else None)

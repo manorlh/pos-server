@@ -899,16 +899,63 @@ def order_out(row: KioskOrder, *, full_phone: bool) -> Dict[str, Any]:
     }
 
 
-def list_orders(db: Session, user: User, machine: POSMachine, day: Optional[date]) -> List[Dict[str, Any]]:
+#: How far back the dashboard's kiosk order search looks (business days up to the chosen date).
+ORDER_SEARCH_DAYS = 30
+ORDER_SEARCH_MAX = 200
+
+
+def list_orders(
+    db: Session, user: User, machine: POSMachine, day: Optional[date], q: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    The kiosk's orders of a business date. With `q` — a pickup number ("17", "A17", "A-17",
+    "a-17": app/services/kiosk_pickup.py) or a document number (a substring) — the matching
+    orders of the last ORDER_SEARCH_DAYS business days up to `day` instead, newest first: the
+    same pickup number comes back every day, so each row says its date, and `matchedBy` says
+    whether the pickup number or the document number found it.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import or_
+
+    from app.services import kiosk_pickup
+
     day = day or business_today(db, machine.tenant_id)
+    full = getattr(user, "role", None) in FULL_PHONE_ROLES
+    needle = (q or "").strip()
+    if not needle:
+        rows = (
+            db.query(KioskOrder)
+            .filter(KioskOrder.machine_id == machine.id, KioskOrder.business_date == day)
+            .order_by(KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+            .all()
+        )
+        return [order_out(r, full_phone=full) for r in rows]
+    pickup = kiosk_pickup.parse_pickup_query(needle)
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    by_document = KioskOrder.transaction_number.ilike(f"%{escaped}%", escape="\\")
+    match = or_(kiosk_pickup.order_match_clause(pickup), by_document) if pickup is not None else by_document
     rows = (
         db.query(KioskOrder)
-        .filter(KioskOrder.machine_id == machine.id, KioskOrder.business_date == day)
-        .order_by(KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .filter(
+            KioskOrder.machine_id == machine.id,
+            KioskOrder.business_date <= day,
+            KioskOrder.business_date > day - timedelta(days=ORDER_SEARCH_DAYS),
+            match,
+        )
+        .order_by(KioskOrder.business_date.desc(), KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .limit(ORDER_SEARCH_MAX)
         .all()
     )
-    full = getattr(user, "role", None) in FULL_PHONE_ROLES
-    return [order_out(r, full_phone=full) for r in rows]
+    out = []
+    for r in rows:
+        found = []
+        if pickup is not None and pickup.matches(r.pickup_label, r.pickup_number):
+            found.append("pickup")
+        if needle.lower() in str(r.transaction_number or "").lower():
+            found.append("document")
+        out.append({**order_out(r, full_phone=full), "matchedBy": found})
+    return out
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────

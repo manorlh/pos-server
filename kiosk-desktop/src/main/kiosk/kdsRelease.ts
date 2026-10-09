@@ -45,7 +45,7 @@ export interface KdsSaleInput {
   transactionId: string;
   /** As printed: `40000057`. */
   transactionNumber: string | null;
-  order: Pick<KioskOrder, 'serviceType' | 'customerName' | 'customerPhone' | 'pickupNumber'>;
+  order: Pick<KioskOrder, 'serviceType' | 'customerName' | 'customerPhone' | 'pickupNumber'> & Partial<Pick<KioskOrder, 'pickupLabel'>>;
   lines: readonly SaleLine[];
   /** productId → its category, from the catalog (the station routing). */
   categoryOf: (productId: string) => string | null;
@@ -82,6 +82,9 @@ export function kdsSaleRelease(input: KdsSaleInput): Record<string, unknown> {
   if (input.transactionNumber) body.transactionNumber = input.transactionNumber.slice(0, 50);
   const pickup = input.order.pickupNumber;
   if (typeof pickup === 'number' && Number.isInteger(pickup) && pickup >= 1 && pickup <= 9999) body.pickupNumber = pickup;
+  // As the slip printed it ("A-17", or "17" with "מספר בלבד"): the kitchen and pickup screens say the same.
+  const label = cut(input.order.pickupLabel, 32);
+  if (label) body.pickupLabel = label;
   body.items = input.lines
     .filter((l) => l.qty > 0)
     .map((l) => {

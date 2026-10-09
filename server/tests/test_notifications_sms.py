@@ -74,12 +74,13 @@ def cycle(w, *, dlr: bool = False):
 
 
 def ready_event(w, *, group=None, version=1, phone=PHONE_LOCAL, pickup=42, mode="ORDER_PROCESS", notify=True,
-                partial=False, when=None, flat=True, first=None):
+                partial=False, when=None, flat=True, first=None, label=None):
     group = group or str(uuid.uuid4())
     payload = {
         "orderId": str(uuid.uuid4()),
         "groupId": group,
         "pickupNumber": pickup,
+        **({"pickupLabel": label} if label else {}),
         "workflowMode": mode,
         "notify": notify,
         "partial": partial,
@@ -282,6 +283,14 @@ def test_ready_for_pickup_queues_one_service_sms_with_the_spec_text(w):
     assert w.mock.sent[0]["message"] == "היי דנה, הזמנה 42 בסניף Alpha מרכז מוכנה לאיסוף. מחכים לך בדלפק. Alpha בע\"מ"
     assert w.mock.sent[0]["phones"][0]["_"] == "0501234567"
     assert decrypt_text(n.recipient_ciphertext) == PHONE and n.recipient_masked == "050-•••-4567"
+
+
+def test_a_kiosk_orders_ready_sms_names_its_label(w):
+    """The kiosk's slip said "A-17" (or "17" with "מספר בלבד"): so does the message."""
+    w.config()
+    ready_event(w, flat=False, first="דנה", pickup=17, label="A-17")
+    cycle(w)
+    assert "הזמנה A-17 בסניף" in w.mock.sent[0]["message"]
 
 
 def test_the_contact_phone_in_the_outbox_is_masked_once_taken(w):

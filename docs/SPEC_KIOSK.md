@@ -79,6 +79,8 @@
 - `scope = kiosk` — רצף יומי של הקיוסק (offline), `start`–`max`, חוזר ל-start אחרי max, נשמר ב-commit כדי שלא יחזור אחרי קריסה.
 - `scope = shop` — רצף יומי של הסניף בענן (`POST /sync/{m}/kiosk/pickup-number`, אטומי ואידמפוטנטי לפי מפתח ההזמנה). בלי ענן תוך 3 שניות — רצף מקומי עם תג `L` ("AL-4") כדי שלא יתבלבל עם מספרי הסניף.
 - תווית: עם קידומת "A-17", בלי — "17".
+- **מספר הזמנה: עם אות (A-17) / מספר בלבד (17)** (`pickup.labelFormat`: `prefixed` — ברירת המחדל, כמו קודם; `number` — הבעלים, 09.10.2026). מספר בלבד מודפס ומוצג בלי אות בכל מקום (מסך ההצלחה, הפתק, שורת החשבונית, הבון, KDS ומסך האיסוף, פאנלי הקופה, הדשבורד). **ייחודיות:** בלי אות שני קיוסקים לא נבדלים, לכן מספר בלבד תמיד מהמונה המשותף של הסניף (`repair` כופה `scope = shop` בענן, בדשבורד ובכל קיוסק) — מספר אחד לכל (סניף, יום עסקים) בכל הקיוסקים, עד שהרצף חוזר אחרי `max`. מספר שהקיוסק הקצה בלי ענן נשאר עם האות ותג `L` בשני הפורמטים ("AL-17", "L-17"). תווית שכבר ניתנה לא משתנה כשהפורמט משתנה. מספר המסמך הפיסקלי לא מושפע.
+- **חיפוש:** "17", "A17", "A-17", "a-17" (בלי רווחים ומקפים, בלי תלות ברישיות) מוצאים את ההזמנה ואת המסמך שלה: היסטוריית הקופה (מקומית — אינדקס `kiosk_pickup_index` במכשיר — וחיפוש המסמכים של הסניף בענן, `GET /reports/{m}/shop-transactions?q=`), עסקאות בדשבורד (`GET /transactions?q=` — `kioskPickup` + `matchedBy`), והזמנות הקיוסק בדשבורד (`GET /kiosks/{id}/orders?q=` — 30 ימי עסקים). מספר בלבד מוצא כל הזמנה עם המספר (כל אות) וגם מסמכים לפי מספר/סכום כמו קודם; כל תוצאה מסומנת "לפי מספר הזמנה" / "לפי מספר מסמך" ועם תאריך העסקים (המספר חוזר כל יום). אותו כלל: `kiosk_pickup.parse_pickup_query`, `lib/kioskPickupSearch.ts`, `domain/KioskPickupSearch.kt`.
 
 ---
 
@@ -106,7 +108,7 @@
 | `hours` | טווחים לפי ימים, כולל אחרי חצות |
 | `payment` | `methods` (card; cash — P2), `tipEnabled` (כבוי), `tipPresets`, `receiptPolicy`, `customerName` / `customerPhone` (off/optional/required), `minOrderAgorot` |
 | `printing` | `bonMode`, `bonPrinterId`, `bonCopies`, `receiptPrinterId`, `pickupSlip` (ברירת מחדל: כבוי), `orderNumberOnReceipt` (ברירת מחדל: מופעל), `bonAutoRetryMin`, `bonOnKiosk` (§29) |
-| `pickup` | `scope`, `prefix`, `start`, `max` |
+| `pickup` | `scope`, `prefix`, `start`, `max`, `labelFormat` (`prefixed` / `number`; `number` ⇒ `scope = shop`) |
 | `timers` | `inactivitySec`, `warningSec`, `successSec`, `attractSlideSec` |
 | `club` | `enabled`, `joinUrl` (QR בלבד; דף ההרשמה של סוכן ה-SMS/מועדון), `title`, `body` |
 | `operations` | `autoCloseAt` (HH:MM; ריק = הפרמטר `autoCloseShiftAt` של הקופה), `pausedTitle`, `pausedBody` |
