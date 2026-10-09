@@ -955,11 +955,13 @@ _PRODUCT_FIELDS = (
 )
 #: Compared only when both snapshots carry them: a publication made before the field
 #: existed has none, and that is not a change the merchant made.
-_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel")
+_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel", "requiresManagerApproval")
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
 )
+#: Compared only when both snapshots carry them (as _PRODUCT_NEW_FIELDS).
+_CATEGORY_NEW_FIELDS = ("requiresManagerApproval",)
 _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQuantity", "allowPre")
 _OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
@@ -1097,6 +1099,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
                 for f in _CATEGORY_FIELDS
                 if not _same(a.get(f), b.get(f))
+            ]
+            changes += [
+                _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
+                for f in _CATEGORY_NEW_FIELDS
+                if f in a and f in b and not _same(a.get(f), b.get(f))
             ]
             if changes:
                 out["categories"].append(_item("changed", key, name, changes))

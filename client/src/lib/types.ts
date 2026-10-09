@@ -1008,6 +1008,11 @@ export interface Category {
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;
+  /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): every product here and beneath it needs a
+   * manager's code at the till and is not shown at a kiosk. The category's own flag.
+   */
+  requiresManagerApproval?: boolean;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -1050,6 +1055,11 @@ export interface Product {
   trackStock?: boolean;
   /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
   noDiscount?: boolean;
+  /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): the product's own flag — its category
+   * (or one above it) may restrict it too.
+   */
+  requiresManagerApproval?: boolean;
   /**
    * "היכן הפריט נמכר" (lib/productChannel.ts): all (קופות וקיוסק, the default) /
    * kiosk_only (the tills hide it) / pos_only (the kiosk hides it).

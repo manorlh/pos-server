@@ -211,7 +211,9 @@ class TestLegacy:
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
         eff = TP.legacy_effective("cashier")
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR
+        # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
+        # "מחייב אישור מנהל במכירה" did not exist before roles).
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others and leaving the Windows kiosk, which were a manager's alone.
         assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}
@@ -700,3 +702,90 @@ def test_the_shared_matrix_fixture_is_the_catalogue():
     for key in TP.BUILTIN_BY_KEY:
         assert data["roles"][key]["states"] == TP.DEFAULTS[key], key
         assert data["roles"][key]["limits"] == TP.DEFAULT_LIMITS.get(key, {}), key
+
+
+# ── "מחייב אישור מנהל במכירה" (SELL_RESTRICTED_ITEMS) on every built-in role ──────────
+
+
+class TestRestrictedItemsPermission:
+    """
+    Managers and supervisors sell a restricted product alone and their code approves it for
+    others; cashiers and waiters are asked for such a code; the legacy roles as their names say.
+    """
+
+    EXPECTED = {
+        TP.MANAGER: A, TP.SUPERVISOR: A, TP.CASHIER: P, TP.WAITER: P,
+        TP.LEGACY_MANAGER: A, TP.LEGACY_CASHIER: P,
+    }
+
+    def test_each_built_in_role_as_the_till_pulls_it(self, w):
+        roles(w)
+        for key in (TP.WAITER, TP.CASHIER, TP.SUPERVISOR, TP.MANAGER, TP.LEGACY_CASHIER, TP.LEGACY_MANAGER):
+            R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, key).id), **ctx(w))
+            row = roster(w)["dana"]
+            assert row.till_role_key == key
+            assert row.permissions["SELL_RESTRICTED_ITEMS"] == self.EXPECTED[key], key
+            # Its code approves for others exactly when it may sell alone.
+            assert S.pos_user_allows(w.dana, "SELL_RESTRICTED_ITEMS") is (self.EXPECTED[key] == A), key
+            assert ("sale:restricted" in S.pos_user_scope_values(w.dana)) is (self.EXPECTED[key] == A), key
+
+    def test_users_not_moved_to_a_role_yet_keep_their_legacy_reading(self, w):
+        rows = roster(w)
+        assert rows["dana"].permissions["SELL_RESTRICTED_ITEMS"] == P  # a cashier: asks
+        assert rows["boss"].permissions["SELL_RESTRICTED_ITEMS"] == A  # a shop manager: alone
+        assert S.pos_user_allows(w.boss, "SELL_RESTRICTED_ITEMS")
+        assert not S.pos_user_allows(w.dana, "SELL_RESTRICTED_ITEMS")
+
+    def test_the_roles_editor_shows_it_in_the_sale_group_with_hebrew_words(self, w):
+        catalogue = R.get_catalogue(current_user=w.admin)
+        spec = {p["code"]: p for p in catalogue["permissions"]}["SELL_RESTRICTED_ITEMS"]
+        assert spec["group"] == "sale" and spec["label"] == "מכירת פריט המחייב אישור מנהל"
+        assert "מחייב אישור מנהל במכירה" in spec["description"]
+        assert any(g["key"] == "sale" for g in catalogue["groups"])
+        builtins = {r["key"]: r for r in catalogue["builtinRoles"]}
+        assert {k: r["permissions"]["SELL_RESTRICTED_ITEMS"] for k, r in builtins.items()} == self.EXPECTED
+
+    def test_a_custom_role_and_a_personal_override_toggle_it(self, w):
+        roles(w)
+        bar = R.create_till_role(
+            str(w.company.id),
+            R.RoleCreateIn(name="ברמן", baseKey=TP.CASHIER, permissions={"SELL_RESTRICTED_ITEMS": A}),
+            **ctx(w, w.company_manager),
+        )
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=bar["id"]), **ctx(w))
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        R.assign_till_role(
+            str(w.shop.id), str(w.dana.id),
+            R.AssignIn(tillRoleId=bar["id"], overrides={"states": {"SELL_RESTRICTED_ITEMS": D}}), **ctx(w),
+        )
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == D
+        # A manager asked for a code on one person only.
+        R.assign_till_role(
+            str(w.shop.id), str(w.boss.id),
+            R.AssignIn(tillRoleId=role_by(w, TP.MANAGER).id, overrides={"states": {"SELL_RESTRICTED_ITEMS": P}}),
+            **ctx(w),
+        )
+        assert roster(w)["boss"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        assert not S.pos_user_allows(w.boss, "SELL_RESTRICTED_ITEMS")
+
+    def test_apply_the_specs_defaults_puts_it_back(self, w):
+        roles(w)
+        manager, cashier = role_by(w, TP.MANAGER), role_by(w, TP.CASHIER)
+        R.update_till_role(str(w.company.id), str(manager.id), R.RoleUpdateIn(permissions={"SELL_RESTRICTED_ITEMS": P}), **ctx(w))
+        R.update_till_role(str(w.company.id), str(cashier.id), R.RoleUpdateIn(permissions={"SELL_RESTRICTED_ITEMS": A}), **ctx(w))
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=cashier.id), **ctx(w))
+        R.assign_till_role(str(w.shop.id), str(w.boss.id), R.AssignIn(tillRoleId=manager.id), **ctx(w))
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        assert roster(w)["boss"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        out = R.apply_spec_defaults(str(w.company.id), R.ApplyDefaultsIn(), **ctx(w, w.company_manager))
+        assert set(out["applied"]["resetRoles"]) == {TP.MANAGER, TP.CASHIER}
+        rows = roster(w)
+        assert rows["dana"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        assert rows["boss"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        # Legacy users moved to the spec's roles keep the same answer.
+        out = R.apply_spec_defaults(
+            str(w.company.id), R.ApplyDefaultsIn(resetBuiltins=False, moveLegacyUsers=True), **ctx(w),
+        )
+        w.db.refresh(w.nir)
+        assert w.nir.till_role.builtin_key == TP.CASHIER  # the other shop's legacy cashier
+        assert S.effective_for_pos_user(w.nir).state("SELL_RESTRICTED_ITEMS") == P

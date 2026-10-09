@@ -53,6 +53,9 @@ class MachineCatalogProduct(BaseModel):
     #: "היכן הפריט נמכר" (app/services/sales_channel.py): all / kiosk_only / pos_only —
     #: the dashboard's kiosk editor leaves pos_only out, as the kiosk itself does.
     sales_channel: str = Field("all", alias="salesChannel")
+    #: "מחייב אישור מנהל במכירה", resolved (its own flag, or its category's or above —
+    #: app/services/restricted_items.py): the kiosk editor leaves it out, as every kiosk does.
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
 
 
 class MachineCatalogCategory(BaseModel):

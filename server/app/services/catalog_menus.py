@@ -1179,6 +1179,11 @@ def simulate(
     products, categories = _catalog_rows(db, level, entity)
     off_channel = "kiosk_only" if surface == R.SURFACE_POS else "pos_only"
     rows = [p for p in products if p.get("salesChannel") != off_channel and not p.get("isGeneral")]
+    if surface != R.SURFACE_POS:
+        # "מחייב אישור מנהל במכירה" is never on a kiosk (app/services/restricted_items.py).
+        from app.services import restricted_items as RI
+
+        rows, _ = RI.kiosk_catalog(rows, [], extra_categories=categories.values())
     applied = R.apply(R.menu_by_id(block, resolution["menuId"]), rows)
     by_id = {p.get("id"): p for p in rows}
     shown = []

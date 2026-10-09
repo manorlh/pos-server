@@ -47,6 +47,8 @@ import {
   type PageSize,
 } from '@/components/dashboard/products/product-list-params';
 import { ProductImageUpload } from '@/components/product-image-upload';
+import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/products/restricted-item';
+import { restrictedCategoryIds, restrictionOf } from '@/lib/restrictedItems';
 import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import Link from 'next/link';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -253,6 +255,8 @@ export default function ProductsPage() {
     queryKey: ['categories'],
     queryFn: () => api.get('/categories').then((r) => r.data),
   });
+  // "מחייב אישור מנהל במכירה": the categories that restrict what is under them (lib/restrictedItems.ts).
+  const restrictedCategories = restrictedCategoryIds(categories);
 
   const { data: vouchersData } = useQuery<PaginatedResponse<Voucher>>({
     queryKey: ['vouchers'],
@@ -459,6 +463,7 @@ export default function ProductsPage() {
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
                         {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                        <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">{p.globalSku ?? '—'}</TableCell>
@@ -541,6 +546,7 @@ export default function ProductsPage() {
                         </Badge>
                       ) : null}
                       {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                      <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                       <span>₪{Number(p.price).toFixed(2)}</span>
@@ -817,6 +823,18 @@ export default function ProductsPage() {
                 onCheckedChange={(c) => setEditing((p) => ({ ...p, noDiscount: c }))}
               />
             </div>
+            {/* "מחייב אישור מנהל במכירה": a manager's code at the till, never at a kiosk. */}
+            <RestrictedSwitch
+              checked={editing.requiresManagerApproval ?? false}
+              disabled={isGeneral}
+              hint={t('requiresManagerApprovalHint')}
+              inheritedNote={
+                editing.categoryId && restrictedCategories.has(editing.categoryId)
+                  ? t('requiresManagerApprovalInherited', { category: categoryName(editing.categoryId) ?? '' })
+                  : null
+              }
+              onChange={(c) => setEditing((p) => ({ ...p, requiresManagerApproval: c }))}
+            />
             {/* "היכן הפריט נמכר": קופות וקיוסק / קיוסק בלבד / קופות בלבד (docs/SPEC_PRODUCT_CHANNELS.md). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">

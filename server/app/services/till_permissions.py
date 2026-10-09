@@ -114,6 +114,14 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("REPRINT", "הדפסה חוזרת", "sale",
                    "הדפסה חוזרת של חשבון / בונים בשולחן, ובקיוסק (פינת המנהל): שובר פריט, העתק חשבונית ובון למטבח.",
                    scope="table:reprint"),
+    # The owner (08.10.2026): "תוסיף אופציה בהגדרה לסיסמה לקטגוריה או לפריט מסויים שחייב סיסמת מנהל,
+    # תבנה את זה בהרשאות" — app/services/restricted_items.py. On the till, "אסור" asks for a
+    # manager's code exactly as "דורש אישור מנהל" does: the code *is* the restriction.
+    PermissionSpec("SELL_RESTRICTED_ITEMS", "מכירת פריט המחייב אישור מנהל", "sale",
+                   "הוספה להזמנה (בכל מכירה: מקשים, חיפוש, סריקה, שולחן, הזמנה בהמתנה) של מוצר או קטגוריה "
+                   "שסומנו \"מחייב אישור מנהל במכירה\". מי שמותר לו — לא נשאל; כל אחד אחר — קוד של מנהל שמותר לו, "
+                   "פעם אחת לכל שורה. כל אישור נרשם (מי אישר, איזה מוצר, באיזו קופה ומתי).",
+                   scope="sale:restricted"),
     # ── שולחנות ──
     PermissionSpec("TABLES.USE", "מודול שולחנות", "tables",
                    "כניסה למסך השולחנות, פתיחת שולחן ועבודה עליו."),
@@ -248,6 +256,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK",
     "REPRINT", "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK",
     "KIOSK_CONTROL", "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+    # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
+    "SELL_RESTRICTED_ITEMS",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -271,6 +281,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "OTH":                               (P, P, A, A),
     "REFUND":                            (D, P, A, A),
     "REPRINT":                           (P, P, A, A),
+    # "מחייב אישור מנהל במכירה": the people who approve for others sell it alone.
+    "SELL_RESTRICTED_ITEMS":             (P, P, A, A),
     "TABLES.USE":                        (A, A, A, A),
     "TABLES.OPEN_OTHERS":                (P, A, A, A),
     "TABLE_CANCEL":                      (P, P, A, A),
@@ -517,7 +529,9 @@ def _role_value(role: Any) -> str:
 #: What makes a role a "shop_manager" for a till that predates roles: it may do alone
 #: everything such a till let a shop manager do alone. Anything less reads as a cashier
 #: there — the direction to fail in.
-LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES
+#: Not grown with codes added after roles (SELL_RESTRICTED_ITEMS): an older till never asks for
+#: them, and a custom role must not read as a cashier there because of one it cannot use.
+LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"}
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:
