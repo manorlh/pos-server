@@ -21,6 +21,8 @@ class ReportEventCreate(_Camel):
     end_date: str
     end_time: str
     machine_ids: List[uuid.UUID] = Field(default_factory=list)
+    #: "העבר לאירוע הזה": tills (also in `machine_ids`) to take out of overlapping draft events.
+    move_machine_ids: List[uuid.UUID] = Field(default_factory=list)
     producer_name: Optional[str] = Field(None, max_length=200)
     notes: Optional[str] = Field(None, max_length=4000)
     thresholds: Optional[Dict[str, Any]] = None
@@ -35,9 +37,20 @@ class ReportEventUpdate(_Camel):
     end_date: Optional[str] = None
     end_time: Optional[str] = None
     machine_ids: Optional[List[uuid.UUID]] = None
+    #: "העבר לאירוע הזה": tills of the event to take out of overlapping draft events.
+    move_machine_ids: List[uuid.UUID] = Field(default_factory=list)
     producer_name: Optional[str] = Field(None, max_length=200)
     notes: Optional[str] = Field(None, max_length=4000)
     thresholds: Optional[Dict[str, Any]] = None
+
+
+class ReportEventTillsChange(_Camel):
+    """"שיוך קופות מהיר לאירוע": add / remove / move tills in one go, all or nothing (draft only)."""
+
+    add: List[uuid.UUID] = Field(default_factory=list, max_length=500)
+    remove: List[uuid.UUID] = Field(default_factory=list, max_length=500)
+    #: Tills to take out of overlapping draft events and add here ("העבר לאירוע הזה").
+    move: List[uuid.UUID] = Field(default_factory=list, max_length=500)
 
 
 class ReportEventConfirm(_Camel):

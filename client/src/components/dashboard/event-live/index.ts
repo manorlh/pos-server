@@ -11,3 +11,5 @@ export { useAlertItems } from './use-alert-items';
 export { ProducerShell } from './producer-shell';
 export { ProducerAccessDialog } from './producer-access-dialog';
 export { ForecastCard } from './forecast-card';
+// "שיוך קופות מהיר לאירוע": "הוסף/הסר קופות" (feat/event-quick-assign).
+export { EventTillsQuickAction } from './event-tills-quick-action';

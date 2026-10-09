@@ -62,6 +62,7 @@ import {
 import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
 import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
 import { WorkConfigStep } from '@/components/dashboard/machines/work-config';
+import { useEventTillSelection } from '@/components/dashboard/events/assign-to-event';
 import {
   EMPTY_DRAFT as EMPTY_WORK_CONFIG,
   draftError as workConfigDraftError,
@@ -222,6 +223,8 @@ export default function MachinesPage() {
    * `machineOptions` already resolves the subtree).
    */
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+  // "שייך לאירוע" (feat/event-quick-assign): its button, the table's checkboxes, its bar and dialogs.
+  const eventAssign = useEventTillSelection({ machines, shops });
   const [search, setSearch] = useState('');
   /** "חיפוש מכשיר": the cloud's device search (serial, SIM, IP…), across shops and tenants. */
   const [deviceSearchOpen, setDeviceSearchOpen] = useState(false);
@@ -622,6 +625,7 @@ export default function MachinesPage() {
           <Button variant="outline" size="sm" onClick={() => setDeviceSearchOpen(true)}>
             <Search className="h-4 w-4 ms-1" /> {t('deviceSearchButton')}
           </Button>
+          {pageTab === 'devices' ? eventAssign.button : null}
           {deviceSearchOpen ? (
             <DeviceSearchDialog
               open
@@ -879,11 +883,13 @@ export default function MachinesPage() {
             isDeviceOnline={isDeviceOnline}
             onAddMachineToShop={openPairForShop}
             onTerminalNumberForShop={canProduceZ ? openTerminalForShop : undefined}
+            selection={pageTab === 'devices' ? eventAssign.selection : undefined}
           />
         )}
         </>
       )}
       </ScopeGate>
+      {eventAssign.ui}
       </>
       )}
 
