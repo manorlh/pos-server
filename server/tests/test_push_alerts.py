@@ -575,3 +575,26 @@ def test_who_may_mark_an_alert_handled_is_what_the_ack_route_lets_through(w, mon
 
     # The organization manager's default is unchanged: no alerts at all.
     assert "alerts" not in DS.ORG_MANAGER_SECTIONS
+
+
+def test_the_senders_session_hooks_are_installed_with_the_models_never_inside_a_commit():
+    """
+    push.py installs Session.after_commit / after_rollback hooks on import. Imported first from
+    inside a commit's after_commit (hooks -> engine -> push), SQLAlchemy raised "deque mutated
+    during iteration" out of session.commit() after the commit — e.g. a till Z whose figures
+    differ, in a process that had not imported push yet. The models install them up front.
+    A fresh interpreter: in this one, whatever ran before may already have imported push.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "import app.models.exception_alerts\n"
+        "assert 'app.services.exception_alerts.push' in sys.modules, 'push not imported with the models'\n"
+        "print('ok')\n"
+    )
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "PYTHONPATH": root})
+    assert out.returncode == 0 and out.stdout.strip().endswith("ok"), out.stderr[-2000:]

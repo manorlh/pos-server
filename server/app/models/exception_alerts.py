@@ -317,3 +317,12 @@ def _install_session_hooks() -> None:
 
 
 _install_session_hooks()
+
+# The phone alerts' sender installs its own Session.after_commit / after_rollback hooks when its
+# module is imported (app/services/exception_alerts/push.py). Imported here, with these models,
+# so they are in place before any session commits — never first imported from inside a commit's
+# after_commit (hooks -> engine -> push), where SQLAlchemy refuses a listener added to the event
+# being dispatched ("deque mutated during iteration", raised from session.commit() after the
+# commit went through — a till Z whose figures differ did that when nothing had imported push
+# yet). The classes above are defined, so push's own import of them resolves.
+from app.services.exception_alerts import push as _push_session_hooks  # noqa: E402,F401
