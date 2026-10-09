@@ -4,6 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   blockSummary,
@@ -86,7 +87,15 @@ describe('the attention feed', () => {
     assert.deepEqual(items[0].actions.map((a) => a.actionId), ['block.extend', 'block.extend', 'block.extend', 'block.clear']);
     assert.equal(items[2].body, 'נדחה: באמצע מכירה');
   });
-  it('an open-ended block cannot be extended, an ended one is gone', () => {
+  it('every action names a label the messages have', () => {
+    const he = JSON.parse(readFileSync('src/messages/he.json', 'utf8')) as Record<string, Record<string, string>>;
+    const keys = liveItemsFrom([block], [device], NOW).flatMap((i) => i.actions.map((a) => a.labelKey));
+    for (const k of keys) {
+      const [ns, key] = k.split('.');
+      assert.ok(he[ns]?.[key], k);
+    }
+  });
+    it('an open-ended block cannot be extended, an ended one is gone', () => {
     const items = liveItemsFrom([{ ...block, until: null }, { ...block, id: 'b2', inForce: false }], [], NOW);
     assert.deepEqual(items.map((i) => i.actions.map((a) => a.actionId)), [['block.clear']]);
   });

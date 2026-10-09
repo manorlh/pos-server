@@ -375,7 +375,8 @@ function MachineRowMenu({
           </DropdownMenuItem>
         ) : null}
         {/* "שליטה מרחוק" (components/dashboard/live-control): this till preselected. */}
-        {!display && actions.onRemoteControl && m.pairingStatus === 'assigned' ? (
+        {/* Not for a working kiosk: it is paused from the kiosks' page instead. */}
+        {!display && actions.onRemoteControl && m.pairingStatus === 'assigned' && !(m.deviceRole === 'kiosk' && m.kioskEnabled !== false) ? (
           <DropdownMenuItem onClick={() => actions.onRemoteControl?.(m)}>
             <MonitorCog aria-hidden /> שליטה מרחוק
           </DropdownMenuItem>

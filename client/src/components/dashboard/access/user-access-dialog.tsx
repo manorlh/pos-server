@@ -263,29 +263,30 @@ function AccessEditor({
                 <p className="text-xs text-muted-foreground">{t('shopsHint')}</p>
               </div>
             ) : null}
-            {areaChoices.length > 0 ? (
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">{t('areasLabel')}</Label>
-                <div className="flex flex-wrap gap-3 rounded-md border p-2">
-                  {areaChoices.map((a) => (
-                    <label key={a.id} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-primary"
-                        checked={areaIds.includes(a.id)}
-                        onChange={() => setAreaIds((ids) => flip(ids, a.id))}
-                      />
-                      {areaShopIds.length > 1 ? `${a.shop} · ${a.name}` : a.name}
-                    </label>
-                  ))}
-                </div>
-                <p className="text-xs text-muted-foreground">{t('areasHint')}</p>
-              </div>
-            ) : null}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">{t('orgScopeOnlyManagers')}</p>
         )}
+        {/* "מנהל נקודת מכירה": also for a shop's manager (their own shop's points of sale). */}
+        {areaChoices.length > 0 ? (
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">{t('areasLabel')}</Label>
+            <div className="flex flex-wrap gap-3 rounded-md border p-2">
+              {areaChoices.map((a) => (
+                <label key={a.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={areaIds.includes(a.id)}
+                    onChange={() => setAreaIds((ids) => flip(ids, a.id))}
+                  />
+                  {areaShopIds.length > 1 ? `${a.shop} · ${a.name}` : a.name}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">{t('areasHint')}</p>
+          </div>
+        ) : null}
       </section>
 
       {/* ── Sections ── */}

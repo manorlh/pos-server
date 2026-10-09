@@ -14855,6 +14855,17 @@
       "quantity_presets_need_one": "קיצורי הכמות חייבים לכלול 1."
     }
   },
+  "liveControl": {
+    "extend15": "הארך +15",
+    "extend30": "הארך +30",
+    "extend60": "הארך +60",
+    "clearNow": "בטל עכשיו",
+    "unlock": "שחרר נעילה",
+    "retry": "שלח שוב",
+    "transferSuggested": "העבר את הכמות המוצעת",
+    "updateStock": "עדכן מלאי",
+    "block": "חסום / אזל"
+  },
   "dashboardAccess": {
     "sections": {
       "reports": "דוחות",

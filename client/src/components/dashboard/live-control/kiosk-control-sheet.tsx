@@ -208,7 +208,10 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
   });
 
   const kiosks = (live.data?.kiosks ?? []).filter((k) => !context?.machineId || k.machineId === context.machineId);
-  const shopId = scope.shopId ?? kiosks[0]?.shopId ?? null;
+  // A quick hide is per shop: the scope's, the only one the kiosks are in, or one picked here.
+  const kioskShops = [...new Map(kiosks.filter((k) => k.shopId).map((k) => [k.shopId as string, k.shopName ?? ''])).entries()];
+  const [hideShop, setHideShop] = useState<string | null>(null);
+  const shopId = scope.shopId ?? (kioskShops.length === 1 ? kioskShops[0][0] : hideShop);
 
   if (live.isPending) {
     return <Skeleton className="h-28 w-full rounded-xl" />;
@@ -265,6 +268,21 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
             <EyeOff className="size-4" aria-hidden />הסתר מוצר / מחלקה
           </Button>
         </div>
+        {!scope.shopId && kioskShops.length > 1 ? (
+          <select
+            className="h-11 w-full rounded-lg border bg-background px-3 text-sm"
+            value={hideShop ?? ''}
+            onChange={(e) => setHideShop(e.target.value || null)}
+            aria-label="סניף להסתרה"
+          >
+            <option value="">בחרו סניף להסתרה</option>
+            {kioskShops.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+        ) : null}
         {!shopId ? <p className="text-sm text-muted-foreground">בחרו סניף כדי להסתיר בקיוסקים שלו.</p> : null}
         {(live.data?.hides ?? []).length === 0 ? (
           <p className="rounded-xl border border-dashed p-3 text-center text-sm text-muted-foreground">אין הסתרות פעילות</p>

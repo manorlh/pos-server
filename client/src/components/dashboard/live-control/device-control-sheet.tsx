@@ -49,6 +49,8 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
   const [lockMessage, setLockMessage] = useState('הקופה נעולה — פנו למנהל');
 
   const tills = useMemo(() => (devices.data ?? []).filter((d) => !d.isKiosk), [devices.data]);
+  // Only tills shown here are ever sent to (a preselected kiosk or another shop's till is not).
+  const chosen = useMemo(() => tills.filter((d) => selected.has(d.machineId)).map((d) => d.machineId), [tills, selected]);
   const allSelected = tills.length > 0 && tills.every((d) => selected.has(d.machineId));
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -60,7 +62,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
 
   const send = useMutation({
     mutationFn: (action: DeviceAction) =>
-      sendDeviceCommand({ action, machineIds: [...selected], message: action === 'lock' ? lockMessage : undefined }),
+      sendDeviceCommand({ action, machineIds: chosen, message: action === 'lock' ? lockMessage : undefined }),
     onSuccess: (rows, action) => {
       toast.success(`${actionLabel(action)} — נשלח ל-${rows.length} ${rows.length === 1 ? 'מכשיר' : 'מכשירים'}`);
       setConfirming(null);
@@ -145,7 +147,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
             key={a.action}
             variant={a.danger ? 'outline' : 'secondary'}
             className={cn('min-h-12 whitespace-normal', a.danger && 'border-destructive/40 text-destructive')}
-            disabled={selected.size === 0 || send.isPending}
+            disabled={chosen.length === 0 || send.isPending}
             onClick={() => setConfirming(a.action)}
             title={a.hint}
           >
@@ -165,7 +167,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
           </DialogHeader>
           <p className="text-sm text-muted-foreground">{DEVICE_ACTIONS.find((a) => a.action === confirming)?.hint}</p>
           <p className="text-sm">
-            {selected.size === 1 ? 'מכשיר אחד' : `${selected.size} מכשירים`}:{' '}
+            {chosen.length === 1 ? 'מכשיר אחד' : `${chosen.length} מכשירים`}:{' '}
             {tills.filter((d) => selected.has(d.machineId)).map((d) => d.name).join(', ')}
           </p>
           {confirming === 'lock' ? (

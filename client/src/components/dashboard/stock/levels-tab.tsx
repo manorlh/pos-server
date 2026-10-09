@@ -218,10 +218,16 @@ function SwitchWizard({
   const [fillAll, setFillAll] = useState('');
   const plan = useMemo(() => wizardPlan(preview, openings, lines, { writeOff, confirmZero }), [preview, openings, lines, writeOff, confirmZero]);
 
-  // Where stock may go: the locations of the new levels, in the source's shop.
+  // Where stock may go: the locations of the new levels in the source's shop, and the company's
+  // own store when the company's rule holds stock there.
   const destinations = (from: StockNode) => {
     const shop = shopOfNode(tree.data, from);
-    return treeNodes(tree.data, shop?.id ?? null).filter((n) => preview.levels.includes(n.node.level) && n.key !== `${from.level}:${from.targetId}`);
+    const nodes = treeNodes(tree.data, shop?.id ?? null);
+    const company = tree.data?.company;
+    if (shop && company && root.level === 'company') {
+      nodes.unshift({ key: `company:${company.id}`, label: `חברה · ${company.name}`, node: { level: 'company', targetId: company.id }, shopId: null });
+    }
+    return nodes.filter((n) => preview.levels.includes(n.node.level) && n.key !== `${from.level}:${from.targetId}`);
   };
 
   const apply = useMutation({

@@ -244,7 +244,7 @@ export function lowStockItems(alerts: StockAlert[]): LiveItem[] {
     const actions: LiveItem['actions'] = [];
     if (a.suggestTransfer && a.suggestTransfer.quantity > 0) {
       actions.push({
-        labelKey: 'stock.transferSuggested',
+        labelKey: 'liveControl.transferSuggested',
         actionId: 'stock.transfer',
         context: {
           productId: a.productId,
@@ -256,8 +256,8 @@ export function lowStockItems(alerts: StockAlert[]): LiveItem[] {
         },
       });
     }
-    actions.push({ labelKey: 'stock.update', actionId: 'stock.update', context: { productId: a.productId, level: a.location.level, targetId: a.location.targetId } });
-    actions.push({ labelKey: 'block.create', actionId: 'block.create', context: { productId: a.productId, shopId: a.shopId ?? null } });
+    actions.push({ labelKey: 'liveControl.updateStock', actionId: 'stock.update', context: { productId: a.productId, level: a.location.level, targetId: a.location.targetId } });
+    actions.push({ labelKey: 'liveControl.block', actionId: 'block.create', context: { productId: a.productId, shopId: a.shopId ?? null } });
     return {
       id: `stock:${a.id}`,
       severity: a.kind === 'out' ? 'critical' : 'warning',

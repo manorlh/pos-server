@@ -132,7 +132,7 @@ export function DurationPicker({
       {preview.data?.rolled ? (
         <p className="flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertTriangle className="size-4 shrink-0" aria-hidden />
-          השעה שבחרתם כבר עברה היום — החסימה תסתיים מחר בשעה הזו.
+          השעה שבחרתם כבר עברה היום — זה יסתיים מחר בשעה הזו.
         </p>
       ) : null}
     </div>

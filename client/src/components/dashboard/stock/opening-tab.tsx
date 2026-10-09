@@ -76,7 +76,8 @@ export function OpeningTab({ root, scope }: { root: StockNode; scope: { companyI
       return next;
     });
 
-  const changed = Object.keys(edits).filter((id) => editable.some((r) => r.productId === id));
+  // Every edit, also of rows a search or a category now hides (a change of place clears them all).
+  const changed = Object.keys(edits);
   const badQty = changed.some((id) => {
     const typed = edits[id].opening;
     const min = edits[id].reorderMin;

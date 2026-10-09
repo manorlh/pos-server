@@ -3,6 +3,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   afterOp,
@@ -132,6 +133,14 @@ describe('low stock in the cockpit', () => {
     assert.equal(item.body, 'נשארו 2 (מינימום 10) · מומלץ להעביר 8 מהרצליה');
     assert.deepEqual(item.actions.map((a) => a.actionId), ['stock.transfer', 'stock.update', 'block.create']);
     assert.equal(item.actions[0].context.quantity, 8);
+  });
+  it('every action names a label the messages have', () => {
+    const he = JSON.parse(readFileSync('src/messages/he.json', 'utf8')) as Record<string, Record<string, string>>;
+    const keys = lowStockItems([alert]).flatMap((i) => i.actions.map((a) => a.labelKey));
+    for (const k of keys) {
+      const [ns, key] = k.split('.');
+      assert.ok(he[ns]?.[key], k);
+    }
   });
   it('out with nothing to move: update or block', () => {
     const [item] = lowStockItems([{ ...alert, kind: 'out', quantity: 0, suggestTransfer: null }]);
