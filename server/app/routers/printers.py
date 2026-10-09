@@ -248,10 +248,23 @@ def test_printer(
         db, tenant_id=active_tenant_id, kind="printer_test", key=idempotency_key, user=current_user,
         request={"printerId": str(printer_id)}, run=run,
         after_commit=lambda _out: background_tasks.add_task(K.publish_job_notify, made["targets"]),
+        refresh=lambda first: _reread_jobs(db, first),
     )
     if replayed and response is not None:
         response.headers[idem.REPLAY_HEADER] = "true"
     return out
+
+
+def _reread_jobs(db: Session, first: dict) -> dict:
+    """A replayed printer test: the same jobs, re-read by id (their status now)."""
+    from app.models.printers import KitchenPrintJob
+
+    ids = [uuid.UUID(str(j["id"])) for j in (first or {}).get("jobs", [])]
+    jobs = db.query(KitchenPrintJob).filter(KitchenPrintJob.id.in_(ids)).all() if ids else []
+    targets = [j.target_machine_id for j in jobs if j.target_machine_id is not None]
+    machines = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(targets)).all()} if targets else {}
+    order = {i: n for n, i in enumerate(ids)}
+    return {"jobs": [K.job_out(j, machines) for j in sorted(jobs, key=lambda j: order.get(j.id, 0))]}
 
 
 @router.get("/printers/{printer_id}/test-jobs")

@@ -33,6 +33,7 @@ from app.services import device_commands as svc
 
 from test_card_attempt_commands import answer, cw, unresolved  # noqa: F401
 from test_device_commands import d  # noqa: F401
+from test_kitchen_printers import k  # noqa: F401
 from test_product_availability import world  # noqa: F401
 from test_shop_areas import _ctx, refused, w  # noqa: F401
 
@@ -267,6 +268,117 @@ class TestCardCommands:
 
         rule = DS.rule_for("GET", "/failed-payments/card-commands/status")
         assert "reports" in rule.sections and rule.needed_level("GET") == "view"
+
+
+# ── Review fixes: housekeeping, read-only polls, replays as they are now ─────
+
+
+class TestReviewFixes:
+    def test_a_failing_prune_never_loses_the_command_or_its_key(self, dk, monkeypatch):
+        from sqlalchemy.exc import OperationalError
+
+        def boom(*a, **k):
+            raise OperationalError("DELETE FROM command_request_keys", {}, Exception("prune failed"))
+
+        monkeypatch.setattr(idem, "prune", boom)
+        (cmd,) = send(dk, "sync_now", machineIds=[dk.h1.id], key="prune-key-001")
+        dk.db.expire_all()
+        row = dk.db.get(DeviceCommand, uuid.UUID(cmd["id"]))
+        assert row is not None and row.status == "pending"
+        assert dk.db.query(CommandRequestKey).count() == 1
+        assert dk.woken == [str(dk.h1.id)]
+        # And the key still protects: a retry gets the same command.
+        again = send(dk, "sync_now", machineIds=[dk.h1.id], key="prune-key-001")
+        assert [c["id"] for c in again] == [cmd["id"]] and dk.db.query(DeviceCommand).count() == 1
+
+    def test_old_keys_are_pruned_after_the_commit(self, dk):
+        send(dk, "sync_now", machineIds=[dk.h1.id], key="ancient-key-01")
+        old = dk.db.query(CommandRequestKey).one()
+        old.created_at = old.created_at - 3 * idem.KEEP_FOR
+        dk.db.commit()
+        send(dk, "sync_now", machineIds=[dk.h2.id], key="fresh-key-0001")
+        assert [r.key for r in dk.db.query(CommandRequestKey).all()] == ["fresh-key-0001"]
+
+    def test_the_status_read_writes_nothing(self, dk):
+        (late,) = send(dk, "sync_now", machineIds=[dk.h1.id])
+        (other,) = send(dk, "sync_now", machineIds=[dk.h2.id])
+        for ident in (late["id"], other["id"]):
+            row = dk.db.get(DeviceCommand, uuid.UUID(ident))
+            row.expires_at = row.created_at - timedelta(seconds=1)
+        dk.db.commit()
+        (read,) = status_of(dk, [late["id"]])
+        assert read["status"] == "expired"
+        dk.db.expire_all()
+        # Not written: neither the one asked about, nor another device's.
+        assert dk.db.get(DeviceCommand, uuid.UUID(late["id"])).status == "pending"
+        assert dk.db.get(DeviceCommand, uuid.UUID(other["id"])).status == "pending"
+
+    def test_a_poll_never_overwrites_the_devices_answer(self, dk):
+        (cmd,) = send(dk, "restart_app", machineIds=[dk.h1.id])
+        svc.pull(dk.db, dk.h1)
+        dk.db.commit()
+        row = dk.db.get(DeviceCommand, uuid.UUID(cmd["id"]))
+        row.delivered_at = row.delivered_at - timedelta(minutes=11)  # past restart's 10 minutes
+        dk.db.commit()
+        assert [(c["status"], c["detail"]) for c in status_of(dk, [cmd["id"]])] == [("expired", "not_answered")]
+        # The till's late "done" still lands (the poll wrote nothing to race it).
+        R.till_ack(str(dk.h1.id), cmd["id"], R.AckIn(status="done"), machine=dk.h1, db=dk.db)
+        assert [c["status"] for c in status_of(dk, [cmd["id"]])] == ["done"]
+
+    def test_a_replay_reads_the_commands_as_they_are_now(self, dk):
+        (cmd,) = send(dk, "sync_now", machineIds=[dk.h1.id], key="replay-now-001")
+        svc.pull(dk.db, dk.h1)
+        dk.db.commit()
+        R.till_ack(str(dk.h1.id), cmd["id"], R.AckIn(status="done"), machine=dk.h1, db=dk.db)
+        (again,) = send(dk, "sync_now", machineIds=[dk.h1.id], key="replay-now-001")
+        assert (again["id"], again["status"]) == (cmd["id"], "done")
+
+    def test_the_key_always_has_a_tenant_and_kiosks_need_no_key(self):
+        assert CommandRequestKey.__table__.c.tenant_id.nullable is False
+        assert "kiosk_command" not in idem.KINDS
+
+    def test_a_card_status_read_writes_nothing(self, ck):
+        a = unresolved(ck, ck.tills[0])
+        out = card_send(ck, a, "check")
+        row = ck.db.get(CardAttemptCommand, uuid.UUID(out["id"]))
+        row.expires_at = row.requested_at - timedelta(seconds=1)
+        ck.db.commit()
+        (read,) = card_status(ck, [out["id"]])
+        assert read["status"] == "expired"
+        ck.db.expire_all()
+        assert ck.db.get(CardAttemptCommand, uuid.UUID(out["id"])).status == "pending"
+
+    def test_a_card_replay_reads_the_command_as_it_is_now(self, ck):
+        till = ck.tills[0]
+        a = unresolved(ck, till)
+        first = card_send(ck, a, "check", key="card-now-0001")
+        answer(ck, till, first["id"], status="done", outcome="approved",
+               details={"verdict": "approved", "checkedAt": "2026-10-09T08:00:00+00:00"})
+        again = card_send(ck, a, "check", key="card-now-0001")
+        assert (again["id"], again["status"], again["verdict"]) == (first["id"], "done", "approved")
+        assert ck.db.query(CardAttemptCommand).count() == 1
+
+
+class TestPrinterTest:
+    def test_a_retry_never_prints_a_second_test_page_and_reads_the_jobs_now(self, k):  # noqa: F811
+        from fastapi import BackgroundTasks
+
+        from app.models.printers import KitchenPrintJob
+        from app.routers import printers as PR
+        from test_kitchen_printers import create
+
+        _keys_table(k.db)
+        printer = create(k, name="Kitchen")["id"]
+        first = PR.test_printer(uuid.UUID(printer), BackgroundTasks(), **_ctx(k), response=None, idempotency_key="print-key-0001")
+        count = k.db.query(KitchenPrintJob).count()
+        job = k.db.get(KitchenPrintJob, uuid.UUID(first["jobs"][0]["id"]))
+        job.status = "done"
+        k.db.commit()
+        tasks = BackgroundTasks()
+        again = PR.test_printer(uuid.UUID(printer), tasks, **_ctx(k), response=None, idempotency_key="print-key-0001")
+        assert [j["id"] for j in again["jobs"]] == [j["id"] for j in first["jobs"]]
+        assert again["jobs"][0]["status"] == "done"
+        assert k.db.query(KitchenPrintJob).count() == count and tasks.tasks == []
 
 
 # ── Till messages: never twice ───────────────────────────────────────────────

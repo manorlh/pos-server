@@ -16,8 +16,12 @@ is rolled back, and it answers with the winner's response.
 
 Kinds: `device_command` (POST /device-commands), `card_command`
 (POST /failed-payments/{id}/card-commands — the money rules of app/services/card_attempt_commands.py
-untouched), `kiosk_command` (POST /kiosks/{m}/commands), `till_message` (POST /till-messages),
-`printer_test` (POST /printers/{id}/test).
+untouched), `till_message` (POST /till-messages), `printer_test` (POST /printers/{id}/test).
+A kiosk command (POST /kiosks/{m}/commands) needs none: pause / resume set a state, and its close
+and Z reuse the till's pending request.
+
+A replay answers with the same rows re-read by id (their status now), not a stale copy. Old keys
+are pruned after the command's own commit, in a transaction of their own.
 """
 from __future__ import annotations
 
@@ -44,7 +48,7 @@ REPLAY_HEADER = "Idempotent-Replayed"
 #: A key answers its retries this long; older rows are pruned on the way.
 KEEP_FOR = timedelta(hours=24)
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,100}$")
-KINDS = ("device_command", "card_command", "kiosk_command", "till_message", "printer_test")
+KINDS = ("device_command", "card_command", "till_message", "printer_test")
 
 
 def _now(now: Optional[datetime] = None) -> datetime:
@@ -92,10 +96,15 @@ def find(
 ) -> Optional[CommandRequestKey]:
     """The earlier answer to this key, or None (none, or older than a day — then it is forgotten)."""
     now = _now(now)
-    q = db.query(CommandRequestKey).filter(CommandRequestKey.kind == kind, CommandRequestKey.key == key)
-    tid = _uuid(tenant_id)
-    q = q.filter(CommandRequestKey.tenant_id == tid) if tid is not None else q.filter(CommandRequestKey.tenant_id.is_(None))
-    row = q.first()
+    row = (
+        db.query(CommandRequestKey)
+        .filter(
+            CommandRequestKey.tenant_id == _uuid(tenant_id),
+            CommandRequestKey.kind == kind,
+            CommandRequestKey.key == key,
+        )
+        .first()
+    )
     if row is None:
         return None
     created = _aware(row.created_at)
@@ -139,17 +148,26 @@ def remember(
 
 
 def prune(db: Session, *, now: Optional[datetime] = None) -> int:
-    """Forget keys older than two days (the caller commits)."""
+    """Forget keys older than two days. Raises on a database error (see `_prune_after_commit`)."""
     now = _now(now)
+    return (
+        db.query(CommandRequestKey)
+        .filter(CommandRequestKey.created_at < now - 2 * KEEP_FOR)
+        .delete(synchronize_session=False)
+    )
+
+
+def _prune_after_commit(db: Session) -> None:
+    """
+    Housekeeping in its own transaction, AFTER the command and its key were committed: a failure
+    here (on Postgres an error aborts the whole transaction) can never take the command with it.
+    """
     try:
-        return (
-            db.query(CommandRequestKey)
-            .filter(CommandRequestKey.created_at < now - 2 * KEEP_FOR)
-            .delete(synchronize_session=False)
-        )
-    except Exception:  # noqa: BLE001 - housekeeping only
+        prune(db)
+        db.commit()
+    except Exception:  # noqa: BLE001 - housekeeping only; the command is already committed
+        db.rollback()
         logger.warning("could not prune command request keys", exc_info=True)
-        return 0
 
 
 def once(
@@ -162,35 +180,46 @@ def once(
     request: Any,
     run: Callable[[], Any],
     after_commit: Optional[Callable[[Any], None]] = None,
+    refresh: Optional[Callable[[Any], Any]] = None,
     status_code: int = 201,
 ) -> Tuple[Any, bool]:
     """
     Runs [run] (it makes the command(s) and returns the JSON answer, without committing) once per
     key, commits, then [after_commit] (the device's wake-up). Returns (answer, replayed): a retry
-    with the same key gets the first answer and `replayed` True — [run] is not called again.
-    Without a key: as before (run, commit, wake).
+    with the same key gets the first answer and `replayed` True — [run] is not called again; with
+    [refresh], that answer is re-read (the same rows by id, as they are now). Without a key (or
+    without a tenant): as before (run, commit, wake).
     """
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind}")
     key = normalize(key)
-    if key is None:
+    if key is None or _uuid(tenant_id) is None:
         out = run()
         db.commit()
         if after_commit is not None:
             after_commit(out)
         return out, False
     request_fp = fingerprint(request)
+
+    def replayed(prior: CommandRequestKey) -> Tuple[Any, bool]:
+        answer = prior.response
+        db.commit()
+        if refresh is not None:
+            try:
+                answer = refresh(answer)
+            except Exception:  # noqa: BLE001 - the first answer is still right
+                logger.warning("%s key %s: could not re-read the replayed answer", kind, key, exc_info=True)
+        return answer, True
+
     prior = find(db, tenant_id=tenant_id, kind=kind, key=key, user=user, request_fp=request_fp)
     if prior is not None:
-        db.commit()
-        return prior.response, True
+        return replayed(prior)
     out = run()
     try:
         remember(
             db, tenant_id=tenant_id, kind=kind, key=key, user=user, request_fp=request_fp,
             response=out, status_code=status_code,
         )
-        prune(db)
         db.commit()
     except IntegrityError:
         # A twin with the same key committed first: drop ours (the command too), answer with its.
@@ -199,7 +228,8 @@ def once(
         if prior is None:
             raise
         logger.info("%s key %s: a racing retry, answered with the first request's response", kind, key)
-        return prior.response, True
+        return replayed(prior)
+    _prune_after_commit(db)
     if after_commit is not None:
         after_commit(out)
     return out, False

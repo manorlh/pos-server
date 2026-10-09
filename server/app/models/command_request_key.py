@@ -25,8 +25,8 @@ class CommandRequestKey(Base):
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), nullable=True)
-    #: "device_command" | "card_command" | "kiosk_command" | "till_message" | "printer_test" …
+    tenant_id = Column(UUID(as_uuid=True), nullable=False)
+    #: "device_command" | "card_command" | "till_message" | "printer_test"
     kind = Column(String(32), nullable=False)
     key = Column(String(100), nullable=False)
     #: Who sent it: another user's key is never answered with this one's response.

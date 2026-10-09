@@ -18,7 +18,7 @@ The heartbeat carries the pending ones (`pendingCardCommands`, app/routers/machi
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -190,11 +190,23 @@ def get_card_commands_status(
             visible[attempt_id] = svc.attempt_for_user(db, active_tenant_id, current_user, attempt_id) is not None
         if visible[attempt_id]:
             mine.append(cmd)
-    for machine_id in {c.machine_id for c in mine}:
-        CC.expire_overdue(db, machine_id=machine_id)
-    items = [CC.command_out(c) for c in mine]
-    db.commit()  # expired on the way
-    return {"items": items}
+    # Read only: a check past its end reads `expired` without writing (a poll never races the till).
+    now = datetime.now(timezone.utc)
+    return {"items": [_card_as_of(c, now) for c in mine]}
+
+
+def _card_as_of(cmd, now: datetime) -> dict:
+    """A card command as it stands at [now]: a pending check past its `expires_at` reads `expired`."""
+    from app.services import card_attempt_commands as CC
+
+    out = CC.command_out(cmd)
+    expires = cmd.expires_at
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if cmd.status == CC.STATUS_PENDING and expires is not None and expires <= now:
+        out["status"] = "expired"
+        out["statusLabel"] = CC.STATUS_LABELS_HE["expired"]
+    return out
 
 
 @router.post("/{attempt_id}/card-commands", status_code=status.HTTP_201_CREATED)
@@ -214,6 +226,7 @@ def create_card_command(
     when it is online. The people of a remote credit: owner / manager roles who may act on that
     till. `404` · `403` · `409 attempt_not_unresolved | attempt_without_vuid | card_command_pending`.
     """
+    from app.models.card_attempt_command import CardAttemptCommand
     from app.routers.machines import check_shift_admin_access
     from app.services import card_attempt_commands as CC
 
@@ -239,6 +252,8 @@ def create_card_command(
         db, tenant_id=active_tenant_id, kind="card_command", key=idempotency_key, user=current_user,
         request={"attemptId": str(attempt_id), **body.model_dump(mode="json", by_alias=True)},
         run=run, after_commit=wake,
+        # A replay: the same command re-read by id (its status now), never a second one.
+        refresh=lambda first: CC.command_out(db.get(CardAttemptCommand, uuid.UUID(str(first["id"])))) or first,
     )
     if replayed:
         if response is not None:

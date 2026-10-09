@@ -38,7 +38,7 @@ def upgrade() -> None:
         op.create_table(
             TABLE,
             sa.Column("id", uuid, primary_key=True),
-            sa.Column("tenant_id", uuid, nullable=True),
+            sa.Column("tenant_id", uuid, nullable=False),
             sa.Column("kind", sa.String(32), nullable=False),
             sa.Column("key", sa.String(100), nullable=False),
             sa.Column("user_id", uuid, nullable=True),
@@ -53,6 +53,11 @@ def upgrade() -> None:
     indexes = {i["name"] for i in insp.get_indexes(TABLE)}
     if "ix_command_request_keys_created" not in indexes:
         op.create_index("ix_command_request_keys_created", TABLE, ["created_at"])
+    # A table made by an earlier build's create_all had a nullable tenant: keys only live a day.
+    tenant = next((c for c in insp.get_columns(TABLE) if c["name"] == "tenant_id"), None)
+    if tenant is not None and tenant.get("nullable", False):
+        op.execute(sa.text(f"DELETE FROM {TABLE} WHERE tenant_id IS NULL"))
+        op.alter_column(TABLE, "tenant_id", existing_type=uuid, nullable=False)
 
 
 def downgrade() -> None:

@@ -228,6 +228,7 @@ def create_commands(
         request=body.model_dump(mode="json", by_alias=True),
         run=lambda: [svc.command_out(r) for r in svc.create(db, machines, body.action, message=body.message, user=current_user)],
         after_commit=lambda _out: svc.wake(machines),
+        refresh=lambda first: _reread(db, first),
     )
     if replayed and response is not None:
         response.headers[idem.REPLAY_HEADER] = "true"
@@ -247,7 +248,7 @@ def get_commands_status(
     command on a device they may not control is left out (never a 403 that names it).
     """
     kiosk_control.require_kiosk_role(current_user)
-    svc.expire_old(db)
+    now = svc.utc_now()
     rows = (
         db.query(DeviceCommand)
         .filter(DeviceCommand.id.in_(list(ids)), DeviceCommand.tenant_id == active_tenant_id)
@@ -265,9 +266,36 @@ def get_commands_status(
             _check_covered(db, narrow, machine)
         except HTTPException:
             continue
-        items.append(svc.command_out(row))
-    db.commit()  # expired on the way
+        items.append(_as_of(row, now))
+    # Read only: nothing is written (a poll never races a device's answer).
     return {"items": items}
+
+
+def _as_of(row: DeviceCommand, now) -> dict:
+    """
+    The command as it stands at [now], computed without writing: one past its end reads
+    `expired` (`not_answered` when delivered), as `svc.expire_old` would make it.
+    """
+    out = svc.command_out(row)
+    if row.status == "pending" and row.expires_at is not None and svc._aware(row.expires_at) <= now:
+        out["status"] = "expired"
+    elif (
+        row.status == "delivered" and row.delivered_at is not None
+        and svc._aware(row.delivered_at) + svc.answer_window(row.action) <= now
+    ):
+        out["status"] = "expired"
+        out["detail"] = out["detail"] or "not_answered"
+    return out
+
+
+def _reread(db: Session, first: list) -> list:
+    """A replayed answer: the same commands, re-read by id (their status now)."""
+    now = svc.utc_now()
+    out = []
+    for item in first or []:
+        row = db.get(DeviceCommand, uuid.UUID(str(item["id"])))
+        out.append(_as_of(row, now) if row is not None else item)
+    return out
 
 
 @router.get("")
