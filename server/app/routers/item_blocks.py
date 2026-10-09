@@ -45,7 +45,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import POS_USER_HEADER, get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path
+from app.middleware.auth import (
+    FISCAL_SYNC_PATH, POS_USER_HEADER, get_active_tenant_id, get_current_user, get_pos_machine_for_sync_path,
+)
 from app.models.company import Company
 from app.models.kiosk import KioskDevice
 from app.models.pos_machine import POSMachine
@@ -692,7 +694,8 @@ def device_blocks(
     return out
 
 
-@till_router.post("/{machine_id}/item-blocks", status_code=status.HTTP_201_CREATED)
+# A write: fiscal devices only (a customer display or a KDS screen never blocks), as every till write.
+@till_router.post("/{machine_id}/item-blocks", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
 def device_block(
     machine_id: str,
     body: DeviceBlockIn,
@@ -722,7 +725,7 @@ def device_block(
     return {"block": {**view, "removable": device_may_clear(machine, row)}, "until": end.until.isoformat() if end.until else None, "rolled": end.rolled}
 
 
-@till_router.post("/{machine_id}/item-blocks/{block_id}/clear")
+@till_router.post("/{machine_id}/item-blocks/{block_id}/clear", dependencies=FISCAL_SYNC_PATH)
 def device_clear(
     machine_id: str,
     block_id: uuid.UUID,
