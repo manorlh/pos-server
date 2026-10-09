@@ -21,7 +21,9 @@
     "publish:release": "node scripts/publish-release.mjs",
     "build:android-bundle": "node --experimental-strip-types scripts/build-android-bundle.mjs",
     "publish:android-bundle": "node scripts/publish-android-bundle.mjs",
-    "build:app-bundle": "node --experimental-strip-types scripts/build-app-bundle.mjs"
+    "build:app-bundle": "node --experimental-strip-types scripts/build-app-bundle.mjs",
+    "build:renderer:legacy": "vite build --config vite.legacy.config.mts",
+    "preview:legacy": "node --experimental-strip-types scripts/preview-legacy.mjs"
   },
   "dependencies": {
     "sharp": "^0.35.5"
