@@ -1,0 +1,156 @@
+"""prepaid vouchers: productions ("הפקות") and a batch's production and event (the contract's §13)
+
+Revision ID: a7d4e9c2b158
+Revises: f3a9c1d7e520
+Create Date: 2026-10-09
+
+* `prepaid_productions` — a company's production (the customer vouchers are made for): its name,
+  contact, billing basis (`redemption` by default, or `delivery`), notes, active. One name per
+  company.
+* `prepaid_voucher_batches.production_id` (FK, null) and `report_event_id` (FK to the existing
+  `report_events`, null); `customer_name` / `event_name` stay (the printed text, the legacy filter).
+* Data: every distinct `customer_name` of a company's batches becomes a production, and those
+  batches name it. A production's id is derived from (tenant, company, name), so a second run
+  adds nothing.
+
+Idempotent (the table, columns and indexes only when missing; the data by name); offline
+(`--sql`) the plain statements, the data as one INSERT … SELECT and one UPDATE (Postgres).
+"""
+import uuid
+from typing import Sequence, Union
+
+import sqlalchemy as sa
+from alembic import op
+from sqlalchemy.dialects import postgresql
+
+revision: str = 'a7d4e9c2b158'
+down_revision: Union[str, Sequence[str], None] = 'f3a9c1d7e520'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+TABLE = 'prepaid_productions'
+BATCHES = 'prepaid_voucher_batches'
+NAMESPACE = uuid.UUID('6f1c8a52-9d3e-4b7a-a0c5-2e8f4d6b1a93')
+
+
+def _uuid():
+    return postgresql.UUID(as_uuid=True)
+
+
+def _offline() -> bool:
+    return bool(op.get_context().as_sql)
+
+
+def _has_table(name: str) -> bool:
+    return False if _offline() else sa.inspect(op.get_bind()).has_table(name)
+
+
+def _columns(table: str) -> set:
+    return set() if _offline() else {c['name'] for c in sa.inspect(op.get_bind()).get_columns(table)}
+
+
+def _indexes(table: str) -> set:
+    return set() if _offline() else {i['name'] for i in sa.inspect(op.get_bind()).get_indexes(table)}
+
+
+def _move_customers() -> None:
+    """Each distinct customer name of a company's batches → a production; the batches name it."""
+    if op.get_context().dialect.name == 'postgresql':
+        op.execute(sa.text(f"""
+            INSERT INTO {TABLE} (id, tenant_id, company_id, name, billing_basis, active, created_at, updated_at)
+            SELECT DISTINCT md5(b.tenant_id::text || ':' || b.company_id::text || ':' || b.customer_name)::uuid,
+                   b.tenant_id, b.company_id, b.customer_name, 'redemption', true, now(), now()
+            FROM {BATCHES} b
+            WHERE b.customer_name IS NOT NULL AND btrim(b.customer_name) <> ''
+            ON CONFLICT (tenant_id, company_id, name) DO NOTHING
+        """))
+        op.execute(sa.text(f"""
+            UPDATE {BATCHES} b SET production_id = p.id
+            FROM {TABLE} p
+            WHERE b.production_id IS NULL AND p.tenant_id = b.tenant_id AND p.company_id = b.company_id
+              AND p.name = b.customer_name
+        """))
+        return
+    bind = op.get_bind()
+    rows = bind.execute(sa.text(
+        f"SELECT DISTINCT tenant_id, company_id, customer_name FROM {BATCHES} "
+        "WHERE customer_name IS NOT NULL AND trim(customer_name) <> '' AND production_id IS NULL"
+    )).all()
+    for tenant_id, company_id, name in rows:
+        found = bind.execute(sa.text(
+            f"SELECT id FROM {TABLE} WHERE tenant_id = :t AND company_id = :c AND name = :n"
+        ), {"t": tenant_id, "c": company_id, "n": name}).first()
+        if found is None:
+            pid = uuid.uuid5(NAMESPACE, f"{tenant_id}:{company_id}:{name}").hex
+            bind.execute(sa.text(
+                f"INSERT INTO {TABLE} (id, tenant_id, company_id, name, billing_basis, active) "
+                "VALUES (:id, :t, :c, :n, 'redemption', 1)"
+            ), {"id": pid, "t": tenant_id, "c": company_id, "n": name})
+        else:
+            pid = found[0]
+        bind.execute(sa.text(
+            f"UPDATE {BATCHES} SET production_id = :p WHERE tenant_id = :t AND company_id = :c "
+            "AND customer_name = :n AND production_id IS NULL"
+        ), {"p": pid, "t": tenant_id, "c": company_id, "n": name})
+
+
+def upgrade() -> None:
+    if not _has_table(TABLE):
+        op.create_table(
+            TABLE,
+            sa.Column('id', _uuid(), primary_key=True),
+            sa.Column('tenant_id', _uuid(), sa.ForeignKey('tenants.id'), nullable=False),
+            sa.Column('company_id', _uuid(), sa.ForeignKey('companies.id'), nullable=False),
+            sa.Column('name', sa.String(200), nullable=False),
+            sa.Column('contact_name', sa.String(200), nullable=True),
+            sa.Column('contact_phone', sa.String(50), nullable=True),
+            sa.Column('contact_email', sa.String(200), nullable=True),
+            sa.Column('billing_basis', sa.String(16), nullable=False, server_default='redemption'),
+            sa.Column('notes', sa.Text(), nullable=True),
+            sa.Column('active', sa.Boolean(), nullable=False, server_default=sa.true()),
+            sa.Column('created_by', _uuid(), sa.ForeignKey('users.id'), nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.UniqueConstraint('tenant_id', 'company_id', 'name', name='ux_prepaid_productions_name'),
+            sa.CheckConstraint("billing_basis IN ('redemption', 'delivery')", name='ck_prepaid_productions_billing'),
+        )
+        op.create_index('ix_prepaid_productions_tenant_id', TABLE, ['tenant_id'])
+        op.create_index('ix_prepaid_productions_company_id', TABLE, ['company_id'])
+    have = _columns(BATCHES)
+    if 'production_id' not in have:
+        op.add_column(BATCHES, sa.Column('production_id', _uuid(), nullable=True))
+    if 'report_event_id' not in have:
+        op.add_column(BATCHES, sa.Column('report_event_id', _uuid(), nullable=True))
+    # The foreign keys (SQLite — the tests — cannot add a constraint to a table in place).
+    if op.get_context().dialect.name == 'postgresql':
+        fks = set() if _offline() else {fk['name'] for fk in sa.inspect(op.get_bind()).get_foreign_keys(BATCHES)}
+        for name, column, target in (
+            ('fk_prepaid_voucher_batches_production', 'production_id', TABLE),
+            ('fk_prepaid_voucher_batches_report_event', 'report_event_id', 'report_events'),
+        ):
+            if name not in fks:
+                op.create_foreign_key(name, BATCHES, target, [column], ['id'])
+    indexes = _indexes(BATCHES)
+    if 'ix_prepaid_voucher_batches_production_id' not in indexes:
+        op.create_index('ix_prepaid_voucher_batches_production_id', BATCHES, ['production_id'])
+    if 'ix_prepaid_voucher_batches_report_event_id' not in indexes:
+        op.create_index('ix_prepaid_voucher_batches_report_event_id', BATCHES, ['report_event_id'])
+    _move_customers()
+
+
+def downgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        fks = None if _offline() else {fk['name'] for fk in sa.inspect(op.get_bind()).get_foreign_keys(BATCHES)}
+        for name in ('fk_prepaid_voucher_batches_report_event', 'fk_prepaid_voucher_batches_production'):
+            if fks is None or name in fks:
+                op.drop_constraint(name, BATCHES, type_='foreignkey')
+    indexes = None if _offline() else _indexes(BATCHES)
+    for name in ('ix_prepaid_voucher_batches_report_event_id', 'ix_prepaid_voucher_batches_production_id'):
+        if indexes is None or name in indexes:
+            op.drop_index(name, table_name=BATCHES)
+    have = None if _offline() else _columns(BATCHES)
+    for name in ('report_event_id', 'production_id'):
+        if have is None or name in have:
+            op.drop_column(BATCHES, name)
+    if _offline() or _has_table(TABLE):
+        op.drop_table(TABLE)

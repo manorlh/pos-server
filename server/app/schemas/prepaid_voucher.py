@@ -650,6 +650,10 @@ class PrepaidVoucherBatchCreate(BaseModel):
     barcode_type: str = Field("qr", alias="barcodeType")
     customer_name: Optional[str] = Field(None, alias="customerName")
     order_ref: Optional[str] = Field(None, alias="orderRef")
+    #: The production it is made for (§13): its name becomes `customerName`.
+    production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
+    #: The event (the existing report events); the printed `eventName` defaults to its name.
+    report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -780,6 +784,10 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
     catalog_mode: Optional[str] = Field(None, alias="catalogMode")
     apply_to_partial: bool = Field(False, alias="applyToPartial")
+    #: The production (§13); null: none — the `customerName` text stays as it is.
+    production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
+    #: The event (the existing report events); null: none.
+    report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
 
     @field_validator("stacking", mode="before")
     @classmethod
@@ -835,6 +843,80 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     @classmethod
     def _logo(cls, value):
         return _clean_text(value, 500)
+
+
+class PrepaidProductionCreate(BaseModel):
+    """A production ("הפקה", §13): the customer a company's vouchers are made for."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: uuid.UUID = Field(..., alias="companyId")
+    name: str
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    #: "redemption" (the default) or "delivery".
+    billing_basis: Optional[str] = Field("redemption", alias="billingBasis")
+    notes: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, NAME_MAX, required=True)
+
+    @field_validator("contact_name", "contact_email", mode="before")
+    @classmethod
+    def _contact(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("contact_phone", mode="before")
+    @classmethod
+    def _phone(cls, value):
+        return _clean_text(value, 50)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("billing_basis", mode="before")
+    @classmethod
+    def _billing(cls, value):
+        return _choice(value, ("redemption", "delivery"), "billingBasis")
+
+
+class PrepaidProductionUpdate(BaseModel):
+    """In place; a null clears a contact field or the notes, never the name or the billing basis."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    billing_basis: Optional[str] = Field(None, alias="billingBasis")
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+    @field_validator("name", "contact_name", "contact_email", mode="before")
+    @classmethod
+    def _names(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("contact_phone", mode="before")
+    @classmethod
+    def _phone(cls, value):
+        return _clean_text(value, 50)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("billing_basis", mode="before")
+    @classmethod
+    def _billing(cls, value):
+        return _choice(value, ("redemption", "delivery"), "billingBasis")
 
 
 class PrepaidVoucherAddIn(BaseModel):

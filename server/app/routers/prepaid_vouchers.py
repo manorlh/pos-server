@@ -55,6 +55,8 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
+    PrepaidProductionCreate,
+    PrepaidProductionUpdate,
     PrepaidVoucherAddIn,
     PrepaidVoucherBatchCreate,
     PrepaidVoucherBatchUpdate,
@@ -72,6 +74,7 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherTypeUpdate,
 )
 from app.services import prepaid_vouchers as PV
+from app.services import prepaid_productions as PPR
 from app.services import prepaid_voucher_reports as PVR
 from app.services import prepaid_voucher_analytics as PVA
 
@@ -203,6 +206,58 @@ def prepaid_voucher_facets(
 ):
     """What the filters offer: for whom, events, types, batches, shops, tills, employees, creators."""
     return PVA.facets(db, current_user, active_tenant_id)
+
+
+# ── Productions ("הפקות") and the events a batch may name (the contract's §13) ──────────────
+
+
+@router.get("/prepaid-vouchers/productions")
+def list_prepaid_productions(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    include_inactive: bool = Query(False, alias="includeInactive"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The productions (the customers vouchers are made for), by name, with how many batches name each."""
+    return PPR.list_productions(db, current_user, active_tenant_id, company_id=company_id, include_inactive=include_inactive)
+
+
+@router.post("/prepaid-vouchers/productions", status_code=status.HTTP_201_CREATED)
+def create_prepaid_production(
+    body: PrepaidProductionCreate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    p = PPR.create_production(db, current_user, active_tenant_id, body)
+    db.commit()
+    return PPR.production_out(p)
+
+
+@router.patch("/prepaid-vouchers/productions/{production_id}")
+def update_prepaid_production(
+    production_id: str,
+    body: PrepaidProductionUpdate,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """In place; a new name reaches the batches that name the production."""
+    p = PPR.update_production(db, current_user, active_tenant_id, production_id, body)
+    db.commit()
+    return PPR.production_out(p, PPR._counts(db, [p.id]).get(str(p.id), 0))
+
+
+@router.get("/prepaid-vouchers/events")
+def list_prepaid_voucher_events(
+    company_id: Optional[str] = Query(None, alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The events a batch may name — the existing report events of the shops the user sees, newest first."""
+    return PPR.list_events(db, current_user, active_tenant_id, company_id=company_id)
 
 
 @router.get("/prepaid-vouchers/search")

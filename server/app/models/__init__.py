@@ -69,6 +69,7 @@ from app.models.exception_alerts import (
     ExceptionLogEntry,
 )
 from app.models.prepaid_voucher import (
+    PrepaidProduction,
     PrepaidVoucher,
     PrepaidVoucherBatch,
     PrepaidVoucherBatchItem,
@@ -214,6 +215,7 @@ __all__ = [
     "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
     "PrepaidVoucherEvent", "PrepaidVoucherReservation", "TransactionVoucherDiscount", "PrepaidVoucherOverrideAudit",
     "PrepaidVoucherOfflineAssignment",
+    "PrepaidProduction",
     "Promotion", "TransactionPromotion",
     "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",

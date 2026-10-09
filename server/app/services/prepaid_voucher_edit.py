@@ -58,7 +58,7 @@ FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE = (
 FIELDS: Tuple[Tuple[str, str], ...] = (
     ("name", FREE), ("customerName", FREE), ("eventName", FREE), ("orderRef", FREE), ("freeText", FREE),
     ("logoUrl", FREE), ("showItems", FREE), ("showValidity", FREE), ("showCredit", FREE), ("showCode", FREE),
-    ("barcodeType", FREE), ("printTillValue", FREE),
+    ("barcodeType", FREE), ("printTillValue", FREE), ("productionId", FREE), ("reportEventId", FREE),
     ("validFrom", VALIDITY), ("validUntil", VALIDITY),
     ("shopIds", WHERE), ("offlineAllowed", WHERE),
     ("stacking", RULES_OF_USE), ("maxVouchersPerSale", RULES_OF_USE), ("promotionPolicy", RULES_OF_USE),
@@ -184,6 +184,8 @@ def view(b, *, prices: bool) -> Dict[str, Any]:
         "totalQty": b.total_qty,
         "catalogMode": b.catalog_mode or "frozen",
         "count": int(b.next_serial or 1) - 1,
+        "productionId": str(b.production_id) if getattr(b, "production_id", None) else None,
+        "reportEventId": str(b.report_event_id) if getattr(b, "report_event_id", None) else None,
     }
     if prices:
         out["productionPrice"] = PV._shekels_out(b.production_price)
@@ -283,6 +285,23 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
             cols[f] = v
     if "name" in cols and not cols["name"]:
         cols.pop("name")
+    # The production (its name becomes the batch's `customer_name`) and the event (§13).
+    if "production_id" in given:
+        from app.services import prepaid_productions as PPR
+
+        if body.production_id is None:
+            cols["production_id"] = None
+        else:
+            production = PPR.production_for_batch(db, tenant_id, body.production_id, batch.company_id)
+            cols["production_id"] = production.id
+            cols["customer_name"] = production.name
+    if "report_event_id" in given:
+        from app.services import prepaid_productions as PPR
+
+        cols["report_event_id"] = (
+            None if body.report_event_id is None
+            else PPR.event_for_batch(db, tenant_id, body.report_event_id, batch.company_id).id
+        )
     vf, vu = cols.get("valid_from", batch.valid_from), cols.get("valid_until", batch.valid_until)
     if vf and vu and PV._utc(vu) <= PV._utc(vf):
         raise PV._http(status.HTTP_400_BAD_REQUEST, "validUntil must be after validFrom")
@@ -368,6 +387,7 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         for f, cat in FIELDS
         if f in after and f in before and not _same(f, before.get(f), after.get(f))
     ]
+    _name_refs(db, changes)
     changed = {c["category"] for c in changes}
     if batch.status == "cancelled" and changed - {FREE}:
         raise PV._http(status.HTTP_409_CONFLICT, PV.BATCH_CANCELLED)
@@ -406,6 +426,22 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         "_assignment": assignment,
         "_categories": changed,
     }
+
+
+def _name_refs(db: Session, changes: List[Dict[str, Any]]) -> None:
+    """A production's / an event's id on either side of a change, as `{id, name}` (the confirmation reads names)."""
+    from app.models.prepaid_voucher import PrepaidProduction
+    from app.models.report_event import ReportEvent
+
+    PV = _pv()
+    for c in changes:
+        model = {"productionId": PrepaidProduction, "reportEventId": ReportEvent}.get(c["field"])
+        if model is None:
+            continue
+        for side in ("before", "after"):
+            if c[side]:
+                row = db.get(model, PV._as_uuid(c[side]))
+                c[side] = {"id": c[side], "name": row.name if row is not None else None}
 
 
 def plan_out(plan: Dict[str, Any]) -> Dict[str, Any]:

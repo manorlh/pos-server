@@ -866,6 +866,17 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         )
     if the_type is None:
         the_type = PVT.one_off_type(db, user, tenant_id, company.id, body.name, terms, items_in, products, targets)
+    # The production it is made for and its event (the contract's §13): names kept as printed text.
+    from app.services import prepaid_productions as PPR
+
+    production = (
+        PPR.production_for_batch(db, tenant_id, body.production_id, company.id)
+        if getattr(body, "production_id", None) else None
+    )
+    report_event = (
+        PPR.event_for_batch(db, tenant_id, body.report_event_id, company.id)
+        if getattr(body, "report_event_id", None) else None
+    )
 
     batch = PrepaidVoucherBatch(
         id=uuid.uuid4(),
@@ -873,7 +884,9 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         company_id=company.id,
         shop_ids=shop_ids,
         name=body.name,
-        event_name=body.event_name,
+        event_name=body.event_name or (report_event.name if report_event is not None else None),
+        report_event_id=report_event.id if report_event is not None else None,
+        production_id=production.id if production is not None else None,
         logo_url=body.logo_url,
         free_text=body.free_text,
         valid_from=body.valid_from,
@@ -886,7 +899,7 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         show_items=getattr(body, "show_items", True) is not False,
         show_credit=getattr(body, "show_credit", True) is not False,
         barcode_type=body.barcode_type or "qr",
-        customer_name=body.customer_name,
+        customer_name=production.name if production is not None else body.customer_name,
         order_ref=body.order_ref,
         # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
         include_extras=bool(terms.get("include_extras")) and not discount,
@@ -1278,6 +1291,9 @@ def batch_out(
         "barcodeType": batch.barcode_type or "qr",
         "customerName": batch.customer_name,
         "orderRef": batch.order_ref,
+        # The production and the event (the contract's §13), when named.
+        "production": _production_ref(db, batch),
+        "reportEvent": _event_ref(db, batch),
         # "כולל תוספות": goods cover the paid options and a meal's upcharges too (§7.14).
         "includeExtras": bool(getattr(batch, "include_extras", False)),
         # Its type (the spec's §2), as issued, and the two prices (§5) — the production price
@@ -1306,6 +1322,24 @@ def batch_out(
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
+
+
+def _production_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
+    if getattr(batch, "production_id", None) is None:
+        return None
+    from app.models.prepaid_voucher import PrepaidProduction
+    from app.services.prepaid_productions import ref_out
+
+    return ref_out(db.get(PrepaidProduction, batch.production_id))
+
+
+def _event_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
+    if getattr(batch, "report_event_id", None) is None:
+        return None
+    from app.models.report_event import ReportEvent
+    from app.services.prepaid_productions import event_ref_out
+
+    return event_ref_out(db.get(ReportEvent, batch.report_event_id))
 
 
 def _policy_out(batch, agorot: bool = False) -> Dict[str, Any]:

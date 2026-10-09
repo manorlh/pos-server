@@ -305,7 +305,11 @@ GET /prepaid-vouchers/batches/{batch_id}/report -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:edit
 GET /prepaid-vouchers/categories -> prepaid_vouchers:view
+GET /prepaid-vouchers/events -> prepaid_vouchers:view
 GET /prepaid-vouchers/facets -> prepaid_vouchers:view
+GET /prepaid-vouchers/productions -> prepaid_vouchers:view
+POST /prepaid-vouchers/productions -> prepaid_vouchers:edit
+PATCH /prepaid-vouchers/productions/{production_id} -> prepaid_vouchers:edit
 GET /prepaid-vouchers/products -> prepaid_vouchers:view
 GET /prepaid-vouchers/search -> prepaid_vouchers:view
 GET /prepaid-vouchers/types -> prepaid_vouchers:view

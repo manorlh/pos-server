@@ -300,8 +300,13 @@ class PrepaidVoucherBatch(Base):
     #: `qr` (2D, any camera / imager) or `code128` (a line barcode, for 1D laser scanners).
     barcode_type = Column(String(16), nullable=False, default="qr", server_default="qr")
     #: Who ordered the run ("קייטרינג אלון") and their order number — cover sheets, manifest.
+    #: With a production, `customer_name` is its name (kept in step: the filters, the snapshots).
     customer_name = Column(String(200), nullable=True)
     order_ref = Column(String(100), nullable=True)
+    #: The production it was made for (`prepaid_productions`, the contract's §13); null: none named.
+    production_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_productions.id"), nullable=True, index=True)
+    #: The event (the existing `report_events`); `event_name` stays the printed text.
+    report_event_id = Column(UUID(as_uuid=True), ForeignKey("report_events.id"), nullable=True, index=True)
 
     # ── Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7) ──────────────────────
     #: `items` (goods, a tender — every batch before kinds), `order_discount` (off the
@@ -746,3 +751,33 @@ class PrepaidVoucherEvent(Base):
     #: Anything else worth keeping: the serial range, the group size, the fields changed.
     details = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class PrepaidProduction(Base):
+    """
+    A production ("הפקה", the contract's §13): the customer vouchers are made for — its name,
+    contact, how it is billed (by redemption, the default, or by delivery) and notes. A company's;
+    a batch names one (`production_id`) and carries its name as `customer_name`.
+    """
+
+    __tablename__ = "prepaid_productions"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "company_id", "name", name="ux_prepaid_productions_name"),
+        CheckConstraint("billing_basis IN ('redemption', 'delivery')", name="ck_prepaid_productions_billing"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    contact_name = Column(String(200), nullable=True)
+    contact_phone = Column(String(50), nullable=True)
+    contact_email = Column(String(200), nullable=True)
+    #: "redemption" (charged by what was redeemed — the default) or "delivery" (what was handed over).
+    billing_basis = Column(String(16), nullable=False, default="redemption", server_default="redemption")
+    notes = Column(Text, nullable=True)
+    active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+

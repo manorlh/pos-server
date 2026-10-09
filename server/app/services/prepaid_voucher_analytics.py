@@ -321,10 +321,15 @@ def scoped_batches(
     now = now or PV._now()
     zone = zone or zone_of(db, tenant_id)
     q = db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.tenant_id == tenant_id)
+    # For whom / the event: a production's or a report event's id (§13), or the legacy text.
     if scope.customers:
-        q = q.filter(PrepaidVoucherBatch.customer_name.in_(scope.customers))
+        ids = [i for i in (PV._as_uuid(c) for c in scope.customers) if i is not None]
+        cond = PrepaidVoucherBatch.customer_name.in_(scope.customers)
+        q = q.filter(or_(cond, PrepaidVoucherBatch.production_id.in_(ids)) if ids else cond)
     if scope.events:
-        q = q.filter(PrepaidVoucherBatch.event_name.in_(scope.events))
+        ids = [i for i in (PV._as_uuid(e) for e in scope.events) if i is not None]
+        cond = PrepaidVoucherBatch.event_name.in_(scope.events)
+        q = q.filter(or_(cond, PrepaidVoucherBatch.report_event_id.in_(ids)) if ids else cond)
     if scope.type_ids:
         ids = [PV._as_uuid(t) for t in scope.type_ids]
         q = q.filter(PrepaidVoucherBatch.type_id.in_([i for i in ids if i is not None] or [uuid.uuid4()]))
