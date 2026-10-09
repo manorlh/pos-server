@@ -32,7 +32,28 @@ export type SketchKind =
   | 'freehand'
   | 'rect'
   // The business's logo, placed on the floor: its own picture (`src`), else the business's.
-  | 'logo';
+  | 'logo'
+  // Sketch schema 2 — the decor symbols ("סמלים", specs/table-map-decor.md): the DJ booth.
+  | 'dj_booth';
+
+/**
+ * What a variant means on the kinds that take one (the server's SKETCH_VARIANTS): a bar's
+ * shape; whose restrooms (none: both); a plain exit ("יציאה"; none: the emergency exit).
+ */
+export type SketchVariant = 'straight' | 'L' | 'U' | 'men' | 'women' | 'accessible' | 'plain';
+export const SKETCH_VARIANTS: Partial<Record<SketchKind, SketchVariant[]>> = {
+  counter: ['straight', 'L', 'U'],
+  restroom: ['men', 'women', 'accessible'],
+  exit: ['plain'],
+};
+/** The sketch schema this editor writes (the server's SKETCH_SCHEMA; the till's too). */
+export const SKETCH_SCHEMA = 2;
+
+/** `variant` as `kind` keeps it: a counter is straight unless L or U; a restroom or an exit only its own; others none. */
+export function variantOf(kind: SketchKind, variant: SketchVariant | null | undefined): SketchVariant | null {
+  if (kind === 'counter') return variant === 'L' || variant === 'U' ? variant : 'straight';
+  return variant && SKETCH_VARIANTS[kind]?.includes(variant) ? variant : null;
+}
 
 export interface SketchElement {
   id: string;
@@ -43,8 +64,11 @@ export interface SketchElement {
   h: number;
   rotation: number;
   text?: string | null;
-  /** A bar counter ("counter"): straight or L-shaped. */
-  variant?: 'straight' | 'L' | null;
+  /**
+   * A bar counter ("counter"): straight, L- or U-shaped. Restrooms: men / women / accessible
+   * (none: both). An exit: plain (none: the emergency exit). See SKETCH_VARIANTS.
+   */
+  variant?: SketchVariant | null;
   /** A bar counter's stools drawn in front of it (0 once they became tables). */
   stools?: number;
   /** A drawn line, polyline (a wall) or freehand stroke: its points, x, y, x, y… in canvas units. */
@@ -72,10 +96,16 @@ export interface Sketch {
   elements: SketchElement[];
 }
 
-export const SKETCH_KINDS: SketchKind[] = [
-  'wall', 'door', 'window', 'counter', 'bar', 'kitchen', 'restroom', 'plant', 'column',
-  'stairs', 'cashier', 'host', 'exit', 'stage', 'sofa', 'label', 'logo',
+/**
+ * The editor's palette in two rows. "סמלים": what guests and staff find their way by —
+ * restrooms, the entrance (`door`), the exit, the bar (`counter`), the DJ booth, plants, the
+ * kitchen, stairs, the cash desk, a free text. "מבנה": the room itself and its furniture.
+ */
+export const SKETCH_SYMBOL_KINDS: SketchKind[] = [
+  'restroom', 'door', 'exit', 'counter', 'dj_booth', 'plant', 'kitchen', 'stairs', 'cashier', 'label',
 ];
+export const SKETCH_STRUCTURE_KINDS: SketchKind[] = ['wall', 'window', 'column', 'bar', 'host', 'stage', 'sofa', 'logo'];
+export const SKETCH_KINDS: SketchKind[] = [...SKETCH_SYMBOL_KINDS, ...SKETCH_STRUCTURE_KINDS];
 
 /** The background a zone is drawn on: an explicit choice, else its image, else the clean floor. */
 export function backgroundOf(sketch: Sketch | null | undefined, hasImage: boolean): SketchBackground {
@@ -91,6 +121,25 @@ export function counterGeometry(el: SketchElement): {
   stools: { cx: number; cy: number; r: number }[];
 } {
   const n = Math.max(0, Math.min(40, el.stools ?? 0));
+  if (el.variant === 'U') {
+    // The bar along the bottom and up both sides; the stools inside, along the bottom.
+    const c = Math.min(el.w, el.h) * 0.28;
+    const band = Math.min(c * 1.3, el.h - c);
+    const length = Math.max(0, el.w - 2 * c);
+    const d = n ? Math.min(band * 0.75, (length / n) * 0.8) : 0;
+    return {
+      bars: [
+        { x: el.x, y: el.y + el.h - c, w: el.w, h: c },
+        { x: el.x, y: el.y, w: c, h: el.h - c },
+        { x: el.x + el.w - c, y: el.y, w: c, h: el.h - c },
+      ],
+      stools: Array.from({ length: n }, (_, i) => ({
+        cx: el.x + c + (i + 0.5) * (length / n),
+        cy: el.y + el.h - c - band / 2,
+        r: d / 2,
+      })),
+    };
+  }
   if (el.variant === 'L') {
     const c = Math.min(el.w, el.h) * 0.28;
     const band = Math.min(c * 1.3, el.h - c);
@@ -175,7 +224,28 @@ export const SKETCH_STYLE: Record<SketchKind, { fill: string; stroke: string; ro
   freehand: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
   rect: { fill: 'transparent', stroke: '#6b4423', text: '#0f172a' },
   logo: { fill: 'transparent', stroke: '#94a3b8', text: '#64748b' },
+  // The DJ booth: graphite, quiet on a light floor and on the dark one.
+  dj_booth: { fill: '#d4d4d8', stroke: '#3f3f46', text: '#18181b' },
 };
+
+/** A plain exit ("יציאה"): neutral slate — the green sign is the emergency exit's. */
+const PLAIN_EXIT_STYLE = { fill: '#f1f5f9', stroke: '#475569', text: '#1e293b' };
+
+/** An element's colours: its kind's, a plain exit's own (the till draws the same). */
+export function styleOf(el: Pick<SketchElement, 'kind' | 'variant'>): (typeof SKETCH_STYLE)[SketchKind] {
+  return el.kind === 'exit' && el.variant === 'plain' ? PLAIN_EXIT_STYLE : SKETCH_STYLE[el.kind];
+}
+
+/** The word on a shape with no text of its own, by its variant too (the till's sketchDefaultText). */
+export function defaultText(el: Pick<SketchElement, 'kind' | 'variant'>): string | null {
+  if (el.kind === 'restroom') {
+    if (el.variant === 'men') return 'גברים';
+    if (el.variant === 'women') return 'נשים';
+    if (el.variant === 'accessible') return 'נגיש';
+  }
+  if (el.kind === 'exit' && el.variant === 'plain') return 'יציאה';
+  return SKETCH_DEFAULT_TEXT[el.kind] ?? null;
+}
 
 /** The word drawn on a shape with no text of its own (the till draws the same). */
 export const SKETCH_DEFAULT_TEXT: Partial<Record<SketchKind, string>> = {
@@ -189,6 +259,7 @@ export const SKETCH_DEFAULT_TEXT: Partial<Record<SketchKind, string>> = {
   host: 'מארחת',
   exit: 'יציאת חירום',
   stage: 'במה',
+  dj_booth: "עמדת די־ג'יי",
 };
 
 /**
@@ -230,6 +301,7 @@ export function newElement(kind: SketchKind, cw: number, ch: number): SketchElem
     freehand: [s * 0.1, s * 0.1],
     rect: [s * 0.2, s * 0.12],
     logo: [s * 0.2, s * 0.12],
+    dj_booth: [s * 0.16, s * 0.1],
   };
   const [w, h] = size[kind];
   return {
@@ -242,6 +314,8 @@ export function newElement(kind: SketchKind, cw: number, ch: number): SketchElem
     rotation: 0,
     text: kind === 'label' ? SKETCH_DEFAULT_TEXT.label : null,
     ...(kind === 'counter' ? { variant: 'straight' as const, stools: 6 } : {}),
+    // An exit from the palette is the plain one ("יציאה"); the emergency exit is a click away.
+    ...(kind === 'exit' ? { variant: 'plain' as const } : {}),
   };
 }
 
