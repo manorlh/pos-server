@@ -104,6 +104,8 @@ PAUSE_NOT_FOUND = "prepaid_voucher_pause_not_found"
 QUOTA_NOT_FOUND = "prepaid_voucher_quota_not_found"
 TEST_HAS_HISTORY = "prepaid_voucher_test_has_history"
 TEST_OFFLINE = "prepaid_voucher_test_assigned_offline"
+#: "ערוך סדרה" turning offline redemption on for a test batch.
+TEST_NEVER_OFFLINE = "prepaid_voucher_test_never_offline"
 NOT_A_TEST_BATCH = "prepaid_voucher_not_a_test_batch"
 ALREADY_TEST = "prepaid_voucher_already_test"
 
@@ -531,22 +533,41 @@ def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optiona
     paused = pause_at(db, batch, _utc(at)) if at is not None else active_pause(db, batch, now)
     if paused is not None:
         flags.append(FLAG_PAUSED)
-    if not test and reached_quota(db, batch, voucher, now, lock=False) is not None:
+    if not test and reached_quota(db, batch, voucher, _utc(at) or now, lock=False) is not None:
         flags.append(FLAG_OVER_QUOTA)
     return flags
 
 
 def offline_assign_check(db: Session, batch: PrepaidVoucherBatch, machine: POSMachine) -> None:
     """
-    Hook (`prepaid_voucher_offline.assign`): a test batch goes only to a device of a shop in training
-    mode (else its offline sales would be real revenue), and no batch is assigned while it is paused.
+    Hook (`prepaid_voucher_offline.assign`): a test batch is never assigned to a device — not even one of a
+    shop in training mode, which may leave training while the device keeps the batch and sells for real
+    (`prepaid_voucher_test_assigned_offline`); and no batch is assigned while it is paused.
     """
     if batch is None or not tables_ready(db):
         return
-    if is_test(db, batch.id) and (machine is None or not _training_till(db, machine)):
-        raise ACC.http(status.HTTP_409_CONFLICT, TEST_ONLY)
+    if is_test(db, batch.id):
+        raise ACC.http(status.HTTP_409_CONFLICT, TEST_OFFLINE)
     if active_pause(db, batch) is not None:
         raise ACC.http(status.HTTP_409_CONFLICT, PAUSED)
+
+
+def edit_check(db: Session, batch: PrepaidVoucherBatch, columns: Dict[str, Any]) -> None:
+    """Hook (the core's "ערוך סדרה", `prepaid_voucher_edit.plan_edit`): a test batch never goes offline."""
+    if batch is None or not tables_ready(db):
+        return
+    if columns.get("offline_allowed") is True and is_test(db, batch.id):
+        raise ACC.http(status.HTTP_409_CONFLICT, TEST_NEVER_OFFLINE)
+
+
+def training_refusal(db: Session, voucher: PrepaidVoucher, features) -> Optional[tuple]:
+    """
+    Hook (the goods reserve, after the core's own checks): (code, Hebrew) when a real voucher is asked for by
+    a till that says it is in training — `prepaid_voucher_training_real`; else None.
+    """
+    if voucher is None or not tables_ready(db) or is_test(db, voucher.batch_id) or not _declares_training(features):
+        return None
+    return TRAINING_REAL, TEXT[TRAINING_REAL]
 
 
 def _local_text(db: Session, tenant_id, moment: datetime, now: datetime) -> str:
@@ -936,10 +957,11 @@ def _has_history(db: Session, batch: PrepaidVoucherBatch) -> bool:
 
 
 def _lock_batch_and_vouchers(db: Session, batch: PrepaidVoucherBatch) -> None:
-    """The batch's row (FOR NO KEY UPDATE — a confirm's audit row takes KEY SHARE on it, never blocked), then
-    its vouchers' (a redemption under way holds its voucher and finishes first: it is seen as history)."""
-    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == batch.id).with_for_update(key_share=True).first()
+    """Its vouchers' rows (in id order), then the batch's (FOR NO KEY UPDATE — a confirm's audit row takes KEY
+    SHARE on it): the order a replacement and a confirm take them, so none of them waits on another in a cycle.
+    A redemption under way holds its voucher and finishes first: it is seen as history."""
     db.query(PrepaidVoucher.id).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.id).with_for_update().all()
+    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == batch.id).with_for_update(key_share=True).first()
 
 
 def mark_test(db: Session, user: User, tenant_id, batch_id, note: Optional[str] = None, *, created: bool = False) -> PrepaidVoucherBatch:

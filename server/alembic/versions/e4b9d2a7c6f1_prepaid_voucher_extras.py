@@ -224,6 +224,9 @@ HELD_INDEX = ('ix_prepaid_voucher_reservations_batch_held', ['batch_id', 'status
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # As the core's migrations: never wait long behind a live API's locks (one transaction per migration).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     offline = _offline()
     insp = None if offline else sa.inspect(op.get_bind())
     for name, columns, indexes in _tables():

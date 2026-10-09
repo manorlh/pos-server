@@ -299,11 +299,17 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
     PV = _pv()
     batch = voucher.batch
     features = set(getattr(body, "features", None) or []) | {"reserve_goods"}
-    if PV.missing_features(db, batch, features):
-        raise _refuse(PV.UPDATE_REQUIRED, PV.UPDATE_REQUIRED_MESSAGE)
+    # The voucher's own state first ("השובר בוטל", a test voucher at a real till …), then what the till can do.
     reason = PV.refusal_reason(db, machine, voucher, now)
     if reason is not None:
         raise _refuse(reason, PV.refusal_message(db, voucher, reason))
+    from app.services.prepaid_voucher_controls import training_refusal  # §18 hook (helper): a real voucher in training
+
+    refusal = training_refusal(db, voucher, features)
+    if refusal is not None:
+        raise _refuse(*refusal)
+    if PV.missing_features(db, batch, features):
+        raise _refuse(PV.UPDATE_REQUIRED, PV.UPDATE_REQUIRED_MESSAGE)
     # Held by another sale (any till): in use until it is confirmed, released or expires.
     others = db.query(PrepaidVoucherReservation).filter(
         PrepaidVoucherReservation.voucher_id == voucher.id,

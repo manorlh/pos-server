@@ -430,36 +430,67 @@ class TestTrainingAndReal:
         assert look(w, codes(w, t)[0], features=TRAINING)["redeemable"] is True
 
     def test_a_test_batch_is_never_offline(self, w):
-        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn, PrepaidOfflineSyncIn
+        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn, PrepaidVoucherBatchUpdate
 
         t = staff_batch(w, offlineAllowed=True)
         row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(t["id"])).one()
         assert row.offline_allowed is False  # forced off
-        # Even switched on behind its back: never to a device of a shop not in training mode.
+        # The core's "ערוך סדרה" never turns it on again (the verification review's probe).
+        e = refused(R.update_prepaid_voucher_batch, t["id"], PrepaidVoucherBatchUpdate(offlineAllowed=True), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, CTL.TEST_NEVER_OFFLINE)
+        real = batch(w, count=1)
+        assert R.update_prepaid_voucher_batch(real["id"], PrepaidVoucherBatchUpdate(offlineAllowed=True),
+                                              **_ctx(w))["offlineAllowed"] is True
+        # Even switched on behind its back: never assigned to any device — a training shop's neither (it may
+        # leave training while the device keeps the batch).
         row.offline_allowed = True
         w.db.commit()
-        e = refused(R.assign_prepaid_batch_offline, t["id"],
-                    PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)), **_ctx(w))
-        assert (e.status_code, e.detail) == (409, CTL.TEST_ONLY)
-        # A device of a training shop takes it; the shop leaves training; what it syncs is flagged, not counted.
-        training(w)
-        a = R.assign_prepaid_batch_offline(t["id"], PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)),
-                                           **_ctx(w))
+        for shop_training in (False, True):
+            training(w, shop_training)
+            e = refused(R.assign_prepaid_batch_offline, t["id"],
+                        PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)), **_ctx(w))
+            assert (e.status_code, e.detail) == (409, CTL.TEST_OFFLINE)
+
+    def test_a_device_still_holding_a_test_batch_syncs_flagged_sales(self, w):
+        """An assignment made before these rules (a stale state): what the device syncs is flagged, never counted."""
+        from app.models.prepaid_voucher import PrepaidVoucherOfflineAssignment
+        from app.schemas.prepaid_voucher import PrepaidOfflineSyncIn
+
+        t = staff_batch(w)
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(t["id"])).one()
+        row.offline_allowed = True
+        a = PrepaidVoucherOfflineAssignment(id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=row.id, target="machine",
+                                            machine_id=w.tills[0].id, shop_id=w.shop.id, status="active", version=1)
+        w.db.add(a)
         w.db.commit()
-        training(w, False)
         v = vouchers(w, t)[0]
         unit = {"productId": str(w.hotdog.id), "productName": "נקניקייה", "quantity": 1, "valueAgorot": 2500,
                 "listValueAgorot": 2500, "coveredAgorot": 2500}
         out = R.sync_prepaid_offline(str(w.tills[0].id), PrepaidOfflineSyncIn(pending=0, redemptions=[{
-            "id": "dev-1", "assignmentId": a["id"], "voucherId": v["id"], "redeemedAt": datetime.now(timezone.utc).isoformat(),
+            "id": "dev-1", "assignmentId": str(a.id), "voucherId": v["id"], "redeemedAt": datetime.now(timezone.utc).isoformat(),
             "saleRef": "s1", "transactionId": "tx-real", "units": [unit], "coveredAgorot": 2500,
             "redemptionAccounting": "payment"}]), machine=w.tills[0], db=w.db)
         w.db.commit()
         assert out["results"][0]["status"] == "accepted" and CTL.FLAG_TEST_REAL in out["results"][0]["flags"]
-        a = X.create_settlement_agreement(SettlementAgreementIn(
+        ag = X.create_settlement_agreement(SettlementAgreementIn(
             name="א", companyId=w.company.id, productionName="קייטרינג אלון"), **_ctx(w))
-        assert a["totals"]["chargeable"] == 0
+        assert ag["totals"]["chargeable"] == 0
         assert X.prepaid_voucher_exceptions_report(scope=PVA.Scope(), **_ctx(w))["counts"].get(CTL.FLAG_TEST_REAL) == 1
+
+    def test_the_goods_reserve_words_its_refusals_and_checks_the_voucher_first(self, w):
+        b = batch(w, count=2)
+        real_cancelled = vouchers(w, b)[1]
+        R.cancel_prepaid_voucher(real_cancelled["id"], **_ctx(w))
+        # A cancelled real voucher at a till that says it is in training: "השובר בוטל" (the voucher first).
+        e = refused(hold, w, real_cancelled["code"], features=GOODS_TRAINING)
+        assert e.detail == {"code": "prepaid_voucher_cancelled", "message": "השובר בוטל"}
+        # A real voucher there: training_real, in Hebrew.
+        e = refused(hold, w, codes(w, b)[0], features=GOODS_TRAINING)
+        assert e.detail == {"code": CTL.TRAINING_REAL, "message": "הקופה במצב הדרכה — ניתן לממש בה רק שוברי בדיקה"}
+        # A test voucher at a real till (whatever it says it can do): test_only, in Hebrew.
+        t = staff_batch(w)
+        e = refused(hold, w, codes(w, t)[0])
+        assert e.detail == {"code": CTL.TEST_ONLY, "message": "שובר בדיקה — ניתן לממש רק בקופת בדיקה"}
 
     def test_never_marked_while_assigned_offline(self, w):
         from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn
@@ -568,14 +599,29 @@ class TestOffline:
         assert CTL.FLAG_PAUSED in (self._sync(w, a, vs[1], during, "d2").get("flags") or [])
 
     def test_unmarking_never_while_assigned(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherOfflineAssignment
+
         t = staff_batch(w)
-        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(t["id"])).one()
-        row.offline_allowed = True  # switched on again behind its back
+        # A device holding it (an assignment made before these rules; none can be made now).
+        w.db.add(PrepaidVoucherOfflineAssignment(id=uuid.uuid4(), tenant_id=w.tenant.id, batch_id=uuid.UUID(t["id"]),
+                                                 target="machine", machine_id=w.tills[0].id, shop_id=w.shop.id,
+                                                 status="active", version=1))
         w.db.commit()
-        training(w)
-        self._assign(w, t)
         e = refused(X.unmark_prepaid_voucher_test_batch, t["id"], **_ctx(w))
         assert (e.status_code, e.detail) == (409, CTL.TEST_OFFLINE)
+
+    def test_a_day_quota_is_judged_by_the_sales_own_day(self, w):
+        """Verification review: a sale made yesterday and synced today counts against yesterday's places."""
+        b = batch(w, count=3, offlineAllowed=True)
+        a = self._assign(w, b)
+        quota(w, "batch", b["id"], 1, period="day")
+        vs = vouchers(w, b)
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1, hours=1)
+        assert CTL.FLAG_OVER_QUOTA not in (self._sync(w, a, vs[0], yesterday, "d1").get("flags") or [])
+        # Today's one place: the first of today is in, the second is over.
+        today = datetime.now(timezone.utc)
+        assert CTL.FLAG_OVER_QUOTA not in (self._sync(w, a, vs[1], today, "d2").get("flags") or [])
+        assert CTL.FLAG_OVER_QUOTA in (self._sync(w, a, vs[2], today, "d3").get("flags") or [])
 
 
 class TestFlagsOnConfirm:
@@ -959,6 +1005,7 @@ class TestMigration:
         with Operations.context(offline):
             module.upgrade()
         assert buf.getvalue().count("CREATE TABLE") == len(module.TABLES) == 10
+        assert "SET LOCAL lock_timeout = '10s'" in buf.getvalue()
 
     def test_on_the_single_head(self):
         from alembic.config import Config

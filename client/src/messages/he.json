@@ -6069,6 +6069,7 @@
         "prepaid_voucher_replacement_bad_reason": "בחרו סיבה וכתבו פירוט (לפחות 2 תווים)",
         "prepaid_voucher_replacement_bad_items": "הפריטים לשובר החלופי אינם תואמים למה שנותר בשובר",
         "prepaid_voucher_replacement_partly_valued": "שובר בשווי קבוע שמומש בחלקו — לא ניתן להנפיק לו שובר חלופי",
+        "prepaid_voucher_test_never_offline": "שוברי בדיקה אינם ממומשים ללא אינטרנט — לא ניתן להפעיל לסדרה הזו מימוש ללא אינטרנט",
         "prepaid_voucher_test_assigned_offline": "הסדרה משויכת לעבודה ללא אינטרנט — יש לשחרר את השיוך לפני סימון כשוברי בדיקה",
         "prepaid_voucher_simulate_shop_invalid": "הסניף אינו מהסניפים שלך או אינו של החברה של השובר",
         "prepaid_voucher_training_real": "הקופה במצב הדרכה — ניתן לממש בה רק שוברי בדיקה",
@@ -6776,6 +6777,7 @@
       "reversed": "בוטל — הוחזר לשובר"
     },
     "errors": {
+      "prepaid_voucher_test_never_offline": "שוברי בדיקה אינם ממומשים ללא אינטרנט — לא ניתן להפעיל לסדרה הזו מימוש ללא אינטרנט",
       "prepaid_voucher_target_invalid": "מוצר או קטגוריה שנבחרו אינם מתאימים",
       "prepaid_voucher_kind_unsupported": "שובר הנחה — לא ניתן לממש אותו בעמדה זו",
       "prepaid_voucher_not_found": "השובר לא נמצא",
