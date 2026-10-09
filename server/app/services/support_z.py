@@ -283,6 +283,15 @@ def produce(
             },
         )
     label = f"הפקת Z מהענן ע״י התמיכה — {REASONS[reason]}" + (f": {note}" if note else "")
+    if before["zMode"]["kind"] == "till":
+        # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py): a dead till
+        # never issues the credit note it owes — send it to another till, or release it from this Z
+        # ("כפה Z בלי הזיכוי", with a reason) first. Refused before anything is closed.
+        from app.services import cloud_refund_z_gate as CRG
+
+        held = CRG.blockers(db, [machine.id])
+        if held:
+            raise CRG.refusal(held, user=user)
 
     closed: List[str] = []
     for shift in _unreported(db, machine):
@@ -327,6 +336,9 @@ def produce(
                 },
             }
             till_z._complete_requests(db, machine, z, None, now)
+            from app.services import cloud_refund_z_gate as CRG
+
+            CRG.consume(db, [machine.id], z.id, path="support_z", now=now)
 
     record = {
         "at": now.isoformat(),

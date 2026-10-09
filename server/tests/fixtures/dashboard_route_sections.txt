@@ -68,6 +68,7 @@ POST /cloud-card-refunds -> reports|z:edit
 GET /cloud-card-refunds/prepare -> reports|z:view
 GET /cloud-card-refunds/{refund_id} -> reports|z:view
 POST /cloud-card-refunds/{refund_id}/check -> reports|z:edit
+POST /cloud-card-refunds/{refund_id}/release-z -> reports|z:edit
 POST /cloud-card-refunds/{refund_id}/resend -> reports|z:edit
 POST /cloud-card-refunds/{refund_id}/resolve -> reports|z:edit
 GET /club -> customers:view
@@ -138,6 +139,7 @@ GET /device-commands/shop-close-preview -> device_control:view
 GET /device-commands/shop-close/{run_id} -> device_control:view
 POST /device-commands/shop-close/{run_id}/cancel -> device_control:edit
 POST /device-commands/shop-close/{run_id}/force -> device_control:edit
+POST /device-commands/shop-close/{run_id}/force-cloud-refunds -> device_control:edit
 POST /device-commands/shop-close/{run_id}/proceed -> device_control:edit
 GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
@@ -687,6 +689,7 @@ GET /sync/{machine_id}/settings -> till
 POST /sync/{machine_id}/shifts/{shift_id}/close -> till
 GET /sync/{machine_id}/shop-z -> till
 POST /sync/{machine_id}/shop-z -> till
+GET /sync/{machine_id}/shop-z/cloud-refund-guard -> till
 GET /sync/{machine_id}/shop-z/history -> till
 POST /sync/{machine_id}/shop-z/local -> till
 POST /sync/{machine_id}/shop-z/local-request/ack -> till
@@ -806,4 +809,5 @@ POST /z-runs -> z:edit
 GET /z-runs/{run_id} -> z:view
 POST /z-runs/{run_id}/cancel -> z:edit
 POST /z-runs/{run_id}/force -> z:edit
+POST /z-runs/{run_id}/force-cloud-refunds -> z:edit
 POST /z-runs/{run_id}/proceed -> z:edit

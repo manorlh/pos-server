@@ -346,6 +346,33 @@ def post_z_run_force(
     return ZR.run_to_out(db, run)
 
 
+class ZRunForceCloudRefundsIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Typed by the super admin: why the Z goes ahead before the cloud card refunds' credit notes.
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/z-runs/{run_id}/force-cloud-refunds", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_force_cloud_refunds(
+    run_id: uuid.UUID,
+    body: ZRunForceCloudRefundsIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py):
+    a super admin, a typed reason — the refunds holding this run are released from it (recorded on
+    each refund and as an exception) and go into the next Z. 403 for anyone else, 422 without a reason.
+    """
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    ZR.force_cloud_refunds(db, run, current_user, body.reason)
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
 @router.post("/z-runs/{run_id}/cancel", response_model=ZRunOut, response_model_by_alias=True)
 def post_z_run_cancel(
     run_id: uuid.UUID,
@@ -404,6 +431,7 @@ def create_run_from_body(db: Session, current_user: User, active_tenant_id, body
             force=body.force,
             wait_for_rest=wait_for_rest,
             force_reason=body.force_reason,
+            force_cloud_refund_reason=body.force_cloud_refund_reason,
         )
         if body.confirm_cloud_data:
             _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)

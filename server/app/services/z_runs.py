@@ -720,6 +720,55 @@ def shop_activity(db: Session, shop_id: uuid.UUID, machines: Sequence[POSMachine
     }
 
 
+def _includes_open_shift(db: Session, machine: POSMachine, sel: MachineSelection, cand: TillCandidates, shop_id) -> bool:
+    """Whether a run would ask this till to close its open shift (as `create_z_run` decides it)."""
+    has_open = is_seated_in(machine, shop_id) and (cand.open_shift is not None or _reported_open_is_live(db, machine))
+    include_open = has_open if sel.include_open_shift is None else bool(sel.include_open_shift)
+    return include_open and has_open
+
+
+def _cloud_refunds_holding_start(
+    db: Session,
+    shop: Shop,
+    tills: Dict[uuid.UUID, POSMachine],
+    selections: Dict[uuid.UUID, MachineSelection],
+    own_z: set,
+    area=None,
+) -> List[dict]:
+    """
+    The cloud card refunds a Z starting now would go without (app/services/cloud_refund_z_gate.py):
+    of every till in its scope, a credit note not issued yet — except at a till whose open shift
+    this run closes (its build issues the note into that shift first) — and a note issued already
+    in a shift no Z took that this run does not take.
+    """
+    from app.services import cloud_refund_z_gate as CRG
+
+    if not CRG.enabled():
+        return []
+    scope = [
+        m for m in tills.values()
+        if m.id not in own_z and (area is None or (str(m.area_id) == str(area.id) and is_seated_in(m, shop.id)))
+    ]
+    closing = set()
+    behind: List[dict] = []
+    for machine in scope:
+        sel = selections.get(machine.id)
+        cand = till_candidates(db, machine, shop.id)
+        closed_ids = [s.id for s in cand.closed]
+        if sel is None:
+            taken: List[uuid.UUID] = []
+        elif _includes_open_shift(db, machine, sel, cand, shop.id):
+            if CRG.holds_next_shift(machine):
+                closing.add(machine.id)
+            taken = closed_ids + ([cand.open_shift.id] if cand.open_shift is not None else [])
+        elif sel.through_shift_id is not None and sel.through_shift_id in closed_ids:
+            taken = closed_ids[: closed_ids.index(sel.through_shift_id) + 1]
+        else:
+            taken = closed_ids
+        behind.extend(CRG.notes_left_behind(db, machine, taken))
+    return CRG.blockers(db, [m.id for m in scope], closing=closing) + behind
+
+
 def create_z_run(
     db: Session,
     user: User,
@@ -734,10 +783,16 @@ def create_z_run(
     force: bool = False,
     wait_for_rest: bool = False,
     force_reason: Optional[str] = None,
+    force_cloud_refund_reason: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
     Start a run (and build at once when nothing needs closing). Raises HTTPException.
+
+    "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py): a cloud card
+    refund whose credit note this Z would go without refuses the start (409
+    `pending_cloud_card_refund`) — unless a super admin forces with a typed reason
+    (`force_cloud_refund_reason`): the refund then goes into the Z after.
 
     `wait_for_rest` ("סגירת יום סניפית" from remote control): each till closes only once no sale,
     payment or card is open on it (`waitForRest` on its close-shift). Never with `force`.
@@ -884,6 +939,18 @@ def create_z_run(
     record_left_out = check_open_tills(
         db, tenant, shop, left_out, confirmed=confirm_open_tills, area_id=area.id if area is not None else None
     )
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": the credit note of a refunded card this Z would go
+    # without holds it — not one its till issues into the shift this run closes — unless a super
+    # admin forces (typed reason; recorded on the refund and as an exception).
+    from app.services import cloud_refund_z_gate as CRG
+
+    cloud_refunds_held = _cloud_refunds_holding_start(db, shop, tills, by_id, own_z, area)
+    if cloud_refunds_held:
+        if force_cloud_refund_reason is None:
+            raise CRG.refusal(cloud_refunds_held, user=user)
+        CRG.release_all(
+            db, [b["refundId"] for b in cloud_refunds_held], user, force_cloud_refund_reason, where="z_run_start", now=now,
+        )
 
     run = ZRun(
         id=uuid.uuid4(),
@@ -1321,6 +1388,18 @@ def finalise_if_ready(
         return False
     if not complete:
         return False
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py): a credit note a
+    # till of this Z still owes keeps the run waiting — no Z, no number drawn — until it lands or a
+    # super admin releases it (`force_cloud_refunds`). Unreadable: waits too (fail closed).
+    from app.services import cloud_refund_z_gate as CRG
+
+    try:
+        scope_ids = CRG.run_scope_ids(db, run) if CRG.enabled() else []
+        if scope_ids and CRG.blockers(db, scope_ids):
+            return False
+    except Exception:  # noqa: BLE001 - the caller's close must still commit
+        logger.exception("Z run %s: the cloud card refund check failed; the run waits", run.id)
+        return False
     savepoint = db.begin_nested()
     try:
         z = build_z(
@@ -1358,6 +1437,13 @@ def finalise_if_ready(
     run.z_report_id = z.id
     run.completed_at = now
     db.flush()
+    if scope_ids:
+        # The releases this Z went ahead on are used up: the refunds go into the next Z.
+        try:
+            with db.begin_nested():
+                CRG.consume(db, scope_ids, z.id, path="z_run", now=now)
+        except Exception:  # noqa: BLE001 - the Z stands; logged
+            logger.exception("Z run %s: marking cloud refund releases used failed", run.id)
     return True
 
 
@@ -1531,6 +1617,49 @@ def proceed_without(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="nothing_to_report")
     finalise_if_ready(db, run, now=now)
     return run
+
+
+def force_cloud_refunds(db: Session, run: ZRun, user: User, reason: Optional[str], *, now: Optional[datetime] = None) -> ZRun:
+    """
+    Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" while the run waits: a super admin,
+    a typed reason — every refund holding this run is released from it (recorded on the refund and
+    as an exception) and the Z is built if nothing else holds it; the refunds go into the next Z.
+    """
+    from app.services import cloud_refund_z_gate as CRG
+
+    run = lock_run(db, run)
+    _require_waiting(run)
+    CRG.check_force(user, reason)
+    held = CRG.blockers(db, CRG.run_scope_ids(db, run))
+    if not held:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "code": "force_not_applicable",
+            "message": "אין זיכוי אשראי מהענן שעוצר את ה-Z הזה",
+        })
+    CRG.release_all(db, [b["refundId"] for b in held], user, reason, where=f"z_run:{run.id}", now=now)
+    finalise_if_ready(db, run, now=now)
+    return run
+
+
+def cloud_refunds_out(db: Session, run: ZRun) -> List[dict]:
+    """
+    The cloud card refunds whose credit note a till of this run still owes, each with its line
+    ("זיכוי אשראי מהענן ממתין להפקה (₪X)"): `landsInThisZ` for a till the run is closing (its build
+    issues the note into that shift first); the others hold the run.
+    """
+    from app.services import cloud_refund_z_gate as CRG
+
+    if run.status != ZRunStatus.WAITING or not CRG.enabled():
+        return []
+    try:
+        closing = {
+            i.machine_id for i in run.items
+            if i.status in PENDING_ITEM_STATUSES and i.machine is not None and CRG.holds_next_shift(i.machine)
+        }
+        return CRG.pending(db, CRG.run_scope_ids(db, run), closing=closing)
+    except Exception:  # noqa: BLE001 - shown only
+        logger.exception("Z run %s: cloud card refunds unreadable", run.id)
+        return []
 
 
 def _all_tills_required(db: Session, run: ZRun, *, guard: bool = True) -> Optional[str]:
@@ -1817,6 +1946,18 @@ def close_shift_pending_machine_ids(db: Session, machine_ids: List[uuid.UUID]) -
 # ── Out ───────────────────────────────────────────────────────────────────────
 
 
+def _cloud_refunds_fields(db: Session, run: ZRun) -> dict:
+    from app.services import cloud_refund_z_gate as CRG
+
+    pending = cloud_refunds_out(db, run)
+    held = [p for p in pending if not p["landsInThisZ"]]
+    return {
+        "pendingCloudRefunds": pending,
+        "cloudRefundsHold": bool(held),
+        "cloudRefundsMessage": CRG.message_of(held) if held else None,
+    }
+
+
 def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dict:
     """
     The run as the wizard shows it. Each item carries its till's last reported backlog
@@ -1872,6 +2013,8 @@ def run_to_out(db: Session, run: ZRun, *, now: Optional[datetime] = None) -> dic
         "strictCloudCheck": strict,
         "force": bool(getattr(run, "force_close", False)),
         "waitForRest": bool(getattr(run, "wait_for_rest", False)),
+        # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": credit notes the run's tills still owe.
+        **_cloud_refunds_fields(db, run),
         # For a till's elapsed-seconds display: the cloud's clock, not the till's.
         "serverTime": now or datetime.now(timezone.utc),
         "items": [
