@@ -1757,6 +1757,10 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
         "requestId": str(item.id),
         "shiftId": str(named_shift_id(item)) if named_shift_id(item) else None,
     }
+    # Who asked, as the realtime push says it (`initiatedBy`): the till's record of what it did for it.
+    creator = db.get(User, item.run.created_by_user_id) if item.run is not None and item.run.created_by_user_id else None
+    if creator is not None:
+        out["initiatedBy"] = _initiator(creator)
     if item.run is not None and item.run.force_close:
         # "Even mid-sale" (docs/SPEC_OFFLINE_TILL_Z.md §9); absent = as always.
         out["force"] = True

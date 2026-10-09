@@ -103,6 +103,23 @@ export function forceReasonOk(reason: string): boolean {
   return reason.trim().length >= 5;
 }
 
+/** `GET /device-commands/area-close-list`: the points of sale this user may close on their own. */
+export interface AreaCloseList {
+  shopId: string;
+  wholeShop: boolean;
+  areas: { areaId: string; name: string; tills: number; inShopZ: number }[];
+}
+
+/**
+ * Which close panels to show: the shop's manager — the shop panel (its areas inside it); a manager
+ * of some points of sale — one panel per own area (they have no shop-wide close).
+ */
+export function closePanels(list: AreaCloseList | undefined): { areaId: string | null }[] {
+  if (!list) return [];
+  if (list.wholeShop) return [{ areaId: null }];
+  return list.areas.map((a) => ({ areaId: a.areaId }));
+}
+
 export interface AreaShiftPreview {
   shopId: string;
   areaId: string;

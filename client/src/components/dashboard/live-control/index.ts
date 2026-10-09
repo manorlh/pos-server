@@ -6,7 +6,7 @@
 export { BlockItemSheet } from './block-item-sheet';
 export { ActiveBlocksList, useActiveBlocks } from './active-blocks';
 export { DeviceControlSheet, DeviceControlPanel, useDevices } from './device-control-sheet';
-export { ShopClosePanel } from './shop-close-panel';
+export { ShopClosePanel, ShopCloseSection } from './shop-close-panel';
 export { KioskControlSheet, KioskControlPanel, useKioskLive } from './kiosk-control-sheet';
 export { useLiveControlItems } from './use-live-control-items';
 export { LiveControlBoardChips, LiveControlBlocksCard } from './board-chips';
