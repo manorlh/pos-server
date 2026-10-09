@@ -1,8 +1,12 @@
 """Products and categories that need a manager's code to be sold
 
 Revision ID: c7e2a9d4f1b6
-Revises: 8c4a2f6e1b93
+Revises: c3f8a1d6e94b
 Create Date: 2026-10-08
+
+Re-chained at the integration merge (integration/fri, 09.10.2026): written on 8c4a2f6e1b93, now
+after the integration head c3f8a1d6e94b (voucher distribution) so the chain stays linear. The
+upgrade itself is unchanged.
 
 The owner: "תוסיף אופציה בהגדרה לסיסמה לקטגוריה או לפריט מסויים שחייב סיסמת מנהל, תבנה את זה
 בהרשאות" — in every sale, nothing to do with vouchers.
@@ -23,7 +27,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = 'c7e2a9d4f1b6'
-down_revision: Union[str, Sequence[str], None] = '8c4a2f6e1b93'
+down_revision: Union[str, Sequence[str], None] = 'c3f8a1d6e94b'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
