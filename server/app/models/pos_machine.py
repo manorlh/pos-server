@@ -559,6 +559,9 @@ class POSMachine(Base):
     #: oldest change's moment worked out on arrival — from its last heartbeat that said.
     lan_sync = Column(JSONB, nullable=True)
     lan_sync_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: What the device's build can do, from its heartbeat's `capabilities` (e.g. "device_logs_v1"):
+    #: {list, appVersion, at}. Null: it never said (an older build).
+    reported_capabilities = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

@@ -358,6 +358,8 @@ OPEN_WRITES = {
     ("POST", "/sync/{machine_id}/kiosk/alerts/{alert_id}/ack"),
     # The kiosk's web-renderer status (app/routers/kiosk_web.py): a report, no fiscal effect.
     ("POST", "/sync/{machine_id}/kiosk-web/status"),
+    # "שליחת לוגים לענן" (app/routers/device_logs.py): a screen sends its logs to support too.
+    ("POST", "/sync/{machine_id}/device-logs"),
     # Removed (410), kept answering old builds.
     ("POST", "/sync/{machine_id}/catalog"),
     ("POST", "/sync/{machine_id}/z-report"),

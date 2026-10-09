@@ -175,6 +175,8 @@ from app.models.kiosk_live import KioskQuickHide
 from app.models.device_command import DeviceCommand, DeviceRemoteState
 # "פקודות שנשלחו": the dashboard's Idempotency-Key per command request (app/services/command_idempotency.py).
 from app.models.command_request_key import CommandRequestKey
+# "שליחת לוגים לענן": a device's logs, uploaded for support (app/services/device_logs.py).
+from app.models.device_log_upload import DeviceLogUpload
 # Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
@@ -267,7 +269,7 @@ __all__ = [
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
-    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
 ]

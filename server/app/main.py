@@ -160,6 +160,11 @@ app.include_router(targets_router.router, prefix=_prefix)
 app.include_router(targets_router.till_router, prefix=_prefix)
 app.include_router(device_commands_router.router, prefix=_prefix)
 app.include_router(device_commands_router.till_router, prefix=_prefix)
+# "שליחת לוגים לענן" (app/routers/device_logs.py): a device's logs for support, and "בקש לוגים".
+from app.routers import device_logs as device_logs_router  # noqa: E402
+
+app.include_router(device_logs_router.router, prefix=_prefix)
+app.include_router(device_logs_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
 # After tax_reports: both mount under /reports, and the literal /reports/tax/...
@@ -332,6 +337,15 @@ def start_exception_alerts_worker():
     from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
 
     start_alerts_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_device_logs_retention_worker():
+    """Uploaded device logs past DEVICE_LOGS_RETENTION_DAYS, deleted nightly; DEVICE_LOGS_RETENTION_WORKER_ENABLED=false stops it."""
+    from app.database import SessionLocal
+    from app.services.device_logs_retention import start_background_worker as start_logs_retention
+
+    start_logs_retention(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 

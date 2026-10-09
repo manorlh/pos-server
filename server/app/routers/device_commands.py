@@ -4,7 +4,9 @@
 Dashboard (section `device_control`; the machine admins' scope, app/services/kiosk_control.py):
 
 GET  /device-commands/devices   ?companyId=&shopId=&machineIds= → the panel's rows (online, lock, commands)
-POST /device-commands           {action, message?, machineIds? | shopId? | groupId?} → [Command]
+POST /device-commands           {action, message?, params?, machineIds? | shopId? | groupId?} → [Command]
+                                (`upload_logs` "בקש לוגים": params {minutes 15–1440}; its own
+                                endpoint for whoever reads logs is POST /device-logs/requests)
                                 (fire-and-forget; header Idempotency-Key: a retry never sends twice)
 GET  /device-commands/status    ?ids= → {items: [Command]} — the background status read
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
@@ -13,16 +15,16 @@ POST /device-commands/{id}/cancel
 Till (`get_pos_machine_for_sync_path`):
 
 GET  /sync/{machine_id}/device-commands                → {state, commands} (pending → delivered)
-POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?}
+POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?, log_id?}
 POST /sync/{machine_id}/device-commands/unlocked       {posUserId?, posUserName?} — a manager code released the lock
 """
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -43,16 +45,41 @@ till_router = APIRouter(prefix="/sync", tags=["device-commands"])
 class CommandIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    action: Literal["lock", "unlock", "sync_now", "refresh_catalog", "sign_out", "restart_app", "install_update"]
+    action: Literal[
+        "lock", "unlock", "sync_now", "refresh_catalog", "sign_out", "restart_app", "install_update", "upload_logs",
+    ]
     message: Optional[str] = Field(None, max_length=300)
     machine_ids: Optional[List[uuid.UUID]] = Field(None, alias="machineIds", max_length=500)
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     group_id: Optional[uuid.UUID] = Field(None, alias="groupId")
+    #: The action's parameters: `upload_logs` → {"minutes": 15–1440} (default 120). Others: none.
+    params: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _action_params(self):
+        from app.services import device_logs
+
+        self.params = device_logs.request_params(self.params) if self.action == "upload_logs" else None
+        return self
 
 
 class AckIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     status: Literal["done", "refused", "failed"]
     detail: Optional[str] = Field(None, max_length=300)
+    #: "בקש לוגים": the upload that answered it (`POST /sync/{m}/device-logs`), as {"log_id": …}.
+    log_id: Optional[uuid.UUID] = Field(None, validation_alias=AliasChoices("log_id", "logId"))
+    result: Optional[Dict[str, Any]] = None
+
+    def result_out(self) -> Optional[Dict[str, Any]]:
+        log_id = self.log_id
+        if log_id is None and isinstance(self.result, dict) and self.result.get("log_id"):
+            try:
+                log_id = uuid.UUID(str(self.result["log_id"]))
+            except (TypeError, ValueError):
+                log_id = None
+        return {"log_id": str(log_id)} if log_id is not None else None
 
 
 class UnlockedIn(BaseModel):
@@ -226,7 +253,10 @@ def create_commands(
     out, replayed = idem.once(
         db, tenant_id=active_tenant_id, kind="device_command", key=idempotency_key, user=current_user,
         request=body.model_dump(mode="json", by_alias=True),
-        run=lambda: [svc.command_out(r) for r in svc.create(db, machines, body.action, message=body.message, user=current_user)],
+        run=lambda: [
+            svc.command_out(r)
+            for r in svc.create(db, machines, body.action, message=body.message, user=current_user, params=body.params)
+        ],
         after_commit=lambda _out: svc.wake(machines),
         refresh=lambda first: _reread(db, first),
     )
@@ -378,7 +408,7 @@ def till_ack(
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    row = svc.ack(db, machine, command_id, body.status, body.detail)
+    row = svc.ack(db, machine, command_id, body.status, body.detail, result=body.result_out())
     db.commit()
     return svc.command_out(row)
 

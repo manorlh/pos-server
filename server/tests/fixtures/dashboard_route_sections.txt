@@ -132,6 +132,13 @@ GET /device-commands/features -> device_control:view
 GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
+GET /device-logs -> devices|device_control:view
+GET /device-logs/machines/{machine_id} -> devices|device_control:view
+POST /device-logs/requests -> devices|device_control:view
+GET /device-logs/requests/status -> devices|device_control:view
+GET /device-logs/{upload_id} -> devices|device_control:view
+GET /device-logs/{upload_id}/download -> devices|device_control:view
+GET /device-logs/{upload_id}/lines -> devices|device_control:view
 POST /device-management/provisioning-qr -> devices:edit
 GET /exception-alerts/dispatches -> exception_alerts:view
 GET /exception-alerts/provider -> exception_alerts:view
