@@ -116,6 +116,8 @@ def s(world, monkeypatch):  # noqa: F811
         "sync_logs", "stock_levels", "stock_movements", "sold_out_marks", "kiosk_devices", "report_events",
         "report_event_machines", "stock_level_settings", "stock_alerts", "stock_resets", "stock_reset_items",
         "dashboard_access_profiles", "shop_category_overrides",
+        # Device groups (feat/menu-groups): blocks read the groups a device is in (app/services/device_groups.py).
+        "machine_groups", "machine_group_members",
     ):
         if not db.get_bind().dialect.has_table(db.connection(), name):
             Base.metadata.tables[name].create(db.get_bind())

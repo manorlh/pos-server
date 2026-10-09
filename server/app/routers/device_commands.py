@@ -68,10 +68,13 @@ def _devices(db: Session, user: User, tenant_id, *, machine_ids=None, shop_id=No
     if machine_ids:
         q = q.filter(POSMachine.id.in_(list(machine_ids)))
     elif group_id is not None:
-        group = device_groups.group(db, group_id)
-        if group is None:
+        if not device_groups.available():
             raise HTTPException(status_code=422, detail={"code": "groups_unavailable", "message": "קבוצות מכשירים עדיין לא זמינות"})
-        q = q.filter(POSMachine.id.in_(list(group.get("machineIds") or [])))  # pragma: no cover - wired at merge
+        # This tenant's group (app/services/device_groups.py); each member is still checked below.
+        group = device_groups.group(db, group_id, tenant_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": "הקבוצה לא נמצאה"})
+        q = q.filter(POSMachine.id.in_(list(group.get("machineIds") or [])))
     elif shop_id is not None:
         q = q.filter(POSMachine.shop_id == shop_id)
     elif company_id is not None:

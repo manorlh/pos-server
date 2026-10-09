@@ -24,7 +24,7 @@ import { DurationPicker } from './duration-picker';
 import { ItemPicker, type PickedItem } from './item-picker';
 import type { LiveControlSheetProps } from './types';
 
-type Where = 'shop' | 'areas' | 'tills' | 'kiosks' | 'all_kiosks' | 'event' | 'company';
+type Where = 'shop' | 'areas' | 'tills' | 'kiosks' | 'all_kiosks' | 'groups' | 'event' | 'company';
 
 const WHERE_LABELS: Record<Where, string> = {
   shop: 'כל הסניף',
@@ -32,6 +32,7 @@ const WHERE_LABELS: Record<Where, string> = {
   tills: 'קופות',
   kiosks: 'קיוסקים',
   all_kiosks: 'כל הקיוסקים בסניף',
+  groups: 'קבוצות מכשירים',
   event: 'אירוע',
   company: 'כל החברה',
 };
@@ -109,6 +110,9 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
         return (t?.tills ?? []).filter((m) => picked.has(m.id)).map((m) => ({ scope: 'machine' as const, scopeId: m.id }));
       case 'kiosks':
         return (t?.kiosks ?? []).filter((m) => picked.has(m.id)).map((m) => ({ scope: 'kiosk' as const, scopeId: m.id }));
+      case 'groups':
+        // "קבוצות מכשירים" (ארגון › מכשירים): the groups with a till here that the server offers this user.
+        return (t?.groups ?? []).filter((g) => picked.has(g.id)).map((g) => ({ scope: 'group' as const, scopeId: g.id }));
     }
   }, [effectiveWhere, eventId, picked, scope.companyId, shopId, targets.data]);
 
@@ -131,6 +135,7 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   });
 
   const options: Where[] = ['shop', 'areas', 'tills', 'kiosks', 'all_kiosks'];
+  if ((targets.data?.groups.length ?? 0) > 0) options.push('groups');
   if ((targets.data?.events.length ?? 0) > 0) options.push('event');
   if (targets.data?.company) options.push('company');
 
@@ -226,6 +231,7 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
                 {effectiveWhere === 'areas' ? listFor(targets.data?.areas ?? []) : null}
                 {effectiveWhere === 'tills' ? listFor(targets.data?.tills ?? []) : null}
                 {effectiveWhere === 'kiosks' ? listFor(targets.data?.kiosks ?? []) : null}
+                {effectiveWhere === 'groups' ? listFor(targets.data?.groups ?? []) : null}
                 {effectiveWhere === 'event' ? (
                   <div className="max-h-48 overflow-y-auto rounded-xl border p-1">
                     {(targets.data?.events ?? []).map((e) => (

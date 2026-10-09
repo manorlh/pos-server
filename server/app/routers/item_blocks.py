@@ -146,6 +146,16 @@ def _check_target(db: Session, user: User, target: svc.Target, tenant_id) -> Non
         if narrowed.narrowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
         return
+    if target.scope == "group" and target.shop_id is None:
+        # A device group across shops (app/services/device_groups.py): its company, like a company
+        # target — and never a manager of points of sale (a group is not one of theirs).
+        company = db.get(Company, target.company_id) if target.company_id is not None else None
+        if company is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="target_not_found")
+        kiosk_control.check_company_scope(db, user, company, tenant_id)
+        if narrowed.narrowed:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
+        return
     shop = db.get(Shop, target.shop_id) if target.shop_id is not None else None
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
@@ -267,12 +277,30 @@ def list_targets(
             company_ok = True
         except HTTPException:
             company_ok = False
+    # Device groups with a member here (app/services/device_groups.py): one inside this shop needs the
+    # shop (checked above); one across shops needs its own company, as a company target does.
+    groups = []
+    company_scopes: dict = {}
+    for g in device_groups.for_shop(db, shop):
+        if g["shopId"] is None:
+            key = str(g["companyId"])
+            if key not in company_scopes:
+                gc = db.get(Company, g["companyId"]) if g["companyId"] is not None else None
+                try:
+                    kiosk_control.check_company_scope(db, current_user, gc, active_tenant_id)
+                    company_scopes[key] = gc is not None
+                except HTTPException:
+                    company_scopes[key] = False
+            if not company_scopes[key]:
+                continue
+        groups.append(g)
     narrow = _narrowing(db, current_user)
     if narrow is not None:
-        # A manager of points of sale picks among theirs only: no company, no event.
+        # A manager of points of sale picks among theirs only: no company, no event, no group.
         areas = [a for a in areas if _covers(db, narrow, "area", a.id)]
         machines = [m for m in machines if _covers(db, narrow, "machine", m.id)]
         events = []
+        groups = []
         company_ok = False
     zone, day_start = _zone_and_day_start(db, active_tenant_id, shop.id)
     return {
@@ -292,7 +320,10 @@ def list_targets(
             for e in events
         ],
         "groupsAvailable": device_groups.available(),
-        "groups": [],
+        "groups": [
+            {"id": str(g["id"]), "name": g["name"], "machines": len(g["machineIds"]), "acrossShops": g["shopId"] is None}
+            for g in groups
+        ],
         "timezone": zone,
         "businessDayStart": day_start,
         "presets": list(block_durations.PRESET_MINUTES),

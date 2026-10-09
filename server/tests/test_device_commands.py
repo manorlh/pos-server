@@ -36,7 +36,8 @@ from test_product_availability import world  # noqa: F401
 @pytest.fixture
 def d(world, monkeypatch):  # noqa: F811
     db = world.db
-    for name in ("device_commands", "device_remote_states", "kiosk_devices", "kiosk_settings", "kiosk_quick_hides"):
+    for name in ("device_commands", "device_remote_states", "kiosk_devices", "kiosk_settings", "kiosk_quick_hides",
+                 "machine_groups", "machine_group_members"):
         if not db.get_bind().dialect.has_table(db.connection(), name):
             Base.metadata.tables[name].create(db.get_bind())
     world.woken = []
@@ -120,6 +121,25 @@ class TestCommands:
         assert {c["machineId"] for c in out} == {str(d.h1.id), str(d.h2.id)}
         with pytest.raises(HTTPException):
             _send(d, "sync_now", user=d.users.h_shop_manager, shopId=d.a_shop.id)
+
+    def test_a_device_group_reaches_its_members_and_each_is_checked_against_the_sender(self, d):
+        """A group (feat/menu-groups' model, app/services/device_groups.py): its active members only —
+        across shops for whoever covers them; a shop's manager gets the members in their own shop."""
+        from app.models.machine_group import MachineGroup, MachineGroupMember
+
+        g = MachineGroup(id=uuid.uuid4(), tenant_id=d.tid, company_id=d.H.id, name="עמדות אירוע")
+        d.db.add(g)
+        d.db.flush()
+        for m in (d.h1, d.a1):
+            d.db.add(MachineGroupMember(group_id=g.id, machine_id=m.id))
+        d.db.commit()
+        out = _send(d, "sync_now", groupId=g.id)
+        assert {c["machineId"] for c in out} == {str(d.h1.id), str(d.a1.id)}, "never h2, not in the group"
+        mine = _send(d, "sync_now", user=d.users.h_shop_manager, groupId=g.id)
+        assert {c["machineId"] for c in mine} == {str(d.h1.id)}, "a1 stands in another shop"
+        with pytest.raises(HTTPException) as refused:
+            _send(d, "sync_now", groupId=uuid.uuid4())
+        assert refused.value.status_code == 404 and refused.value.detail["code"] == "group_not_found"
 
     def test_cancel_before_delivery_only(self, d):
         cmd = _send(d, "sign_out", machineIds=[d.h1.id])[0]

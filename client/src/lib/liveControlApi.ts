@@ -12,7 +12,8 @@ export interface BlockTargets {
   kiosks: { id: string; name: string; posNumber?: string | null; areaId?: string | null }[];
   events: { id: string; name: string; startsAt: string; endsAt: string }[];
   groupsAvailable: boolean;
-  groups: { id: string; name: string }[];
+  /** Device groups with a till in the shop that this user may target (app/services/device_groups.py). */
+  groups: { id: string; name: string; machines?: number; acrossShops?: boolean }[];
   timezone: string;
   businessDayStart: string;
   presets: number[];

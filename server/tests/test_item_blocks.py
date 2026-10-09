@@ -160,6 +160,7 @@ def b(world, monkeypatch):  # noqa: F811
     for name in (
         "sync_logs", "stock_levels", "stock_movements", "sold_out_marks", "kiosk_devices",
         "report_events", "report_event_machines", "shop_category_overrides",
+        "machine_groups", "machine_group_members",
     ):
         if name in Base.metadata.tables and not db.get_bind().dialect.has_table(db.connection(), name):
             Base.metadata.tables[name].create(db.get_bind())
@@ -202,6 +203,19 @@ def _block(w, scope, scope_id, *, kind="sold_out", until=None, user=None, produc
 
 def _sells(w, machine) -> bool:
     return _row(w, machine)["isAvailable"]
+
+
+def _group(w, name, company, machines):
+    """A device group ("קבוצות מכשירים", app/models/machine_group.py) of the company, with these tills."""
+    from app.models.machine_group import MachineGroup, MachineGroupMember
+
+    g = MachineGroup(id=uuid.uuid4(), tenant_id=w.tid, company_id=company.id, name=name)
+    w.db.add(g)
+    w.db.flush()
+    for m in machines:
+        w.db.add(MachineGroupMember(group_id=g.id, machine_id=m.id))
+    w.db.commit()
+    return g
 
 
 class TestScopes:
@@ -258,10 +272,42 @@ class TestScopes:
         _block(b, "shop", b.h_shop.id, until=datetime.now(timezone.utc) + timedelta(hours=1))
         assert b.db.query(SoldOutMark).count() == 1
 
-    def test_a_group_cannot_be_chosen_while_groups_are_not_in_this_base(self, b):
-        with pytest.raises(HTTPException) as refused:
-            svc.resolve_target(b.db, "group", uuid.uuid4(), b.tid)
-        assert refused.value.detail["code"] == "groups_unavailable"
+    # ── Device groups (feat/menu-groups' model, wired at the integration merge) ──
+
+    def test_a_group_inside_one_shop_reaches_its_members_only(self, b):
+        bar = _group(b, "בר", b.H, [b.h1])
+        target = svc.resolve_target(b.db, "group", bar.id, b.tid)
+        assert (target.company_id, target.shop_id, target.name) == (b.H.id, b.h_shop.id, "בר")
+        _block(b, "group", bar.id)
+        assert (_sells(b, b.h1), _sells(b, b.h2), _sells(b, b.a1)) == (False, True, True)
+        assert [x["scope"] for x in _row(b, b.h1)["blocks"]] == ["group"]
+
+    def test_a_group_across_shops_reaches_its_members_in_each(self, b):
+        events = _group(b, "עמדות אירוע", b.H, [b.h1, b.a1])
+        target = svc.resolve_target(b.db, "group", events.id, b.tid)
+        assert (target.company_id, target.shop_id) == (b.H.id, None), "across shops: a company-wide target"
+        _block(b, "group", events.id)
+        assert (_sells(b, b.h1), _sells(b, b.h2), _sells(b, b.a1)) == (False, True, False)
+
+    def test_another_tenants_group_or_an_unknown_one_is_not_found(self, b):
+        from app.models.machine_group import MachineGroup
+
+        other = MachineGroup(id=uuid.uuid4(), tenant_id=uuid.uuid4(), company_id=b.H.id, name="זר")
+        b.db.add(other)
+        b.db.commit()
+        for gid in (other.id, uuid.uuid4()):
+            with pytest.raises(HTTPException) as refused:
+                svc.resolve_target(b.db, "group", gid, b.tid)
+            assert refused.value.status_code == 404 and refused.value.detail["code"] == "scope_not_found"
+
+    def test_an_inactive_member_is_not_reached(self, b):
+        from app.services import device_groups
+
+        g = _group(b, "בר", b.H, [b.h1, b.h2])
+        b.h2.is_active = False
+        b.db.commit()
+        assert device_groups.group(b.db, g.id, b.tid)["machineIds"] == [b.h1.id]
+        assert device_groups.groups_of(b.db, b.h1.id) == [g.id]
 
 
 class TestDelivery:
@@ -426,7 +472,34 @@ class TestDashboard:
         assert {t["id"] for t in out["kiosks"]} == {str(b.h2.id)}
         assert str(b.h1.id) in {t["id"] for t in out["tills"]}
         assert [a["name"] for a in out["areas"]] == ["Bar"]
-        assert out["groupsAvailable"] is False and out["businessDayStart"] == "04:00"
+        assert out["groupsAvailable"] is True and out["businessDayStart"] == "04:00"
+        assert out["groups"] == []
+
+    def test_who_may_block_a_device_group(self, b):
+        inside = _group(b, "בר", b.H, [b.h1])
+        across = _group(b, "עמדות אירוע", b.H, [b.h1, b.a1])
+        # The shop's manager: a group inside their shop, never one across shops (that is the company's).
+        self._create(b, b.users.h_shop_manager, [("group", inside.id)])
+        with pytest.raises(HTTPException) as refused:
+            self._create(b, b.users.h_shop_manager, [("group", across.id)])
+        assert refused.value.status_code == 403
+        # The group's company manager: across its shops too; another company's manager: neither.
+        self._create(b, b.users.h_manager, [("group", across.id)])
+        for group in (inside, across):
+            with pytest.raises(HTTPException) as refused:
+                self._create(b, b.users.b_manager, [("group", group.id)])
+            assert refused.value.status_code in (403, 404)
+
+    def test_the_picker_offers_the_groups_each_user_may_block(self, b):
+        inside = _group(b, "בר", b.H, [b.h1])
+        across = _group(b, "עמדות אירוע", b.H, [b.h1, b.a1])
+        _group(b, "רחוק", b.H, [b.a1])  # no till in this shop: not offered here
+        admin = R.list_targets(b.h_shop.id, current_user=b.users.admin, active_tenant_id=b.tid, db=b.db)
+        assert {(g["id"], g["acrossShops"], g["machines"]) for g in admin["groups"]} == {
+            (str(inside.id), False, 1), (str(across.id), True, 2),
+        }
+        manager = R.list_targets(b.h_shop.id, current_user=b.users.h_shop_manager, active_tenant_id=b.tid, db=b.db)
+        assert [g["id"] for g in manager["groups"]] == [str(inside.id)]
 
 
 def test_the_migrations_chain_on_one_head():

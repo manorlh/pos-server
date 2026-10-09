@@ -423,13 +423,15 @@ def resolve_target(db: Session, scope: str, scope_id: Any, tenant_id: Any) -> Ta
             raise _bad("scope_not_found", "האירוע לא נמצא", status.HTTP_404_NOT_FOUND)
         same(event.tenant_id)
         return Target(scope, event.id, event.name, event.company_id, event.shop_id)
-    group = device_groups.group(db, ident)
-    if group is None:
+    if not device_groups.available():
         raise _bad("groups_unavailable", "קבוצות מכשירים עדיין לא זמינות")
-    shop = db.get(Shop, _uuid(group.get("shopId"))) if group.get("shopId") else None  # pragma: no cover - wired at merge
-    return Target(  # pragma: no cover
-        scope, ident, group.get("name") or "", shop.company_id if shop else None, shop.id if shop else None,
-    )
+    # A device group (feat/menu-groups, app/services/device_groups.py): this tenant's only. Its company
+    # is the group's; its shop the one all its members stand in, else None — a group across shops is
+    # then a company-wide target for the scope checks (app/routers/item_blocks.py `_check_target`).
+    group = device_groups.group(db, ident, tenant_id)
+    if group is None:
+        raise _bad("scope_not_found", "הקבוצה לא נמצאה", status.HTTP_404_NOT_FOUND)
+    return Target(scope, group["id"], group.get("name") or "", group.get("companyId"), group.get("shopId"))
 
 
 def global_product(db: Session, product_id: Any, tenant_id: Any) -> Product:
