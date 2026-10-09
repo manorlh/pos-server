@@ -113,7 +113,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
-  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings'] },
+  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display'] },
   { id: 'pos_users', pages: ['/dashboard/pos-users', '/dashboard/till-roles'] },
   { id: 'attendance', pages: ['/dashboard/attendance'] },
   { id: 'users', pages: ['/dashboard/users'] },

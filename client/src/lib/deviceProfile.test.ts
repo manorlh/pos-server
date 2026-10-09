@@ -174,7 +174,8 @@ describe('PAX A77 / Urovo i9100 (app/models/vendor_devices.py)', () => {
 
 describe('roles', () => {
   it('a till, a kiosk, a KDS or the ready / not-ready board', () => {
-    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board']);
+    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display']);
+    assert.equal(deviceRoleOf('customer_display'), 'customer_display');
     assert.equal(deviceRoleOf('kiosk'), 'kiosk');
     assert.equal(deviceRoleOf(' TILL '), 'till');
     assert.equal(deviceRoleOf('kds'), 'kds');
@@ -184,7 +185,9 @@ describe('roles', () => {
   });
 
   it('a KDS and the board are not tills, not accounting systems', () => {
-    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board']);
+    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display']);
+    // "מסך לקוח" (P:/specs/customer-display.md §4): a screen too — no sales, no Z.
+    assert.equal(isFiscalRole('customer_display'), false);
     assert.equal(isFiscalRole('till'), true);
     assert.equal(isFiscalRole('kiosk'), true);
     assert.equal(isFiscalRole(null), true);
@@ -232,6 +235,9 @@ describe('platforms', () => {
     assert.deepEqual(platformsFor('kds'), ['android', 'windows', 'web']);
     assert.deepEqual(platformsFor('order_status_board'), ['android', 'windows', 'web']);
     assert.deepEqual([webPathOf('kiosk'), webPathOf('kds'), webPathOf('order_status_board'), webPathOf('till')], ['/k', '/kds', '/board', null]);
+    assert.deepEqual(platformsFor('customer_display'), ['android', 'windows', 'web']);
+    assert.equal(webPathOf('customer_display'), '/display');
+    assert.equal(webScreenLink('http://localhost:3002', 'customer_display', 'ab12'), 'http://localhost:3002/display#pair=AB12');
     assert.equal(webScreenLink('https://pos-cloud-app.vercel.app/', 'kds', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/kds#pair=AB12CD34');
     assert.equal(webScreenLink('http://localhost:3002', 'order_status_board', ' xy9 8zz1 '), 'http://localhost:3002/board#pair=XY98ZZ1');
     assert.equal(webScreenLink('http://localhost:3002', 'order_status_board'), 'http://localhost:3002/board');
@@ -336,6 +342,18 @@ describe('adding a device', () => {
       { name: 'TV' },
     );
     assert.equal(pairingRequestBody({ ...inShop, role: 'order_status_board' }, noKiosk).kiosk, undefined);
+  });
+
+  it('a customer display code: its shop, its name and the till it mirrors (optional)', () => {
+    assert.equal(roleNeedsShop('customer_display'), true);
+    assert.equal(addDeviceMissing({ ...draft, role: 'customer_display' }), 'shop');
+    const inShop = { ...draft, companyId: 'c', shopId: 's' };
+    assert.equal(addDeviceMissing({ ...inShop, role: 'customer_display' }), null);
+    assert.deepEqual(
+      pairingRequestBody({ ...inShop, role: 'customer_display', platform: 'web', kds: { name: ' מסך 1 ', screenRole: 'expo', stationIds: [] }, mirrorTillId: 't1' }, noKiosk).kds,
+      { name: 'מסך 1', tillMachineId: 't1' },
+    );
+    assert.deepEqual(pairingRequestBody({ ...inShop, role: 'customer_display' }, noKiosk).kds, {});
   });
 
   it('the generate body carries the role, and the kiosk options for a kiosk only', () => {

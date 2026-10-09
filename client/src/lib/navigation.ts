@@ -338,6 +338,8 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       // "תצורת עבודה" (direct sale / order process, targets) per level, and the KDS screens.
       { href: '/dashboard/workflow', labelKey: 'workflowMode', icon: Workflow, gate: 'settingsWrite' },
+      // "מסך לקוח": the customer-facing screen — a till's second screen or a paired device — per level.
+      { href: '/dashboard/customer-display', labelKey: 'customerDisplay', icon: MonitorSmartphone, gate: 'settingsWrite' },
       { href: '/dashboard/kds', labelKey: 'kds', icon: MonitorPlay, gate: 'settingsWrite' },
       // Global definitions every tenant's tills read; only a super admin sets them.
       {

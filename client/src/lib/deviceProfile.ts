@@ -12,11 +12,11 @@
  * tests (here and tests/test_device_profile.py) pin the same table.
  */
 
-export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board'] as const;
+export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display'] as const;
 export type DeviceRole = (typeof DEVICE_ROLES)[number];
 
 /** The display devices: "מסך — לא קופה, בלי מכירות ובלי חשבונאות". */
-export const NON_FISCAL_ROLES = ['kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+export const NON_FISCAL_ROLES = ['kds', 'order_status_board', 'customer_display'] as const satisfies readonly DeviceRole[];
 
 /** A till or a kiosk (or no role yet: a till); not a KDS / the board. */
 export function isFiscalRole(role: unknown): boolean {
@@ -49,7 +49,7 @@ export const DEVICE_PLATFORMS = ['android', 'windows', 'web'] as const;
 export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
 
 /** The roles a browser runs (the server says so too: web_platform_not_a_till). */
-export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board', 'customer_display'] as const satisfies readonly DeviceRole[];
 
 /** The platforms a role may be added on: the browser runs a kiosk, a KDS or a board — not a till. */
 export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
@@ -57,10 +57,12 @@ export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
 }
 
 /** The page on the dashboard's site a browser of this role opens: `/k`, `/kds`, `/board`. */
-export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | null {
+export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | '/display' | null {
   if (role === 'kiosk') return '/k';
   if (role === 'kds') return '/kds';
   if (role === 'order_status_board') return '/board';
+  // "מסך לקוח" in a browser (P:/specs/customer-display.md §4): it reads its till through the cloud relay.
+  if (role === 'customer_display') return '/display';
   return null;
 }
 
@@ -68,7 +70,7 @@ export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kd
  * A browser screen's address (KDS / board) on this dashboard's site, with the pairing code in the
  * fragment (never sent to a server; the page pairs with it at once and wipes it from the address bar).
  */
-export function webScreenLink(origin: string, role: 'kds' | 'order_status_board', code?: string | null): string {
+export function webScreenLink(origin: string, role: 'kds' | 'order_status_board' | 'customer_display', code?: string | null): string {
   const base = `${origin.replace(/\/+$/, '')}${webPathOf(role)}`;
   const c = (code ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   return c ? `${base}#pair=${c}` : base;
@@ -337,11 +339,13 @@ export interface AddDeviceDraft {
   platform?: DevicePlatform;
   /** A KDS's screen (kds only; the board takes only its name). */
   kds?: KdsScreenDraft;
+  /** "מסך לקוח": the till it mirrors ('' = chosen later, on the customer-display page). */
+  mirrorTillId?: string;
 }
 
 /** Every role but a plain till opens in one shop: its code is pre-assigned (the server says so too). */
 export function roleNeedsShop(role: DeviceRole | ''): boolean {
-  return role === 'kiosk' || role === 'kds' || role === 'order_status_board';
+  return role === 'kiosk' || role === 'kds' || role === 'order_status_board' || role === 'customer_display';
 }
 
 /**
@@ -415,6 +419,11 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
   };
   if (d.role === 'kiosk') body.kiosk = kioskBody(kiosk);
   if (d.role === 'kds' || d.role === 'order_status_board') body.kds = kdsBody(d.role, d.kds);
+  // A customer display's options ride on the screen's object: its name and the till it mirrors.
+  if (d.role === 'customer_display') {
+    const name = (d.kds?.name ?? '').trim();
+    body.kds = { ...(name ? { name } : {}), ...(d.mirrorTillId ? { tillMachineId: d.mirrorTillId } : {}) };
+  }
   return body;
 }
 

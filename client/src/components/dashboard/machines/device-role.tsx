@@ -87,6 +87,7 @@ const ROLE_ICONS: Record<DeviceRole, typeof Store> = {
   kiosk: MonitorSmartphone,
   kds: ChefHat,
   order_status_board: Tv,
+  customer_display: Monitor,
 };
 
 /** קופה / קיוסק / מסך מטבח / מסך מוכן-לא מוכן, each with its one line (`roles`: the ones offered). */
@@ -415,7 +416,7 @@ export function DisplayDeviceNote({ m }: { m: Pick<PosMachine, 'fiscal' | 'devic
       <div className="space-y-1 rounded-md bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
         <p className="font-medium">{t('displayNotTill')}</p>
         <p>{t('displayNotTillHint')}</p>
-        {!m.kdsScreen ? <p className="text-amber-800 dark:text-amber-300">{t('displayNoScreen')}</p> : null}
+        {!m.kdsScreen && m.deviceRole !== 'customer_display' ? <p className="text-amber-800 dark:text-amber-300">{t('displayNoScreen')}</p> : null}
       </div>
     );
   }
@@ -441,7 +442,7 @@ export function DeviceRoleBadge({
 }) {
   const t = useTranslations('machines.deviceRole');
   if (isDisplayDevice(m)) {
-    const role = m.deviceRole === 'order_status_board' ? 'order_status_board' : 'kds';
+    const role = m.deviceRole === 'order_status_board' || m.deviceRole === 'customer_display' ? m.deviceRole : 'kds';
     const Icon = ROLE_ICONS[role];
     return (
       <Badge
