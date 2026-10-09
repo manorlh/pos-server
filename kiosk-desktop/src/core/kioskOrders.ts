@@ -11,6 +11,12 @@ export interface PickupRules {
   prefix: string;
   start: number;
   max: number;
+  /**
+   * "מספר הזמנה": with the letter ("A-17", the default) or the number alone ("17"). The number
+   * alone comes with `scope: 'shop'` (the config's repair); a number drawn without the cloud keeps
+   * its letter and the L tag ("AL-17") in either format, so it is never one of the shop's.
+   */
+  labelFormat?: 'prefixed' | 'number';
 }
 
 /** The next daily number: `start` on a new day, then +1, back to `start` after `max`. */
@@ -22,8 +28,12 @@ export function nextPickup(lastDate: string | null, last: number | null, today: 
   return n > max || n < start ? start : n;
 }
 
-/** "A-17" with a prefix, "17" without. */
-export function pickupLabel(prefix: string | null | undefined, n: number): string {
+/**
+ * "A-17" with a prefix, "17" without — and "17" whatever the prefix with `format: 'number'`
+ * ("מספר בלבד", `pickup.labelFormat`; the server's kiosk_pickup.pickup_label, one rule).
+ */
+export function pickupLabel(prefix: string | null | undefined, n: number, format?: 'prefixed' | 'number' | null): string {
+  if (format === 'number') return String(n);
   const p = (prefix ?? '').trim();
   return p ? `${p}-${n}` : String(n);
 }

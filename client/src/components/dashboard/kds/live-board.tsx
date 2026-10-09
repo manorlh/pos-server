@@ -143,8 +143,10 @@ function OrderCard({
   const ready = order.groupState === 'ready_for_pickup';
   const tone = ready ? 'ready' : minutes !== null && minutes >= late ? 'late' : minutes !== null && minutes >= warn ? 'warn' : 'ok';
 
-  const title =
-    order.pickupNumber !== null && order.pickupNumber !== undefined
+  // A kiosk's order: its label as the slip printed it ("A-17", or "17" with "מספר בלבד").
+  const title = order.pickupLabel?.trim()
+    ? order.pickupLabel.trim()
+    : order.pickupNumber !== null && order.pickupNumber !== undefined
       ? t('pickupNo', { n: order.pickupNumber })
       : order.displayRef || (order.tableRef ? t('table', { ref: order.tableRef }) : order.sourceRef);
 

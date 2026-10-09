@@ -458,6 +458,31 @@ describe('helpers', () => {
     assert.equal(pickupLabel(' B ', 3), 'B-3');
   });
 
+  it('"מספר הזמנה": with its letter (the default) or the number alone', () => {
+    assert.equal(KIOSK_DEFAULTS.pickup.labelFormat, 'prefixed');
+    assert.equal(pickupLabel('A', 17, 'prefixed'), 'A-17');
+    assert.equal(pickupLabel('A', 17, 'number'), '17');
+    assert.equal(pickupLabel('', 17, 'number'), '17');
+    assert.equal(pickupLabel('A', 17, null), 'A-17');
+  });
+
+  it('the number alone always takes the shop\'s shared counter (unique across the kiosks)', () => {
+    assert.equal(resolveKioskConfig({ pickup: { labelFormat: 'number' } }).pickup.scope, 'shop');
+    // A lower layer asking for the kiosk's own sequence cannot undo it …
+    assert.equal(resolveKioskConfig({ pickup: { labelFormat: 'number' } }, {}, { pickup: { scope: 'kiosk' } }).pickup.scope, 'shop');
+    // … and with the letter the scope is as set.
+    assert.equal(resolveKioskConfig({ pickup: { scope: 'kiosk' } }).pickup.scope, 'kiosk');
+    const cfg = repairKioskConfig({ ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'number' } });
+    assert.equal(cfg.pickup.scope, 'shop');
+  });
+
+  it('validates the format like the server', () => {
+    const ok = { ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'number' as const } };
+    assert.deepEqual(validateKioskConfig(ok).filter((e) => e.path.startsWith('pickup')), []);
+    const bad = { ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'letters' as unknown as 'number' } };
+    assert.deepEqual(validateKioskConfig(bad).filter((e) => e.path.startsWith('pickup')).map((e) => e.path), ['pickup.labelFormat']);
+  });
+
   it('moves and toggles', () => {
     assert.deepEqual(moveItem(['a', 'b', 'c'], 0, 1), ['b', 'a', 'c']);
     assert.deepEqual(moveItem(['a', 'b', 'c'], 2, 1), ['a', 'b', 'c']);

@@ -102,11 +102,16 @@ export async function allocatePickup(kv: Kv, api: Api | null, machineId: string 
       { timeoutMs: SHOP_PICKUP_TIMEOUT_MS },
     );
     if (reply.kind === 'ok' && typeof reply.body?.number === 'number' && reply.body.number > 0) {
-      return { number: reply.body.number, label: reply.body.label?.trim() || pickupLabel(rules.prefix, reply.body.number) };
+      return { number: reply.body.number, label: reply.body.label?.trim() || pickupLabel(rules.prefix, reply.body.number, rules.labelFormat) };
     }
     const n = local('pickup.fallback');
     return { number: n, label: offlinePickupLabel(rules.prefix, n) };
   }
+  // "מספר בלבד" never shows a number it drew alone bare (another kiosk may say the same): tagged.
+  if (rules.labelFormat === 'number') {
+    const n = local('pickup.fallback');
+    return { number: n, label: offlinePickupLabel(rules.prefix, n) };
+  }
   const n = local('pickup');
-  return { number: n, label: pickupLabel(rules.prefix, n) };
+  return { number: n, label: pickupLabel(rules.prefix, n, rules.labelFormat) };
 }

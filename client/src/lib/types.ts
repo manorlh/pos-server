@@ -1523,6 +1523,13 @@ export interface Transaction {
   /** List rows: the brands (מותג) of its card legs. */
   cardBrands?: string[];
   /**
+   * List rows: the kiosk order this document paid — its pickup number as the slip printed it
+   * ("A-17", or "17" with "מספר בלבד") and its business date (the number comes back every day).
+   */
+  kioskPickup?: { label: string; number: number; businessDate: string | null } | null;
+  /** List rows, with a free search: why it was found — its number or amount, or its kiosk order's pickup number. */
+  matchedBy?: Array<'document' | 'pickup'> | null;
+  /**
    * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
    * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
    */

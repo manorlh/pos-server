@@ -12,7 +12,7 @@
  * more commands can be sent meanwhile.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
@@ -33,6 +33,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { agorotToShekels, isoDayInZone, kioskConnection } from '@/lib/kioskConfig';
+import { pickupDateText } from '@/lib/kioskPickupSearch';
 import {
   deleteKiosk,
   fetchKioskCommands,
@@ -59,6 +60,16 @@ const BON_TONE: Record<KioskBonStatus, string> = {
   failed: 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200',
   none: 'border text-muted-foreground',
 };
+
+/** [value] once it has stayed the same for [ms] (the order search asks the server after the typing stops). */
+function useDebouncedText(value: string, ms = 350): string {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
 
 function timeIn(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
@@ -212,9 +223,13 @@ export function KioskDetailDialog({
 
   const machineId = kiosk?.machineId ?? '';
   const today = isoDayInZone(new Date(nowMs), timeZone);
+  // "חיפוש הזמנה": a pickup number ("17", "A17", "A-17") or a document number, over 30 days.
+  const [orderQuery, setOrderQuery] = useState('');
+  const searchOrders = useDebouncedText(orderQuery.trim());
+  const searching = searchOrders.length > 0;
   const orders = useQuery({
-    queryKey: ['kiosk-orders', machineId, today],
-    queryFn: () => fetchKioskOrders(machineId, today),
+    queryKey: ['kiosk-orders', machineId, today, searchOrders],
+    queryFn: () => fetchKioskOrders(machineId, today, searchOrders || undefined),
     enabled: open && !!machineId,
     refetchInterval: 20_000,
   });
@@ -325,20 +340,30 @@ export function KioskDetailDialog({
 
         <DetailsForm key={`${kiosk.machineId}:${kiosk.name}:${kiosk.enabled}:${(kiosk.controllerMachineIds ?? []).join(',')}`} kiosk={kiosk} options={options} canWrite={canWrite} />
 
-        {/* Today's orders */}
+        {/* Today's orders — or, searching, the orders of that number over the last 30 days */}
         <section className="space-y-2">
-          <h3 className="font-semibold">{t('orders')}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">{searching ? to('searchTitle') : t('orders')}</h3>
+            <Input
+              value={orderQuery}
+              onChange={(e) => setOrderQuery(e.target.value)}
+              placeholder={to('searchPlaceholder')}
+              aria-label={to('searchPlaceholder')}
+              className="h-8 w-full sm:w-64"
+            />
+          </div>
           {connection !== 'online' ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('ordersStale')}</p> : null}
           {orders.isLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : list.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('ordersEmpty')}</p>
+            <p className="text-sm text-muted-foreground">{searching ? to('searchEmpty') : t('ordersEmpty')}</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>{to('columns.pickup')}</TableHead>
+                    {searching ? <TableHead>{to('columns.date')}</TableHead> : null}
                     <TableHead>{to('columns.time')}</TableHead>
                     <TableHead>{to('columns.service')}</TableHead>
                     <TableHead>{to('columns.total')}</TableHead>
@@ -350,9 +375,18 @@ export function KioskDetailDialog({
                 <TableBody>
                   {list.map((o) => (
                     <TableRow key={o.id}>
-                      <TableCell className="font-bold tabular-nums" dir="ltr">
-                        {o.pickupLabel}
+                      <TableCell className="font-bold tabular-nums">
+                        <bdi dir="ltr">{o.pickupLabel}</bdi>
+                        {searching && o.matchedBy?.length ? (
+                          <span className="block text-[11px] font-normal text-muted-foreground">
+                            {o.matchedBy.map((m) => to(`matchedBy.${m}`)).join(' · ')}
+                          </span>
+                        ) : null}
+                        {searching && o.transactionNumber ? (
+                          <span className="block text-[11px] font-normal text-muted-foreground" dir="ltr">{String(o.transactionNumber)}</span>
+                        ) : null}
                       </TableCell>
+                      {searching ? <TableCell className="tabular-nums">{pickupDateText(o.businessDate)}</TableCell> : null}
                       <TableCell className="tabular-nums">{timeIn(o.paidAt, timeZone)}</TableCell>
                       <TableCell className="text-sm">
                         {o.serviceType ? to(`service.${o.serviceType}`) : <span className="text-muted-foreground">—</span>}

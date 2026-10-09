@@ -1035,13 +1035,18 @@ export class WebKioskService {
     if (rules.scope === 'shop' && this.creds) {
       const r = await this.seen(await this.api.post<{ number?: number; label?: string }>(this.machinePath('kiosk/pickup-number'), { orderKey: localId, businessDate }, { timeoutMs: SHOP_PICKUP_TIMEOUT_MS }));
       if (r.kind === 'ok' && typeof r.body?.number === 'number' && r.body.number > 0) {
-        return { number: r.body.number, label: r.body.label?.trim() || pickupLabelOf(rules.prefix, r.body.number) };
+        return { number: r.body.number, label: r.body.label?.trim() || pickupLabelOf(rules.prefix, r.body.number, rules.labelFormat) };
       }
       const n = await local(KV.pickupFallback);
       return { number: n, label: offlinePickupLabel(rules.prefix, n) };
     }
+    // "מספר בלבד" never shows a number it drew alone bare (another kiosk may say the same): tagged.
+    if (rules.labelFormat === 'number') {
+      const n = await local(KV.pickupFallback);
+      return { number: n, label: offlinePickupLabel(rules.prefix, n) };
+    }
     const n = await local(KV.pickup);
-    return { number: n, label: pickupLabelOf(rules.prefix, n) };
+    return { number: n, label: pickupLabelOf(rules.prefix, n, rules.labelFormat) };
   }
 
   /**

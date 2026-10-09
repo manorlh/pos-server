@@ -1311,7 +1311,7 @@ export class KioskService extends EventEmitter {
     let order = this.orders.update(orderId, (o) => ({ ...o, paid: true, paidAt: doc.updatedAt, transactionId: doc.id, transactionNumber: number, recovered }));
     if (!order) return;
     const cfg = this.config();
-    const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max };
+    const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat };
     const pickup = order.pickupNumber ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) } : await allocatePickup(this.kv, this.api, this.machineId, order, rules);
     order = this.orders.update(orderId, (o) => ({ ...o, pickupNumber: pickup.number, pickupLabel: pickup.label }))!;
     const policy = cfg.payment.receiptPolicy;
@@ -1441,7 +1441,7 @@ export class KioskService extends EventEmitter {
     const now = Date.now();
     const localId = randomUUID();
     const businessDate = localDate(now);
-    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max });
+    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat });
     const order: OpenOrder = {
       localId,
       createdAtMs: now,

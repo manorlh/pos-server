@@ -237,6 +237,8 @@ export interface KioskOrderOut {
   status: 'paid' | 'paid_print_failed' | 'recovered';
   createdAt: string | null;
   updatedAt: string | null;
+  /** With a search (`q`): what found it — its pickup number ("17", "A-17") or its document number. */
+  matchedBy?: Array<'pickup' | 'document'>;
 }
 
 /* ----------------------------------------------------------------- kiosks */
@@ -346,9 +348,14 @@ export async function fetchKioskCommands(machineId: string, limit = 20): Promise
   return Array.isArray(data) ? data : [];
 }
 
-export async function fetchKioskOrders(machineId: string, date?: string): Promise<KioskOrderOut[]> {
+/**
+ * The kiosk's orders of a business date (default today). With `q` — a pickup number ("17", "A17",
+ * "A-17", any case) or a document number — the matching orders of the 30 business days up to
+ * `date` instead, newest first, each with its `businessDate` and `matchedBy`.
+ */
+export async function fetchKioskOrders(machineId: string, date?: string, q?: string): Promise<KioskOrderOut[]> {
   const { data } = await api.get<KioskOrderOut[]>(`/kiosks/${machineId}/orders`, {
-    params: date ? { date } : {},
+    params: { ...(date ? { date } : {}), ...(q && q.trim() ? { q: q.trim() } : {}) },
   });
   return Array.isArray(data) ? data : [];
 }
