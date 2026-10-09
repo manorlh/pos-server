@@ -28,6 +28,8 @@ import {
   rangesCount,
   rangesText,
   replaceable,
+  serialsText,
+  serialsToRanges,
   replacementReady,
   shekelsFromText,
   shekelsOf,
@@ -244,5 +246,14 @@ describe('simulator basket', () => {
         { productId: 'p2', quantity: 0.5, price: 12.9 },
       ],
     );
+  });
+});
+
+describe('serialsText', () => {
+  it('joins consecutive serials into ranges, sorted and each once', () => {
+    assert.deepEqual(serialsToRanges([7, 1, 3, 2, 3]), [{ from: 1, to: 3 }, { from: 7, to: 7 }]);
+    assert.equal(serialsText([4, 5]), '#4–#5');
+    assert.equal(serialsText([1, 2, 3, 7]), '#1–#3, #7');
+    assert.equal(serialsText(null), '');
   });
 });

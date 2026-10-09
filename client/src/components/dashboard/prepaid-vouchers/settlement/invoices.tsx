@@ -28,6 +28,7 @@ import {
   invoiceLinesAmount,
   overInvoicedOf,
   shekelsFromText,
+  serialsText,
 } from '@/lib/prepaidVoucherExtras';
 import { agorotText } from '@/lib/prepaidVoucherFilters';
 import { businessToday } from '@/lib/format';
@@ -129,6 +130,7 @@ export function InvoicesSection({ agreement: a }: { agreement: SettlementAgreeme
                     {i.lines.map((l) => (
                       <span key={l.batchId} className="block text-xs text-muted-foreground">
                         {l.batchName ?? l.batchId} × {l.quantity}{l.unitPriceAgorot != null ? ` · ${agorotText(l.unitPriceAgorot)}` : ''}
+                        {l.serials?.length ? ` · ${serialsText(l.serials)}` : ''}
                       </span>
                     ))}
                   </td>

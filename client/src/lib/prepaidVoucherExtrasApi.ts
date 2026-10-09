@@ -91,6 +91,8 @@ export interface SettlementInvoiceLine {
   batchId: string;
   batchName: string | null;
   quantity: number;
+  /** The very vouchers it covers (a voucher is on one live invoice at most). */
+  serials?: number[];
   unitPriceAgorot: number | null;
   amountAgorot: number | null;
 }

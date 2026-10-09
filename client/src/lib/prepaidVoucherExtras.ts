@@ -69,6 +69,23 @@ export function rangesText(ranges: readonly SerialRange[]): string {
   return ranges.map((r) => rangeText(r.from, r.to)).join(', ');
 }
 
+/** Serials as ranges: [1, 2, 3, 7] → [{1–3}, {7–7}] (sorted, each once). */
+export function serialsToRanges(serials: readonly number[]): SerialRange[] {
+  const sorted = [...new Set(serials)].filter((n) => Number.isInteger(n)).sort((a, b) => a - b);
+  const out: SerialRange[] = [];
+  for (const n of sorted) {
+    const last = out[out.length - 1];
+    if (last && n === last.to + 1) last.to = n;
+    else out.push({ from: n, to: n });
+  }
+  return out;
+}
+
+/** "#1–#3, #7" for an invoice line's vouchers; '' for none. */
+export function serialsText(serials: readonly number[] | null | undefined): string {
+  return rangesText(serialsToRanges(serials ?? []));
+}
+
 /** How many serials the ranges hold. */
 export function rangesCount(ranges: readonly SerialRange[]): number {
   return ranges.reduce((n, r) => n + Math.max(0, r.to - r.from + 1), 0);
