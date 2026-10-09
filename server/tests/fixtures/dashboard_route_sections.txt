@@ -807,3 +807,10 @@ GET /z-runs/{run_id} -> z:view
 POST /z-runs/{run_id}/cancel -> z:edit
 POST /z-runs/{run_id}/force -> z:edit
 POST /z-runs/{run_id}/proceed -> z:edit
+GET /zcredit-reconciliation/attention -> reports|z|cockpit:view
+POST /zcredit-reconciliation/items/{item_id}/handle -> reports|z:edit
+POST /zcredit-reconciliation/items/{item_id}/reopen -> reports|z:edit
+POST /zcredit-reconciliation/run -> reports|z:edit
+GET /zcredit-reconciliation/runs -> reports|z:view
+GET /zcredit-reconciliation/runs/{run_id} -> reports|z:view
+GET /zcredit-reconciliation/terminals -> reports|z:view

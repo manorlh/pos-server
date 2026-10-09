@@ -60,6 +60,8 @@ from app.models.failed_payment import FailedPaymentAttempt
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
 # "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card.
 from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundEvent
+# "התאמת אשראי מול Z-Credit" (docs/SPEC_ZCREDIT.md "חלק ג׳"): our card legs against the terminal's report.
+from app.models.zcredit_reconciliation import ZCreditReconItem, ZCreditReconRun
 from app.models.document_refusal import DocumentRefusal
 # "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts).
 from app.models.exception_alerts import (
@@ -261,6 +263,7 @@ __all__ = [
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "CloudCardRefund", "CloudCardRefundEvent",
+    "ZCreditReconRun", "ZCreditReconItem",
     "DocumentRefusal",
     "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",

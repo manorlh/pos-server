@@ -228,6 +228,10 @@ app.include_router(remote_credits_router.router, prefix=_prefix)
 from app.routers import cloud_card_refunds as cloud_card_refunds_router  # noqa: E402
 
 app.include_router(cloud_card_refunds_router.router, prefix=_prefix)
+# "התאמת אשראי מול Z-Credit" (docs/SPEC_ZCREDIT.md "חלק ג׳"): read-only against the terminal's report.
+from app.routers import zcredit_reconciliation as zcredit_reconciliation_router  # noqa: E402
+
+app.include_router(zcredit_reconciliation_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
@@ -329,6 +333,18 @@ def start_sales_targets_worker():
     from app.services.sales_targets_worker import start_background_worker as start_targets_worker
 
     start_targets_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_zcredit_reconcile_worker():
+    """
+    "התאמת אשראי מול Z-Credit" nightly per terminal (app/services/zcredit_reconcile_worker.py);
+    ZCREDIT_RECONCILE_WORKER_ENABLED=false stops it. Read-only toward Z-Credit.
+    """
+    from app.database import SessionLocal
+    from app.services.zcredit_reconcile_worker import start_background_worker as start_zc_recon_worker
+
+    start_zc_recon_worker(SessionLocal)
 
 
 @app.on_event("startup")
