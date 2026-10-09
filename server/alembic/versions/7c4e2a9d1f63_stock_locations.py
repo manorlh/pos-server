@@ -76,6 +76,9 @@ def _has_table(insp, table: str) -> bool:
 
 BATCH = 5000
 TRIGGER_FN = "stock_location_defaults"
+#: How long a DDL statement waits for its lock before failing (the migration is safe to run again)
+#: rather than queueing every write behind it.
+LOCK_TIMEOUT = "10s"
 
 
 def _add_location_columns(insp, table: str, uuid) -> None:
@@ -100,20 +103,36 @@ def _defaults_trigger(table: str) -> None:
 
 
 def _backfill(table: str) -> None:
-    """Every row so far is its shop's stock — in batches, each committed by itself."""
-    sql = (
+    """
+    Every row so far is its shop's stock — paged by id (`id > :last ORDER BY id LIMIT 5000`, never a
+    rescan from the start), each page updated by its id range and committed by itself.
+    """
+    update = (
         f"UPDATE {table} t SET target_id = t.shop_id, "
         f"company_id = COALESCE(t.company_id, (SELECT s.company_id FROM shops s WHERE s.id = t.shop_id)) "
-        f"WHERE t.id IN (SELECT id FROM {table} WHERE target_id IS NULL LIMIT {BATCH})"
+        f"WHERE t.target_id IS NULL"
     )
     if context.is_offline_mode():
-        op.execute(sql.replace(f" LIMIT {BATCH}", ""))
+        op.execute(update)
         return
     with op.get_context().autocommit_block():
         bind = op.get_bind()
+        last = None
         while True:
-            if bind.execute(sa.text(sql)).rowcount == 0:
+            if last is None:
+                ids = [r[0] for r in bind.execute(sa.text(f"SELECT id FROM {table} ORDER BY id LIMIT {BATCH}")).all()]
+            else:
+                ids = [r[0] for r in bind.execute(
+                    sa.text(f"SELECT id FROM {table} WHERE id > CAST(:last AS uuid) ORDER BY id LIMIT {BATCH}"),
+                    {"last": str(last)},
+                ).all()]
+            if not ids:
                 break
+            bind.execute(
+                sa.text(update + " AND t.id >= CAST(:first AS uuid) AND t.id <= CAST(:last AS uuid)"),
+                {"first": str(ids[0]), "last": str(ids[-1])},
+            )
+            last = ids[-1]
 
 
 def _target_not_null(table: str) -> None:
@@ -129,11 +148,36 @@ def _target_not_null(table: str) -> None:
         return
     check = f"ck_{table}_target_id_not_null"
     exists = bind.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = :c"), {"c": check}).scalar()
+    # 1. The constraint, NOT VALID: a brief lock, committed at once (its own autocommit block).
     if not exists:
-        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {check} CHECK (target_id IS NOT NULL) NOT VALID")
-    op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {check}")
-    op.alter_column(table, "target_id", nullable=False)
-    op.execute(f"ALTER TABLE {table} DROP CONSTRAINT {check}")
+        with op.get_context().autocommit_block():
+            conn = op.get_bind()
+            conn.execute(sa.text(f"SET lock_timeout = '{LOCK_TIMEOUT}'"))
+            try:
+                conn.execute(sa.text(f"ALTER TABLE {table} ADD CONSTRAINT {check} CHECK (target_id IS NOT NULL) NOT VALID"))
+            finally:
+                conn.execute(sa.text("RESET lock_timeout"))
+    # 2. VALIDATE in another: it scans under SHARE UPDATE EXCLUSIVE — writes go on meanwhile.
+    with op.get_context().autocommit_block():
+        conn = op.get_bind()
+        conn.execute(sa.text(f"SET lock_timeout = '{LOCK_TIMEOUT}'"))
+        try:
+            conn.execute(sa.text(f"ALTER TABLE {table} VALIDATE CONSTRAINT {check}"))
+        finally:
+            conn.execute(sa.text("RESET lock_timeout"))
+    # 3. SET NOT NULL (no scan: the validated check proves it) and the check dropped, in one short
+    #    transaction of its own.
+    with op.get_context().autocommit_block():
+        conn = op.get_bind()
+        conn.exec_driver_sql("BEGIN")
+        try:
+            conn.exec_driver_sql(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+            conn.exec_driver_sql(f"ALTER TABLE {table} ALTER COLUMN target_id SET NOT NULL")
+            conn.exec_driver_sql(f"ALTER TABLE {table} DROP CONSTRAINT {check}")
+            conn.exec_driver_sql("COMMIT")
+        except Exception:
+            conn.exec_driver_sql("ROLLBACK")
+            raise
 
 
 def _index_concurrently(name: str, table: str, columns: list, unique: bool = False) -> None:
