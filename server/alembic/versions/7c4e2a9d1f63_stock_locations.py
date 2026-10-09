@@ -17,7 +17,19 @@
 * `dashboard_access_profiles.area_ids` / `machine_ids` — a dashboard user scoped to points of sale
   or devices (the stock and block screens).
 
-Idempotent: every column, index, table and enum value is looked at first. Never downgraded in place.
+Safe to deploy while the previous build still serves (stock locations themselves stay off until
+`STOCK_LOCATIONS_ENABLED`):
+
+* a BEFORE INSERT trigger fills `target_id` (and `company_id`) from `shop_id`, so a row written by
+  the previous build — which knows nothing of locations — is its shop's location;
+* the backfill runs in batches, each committed on its own (no long lock on a big movements table);
+* `target_id NOT NULL` goes through a NOT VALID check constraint validated without blocking writes;
+* every index is built CONCURRENTLY outside the transaction (an invalid leftover is rebuilt), the
+  new unique index before the old unique constraint goes.
+
+Idempotent: every column, index, trigger, table and enum value is looked at first. The downgrade
+(a scratch database) folds points of sale and devices back into their shop rows — never deletes
+stock — and refuses while a company warehouse holds any.
 
 Revision ID: 7c4e2a9d1f63
 Revises: 9e6a4c1f3b85
@@ -62,7 +74,12 @@ def _has_table(insp, table: str) -> bool:
     return insp is not None and insp.has_table(table)
 
 
-def _location_columns(insp, table: str, uuid) -> None:
+BATCH = 5000
+TRIGGER_FN = "stock_location_defaults"
+
+
+def _add_location_columns(insp, table: str, uuid) -> None:
+    """Nullable / constant-default columns: metadata only, no table rewrite."""
     cols = _columns(insp, table)
     if "company_id" not in cols:
         op.add_column(table, sa.Column("company_id", uuid, sa.ForeignKey("companies.id"), nullable=True))
@@ -70,17 +87,70 @@ def _location_columns(insp, table: str, uuid) -> None:
         op.add_column(table, sa.Column("level", sa.String(16), nullable=False, server_default="shop"))
     if "target_id" not in cols:
         op.add_column(table, sa.Column("target_id", uuid, nullable=True))
-    # Every row so far is its shop's stock.
-    op.execute(f"UPDATE {table} SET target_id = shop_id WHERE target_id IS NULL")
-    op.execute(
-        f"UPDATE {table} t SET company_id = s.company_id FROM shops s "
-        f"WHERE t.company_id IS NULL AND t.shop_id = s.id"
-    )
-    op.alter_column(table, "target_id", nullable=False)
     op.alter_column(table, "shop_id", nullable=True)
-    indexes = _indexes(insp, table)
-    if f"ix_{table}_company_id" not in indexes:
-        op.create_index(f"ix_{table}_company_id", table, ["company_id"])
+
+
+def _defaults_trigger(table: str) -> None:
+    """A row the previous build writes (no location) is its shop's: target_id / company_id from shop_id."""
+    op.execute(f"DROP TRIGGER IF EXISTS {table}_location_defaults ON {table}")
+    op.execute(
+        f"CREATE TRIGGER {table}_location_defaults BEFORE INSERT ON {table} "
+        f"FOR EACH ROW EXECUTE FUNCTION {TRIGGER_FN}()"
+    )
+
+
+def _backfill(table: str) -> None:
+    """Every row so far is its shop's stock — in batches, each committed by itself."""
+    sql = (
+        f"UPDATE {table} t SET target_id = t.shop_id, "
+        f"company_id = COALESCE(t.company_id, (SELECT s.company_id FROM shops s WHERE s.id = t.shop_id)) "
+        f"WHERE t.id IN (SELECT id FROM {table} WHERE target_id IS NULL LIMIT {BATCH})"
+    )
+    if context.is_offline_mode():
+        op.execute(sql.replace(f" LIMIT {BATCH}", ""))
+        return
+    with op.get_context().autocommit_block():
+        bind = op.get_bind()
+        while True:
+            if bind.execute(sa.text(sql)).rowcount == 0:
+                break
+
+
+def _target_not_null(table: str) -> None:
+    """NOT NULL without a scan under an exclusive lock: a validated check constraint first."""
+    if context.is_offline_mode():
+        op.alter_column(table, "target_id", nullable=False)
+        return
+    bind = op.get_bind()
+    nullable = bind.execute(sa.text(
+        "SELECT is_nullable FROM information_schema.columns WHERE table_name = :t AND column_name = 'target_id'"
+    ), {"t": table}).scalar()
+    if nullable != "YES":
+        return
+    check = f"ck_{table}_target_id_not_null"
+    exists = bind.execute(sa.text("SELECT 1 FROM pg_constraint WHERE conname = :c"), {"c": check}).scalar()
+    if not exists:
+        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {check} CHECK (target_id IS NOT NULL) NOT VALID")
+    op.execute(f"ALTER TABLE {table} VALIDATE CONSTRAINT {check}")
+    op.alter_column(table, "target_id", nullable=False)
+    op.execute(f"ALTER TABLE {table} DROP CONSTRAINT {check}")
+
+
+def _index_concurrently(name: str, table: str, columns: list, unique: bool = False) -> None:
+    """CREATE INDEX CONCURRENTLY outside the transaction; an invalid leftover (a failed build) is rebuilt."""
+    if context.is_offline_mode():
+        op.create_index(name, table, columns, unique=unique)
+        return
+    bind = op.get_bind()
+    state = bind.execute(sa.text(
+        "SELECT i.indisvalid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname = :n"
+    ), {"n": name}).scalar()
+    if state is True:
+        return
+    with op.get_context().autocommit_block():
+        if state is False:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+        op.create_index(name, table, columns, unique=unique, postgresql_concurrently=True)
 
 
 def upgrade() -> None:
@@ -93,8 +163,25 @@ def upgrade() -> None:
         op.execute("ALTER TYPE stockmovementreason ADD VALUE IF NOT EXISTS 'transfer'")
         op.execute("ALTER TYPE stockmovementreason ADD VALUE IF NOT EXISTS 'daily_reset'")
 
-    # ── stock_levels ──
-    _location_columns(insp, LEVELS, uuid)
+    # ── the location columns, and the trigger that keeps the previous build's inserts whole ──
+    op.execute(f"""
+        CREATE OR REPLACE FUNCTION {TRIGGER_FN}() RETURNS trigger AS $$
+        BEGIN
+            IF NEW.target_id IS NULL THEN
+                NEW.target_id := NEW.shop_id;
+            END IF;
+            IF NEW.company_id IS NULL AND NEW.shop_id IS NOT NULL THEN
+                NEW.company_id := (SELECT company_id FROM shops WHERE id = NEW.shop_id);
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+    """)
+    for table in (LEVELS, MOVEMENTS):
+        _add_location_columns(insp, table, uuid)
+        _defaults_trigger(table)
+    if "transfer_id" not in _columns(insp, MOVEMENTS):
+        op.add_column(MOVEMENTS, sa.Column("transfer_id", uuid, nullable=True))
     cols = _columns(insp, LEVELS)
     for name, column in (
         ("opening_quantity", sa.Column("opening_quantity", sa.Numeric(12, 3), nullable=True)),
@@ -104,20 +191,21 @@ def upgrade() -> None:
     ):
         if name not in cols:
             op.add_column(LEVELS, column)
+
+    # ── the backfill (batched), then NOT NULL (no blocking scan) ──
+    for table in (LEVELS, MOVEMENTS):
+        _backfill(table)
+        _target_not_null(table)
+
+    # ── the indexes, concurrently; the new unique before the old one goes ──
+    for table in (LEVELS, MOVEMENTS):
+        _index_concurrently(f"ix_{table}_company_id", table, ["company_id"])
+    _index_concurrently(NEW_UNIQUE, LEVELS, ["level", "target_id", "product_id"], unique=True)
+    _index_concurrently("ix_stock_movements_transfer_id", MOVEMENTS, ["transfer_id"])
+    _index_concurrently("ix_stock_movements_location", MOVEMENTS, ["level", "target_id", "product_id"])
+    insp = _inspector()  # fresh: the indexes above were built outside the first transaction
     if insp is None or OLD_UNIQUE in _uniques(insp, LEVELS):
         op.drop_constraint(OLD_UNIQUE, LEVELS, type_="unique")
-    if NEW_UNIQUE not in _indexes(insp, LEVELS):
-        op.create_index(NEW_UNIQUE, LEVELS, ["level", "target_id", "product_id"], unique=True)
-
-    # ── stock_movements ──
-    _location_columns(insp, MOVEMENTS, uuid)
-    if "transfer_id" not in _columns(insp, MOVEMENTS):
-        op.add_column(MOVEMENTS, sa.Column("transfer_id", uuid, nullable=True))
-    indexes = _indexes(insp, MOVEMENTS)
-    if "ix_stock_movements_transfer_id" not in indexes:
-        op.create_index("ix_stock_movements_transfer_id", MOVEMENTS, ["transfer_id"])
-    if "ix_stock_movements_location" not in indexes:
-        op.create_index("ix_stock_movements_location", MOVEMENTS, ["level", "target_id", "product_id"])
 
     # ── the managed levels ──
     if not _has_table(insp, "stock_level_settings"):
@@ -214,16 +302,50 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Never in place (another branch's data may sit on these columns); for a scratch database only.
+    # For a scratch database. Stock is never deleted: every point of sale's and device's quantity is
+    # added into its shop's row (created when missing) and their movements become the shop's; a
+    # company warehouse cannot be folded into one shop, so the downgrade refuses while one holds stock.
     # The enum values stay (Postgres cannot drop one).
+    op.execute(f"""
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM {LEVELS} WHERE shop_id IS NULL AND quantity <> 0) THEN
+                RAISE EXCEPTION 'stock is held at a company warehouse: move it to a shop before downgrading';
+            END IF;
+        END $$
+    """)
+    op.execute(f"""
+        INSERT INTO {LEVELS} (id, tenant_id, company_id, shop_id, level, target_id, product_id, quantity, updated_at)
+        SELECT md5(random()::text || clock_timestamp()::text || x.shop_id::text || x.product_id::text)::uuid,
+               x.tenant_id, x.company_id, x.shop_id, 'shop', x.shop_id, x.product_id, 0, now()
+        FROM (
+            SELECT shop_id, product_id, (array_agg(tenant_id))[1] AS tenant_id, (array_agg(company_id))[1] AS company_id
+            FROM {LEVELS} WHERE shop_id IS NOT NULL AND level <> 'shop' GROUP BY shop_id, product_id
+        ) x
+        WHERE NOT EXISTS (
+            SELECT 1 FROM {LEVELS} s WHERE s.level = 'shop' AND s.target_id = x.shop_id AND s.product_id = x.product_id
+        )
+    """)
+    op.execute(f"""
+        UPDATE {LEVELS} s SET quantity = s.quantity + x.q, updated_at = now()
+        FROM (
+            SELECT shop_id, product_id, SUM(quantity) AS q FROM {LEVELS}
+            WHERE shop_id IS NOT NULL AND level <> 'shop' GROUP BY shop_id, product_id
+        ) x
+        WHERE s.level = 'shop' AND s.target_id = x.shop_id AND s.product_id = x.product_id
+    """)
+    op.execute(f"DELETE FROM {LEVELS} WHERE level <> 'shop' OR shop_id IS NULL")
+    op.execute(f"UPDATE {MOVEMENTS} SET level = 'shop', target_id = shop_id WHERE shop_id IS NOT NULL AND level <> 'shop'")
+    op.execute(f"DELETE FROM {MOVEMENTS} WHERE shop_id IS NULL")  # a company warehouse at 0 (checked above)
+    for table in (LEVELS, MOVEMENTS):
+        op.execute(f"DROP TRIGGER IF EXISTS {table}_location_defaults ON {table}")
+    op.execute(f"DROP FUNCTION IF EXISTS {TRIGGER_FN}()")
     op.drop_column("dashboard_access_profiles", "machine_ids")
     op.drop_column("dashboard_access_profiles", "area_ids")
     op.drop_table("stock_reset_items")
     op.drop_table("stock_resets")
     op.drop_table("stock_alerts")
     op.drop_table("stock_level_settings")
-    op.execute(f"DELETE FROM {MOVEMENTS} WHERE shop_id IS NULL OR level <> 'shop'")
-    op.execute(f"DELETE FROM {LEVELS} WHERE shop_id IS NULL OR level <> 'shop'")
     op.drop_index("ix_stock_movements_location", table_name=MOVEMENTS)
     op.drop_index("ix_stock_movements_transfer_id", table_name=MOVEMENTS)
     op.drop_column(MOVEMENTS, "transfer_id")
