@@ -80,7 +80,13 @@ class TestCommands:
 
     def test_a_manager_code_on_the_till_unlocks_and_is_audited(self, d):
         _send(d, "lock", machineIds=[d.h1.id])
+        locked_at = svc.pull(d.db, d.h1)["state"]["lockedAt"]
+        # No lock named: nothing released (never "whatever is locked now").
         out = R.till_unlocked(str(d.h1.id), R.UnlockedIn(posUserName="דנה"), machine=d.h1, db=d.db)
+        assert out["state"]["locked"] is True and out["command"] is None
+        # The same instant written another way ("Z", no microseconds lost) is the same lock.
+        as_z = locked_at.replace("+00:00", "Z")
+        out = R.till_unlocked(str(d.h1.id), R.UnlockedIn(posUserName="דנה", lockedAt=as_z), machine=d.h1, db=d.db)
         assert out["state"]["locked"] is False
         rows = {(r.action, r.status, r.source) for r in d.db.query(DeviceCommand).all()}
         assert ("unlock", "done", "till") in rows and ("lock", "done", "dashboard") in rows
@@ -124,6 +130,14 @@ class TestCommands:
         with pytest.raises(HTTPException) as refused:
             R.cancel_command(uuid.UUID(cmd["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
         assert refused.value.status_code == 409
+
+    def test_cancelling_an_unlock_puts_back_the_very_lock_the_till_knows(self, d):
+        _send(d, "lock", machineIds=[d.h1.id], message="ספירת קופה — חכו")
+        known = svc.pull(d.db, d.h1)["state"]
+        unlock = _send(d, "unlock", machineIds=[d.h1.id])[0]
+        R.cancel_command(uuid.UUID(unlock["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
+        state = svc.pull(d.db, d.h1)["state"]
+        assert (state["locked"], state["message"], state["lockedAt"]) == (True, "ספירת קופה — חכו", known["lockedAt"])
 
     def test_cancelling_a_lock_the_till_never_saw_puts_the_lock_back(self, d):
         cmd = _send(d, "lock", machineIds=[d.h1.id])[0]

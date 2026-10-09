@@ -11,7 +11,7 @@
 import uuid
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.database import Base
@@ -57,6 +57,9 @@ class DeviceCommand(Base):
     done_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    #: A lock / unlock: the device's lock as it was before it (locked, message, when, by whom), for
+    #: a cancel to put back exactly (app/services/device_commands.py `cancel`).
+    prev_state = Column(JSONB, nullable=True)
 
 
 class DeviceRemoteState(Base):

@@ -110,8 +110,56 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
 #: What a kiosk never takes (its own pause is the kiosks' tab).
 KIOSK_REFUSES = ("lock", "unlock", "sign_out")
 
-#: A pending lock / unlock remembers the lock state before it (`detail`), for a cancel to restore it.
+#: Words an older build wrote in `detail` for the state before a lock / unlock (never shown).
 WAS_LOCKED, WAS_UNLOCKED = "was_locked", "was_unlocked"
+
+
+def _snapshot(state: Optional[DeviceRemoteState]) -> Dict[str, Any]:
+    """The lock as it is now — what a cancel puts back."""
+    if state is None:
+        return {"locked": False}
+    return {
+        "locked": bool(state.locked),
+        "message": state.lock_message,
+        "lockedAt": _iso(state.locked_at),
+        "lockedBy": state.locked_by,
+        "unlockedAt": _iso(state.unlocked_at),
+        "unlockedBy": state.unlocked_by,
+    }
+
+
+def _restore(db: Session, machine_id: Any, tenant_id: Any, snap: Dict[str, Any], now: datetime) -> None:
+    state = state_of(db, machine_id)
+    if state is None:
+        if not snap.get("locked"):
+            return
+        state = DeviceRemoteState(machine_id=machine_id, tenant_id=tenant_id, locked=False)
+        db.add(state)
+    state.locked = bool(snap.get("locked"))
+    state.lock_message = snap.get("message")
+    state.locked_at = _parse_instant(snap.get("lockedAt"))
+    state.locked_by = snap.get("lockedBy")
+    state.unlocked_at = _parse_instant(snap.get("unlockedAt"))
+    state.unlocked_by = snap.get("unlockedBy")
+    state.updated_at = now
+
+
+def _parse_instant(value: Any) -> Optional[datetime]:
+    """An ISO instant (any offset, "Z", microseconds or none) as an aware UTC datetime, or None."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def same_instant(a: Optional[datetime], b: Optional[datetime]) -> bool:
+    """Two instants equal to the millisecond (a device keeps what it was sent, perhaps rounded)."""
+    if a is None or b is None:
+        return False
+    return abs((_aware(a) - _aware(b)).total_seconds()) < 0.001
 
 
 def _set_lock(db: Session, machine: POSMachine, locked: bool, *, message: Optional[str], by: Optional[str], now: datetime) -> DeviceRemoteState:
@@ -177,10 +225,9 @@ def create(
     out: List[DeviceCommand] = []
     for machine in machines:
         # An earlier lock / unlock still waiting is overtaken by this one.
-        was: Optional[str] = None
+        prev: Optional[Dict[str, Any]] = None
         if action in ("lock", "unlock"):
-            prior = state_of(db, machine.id)
-            was = WAS_LOCKED if prior is not None and prior.locked else WAS_UNLOCKED
+            prev = _snapshot(state_of(db, machine.id))
             for old in (
                 db.query(DeviceCommand)
                 .filter(
@@ -191,8 +238,8 @@ def create(
                 .all()
             ):
                 # The state before a chain of waiting commands is the first one's.
-                if old.status == "pending" and old.detail in (WAS_LOCKED, WAS_UNLOCKED):
-                    was = old.detail
+                if old.status == "pending" and old.prev_state is not None:
+                    prev = old.prev_state
                 old.status = "cancelled"
                 old.detail = "superseded"
                 old.updated_at = now
@@ -206,7 +253,7 @@ def create(
             action=action,
             message=((message or "").strip()[:300] or None) if action == "lock" else None,
             status="pending",
-            detail=was,
+            prev_state=prev,
             source=source,
             created_by_user_id=getattr(user, "id", None),
             created_by_name=(who or None) and who[:200],
@@ -262,11 +309,9 @@ def cancel(db: Session, command: DeviceCommand, *, now: Optional[datetime] = Non
     now = now or utc_now()
     if command.status != "pending":
         raise _bad("not_pending", "הפקודה כבר נמסרה לקופה", status.HTTP_409_CONFLICT)
-    if command.action in ("lock", "unlock") and command.detail in (WAS_LOCKED, WAS_UNLOCKED):
-        state = state_of(db, command.machine_id)
-        if state is not None:
-            state.locked = command.detail == WAS_LOCKED
-            state.updated_at = now
+    if command.action in ("lock", "unlock") and command.prev_state is not None:
+        # Exactly as before it: locked or not, the same message, the same `lockedAt` the device knows.
+        _restore(db, command.machine_id, command.tenant_id, command.prev_state, now)
     command.status = "cancelled"
     command.updated_at = now
     return command
@@ -342,7 +387,9 @@ def unlock_from_till(
     """
     now = now or utc_now()
     state = state_of(db, machine.id)
-    if locked_at and state is not None and state.locked and _iso(state.locked_at) != locked_at:
+    # Only the very lock the till released: named by its instant (never "whatever is locked now"),
+    # compared as instants (not as strings).
+    if state is None or not state.locked or not same_instant(state.locked_at, _parse_instant(locked_at)):
         return None
     _set_lock(db, machine, False, message=None, by=manager_name, now=now)
     for old in (
