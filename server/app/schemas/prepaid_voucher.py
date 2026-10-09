@@ -281,6 +281,11 @@ def _check_prices(m, *, one_off: bool) -> None:
         raise ValueError("tillValue is required for a fixed value")
     if m.pricing == "fixed":
         m.allow_top_up = False  # a fixed value has no top-up (the spec's §5)
+    if (m.redemption_accounting == "zero" and m.pricing == "cover" and m.till_value is not None
+            and m.allow_top_up):
+        # ₪0 lines cannot carry a part the customer pays: a cover value with a top-up needs a mode
+        # that books money (review 09.10).
+        raise ValueError("zero accounting cannot take a top-up over a cover value")
     if m.till_value is None:
         m.print_till_value = False
 

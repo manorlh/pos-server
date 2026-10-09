@@ -6,6 +6,11 @@ The independent review of `fix/voucher-print` (09.10), each finding as the revie
 3. Two confirms of one hold could both write; a document of another till filed it there.
 4. A confirm revived a cancelled voucher.
 5. A document's confirm never compared what it booked with the hold.
+6. Only a deduction named its hold; a payment leg or memo lines could not.
+7. `voucherMemo` dropped a sale with money out of the Z.
+8. The deduction still counted as a discount (exceptions, events, insights); waiters filed it as "other".
+9. A legacy redemption (no mode recorded) was re-filed when the batch's mode changed.
+10. `zero` + a cover value + a top-up was accepted.
 16. The till's word was taken for a manager's approval and for the "no discount" flag.
 """
 from __future__ import annotations
@@ -15,7 +20,15 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
+from decimal import Decimal
+
 from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption, PrepaidVoucherReservation
+from app.models.shift import ShiftStatus
+from app.models.transaction import Transaction
+from app.schemas.transaction import TransactionIn
+from app.services.shift_totals import compute_totals, production_deductions_of
+from app.services.transactions import upsert_transactions
+from shift_world import NOW, TODAY
 from app.routers import prepaid_vouchers as R
 from app.schemas.prepaid_voucher import PrepaidVoucherLookupIn, PrepaidVoucherRedeemIn, PrepaidVoucherTypeCreate
 from app.services import prepaid_vouchers as PV
@@ -183,3 +196,140 @@ class TestApprovalAndCatalogFlags:
         w.db.commit()
         out = reserve(w, codes(w, b)[1], [unit(w.hotdog, 2500, "a", no_discount=True), unit(w.sandwich, 4000, "b")])
         assert out["status"] == "held"
+
+
+def document(w, shift, *, total="65.00", legs=(), items=None, deductions=(), memo=False, tip="0", number="9001"):
+    return TransactionIn.model_validate({
+        "id": str(uuid.uuid4()), "transactionNumber": number, "status": "completed", "documentType": 320,
+        "totalAmount": total, "documentDiscount": str(sum((Decimal(d["amount"]) for d in deductions), Decimal(0))),
+        "paymentMethod": legs[0]["method"] if legs else "cash",
+        "payments": [{"id": str(uuid.uuid4()), **leg} for leg in legs], "tipAmount": tip,
+        "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(), "shiftId": str(shift.id), "businessDate": str(TODAY),
+        "items": items or [{"id": str(uuid.uuid4()), "productName": "כריך", "quantity": 1, "unitPrice": total, "totalPrice": total}],
+        "voucherDiscounts": list(deductions), "voucherMemo": memo,
+    })
+
+
+def held_goods(w, accounting, till=None):
+    b = issue(w, goods_type(w, tillValue=50, pricing="fixed", redemptionAccounting=accounting)["id"])
+    return reserve(w, codes(w, b)[0], [unit(w.hotdog, 2500, "a"), unit(w.sandwich, 4000, "b")], till=till)
+
+
+class TestTheDocumentNamesItsHold:
+    """5 + 6: the document confirms its hold in every mode and says what it booked."""
+
+    def test_a_payment_leg(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        out = held_goods(w, "payment")
+        doc = document(w, shift, total="65.00", legs=[
+            {"method": "production_voucher", "amount": "50.00", "reservationId": out["reservationId"]},
+            {"method": "cash", "amount": "15.00"}])
+        assert [r.status for r in upsert_transactions(w.db, till, [doc])] == ["accepted"]
+        r = w.db.query(PrepaidVoucherRedemption).one()
+        assert (r.transaction_id, r.covered_agorot, r.flags) == (str(doc.id), 5000, None)
+
+    def test_memo_lines(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        out = held_goods(w, "zero")
+        items = [{"id": str(uuid.uuid4()), "productName": p.name, "quantity": 1, "unitPrice": "0", "totalPrice": "0",
+                  "voucherMemoValueAgorot": v, "voucherReservationId": out["reservationId"]}
+                 for p, v in ((w.hotdog, 2500), (w.sandwich, 4000))]
+        upsert_transactions(w.db, till, [document(w, shift, total="0.00", items=items, memo=True)])
+        r = w.db.query(PrepaidVoucherRedemption).one()
+        assert (r.redemption_accounting, r.covered_agorot) == ("zero", 0)
+
+    def test_a_deduction_that_differs_from_the_hold_is_flagged_and_recorded_as_the_document_says(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        out = held_goods(w, "discount")
+        item = str(uuid.uuid4())
+        doc = document(w, shift, total="65.00", legs=[{"method": "cash", "amount": "20.00"}],
+                       items=[{"id": item, "productName": "כריך", "quantity": 1, "unitPrice": "65.00", "totalPrice": "65.00"}],
+                       deductions=[{"reservationId": out["reservationId"], "kind": "production_voucher", "uses": 1,
+                                    "amount": "40.00", "lines": [{"itemId": item, "amount": "45.00"}]}])
+        upsert_transactions(w.db, till, [doc])
+        r = w.db.query(PrepaidVoucherRedemption).one()
+        # The hold covered ₪65 (a fixed deduction takes the lines whole); the document's lines say ₪45.
+        assert r.covered_agorot == 4500 and "amount_mismatch" in (r.flags or [])
+
+
+class TestVoucherMemoOnlyWhenSafe:
+    """7: a document with money and `voucherMemo: true` vanished from the Z."""
+
+    def test_money_is_never_out_of_the_z(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        doc = document(w, shift, total="30.00", legs=[{"method": "cash", "amount": "30.00"}], memo=True)
+        results = upsert_transactions(w.db, till, [doc])
+        assert any("voucherMemo ignored" in str(x) for x in (results[0].warnings or []))
+        w.db.commit()
+        assert w.db.query(Transaction).one().voucher_memo is False
+        totals = compute_totals(w.db, [shift.id])
+        assert (totals.transactions_count, totals.voucher_memo_documents, totals.total_sales) == (1, 0, Decimal("30.00"))
+
+
+class TestTheDeductionIsNoDiscount:
+    """8: a ₪40 deduction raised a "large discount" exception and counted in events' discounts; waiters filed it as other."""
+
+    def booked(self, w):
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        out = held_goods(w, "discount")
+        item = str(uuid.uuid4())
+        doc = document(w, shift, total="65.00", legs=[{"method": "cash", "amount": "25.00"}],
+                       items=[{"id": item, "productName": "כריך", "quantity": 1, "unitPrice": "65.00", "totalPrice": "65.00"}],
+                       deductions=[{"reservationId": out["reservationId"], "kind": "production_voucher", "uses": 1,
+                                    "amount": "40.00", "lines": [{"itemId": item, "amount": "40.00"}]}])
+        upsert_transactions(w.db, till, [doc])
+        w.db.commit()
+        return till, shift, w.db.query(Transaction).one()
+
+    def test_no_discount_exception(self, w):
+        from app.services import exceptions as EX
+
+        _till, _shift, tx = self.booked(w)
+        deduction = production_deductions_of(w.db, [tx.id])[tx.id]
+        assert deduction == Decimal("40.00")
+        rule = EX.EffectiveRule(type="discount", enabled=True, params={"minPercent": 10})
+        assert [f.type for f in EX.detect_transaction(tx, {"discount": rule}, None)] == ["discount"]  # as before
+        assert [f.type for f in EX.detect_transaction(tx, {"discount": rule}, None, deduction)] == []
+
+    def test_events_gross_and_discount(self, w):
+        from app.services.report_events.common import make_doc
+
+        _till, _shift, tx = self.booked(w)
+        d = make_doc(tx, [], production_deductions_of(w.db, [tx.id])[tx.id])
+        assert (d.gross, d.discount) == (Decimal("25.00"), Decimal("0"))
+
+    def test_waiters_file_the_voucher_tender_apart(self, w):
+        from app.services.z_waiters import waiter_breakdown
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        upsert_transactions(w.db, till, [document(w, shift, total="65.00", legs=[
+            {"method": "production_voucher", "amount": "50.00"}, {"method": "cash", "amount": "15.00"}])])
+        w.db.commit()
+        (row,) = waiter_breakdown(w.db, [shift.id], till.shop_id)
+        assert (row["productionVoucher"], row["other"], row["cash"]) == ("50.00", "0.00", "15.00")
+
+
+class TestLegacyAndTerms:
+    def test_9_a_legacy_redemption_is_payment_whatever_the_batch_says_later(self, w):
+        from app.services import prepaid_voucher_analytics as A
+
+        b = issue(w, goods_type(w, redemptionAccounting="payment", pricing="cover")["id"])
+        immediate(w, codes(w, b)[0], [(w.hotdog, 1), (w.sandwich, 1)], features=())
+        w.db.query(PrepaidVoucherRedemption).update({"redemption_accounting": None})
+        w.db.query(PrepaidVoucherBatch).update({"redemption_accounting": "zero"})
+        w.db.commit()
+        (row,) = A.redemptions_list(w.db, w.admin, w.tenant.id, A.make_scope())["items"]
+        assert row["accounting"] == "payment"
+
+    def test_10_zero_with_a_cover_value_and_a_top_up_is_refused(self, w):
+        with pytest.raises(Exception) as e:
+            goods_type(w, redemptionAccounting="zero", pricing="cover", tillValue=30, allowTopUp=True)
+        assert "top-up" in str(e.value)
+        assert goods_type(w, code="Z2", redemptionAccounting="zero", pricing="cover", tillValue=30, allowTopUp=False)["id"]
+

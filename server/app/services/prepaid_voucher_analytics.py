@@ -615,7 +615,7 @@ class Row:
     units: Decimal = Decimal(0)
     value: int = 0
     basis: str = "list"
-    #: The accounting mode the redemption recorded (§5); None: before the record, the batch's.
+    #: The accounting mode the redemption recorded (§5); None: before the record — `payment` (review 09.10).
     accounting: Optional[str] = None
 
 
@@ -710,7 +710,9 @@ def _values_by_mode(rows: Iterable[Row], batches: Dict[str, PrepaidVoucherBatch]
     out = {m: 0 for m in ACCOUNTING}
     for r in rows:
         b = batches[r.batch_id]
-        mode = "discount" if PV.is_discount(b) else (r.accounting or b.redemption_accounting or "zero")
+        # A goods redemption that recorded no mode was booked by a till of before the record — as the
+        # `voucher` tender (payment). Never the batch's mode now: an edit never re-files history.
+        mode = "discount" if PV.is_discount(b) else (r.accounting or "payment")
         out[mode if mode in out else "zero"] += r.value
     out["total"] = sum(out[m] for m in ACCOUNTING)
     return out
@@ -877,7 +879,7 @@ def redemptions_list(db: Session, user: User, tenant_id, scope: Scope, *, limit:
             "uses": r.uses,
             "value": r.value,
             "valueBasis": r.basis,
-            "accounting": "discount" if PV.is_discount(b) else (r.accounting or b.redemption_accounting or "zero"),
+            "accounting": "discount" if PV.is_discount(b) else (r.accounting or "payment"),
             "machineId": r.machine_id,
             "machineName": (machines.get(r.machine_id) or (None,))[0] if r.machine_id else None,
             "employeeId": r.employee_id,

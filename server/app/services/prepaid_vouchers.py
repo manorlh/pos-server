@@ -2694,6 +2694,7 @@ def confirm(
     document_lines: Optional[List[Dict[str, Any]]] = None,
     any_till: bool = False,
     units=None,
+    document_amount: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     The sale was written: take the voucher's uses and record the use (a redemption row with
@@ -2736,7 +2737,7 @@ def confirm(
         # A goods voucher's hold: its units come off the voucher, the redemption records them.
         from app.services import production_voucher_reserve as PVRG
 
-        return PVRG.confirm_goods(db, machine, r, voucher, transaction_id, units)
+        return PVRG.confirm_goods(db, machine, r, voucher, transaction_id, units, document_amount=document_amount)
 
     if r.status == "confirmed":
         if r.transaction_id and r.transaction_id != transaction_id:

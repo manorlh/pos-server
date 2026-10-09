@@ -49,6 +49,40 @@ ZERO = Decimal("0")
 CENT = Decimal("0.01")
 
 
+def production_deduction_expr():
+    """Per document (correlated to `Transaction`): Σ its production vouchers' deductions (₪, ≥ 0)."""
+    from sqlalchemy import func as _f
+    from sqlalchemy import select as _select
+
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount as _TVD
+    from app.models.transaction import Transaction as _Tx
+
+    return _f.coalesce(
+        _select(_f.sum(_f.abs(_TVD.discount_amount)))
+        .where(_TVD.transaction_id == _Tx.id, _TVD.kind == PRODUCTION_VOUCHER_DEDUCTION)
+        .correlate(_Tx)
+        .scalar_subquery(),
+        0,
+    )
+
+
+def production_deductions_of(db, transaction_ids) -> dict:
+    """{transaction id: Σ its production vouchers' deductions} — out of every "discount" figure (review 09.10)."""
+    from sqlalchemy import func as _f
+
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount as _TVD
+
+    ids = [t for t in transaction_ids if t is not None]
+    if not ids:
+        return {}
+    return {
+        tid: _dec(amount)
+        for tid, amount in db.query(_TVD.transaction_id, _f.coalesce(_f.sum(_f.abs(_TVD.discount_amount)), 0))
+        .filter(_TVD.transaction_id.in_(ids), _TVD.kind == PRODUCTION_VOUCHER_DEDUCTION)
+        .group_by(_TVD.transaction_id)
+    }
+
+
 def _dec(value) -> Decimal:
     if value is None:
         return ZERO
@@ -407,7 +441,9 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
     else:
         deduction_of = {}
     for doc in counted:
-        if getattr(doc, "voucher_memo", False):
+        if getattr(doc, "voucher_memo", False) and not _dec(getattr(doc, "total_amount", 0)) and not _dec(
+            getattr(doc, "tip_amount", 0)
+        ):
             # ₪0 memo lines only (`zero` mode): the till counts no document, no sale (§4.3).
             totals.voucher_memo_documents += 1
             continue

@@ -411,14 +411,30 @@ def take_units(remaining: Dict[str, Decimal], units: List[Dict[str, Any]], group
     return over
 
 
-def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, transaction_id: str, units=None) -> Dict[str, Any]:
-    """The sale was written (§3): take the units off the voucher and record the redemption. Idempotent."""
+def _document_says(db: Session, voucher, redemption, document_amount: Optional[int]) -> None:
+    """The document is the fiscal fact: its amount recorded; one that differs from the hold's coverage flagged."""
+    if document_amount is None or redemption is None:
+        return
+    if int(redemption.covered_agorot or 0) != int(document_amount):
+        PV = _pv()
+        PV._flag(db, voucher.batch, voucher, redemption, ["amount_mismatch"])
+        redemption.covered_agorot = int(document_amount)
+
+
+def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, transaction_id: str, units=None,
+                  *, document_amount: Optional[int] = None) -> Dict[str, Any]:
+    """
+    The sale was written (§3): take the units off the voucher and record the redemption. Idempotent.
+    [document_amount]: what the document booked (its confirm) — compared with the hold's coverage.
+    """
     PV = _pv()
     now = PV._now()
     if r.status == "confirmed":
         if r.transaction_id and r.transaction_id != transaction_id:
             raise _refuse(PV.RESERVATION_CONFLICT)
         redemption = db.query(PrepaidVoucherRedemption).filter(PrepaidVoucherRedemption.id == r.redemption_id).first()
+        _document_says(db, voucher, redemption, document_amount)
+        db.flush()
         return _confirm_out(r, redemption, replayed=True)
     goods = dict(r.goods or {})
     taken = goods.get("units") or []
@@ -499,6 +515,8 @@ def confirm_goods(db: Session, machine: POSMachine, r, voucher: PrepaidVoucher, 
     except IntegrityError:
         # Another confirm of this hold wrote it first (a database without row locks): its answer.
         return _replay_written(db, r)
+    _document_says(db, voucher, redemption, document_amount)
+    db.flush()
     return _confirm_out(r, redemption, replayed=False)
 
 

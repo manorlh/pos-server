@@ -144,6 +144,9 @@ class TransactionPaymentIn(BaseModel):
     #: "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): a credit's leg for a
     #: sale that never really happened — the original's method, no money moved.
     no_money_movement: Optional[bool] = Field(None, alias="noMoneyMovement")
+    #: A `production_voucher` leg names the goods hold it pays (the production vouchers contract
+    #: §4.2): the document confirms it. Optional; an unreadable id is a warning, never a refusal.
+    reservation_id: Optional[str] = Field(None, alias="reservationId", max_length=100)
 
     class Config:
         populate_by_name = True
@@ -208,6 +211,8 @@ class TransactionItemIn(BaseModel):
     prepaid_deduction: Optional[Decimal] = Field(None, alias="prepaidDeduction")
     voucher_memo_value_agorot: Optional[int] = Field(None, alias="voucherMemoValueAgorot", ge=0)
     voucher_redemption_id: Optional[str] = Field(None, alias="voucherRedemptionId", max_length=100)
+    #: A memo line's goods hold (§4.3): the document confirms it (amount 0). Optional.
+    voucher_reservation_id: Optional[str] = Field(None, alias="voucherReservationId", max_length=100)
     #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
     #: allergies, seat, course, a meal's components. Optional; never checked against the
     #: menu — anything that is not an object, or too big, is dropped and the line kept.

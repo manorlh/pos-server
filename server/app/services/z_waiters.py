@@ -31,7 +31,7 @@ from app.models.tables import TableOrder
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
 from app.services.dashboard_stats import SALE_STATUSES
-from app.services.tenders import EXCHANGE_PAYMENT_METHOD, expected_tender_total, is_refund_document
+from app.services.tenders import EXCHANGE_PAYMENT_METHOD, expected_tender_total, is_production_voucher, is_refund_document
 
 ZERO = Decimal("0")
 CENT = Decimal("0.01")
@@ -163,7 +163,7 @@ def waiter_breakdown(db: Session, shift_ids: Iterable[uuid.UUID], shop_id: Any) 
         key = str(_uuid_text(wid) or wid or name or "")
         r = rows.setdefault(key, {
             "waiterId": wid, "waiter": name, "salesCount": 0, "sales": ZERO, "refundsCount": 0,
-            "refunds": ZERO, "cash": ZERO, "card": ZERO, "other": ZERO, "tips": ZERO,
+            "refunds": ZERO, "cash": ZERO, "card": ZERO, "productionVoucher": ZERO, "other": ZERO, "tips": ZERO,
             "tables": 0, "guests": 0,
         })
         if r["waiter"] is None and name:
@@ -192,7 +192,10 @@ def waiter_breakdown(db: Session, shift_ids: Iterable[uuid.UUID], shop_id: Any) 
         ):
             if method == EXCHANGE_PAYMENT_METHOD:
                 continue
-            bucket = "cash" if method in _CASH else "card" if method in _CARD else "other"
+            bucket = (
+                "cash" if method in _CASH else "card" if method in _CARD
+                else "productionVoucher" if is_production_voucher(method) else "other"
+            )
             r[bucket] += sign * amount
         tip = _dec(doc.tip_amount)
         if tip:
@@ -208,6 +211,7 @@ def waiter_breakdown(db: Session, shift_ids: Iterable[uuid.UUID], shop_id: Any) 
             "net": _money(net),
             "cash": _money(r["cash"]),
             "card": _money(r["card"]),
+            "productionVoucher": _money(r["productionVoucher"]),
             "other": _money(r["other"]),
             "tips": _money(r["tips"]),
         })

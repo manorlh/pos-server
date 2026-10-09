@@ -87,7 +87,8 @@ class Doc:
     legs: List[Tuple[str, str, Decimal, Optional[TransactionPayment]]] = field(default_factory=list)
 
 
-def make_doc(tx: Transaction, legs: Sequence[TransactionPayment]) -> Doc:
+def make_doc(tx: Transaction, legs: Sequence[TransactionPayment], deduction: Decimal = ZERO) -> Doc:
+    """[deduction]: the document's production vouchers' deductions — in neither its gross nor its discount."""
     refund = is_refund_document(
         document_type=tx.document_type, refund_of_transaction_id=tx.refund_of_transaction_id
     )
@@ -110,8 +111,8 @@ def make_doc(tx: Transaction, legs: Sequence[TransactionPayment]) -> Doc:
         shift_id=str(tx.shift_id) if tx.shift_id else None,
         at=utc(tx.created_at),
         refund=refund,
-        gross=ZERO if refund else dec(tx.total_amount),
-        discount=ZERO if refund else dec(tx.document_discount),
+        gross=ZERO if refund else dec(tx.total_amount) - deduction,
+        discount=ZERO if refund else max(dec(tx.document_discount) - deduction, ZERO),
         collected=collected,
         net=sign * collected,
         tip=dec(tx.tip_amount),
