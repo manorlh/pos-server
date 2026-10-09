@@ -438,5 +438,6 @@ def test_the_migrations_chain_on_one_head():
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
     assert len(script.get_heads()) == 1
-    assert script.get_revision("8d5f3b0e2a74").down_revision == "6b1e9d4f2a87"
+    # Written on 6b1e9d4f2a87; re-chained after device groups' e8b3f5a1c7d2 at the integration merge.
+    assert script.get_revision("8d5f3b0e2a74").down_revision == "e8b3f5a1c7d2"
     assert script.get_revision("9e6a4c1f3b85").down_revision == "8d5f3b0e2a74"
