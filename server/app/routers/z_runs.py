@@ -87,6 +87,10 @@ def _run_or_404(db: Session, run_id: uuid.UUID, user: User, tenant_id) -> "ZR.ZR
     return run
 
 
+def _initiator_name(user: User) -> str:
+    return user.username or user.email or str(user.id)
+
+
 def _summary(shift):
     out = shift_to_out(shift)
     out.till_totals = None
@@ -303,7 +307,8 @@ def post_z_run_proceed(
 ):
     """Build now without the listed tills; their shifts wait for the next Z."""
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.proceed_without(db, run, body.exclude_machine_ids)
+    # Who decided to go without them, frozen on the Z with the tills (`openTillsLeftOut`).
+    ZR.proceed_without(db, run, body.exclude_machine_ids, deferred_by=_initiator_name(current_user))
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
@@ -330,8 +335,10 @@ def post_z_run_force(
     admin builds the Z without the listed tills, with a typed reason — recorded on the Z and
     as an exception; their shifts go into the next Z. 403 for anyone else, 422 without a reason.
     """
+    from app.services import remote_till_z
     from app.services import z_shift_guard
 
+    remote_till_z.require_enabled()  # off: no such route — everything exactly as before
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
     z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
     db.commit()
@@ -347,7 +354,7 @@ def post_z_run_cancel(
     db: Session = Depends(get_db),
 ):
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.cancel_run(db, run)
+    ZR.cancel_run(db, run, cancelled_by=_initiator_name(current_user))
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)

@@ -149,6 +149,8 @@ def _remote_z_machine(db: Session, user: User, tenant_id, machine_id) -> POSMach
     from app.services import dashboard_access as DA
     from app.services import dashboard_sections as DS
 
+    # The machine admins' roles, whatever a profile grants (the route's dependency says so too).
+    get_current_machine_admin(user)
     machine = machine_for_shift_admin(db, machine_id, user, tenant_id)
     _check_covered(db, _narrowing(db, user), machine)
     if not DA.effective_access(db, user).allows("z", DS.EDIT):
@@ -167,7 +169,7 @@ def get_features(current_user: User = Depends(get_current_user)):
 @router.get("/{machine_id}/close-preview")
 def get_close_preview(
     machine_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
@@ -184,7 +186,7 @@ def get_close_preview(
 @router.post("/close", status_code=status.HTTP_201_CREATED)
 def post_remote_close(
     body: RemoteCloseIn,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
@@ -227,6 +229,7 @@ def _remote_z_shop(db: Session, user: User, tenant_id, shop_id) -> Shop:
     from app.services import dashboard_sections as DS
     from app.services import z_runs as ZR
 
+    get_current_machine_admin(user)
     shop = _shop_for(db, shop_id, user, tenant_id)
     if _narrowing(db, user) is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={
@@ -340,7 +343,7 @@ def post_shop_close_proceed(
 
     remote_till_z.require_enabled()
     run = _shop_close_run(db, current_user, active_tenant_id, run_id)
-    ZR.proceed_without(db, run, body.exclude_machine_ids)
+    ZR.proceed_without(db, run, body.exclude_machine_ids, deferred_by=remote_till_z.who(current_user))
     db.commit()
     db.refresh(run)
     return remote_till_z.run_progress(db, run, user=current_user)
@@ -386,7 +389,7 @@ def post_shop_close_cancel(
 
     remote_till_z.require_enabled()
     run = _shop_close_run(db, current_user, active_tenant_id, run_id)
-    ZR.cancel_run(db, run)
+    ZR.cancel_run(db, run, cancelled_by=remote_till_z.who(current_user))
     db.commit()
     db.refresh(run)
     return remote_till_z.run_progress(db, run, user=current_user)

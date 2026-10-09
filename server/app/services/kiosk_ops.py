@@ -695,6 +695,29 @@ def request_shop_z_close(
     return made
 
 
+def withdraw_shop_z_close(db: Session, *, source: str, ref: str, now: Optional[datetime] = None) -> int:
+    """
+    The shop's Z that asked the kiosks to close was cancelled: every request of it not yet done
+    is withdrawn (`cancelled`) — never handed to a kiosk again, so no Z of theirs comes of it.
+    The caller commits. How many were withdrawn.
+    """
+    now = _now(now)
+    rows = (
+        db.query(KioskCloseRequest)
+        .filter(
+            KioskCloseRequest.source == source,
+            KioskCloseRequest.source_ref == str(ref)[:64],
+            KioskCloseRequest.state.in_(("pending", "delivered")),
+        )
+        .all()
+    )
+    for row in rows:
+        row.state = "cancelled"
+        row.finished_at = now
+    db.flush()
+    return len(rows)
+
+
 def on_cloud_z_run(db: Session, run: Any, *, now: Optional[datetime] = None) -> List[KioskCloseRequest]:
     """After a cloud z run started: kiosks it closes itself (a live item) are skipped."""
     try:

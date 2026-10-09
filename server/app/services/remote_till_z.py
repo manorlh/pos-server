@@ -148,6 +148,8 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None)
         why = "אין משמרות שעוד לא נכללו ב-Z"
     elif kind == KIND_CLOSE_SHIFT and _local_mode(db, machine):
         why = LOCAL_MODE_SHIFT_TEXT
+    elif too_old(machine):
+        why = TOO_OLD_TEXT
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -237,6 +239,31 @@ def _request_command(kind: str, out: Dict[str, Any], user: Any) -> Dict[str, Any
         created_at=out.get("createdAt"), sent_at=out.get("sentAt"), received_at=out.get("receivedAt"),
         done_at=out.get("completedAt"), expires_at=out.get("expiresAt"),
     )
+
+
+#: The first till build that honours `waitForRest` (pos-android feat/live-control c21f40d, the
+#: merge carrying fab76fc onto the release line: 0.1.334). An older till would close mid-sale, so it
+#: is never asked from remote control. `REMOTE_TILL_Z_MIN_TILL_VERSION` (a version code) raises it
+#: to the release build that carries it.
+MIN_WAIT_FOR_REST_VERSION_CODE = 334
+TOO_OLD_TEXT = "הקופה צריכה עדכון גרסה לפני סגירה מרחוק"
+
+
+def min_version_code() -> int:
+    raw = (os.environ.get("REMOTE_TILL_Z_MIN_TILL_VERSION") or "").strip()
+    return max(int(raw), MIN_WAIT_FOR_REST_VERSION_CODE) if raw.isdigit() else MIN_WAIT_FOR_REST_VERSION_CODE
+
+
+def too_old(machine: POSMachine) -> bool:
+    """The till never said its version, or its build predates `waitForRest`."""
+    from app.services.cloud_card_refunds import till_version_code
+
+    code = till_version_code(getattr(machine, "app_version", None))
+    return code is None or code < min_version_code()
+
+
+def who(user: Any) -> str:
+    return getattr(user, "username", None) or getattr(user, "email", None) or str(getattr(user, "id", ""))
 
 
 def _local_mode(db: Session, machine: POSMachine) -> bool:
@@ -494,6 +521,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             # Its own Z ("Z לכל קופה" / independent): never in the shop Z; its own remote Z.
             why = ("קיוסק — מלשונית הקיוסקים" if m.id in kiosks
                    else "הקופה אינה משויכת עוד לסניף" if not seated
+                   else TOO_OLD_TEXT if too_old(m)
                    else None if shifts else "אין משמרות שעוד לא נכללו ב-Z")
             row["action"] = {"kind": KIND_TILL_Z, "label": "הפקת Z לקופה", "available": why is None, "whyNot": why}
             if m.id in kiosks:
@@ -505,7 +533,10 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             why = ("קיוסק — מלשונית הקיוסקים" if m.id in kiosks
                    else "הקופה אינה משויכת עוד לסניף — משמרותיה הסגורות ייכללו ב-Z הסניפי" if not seated
                    else LOCAL_MODE_SHIFT_TEXT if local_mode
+                   else TOO_OLD_TEXT if too_old(m)
                    else None if cand.open_shift is not None else "אין משמרת פתוחה")
+            if seated and too_old(m):
+                row["needsUpdate"] = True
             row["action"] = {"kind": KIND_CLOSE_SHIFT, "label": "סגירת משמרת", "available": why is None, "whyNot": why}
             in_shop_z.append(row)
     totals = _totals_out(compute_totals(db, shop_shift_ids))
@@ -527,6 +558,9 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         why = "לא זמין עדיין: העסק מוגדר ל-Z נפרד לכל קופה — הפיקו מאשף ה-Z, קופה אחר קופה"
     elif not local["available"]:
         why = local["whyNot"]
+    elif any(r.get("needsUpdate") for r in in_shop_z):
+        names = ", ".join(r["name"] or "" for r in in_shop_z if r.get("needsUpdate"))
+        why = f"{TOO_OLD_TEXT}: {names}"
     elif run is not None:
         why = "סגירת יום של הסניף כבר בתהליך"
     elif not shop_shift_ids:

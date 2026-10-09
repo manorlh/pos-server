@@ -160,6 +160,24 @@ def shop_tills(db: Session, shop_id: uuid.UUID) -> List[POSMachine]:
     )
 
 
+def lock_shop_z_start(db: Session, shop_id: uuid.UUID) -> None:
+    """
+    Serialize the starts of a shop's Z runs: a transaction-scoped advisory lock (Postgres) keyed
+    on the shop, held until the start commits — the next start then sees its items as live.
+    The shop's Z counter row is locked too when it exists. Nothing to do on SQLite (tests).
+    """
+    bind = db.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+
+    key = int.from_bytes(uuid.UUID(str(shop_id)).bytes[:8], "big", signed=True) ^ 0x5A52554E  # "ZRUN"
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+    from app.models.shop_z_sequence import ShopZSequence
+
+    db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
+
+
 def _live_items(db: Session, machine_ids: Sequence[uuid.UUID]) -> Dict[uuid.UUID, ZRunItem]:
     if not machine_ids:
         return {}
@@ -489,7 +507,9 @@ def tills_left_out(
     return left
 
 
-def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop, *, area_id: Optional[uuid.UUID] = None) -> Optional[str]:
+def open_tills_rule(
+    db: Session, tenant: Optional[Tenant], shop: Shop, *, area_id: Optional[uuid.UUID] = None, guard: bool = True
+) -> Optional[str]:
     """
     `shopZOpenTills` for this shop: "block" or "confirm"; None when it does not apply —
     one till per Z (the tenant's `zScope`), or the parameter missing or deactivated by a
@@ -509,7 +529,7 @@ def open_tills_rule(db: Session, tenant: Optional[Tenant], shop: Shop, *, area_i
         return "block"
     from app.services import z_shift_guard
 
-    if z_shift_guard.required(db, shop, area_id=area_id):
+    if guard and z_shift_guard.required(db, shop, area_id=area_id):
         # "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): no till left out.
         return "block"
     value = TP.resolve_for_shop(db, shop).get(TP.SHOP_Z_OPEN_TILLS_KEY)
@@ -778,6 +798,9 @@ def create_z_run(
                     detail=f"machine_not_in_area:{machine_id}",
                 )
 
+    # One start at a time per shop: two day closes started together (the wizard, a master till,
+    # remote control) must not both pass the "run in progress" check below.
+    lock_shop_z_start(db, shop.id)
     live = _live_items(db, wanted)
     if live:
         raise HTTPException(
@@ -1367,17 +1390,30 @@ def proceed_without(
     excluded = set(exclude_machine_ids)
     from app.services import z_shift_guard
 
-    required = _all_tills_required(db, run) if excluded else None
-    if required and forced_reason and required != "local":
-        required = None  # the super admin's force, recorded on each till left out below
+    from app.services.z_completeness import WAITING_DOCUMENTS
+
+    if forced_reason:
+        # The super admin's force (z_shift_guard.force_without) passes "חסימת Z כשיש משמרות
+        # פתוחות" only: "חובה לסגור את כל הקופות" and local mode keep their own rules.
+        required = _all_tills_required(db, run, guard=False) if excluded else None
+    else:
+        required = _all_tills_required(db, run) if excluded else None
     if required:
         # "חובה לסגור את כל הקופות" (and always in local mode, docs/SPEC_INDEPENDENT_TILL.md §8):
         # neither "סגור" nor the dashboard's proceed leaves a till behind — its sales would
         # slip into the next Z.
-        leaving = [
-            str(i.machine_id) for i in run.items
-            if i.machine_id in excluded and i.status not in (ZRunItemStatus.EXCLUDED, ZRunItemStatus.READY)
-        ]
+        def _not_in(i: ZRunItem) -> bool:
+            if i.status == ZRunItemStatus.EXCLUDED:
+                return False
+            if i.status != ZRunItemStatus.READY:
+                return True
+            # "חסימת Z כשיש משמרות פתוחות": a ready till whose documents the cloud knows are
+            # missing, or not yet verified on a master-started run, is not in the Z either.
+            return required == "shifts" and (
+                i.error_code == WAITING_DOCUMENTS or (strict and not verify_item(db, run, i).ok)
+            )
+
+        leaving = [str(i.machine_id) for i in run.items if i.machine_id in excluded and _not_in(i)]
         if leaving:
             db.rollback()
             raise HTTPException(
@@ -1398,8 +1434,6 @@ def proceed_without(
                     "canForce": required != "local",
                 },
             )
-    from app.services.z_completeness import WAITING_DOCUMENTS
-
     for item in list(run.items):
         if item.machine_id not in excluded or item.status == ZRunItemStatus.EXCLUDED:
             continue
@@ -1436,7 +1470,7 @@ def proceed_without(
     return run
 
 
-def _all_tills_required(db: Session, run: ZRun) -> Optional[str]:
+def _all_tills_required(db: Session, run: ZRun, *, guard: bool = True) -> Optional[str]:
     """
     Whether this run's shop Z must include every till it covers — "local" (the shop is in
     local mode) or "block" (its `shopZOpenTills` is "חובה לסגור את כל הקופות"); None when a
@@ -1444,17 +1478,21 @@ def _all_tills_required(db: Session, run: ZRun) -> Optional[str]:
     """
     if _local_mode_run(db, run):
         return "local"
-    try:
-        from app.services import z_shift_guard
+    from app.services import z_shift_guard
 
+    try:
         shop = db.get(Shop, run.shop_id)
-        if shop is not None and z_shift_guard.required(db, shop, area_id=run.area_id):
+        if guard and shop is not None and z_shift_guard.required(db, shop, area_id=run.area_id):
             return "shifts"
         tenant = db.get(Tenant, run.tenant_id) if run.tenant_id else None
-        return "block" if shop is not None and open_tills_rule(db, tenant, shop) == "block" else None
+        if shop is not None and open_tills_rule(db, tenant, shop, guard=False) == "block":
+            return "block"
+        return None
     except Exception:  # noqa: BLE001 - a rule read must never break an expiry sweep
         logger.exception("open-tills rule of shop %s unreadable", run.shop_id)
-        return None
+        # Fail closed while "חסימת Z כשיש משמרות פתוחות" can apply (it ships behind
+        # REMOTE_TILL_Z_ENABLED): an unreadable rule never lets a till be left behind.
+        return "shifts" if guard and z_shift_guard.flag_on() else None
 
 
 def _local_mode_run(db: Session, run: ZRun) -> bool:
@@ -1470,7 +1508,7 @@ def _local_mode_run(db: Session, run: ZRun) -> bool:
         return False
 
 
-def cancel_run(db: Session, run: ZRun) -> ZRun:
+def cancel_run(db: Session, run: ZRun, *, cancelled_by: Optional[str] = None) -> ZRun:
     # Locked and re-checked: a till's close may be building this very run.
     run = lock_run(db, run)
     _require_waiting(run)
@@ -1479,6 +1517,17 @@ def cancel_run(db: Session, run: ZRun) -> ZRun:
             item.status = ZRunItemStatus.EXCLUDED
             item.error_code = "cancelled"
     run.status = ZRunStatus.CANCELLED
+    if cancelled_by:
+        # Who cancelled it, on the run itself (its `errorMessage`).
+        run.error_message = f"בוטל ע״י {cancelled_by}"[:500]
+    # "סגירה יחד עם ה-Z הסניפי": the kiosks this run asked to close (kiosk_ops.on_cloud_z_run)
+    # and that have not closed yet are no longer asked — a cancelled day close makes no Z of theirs.
+    try:
+        from app.services import kiosk_ops
+
+        kiosk_ops.withdraw_shop_z_close(db, source="cloud_shop_z", ref=str(run.id))
+    except Exception:  # noqa: BLE001 - never fails the cancel; logged
+        logger.exception("withdrawing the kiosks' close of run %s failed", run.id)
     db.flush()
     return run
 

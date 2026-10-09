@@ -121,9 +121,9 @@ def required(db: Session, shop: Any, *, area_id: Any = None) -> bool:
         return False
     try:
         return _value(db, company_id=getattr(shop, "company_id", None), shop_id=shop.id, area_id=area_id)
-    except Exception:  # noqa: BLE001 - a rule read never breaks a run; logged, read as off
+    except Exception:  # noqa: BLE001 - never breaks a run; logged, and read as ON (fail closed)
         logger.exception("zRequireAllShiftsClosed unreadable for shop %s", getattr(shop, "id", None))
-        return False
+        return True
 
 
 def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
@@ -216,13 +216,24 @@ def force_without(db: Session, run: Any, user: Any, exclude_machine_ids: Iterabl
     The super admin's force: the run's existing "build without", past this rule (never past
     local mode), each till left out recorded on the Z with who, when and why; audited.
     """
+    from app.services import remote_till_z
     from app.services import z_runs as ZR
 
+    remote_till_z.require_enabled()  # off: no force at all — everything exactly as before
     text = check_force(user, reason)
     who = getattr(user, "username", None) or getattr(user, "email", None) or str(getattr(user, "id", ""))
     excluded = set(exclude_machine_ids)
-    leaving = [i for i in run.items if i.machine_id in excluded
-               and i.status not in (ZR.ZRunItemStatus.EXCLUDED, ZR.ZRunItemStatus.READY)]
+    run = ZR.lock_run(db, run)
+    # Only "חסימת Z כשיש משמרות פתוחות" is forced past; "חובה לסגור את כל הקופות" and local mode
+    # keep their own rules (proceed_without refuses them as always).
+    if ZR._all_tills_required(db, run) != "shifts":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+            "code": "force_not_applicable",
+            "message": f"אין מה לכפות: \"{LABEL}\" אינו מה שעוצר את ה-Z",
+        })
+    leaving = [i for i in run.items if i.machine_id in excluded and i.status != ZR.ZRunItemStatus.EXCLUDED
+               and (i.status != ZR.ZRunItemStatus.READY or i.error_code == "waiting_documents"
+                    or (run.strict_cloud_check and not ZR.verify_item(db, run, i).ok))]
     # The run's own clock (z_runs) decides expiry; `now` only when the caller gives one.
     run = ZR.proceed_without(db, run, excluded, now=now, deferred_by=f"{who} (תמיכה)", forced_reason=text)
     _record(db, run, leaving, who, text, now or datetime.now(timezone.utc))

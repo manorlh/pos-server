@@ -54,6 +54,7 @@ def z(w, monkeypatch):  # noqa: F811
     w.t1, w.t2 = w.tills
     for t in w.tills:
         t.last_heartbeat_at = NOW - timedelta(seconds=10)
+        t.app_version = "0.1.400+abcdef0-device"  # a build that honours waitForRest
     w.db.commit()
     return w
 
