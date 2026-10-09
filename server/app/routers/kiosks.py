@@ -455,7 +455,13 @@ def delete_kiosk(
     db: Session = Depends(get_db),
 ):
     """Back to a regular till; its orders and the command audit stay."""
-    _machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    # A browser / iOS kiosk becomes a till only with WEB_TILL_ENABLED on (the web till).
+    from app.services import display_devices as DD
+
+    web_refused = DD.web_platform_refusal(DD.platform_of(machine), DD.ROLE_TILL)
+    if web_refused is not None:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
     svc.remove(db, device)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

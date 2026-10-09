@@ -204,8 +204,10 @@ class TestCatalog:
             assert PairingCodeGenerateRequest(deviceRole=role, platform="windows").device_role == role
         with pytest.raises(ValidationError):
             PairingCodeGenerateRequest(deviceRole="printer")
+        # "ios" is a platform since the web till (tests/test_web_till_platform.py); "macos" is not.
+        assert PairingCodeGenerateRequest(platform="ios").platform == "ios"
         with pytest.raises(ValidationError):
-            PairingCodeGenerateRequest(platform="ios")
+            PairingCodeGenerateRequest(platform="macos")
         with pytest.raises(ValidationError):
             DeviceProfileIn(deviceModel="X9")
 

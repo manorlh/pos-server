@@ -30,8 +30,9 @@ DeviceModel = Literal[
 DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
 
 #: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
-#: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
-DevicePlatform = Literal["android", "windows", "web"]
+#: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27). "ios": the iPad /
+#: iPhone shell. A till on "web" / "ios" only with WEB_TILL_ENABLED (`roles_for_platform`).
+DevicePlatform = Literal["android", "windows", "web", "ios"]
 
 
 class PairingStatus(str):

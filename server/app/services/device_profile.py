@@ -406,6 +406,10 @@ def check_role_switch(db: Session, machine: POSMachine, role: str) -> None:
         raise DD.role_change_refusal(machine, current, role)
     if role in DD.NON_FISCAL_ROLES:
         return  # a screen's role: nothing fiscal on it to wait for
+    # A browser / iOS kiosk is a till only with WEB_TILL_ENABLED on (the web till).
+    web_refused = DD.web_platform_refusal(DD.platform_of(machine), role)
+    if web_refused is not None:
+        raise _refuse(web_refused["detail"], machine, web_refused["message"], status.HTTP_422_UNPROCESSABLE_ENTITY)
     label = _label(machine)
     if role == ROLE_KIOSK:
         prefix = f"לא ניתן להפוך את {label} לקיוסק"

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # tills that will issue those credit notes run a version that knows the mode.
     zcredit_cloud_refunds_enabled: bool = False
 
+    # "קופת WEB" (web-till spec v2 §9.1): a till on the "web" (browser) and "ios" platforms —
+    # the till screens of the r2m-app bundle, driven by a till engine. OFF by default: with it
+    # off a web / iOS code is a kiosk's, a KDS's or a board's only (422 `web_platform_not_a_till`),
+    # exactly as before (app/services/display_devices.py `web_till_enabled`).
+    web_till_enabled: bool = False
+
     # Notifications / 019 SMS (docs/SPEC_NOTIFICATIONS_CLUB.md). Live sending is its own
     # explicit switch, OFF by default: with it off no request ever goes to 019's live
     # endpoint, whatever a provider config says (mock and 019's /api/test only).

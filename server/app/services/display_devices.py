@@ -35,6 +35,10 @@ added on the dashboard, during pairing.
 * **Never back.** A display device never becomes a till or a kiosk again, and a till
   never a display device, from the machine page: 409 `device_role_change_requires_pairing`
   — remove the device and add it again with a new code.
+* **The web till** (web-till spec v2 §9.1). The browser ("web") and the iPad / iPhone shell
+  ("ios") are a kiosk, a KDS or a board; a till there only with `WEB_TILL_ENABLED` on
+  (`roles_for_platform`) — at pairing and on the machine page alike (422
+  `web_platform_not_a_till`). A web / iOS till is an ordinary fiscal till for the cloud.
 """
 from __future__ import annotations
 
@@ -60,13 +64,26 @@ PLATFORM_WINDOWS = "windows"
 #: The browser on the dashboard's own site: the kiosk (`/k`, docs/SPEC_KIOSK.md §27), the KDS
 #: (`/kds`) and the "מוכן / לא מוכן" board (`/board`, docs/SPEC_KDS.md §13) — never a till.
 PLATFORM_WEB = "web"
-PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_WEB)
-PLATFORM_LABELS = {PLATFORM_ANDROID: "Android", PLATFORM_WINDOWS: "Windows", PLATFORM_WEB: "דפדפן (Web)"}
+#: The iPad / iPhone shell (web-till spec v2 §4.2, §9.1): the same r2m-app screens as the browser,
+#: in a Capacitor app. Its codes and devices follow the browser's rules (`WEB_TILL_PLATFORMS`).
+PLATFORM_IOS = "ios"
+PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_WEB, PLATFORM_IOS)
+PLATFORM_LABELS = {
+    PLATFORM_ANDROID: "Android", PLATFORM_WINDOWS: "Windows", PLATFORM_WEB: "דפדפן (Web)",
+    PLATFORM_IOS: "iPad / iPhone (iOS)",
+}
 #: The roles a browser may be added as.
 WEB_ROLES = (ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
+#: "קופת WEB" (web-till spec v2): the platforms whose till is the web till — the r2m-app till
+#: screens driven by a till engine, never by the page. Their till exists only behind
+#: `settings.web_till_enabled` (`WEB_TILL_ENABLED`, off): `web_till_enabled`.
+WEB_TILL_PLATFORMS = (PLATFORM_WEB, PLATFORM_IOS)
 WEB_PLATFORM_NOT_A_TILL = "web_platform_not_a_till"
 WEB_PLATFORM_NOT_A_TILL_MESSAGE = (
     "בדפדפן אפשר להפעיל קיוסק, מסך מטבח (KDS) או מסך מוכן / לא מוכן — לא קופה. לקופה בחרו Android או Windows."
+)
+IOS_PLATFORM_NOT_A_TILL_MESSAGE = (
+    "ב-iPad / iPhone אפשר להפעיל קיוסק, מסך מטבח (KDS) או מסך מוכן / לא מוכן — לא קופה. לקופה בחרו Android או Windows."
 )
 
 #: The KDS module's screen roles a KDS code may ask for; a board is always "pickup".
@@ -103,21 +120,51 @@ def is_fiscal_role(role: Optional[str]) -> bool:
 
 
 def platform_of_device_info(device_info: Any) -> str:
-    """`device_info.platform == "windows"` is Windows, `"web"` the browser kiosk; anything else, or nothing, Android."""
+    """
+    `device_info.platform == "windows"` is Windows, `"web"` the browser, `"ios"` the iPad /
+    iPhone shell; anything else, or nothing, Android.
+    """
     if isinstance(device_info, dict):
         said = str(device_info.get("platform") or "").strip().lower()
         if said == PLATFORM_WINDOWS:
             return PLATFORM_WINDOWS
         if said == PLATFORM_WEB:
             return PLATFORM_WEB
+        if said == PLATFORM_IOS:
+            return PLATFORM_IOS
     return PLATFORM_ANDROID
 
 
+def web_till_enabled() -> bool:
+    """`WEB_TILL_ENABLED`: a till may be added on the web / iOS platforms (off by default)."""
+    from app.config import get_settings
+
+    return bool(getattr(get_settings(), "web_till_enabled", False))
+
+
+def roles_for_platform(platform: Optional[str]) -> Tuple[str, ...]:
+    """
+    The roles a device of `platform` may be added as, or switched to: every role on Android
+    and Windows; on the web / iOS a kiosk, a KDS or a board — and a till only with
+    `WEB_TILL_ENABLED` on.
+    """
+    if platform in WEB_TILL_PLATFORMS:
+        return WEB_ROLES + ((ROLE_TILL,) if web_till_enabled() else ())
+    return ROLES
+
+
 def web_platform_refusal(platform: Optional[str], role: Optional[str]) -> Optional[Dict[str, str]]:
-    """A code for the browser is a kiosk's, a KDS's or a board's — never a till's (422 body), else None."""
-    if platform == PLATFORM_WEB and role not in WEB_ROLES:
-        return {"detail": WEB_PLATFORM_NOT_A_TILL, "message": WEB_PLATFORM_NOT_A_TILL_MESSAGE}
-    return None
+    """
+    A code for the browser (or the iOS shell) is a kiosk's, a KDS's or a board's — a till's
+    only with `WEB_TILL_ENABLED` on (422 body `web_platform_not_a_till`), else None. No role
+    is a till.
+    """
+    if platform not in WEB_TILL_PLATFORMS:
+        return None
+    if (role or ROLE_TILL) in roles_for_platform(platform):
+        return None
+    message = IOS_PLATFORM_NOT_A_TILL_MESSAGE if platform == PLATFORM_IOS else WEB_PLATFORM_NOT_A_TILL_MESSAGE
+    return {"detail": WEB_PLATFORM_NOT_A_TILL, "message": message}
 
 
 def platform_of(machine: Any) -> str:

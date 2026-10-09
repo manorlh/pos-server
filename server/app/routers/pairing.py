@@ -81,7 +81,8 @@ def generate_pairing_code(
     except device_profile.DeviceProfileRefused as refused:
         return JSONResponse(status_code=refused.status_code, content=refused.body)
     # "דפדפן (Web)": the browser kiosk at `/k` (docs/SPEC_KIOSK.md §27), the KDS at `/kds` and the
-    # board at `/board` (docs/SPEC_KDS.md §13) — never a till.
+    # board at `/board` (docs/SPEC_KDS.md §13) — a till (the web till, on "web" / "ios") only
+    # with WEB_TILL_ENABLED on (`display_devices.roles_for_platform`).
     web_refused = display_devices.web_platform_refusal(body.platform, device_role)
     if web_refused is not None:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
