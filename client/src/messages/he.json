@@ -23,6 +23,21 @@
       "thisYear": "השנה"
     }
   },
+  "combobox": {
+    "noResults": "לא נמצאו תוצאות",
+    "clear": "ניקוי הבחירה",
+    "clearSearch": "ניקוי החיפוש",
+    "toggle": "הצגת האפשרויות",
+    "results": "{count, plural, =0 {אין תוצאות} one {תוצאה אחת} other {# תוצאות}}",
+    "deviceModel": {
+      "placeholder": "בחרו או חפשו דגם (T2, A77, סאנמי…)",
+      "noResults": "לא נמצא דגם כזה — נסו שם אחר, יצרן או קוד",
+      "anyModel": "כל הדגמים"
+    },
+    "deviceType": {
+      "noResults": "לא נמצא סוג מכשיר כזה"
+    }
+  },
   "common": {
     "save": "שמור",
     "saving": "שומר...",

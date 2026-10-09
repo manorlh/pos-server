@@ -24,8 +24,10 @@ import {
   type DeviceSearchFilters,
   type DeviceSearchPage,
 } from '@/lib/deviceSearch';
+import { deviceModelOptions } from '@/lib/deviceModelSearch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -99,6 +101,9 @@ export function DeviceSearchDialog({
   superAdmin: boolean;
 }) {
   const t = useTranslations('deviceSearch');
+  const tModel = useTranslations('machines.deviceModel');
+  const tm = useTranslations('combobox.deviceModel');
+  const modelOptions = useMemo(() => deviceModelOptions((model) => tModel(model)), [tModel]);
   const [draft, setDraft] = useState<DeviceSearchFilters>(EMPTY_DEVICE_SEARCH);
   const [applied, setApplied] = useState<DeviceSearchFilters>(EMPTY_DEVICE_SEARCH);
   const [page, setPage] = useState(0);
@@ -193,7 +198,20 @@ export function DeviceSearchDialog({
             onChange={(v) => set('shopId', v)}
             allLabel={t('all')}
           />
-          {text('model', 'ltr')}
+          <div className="space-y-1">
+            <Label htmlFor="ds-model">{t('fields.model')}</Label>
+            {/* The server matches the model id exactly: picked from the catalogue, searched like the add-terminal picker. */}
+            <Combobox
+              id="ds-model"
+              aria-label={t('fields.model')}
+              options={modelOptions}
+              value={draft.model}
+              onValueChange={(next) => set('model', next ?? '')}
+              placeholder={tm('anyModel')}
+              emptyText={tm('noResults')}
+              clearable
+            />
+          </div>
           <FilterSelect
             id="ds-role"
             label={t('fields.role')}
