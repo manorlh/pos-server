@@ -1540,6 +1540,12 @@ from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _HELD_SALES_SPECS)
 
+# "זיכוי באשראי מהענן (Z-Credit)" (app/services/cloud_refund_z_gate.py, SPEC_REMOTE_CREDIT.md §11.8):
+# offered per layer, which shift its credit note lands in, and "חובה לפני ה-Z הבא".
+from app.services.cloud_refund_z_gate import PARAMETER_SPECS as _CLOUD_REFUND_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CLOUD_REFUND_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

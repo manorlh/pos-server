@@ -127,6 +127,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
     # closed (app/services/z_shift_guard.py). Always recorded — the tenant's rules never switch it off.
     RuleSpec("z_forced_open_shifts", True, (), "high", "z"),
+    # A super admin let a Z go ahead before a cloud card refund's credit note was issued ("זיכוי באשראי
+    # מהענן — חובה לפני ה-Z הבא", app/services/cloud_refund_z_gate.py). Always recorded.
+    RuleSpec("z_forced_pending_cloud_refund", True, (), "high", "z"),
     # A remote close let the till close keeping its held sales ("סגור בכל זאת — המכירות המושהות
     # יישמרו", app/services/held_sales_close.py). Always recorded.
     RuleSpec("close_keep_held_sales", True, (), "medium", "z"),

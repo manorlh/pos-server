@@ -42,3 +42,9 @@ class CloudCardRefundResendIn(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class CloudCardRefundReleaseIn(BaseModel):
+    """A super admin lets the next Z of the note's till go without it — with a typed reason."""
+
+    reason: str = Field(..., max_length=300)
