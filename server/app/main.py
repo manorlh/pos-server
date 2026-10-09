@@ -100,6 +100,12 @@ from app.services.display_devices import DeviceNotFiscal, not_fiscal_handler  # 
 
 app.add_exception_handler(DeviceNotFiscal, not_fiscal_handler)
 
+# "נעילת הקופה לנקודת המכירה שלה": `{"detail": "area_locked", "message": <Hebrew>, "kind": …}` for a
+# till acting on another area's document / table / kiosk (app/services/area_lock.py).
+from app.services.area_lock import AreaLocked, area_locked_handler  # noqa: E402
+
+app.add_exception_handler(AreaLocked, area_locked_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
