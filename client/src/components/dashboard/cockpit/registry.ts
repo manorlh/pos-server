@@ -51,6 +51,7 @@ import { useAnomalyAttentionItems } from './insights-slots';
 import { useFailedPaymentItems, useNoItems, useTillAlertItems } from './providers';
 import { FailedPaymentsSheet } from './sheets/failed-payments-sheet';
 import { TillMessageSheet } from './sheets/till-message-sheet';
+import { useZCreditReconItems } from './zcredit-recon-slot';
 import type { AttentionProvider, CockpitAction, CockpitCard } from './types';
 
 export type {
@@ -169,6 +170,11 @@ export const ATTENTION_PROVIDERS: AttentionProvider[] = [
   // ── Built here ──
   { id: 'tillAlerts', gate: OPEN_GATE, useItems: useTillAlertItems },
   { id: 'failedPayments', gate: FAILED_PAYMENTS_GATE, useItems: useFailedPaymentItems },
+  /**
+   * "התאמת אשראי מול Z-Credit": per terminal and day, a charge with no document / a document with no
+   * charge still open, and a night Z-Credit could not be read (`GET /zcredit-reconciliation/attention`).
+   */
+  { id: 'zcreditRecon', gate: { sections: ['reports', 'z', 'cockpit'], level: 'view' }, useItems: useZCreditReconItems },
   /**
    * Insight anomalies (a till barely selling, an abnormal average or cash), then a few slow
    * products — feat/insights-actions (insights-slots.ts). The board's own "מה דורש תשומת לב"

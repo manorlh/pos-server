@@ -197,6 +197,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // documents ↔ Zs ↔ card transmissions, and the transmissions across tills.
       { href: '/dashboard/all-in-one', labelKey: 'allInOne', icon: ListChecks },
       { href: '/dashboard/reconciliation', labelKey: 'reconciliation', icon: GitCompareArrows },
+      // "התאמת אשראי מול Z-Credit": our card legs against the Z-Credit terminal's own report.
+      { href: '/dashboard/zcredit-reconciliation', labelKey: 'zcreditReconciliation', icon: CreditCard },
       { href: '/dashboard/transmissions', labelKey: 'transmissions', icon: RadioTower },
       // Temporary events: a shop's tills grouped for a report only, with the producer's
       // report, reconciliations and the confirmation that freezes it (docs/SPEC_EVENTS.md).

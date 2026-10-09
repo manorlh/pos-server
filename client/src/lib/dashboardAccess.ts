@@ -62,7 +62,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard', '/dashboard/live-items', '/dashboard/compare', '/dashboard/insights',
       '/dashboard/insights/kiosks', '/dashboard/transactions', '/dashboard/day-summary',
-      '/dashboard/all-in-one', '/dashboard/reconciliation', '/dashboard/transmissions',
+      '/dashboard/all-in-one', '/dashboard/reconciliation', '/dashboard/zcredit-reconciliation',
+      '/dashboard/transmissions',
       '/dashboard/events', '/dashboard/offline-transactions', '/dashboard/product-sales',
       '/dashboard/cashier-sales', '/dashboard/area-sales', '/dashboard/tips',
       '/dashboard/sales-by-payment', '/dashboard/card-brands', '/dashboard/promotions-report',

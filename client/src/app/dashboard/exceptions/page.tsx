@@ -98,6 +98,7 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   local_shop_z_mismatch: 'bg-red-300 text-red-950 dark:bg-red-800 dark:text-red-50',
   local_shop_z_till_unsynced: 'bg-amber-200 text-amber-950 dark:bg-amber-900 dark:text-amber-100',
   kiosk_offline: 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100',
+  zcredit_recon: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   // "מגירת מזומן" (the drawer spec §11): the drawer's colour family, the gravest darkest.
   drawer_after_close: 'bg-orange-300 text-orange-950 dark:bg-orange-800 dark:text-orange-50',
   drawer_manual_burst: 'bg-orange-200 text-orange-950 dark:bg-orange-900 dark:text-orange-100',

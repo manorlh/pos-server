@@ -65,6 +65,9 @@ export const EXCEPTION_TYPES = [
   // A self-order kiosk offline longer than the rule's minutes in its opening hours; closed
   // when it comes back (details: kiosk, offlineSince, backAt; value = minutes offline).
   'kiosk_offline',
+  // "התאמת אשראי מול Z-Credit": a charge at Z-Credit with no document of ours, or a document with no
+  // Z-Credit transaction (details: runId, itemId, category, businessDate, terminal, reference, summary).
+  'zcredit_recon',
   // "מגירת מזומן" (pos-server app/services/cash_drawer_exceptions.py, docs/SPEC_ROLES_PERMISSIONS.md):
   // detected from the tills' drawer events and cash movements; thresholds on the roles page.
   'drawer_after_close',
