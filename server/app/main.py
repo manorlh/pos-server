@@ -312,6 +312,18 @@ def start_stock_reset_worker():
 
 
 @app.on_event("startup")
+def start_sales_targets_worker():
+    """
+    "יעד הושג" every minute (app/services/sales_targets_worker.py) — its own job, never tied to stock
+    (`STOCK_LOCATIONS_ENABLED` / `STOCK_RESET_WORKER_ENABLED`); SALES_TARGETS_WORKER_ENABLED=false stops it.
+    """
+    from app.database import SessionLocal
+    from app.services.sales_targets_worker import start_background_worker as start_targets_worker
+
+    start_targets_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_exception_alerts_worker():
     """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
     if not getattr(settings, "exception_alerts_worker_enabled", True):
