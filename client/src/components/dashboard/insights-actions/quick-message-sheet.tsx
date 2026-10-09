@@ -34,6 +34,7 @@ import {
   TargetPicker,
   todayIso,
   useCanAct,
+  useCanFullScreen,
   useProductName,
   useTargets,
 } from './sheet-parts';
@@ -58,6 +59,7 @@ export function QuickMessageSheetBody({
   const ti = useTranslations('insightsActions');
   const qc = useQueryClient();
   const canAct = useCanAct();
+  const canFullScreen = useCanFullScreen();
   const productName = useProductName(context?.productId);
   const targets = useTargets(scope, context);
   const [target, setTarget] = useState<string>('');
@@ -83,7 +85,7 @@ export function QuickMessageSheetBody({
         targetId: chosen!.id,
         duration: body!,
         productId: display === 'banner' ? (context?.productId ?? null) : null,
-        display,
+        display: canFullScreen ? display : 'banner',
         source: source ?? (context?.productId ? 'slow' : context?.machineId ? 'anomaly' : 'manual'),
       }),
     onSuccess: (action) => {
@@ -168,17 +170,19 @@ export function QuickMessageSheetBody({
           className="w-full resize-none bg-transparent text-[15px] leading-snug outline-none placeholder:text-[#C7C7CC]"
         />
       </SheetGroup>
-      <SheetGroup label={t('display')} hint={display === 'banner' ? t('bannerHint') : t('fullscreenHint')}>
-        <Segmented
-          value={display}
-          onChange={setDisplay}
-          label={t('display')}
-          options={[
-            { id: 'banner', label: t('banner') },
-            { id: 'fullscreen', label: t('fullscreen') },
-          ]}
-        />
-      </SheetGroup>
+      {canFullScreen ? (
+        <SheetGroup label={t('display')} hint={display === 'banner' ? t('bannerHint') : t('fullscreenHint')}>
+          <Segmented
+            value={display}
+            onChange={setDisplay}
+            label={t('display')}
+            options={[
+              { id: 'banner', label: t('banner') },
+              { id: 'fullscreen', label: t('fullscreen') },
+            ]}
+          />
+        </SheetGroup>
+      ) : null}
       <SheetGroup label={t('target')}>
         <TargetPicker options={targets} value={chosen ? targetKey(chosen) : ''} onChange={setTarget} />
       </SheetGroup>

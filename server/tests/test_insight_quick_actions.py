@@ -88,11 +88,30 @@ class TestWindow:
         eod = Q.resolve_window(now, JLM, {"kind": "end_of_day"})
         assert eod.ends_at == datetime(2026, 10, 25, 2, 0, tzinfo=UTC)  # 04:00 winter time (+2)
 
-    def test_until_a_date_in_whole_days(self):
+    def test_until_a_date_in_whole_business_days(self):
         w = Q.resolve_window(NOW, JLM, {"kind": "until", "date": "2026-09-30"})
-        assert w.ends_at == local(2026, 10, 1, 4).astimezone(UTC)
-        assert (w.valid_from, w.valid_to, w.start_time, w.end_time) == (date(2026, 9, 27), date(2026, 9, 30), None, None)
+        # Each business day from 04:00 to 03:59 the morning after: the last one ends then.
+        assert w.ends_at == local(2026, 10, 1, 3, 59).astimezone(UTC)
+        assert (w.valid_from, w.valid_to, w.start_time, w.end_time) == (date(2026, 9, 27), date(2026, 9, 30), "04:00", "03:59")
 
+    def test_until_today_at_01_30_is_the_business_day_before(self):
+        # 28.9 01:30 is still Sunday 27.9's business day: from and to are both the 27th —
+        # not 28 > 27 (which the promotions refused with a 500) — and it runs until 03:59.
+        now = local(2026, 9, 28, 1, 30).astimezone(UTC)
+        w = Q.resolve_window(now, JLM, {"kind": "until", "date": "2026-09-27"})
+        assert (w.valid_from, w.valid_to, w.start_time, w.end_time) == (date(2026, 9, 27), date(2026, 9, 27), "04:00", "03:59")
+        assert w.ends_at == local(2026, 9, 28, 3, 59).astimezone(UTC)
+        from app.schemas.promotion import PromotionIn
+
+        PromotionIn.model_validate({"name": "x", "type": "discount", "config": {"target": {"all": True}, "discountKind": "percent", "discountValue": 10},
+                                    "validFrom": w.valid_from.isoformat(), "validTo": w.valid_to.isoformat(),
+                                    "startTime": w.start_time, "endTime": w.end_time})
+        # The schedule the tills run is exactly that window.
+        from app.services import promotion_schedule as PS
+
+        s = PS.Schedule(valid_from=w.valid_from, valid_to=w.valid_to, start_time=w.start_time, end_time=w.end_time)
+        assert PS.current_or_next(s, JLM, now) == (local(2026, 9, 27, 4).astimezone(UTC), w.ends_at)
+        assert PS.final_end(s, JLM) == w.ends_at
     @pytest.mark.parametrize("duration", [
         {"kind": "hours", "hours": 0}, {"kind": "hours", "hours": 13}, {"kind": "hours"}, {"kind": "week"},
         {"kind": "until", "date": "2026-09-26"}, {"kind": "until", "date": "2026-10-28"}, {"kind": "until"},
@@ -384,3 +403,211 @@ class TestSections:
         assert DS.rule_for("PUT", "/insights/anomaly-settings").describe("PUT") == "reports:edit"
         assert DS.rule_for("POST", "/promotions").describe("POST") == "promotions:edit"
         assert "quick_actions" in DS.SECTION_IDS
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The review's findings (each a scenario that went wrong before)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def distributor(w, tills):
+    """A distributor who placed `tills` (and no other)."""
+    d = User(id=uuid.uuid4(), role=UserRole.DISTRIBUTOR, tenant_id=w.tenant.id, email="d@x", username="dist")
+    w.db.add(d)
+    w.db.flush()
+    for t in tills:
+        t.distributor_id = d.id
+    w.db.commit()
+    return d
+
+
+class TestFloorEverywhereItSells:
+    def test_an_active_menu_price_is_part_of_the_floor_check(self, w):
+        from app.models.catalog_menu import CatalogMenu, CatalogMenuProduct
+
+        # Coffee ₪12, cost ₪4 → floor ₪4.72. The "Happy" menu sells it at ₪5.50.
+        menu = CatalogMenu(id=uuid.uuid4(), tenant_id=w.tenant.id, name="הפי", is_active=True)
+        off = CatalogMenu(id=uuid.uuid4(), tenant_id=w.tenant.id, name="כבוי", is_active=False)
+        w.db.add_all([menu, off])
+        w.db.flush()
+        w.db.add(CatalogMenuProduct(id=uuid.uuid4(), menu_id=menu.id, product_id=w.coffee.id, price=Decimal("5.50")))
+        w.db.add(CatalogMenuProduct(id=uuid.uuid4(), menu_id=off.id, product_id=w.coffee.id, price=Decimal("1.00")))
+        w.db.commit()
+        with pytest.raises(HTTPException) as below:  # 20% of ₪5.50 = ₪4.40
+            R.post_quick_promotion(BackgroundTasks(), body=promo_body(w, offer={"kind": "percent", "value": 20}), **ctx(w))
+        assert below.value.detail["code"] == Q.BELOW_COST and below.value.detail["lowestUnitPrice"] == 440
+        s = R.get_promotion_suggestion(product_id=w.coffee.id, category_id=None, all_products=False, target_level="shop", target_id=w.shop.id, **ctx(w))
+        assert s["minPrice"] == 550 and s["suggested"]["value"] == 10.0  # ₪4.95, the inactive menu's ₪1 ignored
+        R.post_quick_promotion(BackgroundTasks(), body=promo_body(w, offer={"kind": "percent", "value": 10}), **ctx(w))
+
+    def test_open_price_and_general_items_are_refused_and_left_out_of_groups(self, w):
+        w.cake.is_open_price = True
+        w.db.add(ProductCost(id=uuid.uuid4(), tenant_id=w.tenant.id, product_id=w.cake.id, cost=Decimal("15.00")))
+        w.db.commit()
+        with pytest.raises(HTTPException) as refused:
+            R.post_quick_promotion(BackgroundTasks(), body=promo_body(w, productId=str(w.cake.id)), **ctx(w))
+        assert refused.value.detail == {"code": Q.UNSUPPORTED_PRODUCT, "reason": "open_price"}
+        s = R.get_promotion_suggestion(product_id=w.cake.id, category_id=None, all_products=False, target_level=None, target_id=None, **ctx(w))
+        assert s["unsupported"] == "open_price" and s["options"] == [] and s["suggested"] is None
+        # In its category it is not checked (20% of ₪20 would be under its ₪17.70): the coffee alone is.
+        group = R.get_promotion_suggestion(product_id=None, category_id=w.category.id, all_products=False, target_level=None, target_id=None, **ctx(w))
+        assert group["costedProducts"] == 1 and group["options"][2]["refused"] is False
+        w.coffee.is_general = True
+        w.db.commit()
+        with pytest.raises(HTTPException) as general:
+            R.post_quick_promotion(BackgroundTasks(), body=promo_body(w), **ctx(w))
+        assert general.value.detail["reason"] == "general"
+
+    def test_a_company_wide_promotion_is_checked_in_every_shop_not_only_the_callers(self, w):
+        d = distributor(w, w.tills)  # the shop's tills are theirs; the north till is not
+        w.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=w.other_shop.id, global_product_id=w.coffee.id, price=Decimal("5.00")))
+        w.db.commit()
+        body = promo_body(w, targetLevel="company", targetId=str(w.company.id), offer={"kind": "percent", "value": 20})
+        with pytest.raises(HTTPException) as below:  # ₪4 in the north shop: under ₪4.72
+            R.post_quick_promotion(BackgroundTasks(), body=body, **ctx(w, d))
+        assert below.value.detail["code"] == Q.BELOW_COST and below.value.detail["lowestUnitPrice"] == 400
+
+
+class TestNothingForFree:
+    def test_the_reviewers_case_fixed_price_far_under_a_cheaper_shop(self, w):
+        # ₪50 here, ₪10 in the north shop, no cost: "₪5" took ₪45 off — −₪35 in the north.
+        w.cake.price = Decimal("50.00")
+        w.db.add(ShopProductOverride(id=uuid.uuid4(), shop_id=w.other_shop.id, global_product_id=w.cake.id, price=Decimal("10.00")))
+        w.db.commit()
+        body = promo_body(w, productId=str(w.cake.id), targetLevel="company", targetId=str(w.company.id),
+                          offer={"kind": "fixed_price", "value": 500})
+        with pytest.raises(HTTPException) as refused:
+            R.post_quick_promotion(BackgroundTasks(), body=body, **ctx(w))
+        assert refused.value.detail["code"] == Q.BELOW_MINIMUM and refused.value.detail["lowestUnitPrice"] == -3500
+        assert w.db.query(Promotion).count() == 0
+
+    def test_never_under_one_shekel_and_only_the_menus_percentages(self, w):
+        p = Q.Pricing(price=1200, min_price=1200, cost=None)
+        assert Q.check_offer("fixed_price", 50, p)["refused"] is True  # ₪0.50
+        assert Q.check_offer("fixed_price", 100, p)["refused"] is False
+        tiny = Q.Pricing(price=110, min_price=110, cost=None)
+        assert Q.check_offer("percent", 20, tiny)["tooLow"] is True  # ₪0.88
+        assert Q.suggest_offer(tiny) is None
+        for pct in (1, 25, 50, 90, 12.5):
+            with pytest.raises(HTTPException):
+                Q.check_offer("percent", pct, p)
+
+    def test_rounding_never_lets_a_unit_one_agora_under_cost(self):
+        # ₪10.15, cost ₪7.74 → floor ₪9.14. 10% off is ₪9.135: half-even rounding said ₪9.14
+        # ("not below"); the till may well charge ₪9.13.
+        p = Q.Pricing(price=1015, min_price=1015, cost=774)
+        assert p.floor == 914
+        offer = Q.check_offer("percent", 10, p)
+        assert offer["lowestUnitPrice"] == 913 and offer["belowCost"] is True
+        assert Q.check_offer("second_half", None, Q.Pricing(price=1001, min_price=1001, cost=None))["lowestUnitPrice"] == 500
+
+
+class TestRecentActionsLeak:
+    def test_the_viewer_sees_only_their_tills_and_their_documents(self, w, monkeypatch):
+        started = NOW - timedelta(hours=2)
+        monkeypatch.setattr(Q, "_now", lambda: started)
+        monkeypatch.setattr(TM, "_now", lambda: started)
+        out = R.post_quick_message(BackgroundTasks(), body=message_body(w, targetLevel="company", targetId=str(w.company.id)), **ctx(w))
+        assert out["tills"] == 3
+        monkeypatch.setattr(Q, "_now", lambda: NOW)
+        sell(w, w.tills[0], started + timedelta(minutes=10), 2)
+        w.db.commit()
+        north = R.list_quick_actions(product_id=None, limit=30, **ctx(w, w.north_manager))["items"]
+        assert [i["id"] for i in north] == [out["id"]]
+        assert north[0]["machineIds"] == [str(w.other_till.id)] and north[0]["tills"] == 1
+        # The center till's sale is not theirs: no data, no units.
+        assert north[0]["result"]["dataArrived"] is False and north[0]["result"]["since"]["units"] == 0.0
+        mine = R.list_quick_actions(product_id=None, limit=30, **ctx(w))["items"][0]
+        assert mine["tills"] == 3 and mine["result"]["dataArrived"] is True and mine["result"]["since"]["units"] == 2.0
+        # A shop manager of the center sees a shop-level action of theirs, never the north's.
+        R.post_quick_message(BackgroundTasks(), body=message_body(w, targetLevel="shop", targetId=str(w.other_shop.id)), **ctx(w))
+        center = R.list_quick_actions(product_id=None, limit=30, **ctx(w, w.manager))["items"]
+        assert all(i["target"]["id"] != str(w.other_shop.id) for i in center)
+
+    def test_applications_are_counted_on_the_viewers_documents_only(self, w):
+        from app.models.promotion import TransactionPromotion
+
+        out = R.post_quick_promotion(BackgroundTasks(), body=promo_body(w, targetLevel="company", targetId=str(w.company.id)), **ctx(w))
+        for till in (w.tills[0], w.other_till):
+            sell(w, till, NOW + timedelta(minutes=1), 1)
+        w.db.flush()
+        for tx in w.db.query(Transaction).all():
+            w.db.add(TransactionPromotion(id=uuid.uuid4(), transaction_id=tx.id, promotion_id=uuid.UUID(out["promotionId"]),
+                                          applications=1, discount_amount=Decimal("1.80")))
+        w.db.commit()
+        later = NOW + timedelta(minutes=30)
+        for module in (Q,):
+            setattr(module, "_now", lambda: later)
+        try:
+            mine = R.list_quick_actions(product_id=None, limit=30, **ctx(w))["items"][0]["result"]
+            north = R.list_quick_actions(product_id=None, limit=30, **ctx(w, w.north_manager))["items"][0]["result"]
+        finally:
+            setattr(Q, "_now", lambda: NOW)
+        assert (mine["applications"], mine["discount"]) == (2, 360)
+        assert (north["applications"], north["discount"]) == (1, 180)
+
+
+class TestHappyHourOverlapsOnTheSameTills:
+    def test_only_promotions_that_reach_the_target_and_the_user_sees(self, w):
+        def hour_window(scopes, name):
+            w.db.add(Promotion(id=uuid.uuid4(), tenant_id=w.tenant.id, name=name, promo_type="discount",
+                               config={"target": {"all": True}, "discountKind": "percent", "discountValue": 5},
+                               scopes=scopes, weekdays=[2], start_time="15:00", end_time="17:00",
+                               valid_from=date(2026, 9, 27), valid_to=date(2026, 10, 31), is_paused=False))
+        hour_window([{"type": "shop", "id": str(w.other_shop.id)}], "צפון")
+        hour_window([{"type": "shop", "id": str(w.shop.id)}], "מרכז")
+        w.db.commit()
+        body = {"weekdays": [2], "startTime": "16:00", "endTime": "18:00", "weeks": 4, "all": True,
+                "offer": {"kind": "percent", "value": 10}, "targetLevel": "shop", "targetId": str(w.shop.id)}
+        out = R.post_happy_hour(BackgroundTasks(), body=body, **ctx(w, w.manager))
+        assert [o["name"] for o in out["params"]["overlaps"]] == ["מרכז"]
+
+
+class TestCancelling:
+    def test_a_deleted_promotions_action_is_cancelled_only_by_who_may_act_on_its_target(self, w):
+        out = R.post_quick_promotion(BackgroundTasks(), body=promo_body(w), **ctx(w))
+        w.db.delete(w.db.get(Promotion, uuid.UUID(out["promotionId"])))
+        w.db.commit()
+        with pytest.raises(HTTPException) as refused:
+            R.cancel_quick_promotion(out["id"], BackgroundTasks(), **ctx(w, w.north_manager))
+        assert refused.value.status_code == 403
+        assert R.cancel_quick_promotion(out["id"], BackgroundTasks(), **ctx(w, w.manager))["status"] == "cancelled"
+
+    def test_an_event_message_another_distributor_owns_is_skipped_not_fatal(self, w):
+        e = event(w, w.tills)
+        out = R.post_quick_message(BackgroundTasks(), body=message_body(w, targetLevel="event", targetId=str(e.id)), **ctx(w))
+        d = distributor(w, [w.tills[0]])  # the other event till stays the admin's
+        done = R.cancel_quick_message(out["id"], BackgroundTasks(), **ctx(w, d))
+        assert done["partial"] is True and done["skipped"] == 1 and done["status"] == "active"
+        live = {m.target_id: m.cancelled_at for m in w.db.query(TillMessage).all()}
+        assert live[w.tills[0].id] is not None and live[w.tills[1].id] is None
+        whole = R.cancel_quick_message(out["id"], BackgroundTasks(), **ctx(w))
+        assert whole["partial"] is False and whole["status"] == "cancelled"
+
+
+class TestFullScreenNeedsTillMessages:
+    def test_quick_actions_alone_send_banners_only(self, w):
+        from app.models.dashboard_access import DashboardAccessProfile
+        from app.services import dashboard_access
+
+        w.db.add(DashboardAccessProfile(user_id=w.manager.id, full_access=False, sections={"quick_actions": "edit", "reports": "view"}))
+        w.db.commit()
+        dashboard_access.forget(w.db)
+        with pytest.raises(HTTPException) as refused:
+            R.post_quick_message(BackgroundTasks(), body=message_body(w, display="fullscreen", productId=None), **ctx(w, w.manager))
+        assert refused.value.status_code == 403
+        assert R.post_quick_message(BackgroundTasks(), body=message_body(w), **ctx(w, w.manager))["kind"] == "message"
+
+
+class TestPickersAndBadInput:
+    def test_the_catalog_lookups_are_open_to_quick_actions(self):
+        for method, path in (("GET", "/products"), ("GET", "/products/{product_id}"), ("GET", "/categories")):
+            assert set(DS.rule_for(method, path).sections) == {"products", "quick_actions", "promotions"}
+            assert DS.rule_for(method, path).describe(method).endswith(":view")
+        assert DS.rule_for("POST", "/products").sections == ("products",)
+
+    def test_a_promotion_the_promotions_refuse_is_a_400_not_a_500(self, w):
+        with pytest.raises(HTTPException) as bad:
+            Q._create_promotion(w.db, w.admin, w.tenant.id, {"name": "x", "type": "discount", "config": {},
+                                                             "validFrom": "2026-09-28", "validTo": "2026-09-27"})
+        assert bad.value.status_code == 400 and bad.value.detail["code"] == Q.BAD_PROMOTION

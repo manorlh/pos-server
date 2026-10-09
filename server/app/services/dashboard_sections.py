@@ -310,6 +310,12 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/attendance/shifts/{}", S("attendance", "z", level=VIEW)),
     (_ALL, "/attendance/*", S("attendance")),
     # ── Catalog ──
+    # The product and category pickers of the promotions page and of the quick actions'
+    # sheets ("מבצע מזדמן", "Happy hour") read the catalog: a reader of those may list it.
+    # (Patterns are anchored: `/products/{}` is not `/products/{}/availability`, below.)
+    (_GET, "/products", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/products/{}", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
     # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
     (_GET, "/availability/reopens", S("products", "item_blocks")),
     (_ALL, "/catalog-import/*", S("products")),

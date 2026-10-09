@@ -25,7 +25,6 @@ import {
 import { fetchPromoProduct } from '@/lib/promotionsApi';
 import { useScope } from '@/lib/scope';
 import { cn } from '@/lib/utils';
-import { useSystemDark } from '@/components/dashboard/control-board/board-ui';
 import { SF_FONT, Segmented } from '@/components/dashboard/insights/ios';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -40,17 +39,23 @@ export function useCanAct(): boolean {
   return !!role && ACTION_ROLES.has(role) && canAccess(access, 'quick_actions', 'edit');
 }
 
+/** A full-screen message (every cashier must acknowledge it) is the till messages' own section. */
+export function useCanFullScreen(): boolean {
+  const role = useAuth((s) => s.user?.role);
+  const access = useDashboardAccess();
+  return !!role && ACTION_ROLES.has(role) && canAccess(access, 'till_messages', 'edit');
+}
+
 /** Inside an `ActionSheetFrame`: a sheet renders its content only, in the frame's one dialog. */
 const InSheetFrame = createContext(false);
 
 /** The iOS sheet's dialog: a bottom sheet on a phone, a centred card on a wide screen. */
 function SheetDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
-  const dark = useSystemDark();
+  // The app's theme (the `.dark` the app puts on <html>), not the phone's own setting.
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent
         className={cn(
-          dark && 'dark',
           'max-h-[92dvh] gap-0 overflow-y-auto bg-[#F2F2F7] p-0 text-black dark:bg-[#1C1C1E] dark:text-white sm:max-w-lg',
         )}
         style={{ fontFamily: SF_FONT }}
