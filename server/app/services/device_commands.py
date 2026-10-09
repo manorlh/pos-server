@@ -220,7 +220,17 @@ def create(
     return out
 
 
+#: A command the device took but never answered lapses: a restart or a sign-out after 10 minutes
+#: (later it would land on another customer or another cashier), anything else after a day.
+ANSWER_WITHIN = {"restart_app": timedelta(minutes=10), "sign_out": timedelta(minutes=10)}
+
+
+def answer_window(action: str) -> timedelta:
+    return ANSWER_WITHIN.get(action, EXPIRES_AFTER)
+
+
 def expire_old(db: Session, *, machine_id: Any = None, now: Optional[datetime] = None) -> None:
+    """Pending past their end, and delivered but unanswered past their action's window: expired."""
     now = now or utc_now()
     q = db.query(DeviceCommand).filter(
         DeviceCommand.status == "pending", DeviceCommand.expires_at.isnot(None), DeviceCommand.expires_at <= now,
@@ -230,6 +240,18 @@ def expire_old(db: Session, *, machine_id: Any = None, now: Optional[datetime] =
     for row in q.all():
         row.status = "expired"
         row.updated_at = now
+    shortest = min([EXPIRES_AFTER, *ANSWER_WITHIN.values()])
+    dq = db.query(DeviceCommand).filter(
+        DeviceCommand.status == "delivered", DeviceCommand.delivered_at.isnot(None),
+        DeviceCommand.delivered_at <= now - shortest,
+    )
+    if machine_id is not None:
+        dq = dq.filter(DeviceCommand.machine_id == machine_id)
+    for row in dq.all():
+        if _aware(row.delivered_at) + answer_window(row.action) <= now:
+            row.status = "expired"
+            row.detail = row.detail or "not_answered"
+            row.updated_at = now
 
 
 def cancel(db: Session, command: DeviceCommand, *, now: Optional[datetime] = None) -> DeviceCommand:

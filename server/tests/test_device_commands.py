@@ -138,6 +138,18 @@ class TestCommands:
         R.cancel_command(uuid.UUID(last["id"]), current_user=d.users.admin, active_tenant_id=d.tid, db=d.db)
         assert svc.pull(d.db, d.h1)["state"]["locked"] is True
 
+    def test_a_restart_taken_but_never_answered_lapses_in_minutes(self, d):
+        restart = _send(d, "restart_app", machineIds=[d.h1.id])[0]
+        sync = _send(d, "install_update", machineIds=[d.h1.id])[0]
+        svc.pull(d.db, d.h1)  # both delivered; the till restarted mid-way and never answered
+        later = datetime.now(timezone.utc) + timedelta(minutes=11)
+        open_ids = [c["id"] for c in svc.pull(d.db, d.h1, now=later)["commands"]]
+        assert restart["id"] not in open_ids and sync["id"] in open_ids
+        row = d.db.get(DeviceCommand, uuid.UUID(restart["id"]))
+        assert (row.status, row.detail) == ("expired", "not_answered")
+        much_later = datetime.now(timezone.utc) + svc.EXPIRES_AFTER + timedelta(minutes=1)
+        assert svc.pull(d.db, d.h1, now=much_later)["commands"] == []
+
     def test_a_command_nobody_picked_up_expires(self, d):
         _send(d, "install_update", machineIds=[d.h1.id])
         later = datetime.now(timezone.utc) + svc.EXPIRES_AFTER + timedelta(minutes=1)
