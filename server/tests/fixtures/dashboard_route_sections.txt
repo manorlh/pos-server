@@ -471,6 +471,7 @@ PUT /shops/{shop_id}/z-mode -> z:edit
 GET /shops/{shop_id}/z-participation -> z:view
 PUT /shops/{shop_id}/z-participation -> z:edit
 GET /stock/alerts -> stock:view
+GET /stock/features -> stock:view
 GET /stock/leftover -> stock:view
 GET /stock/movements -> stock:view
 PUT /stock/opening -> stock:edit
