@@ -266,6 +266,9 @@ def _serialize_merged_product(
         # own clock (app/services/sold_out_rules.py).
         "lockAvailable": bool(is_avail),
         "blocks": [sold_out.block_out(b) for b in active_blocks],
+        # A kiosk's own look for this product while blocked: "hide" / "grey" asked by a block in force
+        # (specs/item-blocks-targets.md), None = its `general.soldOutMode`. Tills ignore it.
+        "kioskDisplay": sold_out.kiosk_display(active_blocks),
         "availabilityLock": lock,
         "stockQuantity": stock_qty,
         "barcode": global_p.barcode,

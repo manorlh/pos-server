@@ -149,6 +149,8 @@ from app.routers import item_blocks as item_blocks_router  # noqa: E402
 from app.routers import device_commands as device_commands_router  # noqa: E402
 
 app.include_router(item_blocks_router.router, prefix=_prefix)
+# A till, a kiosk's staff screen, a controlling till: "חסום / אזל" and "חסומים כעת" (specs/item-blocks-targets.md).
+app.include_router(item_blocks_router.till_router, prefix=_prefix)
 # Stock over the hierarchy: quick stock, transfers, managed levels, alerts, the daily reset.
 from app.routers import stock_live as stock_live_router  # noqa: E402
 
