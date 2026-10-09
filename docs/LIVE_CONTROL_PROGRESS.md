@@ -85,6 +85,21 @@ REMOTE_TILL_Z_ENABLED is off nothing applies and the tills receive it as `false`
   for a dead till (`support_z.py`) was already the super admin's with reason and audit — unchanged.
 - Off: exactly today's behaviour. Tests: `tests/test_z_shift_guard.py`, Android `LocalShopZTest`.
 
+### Independent review (09.10) — fixed before the flag goes on
+
+`tests/test_remote_z_review_fixes.py` (the reviewer's probes, inverted). Before turning the flag on:
+
+- [ ] **Till version floor.** Remote close / Z / day close refuse tills below 0.1.334 (the merge
+      carrying `waitForRest`, c21f40d) or with no version reported: "הקופה צריכה עדכון גרסה לפני
+      סגירה מרחוק". Version codes are commit counts and differ per branch: set
+      `REMOTE_TILL_Z_MIN_TILL_VERSION` to the release build that carries `waitForRest`.
+- A till offline with no shift the cloud knows of is "מצב לא ידוע — ייתכן שיש משמרת פתוחה": with
+  the open-shifts rule on, it holds every Z start of its shop until it reconnects or a super admin
+  starts with a typed reason (recorded as `z_forced_open_shifts`). Expect this on tills switched off
+  overnight.
+- The force passes the open-shifts rule only; "חובה לסגור את כל הקופות" and local mode keep their
+  own rules and paths.
+
 ## Saturday — decided at the Friday integration (09.10)
 
 The coordinator's decisions on the `integration/fri` merge; event-live's and the vouchers' items
