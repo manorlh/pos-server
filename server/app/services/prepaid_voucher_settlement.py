@@ -1088,6 +1088,8 @@ def void_invoice(db: Session, user: User, tenant_id, invoice_id, reason: Optiona
 
 def put_invoice_file(db: Session, user: User, tenant_id, invoice_id, name: str, content_type: str, data: bytes) -> PrepaidSettlementInvoice:
     _require(db, user, "edit")
+    if not ACC.prices_visible(db, user):
+        raise ACC.http(status.HTTP_403_FORBIDDEN, PRICES_REQUIRED)
     inv = _invoice(db, user, tenant_id, invoice_id)
     if inv.voided_at is not None:
         raise ACC.http(status.HTTP_409_CONFLICT, INVOICE_VOIDED)

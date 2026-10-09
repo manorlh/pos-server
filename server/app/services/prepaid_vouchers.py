@@ -1909,7 +1909,7 @@ def missing_features(db: Session, batch: PrepaidVoucherBatch, features: Optional
     have = {str(f).strip().lower() for f in (features or ())}
     from app.services.prepaid_voucher_controls import required_features as controls_features  # §18 hook (helper)
 
-    return [f for f in required_features(db, batch) + controls_features(db, batch) if f not in have]
+    return [f for f in required_features(db, batch) + controls_features(db, batch, have) if f not in have]
 
 
 def till_view(
@@ -1929,6 +1929,9 @@ def till_view(
         # A client that cannot apply a discount (the web / Windows kiosks today) never
         # treats one as goods: it is not redeemable there, and the customer is told why.
         reason, message = KIND_UNSUPPORTED, KIND_UNSUPPORTED_MESSAGE
+    from app.services.prepaid_voucher_controls import till_view_hook as controls_view  # §18 hook (helper)
+
+    reason, message, controls_extra = controls_view(db, machine, voucher, features, reason, message)
     if reason is None and check_features and missing_features(db, batch, features):
         # Terms this client would book wrongly (a deduction as a tender, a fixed value at
         # list prices): not here — the till must be updated first.
@@ -2022,6 +2025,7 @@ def till_view(
         "usesToday": uses["today"] if uses else None,
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1) if is_discount(batch) else None,
         "maxUsesPerDay": batch.max_uses_per_day if is_discount(batch) else None,
+        **controls_extra,  # §18 (helper): isTest
     }
 
 
@@ -2548,6 +2552,7 @@ def _reservation_out(
         # As this sale sees it: its own hold is not "in use elsewhere".
         "voucher": till_view(db, machine, voucher, exclude_reservation=r.id),
     }
+    out["isTest"] = bool(out["voucher"].get("isTest"))  # §18 (helper): a staff test voucher
     if result is not None:
         out["shares"] = dict(result.shares)
         out["dropPromotion"] = list(result.drop_promotion)
@@ -2606,6 +2611,8 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     reason = refusal_reason(db, machine, voucher, now)
     if reason is not None:
         raise _http(status.HTTP_409_CONFLICT, reason)
+    if missing_features(db, batch, getattr(body, "features", None)):  # §18 (helper): a test voucher's "training"
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
 
     exclude = prior.id if prior is not None else None
     refusal = RULES.stacking_refusal(
@@ -2767,6 +2774,9 @@ def confirm(
             redemption.discount_amount = amount_agorot
             if document_lines is not None and _promotion_breaches(batch.promotion_policy or "exclude", document_lines):
                 _flag(db, batch, voucher, redemption, ["promotion"])
+            from app.services.prepaid_voucher_controls import replay_flags  # §18 hook (helper): a real document
+
+            _flag(db, batch, voucher, redemption, replay_flags(db, voucher, any_till))
         db.flush()
         return _confirm_out(r, redemption, replayed=True)
 
@@ -2790,7 +2800,7 @@ def confirm(
         flags.append("promotion")
     from app.services.prepaid_voucher_controls import redemption_flags as controls_flags  # §18 hook (helper)
 
-    flags += controls_flags(db, r.machine_id, voucher, now)
+    flags += controls_flags(db, r.machine_id, voucher, now, from_document=any_till)
 
     redemption = PrepaidVoucherRedemption(
         id=uuid.uuid4(),

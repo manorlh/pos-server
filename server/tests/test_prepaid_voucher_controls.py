@@ -53,10 +53,12 @@ from test_prepaid_voucher_types import make_type
 from test_prepaid_vouchers import _ctx, redeem, refused, vouchers, w  # noqa: F401 — `w` is the fixture
 
 ROOT = pathlib.Path(__file__).absolute().parents[1]
-#: A till that books every mode — and says it is in training (harmless for a real voucher; a test voucher
-#: needs it, review 09.10).
-FEATURES = ["accounting", "override", "training"]
-GOODS_FEATURES = ["accounting", "groups", "reserve_goods", "override", "training"]
+#: A till that books every mode; one in training says so too (a test voucher needs it, a real one is
+#: refused there — review 09.10).
+FEATURES = ["accounting", "override"]
+TRAINING = FEATURES + ["training"]
+GOODS_FEATURES = ["accounting", "groups", "reserve_goods", "override"]
+GOODS_TRAINING = GOODS_FEATURES + ["training"]
 
 
 def batch(w, *, count=3, name="ארוחות", customer="קייטרינג אלון", event="פסטיבל הקיץ", **extra):
@@ -72,8 +74,8 @@ def codes(w, b):
     return [v["code"] for v in vouchers(w, b)]
 
 
-def take(w, code, till=None):
-    return redeem(w, code, [(w.hotdog, 1)], till=till, features=FEATURES)
+def take(w, code, till=None, features=FEATURES):
+    return redeem(w, code, [(w.hotdog, 1)], till=till, features=features)
 
 
 def _unit(product, price, ref):
@@ -107,9 +109,9 @@ def training(w, on=True, shop=None):
     w.db.commit()
 
 
-def look(w, code, till=None):
+def look(w, code, till=None, features=FEATURES):
     till = till or w.tills[0]
-    return R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=code, features=FEATURES), machine=till, db=w.db)
+    return R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=code, features=features), machine=till, db=w.db)
 
 
 def pause(w, kind, value, reason="תקלה בקופות", until=None):
@@ -294,7 +296,7 @@ class TestScope:
         real = batch(w, count=2)
         quota(w, "production", "קייטרינג אלון", 1)
         t = staff_batch(w)
-        assert take(w, codes(w, t)[0])["ok"]
+        assert take(w, codes(w, t)[0], features=TRAINING)["ok"]
         assert take(w, codes(w, real)[0], till=w.other_till)["ok"]  # a real voucher, at a real till
         assert refused(take, w, codes(w, real)[1], w.other_till).detail == CTL.QUOTA_REACHED
 
@@ -323,13 +325,14 @@ class TestTestVouchers:
         b = staff_batch(w)
         assert b["name"] == "שובר בדיקה · ניסיון"
         assert b["typeName"].startswith("שובר בדיקה")
-        out = look(w, codes(w, b)[0])
+        out = look(w, codes(w, b)[0], features=TRAINING)
         assert (out["reason"], out["message"]) == (CTL.TEST_ONLY, "שובר בדיקה — ניתן לממש רק בקופת בדיקה")
         assert out["typeName"].startswith("שובר בדיקה")  # what the receipt prints
-        assert refused(take, w, codes(w, b)[0]).detail == CTL.TEST_ONLY
+        assert out["isTest"] is True  # what the till reads (the name's prefix only a fallback)
+        assert refused(take, w, codes(w, b)[0], None, TRAINING).detail == CTL.TEST_ONLY
         w.db.query(Shop).filter(Shop.id == w.shop.id).update({"training_mode": True})
         w.db.commit()
-        assert take(w, codes(w, b)[0])["ok"]
+        assert take(w, codes(w, b)[0], features=TRAINING)["ok"]
 
     def test_the_signed_in_user_needs_the_permission(self, w):
         from app.models.pos_user import PosUser, PosUserRole
@@ -345,15 +348,15 @@ class TestTestVouchers:
         w.db.add(PosUserSession(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, pos_user_id=pu.id,
                                 machine_id=w.tills[0].id))
         w.db.commit()
-        out = look(w, codes(w, b)[0])
+        out = look(w, codes(w, b)[0], features=TRAINING)
         assert (out["reason"], out["message"]) == (CTL.TEST_NOT_PERMITTED,
                                                    "שובר בדיקה — לעובד המחובר אין הרשאת \"מימוש שובר בדיקה\"")
         # A cashier without an override needs a manager's approval at the till — the cloud lets it through.
         pu.permission_overrides = None
         w.db.commit()
-        assert take(w, codes(w, b)[0])["ok"]
+        assert take(w, codes(w, b)[0], features=TRAINING)["ok"]
         # Another till, nobody signed in there: the till's own check stands alone.
-        assert take(w, codes(w, b)[1], till=w.tills[1])["ok"]
+        assert take(w, codes(w, b)[1], till=w.tills[1], features=TRAINING)["ok"]
         assert TP.legacy_effective("cashier").state(CTL.TEST_PERMISSION) == TP.APPROVAL
 
     def test_out_of_every_settlement(self, w):
@@ -361,7 +364,7 @@ class TestTestVouchers:
         b = staff_batch(w)
         w.db.query(Shop).filter(Shop.id == w.shop.id).update({"training_mode": True})
         w.db.commit()
-        take(w, codes(w, b)[0])
+        take(w, codes(w, b)[0], features=TRAINING)
         take(w, codes(w, real)[0], till=w.other_till)
         a = X.create_settlement_agreement(SettlementAgreementIn(
             name="א", companyId=w.company.id, productionName="קייטרינג אלון"), **_ctx(w))
@@ -387,13 +390,35 @@ class TestTestVouchers:
 class TestTrainingAndReal:
     """Review 09.10: a test voucher never reaches real revenue; a real voucher is never spent in practice."""
 
-    def test_a_real_voucher_at_a_training_till_is_refused(self, w):
+    def test_a_real_voucher_at_a_till_that_says_training_is_refused(self, w):
         b = batch(w)
         training(w)
-        out = look(w, codes(w, b)[0])
-        assert (out["reason"], out["message"]) == (CTL.TRAINING_REAL, "הקופה במצב הדרכה — ניתן לממש בה רק שוברי בדיקה")
-        assert refused(take, w, codes(w, b)[0]).detail == CTL.TRAINING_REAL
-        assert take(w, codes(w, b)[0], till=w.other_till)["ok"]
+        out = look(w, codes(w, b)[0], features=TRAINING)
+        assert (out["reason"], out["message"], out["isTest"]) == (
+            CTL.TRAINING_REAL, "הקופה במצב הדרכה — ניתן לממש בה רק שוברי בדיקה", False)
+        assert refused(take, w, codes(w, b)[0], None, TRAINING).detail == CTL.TRAINING_REAL
+        assert refused(hold, w, codes(w, b)[0], features=GOODS_TRAINING).status_code == 409
+        # A till of the shop that has not picked up training mode still sells for real (the core's rule).
+        assert take(w, codes(w, b)[0])["ok"]
+
+    def test_a_discount_test_voucher_needs_training_on_reserve(self, w):
+        from app.schemas.prepaid_voucher import PrepaidVoucherReserveIn
+
+        t = X.create_prepaid_voucher_test_batch(StaffTestBatchIn(
+            name="הנחה", companyId=w.company.id, count=1, kind="order_discount", discountType="fixed", discountValue=10,
+        ), **_ctx(w))
+        training(w)
+        till = w.tills[0]
+
+        def reserve(features):
+            return R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
+                code=codes(w, t)[0], clientRequestId=str(uuid.uuid4()), saleRef="s1", features=features,
+                lines=[{"id": "l1", "productIds": [str(w.hotdog.id)], "quantity": 1, "grossAgorot": 2500}],
+                supportedKinds=["items", "order_discount", "item_discount"]), machine=till, db=w.db)
+
+        assert refused(reserve, ["accounting"]).detail == "prepaid_voucher_update_required"
+        out = reserve(["accounting", "training"])
+        assert out["isTest"] is True and out["voucher"]["isTest"] is True
 
     def test_a_test_voucher_needs_the_till_to_say_training(self, w):
         t = staff_batch(w)
@@ -402,7 +427,7 @@ class TestTrainingAndReal:
         out = R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=codes(w, t)[0], features=["accounting"]),
                                        machine=till, db=w.db)
         assert out["reason"] == "prepaid_voucher_update_required"
-        assert look(w, codes(w, t)[0])["redeemable"] is True
+        assert look(w, codes(w, t)[0], features=TRAINING)["redeemable"] is True
 
     def test_a_test_batch_is_never_offline(self, w):
         from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn, PrepaidOfflineSyncIn
@@ -462,10 +487,95 @@ class TestTrainingAndReal:
     def test_a_test_voucher_confirmed_on_the_real_path_is_flagged(self, w):
         t = staff_batch(w)
         training(w)
-        held = hold(w, codes(w, t)[0])
+        held = hold(w, codes(w, t)[0], features=GOODS_TRAINING)
+        assert held["isTest"] is True
         training(w, False)  # the shop left training before the sale was written
         out = confirm_hold(w, held)
         assert CTL.FLAG_TEST_REAL in out["flags"]
+
+    def test_a_test_voucher_in_a_real_document_is_flagged(self, w):
+        """The till confirmed at a training till (no flag); its document reached the real tables after."""
+        from app.models.prepaid_voucher import PrepaidVoucherRedemption as RR
+        from app.services import prepaid_vouchers as PV
+
+        t = staff_batch(w)
+        training(w)
+        held = hold(w, codes(w, t)[0], features=GOODS_TRAINING)
+        out = confirm_hold(w, held)
+        assert CTL.FLAG_TEST_REAL not in out["flags"]
+        PV.confirm(w.db, w.tills[0], held["reservationId"], out["transactionId"], 2500, any_till=True, document_amount=2500)
+        w.db.commit()
+        row = w.db.query(RR).filter(RR.id == uuid.UUID(out["redemptionId"])).one()
+        assert CTL.FLAG_TEST_REAL in (row.flags or [])
+
+
+class TestOffline:
+    """The device's copy says what the controls say (isTest, paused, quota); its sales are judged by their own time."""
+
+    def _assign(self, w, b):
+        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn
+
+        a = R.assign_prepaid_batch_offline(b["id"], PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)),
+                                           **_ctx(w))
+        w.db.commit()
+        return a
+
+    def _sync(self, w, a, v, at, rid):
+        from app.schemas.prepaid_voucher import PrepaidOfflineSyncIn
+
+        unit = {"productId": str(w.hotdog.id), "productName": "נקניקייה", "quantity": 1, "valueAgorot": 2500,
+                "listValueAgorot": 2500, "coveredAgorot": 2500}
+        out = R.sync_prepaid_offline(str(w.tills[0].id), PrepaidOfflineSyncIn(pending=0, redemptions=[{
+            "id": rid, "assignmentId": a["id"], "voucherId": v["id"], "redeemedAt": at.isoformat(), "saleRef": rid,
+            "transactionId": f"tx-{rid}", "units": [unit], "coveredAgorot": 2500, "redemptionAccounting": "payment"}]),
+            machine=w.tills[0], db=w.db)
+        w.db.commit()
+        return out["results"][0]
+
+    def test_the_snapshot_says_paused_and_the_quota_left(self, w):
+        b = batch(w, count=3, offlineAllowed=True)
+        self._assign(w, b)
+        quota(w, "batch", b["id"], 5)
+        take_offline = R.download_prepaid_offline(str(w.tills[0].id), machine=w.tills[0], db=w.db)
+        snap = take_offline["assignments"][0]["snapshot"]
+        assert (snap["isTest"], snap["paused"]) == (False, None)
+        assert (snap["quota"]["maxRedemptions"], snap["quota"]["remaining"], snap["quota"]["period"]) == (5, 5, "overall")
+        pause(w, "batch", b["id"], until=datetime.now(timezone.utc) + timedelta(hours=2))
+        snap = R.download_prepaid_offline(str(w.tills[0].id), machine=w.tills[0], db=w.db)["assignments"][0]["snapshot"]
+        assert snap["paused"]["reason"] == "תקלה בקופות" and snap["paused"]["until"] is not None
+        assert snap["paused"]["text"].startswith("מימוש השוברים מושהה עד ")
+
+    def test_a_paused_batch_is_not_assigned(self, w):
+        from app.schemas.prepaid_voucher import PrepaidOfflineAssignIn
+
+        b = batch(w, count=1, offlineAllowed=True)
+        pause(w, "batch", b["id"])
+        e = refused(R.assign_prepaid_batch_offline, b["id"],
+                    PrepaidOfflineAssignIn(target="machine", machineId=str(w.tills[0].id)), **_ctx(w))
+        assert (e.status_code, e.detail) == (409, CTL.PAUSED)
+
+    def test_a_sale_is_judged_by_the_pause_of_its_own_time(self, w):
+        b = batch(w, count=3, offlineAllowed=True)
+        a = self._assign(w, b)
+        before = datetime.now(timezone.utc) - timedelta(minutes=30)
+        p = pause(w, "batch", b["id"])
+        vs = vouchers(w, b)
+        # Redeemed before the pause, synced during it: not flagged.
+        assert CTL.FLAG_PAUSED not in (self._sync(w, a, vs[0], before, "d1").get("flags") or [])
+        # Redeemed during it, synced after it was resumed: flagged.
+        during = datetime.now(timezone.utc)
+        X.resume_prepaid_voucher_pause(p["id"], None, **_ctx(w))
+        assert CTL.FLAG_PAUSED in (self._sync(w, a, vs[1], during, "d2").get("flags") or [])
+
+    def test_unmarking_never_while_assigned(self, w):
+        t = staff_batch(w)
+        row = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(t["id"])).one()
+        row.offline_allowed = True  # switched on again behind its back
+        w.db.commit()
+        training(w)
+        self._assign(w, t)
+        e = refused(X.unmark_prepaid_voucher_test_batch, t["id"], **_ctx(w))
+        assert (e.status_code, e.detail) == (409, CTL.TEST_OFFLINE)
 
 
 class TestFlagsOnConfirm:
@@ -481,6 +591,17 @@ class TestFlagsOnConfirm:
         take(w, codes(w, b)[0])
         quota(w, "batch", b["id"], 1)
         assert CTL.FLAG_OVER_QUOTA in confirm_hold(w, held)["flags"]
+
+    def test_a_hold_abandoned_long_ago_frees_its_place(self, w):
+        from app.models.prepaid_voucher import PrepaidVoucherReservation
+
+        b = batch(w, count=2)
+        held = hold(w, codes(w, b)[0])
+        w.db.query(PrepaidVoucherReservation).filter(PrepaidVoucherReservation.id == uuid.UUID(held["reservationId"])).update(
+            {"expires_at": datetime.now(timezone.utc) - CTL.HOLD_GRACE - timedelta(minutes=5)})
+        w.db.commit()
+        quota(w, "batch", b["id"], 1)
+        assert take(w, codes(w, b)[1])["ok"]
 
     def test_an_expired_hold_never_ended_still_counts(self, w):
         from app.models.prepaid_voucher import PrepaidVoucherReservation

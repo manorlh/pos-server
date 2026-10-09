@@ -32,7 +32,7 @@ import hashlib
 import logging
 import uuid
 import weakref
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from fastapi import status
@@ -118,6 +118,8 @@ _WARNED: List[bool] = []
 #: this many of it, under its lock — more tills than this racing for one quota's last places at the
 #: same instant is not a festival.
 LOCK_NEAR = 20
+#: How long after its expiry a hold that never ended still takes a quota's place.
+HOLD_GRACE = timedelta(hours=24)
 
 
 def _pv():
@@ -281,6 +283,19 @@ def _pause_live(p: PrepaidRedemptionPause, now: datetime) -> bool:
     return until is None or now < until
 
 
+def pause_at(db: Session, batch: PrepaidVoucherBatch, moment: datetime) -> Optional[PrepaidRedemptionPause]:
+    """The pause that applied to [batch] at [moment] (created by then, not yet resumed nor past its end)."""
+    moment = _utc(moment)
+    keys = batch_keys(batch)
+    for p in db.query(PrepaidRedemptionPause).filter(PrepaidRedemptionPause.tenant_id == batch.tenant_id).order_by(
+            PrepaidRedemptionPause.created_at):
+        start = _utc(p.created_at)
+        stop = min([t for t in (_utc(p.resumed_at), _utc(p.until)) if t is not None], default=None)
+        if start is not None and start <= moment and (stop is None or moment < stop) and _applies(p, batch, keys):
+            return p
+    return None
+
+
 def active_pause(db: Session, batch: PrepaidVoucherBatch, now: Optional[datetime] = None) -> Optional[PrepaidRedemptionPause]:
     now = now or _now()
     keys = batch_keys(batch)
@@ -331,8 +346,13 @@ def quota_used(
         rq = rq.filter(R.redeemed_at < end)
     used = rq.count()
     H = PrepaidVoucherReservation
-    # Every hold not confirmed nor released, expired or not: its document may still come (review 09.10).
-    hq = db.query(H.id).filter(H.batch_id.in_(ids), H.status == "held")
+    # A hold neither confirmed nor released counts while live and for HOLD_GRACE after its expiry (its
+    # document may still come — review 09.10); later it is an abandoned sale and frees its place.
+    hq = db.query(H.id).filter(H.batch_id.in_(ids), H.status == "held", H.expires_at > now - HOLD_GRACE)
+    if start is not None:
+        hq = hq.filter(H.created_at >= start)
+    if end is not None:
+        hq = hq.filter(H.created_at < end)
     if exclude_voucher_id is not None:
         hq = hq.filter(H.voucher_id != exclude_voucher_id)
     return used + hq.count()
@@ -393,14 +413,14 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
     now = now or _now()
     batch = voucher.batch
     test = is_test(db, batch.id)
-    training = _training_till(db, machine)
     if test:
-        if not training:
+        if not _training_till(db, machine):
             return TEST_ONLY
         if _staff_denied(db, machine):
             return TEST_NOT_PERMITTED
-    elif training:
-        return TRAINING_REAL
+    # A real voucher at a till that *says* it is in training is refused where the client's features are
+    # known (`till_view_hook`, `required_features`) — never by the shop's flag alone: a till that has not
+    # picked up training mode still sells for real (the core's training rule).
     if active_pause(db, batch, now) is not None:
         return PAUSED
     if not test and reached_quota(db, batch, voucher, now) is not None:
@@ -408,17 +428,85 @@ def refusal_reason(db: Session, machine: POSMachine, voucher: PrepaidVoucher, no
     return None
 
 
-def required_features(db: Session, batch: PrepaidVoucherBatch) -> List[str]:
+def _declares_training(features) -> bool:
+    return TRAINING_FEATURE in {str(f).strip().lower() for f in (features or ())}
+
+
+def required_features(db: Session, batch: PrepaidVoucherBatch, features=None) -> List[str]:
     """
-    Hook (`prepaid_vouchers.missing_features`): a test voucher needs the till to say it is in training
-    mode (`features: ["training"]`) — the till declares it, the cloud checks the shop as well.
+    Hook (`prepaid_vouchers.missing_features` — lookup, redeem, both reserves): a test voucher needs the
+    till to say it is in training (`features: ["training"]`); a real voucher at a till that says so is
+    refused — 409 `prepaid_voucher_training_real` (its sale is a training document: quarantined, the
+    voucher spent for nothing). Lookup never gets here for that (`till_view_hook` answers it first).
     """
     if batch is None or not tables_ready(db):
         return []
-    return [TRAINING_FEATURE] if is_test(db, batch.id) else []
+    if is_test(db, batch.id):
+        return [TRAINING_FEATURE]
+    if _declares_training(features):
+        raise ACC.http(status.HTTP_409_CONFLICT, TRAINING_REAL)
+    return []
 
 
-def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optional[datetime] = None) -> List[str]:
+def till_view_hook(db: Session, machine, voucher: PrepaidVoucher, features, reason: Optional[str],
+                   message: Optional[str]):
+    """
+    Hook (`prepaid_vouchers.till_view` — lookup and the reserve answers' `voucher`): `isTest` on the
+    voucher, and at lookup a real voucher at a till that says it is in training is not redeemable
+    (`prepaid_voucher_training_real`, with its Hebrew).
+    """
+    if voucher is None or not tables_ready(db):
+        return reason, message, {"isTest": False}
+    test = is_test(db, voucher.batch_id)
+    if reason is None and not test and _declares_training(features):
+        reason, message = TRAINING_REAL, TEXT[TRAINING_REAL]
+    return reason, message, {"isTest": test}
+
+
+def replay_flags(db: Session, voucher: PrepaidVoucher, from_document: bool) -> List[str]:
+    """
+    Hook (a confirm answered again — the till confirmed first, its document comes after): a document that
+    reaches the cloud's real tables is a real sale (training documents are diverted before), so a test
+    voucher in it is flagged `test_real`.
+    """
+    if voucher is None or not from_document or not tables_ready(db):
+        return []
+    return [FLAG_TEST_REAL] if is_test(db, voucher.batch_id) else []
+
+
+def offline_snapshot_fields(db: Session, batch: PrepaidVoucherBatch) -> Dict[str, Any]:
+    """
+    Hook (`prepaid_voucher_offline._snapshot`): what a device holding [batch] must know of the controls —
+    `isTest` (never true in practice: a test batch is never assigned), `paused` ({reason, until, text} or
+    null) and `quota` ({maxRedemptions, period, periodFrom, periodTo, used, remaining, text} of the
+    quota with the fewest places left, or null). The device refuses while paused and stops at the remaining
+    count; what it syncs anyway is flagged (`paused`, `over_quota`).
+    """
+    if batch is None or not tables_ready(db):
+        return {"isTest": False, "paused": None, "quota": None}
+    PV = _pv()
+    now = _now()
+    p = active_pause(db, batch, now)
+    paused = {"reason": p.reason, "until": PV._iso(p.until), "text": pause_text(db, p, now)} if p is not None else None
+    keys = batch_keys(batch)
+    best = None
+    for q in db.query(PrepaidRedemptionQuota).filter(PrepaidRedemptionQuota.tenant_id == batch.tenant_id,
+                                                     PrepaidRedemptionQuota.active.is_(True)):
+        if not _applies(q, batch, keys):
+            continue
+        used = quota_used(db, q, now)
+        if used is None:
+            continue
+        left = max(0, int(q.max_redemptions) - used)
+        if best is None or left < best["remaining"]:
+            best = {"quotaId": str(q.id), "maxRedemptions": int(q.max_redemptions), "period": q.period,
+                    "periodFrom": PV._iso(q.period_from), "periodTo": PV._iso(q.period_to), "used": used,
+                    "remaining": left, "text": quota_text(db, q)}
+    return {"isTest": is_test(db, batch.id), "paused": paused, "quota": best}
+
+
+def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optional[datetime] = None, *,
+                     from_document: bool = False, at: Optional[datetime] = None) -> List[str]:
     """
     Hook (the confirms of reserve → confirm, the offline sync): what a redemption that is recorded
     anyway (the sale is a fiscal fact) did against the controls —
@@ -426,7 +514,8 @@ def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optiona
       and a test batch is out of every settlement whatever happens;
     * `paused` — a pause applies to it now (a hold taken before the pause, a device offline);
     * `over_quota` — its quota was already used up without it.
-    [machine]: the till that redeemed (a machine or its id).
+    [machine]: the till that redeemed (a machine or its id); [from_document]: the confirm came with the
+    sale's document (always the real path); [at]: when the device redeemed (offline: the pause then).
     """
     if voucher is None or not tables_ready(db):
         return []
@@ -436,9 +525,11 @@ def redemption_flags(db: Session, machine, voucher: PrepaidVoucher, now: Optiona
         machine = db.query(POSMachine).filter(POSMachine.id == ACC.as_uuid(machine)).first()
     flags: List[str] = []
     test = is_test(db, batch.id)
-    if test and (machine is None or not _training_till(db, machine)):
+    # A document that reaches the real tables is a real sale (training documents are diverted before).
+    if test and (from_document or machine is None or not _training_till(db, machine)):
         flags.append(FLAG_TEST_REAL)
-    if active_pause(db, batch, now) is not None:
+    paused = pause_at(db, batch, _utc(at)) if at is not None else active_pause(db, batch, now)
+    if paused is not None:
         flags.append(FLAG_PAUSED)
     if not test and reached_quota(db, batch, voucher, now, lock=False) is not None:
         flags.append(FLAG_OVER_QUOTA)
@@ -829,6 +920,11 @@ def _has_history(db: Session, batch: PrepaidVoucherBatch) -> bool:
 
     if db.query(PrepaidVoucherRedemption.id).filter(PrepaidVoucherRedemption.batch_id == batch.id).first():
         return True
+    # Ever assigned to a device offline: it may still sync sales made with it.
+    from app.models.prepaid_voucher import PrepaidVoucherOfflineAssignment
+
+    if db.query(PrepaidVoucherOfflineAssignment.id).filter(PrepaidVoucherOfflineAssignment.batch_id == batch.id).first():
+        return True
     # A sale holding one of its vouchers (live, or expired and never ended): it may still be confirmed.
     if db.query(PrepaidVoucherReservation.id).filter(PrepaidVoucherReservation.batch_id == batch.id,
                                                      PrepaidVoucherReservation.status == "held").first():
@@ -840,9 +936,9 @@ def _has_history(db: Session, batch: PrepaidVoucherBatch) -> bool:
 
 
 def _lock_batch_and_vouchers(db: Session, batch: PrepaidVoucherBatch) -> None:
-    """The batch's row, then its vouchers' (the order a redemption takes them: a redemption that starts
-    now waits; one under way finishes first and is seen as history)."""
-    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().first()
+    """The batch's row (FOR NO KEY UPDATE — a confirm's audit row takes KEY SHARE on it, never blocked), then
+    its vouchers' (a redemption under way holds its voucher and finishes first: it is seen as history)."""
+    db.query(PrepaidVoucherBatch.id).filter(PrepaidVoucherBatch.id == batch.id).with_for_update(key_share=True).first()
     db.query(PrepaidVoucher.id).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.id).with_for_update().all()
 
 
@@ -858,12 +954,12 @@ def mark_test(db: Session, user: User, tenant_id, batch_id, note: Optional[str] 
     _lock_batch_and_vouchers(db, batch)
     if is_test(db, batch.id):
         raise ACC.http(status.HTTP_409_CONFLICT, ALREADY_TEST)
-    if _has_history(db, batch):
-        raise ACC.http(status.HTTP_409_CONFLICT, TEST_HAS_HISTORY)
     from app.services import prepaid_voucher_offline as PVO
 
     if PVO.active_of(db, batch.id) is not None:
         raise ACC.http(status.HTTP_409_CONFLICT, TEST_OFFLINE)
+    if _has_history(db, batch):
+        raise ACC.http(status.HTTP_409_CONFLICT, TEST_HAS_HISTORY)
     before = {"name": batch.name, "typeName": batch.type_name, "offlineAllowed": bool(batch.offline_allowed)}
     # Never offline: a device's sales are real documents whatever the voucher (review 09.10).
     batch.offline_allowed = False
@@ -891,6 +987,10 @@ def unmark_test(db: Session, user: User, tenant_id, batch_id, note: Optional[str
     row = db.get(PrepaidVoucherTestBatch, batch.id)
     if row is None:
         raise ACC.http(status.HTTP_409_CONFLICT, NOT_A_TEST_BATCH)
+    from app.services import prepaid_voucher_offline as PVO
+
+    if PVO.active_of(db, batch.id) is not None:
+        raise ACC.http(status.HTTP_409_CONFLICT, TEST_OFFLINE)
     if _has_history(db, batch):
         raise ACC.http(status.HTTP_409_CONFLICT, TEST_HAS_HISTORY)
     before = {"name": batch.name, "typeName": batch.type_name}

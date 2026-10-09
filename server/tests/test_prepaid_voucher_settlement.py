@@ -585,6 +585,8 @@ class TestWho:
         cm = restricted(w, {"prepaid_vouchers": "edit", "prepaid_voucher_settlement": "edit"})
         e = refused(X.get_settlement_invoice_file, a["invoices"][0]["id"], **_ctx(w, cm))
         assert (e.status_code, e.detail) == (403, ST.PRICES_REQUIRED)
+        e = refused(ST.put_invoice_file, w.db, cm, w.tenant.id, a["invoices"][0]["id"], "y.pdf", "application/pdf", b"%PDF")
+        assert (e.status_code, e.detail) == (403, ST.PRICES_REQUIRED)
 
     def test_amounts_only_with_the_prices(self, w, festival):
         a = agreement(w)
