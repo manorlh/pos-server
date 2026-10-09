@@ -27,6 +27,8 @@ import { KioskService } from './service';
 import type { PageRenderer } from './printer/printQueue';
 import { UpdateManager } from './update/updater';
 import { RoleManager } from './roles/manager';
+import { liteHintOf, PREVIEW_CAPS, TillRole } from './roles/till';
+import { APP_SCHEME, attachTillRole, type TillElectron } from './roles/tillElectron';
 import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
 import { startBridgeMode, type BridgeModeHandle } from './bridge/electron';
@@ -61,6 +63,8 @@ let bridgeMode: BridgeModeHandle | null = null;
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'kiosk', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
+  // The till role's screens (roles/tillElectron.ts): the one app bundle, verified, at r2m://app/.
+  APP_SCHEME,
 ]);
 
 // Smooth: GPU raster, no throttling, autoplaying videos.
@@ -118,6 +122,9 @@ function fileResponse(file: string, request: Request, cache: string): Response {
 let service: KioskService | null = null;
 let updater: UpdateManager | null = null;
 let roles: RoleManager | null = null;
+/** The till role (roles/till.ts): a preview over the mock engine until the bundled engine (P2). */
+let tillRole: TillRole | null = null;
+let tillView: TillElectron | null = null;
 let main: BrowserWindow | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
@@ -149,6 +156,8 @@ function installConfig(): {
    * cloud's setting "חזרה אוטומטית לקיוסק" (`desktopIdleReturnMinutes`) has not reached the device.
    */
   desktopIdleReturnMinutes?: number;
+  /** The till role's preview (S0-6): a device the cloud makes a till shows the new screens over the mock engine. */
+  tillPreview?: boolean;
 } {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
@@ -399,6 +408,7 @@ void app.whenReady().then(async () => {
     return;
   }
   windowed = windowedArg || install.windowed === true;
+  const tillPreview = install.tillPreview === true || process.argv.includes('--till-preview');
   // "חזרה אוטומטית לקיוסק": the cloud's setting, read on every look; kiosk.json only when the cloud sent none.
   const idleMinutes = () => service?.desktopIdleReturnMinutes(install.desktopIdleReturnMinutes) ?? IDLE_RETURN_MINUTES;
   desktop = new DesktopMode(
@@ -455,7 +465,8 @@ void app.whenReady().then(async () => {
     currentVersion: appVersion(),
     dir: path.join(app.getPath('userData'), 'updates'),
     // Out on the desktop: an automatic install waits for the way back (core/updatePolicy.ts).
-    activity: () => ({ ...(roles?.activity() ?? svc.activity()), desktop: desktop?.active === true }),
+    // The till's preview: busy / at rest as its screens say (never an install mid-sale).
+    activity: () => ({ ...(roles?.activity() ?? svc.activity()), ...(tillRole && roles?.role() === 'till' && tillPreview ? tillRole.activity() : {}), desktop: desktop?.active === true }),
     localWindow: parseWindow(install.updateWindow),
     checkEveryMs: Math.max(5, Number(install.updateCheckMinutes) || 15) * 60_000,
     runInstaller: (file, args) => {
@@ -473,6 +484,29 @@ void app.whenReady().then(async () => {
   roles.on('view', (v) => sendShell('shell:view', v));
   roles.on('board', (v) => sendShell('shell:board', v));
   roles.on('kds', (v) => sendShell('shell:kds', v));
+
+  // The till role (S0-6): the same app and installer — the cloud's role decides. A preview until
+  // the bundled engine (P2): only with kiosk.json `tillPreview: true` or `--till-preview`.
+  tillRole = new TillRole({
+    userData: app.getPath('userData'),
+    builtInBundleDir: app.isPackaged ? path.join(process.resourcesPath, 'app-bundle') : path.join(__dirname, '..', 'app-bundle'),
+    appVersion: appVersion(),
+    device: () => {
+      const d = screen.getPrimaryDisplay();
+      return {
+        model: 'Windows',
+        os: `${os.type()} ${os.release()}`,
+        screen: { width: d.size.width, height: d.size.height, dpr: d.scaleFactor },
+        installationId: null,
+        shellVersion: appVersion(),
+        lite: liteHintOf({ release: os.release(), totalMemBytes: os.totalmem() }),
+      };
+    },
+    caps: () => PREVIEW_CAPS,
+    log: (m) => console.log(`[shell] ${m}`),
+  });
+  tillView = attachTillRole({ role: tillRole, main: () => main, preload: path.join(__dirname, '..', 'preload', 'app.js'), isDev, enabled: () => tillPreview, log: (m) => console.log(`[shell] ${m}`) });
+  roles.on('view', (v) => tillView?.onRole(v.role));
 
   registerKioskProtocol();
 
@@ -511,6 +545,7 @@ app.on('window-all-closed', () => {
   desktop?.stop();
   hideReturnTray();
   updater?.stop();
+  tillView?.stop();
   roles?.stop();
   service?.stop();
   app.quit();
