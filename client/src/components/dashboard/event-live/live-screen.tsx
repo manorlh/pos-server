@@ -607,7 +607,7 @@ export function LiveScreen({ eventId, backHref, onClose }: { eventId: string; ba
           <ArrowRight className="size-5" aria-hidden />
         </BackControl>
         <div className="min-w-0 flex-1 basis-[calc(100%-4rem)] sm:basis-0">
-          <h1 className="truncate text-2xl font-black md:text-4xl 2xl:text-6xl">{live.event.name}</h1>
+          <h1 className="line-clamp-2 text-2xl font-black md:truncate md:text-4xl 2xl:text-6xl">{live.event.name}</h1>
           <p className="truncate text-base md:text-lg 2xl:text-2xl" style={{ color: C.muted }}>
             {[live.event.shopName, `${live.event.startTime}–${live.event.endTime}`, live.event.producerName].filter(Boolean).join(' · ')}
           </p>
