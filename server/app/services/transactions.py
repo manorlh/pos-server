@@ -755,7 +755,7 @@ def _serialize_tx_for_upsert(
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
         # Production vouchers' ₪0 memo document (§4.3): out of the counts, as on the till — only
         # when that is safe (no total, no money leg, no tip; review 09.10), else a sale as any.
-        "voucher_memo": bool(getattr(tx, "voucher_memo", False)) and voucher_memo_problem(tx) is None,
+        "voucher_memo": getattr(tx, "voucher_memo", False) is True and voucher_memo_problem(tx) is None,
         # A staff / managers' table meal: its kind, whose meal, why (app/services/table_policies.py).
         "meal_kind": getattr(tx, "meal_kind", None),
         "meal_employee_id": getattr(tx, "meal_employee_id", None),
@@ -799,15 +799,19 @@ def voucher_memo_problem(tx) -> Optional[str]:
     cannot be honoured — it would leave money out of the Z: a total, a money leg or a tip. None: safe.
     """
     from decimal import Decimal as _D
+    from decimal import InvalidOperation
 
-    if not getattr(tx, "voucher_memo", False):
+    if getattr(tx, "voucher_memo", False) is not True:
         return None
-    if _D(str(getattr(tx, "total_amount", 0) or 0)) != 0:
-        return "the document has a total"
-    if any(_D(str(getattr(p, "amount", 0) or 0)) != 0 for p in (getattr(tx, "payments", None) or [])):
-        return "the document has a money leg"
-    if _D(str(getattr(tx, "tip_amount", 0) or 0)) != 0:
-        return "the document has a tip"
+    try:
+        if _D(str(getattr(tx, "total_amount", 0) or 0)) != 0:
+            return "the document has a total"
+        if any(_D(str(getattr(p, "amount", 0) or 0)) != 0 for p in (getattr(tx, "payments", None) or [])):
+            return "the document has a money leg"
+        if _D(str(getattr(tx, "tip_amount", 0) or 0)) != 0:
+            return "the document has a tip"
+    except (InvalidOperation, TypeError, ValueError):
+        return "the document's amounts are unreadable"
     return None
 
 
