@@ -99,7 +99,7 @@ import { BoardKpis } from '@/components/dashboard/control-board/board-kpis';
 import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
 import { BoardTenders } from '@/components/dashboard/control-board/board-tenders';
 import type { BoardAlert } from '@/components/dashboard/control-board/board-alerts';
-import { AttentionFeed, CockpitProvider, DevicesStrip, QuickActionsBar } from '@/components/dashboard/cockpit/cockpit';
+import { AttentionFeed, CockpitCards, CockpitProvider, DevicesStrip, QuickActionsBar } from '@/components/dashboard/cockpit/cockpit';
 import { CockpitScopeHeader } from '@/components/dashboard/cockpit/scope-header';
 import type { CockpitScope } from '@/components/dashboard/cockpit/registry';
 import { BoardItems } from '@/components/dashboard/control-board/board-items';
@@ -806,6 +806,9 @@ export default function DashboardPage() {
                 <BoardTenders a={figA} b={figB} labelA={labelA} labelB={labelB} loading={salesLoading} />
               </div>
             ) : null}
+
+            {/* ── 7. The cockpit's own cards (registry `COCKPIT_CARDS`): "תחזית ואיוש"… ── */}
+            <CockpitCards />
 
             {/* Company › shop › point of sale › till */}
             <section id="cb-tills" aria-label={t('tills.title')} className="scroll-mt-4 space-y-3">

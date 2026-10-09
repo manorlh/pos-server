@@ -1131,7 +1131,9 @@
         "review": "לבדיקה",
         "messageTill": "הודעה לקופה",
         "quickMessage": "הודעה מהירה",
-        "quickPromo": "מבצע מהיר"
+        "quickPromo": "מבצע מהיר",
+        "ackAlert": "טופל",
+        "openAlert": "פתיחה"
       },
       "feed": {
         "title": "דורש תשומת לב",

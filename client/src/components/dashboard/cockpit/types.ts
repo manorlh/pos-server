@@ -74,6 +74,11 @@ export interface AttentionAction {
   /** The action it opens (a `CockpitAction.id`, or `tillDetails` — the till's own sheet). */
   actionId: string;
   context?: CockpitActionContext;
+  /**
+   * Done in place by its provider instead of opening an action (the phone alerts' "טופל" and
+   * "פתיחה"); shown whenever the provider offers it — the provider gates it on what the server allows.
+   */
+  run?: () => void;
 }
 
 export interface AttentionItem {

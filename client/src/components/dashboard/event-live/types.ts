@@ -1,19 +1,20 @@
 /**
- * The Manager Cockpit's contract for the pieces this folder exports (feat/event-live). Defined
- * here; the cockpit unifies it with its own at merge.
+ * The Manager Cockpit's contract for the pieces this folder exports (feat/event-live), unified
+ * with the cockpit's own (components/dashboard/cockpit/types.ts) at the integration merge:
+ *
+ * * `CockpitScope` — the cockpit's scope keys; a page may pass null for "none" (its params);
+ * * `CockpitProps` — the cockpit's `CockpitActionProps` (`{ scope, context?, onDone }`, the same
+ *   context type), with `onDone` optional since the pages mount these pieces too. A cockpit
+ *   sheet's props are assignable to it (checked in cockpit/event-live-slots.tsx).
  */
 
-export interface CockpitScope {
-  companyId?: string | null;
-  shopId?: string | null;
-  areaId?: string | null;
-  machineId?: string | null;
-  eventId?: string | null;
-}
+import type { CockpitActionContext, CockpitScope as CockpitScopeBase } from '@/components/dashboard/cockpit/types';
+
+export type CockpitScope = { [K in keyof CockpitScopeBase]?: CockpitScopeBase[K] | null };
 
 export interface CockpitProps {
   scope: CockpitScope;
-  context?: Record<string, unknown>;
+  context?: CockpitActionContext;
   /** Called when the piece finished what it was opened for (closed, saved…). */
   onDone?: () => void;
 }

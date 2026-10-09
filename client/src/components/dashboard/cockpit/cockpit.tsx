@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BoardCard, CardTitle, boardSurface } from '@/components/dashboard/control-board/board-ui';
-import { ATTENTION_PROVIDERS, QUICK_ACTIONS, TILL_DETAILS_ACTION, actionById } from './registry';
+import { ATTENTION_PROVIDERS, COCKPIT_CARDS, QUICK_ACTIONS, TILL_DETAILS_ACTION, actionById } from './registry';
 import type { AttentionItem, AttentionProvider, CockpitAction, CockpitActionContext, CockpitScope } from './types';
 
 // ── The host ─────────────────────────────────────────────────────────────────
@@ -154,7 +154,10 @@ function ProviderProbe({
   onItems: (id: string, items: AttentionItem[], loading: boolean) => void;
 }) {
   const { items, loading } = provider.useItems(scope);
-  const key = items.map((i) => `${i.id}|${i.severity}|${i.title}|${i.body ?? ''}`).join('¦');
+  // Its buttons too: a provider may offer one only once it knows the user may use it.
+  const key = items
+    .map((i) => `${i.id}|${i.severity}|${i.title}|${i.body ?? ''}|${i.actions.map((a) => `${a.actionId}:${a.labelKey}`).join(',')}`)
+    .join('¦');
   useEffect(() => {
     onItems(provider.id, items, loading);
     // `key` stands for the items' content: a provider may build a new array every render.
@@ -212,7 +215,9 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
           <ul className="divide-y divide-cb-line">
             {shown.map((item) => {
               const style = SEVERITY_STYLE[item.severity];
-              const buttons = item.actions.filter((a) => a.actionId === TILL_DETAILS_ACTION || actionsAllowed.has(a.actionId));
+              const buttons = item.actions.filter(
+                (a) => a.run !== undefined || a.actionId === TILL_DETAILS_ACTION || actionsAllowed.has(a.actionId),
+              );
               return (
                 <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
                   <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-full', style.tone)} aria-hidden>
@@ -228,7 +233,7 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
                         <button
                           key={`${b.actionId}:${b.labelKey}`}
                           type="button"
-                          onClick={() => open(b.actionId, b.context)}
+                          onClick={() => (b.run ? b.run() : open(b.actionId, b.context))}
                           className="inline-flex min-h-10 items-center rounded-full border border-cb-line bg-cb-card px-3 text-sm font-medium text-cb-blue-ink hover:bg-cb-soft"
                         >
                           {t(`itemActions.${b.labelKey}`)}
@@ -252,6 +257,22 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
         </>
       )}
     </BoardCard>
+  );
+}
+
+// ── The cockpit's own cards ──────────────────────────────────────────────────
+
+/** The registered cards (registry `COCKPIT_CARDS`) the user may see, each once, for the scope. */
+export function CockpitCards({ className }: { className?: string }) {
+  const { scope } = useCockpit();
+  const access = useDashboardAccess();
+  const role = useAuth((s) => s.user?.role);
+  const cards = allowedEntries(COCKPIT_CARDS, access, role).filter((c) => c.Card !== null);
+  if (cards.length === 0) return null;
+  return (
+    <div className={cn('space-y-4 md:space-y-5', className)}>
+      {cards.map(({ id, Card }) => (Card ? <Card key={id} scope={scope} /> : null))}
+    </div>
   );
 }
 
