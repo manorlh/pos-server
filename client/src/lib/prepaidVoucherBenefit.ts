@@ -10,7 +10,10 @@
 
 export type PrepaidVoucherKind = 'items' | 'order_discount' | 'item_discount';
 export type PrepaidDiscountType = 'fixed' | 'percent';
-/** Other vouchers in the same sale: none (the default), only of other batches, any. */
+/**
+ * Other vouchers in the same sale: "שובר אחד בעסקה" (`single`), "כמה שוברים בעסקה"
+ * (`unlimited`, a new type's default), "כמה שוברים, רק מסוגים שונים" (`distinct_batches`).
+ */
 export type PrepaidStacking = 'single' | 'distinct_batches' | 'unlimited';
 /** A discount voucher on a promoted line: never (default), the better of the two, both. */
 export type PrepaidPromotionPolicy = 'exclude' | 'best' | 'combine';
@@ -18,6 +21,22 @@ export type PrepaidPromotionPolicy = 'exclude' | 'best' | 'combine';
 export const PREPAID_KINDS: PrepaidVoucherKind[] = ['items', 'order_discount', 'item_discount'];
 export const PREPAID_STACKING: PrepaidStacking[] = ['single', 'distinct_batches', 'unlimited'];
 export const PREPAID_PROMOTION_POLICIES: PrepaidPromotionPolicy[] = ['exclude', 'best', 'combine'];
+
+/** "מספר שוברים מקסימלי בעסקה": the most the server takes. */
+export const MAX_VOUCHERS_PER_SALE = 50;
+
+/**
+ * "מספר שוברים מקסימלי בעסקה" as typed: null — no maximum (left empty, or "שובר אחד בעסקה",
+ * which is its own); undefined — not a whole number from 1 to [MAX_VOUCHERS_PER_SALE].
+ */
+export function maxVouchersPerSale(stacking: PrepaidStacking, typed: string): number | null | undefined {
+  if (stacking === 'single') return null;
+  const s = typed.trim();
+  if (!s) return null;
+  if (!/^\d+$/.test(s)) return undefined;
+  const n = parseInt(s, 10);
+  return n >= 1 && n <= MAX_VOUCHERS_PER_SALE ? n : undefined;
+}
 
 export function isDiscountKind(kind: PrepaidVoucherKind | null | undefined): boolean {
   return kind === 'order_discount' || kind === 'item_discount';

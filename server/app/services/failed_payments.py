@@ -89,9 +89,13 @@ UNRESOLVED_EXPLANATION = (
     "תוצאת התשלום באשראי לא ידועה — ייתכן שהלקוח חויב. בדקו במסוף או הכריעו כאן; "
     "המסמכים בקופה ממתינים עד ההכרעה."
 )
-METHOD_LABELS = {"card": "אשראי", "cash": "מזומן", "voucher": "שובר", "mixed": "מעורב"}
+METHOD_LABELS = {
+    "card": "אשראי", "cash": "מזומן", "voucher": "שובר הפקה", "production_voucher": "שובר הפקה", "mixed": "מעורב",
+}
 #: "שולם בהמשך במזומן / באשראי / בשובר / (מעורב)".
-PAID_LATER_WORDS = {"cash": "במזומן", "card": "באשראי", "voucher": "בשובר", "mixed": "(מעורב)"}
+PAID_LATER_WORDS = {
+    "cash": "במזומן", "card": "באשראי", "voucher": "בשובר", "production_voucher": "בשובר", "mixed": "(מעורב)",
+}
 
 SECTION_TITLE = "עסקאות שלא הושלמו"
 CANCELLED_TITLE = "מכירות שבוטלו"

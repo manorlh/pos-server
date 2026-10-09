@@ -153,7 +153,10 @@ def load_docs(db: Session, event: ReportEvent, machine_ids: Sequence[uuid.UUID])
     for chunk in chunks([t.id for t in txs]):
         for leg in db.query(TransactionPayment).filter(TransactionPayment.transaction_id.in_(list(chunk))).all():
             legs[leg.transaction_id].append(leg)
-    return [make_doc(t, legs.get(t.id, [])) for t in txs]
+    from app.services.shift_totals import production_deductions_of
+
+    deductions = production_deductions_of(db, [t.id for t in txs])
+    return [make_doc(t, legs.get(t.id, []), deductions.get(t.id, Decimal("0"))) for t in txs]
 
 
 def _bucket_start(moment: datetime, minutes: int) -> datetime:

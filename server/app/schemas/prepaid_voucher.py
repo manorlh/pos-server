@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -18,6 +18,7 @@ from app.services.prepaid_voucher_rules import (
 
 NAME_MAX = 200
 TEXT_MAX = 1000
+TYPE_CODE_MAX = 32
 #: A batch is printed and handed out by hand; thousands is already a lot of paper.
 MAX_VOUCHERS_PER_BATCH = 5000
 MAX_ITEMS_PER_VOUCHER = 30
@@ -29,7 +30,13 @@ REF_MAX = 100
 #: Discount vouchers: the most a fixed one, a minimum or a cap may be (₪), and uses.
 MONEY_MAX = Decimal("100000")
 MAX_USES = 1000
+#: "מספר שוברים מקסימלי בעסקה" — the most a sale may hold.
+MAX_VOUCHERS_PER_SALE = 50
 MAX_TARGETS = 200
+#: Groups per voucher type ("מנה", "שתייה", "קינוח" …).
+MAX_GROUPS = 20
+SELECTIONS = ("items", "groups")
+CATALOG_MODES = ("frozen", "live")
 
 
 def _choice(value, allowed, field_name):
@@ -59,6 +66,42 @@ def _shekels(value, field_name):
 def agorot(amount: Optional[Decimal]) -> Optional[int]:
     """₪ → whole agorot (the till's and the rules' unit)."""
     return None if amount is None else int((amount * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+class PrepaidGroupIn(BaseModel):
+    """One group of a voucher type (the production vouchers contract §1). Money in ₪."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    key: Optional[str] = Field(None, max_length=40)
+    name: str = Field(..., min_length=1, max_length=80)
+    min_qty: int = Field(0, alias="minQty", ge=0, le=MAX_ITEM_QUANTITY)
+    max_qty: int = Field(1, alias="maxQty", ge=1, le=MAX_ITEM_QUANTITY)
+    #: ₪ per unit of the group (a fixed voucher's split); null: by the list prices.
+    value: Optional[Decimal] = None
+    allow_repeat: bool = Field(True, alias="allowRepeat")
+    all_items: bool = Field(False, alias="allItems")
+    product_ids: List[uuid.UUID] = Field(default_factory=list, alias="productIds", max_length=500)
+    category_ids: List[uuid.UUID] = Field(default_factory=list, alias="categoryIds", max_length=200)
+    include_subcategories: bool = Field(True, alias="includeSubcategories")
+    exclude_product_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeProductIds", max_length=500)
+    exclude_category_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeCategoryIds", max_length=200)
+    sort_order: int = Field(0, alias="sortOrder")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.min_qty > self.max_qty:
+            raise ValueError(f"group {self.name}: minQty above maxQty")
+        if not (self.all_items or self.product_ids or self.category_ids):
+            raise ValueError(f"group {self.name}: choose products, categories or every item")
+        if self.value is not None and self.value < 0:
+            raise ValueError(f"group {self.name}: a negative value")
+        return self
 
 
 class PrepaidVoucherTargetsIn(BaseModel):
@@ -131,11 +174,380 @@ class PrepaidVoucherItemIn(BaseModel):
         return _quantity(value, most=MAX_ITEM_QUANTITY)
 
 
+def _check_terms(m) -> None:
+    """
+    What a voucher gives, checked and tidied — the same for a batch made without a type and
+    for a type: goods need items (each product once), a discount needs its terms.
+    """
+    if getattr(m, "stacking", None) == "single":
+        m.max_vouchers_per_sale = None  # "שובר אחד בעסקה" is its own maximum
+    selection = getattr(m, "selection", None) or "items"
+    if selection not in SELECTIONS:
+        raise ValueError("selection must be items or groups")
+    if (getattr(m, "catalog_mode", None) or "frozen") not in CATALOG_MODES:
+        raise ValueError("catalogMode must be frozen or live")
+    if m.kind not in DISCOUNT_KINDS and selection == "groups":
+        # A package or "one of several": the groups say what it gives (§1), no fixed list.
+        groups = list(getattr(m, "groups", None) or [])
+        if not groups:
+            raise ValueError("at least one group")
+        def _g(g, name, alias):
+            return g.get(alias) if isinstance(g, dict) else getattr(g, name)
+        least = sum(int(_g(g, "min_qty", "minQty") or 0) for g in groups)
+        most = sum(int(_g(g, "max_qty", "maxQty") or 0) for g in groups)
+        total = getattr(m, "total_qty", None)
+        if total is not None and not (least <= total <= most):
+            raise ValueError(f"totalQty must be between {least} and {most}")
+        m.items = []
+        m.discount_type = m.discount_value = m.min_purchase = m.max_discount = None
+        m.targets = None
+        m.max_units = None
+        return
+    if hasattr(m, "groups"):
+        m.groups = None
+        m.total_qty = None
+        if hasattr(m, "selection"):
+            m.selection = "items"
+    if m.kind not in DISCOUNT_KINDS:
+        if not m.items:
+            raise ValueError("at least one item")
+        if len(m.items) > MAX_ITEMS_PER_VOUCHER:
+            raise ValueError(f"at most {MAX_ITEMS_PER_VOUCHER} items")
+        if len({i.product_id for i in m.items}) != len(m.items):
+            raise ValueError("each product at most once")
+        # A goods voucher has no discount terms: whatever came is dropped.
+        m.discount_type = m.discount_value = m.min_purchase = m.max_discount = None
+        m.targets = None
+        m.max_units = None
+        return
+    # A discount voucher: no goods, no "in parts" (its uses say how often), no extras.
+    if m.items:
+        raise ValueError("a discount voucher has no items")
+    m.split_allowed = False
+    m.include_extras = False
+    if m.discount_type is None or m.discount_value is None or m.discount_value <= 0:
+        raise ValueError("discountType and a discountValue above 0 are required")
+    if m.discount_type == "percent" and m.discount_value > 100:
+        raise ValueError("a percent is at most 100")
+    if m.discount_type == "fixed" or m.kind == "item_discount":
+        m.max_discount = None  # a cap is for a percent off the whole sale
+    if m.max_discount is not None and m.max_discount <= 0:
+        m.max_discount = None
+    if m.kind == "order_discount":
+        m.targets = None
+        m.max_units = None
+    else:
+        m.min_purchase = None
+        if m.targets is None or not (m.targets.product_ids or m.targets.category_ids):
+            raise ValueError("an item discount names at least one product or category")
+        m.max_units = m.max_units or 1
+    if m.min_purchase is not None and m.min_purchase <= 0:
+        m.min_purchase = None
+    if m.max_uses_per_sale > m.uses_per_voucher:
+        m.max_uses_per_sale = m.uses_per_voucher
+
+
+def _check_prices(m, *, one_off: bool) -> None:
+    """
+    The two prices and how a redemption is priced and recorded (the spec's §5):
+
+    * a discount voucher has none of them — it is a discount on the document;
+    * `fixed` needs a till value (the redeemed goods come to it exactly, no top-up);
+    * `cover` with a value pays the goods up to it (the rest a top-up when allowed); `cover`
+      without one pays the goods whatever they cost — what every till did before types: the
+      covered lines paid by the "שובר הפקה" tender (`payment`);
+    * `redemption_accounting` — how the till books it: `discount` (a document deduction, the
+      default), `payment` (the `production_voucher` tender), `zero` (₪0 lines, the value shown);
+    * a batch made without a type ([one_off]) that says nothing: `discount`, `cover`, and `fixed`
+      when it names a value.
+    """
+    if m.kind in DISCOUNT_KINDS:
+        m.till_value = None
+        m.pricing, m.allow_top_up, m.print_till_value = "cover", False, False
+        m.redemption_accounting = "discount"  # a discount voucher is a discount on the document
+        return
+    if m.till_value is not None and m.till_value <= 0:
+        raise ValueError("tillValue must be above 0")
+    if one_off:
+        if m.redemption_accounting is None:
+            m.redemption_accounting = "discount"
+        if m.pricing is None:
+            m.pricing = "fixed" if m.till_value is not None else "cover"
+        if m.allow_top_up is None:
+            m.allow_top_up = True
+        if m.print_till_value is None:
+            m.print_till_value = False
+    if m.pricing == "fixed" and m.till_value is None:
+        raise ValueError("tillValue is required for a fixed value")
+    if m.pricing == "fixed":
+        m.allow_top_up = False  # a fixed value has no top-up (the spec's §5)
+    if (m.redemption_accounting == "zero" and m.pricing == "cover" and m.till_value is not None
+            and m.allow_top_up):
+        # ₪0 lines cannot carry a part the customer pays: a cover value with a top-up needs a mode
+        # that books money (review 09.10).
+        raise ValueError("zero accounting cannot take a top-up over a cover value")
+    if m.till_value is None:
+        m.print_till_value = False
+
+
+PRICINGS = ("fixed", "cover")
+#: "קיזוז מהחשבונית (כמו הנחה)" / "אמצעי תשלום (חייב במע״מ)" / "₪0 עם הצגת שווי".
+REDEMPTION_ACCOUNTING = ("discount", "payment", "zero")
+#: Products that take no discounts ("לא מקבל הנחות", the spec's §7): honour the block, force
+#: the type's price automatically (within caps), or force it with a manager's approval.
+DISCOUNT_BLOCK_POLICIES = ("honour", "auto", "manager")
+
+
+class PrepaidOverridePolicyIn(BaseModel):
+    """The discount-block policy: its mode, optional caps (₪ / % per unit, ₪ per voucher) and scope."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mode: str = "honour"
+    max_amount: Optional[Decimal] = Field(None, alias="maxAmount")
+    max_percent: Optional[Decimal] = Field(None, alias="maxPercent")
+    max_total: Optional[Decimal] = Field(None, alias="maxTotal")
+    #: The products / categories it may force on (a category takes its sub-categories); null: all.
+    scope: Optional[PrepaidVoucherTargetsIn] = None
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _mode(cls, value):
+        return _choice(value, DISCOUNT_BLOCK_POLICIES, "discountBlockPolicy.mode") or "honour"
+
+    @field_validator("max_amount", "max_percent", "max_total", mode="before")
+    @classmethod
+    def _caps(cls, value, info):
+        return _shekels(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.max_percent is not None and self.max_percent > 100:
+            raise ValueError("maxPercent is at most 100")
+        if self.mode == "honour":
+            self.max_amount = self.max_percent = self.max_total = None
+            self.scope = None
+        return self
+
+
+
+class PrepaidVoucherTypeCreate(BaseModel):
+    """"סוג שובר" — the template batches are issued from (the spec's §2–3)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: uuid.UUID = Field(..., alias="companyId")
+    name: str
+    code: Optional[str] = None
+    description: Optional[str] = None
+    active: bool = True
+    kind: str = "items"
+    items: List[PrepaidVoucherItemIn] = Field(default_factory=list)
+    #: ₪ — the whole voucher's value at the till, and its price to the production.
+    till_value: Optional[Decimal] = Field(None, alias="tillValue")
+    production_price: Optional[Decimal] = Field(None, alias="productionPrice")
+    #: "fixed" (default) or "cover".
+    pricing: str = "fixed"
+    allow_top_up: bool = Field(True, alias="allowTopUp")
+    #: How the till books a redemption: "discount" (default) / "payment" / "zero".
+    redemption_accounting: str = Field("discount", alias="redemptionAccounting")
+    #: "הצג תוקף על השובר".
+    show_validity: bool = Field(True, alias="showValidity")
+    discount_block_policy: Optional[PrepaidOverridePolicyIn] = Field(None, alias="discountBlockPolicy")
+    #: "מימוש ללא אינטרנט": the batches may be assigned to a till / the shop's LAN host.
+    offline_allowed: bool = Field(False, alias="offlineAllowed")
+    split_allowed: bool = Field(False, alias="splitAllowed")
+    include_extras: bool = Field(False, alias="includeExtras")
+    print_till_value: bool = Field(False, alias="printTillValue")
+    discount_type: Optional[str] = Field(None, alias="discountType")
+    discount_value: Optional[Decimal] = Field(None, alias="discountValue")
+    min_purchase: Optional[Decimal] = Field(None, alias="minPurchase")
+    max_discount: Optional[Decimal] = Field(None, alias="maxDiscount")
+    targets: Optional[PrepaidVoucherTargetsIn] = None
+    max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
+    #: "כמה שוברים בעסקה" by default (the owner); "שובר אחד בעסקה" = single.
+    stacking: str = "unlimited"
+    #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    #: "items" (a fixed list) or "groups" (the production vouchers contract §1): a package, one of several.
+    selection: str = "items"
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    #: Units per voucher across the groups; null: Σ the groups' max.
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    #: "frozen" (the catalog as it is at issue, the default) or "live" (the categories at redemption).
+    catalog_mode: str = Field("frozen", alias="catalogMode")
+    promotion_policy: str = Field("exclude", alias="promotionPolicy")
+    uses_per_voucher: int = Field(1, alias="usesPerVoucher", ge=1, le=MAX_USES)
+    max_uses_per_sale: int = Field(1, alias="maxUsesPerSale", ge=1, le=MAX_USES)
+    max_uses_per_day: Optional[int] = Field(None, alias="maxUsesPerDay", ge=1, le=MAX_USES)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, NAME_MAX, required=True)
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _code(cls, value):
+        value = _clean_text(value, TYPE_CODE_MAX)
+        return value.upper() if value else None
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _description(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _kind(cls, value):
+        return _choice(value, KINDS, "kind") or "items"
+
+    @field_validator("pricing", mode="before")
+    @classmethod
+    def _pricing(cls, value):
+        return _choice(value, PRICINGS, "pricing") or "fixed"
+
+    @field_validator("redemption_accounting", mode="before")
+    @classmethod
+    def _accounting(cls, value):
+        return _choice(value, REDEMPTION_ACCOUNTING, "redemptionAccounting") or "discount"
+
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _discount_type(cls, value):
+        return _choice(value, DISCOUNT_TYPES, "discountType")
+
+    @field_validator("stacking", mode="before")
+    @classmethod
+    def _stacking(cls, value):
+        return _choice(value, STACKING, "stacking") or "unlimited"
+
+    @field_validator("promotion_policy", mode="before")
+    @classmethod
+    def _policy(cls, value):
+        return _choice(value, PROMOTION_POLICIES, "promotionPolicy") or "exclude"
+
+    @field_validator("discount_value", "min_purchase", "max_discount", "till_value", "production_price", mode="before")
+    @classmethod
+    def _money(cls, value, info):
+        return _shekels(value, info.field_name)
+
+    @model_validator(mode="after")
+    def _check(self):
+        _check_terms(self)
+        _check_prices(self, one_off=False)
+        return self
+
+
+class PrepaidVoucherTypeUpdate(BaseModel):
+    """
+    A type's change. Its name, code, description and whether it is active change in place; a
+    change of what it gives or its prices makes a new version — batches already issued keep
+    theirs. Absent fields stay; the goods are replaced as a whole when `items` is sent.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    code: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
+    items: Optional[List[PrepaidVoucherItemIn]] = None
+    till_value: Optional[Decimal] = Field(None, alias="tillValue")
+    production_price: Optional[Decimal] = Field(None, alias="productionPrice")
+    pricing: Optional[str] = None
+    allow_top_up: Optional[bool] = Field(None, alias="allowTopUp")
+    redemption_accounting: Optional[str] = Field(None, alias="redemptionAccounting")
+    show_validity: Optional[bool] = Field(None, alias="showValidity")
+    discount_block_policy: Optional[PrepaidOverridePolicyIn] = Field(None, alias="discountBlockPolicy")
+    offline_allowed: Optional[bool] = Field(None, alias="offlineAllowed")
+    split_allowed: Optional[bool] = Field(None, alias="splitAllowed")
+    include_extras: Optional[bool] = Field(None, alias="includeExtras")
+    print_till_value: Optional[bool] = Field(None, alias="printTillValue")
+    discount_type: Optional[str] = Field(None, alias="discountType")
+    discount_value: Optional[Decimal] = Field(None, alias="discountValue")
+    min_purchase: Optional[Decimal] = Field(None, alias="minPurchase")
+    max_discount: Optional[Decimal] = Field(None, alias="maxDiscount")
+    targets: Optional[PrepaidVoucherTargetsIn] = None
+    max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
+    stacking: Optional[str] = None
+    #: Null clears the maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    selection: Optional[str] = None
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    catalog_mode: Optional[str] = Field(None, alias="catalogMode")
+    promotion_policy: Optional[str] = Field(None, alias="promotionPolicy")
+    uses_per_voucher: Optional[int] = Field(None, alias="usesPerVoucher", ge=1, le=MAX_USES)
+    max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
+    max_uses_per_day: Optional[int] = Field(None, alias="maxUsesPerDay", ge=1, le=MAX_USES)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def _code(cls, value):
+        value = _clean_text(value, TYPE_CODE_MAX)
+        return value.upper() if value else value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _description(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("pricing", mode="before")
+    @classmethod
+    def _pricing(cls, value):
+        return _choice(value, PRICINGS, "pricing")
+
+    @field_validator("redemption_accounting", mode="before")
+    @classmethod
+    def _accounting(cls, value):
+        return _choice(value, REDEMPTION_ACCOUNTING, "redemptionAccounting")
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _discount_type(cls, value):
+        return _choice(value, DISCOUNT_TYPES, "discountType")
+
+    @field_validator("stacking", mode="before")
+    @classmethod
+    def _stacking(cls, value):
+        return _choice(value, STACKING, "stacking")
+
+    @field_validator("promotion_policy", mode="before")
+    @classmethod
+    def _policy(cls, value):
+        return _choice(value, PROMOTION_POLICIES, "promotionPolicy")
+
+    @field_validator("discount_value", "min_purchase", "max_discount", "till_value", "production_price", mode="before")
+    @classmethod
+    def _money(cls, value, info):
+        return _shekels(value, info.field_name)
+
+
 class PrepaidVoucherBatchCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str
     company_id: uuid.UUID = Field(..., alias="companyId")
+    #: The type it is issued from (the spec's §2): what it gives, its terms and prices are the
+    #: type's. Absent: the batch says them itself and gets a type of its own (`origin` batch).
+    type_id: Optional[uuid.UUID] = Field(None, alias="typeId")
+    #: A batch without a type: its prices (₪) and how it is priced / recorded — see `_check_prices`.
+    till_value: Optional[Decimal] = Field(None, alias="tillValue")
+    production_price: Optional[Decimal] = Field(None, alias="productionPrice")
+    pricing: Optional[str] = None
+    allow_top_up: Optional[bool] = Field(None, alias="allowTopUp")
+    redemption_accounting: Optional[str] = Field(None, alias="redemptionAccounting")
+    show_validity: Optional[bool] = Field(None, alias="showValidity")
+    discount_block_policy: Optional[PrepaidOverridePolicyIn] = Field(None, alias="discountBlockPolicy")
+    offline_allowed: Optional[bool] = Field(None, alias="offlineAllowed")
+    print_till_value: Optional[bool] = Field(None, alias="printTillValue")
     #: Null or empty: every shop of the company.
     shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
     event_name: Optional[str] = Field(None, alias="eventName")
@@ -163,8 +575,18 @@ class PrepaidVoucherBatchCreate(BaseModel):
     #: item_discount: what is discounted, and how many units per use (default 1).
     targets: Optional[PrepaidVoucherTargetsIn] = None
     max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
-    #: "single" (default), "distinct_batches", "unlimited".
-    stacking: str = "single"
+    #: "unlimited" ("כמה שוברים בעסקה", the default), "single" ("שובר אחד בעסקה"),
+    #: "distinct_batches" ("כמה שוברים, רק מסוגים שונים").
+    stacking: str = "unlimited"
+    #: "מספר שוברים מקסימלי בעסקה" — with unlimited / distinct_batches; null: no maximum.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+    #: "items" (a fixed list) or "groups" (the production vouchers contract §1): a package, one of several.
+    selection: str = "items"
+    groups: Optional[List["PrepaidGroupIn"]] = Field(None, max_length=MAX_GROUPS)
+    #: Units per voucher across the groups; null: Σ the groups' max.
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    #: "frozen" (the catalog as it is at issue, the default) or "live" (the categories at redemption).
+    catalog_mode: str = Field("frozen", alias="catalogMode")
     #: Discount kinds: "exclude" (default), "best", "combine".
     promotion_policy: str = Field("exclude", alias="promotionPolicy")
     #: Discount kinds: uses per voucher, per sale, and (optional) per day.
@@ -177,6 +599,21 @@ class PrepaidVoucherBatchCreate(BaseModel):
     def _kind(cls, value):
         return _choice(value, KINDS, "kind") or "items"
 
+    @field_validator("pricing", mode="before")
+    @classmethod
+    def _pricing(cls, value):
+        return _choice(value, PRICINGS, "pricing")
+
+    @field_validator("redemption_accounting", mode="before")
+    @classmethod
+    def _accounting(cls, value):
+        return _choice(value, REDEMPTION_ACCOUNTING, "redemptionAccounting")
+
+    @field_validator("till_value", "production_price", mode="before")
+    @classmethod
+    def _prices(cls, value, info):
+        return _shekels(value, info.field_name)
+
     @field_validator("discount_type", mode="before")
     @classmethod
     def _discount_type(cls, value):
@@ -185,7 +622,7 @@ class PrepaidVoucherBatchCreate(BaseModel):
     @field_validator("stacking", mode="before")
     @classmethod
     def _stacking(cls, value):
-        return _choice(value, STACKING, "stacking") or "single"
+        return _choice(value, STACKING, "stacking") or "unlimited"
 
     @field_validator("promotion_policy", mode="before")
     @classmethod
@@ -218,6 +655,10 @@ class PrepaidVoucherBatchCreate(BaseModel):
     barcode_type: str = Field("qr", alias="barcodeType")
     customer_name: Optional[str] = Field(None, alias="customerName")
     order_ref: Optional[str] = Field(None, alias="orderRef")
+    #: The production it is made for (§13): its name becomes `customerName`.
+    production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
+    #: The event (the existing report events); the printed `eventName` defaults to its name.
+    report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -258,43 +699,12 @@ class PrepaidVoucherBatchCreate(BaseModel):
     def _check(self):
         if self.valid_from and self.valid_until and self.valid_until <= self.valid_from:
             raise ValueError("validUntil must be after validFrom")
-        if self.kind not in DISCOUNT_KINDS:
-            if not self.items:
-                raise ValueError("at least one item")
-            if len(self.items) > MAX_ITEMS_PER_VOUCHER:
-                raise ValueError(f"at most {MAX_ITEMS_PER_VOUCHER} items")
-            if len({i.product_id for i in self.items}) != len(self.items):
-                raise ValueError("each product at most once")
-            # A goods voucher has no discount terms: whatever came is dropped.
-            self.discount_type = self.discount_value = self.min_purchase = self.max_discount = None
-            self.targets = None
-            self.max_units = None
+        if self.type_id is not None:
+            # Issued from a type: what it gives, its terms and prices are the type's (copied
+            # by the service) — whatever else came is not this batch's to say.
             return self
-        # A discount voucher: no goods, no "in parts" (its uses say how often), no extras.
-        if self.items:
-            raise ValueError("a discount voucher has no items")
-        self.split_allowed = False
-        self.include_extras = False
-        if self.discount_type is None or self.discount_value is None or self.discount_value <= 0:
-            raise ValueError("discountType and a discountValue above 0 are required")
-        if self.discount_type == "percent" and self.discount_value > 100:
-            raise ValueError("a percent is at most 100")
-        if self.discount_type == "fixed" or self.kind == "item_discount":
-            self.max_discount = None  # a cap is for a percent off the whole sale
-        if self.max_discount is not None and self.max_discount <= 0:
-            self.max_discount = None
-        if self.kind == "order_discount":
-            self.targets = None
-            self.max_units = None
-        else:
-            self.min_purchase = None
-            if self.targets is None or not (self.targets.product_ids or self.targets.category_ids):
-                raise ValueError("an item discount names at least one product or category")
-            self.max_units = self.max_units or 1
-        if self.min_purchase is not None and self.min_purchase <= 0:
-            self.min_purchase = None
-        if self.max_uses_per_sale > self.uses_per_voucher:
-            self.max_uses_per_sale = self.uses_per_voucher
+        _check_terms(self)
+        _check_prices(self, one_off=True)
         return self
 
     # ── In the units the rules count in ──────────────────────────────────────
@@ -308,7 +718,13 @@ class PrepaidVoucherBatchCreate(BaseModel):
 
 
 class PrepaidVoucherBatchUpdate(BaseModel):
-    """What may change after printing: the texts that are not on paper yet, and validity."""
+    """
+    "ערוך סדרה" (app/services/prepaid_voucher_edit.py): every setting of a batch after it was set
+    up but its codes and serials, its kind and its company. Absent fields stay; a null clears what
+    may be empty (a date, a text, a maximum) and never a setting that always has a value. The
+    goods are replaced as a whole when `items` is sent. `applyToPartial`: new contents reach the
+    partly redeemed vouchers too ("החל גם על שוברים במימוש חלקי").
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -322,16 +738,61 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     show_code: Optional[bool] = Field(None, alias="showCode")
     show_items: Optional[bool] = Field(None, alias="showItems")
     show_credit: Optional[bool] = Field(None, alias="showCredit")
+    #: Print the till value on the voucher (the type's setting, per batch).
+    print_till_value: Optional[bool] = Field(None, alias="printTillValue")
+    # Editable after issue: every redemption records the mode it used.
+    redemption_accounting: Optional[str] = Field(None, alias="redemptionAccounting")
+
+    @field_validator("redemption_accounting", mode="before")
+    @classmethod
+    def _accounting(cls, value):
+        return _choice(value, REDEMPTION_ACCOUNTING, "redemptionAccounting")
+    show_validity: Optional[bool] = Field(None, alias="showValidity")
+    discount_block_policy: Optional[PrepaidOverridePolicyIn] = Field(None, alias="discountBlockPolicy")
+    offline_allowed: Optional[bool] = Field(None, alias="offlineAllowed")
     barcode_type: Optional[str] = Field(None, alias="barcodeType")
     customer_name: Optional[str] = Field(None, alias="customerName")
     order_ref: Optional[str] = Field(None, alias="orderRef")
     # The rules of use — not on the paper, so they may change (the next sale reads them).
     # What the voucher gives and its uses are printed / issued and never change.
     stacking: Optional[str] = None
+    #: "מספר שוברים מקסימלי בעסקה"; null clears it (no maximum).
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
     promotion_policy: Optional[str] = Field(None, alias="promotionPolicy")
     max_uses_per_sale: Optional[int] = Field(None, alias="maxUsesPerSale", ge=1, le=MAX_USES)
     #: Null clears the daily limit.
     max_uses_per_day: Optional[int] = Field(None, alias="maxUsesPerDay", ge=1, le=MAX_USES)
+    # ── "ערוך סדרה": where, how many, what it gives and its prices ──────────────────
+    #: Null or empty: every shop of the company.
+    shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
+    #: The vouchers in all: more issues the difference (the next serials); never below the issued.
+    count: Optional[int] = Field(None, ge=1)
+    #: Never changes (goods / a discount): sent only to be checked.
+    kind: Optional[str] = None
+    items: Optional[List[PrepaidVoucherItemIn]] = None
+    include_extras: Optional[bool] = Field(None, alias="includeExtras")
+    split_allowed: Optional[bool] = Field(None, alias="splitAllowed")
+    till_value: Optional[Decimal] = Field(None, alias="tillValue")
+    #: With the prices section only; applies to the vouchers issued from now on.
+    production_price: Optional[Decimal] = Field(None, alias="productionPrice")
+    pricing: Optional[str] = None
+    allow_top_up: Optional[bool] = Field(None, alias="allowTopUp")
+    discount_type: Optional[str] = Field(None, alias="discountType")
+    discount_value: Optional[Decimal] = Field(None, alias="discountValue")
+    min_purchase: Optional[Decimal] = Field(None, alias="minPurchase")
+    max_discount: Optional[Decimal] = Field(None, alias="maxDiscount")
+    targets: Optional[PrepaidVoucherTargetsIn] = None
+    max_units: Optional[int] = Field(None, alias="maxUnits", ge=1, le=MAX_ITEM_QUANTITY)
+    uses_per_voucher: Optional[int] = Field(None, alias="usesPerVoucher", ge=1, le=MAX_USES)
+    selection: Optional[str] = None
+    groups: Optional[List[PrepaidGroupIn]] = Field(None, max_length=MAX_GROUPS)
+    total_qty: Optional[int] = Field(None, alias="totalQty", ge=1, le=MAX_ITEM_QUANTITY * MAX_GROUPS)
+    catalog_mode: Optional[str] = Field(None, alias="catalogMode")
+    apply_to_partial: bool = Field(False, alias="applyToPartial")
+    #: The production (§13); null: none — the `customerName` text stays as it is.
+    production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
+    #: The event (the existing report events); null: none.
+    report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
 
     @field_validator("stacking", mode="before")
     @classmethod
@@ -342,6 +803,26 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     @classmethod
     def _policy(cls, value):
         return _choice(value, PROMOTION_POLICIES, "promotionPolicy")
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _kind(cls, value):
+        return _choice(value, KINDS, "kind")
+
+    @field_validator("pricing", mode="before")
+    @classmethod
+    def _pricing(cls, value):
+        return _choice(value, PRICINGS, "pricing")
+
+    @field_validator("discount_type", mode="before")
+    @classmethod
+    def _discount_type(cls, value):
+        return _choice(value, DISCOUNT_TYPES, "discountType")
+
+    @field_validator("discount_value", "min_purchase", "max_discount", "till_value", "production_price", mode="before")
+    @classmethod
+    def _money(cls, value, info):
+        return _shekels(value, info.field_name)
 
     @field_validator("name", "event_name", "customer_name", mode="before")
     @classmethod
@@ -367,6 +848,80 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     @classmethod
     def _logo(cls, value):
         return _clean_text(value, 500)
+
+
+class PrepaidProductionCreate(BaseModel):
+    """A production ("הפקה", §13): the customer a company's vouchers are made for."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: uuid.UUID = Field(..., alias="companyId")
+    name: str
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    #: "redemption" (the default) or "delivery".
+    billing_basis: Optional[str] = Field("redemption", alias="billingBasis")
+    notes: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return _clean_text(value, NAME_MAX, required=True)
+
+    @field_validator("contact_name", "contact_email", mode="before")
+    @classmethod
+    def _contact(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("contact_phone", mode="before")
+    @classmethod
+    def _phone(cls, value):
+        return _clean_text(value, 50)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("billing_basis", mode="before")
+    @classmethod
+    def _billing(cls, value):
+        return _choice(value, ("redemption", "delivery"), "billingBasis")
+
+
+class PrepaidProductionUpdate(BaseModel):
+    """In place; a null clears a contact field or the notes, never the name or the billing basis."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = None
+    contact_name: Optional[str] = Field(None, alias="contactName")
+    contact_phone: Optional[str] = Field(None, alias="contactPhone")
+    contact_email: Optional[str] = Field(None, alias="contactEmail")
+    billing_basis: Optional[str] = Field(None, alias="billingBasis")
+    notes: Optional[str] = None
+    active: Optional[bool] = None
+
+    @field_validator("name", "contact_name", "contact_email", mode="before")
+    @classmethod
+    def _names(cls, value):
+        return _clean_text(value, NAME_MAX)
+
+    @field_validator("contact_phone", mode="before")
+    @classmethod
+    def _phone(cls, value):
+        return _clean_text(value, 50)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes(cls, value):
+        return _clean_text(value, TEXT_MAX)
+
+    @field_validator("billing_basis", mode="before")
+    @classmethod
+    def _billing(cls, value):
+        return _choice(value, ("redemption", "delivery"), "billingBasis")
 
 
 class PrepaidVoucherAddIn(BaseModel):
@@ -427,6 +982,19 @@ class PrepaidVoucherLookupIn(BaseModel):
     #: web and Windows kiosks today): goods only, so a discount voucher reads as not
     #: redeemable here (`prepaid_voucher_kind_unsupported`, with a Hebrew `message`).
     supported_kinds: Optional[List[str]] = Field(None, alias="supportedKinds")
+    #: What this client can do beyond today's goods redemption (the contract's §2): "accounting"
+    #: (books all three `redemptionAccounting` modes and the cloud's value), "override", "groups",
+    #: "production_voucher", "reserve_goods", "offline". Absent: none (every client before them).
+    features: Optional[List[str]] = None
+
+    @field_validator("features", mode="before")
+    @classmethod
+    def _features(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip().lower() for v in value if isinstance(v, str) and v.strip()][:20]
 
     @field_validator("supported_kinds", mode="before")
     @classmethod
@@ -465,6 +1033,19 @@ class PrepaidVoucherRedeemIn(BaseModel):
     #: The till's open sale (basket) the voucher pays towards — how the cloud sees the
     #: other vouchers of the same sale (stacking). Absent from older clients.
     sale_ref: Optional[str] = Field(None, alias="saleRef", max_length=100)
+    #: What this client can do beyond today's goods redemption (the contract's §2): "accounting"
+    #: (books all three `redemptionAccounting` modes and the cloud's value), "override", "groups",
+    #: "production_voucher", "reserve_goods", "offline". Absent: none (every client before them).
+    features: Optional[List[str]] = None
+
+    @field_validator("features", mode="before")
+    @classmethod
+    def _features(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return []
+        return [str(v).strip().lower() for v in value if isinstance(v, str) and v.strip()][:20]
 
     @field_validator("pos_user_id", mode="before")
     @classmethod
@@ -514,10 +1095,121 @@ class PrepaidVoucherInSaleIn(BaseModel):
     batch_id: str = Field(..., alias="batchId", min_length=1, max_length=100)
     kind: str = "items"
     stacking: str = "single"
+    #: Its batch's "מספר שוברים מקסימלי בעסקה" (lookup's `maxVouchersPerSale`). Absent from older tills.
+    max_vouchers_per_sale: Optional[int] = Field(None, alias="maxVouchersPerSale", ge=1, le=MAX_VOUCHERS_PER_SALE)
+
+
+class PrepaidReserveUnitIn(BaseModel):
+    """One unit of the basket a goods voucher is to cover (the production vouchers contract §3)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ref: Optional[str] = Field(None, max_length=60)
+    product_id: str = Field(..., alias="productId", min_length=1, max_length=100)
+    product_name: Optional[str] = Field(None, alias="productName", max_length=255)
+    group_key: Optional[str] = Field(None, alias="groupKey", max_length=40)
+    quantity: Decimal = Field(Decimal("1"), gt=0, le=MAX_ITEM_QUANTITY)
+    #: The unit's net price before the voucher, and its list / menu value (agorot).
+    list_price_agorot: int = Field(0, alias="listPriceAgorot", ge=0)
+    list_value_agorot: Optional[int] = Field(None, alias="listValueAgorot", ge=0)
+    category_ids: List[str] = Field(default_factory=list, alias="categoryIds", max_length=20)
+    no_discount: bool = Field(False, alias="noDiscount")
+
+
+class PrepaidApprovalIn(BaseModel):
+    """The manager who approved a forced discount at the till (`VOUCHER_DISCOUNT_OVERRIDE`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    method: Optional[str] = Field(None, max_length=16)
+
+    @field_validator("pos_user_id", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return str(value) if isinstance(value, (int, float)) else value
+
+
+class PrepaidOfflineAssignIn(BaseModel):
+    """`machine` (a till) or `lan_host` (the shop's main till; the batch's single shop or `shopId`)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    target: str
+    machine_id: Optional[str] = Field(None, alias="machineId")
+    shop_id: Optional[str] = Field(None, alias="shopId")
+
+
+class PrepaidOfflineReleaseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    force: bool = False
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class PrepaidOfflineRedemptionIn(BaseModel):
+    """One redemption made without the cloud, as the device queued it (§7)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(..., min_length=1, max_length=100)
+    assignment_id: Optional[str] = Field(None, alias="assignmentId")
+    voucher_id: str = Field(..., alias="voucherId")
+    redeemed_at: Optional[datetime] = Field(None, alias="redeemedAt")
+    transaction_id: Optional[str] = Field(None, alias="transactionId", max_length=100)
+    sale_ref: Optional[str] = Field(None, alias="saleRef", max_length=100)
+    pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
+    pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    #: As §3's units: productId, productName, groupKey, groupName, quantity, values (agorot).
+    units: List[Dict[str, Any]] = Field(default_factory=list, max_length=200)
+    covered_agorot: int = Field(0, alias="coveredAgorot", ge=0)
+    top_up_agorot: int = Field(0, alias="topUpAgorot", ge=0)
+    redemption_accounting: Optional[str] = Field(None, alias="redemptionAccounting")
+    approval: Optional[PrepaidApprovalIn] = None
+    reversed_at: Optional[datetime] = Field(None, alias="reversedAt")
+
+    @field_validator("pos_user_id", mode="before")
+    @classmethod
+    def _uid(cls, value):
+        return str(value) if isinstance(value, (int, float)) else value
+
+
+class PrepaidOfflineSyncIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: What is left on the device after this call (release waits for 0).
+    pending: int = Field(0, ge=0)
+    redemptions: List[PrepaidOfflineRedemptionIn] = Field(default_factory=list, max_length=500)
+    #: The release's second step: the assignments (`releasing`) the device has dropped (§7).
+    release_ack: List[str] = Field(default_factory=list, alias="releaseAck", max_length=100)
+
+
+class PrepaidConfirmUnitIn(BaseModel):
+    """A unit as the document booked it, when the basket changed after the hold."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    ref: Optional[str] = Field(None, max_length=60)
+    product_id: str = Field(..., alias="productId", min_length=1, max_length=100)
+    product_name: Optional[str] = Field(None, alias="productName", max_length=255)
+    group_key: Optional[str] = Field(None, alias="groupKey", max_length=40)
+    quantity: Decimal = Field(Decimal("1"), gt=0, le=MAX_ITEM_QUANTITY)
+    value_agorot: Optional[int] = Field(None, alias="valueAgorot", ge=0)
+    covered_agorot: Optional[int] = Field(None, alias="coveredAgorot", ge=0)
+    list_value_agorot: Optional[int] = Field(None, alias="listValueAgorot", ge=0)
 
 
 class PrepaidVoucherReserveIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
+
+    #: Goods (§3): the units the voucher is to cover. A discount voucher sends `lines` instead.
+    units: Optional[List[PrepaidReserveUnitIn]] = Field(None, max_length=200)
+    #: A one-time voucher of a fixed list, part of it taken: the rest is given up.
+    forfeit_rest: bool = Field(False, alias="forfeitRest")
+    #: A manager's approval of a forced discount (a `manager` policy).
+    approval: Optional[PrepaidApprovalIn] = None
+    features: Optional[List[str]] = None
 
     code: str = Field(..., min_length=1, max_length=100)
     #: Makes a retry safe, and a renewal: the same id from the same till answers the
@@ -554,3 +1246,10 @@ class PrepaidVoucherConfirmIn(BaseModel):
     transaction_id: str = Field(..., alias="transactionId", min_length=1, max_length=100)
     amount_agorot: int = Field(..., alias="amountAgorot", ge=0)
     uses: Optional[int] = Field(None, ge=1, le=MAX_USES)
+    #: Goods: the units as the document booked them, when the basket changed after the hold.
+    units: Optional[List[PrepaidConfirmUnitIn]] = Field(None, max_length=200)
+
+
+PrepaidVoucherTypeCreate.model_rebuild()
+PrepaidVoucherTypeUpdate.model_rebuild()
+PrepaidVoucherBatchCreate.model_rebuild()

@@ -539,7 +539,8 @@ def build_product_sales_report(
     ).subquery()
 
     is_refund = tx_sub.c.is_refund
-    qty = TransactionItem.quantity
+    # A production voucher's ₪0 memo line (`zero` mode) is no unit sold — as on the till (§4.3).
+    qty = case((TransactionItem.voucher_memo_value.isnot(None), 0), else_=TransactionItem.quantity)
     line_gross = TransactionItem.total_price
     # The line's own discount and its promotions' share: both are this product's.
     line_discount = func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0)
@@ -673,7 +674,8 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
         cashier_id=None, cashier_name=None, worker_number=None,
         document_count=0, sales_count=0, refunds_count=0,
         gross=0.0, discounts=0.0, refunds=0.0, net=0.0, average_basket=0.0,
-        cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, tips=0.0,
+        cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, production_voucher_net=0.0, tips=0.0,
+        production_voucher_deductions=0.0,
     )
     base.update(kwargs)
     return CashierSalesRow(**base)
@@ -684,6 +686,10 @@ def _new_sales_bucket() -> Dict[str, float]:
         "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
         "sales_count": 0, "refunds_count": 0,
         "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0, "exchange_net": 0.0,
+        "production_voucher_net": 0.0,
+        # Production vouchers' deductions: inside "discounts" here (the documents' discount),
+        # taken out of the discounts a row shows and shown apart.
+        "voucher_deductions": 0.0,
     }
 
 
@@ -703,6 +709,18 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
     # their sum); a credit note's total_amount is already the money handed back.
     sale_gross = Transaction.total_amount
     sale_discount = func.coalesce(Transaction.document_discount, 0)
+    # A production voucher's deduction ("קיזוז שוברי הפקה"), per document.
+    from sqlalchemy import select as _select
+
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount as _TVD
+
+    sale_deduction = func.coalesce(
+        _select(func.sum(func.abs(_TVD.discount_amount)))
+        .where(_TVD.transaction_id == Transaction.id, _TVD.kind == PRODUCTION_VOUCHER_DEDUCTION)
+        .correlate(Transaction)
+        .scalar_subquery(),
+        0,
+    )
 
     # Document-level figures. Deliberately NOT grouped by tender any more: a document
     # can now carry several, and grouping the document's own gross/discounts/tips by
@@ -713,8 +731,10 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
             key.label("bucket_key"),
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_gross)), 0).label("gross"),
             func.coalesce(func.sum(case((refund_cond, 0), else_=sale_discount)), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund_cond, 0), else_=sale_deduction)), 0).label("deductions"),
             func.coalesce(func.sum(case((refund_cond, Transaction.total_amount), else_=0)), 0).label("refunds"),
-            func.coalesce(func.sum(case((refund_cond, 0), else_=1)), 0).label("sales_count"),
+            # A memo document (production vouchers' ₪0 lines only) is no sale (§4.3, review 09.10).
+            func.coalesce(func.sum(case((refund_cond, 0), (Transaction.voucher_memo.is_(True), 0), else_=1)), 0).label("sales_count"),
             func.coalesce(func.sum(case((refund_cond, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
         )
@@ -727,6 +747,7 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
         bucket = agg.setdefault(r.bucket_key or None, _new_sales_bucket())
         bucket["gross"] += _to_float(r.gross)
         bucket["discounts"] += _to_float(r.discounts)
+        bucket["voucher_deductions"] += _to_float(r.deductions)
         bucket["refunds"] += _to_float(r.refunds)
         bucket["tips"] += _to_float(r.tips)
         bucket["sales_count"] += int(r.sales_count or 0)
@@ -805,8 +826,9 @@ def build_cashier_sales_report(
                 document_count=sales_count + int(b["refunds_count"]),
                 sales_count=sales_count,
                 refunds_count=int(b["refunds_count"]),
-                gross=b["gross"],
-                discounts=b["discounts"],
+                gross=b["gross"] - b["voucher_deductions"],
+                discounts=b["discounts"] - b["voucher_deductions"],
+                production_voucher_deductions=b["voucher_deductions"],
                 refunds=b["refunds"],
                 net=net,
                 average_basket=(b["gross"] - b["discounts"]) / sales_count if sales_count else 0.0,
@@ -814,6 +836,7 @@ def build_cashier_sales_report(
                 card_net=b["card_net"],
                 other_net=b["other_net"],
                 exchange_net=b["exchange_net"],
+                production_voucher_net=b["production_voucher_net"],
                 tips=b["tips"],
             )
         )
@@ -824,6 +847,7 @@ def build_cashier_sales_report(
     total_sales_count = sum(r.sales_count for r in out_rows)
     total_gross = sum(r.gross for r in out_rows)
     total_discounts = sum(r.discounts for r in out_rows)
+    total_deductions = sum(r.production_voucher_deductions for r in out_rows)
     totals = _empty_cashier_row(
         cashier_name="Total",
         document_count=sum(r.document_count for r in out_rows),
@@ -831,6 +855,7 @@ def build_cashier_sales_report(
         refunds_count=sum(r.refunds_count for r in out_rows),
         gross=total_gross,
         discounts=total_discounts,
+        production_voucher_deductions=total_deductions,
         refunds=sum(r.refunds for r in out_rows),
         net=sum(r.net for r in out_rows),
         average_basket=(total_gross - total_discounts) / total_sales_count if total_sales_count else 0.0,
@@ -838,6 +863,7 @@ def build_cashier_sales_report(
         card_net=sum(r.card_net for r in out_rows),
         other_net=sum(r.other_net for r in out_rows),
         exchange_net=sum(r.exchange_net for r in out_rows),
+        production_voucher_net=sum(r.production_voucher_net for r in out_rows),
         tips=sum(r.tips for r in out_rows),
     )
     return CashierSalesReportResponse(
@@ -894,14 +920,16 @@ def build_sales_by_area_report(
             area_name=area.name if area is not None else None,
             archived=bool(area is not None and area.archived_at is not None),
             transactions_count=int(bucket["sales_count"]) + int(bucket["refunds_count"]),
-            gross=_cents(bucket["gross"]),
-            discounts=_cents(bucket["discounts"]),
+            gross=_cents(bucket["gross"] - bucket["voucher_deductions"]),
+            discounts=_cents(bucket["discounts"] - bucket["voucher_deductions"]),
+            production_voucher_deductions=_cents(bucket["voucher_deductions"]),
             refunds=_cents(bucket["refunds"]),
             net=_cents(bucket["gross"] - bucket["discounts"] - bucket["refunds"]),
             cash=_cents(bucket["cash_net"]),
             card=_cents(bucket["card_net"]),
             other=_cents(bucket["other_net"]),
             exchange=_cents(bucket["exchange_net"]),
+            production_voucher=_cents(bucket["production_voucher_net"]),
             tips=_cents(bucket["tips"]),
         )
 
@@ -931,7 +959,10 @@ def build_sales_by_area_report(
         transactions_count=sum(r.transactions_count for r in rows),
         **{
             f: total(f)
-            for f in ("gross", "discounts", "net", "refunds", "cash", "card", "other", "tips")
+            for f in (
+                "gross", "discounts", "production_voucher_deductions", "net", "refunds", "cash", "card", "other",
+                "production_voucher", "tips",
+            )
         },
     )
     return SalesByAreaResponse(
@@ -1013,8 +1044,9 @@ def build_tips_range_report(
         # rather than guessing a leg. That is the honest answer: only the till knows
         # which tender the tip went on, and it says so in `tip_payment_method`.
         method = normalize_tender(r.tip_method or r.payment_method)
-        if method == "exchange":
-            # A document settled by `exchange` alone took no money a tip could ride on.
+        if method not in ("cash", "card"):
+            # A document settled by `exchange` alone took no money a tip could ride on, and a
+            # production voucher pays for goods, never a tip: either is "other" here.
             method = "other"
 
         by_method[method]["amount"] += tips

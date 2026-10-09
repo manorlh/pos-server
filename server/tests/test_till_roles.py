@@ -207,6 +207,8 @@ class TestLegacy:
         "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK", "REPRINT",
         "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK", "KIOSK_CONTROL",
         "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+        # New with production vouchers (no older behaviour to keep): a senior approves an override.
+        "VOUCHER_DISCOUNT_OVERRIDE",
     }
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
@@ -447,6 +449,38 @@ class TestAssignment:
         names = {u["username"]: u for u in out["users"]}
         assert set(names) == {"dana", "boss"}  # their own shop only
         assert names["dana"]["tillRoleName"] == "קופאי (הרשאות קודמות)"
+
+
+class TestVoucherDiscountOverride:
+    """
+    "אישור כפיית הנחה בשובר" (production vouchers §6): a manager, a shift supervisor and a legacy
+    shop manager approve an override with their own code; a cashier, a waiter and a legacy cashier
+    get the manager-code prompt.
+    """
+
+    @pytest.mark.parametrize("role, state", [
+        (TP.MANAGER, A), (TP.SUPERVISOR, A), (TP.LEGACY_MANAGER, A),
+        (TP.CASHIER, P), (TP.WAITER, P), (TP.LEGACY_CASHIER, P),
+    ])
+    def test_each_built_in_role(self, role, state):
+        assert TP.DEFAULTS[role]["VOUCHER_DISCOUNT_OVERRIDE"] == state
+
+    def test_it_is_in_the_editor_with_its_hebrew_label(self):
+        spec = next(p for p in TP.PERMISSIONS if p.code == "VOUCHER_DISCOUNT_OVERRIDE")
+        assert spec.label == "אישור כפיית הנחה בשובר"
+        out = TP.catalogue_out()
+        assert any(p.get("code") == "VOUCHER_DISCOUNT_OVERRIDE" for p in out["permissions"])
+
+    def test_the_spec_defaults_put_it_back(self, w):
+        roles(w)
+        cashier = role_by(w, TP.CASHIER)
+        R.update_till_role(str(w.company.id), str(cashier.id),
+                           R.RoleUpdateIn(permissions={"VOUCHER_DISCOUNT_OVERRIDE": A}), **ctx(w))
+        R.apply_spec_defaults(str(w.company.id), R.ApplyDefaultsIn(), **ctx(w, w.company_manager))
+        w.db.refresh(cashier)
+        # The override is gone: the cashier is back on the spec's prompt.
+        assert cashier.permissions == {}
+        assert TP.DEFAULTS[TP.CASHIER]["VOUCHER_DISCOUNT_OVERRIDE"] == P
 
 
 class TestApplyDefaults:

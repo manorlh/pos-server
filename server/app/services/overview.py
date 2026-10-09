@@ -107,8 +107,9 @@ def _sales_fields(bucket: Dict[str, float]) -> dict:
         cash=_cents(bucket["cash_net"]),
         card=_cents(bucket["card_net"]),
         # `exchange` nets to zero over a complete basket; folded into "other" so
-        # cash + card + other is the day's net, as on the area report's totals.
-        other=_cents(bucket["other_net"] + bucket["exchange_net"]),
+        # cash + card + other is the day's net, as on the area report's totals. The home
+        # page has no voucher figure: production vouchers count under "other" here.
+        other=_cents(bucket["other_net"] + bucket["exchange_net"] + bucket["production_voucher_net"]),
         tips=_cents(bucket["tips"]),
     )
 

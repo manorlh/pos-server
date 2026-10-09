@@ -6,8 +6,9 @@
  * golden fixture server/tests/fixtures/prepaid_voucher_layout.json pins that both produce the
  * same operations for the same voucher, so the two can never disagree.
  *
- * The design: logo (optional), the title large, what the voucher gives in a framed box (unless
- * hidden), free text, validity in a strong line, terms; the QR / Code 128 large with a quiet
+ * The design: logo (optional), the voucher type's name small, the title large, what the voucher
+ * gives in a framed box (unless hidden), the till value when printed, free text, validity in a
+ * strong line, terms; the QR / Code 128 large with a quiet
  * zone, the code in monospace, the short service number prominent ("מס׳ 0008"); "נוצר על ידי
  * Runner Systems" at the very bottom (`showCredit`). RTL, pure black (thermal heads).
  *
@@ -26,6 +27,8 @@ const TITLE_PORTRAIT = 4.4;
 const TITLE_LANDSCAPE = 4.0;
 const TITLE_LH = 1.15;
 const TITLE_LINES = 2;
+const KICKER = 2.4;
+const VALUE = 3.0;
 const LOGO_PORTRAIT = 10.0;
 const LOGO_LANDSCAPE = 8.0;
 const LOGO_GAP = 1.2;
@@ -73,11 +76,14 @@ export const VOUCHER_TEXT = {
   includeExtras: 'כולל תוספות',
   moreItems: 'ועוד {n} פריטים',
   credit: 'נוצר על ידי Runner Systems',
+  valueFixed: 'שווי השובר: {v}',
+  valueCover: 'השובר מכסה עד {v}',
 } as const;
 
 export interface CardContent {
   title: string;
-  terms: string;
+  /** The terms in small print; null: no line (with the validity hidden). */
+  terms?: string | null;
   serial: string;
   /** 'code128': a line barcode across the bottom; anything else a QR. */
   barcode?: string;
@@ -91,6 +97,10 @@ export interface CardContent {
   code?: string | null;
   credit?: string | null;
   moreItems?: string;
+  /** The voucher type's name, small above the title ("שובר ארוחה"). */
+  kicker?: string | null;
+  /** "שווי השובר: ₪80" — when the type prints its till value. */
+  valueLine?: string | null;
 }
 
 export type Align = 'right' | 'center' | 'left';
@@ -161,16 +171,24 @@ function textBlock(
 
   const logoH = c.logo ? (landscape ? LOGO_LANDSCAPE : LOGO_PORTRAIT) * t : 0;
   const logoPart = c.logo ? logoH + LOGO_GAP * t : 0;
+  const kickerSize = KICKER * t;
+  const kicker = c.kicker ? fit(measure, c.kicker, kickerSize, true, col) : null;
+  const kickerH = kicker ? kickerSize * SMALL_LH : 0;
   const titleSize = (landscape ? TITLE_LANDSCAPE : TITLE_PORTRAIT) * t;
   const title = wrap(measure, c.title, titleSize, true, col, TITLE_LINES);
   const titleH = title.length * titleSize * TITLE_LH;
+  const valueSize = VALUE * t;
+  const value = c.valueLine ? fit(measure, c.valueLine, valueSize, true, col) : null;
+  const valueH = value ? gap + valueSize * SMALL_LH : 0;
   const validSize = VALID * t;
   const termsSize = TERMS * t;
-  const footerH = (c.validity ? validSize * SMALL_LH : 0) + termsSize * SMALL_LH;
+  const footerH = (c.validity ? validSize * SMALL_LH : 0) + (c.terms ? termsSize * SMALL_LH : 0);
   const freeSize = FREE * t;
   const freeLh = freeSize * FREE_LH;
   const freeAll = c.freeText ? wrap(measure, c.freeText, freeSize, false, col, FREE_MAX_LINES) : [];
-  const avail = area - logoPart - titleH - gap - footerH;
+  // The gap above the footer only when there is a footer: no empty band (`showValidity` off).
+  const footerGap = footerH ? gap : 0;
+  const avail = area - logoPart - kickerH - titleH - valueH - footerGap - footerH;
   const pad = BOX_PAD * t;
   const inner = col - 2 * pad;
 
@@ -207,6 +225,10 @@ function textBlock(
     ops.push({ op: 'logo', x: left, y, w: col, h: logoH, align: landscape ? 'right' : 'center' });
     y += logoPart;
   }
+  if (kicker) {
+    ops.push(text(kicker, ax, y + kickerSize * BASE, kickerSize, { bold: true, align }));
+    y += kickerH;
+  }
   for (const line of title) {
     ops.push(text(line, ax, y + titleSize * BASE, titleSize, { bold: true, align }));
     y += titleSize * TITLE_LH;
@@ -232,6 +254,11 @@ function textBlock(
     }
     y += boxH;
   }
+  if (value) {
+    y += gap;
+    ops.push(text(value, ax, y + valueSize * BASE, valueSize, { bold: true, align }));
+    y += valueSize * SMALL_LH;
+  }
   if (free.length) {
     y += gap;
     for (const line of free) {
@@ -239,13 +266,15 @@ function textBlock(
       y += freeLh;
     }
   }
-  y += gap;
+  y += footerGap;
   if (c.validity) {
     ops.push(text(c.validity, ax, y + validSize * BASE, validSize, { bold: true, align }));
     y += validSize * SMALL_LH;
   }
-  ops.push(text(c.terms, ax, y + termsSize * BASE, termsSize, { align }));
-  y += termsSize * SMALL_LH;
+  if (c.terms) {
+    ops.push(text(c.terms, ax, y + termsSize * BASE, termsSize, { align }));
+    y += termsSize * SMALL_LH;
+  }
   return [ops, y];
 }
 

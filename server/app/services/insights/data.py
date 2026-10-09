@@ -21,6 +21,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import Date, Integer, and_, case, cast, func, or_
+
+from app.services.shift_totals import production_deduction_expr
 from sqlalchemy.orm import Query, Session, aliased
 
 from app.models.audit_exception import TillEvent
@@ -174,6 +176,9 @@ def load_hour_cells(
         return cells
     refund = _is_refund_condition()
     discount = func.coalesce(Transaction.document_discount, 0)
+    # A production voucher's deduction is in neither the gross nor the discounts (as the till's X): the
+    # net is the same, the discount KPIs never rise when vouchers are redeemed (review 09.10).
+    deduction = production_deduction_expr()
     keys, decode = _local_keys(db, clock, Transaction.created_at)
     rows = (
         query.with_entities(
@@ -181,8 +186,8 @@ def load_hour_cells(
             func.coalesce(func.sum(case((refund, -Transaction.total_amount), else_=Transaction.total_amount - discount)), 0).label("net"),
             func.count(Transaction.id).label("docs"),
             func.coalesce(func.sum(case((refund, 0), else_=1)), 0).label("sales"),
-            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount)), 0).label("gross"),
-            func.coalesce(func.sum(case((refund, 0), else_=discount)), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount - deduction)), 0).label("gross"),
+            func.coalesce(func.sum(case((refund, 0), else_=discount - deduction)), 0).label("discounts"),
             func.coalesce(func.sum(case((refund, Transaction.total_amount), else_=0)), 0).label("refunds"),
             func.coalesce(func.sum(case((refund, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
@@ -575,8 +580,10 @@ def load_cashiers(
         query.with_entities(
             Transaction.cashier_id,
             func.coalesce(func.sum(case((refund, 0), else_=1)), 0).label("sales"),
-            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount)), 0).label("gross"),
-            func.coalesce(func.sum(case((refund, 0), else_=func.coalesce(Transaction.document_discount, 0))), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount - production_deduction_expr())), 0).label("gross"),
+            # Without production vouchers' deductions — a voucher paid for, never the employee's discount.
+            func.coalesce(func.sum(case((refund, 0), else_=func.coalesce(Transaction.document_discount, 0)
+                                        - production_deduction_expr())), 0).label("discounts"),
             func.coalesce(func.sum(case((refund, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(case((refund, Transaction.total_amount), else_=0)), 0).label("refunds"),
         )

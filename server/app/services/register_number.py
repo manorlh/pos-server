@@ -176,6 +176,18 @@ def set_machine_shop(db: Session, machine: POSMachine, shop_id: ShopId) -> Optio
     """
     if not _same_shop(machine.shop_id, shop_id):
         machine.shop_id = shop_id
+        # A till holding a voucher batch offline (the production vouchers contract §7) loses it with
+        # its shop — never downloads vouchers it may no longer redeem (review 09.10).
+        # Never a reason to fail the move itself: the device's next download / sync drops them too.
+        try:
+            from app.services.prepaid_voucher_offline import released_on_machine_move
+
+            released_on_machine_move(db, machine)
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception("machine %s moved: its offline assignments were not released now",
+                                                  getattr(machine, "id", None))
         machine.pos_number = None
         if getattr(machine, "document_prefix", None) is not None:
             machine.document_prefix = None

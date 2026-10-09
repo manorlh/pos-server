@@ -42,7 +42,8 @@ export type VoucherResult =
   | { kind: 'forfeit' }
   | { kind: 'no_match' }
   | { kind: 'offline' }
-  | { kind: 'refused'; reason: string };
+  /** [message]: the cloud's own Hebrew for the refusal (which till used it, when it expired), when it sent one. */
+  | { kind: 'refused'; reason: string; message?: string };
 
 export interface PayAtTillDeps {
   kv: Kv;
@@ -104,7 +105,14 @@ export class PayAtTill {
     if (looked.kind === 'offline') return { kind: 'offline' };
     if (looked.kind === 'refused') return { kind: 'refused', reason: looked.detail ?? (looked.status === 404 ? 'prepaid_voucher_not_found' : `http_${looked.status}`) };
     const dto = looked.body ?? {};
-    if (dto.redeemable === false) return { kind: 'refused', reason: typeof dto.reason === 'string' ? dto.reason : typeof dto.status === 'string' ? `prepaid_voucher_${dto.status}` : 'not_redeemable' };
+    if (dto.redeemable === false) {
+      const reason = typeof dto.reason === 'string' ? dto.reason : typeof dto.status === 'string' ? `prepaid_voucher_${dto.status}` : 'not_redeemable';
+      // A voucher whose terms need a till that books them (a deduction, a fixed value, a forced discount —
+      // pos-server production-vouchers contract §2 `features`): this kiosk books nothing itself, so the
+      // customer is sent to the till; the cloud's words ("update the till") are the cashier's, not theirs.
+      const message = reason !== 'prepaid_voucher_update_required' && typeof dto.message === 'string' && dto.message ? dto.message : undefined;
+      return message ? { kind: 'refused', reason, message } : { kind: 'refused', reason };
+    }
     const items: VoucherItem[] = (Array.isArray(dto.items) ? (dto.items as Array<Record<string, unknown>>) : [])
       .filter((it) => typeof it.productId === 'string')
       .map((it) => ({

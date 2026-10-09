@@ -103,13 +103,27 @@ NO_MONEY_BUCKET = "no_money"
 TENDER_TOLERANCE_PER_LEG = Decimal("0.01")
 
 
+#: A prepaid production voucher ("שובר הפקה") paying for the goods on it: a tender bucket of its
+#: own ("שוברי הפקה"), never cash and never "other" (the production vouchers contract, §4.2).
+#: `voucher` is what every till writes today, `production_voucher` the contract's code for the
+#: `payment` accounting mode, `vouchers` the alias the Z already read. Uniform file: D120 code 5.
+PRODUCTION_VOUCHER_BUCKET = "production_voucher"
+PRODUCTION_VOUCHER_METHODS = frozenset({"voucher", "vouchers", PRODUCTION_VOUCHER_BUCKET})
+
+
+def is_production_voucher(method: Optional[str]) -> bool:
+    return (method or "").strip().lower() in PRODUCTION_VOUCHER_METHODS
+
+
 def normalize_tender(method: Optional[str]) -> str:
     """
-    Collapse a payment method to cash / card / exchange / other for the tender splits.
+    Collapse a payment method to cash / card / exchange / production_voucher / other for the
+    tender splits.
 
     `exchange` is a bucket of its own rather than `other`: it is the offset between the
     two halves of a mixed basket, not money anyone took, and folding it into `other`
-    would show a basket's sale half as unclassified takings.
+    would show a basket's sale half as unclassified takings. A production voucher is its
+    own too: "שוברי הפקה" — the voucher paid, not an unknown tender.
     """
     m = (method or "").strip().lower()
     if m == "cash":
@@ -118,6 +132,8 @@ def normalize_tender(method: Optional[str]) -> str:
         return "card"
     if m == EXCHANGE_PAYMENT_METHOD:
         return EXCHANGE_PAYMENT_METHOD
+    if m in PRODUCTION_VOUCHER_METHODS:
+        return PRODUCTION_VOUCHER_BUCKET
     return "other"
 
 

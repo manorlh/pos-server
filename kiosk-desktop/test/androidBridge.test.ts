@@ -18,19 +18,29 @@ import {
   localMediaOnly,
   normalizeView,
   scanKeys,
+  voucherAnswerOf,
   type AndroidNative,
   type ScanKey,
 } from '../src/renderer/bridges/android';
 import { ScanKeyReader } from '../src/core/kioskScan';
 import { KIOSK_DEFAULTS, type KioskConfig } from '@dash-lib/kioskConfig';
-import type { KioskView, PayProgress, StartPaymentIn, StartPaymentOut } from '../src/shared/bridge';
+import type { KioskView, PayProgress, StartPaymentIn, StartPaymentOut, VoucherAnswer, VoucherApplyIn } from '../src/shared/bridge';
+import { INITIAL_FLOW, reduce, type KioskEvent, type KioskFlowRules } from '../src/core/kioskFlow';
 
 const fixture = JSON.parse(readFileSync(path.join(__dirname, 'fixtures/android_bridge_api.json'), 'utf8')) as {
   bridgeApi: number;
   calls: string[];
   sends: string[];
   events: string[];
-  samples: { startPayment: StartPaymentIn; pay: PayProgress; startPaymentChanged: StartPaymentOut; reportFlow: Record<string, unknown> };
+  samples: {
+    startPayment: StartPaymentIn;
+    pay: PayProgress;
+    startPaymentChanged: StartPaymentOut;
+    reportFlow: Record<string, unknown>;
+    voucherApply: VoucherApplyIn;
+    voucherRemove: { serial: number };
+    voucherAnswer: VoucherAnswer;
+  };
 };
 
 /** A fake APK: records what the screens ask; the test answers through the inbox. */
@@ -171,6 +181,86 @@ describe('calls and answers', () => {
   it('no battery on Android: the APK shows it itself', () => {
     const b = createAndroidBridges(fakeNative().native);
     expect(b.kiosk.battery).toBeUndefined();
+  });
+});
+
+describe('production vouchers: the APK holds them ("שוברי הפקה")', () => {
+  it('voucherApply sends the code and the basket as they are; the answer is the order\'s vouchers now', async () => {
+    const { native, calls } = fakeNative();
+    const b = createAndroidBridges(native);
+    const p = b.kiosk.voucherApply!(fixture.samples.voucherApply);
+    expect(calls.map((c) => [c.method, c.args])).toEqual([['voucherApply', fixture.samples.voucherApply]]);
+    b.inbox.reply(calls[0].id, true, JSON.stringify(fixture.samples.voucherAnswer));
+    // The owner's layout: ₪50, the voucher's ₪40 off (and what it covered), ₪10 to pay.
+    await expect(p).resolves.toEqual(fixture.samples.voucherAnswer);
+  });
+
+  it('voucherRemove sends the serial; a refusal is an answer with the APK\'s words and the vouchers as they stand', async () => {
+    const { native, calls } = fakeNative();
+    const b = createAndroidBridges(native);
+    const p = b.kiosk.voucherRemove!(fixture.samples.voucherRemove.serial);
+    expect(calls.map((c) => [c.method, c.args])).toEqual([['voucherRemove', fixture.samples.voucherRemove]]);
+    const refused = { ok: false, error: 'ניתן לממש שובר אחד בלבד בעסקה', note: null, totalAgorot: null, deductionAgorot: 0, dueAgorot: 5000, vouchers: [] };
+    b.inbox.reply(calls[0].id, true, JSON.stringify(refused));
+    await expect(p).resolves.toEqual(refused);
+  });
+
+  it('never a rejection: no answer, a refusal or a broken APK is null (the screens keep what they had)', async () => {
+    vi.useFakeTimers();
+    const { native, calls } = fakeNative();
+    const b = createAndroidBridges(native, { timeouts: { voucherApply: 1000 } });
+    const silent = b.kiosk.voucherApply!(fixture.samples.voucherApply);
+    vi.advanceTimersByTime(1001);
+    await expect(silent).resolves.toBeNull();
+    const refused = b.kiosk.voucherRemove!(8);
+    b.inbox.reply(calls[1].id, false, '"unknown method"');
+    await expect(refused).resolves.toBeNull();
+    const broken = createAndroidBridges({ ...native, call: () => { throw new Error('gone'); } });
+    await expect(broken.kiosk.voucherApply!(fixture.samples.voucherApply)).resolves.toBeNull();
+    expect(b.pending()).toBe(0);
+  });
+
+  it('an answer not of the answer\'s shape is no answer; a missing title or line is filled, never shown broken', () => {
+    expect(voucherAnswerOf(null)).toBeNull();
+    expect(voucherAnswerOf({ ok: true })).toBeNull();
+    expect(voucherAnswerOf({ ok: true, dueAgorot: 100, vouchers: [{ serial: 'x', amountAgorot: 1 }] })).toBeNull();
+    expect(voucherAnswerOf({ ok: true, dueAgorot: -5, deductionAgorot: null, vouchers: [{ serial: 8, amountAgorot: 4000, lines: ['מנה ×1', 3, ''] }] })).toEqual({
+      ok: true,
+      error: null,
+      note: null,
+      totalAgorot: null,
+      deductionAgorot: 0,
+      dueAgorot: 0,
+      vouchers: [{ serial: 8, title: 'שובר מס׳ 0008', mode: 'payment', amountAgorot: 4000, lines: ['מנה ×1'] }],
+    });
+    // "ok" with an error is not ok.
+    expect(voucherAnswerOf({ ok: true, error: 'השובר כבר מומש', dueAgorot: 5000, vouchers: [] })?.ok).toBe(false);
+  });
+
+  it('the view: the voucher tile where the kiosk takes one, the card alone otherwise', () => {
+    const pay = (methods: string[]) => normalizeView({ phase: 'kiosk', config: { payment: { methods } } } as unknown as KioskView).pay;
+    expect(pay(['card', 'voucher'])).toEqual({ methods: ['card', 'voucher'], usable: ['card', 'voucher'], cardOff: null });
+    expect(pay(['voucher', 'cash_at_till', 'card'])).toEqual({ methods: ['card', 'voucher'], usable: ['card', 'voucher'], cardOff: null });
+    expect(pay(['card', 'cash_at_till'])).toEqual({ methods: ['card'], usable: ['card'], cardOff: null });
+    const own = { methods: ['card'], usable: [], cardOff: 'x' };
+    expect(normalizeView({ phase: 'kiosk', config: {}, pay: own } as unknown as KioskView).pay).toEqual(own);
+  });
+
+  it('the checkout reports "details" and the charge "pay" — the APK keeps the vouchers there, "cart" gives them back', () => {
+    const rules: KioskFlowRules = { services: ['take_away'], skipCart: 'off', asksDetails: () => false, cartEmpty: false, detailsStep: 'before_pay', asksPayMethod: true };
+    const run = (...events: KioskEvent[]) => events.reduce((s, e) => reduce(s, e, rules), INITIAL_FLOW);
+    const toPayMethod: KioskEvent[] = [{ type: 'start' }, { type: 'openCart' }, { type: 'checkout' }];
+    expect(run(...toPayMethod)).toMatchObject({ screen: 'details', detailsNext: 'pay' });
+    expect(run(...toPayMethod, { type: 'detailsDone' })).toMatchObject({ screen: 'pay' });
+    // Declined, or back from the charge: the checkout again — the vouchers stay.
+    expect(run(...toPayMethod, { type: 'detailsDone' }, { type: 'paymentStarted' }, { type: 'paymentDeclined' })).toMatchObject({ screen: 'pay' });
+    expect(run(...toPayMethod, { type: 'detailsDone' }, { type: 'back' })).toMatchObject({ screen: 'details', detailsNext: 'pay' });
+    // Back out of the checkout: the basket — the APK gives them back.
+    expect(run(...toPayMethod, { type: 'back' })).toMatchObject({ screen: 'cart' });
+    const { native, sends } = fakeNative();
+    const b = createAndroidBridges(native);
+    b.kiosk.reportFlow({ flowState: 'ordering', screen: run(...toPayMethod).screen, busy: false, idle: false });
+    expect(sends).toEqual([{ method: 'reportFlow', payload: { flowState: 'ordering', screen: 'details', busy: false, idle: false } }]);
   });
 });
 

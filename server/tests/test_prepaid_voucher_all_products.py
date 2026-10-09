@@ -128,6 +128,8 @@ def picker(w, *, search=None, purpose="items", shops=None):
 def make(w, items, *, kind="items", count=2, split=True, shops=None, **extra):
     body = {"name": "הפקה", "companyId": w.company.id, "count": count, "kind": kind, "splitAllowed": split,
             "items": items, "shopIds": shops, **extra}
+    # What today's tills book (the `voucher` tender at list prices): no `features` needed.
+    body.setdefault("redemptionAccounting", "payment")
     return R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(**body), **_ctx(w))
 
 

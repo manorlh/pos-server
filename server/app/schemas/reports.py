@@ -104,8 +104,11 @@ class CashierSalesRow(BaseModel):
     sales_count: int = Field(..., alias="salesCount")
     refunds_count: int = Field(..., alias="refundsCount")
 
+    #: Gross and discounts without production vouchers' deductions (as the till's X).
     gross: float
     discounts: float
+    #: "שוברי הפקה": what production vouchers booked as a document deduction took off — apart.
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     refunds: float
     #: gross - discounts - refunds
     net: float
@@ -117,8 +120,11 @@ class CashierSalesRow(BaseModel):
     card_net: float = Field(..., alias="cardNet")
     other_net: float = Field(..., alias="otherNet")
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a): not money
-    #: taken, and zero over complete baskets, so cash + card + other + exchange = net.
+    #: taken, and zero over complete baskets, so cash + card + other + exchange +
+    #: productionVoucher = net.
     exchange_net: float = Field(0.0, alias="exchangeNet")
+    #: "שוברי הפקה": what production vouchers paid for (the `voucher` / `production_voucher` legs).
+    production_voucher_net: float = Field(0.0, alias="productionVoucherNet")
 
     tips: float
 
@@ -153,14 +159,18 @@ class SalesByAreaRow(BaseModel):
     transactions_count: int = Field(0, alias="transactionsCount")
     gross: float = 0.0
     discounts: float = 0.0
+    #: "שוברי הפקה": production vouchers' deductions (not in `discounts`).
+    production_voucher_deductions: float = Field(0.0, alias="productionVoucherDeductions")
     net: float = 0.0
     refunds: float = 0.0
     cash: float = 0.0
     card: float = 0.0
     other: float = 0.0
     #: Net of the `exchange` legs of mixed baskets (docs/SHIFTS_API.md §1.2a); zero over
-    #: complete baskets, so cash + card + other + exchange = net.
+    #: complete baskets, so cash + card + other + exchange + productionVoucher = net.
     exchange: float = 0.0
+    #: "שוברי הפקה".
+    production_voucher: float = Field(0.0, alias="productionVoucher")
     tips: float = 0.0
 
 

@@ -66,7 +66,7 @@ export interface RosterUser {
  * by test/desktopExit.test.ts against pos-server's tests/fixtures/till_permissions_matrix.json.
  */
 export const CODES: readonly string[] = [
-  'SELL', 'CALCULATOR.USE', 'PRICE_OVERRIDE', 'DISCOUNT', 'LINE_VOID', 'OTH', 'REFUND', 'REPRINT',
+  'SELL', 'CALCULATOR.USE', 'PRICE_OVERRIDE', 'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'LINE_VOID', 'OTH', 'REFUND', 'REPRINT',
   'TABLES.USE', 'TABLES.OPEN_OTHERS', 'TABLE_CANCEL', 'TABLE_VOID', 'TABLE_RESTORE', 'TABLE_UNLOCK',
   'SHIFT_OPEN', 'SHIFT_CLOSE', 'X', 'Z', 'TRANSMIT', 'VIEW_REPORTS',
   'CASH_DRAWER.OPEN_ON_CASH_SALE', 'CASH_DRAWER.OPEN_MANUALLY', 'CASH_DRAWER.OPEN_FOR_CHANGE', 'CASH_DRAWER.CASH_IN',
@@ -80,7 +80,7 @@ const KNOWN = new Set(CODES);
 
 /** What a cashier needed a manager for before roles (the cloud's `LEGACY_APPROVAL_CODES`). */
 const LEGACY_APPROVAL = new Set([
-  'REFUND', 'DISCOUNT', 'OTH', 'CATALOG_WRITE', 'TRANSMIT', 'TABLE_CANCEL', 'TABLE_UNLOCK', 'REPRINT', 'TABLE_VOID',
+  'REFUND', 'DISCOUNT', 'VOUCHER_DISCOUNT_OVERRIDE', 'OTH', 'CATALOG_WRITE', 'TRANSMIT', 'TABLE_CANCEL', 'TABLE_UNLOCK', 'REPRINT', 'TABLE_VOID',
   'TABLE_RESTORE', 'USER_SESSION_RELEASE', 'KIOSK_UNLOCK', 'KIOSK_CONTROL', 'ATTENDANCE_MANAGE', 'CARD_UNRESOLVED',
 ]);
 /** A shop manager's alone before roles (the cloud's `LEGACY_CASHIER_DENIED`). */

@@ -116,7 +116,10 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
             document_type=tx.document_type,
             refund_of_transaction_id=tx.refund_of_transaction_id,
         )
-        split = {"cash": Decimal("0"), "card": Decimal("0"), "other": Decimal("0"), "exchange": Decimal("0")}
+        split = {
+            "cash": Decimal("0"), "card": Decimal("0"), "other": Decimal("0"), "exchange": Decimal("0"),
+            "production_voucher": Decimal("0"),
+        }
         brands: List[str] = []
         last4: List[str] = []
         approvals: List[str] = []
@@ -171,6 +174,8 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
             "card": _money(split["card"]),
             "other": _money(split["other"]),
             "exchange": _money(split["exchange"]),
+            # "שוברי הפקה": what production vouchers paid.
+            "productionVoucher": _money(split["production_voucher"]),
             "legs": len(doc_legs),
             "cardBrands": brands,
             "cardLast4": last4,

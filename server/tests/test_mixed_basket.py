@@ -167,7 +167,9 @@ class TestTheExchangeTender:
     def test_it_is_a_bucket_of_its_own(self):
         assert normalize_tender("exchange") == "exchange"
         assert normalize_tender(" Exchange ") == "exchange"
-        assert normalize_tender("voucher") == "other"
+        # A production voucher is a bucket of its own too ("שוברי הפקה"), whichever code the till wrote.
+        assert normalize_tender("voucher") == normalize_tender("production_voucher") == "production_voucher"
+        assert normalize_tender("bit") == "other"
 
     @pytest.mark.parametrize(
         "methods,summary",

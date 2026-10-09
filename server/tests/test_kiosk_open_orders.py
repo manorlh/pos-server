@@ -24,6 +24,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
+from fastapi import HTTPException
 
 from decimal import Decimal
 
@@ -45,6 +46,7 @@ from app.schemas.prepaid_voucher import PrepaidVoucherBatchCreate, PrepaidVouche
 from app.services import ably_notify
 from app.services import kiosk_config as C
 from app.services import kiosk_open_orders as S
+from app.services import prepaid_vouchers as PV
 from app.services import till_parameters as TP
 from shift_world import accept_str_uuids, make_world
 
@@ -336,6 +338,8 @@ def _redeem_hotdog(w, *, machine=None, request="r-1"):
     batch = PVR.create_prepaid_voucher_batch(
         PrepaidVoucherBatchCreate(
             name="פסטיבל", companyId=w.company.id, splitAllowed=True, count=1,
+            # What the Windows kiosk books (the `voucher` tender at list prices): it sends no `features`.
+            redemptionAccounting="payment",
             items=[{"productId": w.hotdog.id, "quantity": 1}, {"productId": w.drink.id, "quantity": 2}],
         ),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
@@ -354,6 +358,25 @@ def _voucher_leg(out, amount=2500):
         "redemptionId": out["redemptionId"], "serial": 1, "amountAgorot": amount, "eventName": "פסטיבל",
         "redeemed": [{"productId": r["productId"], "tillProductId": r["tillProductId"], "name": r["name"], "quantity": r["quantity"]} for r in out["redeemed"]],
     }
+
+
+def test_a_voucher_the_kiosk_cannot_book_sends_the_customer_to_the_till(w):
+    """A batch booked as a document deduction (the default since voucher types): the Windows kiosk
+    sends no `features`, so the cloud says "update required" — kiosk-desktop sends the customer to the till."""
+    batch = PVR.create_prepaid_voucher_batch(
+        PrepaidVoucherBatchCreate(name="פסטיבל", companyId=w.company.id, count=1,
+                                  items=[{"productId": w.hotdog.id, "quantity": 1}]),
+        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    assert batch["redemptionAccounting"] == "discount"
+    voucher = w.db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == uuid.UUID(batch["id"])).one()
+    with pytest.raises(HTTPException) as e:
+        PVR.redeem_prepaid_voucher(
+            str(w.kiosk.id),
+            PrepaidVoucherRedeemIn(code=voucher.code, items=[{"productId": str(w.hotdog.id), "quantity": 1}], clientRequestId="r-x"),
+            machine=w.kiosk, db=w.db,
+        )
+    assert e.value.detail == PV.UPDATE_REQUIRED
 
 
 def test_a_voucher_pays_part_and_the_till_takes_the_rest(w):
