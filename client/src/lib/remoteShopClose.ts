@@ -72,13 +72,15 @@ export interface ShopCloseRun {
   forceAllowed: boolean;
   items: ShopCloseRunItem[];
   commands: ShopCloseCommand[];
+  /** One line per till the Z went ahead without waiting for (offline since a report of no shift open). */
+  warnings?: string[];
 }
 
 export interface ShiftGuardBlocker {
   machineId: string;
   name: string;
   posNumber: string | null;
-  status: 'open_shift' | 'pending_acceptance';
+  status: 'open_shift' | 'pending_acceptance' | 'unknown' | 'offline_last_closed';
   online: boolean;
   words: string;
 }
@@ -87,6 +89,8 @@ export interface ShiftGuard {
   label: string;
   required: boolean;
   blockers: ShiftGuardBlocker[];
+  /** Offline since a report of no shift open: "לא מחובר — המשמרת האחרונה סגורה", never blocking. */
+  offlineClosed?: ShiftGuardBlocker[];
 }
 
 /** The force's reason, as the server takes it: typed, at least 5 characters. */

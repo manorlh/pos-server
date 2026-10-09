@@ -65,6 +65,13 @@ STATUS_PENDING = "pending_acceptance"
 #: Offline with no shift the cloud knows of: it may have opened one the cloud never saw.
 STATUS_UNKNOWN = "unknown"
 UNKNOWN_WORDS = "מצב לא ידוע — ייתכן שיש משמרת פתוחה"
+#: Offline since a report that said no shift was open: never blocks (a shift it opened since, the
+#: cloud unaware, is not lost — its documents reach the next Z as late documents, document_filing).
+STATUS_OFFLINE_CLOSED = "offline_last_closed"
+OFFLINE_CLOSED_WORDS = "לא מחובר — המשמרת האחרונה סגורה"
+OFFLINE_CLOSED_WARNING = (
+    "לא מחובר — המשמרת האחרונה שדיווח עליה סגורה. אם נפתחה בו משמרת בלי חיבור, המסמכים שלה ייכנסו ל-Z הבא."
+)
 STATUS_WORDS = {STATUS_OPEN: "משמרת פתוחה", STATUS_PENDING: "ממתין לקבלה", STATUS_UNKNOWN: UNKNOWN_WORDS}
 OFFLINE_WORD = "מנותקת"
 
@@ -134,6 +141,10 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
     Why this till blocks the Z, or None: a shift open (on the cloud or as the till reports it),
     or closed on the till and not yet accepted by the cloud (the cloud still holds it open while
     the till no longer does, or documents of it are still on their way).
+
+    Offline, it blocks only when its state is unknown — it never reported, or its last report had
+    a shift open. Its last report said none was open: `offline_last_closed`, shown, never blocking
+    (`blocks: False`).
     """
     from app.services import z_runs as ZR
     from app.services.machine_status import is_online
@@ -159,13 +170,18 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
         state = STATUS_PENDING
     online = is_online(machine.last_heartbeat_at, now=now)
     if state is None and seated and not online:
-        state = STATUS_UNKNOWN  # never "closed" for a till the cloud cannot see
+        if machine.last_heartbeat_at is not None and reported is None:
+            # Its last report: no shift open, and it went offline after it.
+            return {"machineId": str(machine.id), "name": machine.name, "posNumber": machine.pos_number,
+                    "status": STATUS_OFFLINE_CLOSED, "online": False, "words": OFFLINE_CLOSED_WORDS,
+                    "blocks": False}
+        state = STATUS_UNKNOWN  # never reported, or its last report had a shift open
     if state is None:
         return None
     words = STATUS_WORDS[state]
     if state == STATUS_UNKNOWN:
         return {"machineId": str(machine.id), "name": machine.name, "posNumber": machine.pos_number,
-                "status": state, "online": online, "words": words}
+                "status": state, "online": online, "words": words, "blocks": True}
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -173,6 +189,7 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
         "status": state,
         "online": online,
         "words": f"{OFFLINE_WORD} · {words}" if not online else words,
+        "blocks": True,
     }
 
 
@@ -180,21 +197,38 @@ def blockers(db: Session, shop: Any, machines: Iterable[POSMachine], *, now: Opt
     out = []
     for m in machines:
         found = till_status(db, m, shop.id, now=now)
-        if found is not None:
+        if found is not None and found["blocks"]:
             out.append(found)
     return out
 
 
-def shop_blockers(db: Session, shop: Any, *, area_id: Any = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The tills of the shop Z's scope (its own-Z tills never) that block it now."""
+def _scoped(db: Session, shop: Any, area_id: Any = None) -> List[POSMachine]:
     from app.models.tenant import Tenant
     from app.services import z_runs as ZR
 
     tills = ZR.shop_tills(db, shop.id)
     tenant = db.get(Tenant, shop.tenant_id) if getattr(shop, "tenant_id", None) is not None else None
     own = ZR.per_till_ids(db, tills, tenant, shop)
-    scoped = [m for m in tills if m.id not in own and (area_id is None or str(m.area_id) == str(area_id))]
-    return blockers(db, shop, scoped, now=now)
+    return [m for m in tills if m.id not in own and (area_id is None or str(m.area_id) == str(area_id))]
+
+
+def offline_closed(db: Session, shop: Any, machines: Iterable[POSMachine], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """The tills offline since a report of no shift open: shown and warned of, never blocking."""
+    out = []
+    for m in machines:
+        found = till_status(db, m, shop.id, now=now)
+        if found is not None and found["status"] == STATUS_OFFLINE_CLOSED:
+            out.append(found)
+    return out
+
+
+def shop_offline_closed(db: Session, shop: Any, *, area_id: Any = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    return offline_closed(db, shop, _scoped(db, shop, area_id), now=now)
+
+
+def shop_blockers(db: Session, shop: Any, *, area_id: Any = None, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """The tills of the shop Z's scope (its own-Z tills never) that block it now."""
+    return blockers(db, shop, _scoped(db, shop, area_id), now=now)
 
 
 def unknown_at_start(db: Session, shop: Any, tills: Iterable[POSMachine], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -251,6 +285,33 @@ def record_forced_start(db: Session, run: Any, user: Any, unknown: List[Dict[str
         },
     ))
     logger.warning("shop Z run %s started past unknown tills by %s: %s", run.id, who, reason)
+
+
+def note_offline_closed(run: Any, tills: List[Dict[str, Any]], now: datetime) -> List[Any]:
+    """
+    Recorded on the run, and so on the Z (`openTillsLeftOut`, reason `offline_last_closed`): the
+    tills offline since a report of no shift open that this Z went ahead without waiting for.
+    """
+    import json
+
+    from app.models.z_run import ZRunItem, ZRunItemStatus
+    from app.services.z_runs import LEFT_OUT_CODE
+
+    rows = []
+    for t in tills:
+        rows.append(ZRunItem(
+            id=uuid.uuid4(),
+            run_id=run.id,
+            machine_id=uuid.UUID(t["machineId"]),
+            include_open_shift=False,
+            status=ZRunItemStatus.EXCLUDED,
+            error_code=LEFT_OUT_CODE,
+            error_message=json.dumps({
+                "id": t["machineId"], "posNumber": t["posNumber"], "name": t["name"], "openShiftId": None,
+                "reason": STATUS_OFFLINE_CLOSED, "warning": OFFLINE_CLOSED_WARNING, "notedAt": now.isoformat(),
+            }, ensure_ascii=False),
+        ))
+    return rows
 
 
 # ── The super admin's force ───────────────────────────────────────────────────

@@ -306,12 +306,26 @@ export function ShopClosePanel({ shopId }: { shopId: string }) {
           </ul>
         </div>
       ) : null}
+      {p.shiftGuard.required && (p.shiftGuard.offlineClosed ?? []).length > 0 ? (
+        <ul className="space-y-0.5 text-sm text-muted-foreground">
+          {(p.shiftGuard.offlineClosed ?? []).map((b) => (
+            <li key={b.machineId} className="flex flex-wrap gap-1.5">
+              <span>{b.name}</span>
+              {b.posNumber ? <span className="text-xs">#{b.posNumber}</span> : null}
+              <span className="ms-auto">{b.words}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {run ? (
         <div className="space-y-2 text-sm">
           <p className="font-medium">
             {run.words}
             {counts && runActive(run.status) ? ` · ${counts.closed}/${counts.total} נסגרו` : ''}
           </p>
+          {(run.warnings ?? []).map((w) => (
+            <p key={w} className="text-xs text-amber-700 dark:text-amber-400">{w}</p>
+          ))}
           <ul className="space-y-1">
             {run.items.map((i) => (
               <li key={i.id} className="flex flex-wrap items-center gap-1.5">

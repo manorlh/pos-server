@@ -432,6 +432,12 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
             done_at=item["readyAt"], expires_at=run.expires_at,
         ))
     out["commands"] = commands
+    # One line per till the Z went ahead without waiting for, offline since a report of no shift open.
+    left = (out.get("openTillsLeftOut") or {}).get("tills") or []
+    out["warnings"] = [
+        f"{t.get('name') or t.get('posNumber') or ''}: {t.get('warning')}"
+        for t in left if isinstance(t, dict) and t.get("reason") == "offline_last_closed"
+    ]
     # "בנה בלי הקופה" (the existing proceed_without) only where the configuration lets a till wait
     # for the next Z: never in local mode, never under "חובה לסגור את כל הקופות".
     required = ZR._all_tills_required(db, run) if run.status == ZRunStatus.WAITING else None
@@ -618,7 +624,13 @@ def _guard_out(db: Session, shop: Any, *, now: Optional[datetime] = None) -> Dic
     from app.services import z_shift_guard as G
 
     required = G.required(db, shop)
-    return {"label": G.LABEL, "required": required, "blockers": G.shop_blockers(db, shop, now=now) if required else []}
+    return {
+        "label": G.LABEL,
+        "required": required,
+        "blockers": G.shop_blockers(db, shop, now=now) if required else [],
+        # Offline since a report of no shift open: shown ("לא מחובר — המשמרת האחרונה סגורה"), never blocking.
+        "offlineClosed": G.shop_offline_closed(db, shop, now=now) if required else [],
+    }
 
 
 def shop_request(

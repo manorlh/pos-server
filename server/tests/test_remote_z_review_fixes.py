@@ -292,7 +292,7 @@ def test_a_till_the_cloud_cannot_see_is_unknown_and_holds_the_start_unless_suppo
     from app.models.audit_exception import AuditException
 
     selling(z, z.t1, 1, "10.00")
-    z.t2.last_heartbeat_at = NOW - timedelta(hours=5)  # off since, no shift the cloud knows of
+    z.t2.last_heartbeat_at = None  # never reported: its state is unknown
     z.db.flush()
     p = svc.shop_preview(z.db, z.shop, now=NOW, user=z.admin)
     (b,) = [b for b in p["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)]
@@ -386,3 +386,72 @@ def test_the_preview_counts_what_the_build_takes_besides(z, monkeypatch):
     assert p["leftovers"] == [{"machineId": str(z.t2.id), "name": z.t2.name, "posNumber": z.t2.pos_number,
                                "shifts": 1, "net": 25.0}]
     assert p["totals"]["totalSales"] == 35.0
+
+
+# ── The offline-till rule (the coordinator, 09.10): block only when the state is unknown ──
+
+
+def test_offline_since_a_report_of_no_shift_open_does_not_block_and_is_warned_and_recorded(z):
+    from app.routers import till_shop_z_local as LR
+
+    s1 = selling(z, z.t1, 1, "10.00")
+    # Till 2's last report: no shift open; it went offline after that.
+    z.t2.reported_open_shift_id = None
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
+    z.db.flush()
+
+    p = preview(z)
+    assert [b["machineId"] for b in p["shiftGuard"]["blockers"]] == [str(z.t1.id)]  # only the till selling
+    (oc,) = p["shiftGuard"]["offlineClosed"]
+    assert oc["machineId"] == str(z.t2.id) and oc["words"] == "לא מחובר — המשמרת האחרונה סגורה"
+    assert oc["blocks"] is False
+    assert p["shopClose"]["available"] is True
+    # The main till is not held by it either.
+    assert [b["machineId"] for b in LR.till_shop_z_shift_guard(str(z.t1.id), machine=z.t1, db=z.db)["blockers"]] == []
+
+    run = start(z)
+    progress = svc.run_progress(z.db, run, now=NOW)
+    assert progress["warnings"] == [f"{z.t2.name}: {G.OFFLINE_CLOSED_WARNING}"]
+    till_closes(z, z.t1, s1)
+    z.db.refresh(run)
+    assert run.status == ZRunStatus.COMPLETED
+    # Recorded on the Z itself.
+    zr = z.db.get(ZReport, run.z_report_id)
+    (left,) = zr.header["openTillsLeftOut"]["tills"]
+    assert left["id"] == str(z.t2.id) and left["reason"] == "offline_last_closed" and left["openShiftId"] is None
+
+
+def test_offline_with_an_open_shift_or_never_reported_blocks(z):
+    from app.models.shift import Shift as ShiftRow
+
+    selling(z, z.t1, 1, "10.00")
+    # Its last report had a shift open (the cloud has not seen it): blocks, as an open shift.
+    z.t2.reported_open_shift_id = uuid.uuid4()
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
+    z.db.flush()
+    (b,) = [b for b in preview(z)["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)]
+    assert b["status"] == G.STATUS_OPEN and b["words"] == "מנותקת · משמרת פתוחה"
+    assert preview(z)["shiftGuard"]["offlineClosed"] == []
+
+    # Its last report had a shift open that the cloud holds closed — what is open now is unknown.
+    closed = till_closes(z, z.t2, selling(z, z.t2, 1, "5.00"))
+    z.t2.reported_open_shift_id = closed.id
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
+    z.db.flush()
+    assert z.db.get(ShiftRow, closed.id) is not None
+    (b,) = [b for b in preview(z)["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)]
+    assert b["status"] == G.STATUS_UNKNOWN and b["words"] == "מצב לא ידוע — ייתכן שיש משמרת פתוחה"
+    with pytest.raises(HTTPException) as e:
+        z_runs_router.post_z_run(ZRunCreateIn(shopId=z.shop.id, machines=[{"machineId": str(z.t1.id)}],
+                                              confirmCloudData=True), **_ctx(z))
+    assert e.value.detail["code"] == G.REFUSED_CODE
+
+    # Never reported at all: unknown, blocks; only a super admin starts anyway, with a reason.
+    z.t2.reported_open_shift_id = None
+    z.t2.last_heartbeat_at = None
+    z.db.flush()
+    p = svc.shop_preview(z.db, z.shop, now=NOW, user=z.admin)
+    assert p["shopClose"]["available"] is False and p["shopClose"]["forceStartAllowed"] is True
+    run = svc.shop_request(z.db, z.admin, z.tenant.id, z.shop, totals_key=p["totalsKey"], confirm_cloud_data=True,
+                           force_reason="הקופה לא הותקנה עדיין", now=NOW)
+    assert isinstance(run, ZRun)

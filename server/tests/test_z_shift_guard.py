@@ -137,7 +137,7 @@ def test_off_today_behaviour(z):
     off(z)
     s1 = selling(z, z.t1, 1, "10.00")
     selling(z, z.t2, 1, "20.00")
-    assert preview(z)["shiftGuard"] == {"label": G.LABEL, "required": False, "blockers": []}
+    assert preview(z)["shiftGuard"] == {"label": G.LABEL, "required": False, "blockers": [], "offlineClosed": []}
     run = start(z)
     till_closes(z, z.t1, s1)
     assert svc.run_progress(z.db, run, now=NOW)["leaveOutAllowed"] is True

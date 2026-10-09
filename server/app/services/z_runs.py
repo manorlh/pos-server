@@ -838,6 +838,7 @@ def create_z_run(
 
     guard_on = z_shift_guard.required(db, shop, area_id=area.id if area is not None else None)
     unknown: List[dict] = []
+    offline_closed: List[dict] = []
     forced_start = None
     if guard_on:
         scoped = [
@@ -846,6 +847,8 @@ def create_z_run(
         ]
         unknown = z_shift_guard.unknown_at_start(db, shop, scoped, now=now)
         forced_start = z_shift_guard.refuse_or_force_start(db, shop, user, unknown, force_reason)
+        # Offline since a report of no shift open: never holds the Z — warned of, and recorded.
+        offline_closed = z_shift_guard.offline_closed(db, shop, scoped, now=now)
     left_out = tills_left_out(db, user, shop, tills, by_id, area=area, own_z=own_z)
     if guard_on and z_scope_of(tenant) == Z_SCOPE_MACHINE:
         # One till per Z: the rule holds for the Z's own till — never started leaving its shift open.
@@ -924,6 +927,8 @@ def create_z_run(
     if record_left_out:
         for till in left_out:
             db.add(_left_out_marker(run, till))
+    for marker in z_shift_guard.note_offline_closed(run, offline_closed, now) if offline_closed else []:
+        db.add(marker)
 
     db.flush()
     db.refresh(run)
