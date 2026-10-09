@@ -110,6 +110,8 @@ export interface ProducerOwnerView {
   /** The batches (names, customers, prices) are the prepaid vouchers' section. */
   canSeeBatches?: boolean;
   canEditBatches?: boolean;
+  /** Switching the settlement on takes the production prices' section (the server refuses otherwise). */
+  canEnableSettlement?: boolean;
   inviteUrl?: string;
 }
 

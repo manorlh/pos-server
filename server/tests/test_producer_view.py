@@ -414,7 +414,9 @@ def test_the_owner_routes(w):
 
 def test_batches_are_the_prepaid_vouchers_section(w):
     restricted = _user(w.db, "restricted2", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
-    w.db.add(DashboardAccessProfile(user_id=restricted.id, full_access=False, sections={"reports": "edit"}))
+    # The production prices' section (switching the settlement on takes it), not the vouchers'.
+    w.db.add(DashboardAccessProfile(user_id=restricted.id, full_access=False,
+                                    sections={"reports": "edit", "prepaid_voucher_prices": "view"}))
     mine = _batch(w, "Stage crew")
     w.event.producer_settings = {"batchIds": [str(mine.id)]}
     w.db.commit()
@@ -443,7 +445,8 @@ def test_production_batches_and_prices():
     assert PROD.production_price(none, SimpleNamespace(id="b5", production_price=-1)) is None
     assert PROD.production_price(none, SimpleNamespace(id="b6", production_price=1200), include_own=False) is None
     assert PROD.production_price(event, SimpleNamespace(id="b1", production_price=1200), include_own=False) == Decimal("30.00")
-    assert PROD.settings_of(SimpleNamespace(producer_settings=None)) == {"settlementEnabled": False, "batchIds": [], "productionPrices": {}}
+    assert PROD.settings_of(SimpleNamespace(producer_settings=None)) == {
+        "settlementEnabled": False, "batchIds": [], "productionPrices": {}, "settlementEnabledBy": None}
 
 
 def test_the_settlement_prices_each_voucher_by_its_serial():
@@ -464,6 +467,11 @@ def test_the_settlement_prices_each_voucher_by_its_serial():
     assert PROD.own_price(flat) == Decimal("12.50")
     assert PROD.settle(none, flat, [7, 8]) == (Decimal("12.50"), Decimal("25.00"))
     assert PROD.settle(none, SimpleNamespace(id="b3"), [1]) == (None, None)
+    # Without the batch's own price (its opener cannot see it): only a price typed on the event.
+    assert PROD.settle(none, flat, [7, 8], include_own=False) == (None, None)
+    assert PROD.settle(none, flat, [], include_own=False) == (None, None)
+    assert PROD.settle(SimpleNamespace(producer_settings={"productionPrices": {"b2": "30"}}), flat, [7, 8],
+                       include_own=False) == (Decimal("30.00"), Decimal("60.00"))
     assert PROD.settle(none, SimpleNamespace(id="b3"), []) == (None, None)
 
 
@@ -472,7 +480,8 @@ def test_the_producer_settles_at_the_core_price_in_agorot(w):
     crew = _batch(w, "צוות במה", production_price=2500,
                   production_price_history=[{"fromSerial": 1, "priceAgorot": 2000}, {"fromSerial": 11, "priceAgorot": 2500}])
     flat = _batch(w, "VIP", production_price=1250)
-    w.event.producer_settings = {"batchIds": [str(crew.id), str(flat.id)], "settlementEnabled": True}
+    w.event.producer_settings = {"batchIds": [str(crew.id), str(flat.id)], "settlementEnabled": True,
+                                 "settlementEnabledBy": str(w.manager.id)}   # opened by an owner who sees prices
     w.db.flush()
     v = _redeem(w, crew, w.t1, 10, serial=3)
     _redeem(w, crew, w.t1, 20, voucher=v)                           # the same voucher again: once
@@ -508,3 +517,76 @@ def test_the_owner_sees_a_batch_price_only_with_the_prices_section(w):
     assert prices(vouchers_only) == {"Stage crew": None, "Typed crew": 22}     # the event's typed price only
     assert prices(with_prices) == {"Stage crew": 18, "Typed crew": 22}
     assert prices(w.manager)["Stage crew"] == 18                               # full access
+
+
+def test_switching_the_settlement_on_takes_the_production_prices_section(w):
+    """
+    Decision 09.10: switching an event's settlement on takes `prepaid_voucher_prices`, and the
+    producer never sees a production price the owner who switched it on cannot — not when that
+    owner loses the section later, nor when nobody is recorded (switched on before this rule).
+    """
+    crew = _batch(w, "צוות במה", production_price=2500)
+    w.event.producer_settings = {"batchIds": [str(crew.id)]}
+    no_prices = _user(w.db, "no_prices", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
+    w.db.add(DashboardAccessProfile(user_id=no_prices.id, full_access=False,
+                                    sections={"reports": "edit", "prepaid_vouchers": "edit"}))
+    opener = _user(w.db, "opener", UserRole.COMPANY_MANAGER, w.tenant, company=w.company)
+    opener_access = DashboardAccessProfile(user_id=opener.id, full_access=False, sections={
+        "reports": "edit", "prepaid_vouchers": "edit", "prepaid_voucher_prices": "view"})
+    w.db.add(opener_access)
+    w.db.flush()
+    _redeem(w, crew, w.t1, 10, serial=1)
+    w.db.commit()
+    settings_url = f"/api/v1/report-events/{w.event.id}/producer-settings"
+
+    def put(user, body):
+        return w.client.put(settings_url, headers=_headers(user, w.tenant), json=body)
+
+    def opened():
+        w.db.refresh(w.event)
+        return PROD.settings_of(w.event)
+
+    def crew_row():
+        settle = _get(w, w.producer, w.event.id, "/settlement")
+        assert settle.status_code == 200, settle.text
+        body = settle.json()
+        return body["rows"][0]["productionPrice"], body["rows"][0]["amount"], body["missingPrices"]
+
+    # Without the section: the owner's tab says so, and the switch is refused.
+    view = w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=_headers(no_prices, w.tenant)).json()
+    assert view["canEnableSettlement"] is False
+    refused = put(no_prices, {"settlementEnabled": True})
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "settlement_requires_prices"
+    assert opened()["settlementEnabled"] is False
+    assert _get(w, w.producer, w.event.id, "/settlement").status_code == 403    # still closed
+
+    # With it: on, and it is the opener's; the producer sees the batch's own price (₪25).
+    view = w.client.get(f"/api/v1/report-events/{w.event.id}/producers", headers=_headers(opener, w.tenant)).json()
+    assert view["canEnableSettlement"] is True
+    assert put(opener, {"settlementEnabled": True}).status_code == 200
+    assert opened()["settlementEnabledBy"] == str(opener.id)
+    assert crew_row() == (25, 25, False)
+
+    # Kept on by an owner without the section (saving the links): still the opener's.
+    assert put(no_prices, {"settlementEnabled": True, "batchIds": [str(crew.id)]}).status_code == 200
+    assert opened()["settlementEnabledBy"] == str(opener.id)
+    # Switching it off is anyone's; on again is not.
+    assert put(no_prices, {"settlementEnabled": False}).status_code == 200
+    assert opened() == {**opened(), "settlementEnabled": False, "settlementEnabledBy": None}
+    assert put(no_prices, {"settlementEnabled": True}).status_code == 403
+
+    # The opener loses the section: the producer no longer sees the batch's own price.
+    assert put(opener, {"settlementEnabled": True}).status_code == 200
+    opener_access.sections = {"reports": "edit", "prepaid_vouchers": "edit"}
+    w.db.commit()
+    DA.forget(w.db)  # access is memoised per session; the test's requests share one
+    assert crew_row() == (None, None, True)
+    # A price typed on the event is the event's, shown whoever opened it.
+    w.event.producer_settings = {**w.event.producer_settings, "productionPrices": {str(crew.id): 30}}
+    w.db.commit()
+    assert crew_row() == (30, 30, False)
+
+    # Switched on before the opener was kept: no batch price for the producer.
+    w.event.producer_settings = {"batchIds": [str(crew.id)], "settlementEnabled": True}
+    w.db.commit()
+    assert crew_row() == (None, None, True)

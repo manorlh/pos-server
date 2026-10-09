@@ -44,9 +44,14 @@ function SettingsForm({ eventId, view }: { eventId: string; view: ProducerOwnerV
         <span>
           <span className="block font-semibold">{t('settlement')}</span>
           <span className="block text-xs text-muted-foreground">{t('settlementHint')}</span>
+          {view.canEnableSettlement === false && !view.settings.settlementEnabled ? (
+            <span className="block text-xs text-muted-foreground">{t('settlementNeedsPrices')}</span>
+          ) : null}
         </span>
         <Switch
           checked={draft.settlementEnabled}
+          // Switching it on takes the production prices' section; switching it off is anyone's.
+          disabled={view.canEnableSettlement === false && !view.settings.settlementEnabled}
           onCheckedChange={(v) => setDraft((d) => ({ ...d, settlementEnabled: v }))}
           aria-label={t('settlement')}
         />

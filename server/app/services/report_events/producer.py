@@ -255,6 +255,48 @@ def may_see_prices(db: Session, user: Any) -> bool:
     return prices_visible(db, user, "view")
 
 
+SETTLEMENT_NEEDS_PRICES = "settlement_requires_prices"
+
+
+def save_settings(db: Session, event: ReportEvent, user: Any, body: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The owner's settings (production.clean_settings), and who switched the settlement on.
+    Switching it on takes the `prepaid_voucher_prices` section: the settlement shows the producer
+    the batches' production prices, and the producer never sees one the owner who opened it
+    cannot. Kept on by someone else, it stays theirs; re-saved by a holder of the section when
+    nobody is recorded, it becomes theirs. Raises ValueError(code) / ProducerError.
+    """
+    current = PROD.settings_of(event)
+    settings = PROD.clean_settings(event, db, body)
+    if not settings["settlementEnabled"]:
+        return settings
+    sees_prices = may_see_prices(db, user)
+    if not current["settlementEnabled"]:
+        if not sees_prices:
+            raise ProducerError(SETTLEMENT_NEEDS_PRICES, 403, "פתיחת ההתחשבנות למפיק דורשת הרשאה למחירי ההפקה")
+        settings["settlementEnabledBy"] = str(user.id)
+    elif current["settlementEnabledBy"]:
+        settings["settlementEnabledBy"] = current["settlementEnabledBy"]
+    elif sees_prices:
+        settings["settlementEnabledBy"] = str(user.id)
+    return settings
+
+
+def enabler_sees_prices(db: Session, event: ReportEvent) -> bool:
+    """Whether the owner who switched [event]'s settlement on (still) sees production prices; no one recorded: no."""
+    by = PROD.settings_of(event)["settlementEnabledBy"]
+    if not by:
+        return False
+    try:
+        ident = by if isinstance(by, uuid.UUID) else uuid.UUID(str(by))
+    except (TypeError, ValueError):
+        return False
+    owner = db.get(User, ident)
+    if owner is None or not owner.is_active:
+        return False
+    return may_see_prices(db, owner)
+
+
 def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, Any]:
     """
     The event's "עמדת מפיק" tab: who is invited, the settings, and — for someone with the prepaid
@@ -269,6 +311,7 @@ def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, A
             "batches": [],
             "canSeeBatches": False,
             "canEditBatches": False,
+            "canEnableSettlement": user is None or may_see_prices(db, user),
         }
     auto = set(PROD.auto_batch_ids(db, event))
     suggested = set(PROD.suggested_batch_ids(db, event))
@@ -296,6 +339,8 @@ def owner_view(db: Session, event: ReportEvent, user: Any = None) -> Dict[str, A
         "batches": batches,
         "canSeeBatches": True,
         "canEditBatches": user is None or may_edit_batches(db, user),
+        # Switching the settlement on takes the production prices' section (save_settings).
+        "canEnableSettlement": own_prices,
     }
 
 
@@ -458,10 +503,12 @@ def settlement(db: Session, event: ReportEvent, now: datetime) -> Dict[str, Any]
     figures = vouchers(db, event, now)
     batches = {str(b.id): b for b in PROD.event_batches(db, event)}
     serials = _redeemed_serials(db, event, list(batches.values()))
+    # A batch's own production price only while the owner who opened the settlement sees it.
+    own = enabler_sees_prices(db, event)
     rows, total, missing = [], ZERO, False
     for row in figures["batches"]:
         # Each redeemed voucher at its production price (by serial once "ערוך סדרה" changed it).
-        price, amount = PROD.settle(event, batches[row["batchId"]], serials.get(row["batchId"], []))
+        price, amount = PROD.settle(event, batches[row["batchId"]], serials.get(row["batchId"], []), include_own=own)
         if amount is None:
             missing = True
         else:

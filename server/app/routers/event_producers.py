@@ -25,7 +25,6 @@ from app.middleware.auth import get_active_tenant_id, get_current_user
 from app.models.user import User
 from app.services.report_events import crud as C
 from app.services.report_events import producer as PR
-from app.services.report_events import production as PROD
 
 router = APIRouter(prefix="/report-events", tags=["report-events"])
 
@@ -102,7 +101,10 @@ def put_producer_settings(
         # Linking batches and their prices is the prepaid vouchers' section; the switch is the event's.
         body = {k: v for k, v in (body or {}).items() if k == "settlementEnabled"}
     try:
-        event.producer_settings = PROD.clean_settings(event, db, body)
+        # Switching the settlement on takes the production prices' section (PR.save_settings).
+        event.producer_settings = PR.save_settings(db, event, current_user, body)
+    except PR.ProducerError as exc:
+        raise _http(exc) from None
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": str(exc)}) from None
     db.commit()

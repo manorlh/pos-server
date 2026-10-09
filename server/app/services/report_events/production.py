@@ -20,7 +20,10 @@ it: `production_price_history`, read through `prepaid_voucher_edit.production_pr
   batch (`productionPrices`, ₪), else the batch's own — the core's agorot, ÷ 100 — at the
   voucher's serial when the settlement knows it (`settle`), else none: the settlement then
   shows quantities without money. The batch's own price is the `prepaid_voucher_prices`
-  section's (the core's rule): the owner's tab shows it only to whoever has that section.
+  section's (the core's rule): the owner's tab shows it only to whoever has that section, and
+  the producer's settlement uses it only while the owner who switched the settlement on
+  (`settlementEnabledBy`) has that section — switching it on takes the section (producer.py
+  `save_settings`): the producer never sees a production price that owner cannot.
 
 Only batches of the event's tenant and company are ever returned, whatever a setting says.
 """
@@ -57,10 +60,14 @@ def unregister_production_provider(provider: ProductionProvider) -> None:
 def settings_of(event: ReportEvent) -> Dict[str, Any]:
     raw = event.producer_settings if isinstance(getattr(event, "producer_settings", None), dict) else {}
     prices = raw.get("productionPrices") if isinstance(raw.get("productionPrices"), dict) else {}
+    enabled = raw.get("settlementEnabled") is True
+    by = raw.get("settlementEnabledBy")
     return {
-        "settlementEnabled": raw.get("settlementEnabled") is True,
+        "settlementEnabled": enabled,
         "batchIds": [str(b) for b in (raw.get("batchIds") or []) if b],
         "productionPrices": {str(k): v for k, v in prices.items()},
+        # Who switched the settlement on (a user id); None when off, or switched on before it was kept.
+        "settlementEnabledBy": str(by) if enabled and by else None,
     }
 
 
@@ -175,17 +182,20 @@ def production_price(event: ReportEvent, batch: PrepaidVoucherBatch, *, include_
     return _shekels(getattr(batch, "production_price", None))
 
 
-def settle(event: ReportEvent, batch: PrepaidVoucherBatch, serials: Sequence[Optional[int]]
-           ) -> Tuple[Optional[Decimal], Optional[Decimal]]:
+def settle(event: ReportEvent, batch: PrepaidVoucherBatch, serials: Sequence[Optional[int]], *,
+           include_own: bool = True) -> Tuple[Optional[Decimal], Optional[Decimal]]:
     """
     (₪ per voucher, ₪ amount) for [batch]'s redeemed vouchers, one serial each: the event's typed
-    price × their number; else each voucher at the batch's own price for its serial. The price
-    is None when it differs between the vouchers (the amount stands) or is unknown; the amount
-    None when any voucher's price is unknown (the settlement says prices are missing).
+    price × their number; else (with [include_own]) each voucher at the batch's own price for its
+    serial. The price is None when it differs between the vouchers (the amount stands) or is
+    unknown; the amount None when any voucher's price is unknown (the settlement says prices are
+    missing).
     """
     typed = typed_price(event, batch)
     if typed is not None:
         return typed, typed * len(serials)
+    if not include_own:
+        return None, None
     if not serials:
         price = production_price(event, batch)
         return price, (Decimal("0.00") if price is not None else None)
