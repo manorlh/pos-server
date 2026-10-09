@@ -10500,6 +10500,7 @@
         "setup": "ממתין להפעלה",
         "no_payment": "אין תשלום",
         "config_pending": "הגדרות חדשות ממתינות",
+        "till_mode": "במצב קופה",
         "running": "פועל"
       },
       "terminal": {
@@ -10591,7 +10592,8 @@
       "closed": "סגור",
       "admin": "מסך ניהול",
       "setup": "ממתין להפעלה",
-      "no_payment": "אין תשלום"
+      "no_payment": "אין תשלום",
+      "till_mode": "מצב קופה"
     },
     "platform": {
       "android": "Android",
@@ -13330,7 +13332,8 @@
       "closed": "סגור",
       "admin": "מסך ניהול",
       "setup": "ממתין להפעלה",
-      "no_payment": "אין תשלום"
+      "no_payment": "אין תשלום",
+      "till_mode": "מצב קופה"
     },
     "list": {
       "pos": "קופה {n}",
@@ -13600,7 +13603,11 @@
         "resume": "חידוש",
         "close_shift": "סגירת משמרת",
         "till_z": "הפקת Z",
-        "menu": "עריכת תפריט הקיוסק"
+        "menu": "עריכת תפריט הקיוסק",
+        "enter_till": "מעבר לקופה",
+        "return_kiosk": "חזרה לקיוסק",
+        "reprint_bon": "הדפסת הבון האחרון",
+        "reprint_receipt": "הדפסת העסקה האחרונה"
       },
       "status": {
         "applied": "בוצע",
@@ -13610,6 +13617,25 @@
       "source": {
         "dashboard": "לוח הבקרה",
         "till": "קופה שולטת"
+      }
+    },
+    "workMode": {
+      "title": "מצב עבודה",
+      "kiosk": "קיוסק",
+      "till": "קופה",
+      "now": "עכשיו: {mode}",
+      "employee": "עובד בקופה: {name}",
+      "since": "מאז {time}",
+      "toTill": "העבר לקופה",
+      "toKiosk": "החזר לקיוסק",
+      "hint": "הקיוסק מבצע כשאין הזמנה או תשלום פתוחים; מכירות מושהות יחכו למצב קופה. אותה מכונה, אותה סדרה ואותו Z.",
+      "gate": "אפשר מצב קופה (מנהל-על / מפיץ)",
+      "gateHint": "כשכבוי — האפשרות לא קיימת: אין כפתור בקיוסק, אין תפריט בקופה ואין מתג כאן.",
+      "gateSaved": "נשמר",
+      "display": "מסך: {orientation} · {size} · {width}×{height}dp",
+      "orientation": {
+        "portrait": "לאורך",
+        "landscape": "לרוחב"
       }
     },
     "settings": {

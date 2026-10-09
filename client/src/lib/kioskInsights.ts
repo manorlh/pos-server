@@ -466,7 +466,7 @@ export type HealthOverall = (typeof OVERALL_STATES)[number];
 
 /** Each part's codes (kiosk_health.*_part); anything else is shown as sent. */
 export const PART_CODES: Record<HealthPartKey, readonly string[]> = {
-  app: ['disabled', 'offline', 'paused', 'closed', 'setup', 'no_payment', 'config_pending', 'running'],
+  app: ['disabled', 'offline', 'paused', 'till_mode', 'closed', 'setup', 'no_payment', 'config_pending', 'running'],
   terminal: ['card_lock', 'card_unknown', 'ready', 'busy', 'unreachable', 'not_ready', 'not_configured', 'none', 'not_reported'],
   printer: ['no_paper', 'offline', 'unavailable', 'error', 'usb_detached', 'usb_permission', 'usb_several', 'overheated', 'unprinted', 'ok', 'none', 'not_reported'],
   tillLink: ['not_reported', 'none', 'down', 'lan', 'cloud', 'ok'],
@@ -489,6 +489,7 @@ export const SCREEN_CODES = [
   'admin',
   'setup',
   'no_payment',
+  'till_mode',
 ] as const;
 
 export interface HealthPart {

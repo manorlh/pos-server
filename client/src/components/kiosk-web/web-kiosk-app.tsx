@@ -17,6 +17,7 @@
  */
 
 import { layoutOf, productColumns } from '@/lib/kioskLayout';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@/lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -176,7 +177,21 @@ interface PayState {
 const NO_PAY: PayState = { vouchers: [], busy: false, note: null, error: null, entry: false, camera: false, forfeit: null, placed: null };
 
 export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: WebKioskService; words: KioskWords }) {
-  const cfg = view.config as KioskConfig;
+  // "שיתאים את עצמו" (P:/specs/kiosk-landscape-till-mode.md §2, §4): the window read again at every resize or
+  // turn; in landscape the side cart where there is room and the rail or the top tabs (lib/displayProfile.ts,
+  // the same rules as the Android kiosk). Portrait: the config exactly as it is. The cart and the flow are
+  // state, never the layout's — a resize keeps them.
+  const size = useWindowSize();
+  const display = useMemo(
+    () => kioskDisplay(displayProfile(browserFacts(size.w, size.h, typeof window !== 'undefined' ? window.devicePixelRatio : 1))),
+    [size.w, size.h],
+  );
+  const cfg = useMemo(() => {
+    const base = view.config as KioskConfig;
+    if (!display.landscape) return base;
+    const theme = kioskDisplayTheme(base.theme, display);
+    return theme === base.theme ? base : { ...base, theme };
+  }, [view.config, display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // The card only through a paired Windows bridge (§28, lib/kioskBridge.ts).
   const cardReady = view.pay.usable.includes('card');
@@ -285,7 +300,6 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const longPress = useRef<number | null>(null);
   const swallowClick = useRef(false);
   const voucherAttempt = useRef<{ code: string; id: string } | null>(null);
-  const size = useWindowSize();
 
   /* ---------------------------------------------------------- the catalog */
 
