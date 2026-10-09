@@ -78,7 +78,7 @@ function demoCatalog() {
     ],
     links: { categories: { 'c-burgers': ['g-size', 'g-extras', 'g-without'] }, products: {} },
     notes: { all: [], categories: { 'c-burgers': [{ text: 'רוטב בצד' }, { text: 'עשוי היטב' }] } },
-    upsells: [{ triggerType: 'category', triggerIds: ['c-burgers'], options: [{ type: 'product', id: 'p-fries' }, { type: 'product', id: 'p-cola' }], prompt: 'משהו לצד?' }],
+    upsells: [{ id: 'u-sides', name: 'משהו לצד', triggerType: 'category', triggerIds: ['c-burgers'], options: [{ type: 'product', id: 'p-fries' }, { type: 'product', id: 'p-cola' }], prompt: 'משהו לצד?' }],
   };
   return { syncType: 'full', serverTime: '2026-10-07T00:00:00Z', products, categories, menu, machineCatalog: { mode: 'all' } };
 }

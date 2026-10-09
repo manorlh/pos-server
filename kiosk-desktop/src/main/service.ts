@@ -559,7 +559,7 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');
@@ -1208,7 +1208,7 @@ export class KioskService extends EventEmitter {
     const cfg = this.config();
     const operator = this.operator();
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
     const totals = saleTotals(lines, this.vatRate(), tip);
     if (totals.chargeAgorot < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
     this.ledger.openShift(operator);
@@ -1435,7 +1435,7 @@ export class KioskService extends EventEmitter {
       return { ok: false, reason: 'changed', changes: [], totalAgorot: goods };
     }
     if (lines.length === 0) return { ok: false, reason: 'empty', message: 'הסל ריק' };
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
     const vouchers = (Array.isArray(input.vouchers) ? input.vouchers : []).filter((v) => v && typeof v.redemptionId === 'string' && Number.isInteger(v.amountAgorot) && v.amountAgorot >= 0);
     if (vouchers.reduce((s, v) => s + v.amountAgorot, 0) > goods + tip) return { ok: false, reason: 'error', message: 'השוברים עולים על ההזמנה' };
     const now = Date.now();

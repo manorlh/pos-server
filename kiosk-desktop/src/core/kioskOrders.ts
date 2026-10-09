@@ -203,8 +203,5 @@ export function localDate(ms: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** The phone the customer may leave: Israeli mobile/landline digits, 9–10 digits. */
-export function phoneValid(raw: string): boolean {
-  const d = raw.replace(/[\s-]/g, '');
-  return /^0\d{8,9}$/.test(d);
-}
+/** The customer's phone: the Android kiosk's rule, one copy for every TS kiosk (client lib/kioskCustomer.ts). */
+export { phoneValid } from '@dash-lib/kioskCustomer';

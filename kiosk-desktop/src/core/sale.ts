@@ -15,7 +15,7 @@
  * Pure: amounts in agorot inside, shekels (2 decimals) on the wire.
  */
 
-import { optionText } from '@dash-lib/kioskMoney';
+import { kioskTipAgorot, optionText, TIP_OTHER_MAX_SHEKELS, tipPercentOf, type TipRules } from '@dash-lib/kioskMoney';
 import { ofShekels, times, toShekels, vatNet } from './money';
 
 /** At most this many of one line (the Android kiosk's KioskViewModel.MAX_QTY). */
@@ -134,23 +134,21 @@ export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgoro
   };
 }
 
-/** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers. */
+/** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers (lib/kioskMoney.ts tipPercentOf — one copy). */
 export function tipOf(goodsAgorot: number, pct: number | null): number {
-  if (!pct || pct <= 0) return 0;
-  return Math.trunc((goodsAgorot * pct + 50) / 100);
+  return tipPercentOf(goodsAgorot, pct);
 }
 
-/** "סכום אחר" at most ₪999 (the dashboard's TIP_OTHER_MAX_SHEKELS). */
-export const TIP_OTHER_MAX_AGOROT = 99_900;
+/** "סכום אחר" at most ₪999 (KioskTip.OTHER_MAX_SHEKELS). */
+export const TIP_OTHER_MAX_AGOROT = TIP_OTHER_MAX_SHEKELS * 100;
 
 /**
- * The tip to charge: "סכום אחר" when it is a whole-shekel amount above zero, not more than the
- * goods and ₪999; else the preset's percent (tipOf).
+ * The tip to charge (KioskViewModel.price, lib/kioskMoney.ts kioskTipAgorot — the Android kiosk's rule):
+ * none with tips off; "סכום אחר" when "other" is on and it is whole shekels above zero, at most the
+ * goods and ₪999; else the preset's percent of the goods after promotions.
  */
-export function tipToCharge(goodsAgorot: number, pct: number | null, otherAgorot: number | null | undefined): number {
-  const other = otherAgorot ?? 0;
-  if (Number.isInteger(other) && other > 0 && other % 100 === 0 && other <= goodsAgorot && other <= TIP_OTHER_MAX_AGOROT) return other;
-  return tipOf(goodsAgorot, pct);
+export function tipToCharge(rules: TipRules, goodsAgorot: number, pct: number | null, otherAgorot: number | null | undefined): number {
+  return kioskTipAgorot(rules, goodsAgorot, pct, otherAgorot);
 }
 
 /** The sale document type by the dealer type: an exempt dealer issues 400 receipts. */

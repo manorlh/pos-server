@@ -100,8 +100,10 @@ import {
   SuccessScreen,
   useKioskRenderProfile,
 } from '@/kiosk-shared';
+// "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
+import { basketUpsell, mealUpsellIds } from '@/kiosk-shared/basket-upsell';
 import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
-import { localDateTimeOf, promotionsOf } from '@/lib/kioskMoney';
+import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@/lib/kioskMoney';
 import {
   backAction,
   busy as flowBusy,
@@ -216,6 +218,13 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   );
 
   const [productId, setProductId] = useState<string | null>(null);
+  // The screen the sheet was opened on (the menu, or the basket — an offer that needs a choice): it shows there only,
+  // so a sheet opened from an offer never pops up later on another screen.
+  const [productAt, setProductAt] = useState<string | null>(null);
+  const openSheetFor = (id: string) => {
+    setProductId(id);
+    setProductAt(flow.screen);
+  };
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [details, setDetails] = useState<DetailsValue>(NO_DETAILS);
   const detailsRef = useRef(details);
@@ -313,7 +322,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   );
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
-  const product = productId ? (allProducts.find((p) => p.id === productId) ?? null) : null;
+  const product = productId && productAt === flow.screen ? (allProducts.find((p) => p.id === productId) ?? null) : null;
   /** Every product the kiosk sells (a meal's component may sit in no category shown). */
   const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
   const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
@@ -443,7 +452,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   // What the goods cost after the promotions (the tip is on that, as the till's).
   const goodsAgorot = pricing.totalAgorot;
-  const tipAgorot = tipOfDetails(details, goodsAgorot);
+  const tipAgorot = tipOfDetails(details, goodsAgorot, cfg.payment);
   const dueNow = dueOf(goodsAgorot, tipAgorot, pay.vouchers);
 
   /**
@@ -549,7 +558,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         tableRef: details.table.trim() || null,
         customerName: details.name.trim() || null,
         customerPhone: details.phone.trim() || null,
-        tipAgorot: tipOfDetails(details, shownAgorot),
+        tipAgorot: tipOfDetails(details, shownAgorot, cfg.payment),
         vouchers: payRef.current.vouchers,
       })
       .catch((e: unknown) => ({ ok: false as const, reason: 'error' as const, message: e instanceof Error ? e.message : String(e) }));
@@ -566,7 +575,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     setPay((p) => ({ ...p, placed: { order: r.order, dueAgorot: r.dueAgorot, pending: r.pending } }));
     dispatch({ type: 'paymentApproved' });
     setSuccessAt(Date.now());
-  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn]);
+  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn, cfg.payment]);
 
   // Into the pay screen: the order goes to the tills at once.
   useEffect(() => {
@@ -595,7 +604,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         setPay((p) => ({ ...p, busy: false, error: null, vouchers: legs, note: words.t('voucherAppliedNote', { amount: formatMoney(r.leg.amountAgorot / 100) }) }));
         // Everything paid by the vouchers (no tip left): the order goes to the tills by itself — once, on this answer.
         const goods = pricingRef.current.totalAgorot;
-        if (dueOf(goods, tipOfDetails(detailsRef.current, goods), legs) === 0) {
+        if (dueOf(goods, tipOfDetails(detailsRef.current, goods, cfg.payment), legs) === 0) {
           chooseMethod('cash_at_till');
           dispatch({ type: 'detailsDone' });
         }
@@ -606,7 +615,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       if (r.kind !== 'offline') voucherAttempt.current = r.kind === 'forfeit' ? voucherAttempt.current : null;
       setPay((p) => ({ ...p, busy: false, note: null, error, forfeit: r.kind === 'forfeit' ? code : null }));
     },
-    [svc, orderLines, words, txt, dispatch, chooseMethod],
+    [svc, orderLines, words, txt, dispatch, chooseMethod, cfg.payment],
   );
 
   const atPayMethod = flow.screen === 'details' && flow.detailsNext === 'pay';
@@ -660,7 +669,10 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       else if (s === 'service' && pendingService.current) dispatch({ type: 'chooseService', service: pendingService.current });
       else dispatch({ type: 'backToCatalog' });
     } else if (target === 'cart') dispatch({ type: 'openCart' });
-    else if (target === 'pay') dispatch({ type: 'checkout' });
+    // "מינימום הזמנה": refused under the minimum, as the Android kiosk's checkout (the button shows why).
+    else if (target === 'pay') {
+      if (!belowMinimumOrder(cfg.payment.minOrderAgorot, pricingRef.current.totalAgorot)) dispatch({ type: 'checkout' });
+    }
     else if (target === 'attract') dispatch({ type: 'reset' });
   };
 
@@ -754,7 +766,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     go,
     openProduct: (p) => {
       if (p.soldOut) return;
-      setProductId(p.id);
+      openSheetFor(p.id);
     },
     cart,
     setCart,
@@ -778,7 +790,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       // line of its own, as the window adds it; a choice with no default opens the window.
       if (p.addPath !== 'direct') {
         const d = defaultsLine(p, groupsOf(p.id));
-        if (!d) return setProductId(p.id);
+        if (!d) return openSheetFor(p.id);
         addLine({ key: defaultsLineKey(p.id), product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from);
         return;
       }
@@ -897,7 +909,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     add: (p, from) => m.quickAdd?.(p, from),
     choose: (p) => {
       if (flowRef.current.screen !== 'catalog') dispatch({ type: 'backToCatalog' });
-      setProductId(p.id);
+      openSheetFor(p.id);
     },
     start: () => dispatch({ type: 'start' }),
     serviceOnAttract: serviceOnAttract(cfgIn),
@@ -1051,7 +1063,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
             )}
           />
         </ReachFrame>
-        {screen === 'catalog' && product ? (
+        {(screen === 'catalog' || screen === 'cart') && product ? (
           <ReachSheets m={m}>
             <LayoutProductSheet
               key={product.id}
@@ -1084,7 +1096,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0.5 z-10 text-center text-[10px] font-medium tracking-[0.12em]" style={{ color: colors.mutedText, opacity: 0.55 }}>
         {words.t('poweredBy')}
       </div>
-      {noteEntry && screen === 'catalog' && product ? (
+      {noteEntry && (screen === 'catalog' || screen === 'cart') && product ? (
         <EntryWindow m={m} caption={noteEntry.caption} steps={noteEntry.steps} onFinish={() => setNoteEntry(null)} onClose={() => setNoteEntry(null)} />
       ) : null}
       {pay.entry && atPayMethod ? (
@@ -1220,42 +1232,22 @@ function pGroupsOf(groups: WebKioskView['catalog']['groups'][string]): PGroup[] 
   }));
 }
 
-/** The offers: the kiosk's own rules, else the till's menu upsells (as the Windows kiosk). */
+/**
+ * The basket's offers: the Android kiosk's rules (kiosk-shared/basket-upsell.ts, lib/kioskUpsellRules.ts) —
+ * the menu's `upsells` + `kioskUpsells` on the kiosk, their days, hours and priority, `upsell.maxShown`.
+ */
 function upsellFor(view: WebKioskView, cfg: KioskConfig, cart: PLine[], all: PProduct[]): PProduct[] {
-  if (cart.length === 0) return [];
-  const inCart = new Set(cart.map((l) => l.product.id));
-  const own = (cfg as KioskConfig & { upsell?: { rules?: Array<{ triggerProductIds: string[]; offerProductIds: string[] }> } }).upsell?.rules ?? [];
-  if (own.length > 0) {
-    const byId = new Map(all.map((p) => [p.id, p]));
-    return own
-      .filter((r) => r.triggerProductIds.length === 0 || r.triggerProductIds.some((id) => inCart.has(id)))
-      .flatMap((r) => r.offerProductIds)
-      .map((id) => byId.get(id))
-      .filter((p): p is PProduct => !!p && !p.soldOut && !inCart.has(p.id))
-      .slice(0, 6);
-  }
-  const catsInCart = new Set(cart.map((l) => l.product.categoryId).filter(Boolean) as string[]);
-  const ids: string[] = [];
-  for (const u of view.catalog.upsells) {
-    const hit = u.triggerType === 'order' || (u.triggerType === 'product' && u.triggerIds.some((id) => inCart.has(id))) || (u.triggerType === 'category' && u.triggerIds.some((id) => catsInCart.has(id)));
-    if (!hit) continue;
-    ids.push(...u.productIds);
-    for (const c of u.categoryIds) ids.push(...all.filter((p) => p.categoryId === c).map((p) => p.id));
-  }
-  const byId = new Map(all.map((p) => [p.id, p]));
-  return Array.from(new Set(ids))
-    .map((id) => byId.get(id))
-    .filter((p): p is PProduct => !!p && !p.soldOut && !inCart.has(p.id))
-    .slice(0, 4);
+  return basketUpsell(view.catalog.upsellRules, cfg.upsell?.maxShown, cart, all).products;
 }
 
+/** "רוצים להפוך לארוחה?" (KioskMealUpsell.optionsFor, kiosk-shared/basket-upsell.ts): up to three meals, cheapest first. */
 function mealsFor(view: WebKioskView, productId: string, all: PProduct[]): PProduct[] {
-  const meals = new Set(view.catalog.products.filter((p) => p.meal).map((p) => p.id));
-  const ids = view.catalog.upsells.filter((u) => u.triggerType === 'product' && u.triggerIds.includes(productId)).flatMap((u) => u.productIds).filter((id) => meals.has(id));
-  return Array.from(new Set(ids))
-    .map((id) => all.find((p) => p.id === id && !p.soldOut))
-    .filter((p): p is PProduct => !!p)
-    .slice(0, 3);
+  const sellable = new Map(all.filter((p) => !p.soldOut).map((p) => [p.id, p] as const));
+  const ids = mealUpsellIds(view.catalog.upsellRules, productId, view.catalog.meals, (id) => {
+    const p = sellable.get(id);
+    return p ? (p.priceAgorot ?? Math.round(p.price * 100)) : null;
+  });
+  return ids.map((id) => sellable.get(id)).filter((p): p is PProduct => !!p);
 }
 
 function NoteField({ m, value, onOpen }: { m: PreviewModel; value: string; onOpen: () => void }) {

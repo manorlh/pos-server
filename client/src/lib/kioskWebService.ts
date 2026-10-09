@@ -424,7 +424,7 @@ export class WebKioskService {
     const kiosk = this.snapshot?.kiosk === true;
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
-    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
     const categoryImages: Record<string, string> = {};
     if (cfg) {
       for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {

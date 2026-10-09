@@ -3,6 +3,7 @@
  * The screens never reach the network: everything they show comes from here, from local data.
  */
 
+import type { KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import type { MealSlot } from '@dash-lib/kioskMoney';
 import type { PaymentMethod } from '@dash-lib/kioskConfig';
 import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
@@ -38,6 +39,8 @@ export interface KioskView {
     groups: Record<string, KGroup[]>;
     quickNotes: Record<string, string[]>;
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
+    /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (client lib/kioskUpsellRules.ts); absent: none. */
+    upsellRules?: KioskUpsellRule[];
     /** Kiosk category pictures (local) by category id. */
     categoryImages: Record<string, string>;
     /** The meals' slots by meal product id (client/src/lib/kioskMoney.ts MealSlot). */
