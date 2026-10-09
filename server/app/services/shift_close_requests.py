@@ -214,14 +214,20 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the heartbeat hands it over on the next beat.
         return
-    publish_close_shift_notify(
+    from sqlalchemy.orm import object_session
+
+    from app.services import after_commit
+
+    args = (
         str(machine.tenant_id),
         str(machine.id),
         str(req.id),
         str(named_shift_id(req)) if named_shift_id(req) else None,
         z_runs._initiator(user),
-        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
     )
+    kw = dict(wait_for_rest=bool(getattr(req, "wait_for_rest", False)))
+    # Only once the request is committed: a till hearing it first would find no such request.
+    after_commit.run(object_session(req), lambda: publish_close_shift_notify(*args, **kw))
     req.sent_at = now
 
 

@@ -175,7 +175,20 @@ def test_the_lock_is_postgres_advisory_and_a_no_op_elsewhere(z):
     import inspect
 
     src = inspect.getsource(ZR.lock_shop_z_start)
-    assert "pg_advisory_xact_lock" in src and "with_for_update" in src
+    # The advisory lock only — the shop's Z counter row is not held through the start (only a build takes it).
+    assert "pg_advisory_xact_lock" in src and "with_for_update" not in src
+    key = ZR.shop_z_start_key(z.shop.id)
+    assert -(2 ** 63) <= key < 2 ** 63
+
+
+def test_the_start_lock_comes_before_the_expiry_sweep(z, monkeypatch):
+    order = []
+    monkeypatch.setattr(ZR, "lock_shop_z_start", lambda db, shop_id: order.append("lock"))
+    original = ZR.expire_overdue_runs
+    monkeypatch.setattr(ZR, "expire_overdue_runs", lambda db, now=None: order.append("sweep") or original(db, now=now))
+    selling(z, z.t1, 1, "10.00")
+    start(z)
+    assert order[:2] == ["lock", "sweep"]
 
 
 # ── 5. Who decided ─────────────────────────────────────────────────────────────
@@ -208,13 +221,13 @@ def test_who_left_a_till_out_and_who_cancelled_are_recorded(z):
     assert cancelled["errorMessage"] == "בוטל ע״י admin"
 
 
-# ── 6. Tills too old for `waitForRest` ─────────────────────────────────────────
+# ── 6. Tills without the remote-close capability ──────────────────────────────
 
 
-def test_a_till_too_old_for_wait_for_rest_is_never_asked(z, monkeypatch):
+def test_a_till_without_the_remote_close_capability_is_never_asked(z, monkeypatch):
     selling(z, z.t1, 1, "10.00")
     selling(z, z.t2, 1, "20.00")
-    z.t2.app_version = "0.1.320+aaaaaaa-device"
+    z.t2.capabilities = None  # an older build says nothing
     z.db.flush()
     p = preview(z)
     assert p["shopClose"]["available"] is False and p["shopClose"]["whyNot"].startswith(svc.TOO_OLD_TEXT)
@@ -227,14 +240,63 @@ def test_a_till_too_old_for_wait_for_rest_is_never_asked(z, monkeypatch):
     with pytest.raises(HTTPException) as e:
         svc.shop_request(z.db, z.admin, z.tenant.id, z.shop, totals_key=p["totalsKey"], now=NOW)
     assert e.value.detail["code"] == "shop_close_unavailable"
-    # A version never reported is too old as well; the release build can raise the floor.
-    z.t2.app_version = None
-    assert svc.too_old(z.t2)
-    z.t2.app_version = "0.1.334+c21f40d-device"
-    assert not svc.too_old(z.t2)
-    monkeypatch.setenv("REMOTE_TILL_Z_MIN_TILL_VERSION", "340")
-    assert svc.too_old(z.t2)
+    # Not a version count: any version name, the capability decides.
+    z.t2.app_version = "0.1.999+abc-device"
+    assert svc.needs_update(z.t2)
+    z.t2.capabilities = ["something_else", svc.REMOTE_CLOSE_CAPABILITY]
+    z.t2.app_version = "0.1.12+abc-device"
+    assert not svc.needs_update(z.t2)
+    assert svc.REMOTE_CLOSE_CAPABILITY == "remote_close_v2"
     assert z.sent == []
+
+
+def test_the_optional_floor_is_a_number_or_refused_loudly(z, monkeypatch):
+    z.t1.capabilities = [svc.REMOTE_CLOSE_CAPABILITY]
+    z.t1.app_version = "0.1.350+abc-device"
+    monkeypatch.delenv(svc.MIN_VERSION_ENV, raising=False)
+    assert svc.min_version_code() is None and not svc.needs_update(z.t1)
+    monkeypatch.setenv(svc.MIN_VERSION_ENV, "352")
+    assert svc.needs_update(z.t1)
+    monkeypatch.setenv(svc.MIN_VERSION_ENV, "350")
+    assert not svc.needs_update(z.t1)
+    # The verifier's probe: a version name is not silently ignored — the server refuses to start.
+    monkeypatch.setenv(svc.MIN_VERSION_ENV, "0.1.340")
+    with pytest.raises(ValueError):
+        svc.check_config()
+    with pytest.raises(ValueError):
+        svc.min_version_code()
+    from app import main
+
+    with pytest.raises(ValueError):
+        main.check_remote_till_z_config()
+
+
+def test_a_kiosk_without_the_capability_never_holds_the_day_close(z):
+    selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    z.t2.capabilities = None  # a Windows kiosk: its own Z path, no capability
+    z.db.add(KioskDevice(machine_id=z.t2.id, tenant_id=z.tenant.id, shop_id=z.shop.id, name="K", enabled=True))
+    z.db.flush()
+    p = preview(z)
+    assert p["shopClose"]["available"] is True
+    kiosk = next(r for r in p["inShopZ"] if r["machineId"] == str(z.t2.id))
+    assert "needsUpdate" not in kiosk and kiosk["action"]["whyNot"] == "קיוסק — מלשונית הקיוסקים"
+
+
+def test_the_heartbeat_stores_what_the_build_can_do(z):
+    from app.routers import machines as machines_router
+    from app.schemas.pos_machine import MachineHeartbeatBody
+
+    z.t1.capabilities = None
+    machines_router.post_my_heartbeat(
+        MachineHeartbeatBody.model_validate({"capabilities": ["remote_close_v2", 7, ""]}), machine=z.t1, db=z.db,
+    )
+    assert z.t1.capabilities == ["remote_close_v2"]
+    # A build that no longer says it (a downgrade) is no longer asked; junk never 422s.
+    machines_router.post_my_heartbeat(MachineHeartbeatBody.model_validate({}), machine=z.t1, db=z.db)
+    assert z.t1.capabilities is None
+    machines_router.post_my_heartbeat(MachineHeartbeatBody.model_validate({"capabilities": "x"}), machine=z.t1, db=z.db)
+    assert z.t1.capabilities is None
 
 
 # ── 7. Fail closed ─────────────────────────────────────────────────────────────
@@ -395,8 +457,10 @@ def test_offline_since_a_report_of_no_shift_open_does_not_block_and_is_warned_an
     from app.routers import till_shop_z_local as LR
 
     s1 = selling(z, z.t1, 1, "10.00")
-    # Till 2's last report: no shift open; it went offline after that.
+    # Till 2's last report: no shift open, nothing pending; it went offline after that.
     z.t2.reported_open_shift_id = None
+    z.t2.pending_documents = 0
+    z.t2.reported_open_shift_claimed_at = NOW - timedelta(hours=8)
     z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
     z.db.flush()
 
@@ -455,3 +519,174 @@ def test_offline_with_an_open_shift_or_never_reported_blocks(z):
     run = svc.shop_request(z.db, z.admin, z.tenant.id, z.shop, totals_key=p["totalsKey"], confirm_cloud_data=True,
                            force_reason="הקופה לא הותקנה עדיין", now=NOW)
     assert isinstance(run, ZRun)
+
+
+# ── The verification's findings (09.10, second round) ───────────────────────────
+
+
+def test_the_pushes_go_only_after_the_commit_and_never_after_a_rollback(z, monkeypatch):
+    from app.services import till_z
+
+    selling(z, z.t1, 1, "10.00")
+    z.db.commit()
+    p = svc.preview(z.db, z.t1, now=NOW)
+    svc.request(z.db, z.admin, z.t1, totals_key=p["totalsKey"], now=NOW)
+    assert z.sent == []  # not yet committed: a till hearing it would find no such request
+    z.db.rollback()
+    z.db.commit()
+    assert z.sent == []  # rolled back: never sent
+    p = svc.preview(z.db, z.t1, now=NOW)
+    svc.request(z.db, z.admin, z.t1, totals_key=p["totalsKey"], now=NOW)
+    z.db.commit()
+    assert len(z.sent) == 1 and z.sent[0].get("wait_for_rest") is True
+    # A till Z request too (its own push).
+    sent = []
+    monkeypatch.setattr(ably_notify, "publish_till_z_notify", lambda *a, **k: sent.append(k))
+    z.t2.z_mode = "till"
+    selling(z, z.t2, 1, "5.00")
+    z.db.flush()
+    till_z.request_for_machine(z.db, z.admin, z.t2, wait_for_rest=True, now=NOW)
+    assert sent == []
+    z.db.commit()
+    assert len(sent) == 1
+
+
+def test_probe_v1_an_offline_closed_till_the_run_takes_is_not_listed_left_out(z):
+    from app.models.shift import Shift
+
+    s1 = selling(z, z.t1, 1, "10.00")
+    s2 = selling(z, z.t2, 1, "25.00")
+    till_closes(z, z.t2, s2)  # closed and accepted while online
+    z.t2.reported_open_shift_id = None
+    z.t2.pending_documents = 0
+    z.t2.reported_open_shift_claimed_at = NOW + timedelta(hours=1)
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
+    z.db.flush()
+    run = start(z)
+    till_closes(z, z.t1, s1)
+    z.db.refresh(run)
+    assert run.status == ZRunStatus.COMPLETED
+    zr = z.db.get(ZReport, run.z_report_id)
+    assert z.db.get(Shift, s2.id).z_report_id == zr.id  # taken by this Z ...
+    assert not (zr.header.get("openTillsLeftOut") or {}).get("tills")  # ... so never "left out"
+
+
+def test_the_offline_closed_tills_print_on_their_own_line_without_approval(z):
+    from app.services import z_print
+
+    s1 = selling(z, z.t1, 1, "10.00")
+    z.t2.reported_open_shift_id = None
+    z.t2.pending_documents = 0
+    z.t2.reported_open_shift_claimed_at = NOW - timedelta(hours=8)
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=8)
+    z.db.flush()
+    run = start(z)
+    till_closes(z, z.t1, s1)
+    z.db.refresh(run)
+    footer = z_print._footer_notes(z.db.get(ZReport, run.z_report_id))
+    line = next(f for f in footer if f.startswith("קופות לא מחוברות"))
+    assert line == f"קופות לא מחוברות (משמרת אחרונה סגורה): {z.t2.pos_number}"
+    assert not any("אושר ע״י" in f for f in footer)
+
+
+def test_probe_v3_offline_with_documents_still_pending_is_unknown_and_blocks(z):
+    selling(z, z.t1, 1, "10.00")
+    z.t2.reported_open_shift_id = None
+    z.t2.pending_documents = 3
+    z.t2.reported_open_shift_claimed_at = NOW - timedelta(hours=2)
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=2)
+    z.db.flush()
+    (b,) = [b for b in preview(z)["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)]
+    assert b["status"] == G.STATUS_UNKNOWN
+    # Did not say how many: unknown too.
+    z.t2.pending_documents = None
+    z.t2.pending_count = None
+    z.db.flush()
+    assert [b["status"] for b in preview(z)["shiftGuard"]["blockers"] if b["machineId"] == str(z.t2.id)] == [G.STATUS_UNKNOWN]
+
+
+def test_a_closed_claim_counts_only_when_the_till_said_it_after_its_last_shift(z):
+    from app.services.administrative_close import close_shift_administratively
+
+    s2 = selling(z, z.t2, 1, "20.00")
+    z.t2.reported_open_shift_id = s2.id
+    z.t2.reported_open_shift_claimed_at = NOW - timedelta(hours=1)
+    z.t2.pending_documents = 0
+    z.t2.last_heartbeat_at = NOW - timedelta(hours=1)
+    z.db.flush()
+    # Support closes it administratively: the till's claim is not wiped ...
+    close_shift_administratively(z.db, z.t2, s2, z.admin, force=True, now=NOW)
+    assert z.t2.reported_open_shift_id == s2.id
+    (b,) = [b for b in G.shop_blockers(z.db, z.shop, now=NOW) if b["machineId"] == str(z.t2.id)]
+    assert b["status"] == G.STATUS_UNKNOWN  # it may still be selling offline into it
+    # ... and a "none open" from before the cloud's last shift of it says nothing either.
+    z.t2.reported_open_shift_id = None
+    z.t2.reported_open_shift_claimed_at = NOW - timedelta(hours=1)
+    z.db.flush()
+    assert [b["status"] for b in G.shop_blockers(z.db, z.shop, now=NOW) if b["machineId"] == str(z.t2.id)] == [G.STATUS_UNKNOWN]
+    # Said by the till after it: trusted.
+    z.t2.reported_open_shift_claimed_at = NOW + timedelta(days=1)
+    z.db.flush()
+    assert [b for b in G.shop_blockers(z.db, z.shop, now=NOW) if b["machineId"] == str(z.t2.id)] == []
+
+
+def test_only_the_tills_own_readable_report_writes_the_claims_time(z):
+    from app.routers import machines as machines_router
+    from app.schemas.pos_machine import MachineHeartbeatBody
+
+    z.t1.reported_open_shift_claimed_at = None
+    machines_router.post_my_heartbeat(None, machine=z.t1, db=z.db)  # no body: says nothing
+    assert z.t1.reported_open_shift_claimed_at is None
+    body = MachineHeartbeatBody.model_validate({"openShiftId": "not-a-uuid"})
+    if getattr(body, "open_shift_id_unreadable", False):
+        machines_router.post_my_heartbeat(body, machine=z.t1, db=z.db)  # unreadable: the claim stays as it was
+        assert z.t1.reported_open_shift_claimed_at is None
+    machines_router.post_my_heartbeat(MachineHeartbeatBody.model_validate({}), machine=z.t1, db=z.db)
+    assert z.t1.reported_open_shift_claimed_at is not None
+
+
+def test_the_force_is_offered_only_when_the_open_shifts_rule_is_what_blocks(z):
+    s1 = selling(z, z.t1, 1, "10.00")
+    selling(z, z.t2, 1, "20.00")
+    run = start(z)
+    till_closes(z, z.t1, s1)
+    assert svc.run_progress(z.db, run, now=NOW, user=z.admin)["forceAllowed"] is True
+    set_param(z, TP.SHOP_Z_OPEN_TILLS_KEY, "shop", z.shop.id, TP.SHOP_Z_OPEN_TILLS_BLOCK)
+    assert svc.run_progress(z.db, run, now=NOW, user=z.admin)["forceAllowed"] is False
+    z.db.commit()
+    with pytest.raises(HTTPException) as e:
+        R.post_shop_close_proceed(run.id, R.ShopCloseProceedIn(excludeMachineIds=[z.t2.id]), **_ctx(z))
+    assert e.value.detail["canForce"] is False
+
+
+def test_a_kiosks_late_done_after_a_cancel_keeps_the_cancellation(z, monkeypatch):
+    from app.services import kiosk_config as KC
+    from app.services import kiosk_ops
+
+    z.t2.z_mode = "till"
+    z.db.add(KioskDevice(machine_id=z.t2.id, tenant_id=z.tenant.id, shop_id=z.shop.id, name="K", enabled=True))
+    monkeypatch.setattr(KC, "effective_config", lambda db, m: {"operations": {"closeWithShopZ": True}})
+    monkeypatch.setattr(kiosk_ops, "wake_machine", lambda *a, **k: None)
+    selling(z, z.t1, 1, "10.00")
+    z.db.flush()
+    run = start(z)
+    (req,) = z.db.query(KioskCloseRequest).all()
+    R.post_shop_close_cancel(run.id, **_ctx(z))
+    kiosk_ops.apply_close_result(z.db, z.t2, {"id": str(req.id), "state": "done", "zNumber": 7})
+    z.db.refresh(req)
+    assert req.state == "cancelled"
+    assert req.result["detail"] == "בוצע לאחר ביטול" and req.result["afterCancel"] is True and req.result["zNumber"] == 7
+
+
+def test_a_close_shift_ack_sweeps_expired_requests_first(z):
+    from app.models.shift_close_request import ShiftCloseRequest
+
+    selling(z, z.t1, 1, "10.00")
+    p = svc.preview(z.db, z.t1, now=NOW)
+    out = svc.request(z.db, z.admin, z.t1, totals_key=p["totalsKey"], now=NOW)
+    z.db.commit()
+    req = z.db.get(ShiftCloseRequest, uuid.UUID(str(out["request"]["id"])))
+    req.expires_at = NOW - timedelta(minutes=1)  # overdue, not swept yet
+    z.db.commit()
+    status_after = remote_close.apply_close_shift_ack(z.db, z.t1, request_id=req.id, phase="received")
+    assert status_after == "expired"

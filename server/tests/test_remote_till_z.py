@@ -36,6 +36,7 @@ def z(w, monkeypatch):  # noqa: F811
     monkeypatch.setattr(ably_notify, "publish_till_z_notify", lambda *a, **k: w.sent.append(("till-z", k)))
     for t in w.tills:
         t.app_version = "0.1.400+abcdef0-device"  # a build that honours waitForRest
+        t.capabilities = ["remote_close_v2"]  # a build with every remote-close safeguard
     w.till = w.tills[0]
     w.shift = open_shift(w, w.till, 1)
     w.doc(w.till, w.shift, "100.00")

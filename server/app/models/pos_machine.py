@@ -336,6 +336,9 @@ class POSMachine(Base):
     #: The heartbeat's `cellular` block as last sent (SIMs, default data SIM, data path, LAN
     #: address, phone numbers where the till may read them), and when.
     cellular = Column(JSONB, nullable=True)
+    #: What the till's build says it can do, from its last heartbeat (`capabilities`, a list of
+    #: strings): remote control asks a till only with "remote_close_v2" (app/services/remote_till_z.py).
+    capabilities = Column(JSONB, nullable=True)
     cellular_reported_at = Column(DateTime(timezone=True), nullable=True)
     #: Flattened from `cellular` for the search: "פרטנר,סלקום" and "0541234567,0521234567".
     sim_carriers = Column(String(200), nullable=True, index=True)
@@ -415,6 +418,10 @@ class POSMachine(Base):
     # Not an identity and not a foreign key: the shift may not exist here yet.
     reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
     reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
+    #: When the till itself last reported its open shift (or none) — set only by its heartbeat with
+    #: a readable body, never by a cloud-side action. "Closed" is trusted only when reported after
+    #: the last shift the cloud saw for the till (app/services/z_shift_guard.py).
+    reported_open_shift_claimed_at = Column(DateTime(timezone=True), nullable=True)
     #: The shop's master till has "סגירת Z סניפי" on screen until then (refreshed while it
     #: is open). Meanwhile the heartbeat tells every till of the shop to beat fast, so the
     #: close a shop Z sends is picked up in seconds even when realtime is down.

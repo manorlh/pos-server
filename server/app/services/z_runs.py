@@ -164,18 +164,20 @@ def lock_shop_z_start(db: Session, shop_id: uuid.UUID) -> None:
     """
     Serialize the starts of a shop's Z runs: a transaction-scoped advisory lock (Postgres) keyed
     on the shop, held until the start commits — the next start then sees its items as live.
-    The shop's Z counter row is locked too when it exists. Nothing to do on SQLite (tests).
+    Taken first, before the expiry sweep; the shop's Z counter row is not held through the start
+    (only a build takes it, as always). Nothing to do on SQLite (tests).
     """
     bind = db.get_bind()
     if bind is None or bind.dialect.name != "postgresql":
         return
     from sqlalchemy import text
 
-    key = int.from_bytes(uuid.UUID(str(shop_id)).bytes[:8], "big", signed=True) ^ 0x5A52554E  # "ZRUN"
-    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
-    from app.models.shop_z_sequence import ShopZSequence
+    db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": shop_z_start_key(shop_id)})
 
-    db.query(ShopZSequence).filter(ShopZSequence.shop_id == shop_id).with_for_update().first()
+
+def shop_z_start_key(shop_id: uuid.UUID) -> int:
+    """The advisory lock's key for a shop's Z starts: a signed 64-bit integer."""
+    return int.from_bytes(uuid.UUID(str(shop_id)).bytes[:8], "big", signed=True) ^ 0x5A52554E  # "ZRUN"
 
 
 def _live_items(db: Session, machine_ids: Sequence[uuid.UUID]) -> Dict[uuid.UUID, ZRunItem]:
@@ -408,15 +410,23 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the till collects it on its next heartbeat.
         return
-    publish_close_shift_notify(
+    from sqlalchemy.orm import object_session
+
+    from app.services import after_commit
+
+    args = (
         str(machine.tenant_id),
         str(machine.id),
         str(item.id),
         str(named_shift_id(item)) if named_shift_id(item) else None,
         _initiator(user),
+    )
+    kw = dict(
         force=bool(getattr(item.run, "force_close", False)),
         wait_for_rest=bool(getattr(item.run, "wait_for_rest", False)),
     )
+    # Only once the item is committed: a till hearing it first would find no such request.
+    after_commit.run(object_session(item), lambda: publish_close_shift_notify(*args, **kw))
     # "Sent" only when realtime really carried it: without Ably the publish is skipped, and
     # the heartbeat that hands the close over stamps it (`take_pending_close_shift`) — so a
     # run's timeline shows when the till actually got its command.
@@ -735,6 +745,10 @@ def create_z_run(
     the till, the area reports are about the stamp.
     """
     now = now or datetime.now(timezone.utc)
+    # One start at a time per shop (before anything else is locked: the expiry sweep below locks
+    # runs and may build one) — two day closes started together must not both pass the "run in
+    # progress" check further down.
+    lock_shop_z_start(db, shop.id)
     expire_overdue_runs(db, now=now)
 
     # Exactly one producer of the shop's Z sequence (docs/SPEC_INDEPENDENT_TILL.md §8.10):
@@ -799,9 +813,6 @@ def create_z_run(
                     detail=f"machine_not_in_area:{machine_id}",
                 )
 
-    # One start at a time per shop: two day closes started together (the wizard, a master till,
-    # remote control) must not both pass the "run in progress" check below.
-    lock_shop_z_start(db, shop.id)
     live = _live_items(db, wanted)
     if live:
         raise HTTPException(
@@ -927,8 +938,12 @@ def create_z_run(
     if record_left_out:
         for till in left_out:
             db.add(_left_out_marker(run, till))
-    for marker in z_shift_guard.note_offline_closed(run, offline_closed, now) if offline_closed else []:
-        db.add(marker)
+    if offline_closed:
+        db.flush()
+        taken = {i.machine_id for i in run.items if i.status != ZRunItemStatus.EXCLUDED}
+        not_taken = [t for t in offline_closed if uuid.UUID(t["machineId"]) not in taken]
+        for marker in z_shift_guard.note_offline_closed(run, not_taken, now):
+            db.add(marker)
 
     db.flush()
     db.refresh(run)
@@ -1461,7 +1476,9 @@ def proceed_without(
                         z_shift_guard.REFUSED_MESSAGE if required == "shifts" else
                         "בסניף מוגדר \"חובה לסגור את כל הקופות\": אי אפשר להפיק את ה-Z בלי קופה. סגרו אותה ונסו שוב."
                     ),
-                    "canForce": required != "local",
+                    # Support's force passes the open-shifts rule only — offered only when that
+                    # rule is what blocks (never with "חובה לסגור את כל הקופות", never in local mode).
+                    "canForce": required == "shifts" and _all_tills_required(db, run, guard=False) is None,
                 },
             )
     for item in list(run.items):
@@ -1555,7 +1572,8 @@ def cancel_run(db: Session, run: ZRun, *, cancelled_by: Optional[str] = None) ->
     try:
         from app.services import kiosk_ops
 
-        kiosk_ops.withdraw_shop_z_close(db, source="cloud_shop_z", ref=str(run.id))
+        with db.begin_nested():
+            kiosk_ops.withdraw_shop_z_close(db, source="cloud_shop_z", ref=str(run.id))
     except Exception:  # noqa: BLE001 - never fails the cancel; logged
         logger.exception("withdrawing the kiosks' close of run %s failed", run.id)
     db.flush()

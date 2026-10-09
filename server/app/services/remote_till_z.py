@@ -243,25 +243,63 @@ def _request_command(kind: str, out: Dict[str, Any], user: Any) -> Dict[str, Any
     )
 
 
-#: The first till build that honours `waitForRest` (pos-android feat/live-control c21f40d, the
-#: merge carrying fab76fc onto the release line: 0.1.334). An older till would close mid-sale, so it
-#: is never asked from remote control. `REMOTE_TILL_Z_MIN_TILL_VERSION` (a version code) raises it
-#: to the release build that carries it.
-MIN_WAIT_FOR_REST_VERSION_CODE = 334
+#: What a till's heartbeat says when its build has every remote-close safeguard (`waitForRest`, the
+#: at-rest re-check at the close, the cloud's answer to each ack, stale replays dropped, the retry
+#: that stops on cancel). Remote control asks only such a till — a capability, not a version count
+#: (counts differ per branch).
+REMOTE_CLOSE_CAPABILITY = "remote_close_v2"
 TOO_OLD_TEXT = "הקופה צריכה עדכון גרסה לפני סגירה מרחוק"
+#: An optional extra floor (a till version code, e.g. the release APK's): numeric or refused at startup.
+MIN_VERSION_ENV = "REMOTE_TILL_Z_MIN_TILL_VERSION"
 
 
-def min_version_code() -> int:
-    raw = (os.environ.get("REMOTE_TILL_Z_MIN_TILL_VERSION") or "").strip()
-    return max(int(raw), MIN_WAIT_FOR_REST_VERSION_CODE) if raw.isdigit() else MIN_WAIT_FOR_REST_VERSION_CODE
+def clean_capabilities(raw: Any) -> Optional[List[str]]:
+    """The heartbeat's `capabilities`, kept as short strings only; None when it said nothing."""
+    if not isinstance(raw, (list, tuple)):
+        return None
+    return [str(x)[:64] for x in raw if isinstance(x, str) and x.strip()][:32]
 
 
-def too_old(machine: POSMachine) -> bool:
-    """The till never said its version, or its build predates `waitForRest`."""
+def min_version_code() -> Optional[int]:
+    """The optional floor, or None. A value that is not a whole number is refused — never ignored."""
+    raw = (os.environ.get(MIN_VERSION_ENV) or "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit():
+        raise ValueError(
+            f"{MIN_VERSION_ENV}={raw!r}: a till version code is a whole number (e.g. 352), not a version name"
+        )
+    return int(raw)
+
+
+def check_config() -> None:
+    """At startup: a misconfigured floor stops the server loudly (app/main.py)."""
+    min_version_code()
+
+
+def needs_update(machine: POSMachine, *, kiosk: bool = False) -> bool:
+    """
+    The till's build lacks `remote_close_v2` (or is below the optional floor): never asked from
+    remote control. A kiosk is exempt: it has its own Z path (kiosk_ops / kiosk_z), and a Windows
+    kiosk in the shop Z must never hold the day close on "needs update".
+    """
+    if kiosk:
+        return False
+    caps = getattr(machine, "capabilities", None) or []
+    if REMOTE_CLOSE_CAPABILITY not in caps:
+        return True
+    floor = min_version_code()
+    if floor is None:
+        return False
     from app.services.cloud_card_refunds import till_version_code
 
     code = till_version_code(getattr(machine, "app_version", None))
-    return code is None or code < min_version_code()
+    return code is None or code < floor
+
+
+def too_old(machine: POSMachine) -> bool:
+    """Kept for the per-till routes (a kiosk never gets that far: `_refuse_device`)."""
+    return needs_update(machine)
 
 
 #: A till Z someone asked "even mid-sale" is still pending: remote control never takes it over.
@@ -449,7 +487,11 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
         else None
     )
     # Support's force past it (app/services/z_shift_guard.py): the super admin only, never local mode.
-    out["forceAllowed"] = bool(required) and required != "local" and _super_admin(user)
+    out["forceAllowed"] = (
+        required == "shifts"
+        and ZR._all_tills_required(db, run, guard=False) is None
+        and _super_admin(user)
+    )
     st = out["status"]
     out["words"] = (
         f"הושלם — Z סניפי מס' {out['zNumber']}" if st == ZRunStatus.COMPLETED and out.get("zNumber") is not None
@@ -539,7 +581,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             # Its own Z ("Z לכל קופה" / independent): never in the shop Z; its own remote Z.
             why = ("קיוסק — מלשונית הקיוסקים" if m.id in kiosks
                    else "הקופה אינה משויכת עוד לסניף" if not seated
-                   else TOO_OLD_TEXT if too_old(m)
+                   else TOO_OLD_TEXT if needs_update(m, kiosk=m.id in kiosks)
                    else None if shifts else "אין משמרות שעוד לא נכללו ב-Z")
             row["action"] = {"kind": KIND_TILL_Z, "label": "הפקת Z לקופה", "available": why is None, "whyNot": why}
             if m.id in kiosks:
@@ -551,9 +593,9 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
             why = ("קיוסק — מלשונית הקיוסקים" if m.id in kiosks
                    else "הקופה אינה משויכת עוד לסניף — משמרותיה הסגורות ייכללו ב-Z הסניפי" if not seated
                    else LOCAL_MODE_SHIFT_TEXT if local_mode
-                   else TOO_OLD_TEXT if too_old(m)
+                   else TOO_OLD_TEXT if needs_update(m, kiosk=m.id in kiosks)
                    else None if cand.open_shift is not None else "אין משמרת פתוחה")
-            if seated and too_old(m):
+            if seated and needs_update(m, kiosk=m.id in kiosks):
                 row["needsUpdate"] = True
             row["action"] = {"kind": KIND_CLOSE_SHIFT, "label": "סגירת משמרת", "available": why is None, "whyNot": why}
             in_shop_z.append(row)

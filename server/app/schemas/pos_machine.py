@@ -162,6 +162,9 @@ class MachineHeartbeatBody(BaseModel):
         serialization_alias="mqttConnected",
     )
     app_version: Optional[str] = Field(None, alias="appVersion")
+    #: What this build can do (e.g. "remote_close_v2"), cleaned in remote_till_z.clean_capabilities —
+    #: never a 422. Absent: an older build that says nothing.
+    capabilities: Optional[Any] = None
 
     # Outbox depth. Accepted and logged rather than stored: it is a live number that
     # is stale the moment it lands, and the machine's real backlog is derivable from

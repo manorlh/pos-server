@@ -1093,11 +1093,14 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
     if not machine.tenant_id or not is_online(machine.last_heartbeat_at, now=now):
         # Offline is a delay, not a failure: the heartbeat hands it over on the next beat.
         return
-    publish_till_z_notify(
-        str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "",
-        force=bool(req.force_close),
-        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
-    )
+    from sqlalchemy.orm import object_session
+
+    from app.services import after_commit
+
+    args = (str(machine.tenant_id), str(machine.id), str(req.id), req.initiated_by or "")
+    kw = dict(force=bool(req.force_close), wait_for_rest=bool(getattr(req, "wait_for_rest", False)))
+    # Only once the request is committed: a till hearing it first would find no such request.
+    after_commit.run(object_session(req), lambda: publish_till_z_notify(*args, **kw))
     req.sent_at = now
 
 

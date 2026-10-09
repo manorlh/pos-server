@@ -66,7 +66,8 @@ STATUS_PENDING = "pending_acceptance"
 STATUS_UNKNOWN = "unknown"
 UNKNOWN_WORDS = "מצב לא ידוע — ייתכן שיש משמרת פתוחה"
 #: Offline since a report that said no shift was open: never blocks (a shift it opened since, the
-#: cloud unaware, is not lost — its documents reach the next Z as late documents, document_filing).
+#: cloud unaware, is not lost — it reaches the next Z the ordinary way: its open report or first
+#: document, then its close).
 STATUS_OFFLINE_CLOSED = "offline_last_closed"
 OFFLINE_CLOSED_WORDS = "לא מחובר — המשמרת האחרונה סגורה"
 OFFLINE_CLOSED_WARNING = (
@@ -142,9 +143,9 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
     or closed on the till and not yet accepted by the cloud (the cloud still holds it open while
     the till no longer does, or documents of it are still on their way).
 
-    Offline, it blocks only when its state is unknown — it never reported, or its last report had
-    a shift open. Its last report said none was open: `offline_last_closed`, shown, never blocking
-    (`blocks: False`).
+    Offline, it blocks only when its state is unknown — it never reported, its last report had a
+    shift open, or documents still to send (or did not say how many). Its last report said none
+    was open and nothing was pending: `offline_last_closed`, shown, never blocking (`blocks: False`).
     """
     from app.services import z_runs as ZR
     from app.services.machine_status import is_online
@@ -170,7 +171,10 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
         state = STATUS_PENDING
     online = is_online(machine.last_heartbeat_at, now=now)
     if state is None and seated and not online:
-        if machine.last_heartbeat_at is not None and reported is None:
+        last_pending = getattr(machine, "pending_documents", None)
+        if last_pending is None:
+            last_pending = getattr(machine, "pending_count", None)
+        if reported is None and last_pending == 0 and _closed_claim_trusted(db, machine):
             # Its last report: no shift open, and it went offline after it.
             return {"machineId": str(machine.id), "name": machine.name, "posNumber": machine.pos_number,
                     "status": STATUS_OFFLINE_CLOSED, "online": False, "words": OFFLINE_CLOSED_WORDS,
@@ -191,6 +195,30 @@ def till_status(db: Session, machine: POSMachine, shop_id: Any, *, now: Optional
         "words": f"{OFFLINE_WORD} · {words}" if not online else words,
         "blocks": True,
     }
+
+
+def _closed_claim_trusted(db: Session, machine: POSMachine) -> bool:
+    """
+    The till's "no shift open" is trusted only when the till itself said so after the last shift
+    the cloud saw for it (opened or closed — an administrative close included): a claim older than
+    that says nothing about now.
+    """
+    from sqlalchemy import func
+
+    from app.models.shift import Shift
+
+    claimed_at = getattr(machine, "reported_open_shift_claimed_at", None)
+    if claimed_at is None:
+        return False
+    last_opened, last_closed = (
+        db.query(func.max(Shift.opened_at), func.max(Shift.closed_at)).filter(Shift.machine_id == machine.id).one()
+    )
+    claimed = _aware(claimed_at)
+    return all(t is None or claimed > _aware(t) for t in (last_opened, last_closed))
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
 
 
 def blockers(db: Session, shop: Any, machines: Iterable[POSMachine], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:

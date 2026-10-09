@@ -714,6 +714,16 @@ def post_my_heartbeat(
         machine.reported_open_shift_opened_at = (
             body.open_shift_opened_at if claimed else None
         )
+        # The till's own word, and when: the only place the claim's time is written.
+        from datetime import datetime as _dt, timezone as _tz
+
+        machine.reported_open_shift_claimed_at = _dt.now(_tz.utc)
+    # What this build can do ("remote_close_v2": remote control may ask it), replaced every beat —
+    # a build that no longer says it (a downgrade) is no longer asked.
+    if body is not None:
+        from app.services.remote_till_z import clean_capabilities
+
+        machine.capabilities = clean_capabilities(body.capabilities)
     # The shift the till says is open is one the cloud holds closed — closed administratively
     # (§2.9: dead-till recovery, `force` on a till that came back, or support's Z): the till is
     # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).

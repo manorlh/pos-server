@@ -32,6 +32,9 @@ def apply_close_shift_ack(
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> str:
+    # Expired requests and runs are swept first (as the till Z's ack does): an ack never revives one.
+    close_requests.expire_overdue(db)
+    z_runs.expire_overdue_runs(db)
     req = close_requests.apply_ack(
         db,
         machine,

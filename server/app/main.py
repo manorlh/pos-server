@@ -299,6 +299,14 @@ app.include_router(exception_alerts_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")
+def check_remote_till_z_config():
+    """REMOTE_TILL_Z_MIN_TILL_VERSION, when set, must be a till version code — refused loudly otherwise."""
+    from app.services import remote_till_z
+
+    remote_till_z.check_config()
+
+
+@app.on_event("startup")
 def start_stock_reset_worker():
     """"איפוס יומי": each stock location at its business day's start (app/services/stock_reset.py)."""
     import os

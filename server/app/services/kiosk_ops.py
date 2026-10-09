@@ -764,6 +764,19 @@ def apply_close_result(db: Session, kiosk: POSMachine, raw: Any, *, now: Optiona
     state = raw.get("state")
     if state not in ("done", "failed"):
         return
+    if row.state == "cancelled":
+        # The shop's Z that asked was cancelled: the kiosk had it already. What it did is kept,
+        # the cancellation too — "בוצע לאחר ביטול".
+        row.result = {
+            "shiftId": _str(raw.get("shiftId"), 64),
+            "zNumber": raw.get("zNumber") if isinstance(raw.get("zNumber"), int) and not isinstance(raw.get("zNumber"), bool) else None,
+            "detail": "בוצע לאחר ביטול" if state == "done" else _str(raw.get("detail"), 300),
+            "afterCancel": True,
+            "state": state,
+        }
+        row.finished_at = now
+        db.flush()
+        return
     row.state = state
     row.finished_at = now
     row.result = {

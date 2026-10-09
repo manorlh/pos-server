@@ -55,6 +55,7 @@ def z(w, monkeypatch):  # noqa: F811
     for t in w.tills:
         t.last_heartbeat_at = NOW - timedelta(seconds=10)
         t.app_version = "0.1.400+abcdef0-device"  # a build that honours waitForRest
+        t.capabilities = ["remote_close_v2"]  # a build with every remote-close safeguard
     w.db.commit()
     return w
 
