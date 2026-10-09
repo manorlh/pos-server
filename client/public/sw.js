@@ -13,7 +13,7 @@
  *
  * Bump VERSION to drop every cache an older worker left.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `r2m-static-${VERSION}`;
 const OFFLINE_URL = '/offline.html';
 const PRECACHE = [OFFLINE_URL, '/icons/icon-192.png', '/icons/icon-512.png'];
@@ -81,4 +81,59 @@ self.addEventListener('fetch', (event) => {
       }),
     );
   }
+});
+
+/**
+ * "התראות לטלפון" (Web Push, pos-server app/services/exception_alerts/push.py): show the alert,
+ * and a tap opens the dashboard page it names — only ever a page of this origin.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: 'R2M POS', body: event.data ? event.data.text() : '' };
+  }
+  const title = data.title || 'R2M POS';
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      tag: data.tag || undefined,
+      renotify: Boolean(data.tag),
+      dir: 'rtl',
+      lang: 'he',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      requireInteraction: data.severity === 'high',
+      data: { url: typeof data.url === 'string' ? data.url : '/dashboard/alerts' },
+    }),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const raw = (event.notification.data && event.notification.data.url) || '/dashboard/alerts';
+  let target = new URL('/dashboard/alerts', self.location.origin);
+  try {
+    const candidate = new URL(raw, self.location.origin);
+    if (candidate.origin === self.location.origin) target = candidate;
+  } catch {
+    // keep the alerts page
+  }
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (list) => {
+      // A dashboard window only (the browser kiosk and the KDS have workers of their own).
+      const client = list.find((c) => new URL(c.url).pathname.startsWith('/dashboard'));
+      if (client) {
+        try {
+          await client.focus();
+          if (client.url !== target.href) await client.navigate(target.href);
+          return;
+        } catch {
+          // Not ours to navigate: open a window instead.
+        }
+      }
+      await self.clients.openWindow(target.href);
+    }),
+  );
 });

@@ -128,6 +128,10 @@ export const NAV_SECTIONS: NavSection[] = [
       // "ביצועי קיוסקים": the kiosks' funnel, where customers leave, time to order, upsell
       // and payments. Its own exact href, so it — not "insights" — lights up on its route.
       { href: '/dashboard/insights/kiosks', labelKey: 'kioskInsights', icon: TabletSmartphone },
+      // "מצב אירוע חי": an event's big screen (feat/event-live).
+      { href: '/dashboard/live-event', labelKey: 'liveEvent', icon: MonitorPlay, matchPrefixes: ['/dashboard/live-event/'] },
+      // "התראות": the phone (push) alerts — history, subscribing this phone, preferences (feat/event-live).
+      { href: '/dashboard/alerts', labelKey: 'alerts', icon: BellRing },
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },

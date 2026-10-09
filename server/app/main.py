@@ -344,6 +344,25 @@ from app.routers import cash_drawer as cash_drawer_router  # noqa: E402
 app.include_router(cash_drawer_router.till_router, prefix=_prefix)
 app.include_router(cash_drawer_router.router, prefix=_prefix)
 
+# ── Event and owner awareness (feat/event-live) ──
+# "מצב אירוע חי": the event's live screen (app/services/report_events/live.py).
+from app.routers import event_live as event_live_router  # noqa: E402
+
+app.include_router(event_live_router.router, prefix=_prefix)
+# "התראות לטלפון": Web Push on the exception alerts (app/services/exception_alerts/push.py).
+from app.routers import push_alerts as push_alerts_router  # noqa: E402
+
+app.include_router(push_alerts_router.router, prefix=_prefix)
+# "עמדת מפיק": the producer's read-only portal, and the owner's side on the event.
+from app.routers import event_producers as event_producers_router, producer as producer_router  # noqa: E402
+
+app.include_router(producer_router.router, prefix=_prefix)
+app.include_router(event_producers_router.router, prefix=_prefix)
+# "תחזית ואיוש": the forecast per shop and the tills to open (app/services/insights/staffing.py).
+from app.routers import forecast_staffing as forecast_staffing_router  # noqa: E402
+
+app.include_router(forecast_staffing_router.router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def seed_builtin_till_parameters():

@@ -16,6 +16,8 @@ import { findNavEntry } from '@/lib/navigation';
 import { canAccess, levelForPath, pageAccess, sectionForPath } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { MyAccessCard, SectionDenied } from '@/components/dashboard/access/my-access-card';
+import { ProducerShell } from '@/components/dashboard/event-live/producer-shell';
+import { isProducer } from '@/lib/producer';
 
 function ShellSkeleton() {
   return (
@@ -80,7 +82,7 @@ function AccessGuard({ children }: { children: React.ReactNode }) {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations('dashboard.layout');
-  const { fetchUser, authHydrated, activeTenantId, tenants } = useAuth();
+  const { fetchUser, authHydrated, activeTenantId, tenants, user } = useAuth();
   const { isLoaded, isSignedIn } = useClerkAuth();
 
   useEffect(() => {
@@ -93,6 +95,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // opened on, so following any link — the menu's or the page's — closes it.
   const pathname = usePathname();
   const [navOpenAt, setNavOpenAt] = useState<string | null>(null);
+
+  // "עמדת מפיק" (feat/event-live): a producer gets their own minimal layout, never the dashboard's.
+  if (isLoaded && isSignedIn && authHydrated && isProducer(user?.role) && activeTenantId) {
+    return <ProducerShell>{children}</ProducerShell>;
+  }
 
   return (
     <div className="flex h-dvh overflow-hidden print:block print:h-auto print:overflow-visible">

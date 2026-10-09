@@ -104,6 +104,15 @@ export default function ExceptionAlertsPage() {
           {t('logLink')}
         </Link>
       </div>
+      {/* feat/event-live: the phone (push) channel — personal, set on "התראות". */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card p-3 text-sm">
+        <span>
+          <span className="font-semibold">{t('pushChannel')}</span> <span className="text-muted-foreground">{t('pushChannelHint')}</span>
+        </span>
+        <Link href="/dashboard/alerts" className="text-primary hover:underline">
+          {t('pushChannelLink')}
+        </Link>
+      </div>
       {authHydrated && !allowed ? (
         <p className="text-muted-foreground text-sm">{t('noPermission')}</p>
       ) : (

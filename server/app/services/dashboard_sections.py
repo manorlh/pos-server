@@ -124,6 +124,17 @@ SECTIONS: Tuple[Section, ...] = (
         "accounting", "הנהלת חשבונות", "ייצוא להנהלת חשבונות ומיפוי חשבונות.",
         ("/dashboard/accounting-export", "/dashboard/accounting-settings"),
     ),
+    # feat/event-live
+    Section(
+        "live_event", "מצב אירוע חי",
+        "מסך גדול לאירוע: מכירות בזמן אמת מול היעד, קצב, פריטים, קופות, מטבח ושוברים. עריכה: יעד המכירות של האירוע.",
+        ("/dashboard/live-event",),
+    ),
+    Section(
+        "alerts", "התראות",
+        "היסטוריית ההתראות לטלפון (Push) של המשתמש וטיפול בהן. ההרשמה וההעדפות האישיות פתוחות לכל משתמש.",
+        ("/dashboard/alerts",),
+    ),
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
@@ -192,6 +203,9 @@ def S(*sections: str, level: Optional[str] = None) -> RouteRule:
 
 
 SELF = RouteRule("self")
+#: "עמדת מפיק": the producer's own routes — the only ones a PRODUCER_VIEW user may use
+#: (app/services/dashboard_access.py `enforce_route`), and every one checks the event grant.
+PRODUCER = RouteRule("producer")
 REFERENCE = RouteRule("reference")
 TILL = RouteRule("till")
 SUPER_ADMIN = RouteRule("super_admin")
@@ -204,6 +218,8 @@ _GET = "GET"
 #: (methods, path pattern, rule). Patterns are the route's path after the API prefix: `{}` is
 #: one path parameter, `*` is anything (including nothing). First match wins.
 ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
+    # ── "עמדת מפיק" (feat/event-live): the producer's read-only portal ──
+    (_ALL, "/producer/*", PRODUCER),
     # ── The caller themselves ──
     (_ALL, "/users/me", SELF),
     (_ALL, "/users/me/*", SELF),
@@ -314,9 +330,17 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # its SMS alert rules hold staff phone numbers and send messages — their own section.
     (_ALL, "/exception-log*", S("reports", "exception_alerts")),
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
+    # "התראות" (feat/event-live): the alerts feed and my history are the section; my own devices
+    # and preferences are mine (the router refuses a producer).
+    (_ALL, "/push/alerts*", S("alerts")),
+    (_GET, "/push/history", S("alerts")),
+    (_ALL, "/push/*", SELF),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     (_GET, "/insights*", S("reports")),
+    # "מצב אירוע חי" (feat/event-live): the screen reads are view; setting its target is edit.
+    (_ALL, "/report-events/live/*", S("live_event")),
+    (_ALL, "/report-events/{}/live*", S("live_event")),
     (_ALL, "/report-events*", S("reports")),
     (_GET, "/reports/discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),
