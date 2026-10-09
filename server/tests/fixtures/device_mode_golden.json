@@ -1,0 +1,296 @@
+{
+  "comment": "The device's role / mode / rolesAllowed state machine (web-till spec v2 §6.2-§6.6, kiosk-landscape-till-mode.md §5) as a scenario corpus. The TS machine (client/src/lib/deviceMode.ts) passes it in client/src/lib/deviceMode.test.ts; the APK passes the same bytes in P6-8, the cloud's role rules in P6-5. Both sides pin the LF-normalised SHA-256. Each case: `config` -> initialState (or `restore` from `persisted`), optional `start` overrides, then `steps`; each step's `facts` are laid over `defaults.facts`; `expect.outcome` is a subset match, `mode` / `pending` / `targets` / `canSwitch` exact when given.",
+  "version": 1,
+  "defaults": {
+    "facts": {
+      "basketOpen": false,
+      "paymentOpen": false,
+      "tableOpen": false,
+      "kioskPayment": false,
+      "customerOrdering": false,
+      "shiftOpen": false,
+      "unsyncedDocuments": false,
+      "undecidedCard": false,
+      "heldSales": 0,
+      "lastTouchAt": null
+    },
+    "now": 1000000
+  },
+  "normalizeRole": [
+    ["till", "till"], ["POS", "till"], ["kiosk", "kiosk"], ["kds", "kds"], ["Kitchen-Display", "kds"],
+    ["order_status_board", "board"], ["pickup", "board"], ["board", "board"],
+    ["customer_display", "display"], ["display", "display"], ["printer", null], [5, null], [null, null]
+  ],
+  "rolesAllowed": [
+    { "config": { "role": "kiosk" }, "expect": [] },
+    { "config": { "role": "kiosk", "kioskTillModeEnabled": true }, "expect": ["till", "kiosk"] },
+    { "config": { "role": "till", "deviceRolesAllowed": ["order_status_board", "kds", "printer"] }, "expect": ["kds", "board"] },
+    { "config": { "role": "till", "deviceRolesAllowed": ["customer_display", "till"], "kioskTillModeEnabled": true }, "expect": ["till", "kiosk", "display"] },
+    { "config": { "role": "till", "deviceRolesAllowed": null, "kioskTillModeEnabled": false }, "expect": [] }
+  ],
+  "idleReturnMinutes": [[null, 3], [-1, 3], [241, 3], [0, 0], [10, 10], [2.7, 2], ["5", 3]],
+  "cases": [
+    {
+      "name": "feature off: no switch anywhere, a device request is refused",
+      "config": { "role": "kiosk" },
+      "steps": [
+        { "op": "check", "expect": { "mode": "kiosk", "targets": [], "canSwitch": false } },
+        { "op": "request", "to": "till", "managerOk": true, "expect": { "outcome": { "kind": "refused", "code": "role_not_allowed", "reason": "disabled", "message": "מעבר בין תפקידים לא הופעל למכשיר הזה." }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "feature off: a dashboard command is refused",
+      "config": { "role": "till", "deviceRolesAllowed": ["till"] },
+      "steps": [
+        { "op": "check", "expect": { "targets": [], "canSwitch": false } },
+        { "op": "command", "to": "kiosk", "commandId": "c0", "expect": { "outcome": { "kind": "refused", "code": "role_not_allowed", "reason": "disabled" }, "mode": "till", "pending": null } }
+      ]
+    },
+    {
+      "name": "kiosk -> till with a manager code",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "check", "expect": { "targets": ["till"], "canSwitch": true } },
+        { "op": "request", "to": "till", "managerOk": true, "now": 1000500, "expect": { "outcome": { "kind": "switched", "from": "kiosk", "to": "till", "reason": "manual", "heldSales": 0, "commandId": null }, "mode": "till", "since": 1000500, "targets": ["kiosk"] } }
+      ]
+    },
+    {
+      "name": "kiosk -> till without the manager code is refused, after the checks",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "request", "to": "till", "managerOk": false, "expect": { "outcome": { "kind": "refused", "code": "manager_required", "reason": null, "message": "המעבר דורש קוד מנהל עם הרשאת מעבר בין מצבים" }, "mode": "kiosk" } },
+        { "op": "request", "to": "till", "managerOk": false, "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "customer_ordering" } } }
+      ]
+    },
+    {
+      "name": "kiosk -> till: a kiosk payment on its way, then a customer mid-order",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "request", "to": "till", "managerOk": true, "facts": { "kioskPayment": true, "customerOrdering": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "kiosk_payment", "message": "יש תשלום בתהליך בקיוסק — אי אפשר לעבור עכשיו" }, "mode": "kiosk" } },
+        { "op": "request", "to": "till", "managerOk": true, "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "customer_ordering", "message": "לקוח באמצע הזמנה — אפשר 'איפוס מסך לקוח' ואז לעבור" }, "mode": "kiosk" } },
+        { "op": "request", "to": "till", "managerOk": true, "facts": { "basketOpen": true, "shiftOpen": true }, "expect": { "outcome": { "kind": "switched", "to": "till" }, "mode": "till" } }
+      ]
+    },
+    {
+      "name": "till -> kiosk: payment, then basket, then table",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "request", "to": "kiosk", "managerOk": true, "facts": { "paymentOpen": true, "basketOpen": true, "tableOpen": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "payment_open" }, "mode": "till" } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "facts": { "basketOpen": true, "tableOpen": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "basket_open", "message": "יש מכירה פתוחה — סיימו או השהו אותה" } } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "facts": { "tableOpen": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "table_open" } } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "facts": { "kioskPayment": true, "shiftOpen": true }, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "manual" }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "held sales never block: confirm first (before the manager code), then switch with the count",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "request", "to": "kiosk", "managerOk": false, "facts": { "heldSales": 2 }, "expect": { "outcome": { "kind": "confirm", "dialog": "held_sales_wait", "count": 2, "message": "יש 2 מכירות מושהות — יחכו במצב קופה" }, "mode": "till" } },
+        { "op": "request", "to": "kiosk", "managerOk": false, "heldSalesConfirmed": true, "facts": { "heldSales": 2 }, "expect": { "outcome": { "kind": "refused", "code": "manager_required" }, "mode": "till" } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "heldSalesConfirmed": true, "facts": { "heldSales": 2 }, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "manual", "heldSales": 2 }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "a device whose role is till may become a kiosk too",
+      "config": { "role": "till", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "check", "expect": { "mode": "till", "targets": ["kiosk"] } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "facts": { "shiftOpen": true }, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "manual" }, "mode": "kiosk", "targets": ["till"] } }
+      ]
+    },
+    {
+      "name": "a role that is not allowed",
+      "config": { "role": "till", "deviceRolesAllowed": ["kiosk"] },
+      "steps": [
+        { "op": "request", "to": "kds", "managerOk": true, "expect": { "outcome": { "kind": "refused", "code": "role_not_allowed", "reason": null, "message": "המעבר לתפקיד הזה לא הותר למכשיר." }, "mode": "till" } },
+        { "op": "request", "to": "till", "managerOk": true, "expect": { "outcome": { "kind": "none" }, "mode": "till" } }
+      ]
+    },
+    {
+      "name": "till -> KDS only with the shift closed, nothing left to upload and no undecided card; back with no shift check",
+      "config": { "role": "till", "deviceRolesAllowed": ["kds"] },
+      "steps": [
+        { "op": "check", "expect": { "targets": ["kds"] } },
+        { "op": "request", "to": "kds", "managerOk": true, "facts": { "shiftOpen": true, "unsyncedDocuments": true }, "expect": { "outcome": { "kind": "refused", "code": "role_switch_open_shift", "reason": "open_shift", "message": "יש משמרת פתוחה — סגרו אותה לפני המעבר" }, "mode": "till" } },
+        { "op": "request", "to": "kds", "managerOk": true, "facts": { "unsyncedDocuments": true, "undecidedCard": true }, "expect": { "outcome": { "kind": "refused", "code": "role_switch_open_shift", "reason": "unsynced_documents" } } },
+        { "op": "request", "to": "kds", "managerOk": true, "facts": { "undecidedCard": true }, "expect": { "outcome": { "kind": "refused", "code": "role_switch_open_shift", "reason": "undecided_card" } } },
+        { "op": "request", "to": "kds", "managerOk": true, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kds", "reason": "manual" }, "mode": "kds", "targets": ["till"] } },
+        { "op": "request", "to": "till", "managerOk": true, "facts": { "basketOpen": true }, "expect": { "outcome": { "kind": "switched", "from": "kds", "to": "till" }, "mode": "till" } }
+      ]
+    },
+    {
+      "name": "busy is said before the shift",
+      "config": { "role": "till", "deviceRolesAllowed": ["display"] },
+      "steps": [
+        { "op": "request", "to": "display", "managerOk": true, "facts": { "basketOpen": true, "shiftOpen": true }, "expect": { "outcome": { "kind": "refused", "code": "mode_switch_busy", "reason": "basket_open" } } },
+        { "op": "request", "to": "display", "managerOk": true, "facts": { "shiftOpen": true }, "expect": { "outcome": { "kind": "refused", "code": "role_switch_open_shift", "reason": "open_shift" } } },
+        { "op": "request", "to": "display", "managerOk": true, "expect": { "outcome": { "kind": "switched", "to": "display" }, "mode": "display" } }
+      ]
+    },
+    {
+      "name": "between two non-fiscal roles nothing fiscal is checked",
+      "config": { "role": "kds", "deviceRolesAllowed": ["board"] },
+      "steps": [
+        { "op": "request", "to": "board", "managerOk": true, "facts": { "shiftOpen": true, "unsyncedDocuments": true }, "expect": { "outcome": { "kind": "switched", "from": "kds", "to": "board", "heldSales": 0 }, "mode": "board", "targets": ["kds"] } }
+      ]
+    },
+    {
+      "name": "dashboard: done at once at rest, no manager code",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "command", "to": "till", "commandId": "c1", "now": 1002000, "expect": { "outcome": { "kind": "switched", "from": "kiosk", "to": "till", "reason": "remote", "commandId": "c1" }, "mode": "till", "pending": null, "since": 1002000 } }
+      ]
+    },
+    {
+      "name": "dashboard: pending while a customer orders, done at the next rest",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "command", "to": "till", "commandId": "c2", "now": 1000000, "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "pending", "to": "till", "blockedBy": "customer_ordering", "message": "ממתין — יש הזמנה או תשלום פתוחים" }, "mode": "kiosk", "pending": { "to": "till", "reason": "remote", "commandId": "c2", "requestedAt": 1000000 } } },
+        { "op": "rest", "now": 1002000, "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "none" }, "mode": "kiosk", "pending": { "to": "till", "commandId": "c2" } } },
+        { "op": "rest", "now": 1004000, "expect": { "outcome": { "kind": "switched", "from": "kiosk", "to": "till", "reason": "remote", "commandId": "c2", "message": null }, "mode": "till", "pending": null } }
+      ]
+    },
+    {
+      "name": "dashboard: a command still blocked after 24 h expires",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "command", "to": "kiosk", "commandId": "c3", "now": 1000000, "facts": { "basketOpen": true }, "expect": { "outcome": { "kind": "pending", "blockedBy": "basket_open" }, "pending": { "to": "kiosk", "commandId": "c3" } } },
+        { "op": "rest", "now": 87399999, "facts": { "basketOpen": true }, "expect": { "outcome": { "kind": "none" }, "mode": "till", "pending": { "commandId": "c3" } } },
+        { "op": "rest", "now": 87400000, "facts": { "basketOpen": true }, "expect": { "outcome": { "kind": "expired", "commandId": "c3" }, "mode": "till", "pending": null } }
+      ]
+    },
+    {
+      "name": "dashboard: to the mode it is in is done at once, and overtakes an older command",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "command", "to": "kiosk", "commandId": "c4", "expect": { "outcome": { "kind": "done", "commandId": "c4" }, "mode": "kiosk", "pending": null } },
+        { "op": "command", "to": "till", "commandId": "c5", "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "pending" }, "pending": { "to": "till", "commandId": "c5" } } },
+        { "op": "command", "to": "kiosk", "commandId": "c6", "facts": { "customerOrdering": true }, "expect": { "outcome": { "kind": "done", "commandId": "c6" }, "mode": "kiosk", "pending": null } }
+      ]
+    },
+    {
+      "name": "dashboard: a role that is not allowed is refused",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "command", "to": "kds", "commandId": "c7", "expect": { "outcome": { "kind": "refused", "code": "role_not_allowed", "reason": null }, "mode": "kiosk", "pending": null } }
+      ]
+    },
+    {
+      "name": "dashboard: to a non-fiscal role waits for the shift to close",
+      "config": { "role": "till", "deviceRolesAllowed": ["kds"] },
+      "steps": [
+        { "op": "command", "to": "kds", "commandId": "c8", "facts": { "shiftOpen": true }, "expect": { "outcome": { "kind": "pending", "to": "kds", "blockedBy": "open_shift" }, "mode": "till" } },
+        { "op": "rest", "facts": { "shiftOpen": true }, "expect": { "outcome": { "kind": "none" }, "mode": "till" } },
+        { "op": "rest", "expect": { "outcome": { "kind": "switched", "to": "kds", "reason": "remote", "commandId": "c8" }, "mode": "kds" } }
+      ]
+    },
+    {
+      "name": "idle return: a kiosk in till mode goes back after its minutes, warned 30 s before",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true, "idleReturnMinutes": 3 },
+      "start": { "mode": "till", "since": 1000000 },
+      "steps": [
+        { "op": "rest", "now": 1149999, "facts": { "lastTouchAt": 1000000 }, "expect": { "outcome": { "kind": "none" }, "mode": "till" } },
+        { "op": "rest", "now": 1150000, "facts": { "lastTouchAt": 1000000 }, "expect": { "outcome": { "kind": "warn", "to": "kiosk", "inMs": 30000, "message": "חוזר לקיוסק בעוד 30 שניות" }, "mode": "till" } },
+        { "op": "rest", "now": 1179001, "facts": { "lastTouchAt": 1000000 }, "expect": { "outcome": { "kind": "warn", "inMs": 999, "message": "חוזר לקיוסק בעוד 1 שניות" } } },
+        { "op": "rest", "now": 1180000, "facts": { "lastTouchAt": 1000000, "heldSales": 1 }, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "idle", "heldSales": 1 }, "mode": "kiosk", "since": 1180000 } }
+      ]
+    },
+    {
+      "name": "idle return: a touch puts it off, an open basket holds it",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 1000000 },
+      "steps": [
+        { "op": "rest", "now": 1170000, "facts": { "lastTouchAt": 1100000 }, "expect": { "outcome": { "kind": "none" } } },
+        { "op": "rest", "now": 1290000, "facts": { "lastTouchAt": 1100000, "basketOpen": true }, "expect": { "outcome": { "kind": "none" }, "mode": "till" } },
+        { "op": "rest", "now": 1290000, "facts": { "lastTouchAt": 1100000 }, "expect": { "outcome": { "kind": "switched", "reason": "idle" }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "idle return: 0 minutes is never",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true, "idleReturnMinutes": 0 },
+      "start": { "mode": "till", "since": 1000000 },
+      "steps": [
+        { "op": "rest", "now": 37000000, "expect": { "outcome": { "kind": "none" }, "mode": "till" } }
+      ]
+    },
+    {
+      "name": "idle return: never for a device whose role is till",
+      "config": { "role": "till", "kioskTillModeEnabled": true },
+      "start": { "mode": "kiosk", "since": 1000000 },
+      "steps": [
+        { "op": "rest", "now": 37000000, "expect": { "outcome": { "kind": "none" }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "the owner changes the role: the mode resets to it",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "config", "config": { "role": "kds" }, "now": 1000000, "expect": { "outcome": { "kind": "reset", "from": "till", "to": "kds" }, "mode": "kds", "pending": null, "targets": [], "since": 1000000 } }
+      ]
+    },
+    {
+      "name": "rolesAllowed narrowed in till mode: back to the role at the next rest; the way home stays open by hand",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "config", "config": { "role": "kiosk", "kioskTillModeEnabled": false }, "expect": { "outcome": { "kind": "none" }, "mode": "till", "pending": { "to": "kiosk", "reason": "cloud", "commandId": null }, "targets": ["kiosk"], "canSwitch": false } },
+        { "op": "rest", "facts": { "basketOpen": true }, "expect": { "outcome": { "kind": "none" }, "mode": "till" } },
+        { "op": "rest", "facts": { "heldSales": 3 }, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "cloud", "heldSales": 3, "message": "המעבר בוטל ע״י מנהל המערכת" }, "mode": "kiosk", "pending": null, "targets": [] } }
+      ]
+    },
+    {
+      "name": "rolesAllowed narrowed: going home by hand",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "start": { "mode": "till", "since": 900000 },
+      "steps": [
+        { "op": "config", "config": { "role": "kiosk" }, "expect": { "pending": { "to": "kiosk", "reason": "cloud" } } },
+        { "op": "request", "to": "kiosk", "managerOk": true, "expect": { "outcome": { "kind": "switched", "from": "till", "to": "kiosk", "reason": "manual" }, "mode": "kiosk", "pending": null } },
+        { "op": "request", "to": "till", "managerOk": true, "expect": { "outcome": { "kind": "refused", "code": "role_not_allowed", "reason": "disabled" }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "rolesAllowed widened: nothing pending, new targets",
+      "config": { "role": "till", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "config", "config": { "role": "till", "kioskTillModeEnabled": true, "deviceRolesAllowed": ["board"] }, "expect": { "outcome": { "kind": "none" }, "mode": "till", "pending": null, "targets": ["kiosk", "board"] } }
+      ]
+    },
+    {
+      "name": "a restart keeps the mode",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "restore": { "role": "kiosk", "mode": "till", "since": 5000 },
+      "steps": [
+        { "op": "check", "expect": { "mode": "till", "since": 5000, "pending": null, "targets": ["kiosk"] } }
+      ]
+    },
+    {
+      "name": "a restart after the owner changed the role starts in the new role",
+      "config": { "role": "till", "kioskTillModeEnabled": true },
+      "restore": { "role": "kiosk", "mode": "till", "since": 5000 },
+      "restoreOutcome": { "kind": "reset", "from": "till", "to": "till" },
+      "steps": [
+        { "op": "check", "expect": { "mode": "till", "since": null, "pending": null } }
+      ]
+    },
+    {
+      "name": "a restart into a mode no longer allowed goes home at the next rest",
+      "config": { "role": "kiosk" },
+      "restore": { "role": "kiosk", "mode": "till", "since": 5000 },
+      "steps": [
+        { "op": "check", "expect": { "mode": "till", "pending": { "to": "kiosk", "reason": "cloud" } } },
+        { "op": "rest", "expect": { "outcome": { "kind": "switched", "to": "kiosk", "reason": "cloud" }, "mode": "kiosk" } }
+      ]
+    },
+    {
+      "name": "a request for the mode it is in does nothing",
+      "config": { "role": "kiosk", "kioskTillModeEnabled": true },
+      "steps": [
+        { "op": "request", "to": "kiosk", "managerOk": false, "expect": { "outcome": { "kind": "none" }, "mode": "kiosk" } }
+      ]
+    }
+  ]
+}
