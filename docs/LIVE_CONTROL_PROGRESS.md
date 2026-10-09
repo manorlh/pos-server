@@ -93,10 +93,14 @@ REMOTE_TILL_Z_ENABLED is off nothing applies and the tills receive it as `false`
       carrying `waitForRest`, c21f40d) or with no version reported: "הקופה צריכה עדכון גרסה לפני
       סגירה מרחוק". Version codes are commit counts and differ per branch: set
       `REMOTE_TILL_Z_MIN_TILL_VERSION` to the release build that carries `waitForRest`.
-- A till offline with no shift the cloud knows of is "מצב לא ידוע — ייתכן שיש משמרת פתוחה": with
-  the open-shifts rule on, it holds every Z start of its shop until it reconnects or a super admin
-  starts with a typed reason (recorded as `z_forced_open_shifts`). Expect this on tills switched off
-  overnight.
+- Offline tills block only when their state is unknown. Last report "no shift open", offline
+  since: never blocks — "לא מחובר — המשמרת האחרונה סגורה", a one-line warning on the run, recorded
+  on the Z (`openTillsLeftOut`, reason `offline_last_closed`); a shift it opened offline reaches the
+  next Z through the late-documents path. Never reported, or its last report had a shift open: "מצב
+  לא ידוע — ייתכן שיש משמרת פתוחה" (or "מנותקת · משמרת פתוחה"), blocks; only a super admin starts
+  anyway, with a typed reason (recorded as `z_forced_open_shifts`).
+- The main till always asks the cloud before its local shop Z, whatever its own parameter says;
+  the cloud's shop-level answer decides.
 - The force passes the open-shifts rule only; "חובה לסגור את כל הקופות" and local mode keep their
   own rules and paths.
 
