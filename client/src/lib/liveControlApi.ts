@@ -89,6 +89,30 @@ export async function requestRemoteClose(machineId: string, totalsKey: string) {
   return (await api.post('/device-commands/close', { machineId, totalsKey })).data as { kind: string; created: boolean };
 }
 
+/** "סגירת יום סניפית": the shop by its configuration, the run under way (lib/remoteShopClose.ts). */
+export async function fetchShopClosePreview(shopId: string): Promise<import('@/lib/remoteShopClose').ShopClosePreview> {
+  return (await api.get('/device-commands/shop-close-preview', { params: { shopId } })).data;
+}
+
+/** The confirmed day close: sent at once — each till closes at rest; progress in the preview. */
+export async function requestShopClose(body: { shopId: string; totalsKey: string; confirmOpenTills?: boolean; confirmCloudData?: boolean }) {
+  return (await api.post('/device-commands/shop-close', body)).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
+/** One day close's progress / outcome ("הושלם — Z סניפי מס' 42"), after it left the preview. */
+export async function fetchShopCloseRun(runId: string) {
+  return (await api.get(`/device-commands/shop-close/${runId}`)).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
+export async function cancelShopClose(runId: string) {
+  return (await api.post(`/device-commands/shop-close/${runId}/cancel`)).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
+/** "בנה בלי": the existing build-without, refused where the configuration needs every till. */
+export async function proceedShopClose(runId: string, excludeMachineIds: string[]) {
+  return (await api.post(`/device-commands/shop-close/${runId}/proceed`, { excludeMachineIds })).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
 export async function fetchDevices(s: { companyId?: string | null; shopId?: string | null; machineIds?: string[] }): Promise<DeviceRow[]> {
   const params = new URLSearchParams();
   if (s.companyId) params.set('companyId', s.companyId);

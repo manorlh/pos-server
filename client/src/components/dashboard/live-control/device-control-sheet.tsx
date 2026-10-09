@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { DEVICE_ACTIONS, actionLabel, commandStatusLabel, commandTone, type DeviceAction, type DeviceRow } from '@/lib/liveControl';
 import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, requestRemoteClose, sendDeviceCommand } from '@/lib/liveControlApi';
 import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
+import { ShopClosePanel } from './shop-close-panel';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
 
 const TONE: Record<string, string> = {
@@ -192,6 +193,7 @@ export function DeviceControlPanel({ scope, preselect }: { scope: LiveControlSco
   }
   return (
     <div className="space-y-4">
+      {features.data?.remoteTillZ && scope.shopId ? <ShopClosePanel shopId={scope.shopId} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex min-h-11 items-center gap-2 text-sm">
           <input
