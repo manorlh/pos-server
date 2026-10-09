@@ -17,7 +17,7 @@ import { idOf, NayaxUsbProvider, nayaxUsbFactory, withId } from '../src/main/pay
 import { PayService } from '../src/main/payment/payService';
 import type { PaymentProvider, ProviderContext } from '../src/main/payment/provider';
 import { PROVIDERS } from '../src/main/payment/registry';
-import type { LinkChannel } from '../src/main/payment/synqpay/transport';
+import { serialChannel, type LinkChannel } from '../src/main/payment/synqpay/transport';
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
@@ -263,5 +263,107 @@ describe('the C4 on USB: chosen by the cloud settings', () => {
     expect(c4.closed).toBe(false);
     svc.setProvider(usb(new FakeC4(), '1234:5678'), 'nayax_usb');
     expect(c4.closed).toBe(true);
+  });
+});
+
+/* ------------------------------------------------- a link that never opens */
+
+type SerialLoader = NonNullable<Parameters<typeof serialChannel>[1]>;
+
+/** A `serialport` package that lists [ports] and whose open fails with [openError] (null: it opens). */
+const fakeSerialport =
+  (ports: Array<{ path: string; vendorId?: string; productId?: string }>, openError: string | null): SerialLoader =>
+  async () =>
+    ({
+      SerialPort: class {
+        static list = async () => ports;
+        open(cb: (err: Error | null) => void) {
+          cb(openError ? new Error(openError) : null);
+        }
+        write() {}
+        close() {}
+        on() {}
+      },
+    }) as unknown as Awaited<ReturnType<SerialLoader>>;
+
+/** The USB provider over the real serial channel, the `serialport` package as [load] has it; each frame it tries, by method. */
+function overSerial(load: SerialLoader, device: string | null = null) {
+  const tried: string[] = [];
+  const pauses: number[] = [];
+  const p = new NayaxUsbProvider(device, ctx, {
+    open: () => serialChannel(device, load),
+    sleep: async (ms) => {
+      pauses.push(ms);
+    },
+  });
+  const call = p.link.call;
+  p.link.call = (frame, timeoutMs) => {
+    tried.push((JSON.parse(frame) as { method: string }).method);
+    return call(frame, timeoutMs);
+  };
+  return { p, tried, pauses };
+}
+
+const NO_PACKAGE = 'אין חיבור למסוף (USB): חבילת serialport אינה מותקנת בקיוסק — חיבור USB סריאלי אינו זמין';
+
+describe('the C4 on USB: a link that never opens is "not sent", never "unknown"', () => {
+  it('no serialport package: the sale is NOT_SENT with its reason — no abort, no lookup', async () => {
+    const { p, tried, pauses } = overSerial(async () => null);
+    const r = await p.sale({ amountAgorot: 100, reference: 'v30', payments: 1 });
+    expect(r).toEqual({ answer: 'NOT_SENT', message: NO_PACKAGE });
+    expect(tried).toEqual(['doTransaction']);
+    expect(pauses).toEqual([]);
+  });
+
+  it('no such port, the port busy, or no C4 on the cable: NOT_SENT as well, nothing written', async () => {
+    const none = await overSerial(fakeSerialport([], null)).p.sale({ amountAgorot: 100, reference: 'v31', payments: 1 });
+    expect(none.answer).toBe('NOT_SENT');
+    if (none.answer === 'NOT_SENT') expect(none.message).toContain('לא נמצא מסוף USB סריאלי יחיד');
+
+    const busy = await overSerial(fakeSerialport([{ path: 'COM3', vendorId: '0b00', productId: '0080' }], 'Access denied'), 'COM3').p.sale({
+      amountAgorot: 100,
+      reference: 'v32',
+      payments: 1,
+    });
+    expect(busy.answer).toBe('NOT_SENT');
+    if (busy.answer === 'NOT_SENT') expect(busy.message).toContain('לא ניתן לפתוח את COM3: Access denied');
+
+    const c4 = new FakeC4();
+    c4.missing = true;
+    expect((await usb(c4).sale({ amountAgorot: 100, reference: 'v33', payments: 1 })).answer).toBe('NOT_SENT');
+    expect(c4.written).toEqual([]);
+  });
+
+  it("the kiosk's charge: voided with the reason, the attempt dropped — nothing to settle, no alert", async () => {
+    const db = openDb(path.join(mkdtempSync(path.join(os.tmpdir(), 'kd-usb-')), 'k.db'));
+    migrate(db);
+    const logs: string[] = [];
+    const svc = new PayService(db, (m) => logs.push(m));
+    svc.setLockOnUnresolved(() => true);
+    const { p, tried, pauses } = overSerial(async () => null);
+    svc.setProvider(p, 'nayax_usb');
+    const out = await svc.charge({ transactionId: 't-30', orderId: 'o-30', amountAgorot: 100, tipAgorot: 0 });
+    expect(out).toEqual({ kind: 'declined', message: NO_PACKAGE, voidMeta: null });
+    expect(tried).toEqual(['doTransaction']);
+    expect(pauses).toEqual([]);
+    expect(svc.attempts()).toEqual([]);
+    expect(svc.unresolved()).toBe(false);
+    expect(svc.blocked()).toBe(false);
+    expect(svc.cardInFlight).toBe(false);
+    expect(logs.join('\n')).toContain('card: not sent');
+  });
+
+  it('written, then the reply lost: still unknown, and settled by its vuid', async () => {
+    const db = openDb(path.join(mkdtempSync(path.join(os.tmpdir(), 'kd-usb-')), 'k.db'));
+    migrate(db);
+    const svc = new PayService(db);
+    const c4 = new FakeC4();
+    c4.pullOn = 'doTransaction';
+    svc.setProvider(usb(c4), 'nayax_usb');
+    const out = await svc.charge({ transactionId: 't-31', orderId: 'o-31', amountAgorot: 100, tipAgorot: 0 });
+    expect(out.kind).toBe('approved');
+    if (out.kind === 'approved') expect(out.recovered).toBe(true);
+    expect(c4.count('doTransaction')).toBe(1);
+    expect(c4.count('getTransactionByVuid')).toBe(1);
   });
 });

@@ -106,6 +106,8 @@ export abstract class NayaxTweezerProvider implements PaymentProvider {
   async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
     req.onProgress?.('הצמד, הכנס או העבר את הכרטיס');
     const r = await this.call(saleFrame(req.amountAgorot, req.reference, req.payments), TIMEOUTS.sale);
+    // The frame never left (no link, nothing written): certainly not charged, its reason said.
+    if (!r.ok && r.notSent) return { answer: 'NOT_SENT', message: r.error };
     if (!r.ok) return { answer: 'UNKNOWN', message: `אין תשובה מהמסוף: ${r.error}`, raw: null };
     req.onAnswered?.();
     const reply = parseReply(r.body);
