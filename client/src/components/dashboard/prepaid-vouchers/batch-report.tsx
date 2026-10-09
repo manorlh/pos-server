@@ -220,6 +220,11 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
 
   return (
     <div className="space-y-4">
+      {r.isTest ? (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          {t('testBatch')}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <p className="text-xs text-muted-foreground">{t('reversedNote')}</p>
         <div className="flex flex-wrap items-center gap-2">

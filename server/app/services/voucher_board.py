@@ -19,7 +19,9 @@ services changed for it:
   sale and product; those goods priced at the unit price on their own sale document in one
   more query (a sale not yet synced adds no ₪);
 * while the period is still running, the compared one is cut like for like
-  (`period_compare.like_for_like`).
+  (`period_compare.like_for_like`);
+* never a staff test batch's ("שוברי בדיקה", the helper's §18.5) — out of the commercial figures,
+  as out of every settlement.
 
 The name shown is `voucher_display_name`: the voucher's type (fix/voucher-print's types — the
 batch keeps the name of the type it was issued as), else the batch's own name.
@@ -147,6 +149,11 @@ def _redemptions(
             POSMachine.area_id == area_filter
         )
         q = q.filter(R.machine_id.in_(tills))
+    from app.services.prepaid_voucher_controls import test_batch_ids
+
+    tests = [b for b in (_uuid(t) for t in test_batch_ids(db, tenant_id)) if b is not None]
+    if tests:
+        q = q.filter(R.batch_id.notin_(tests))
     return q
 
 

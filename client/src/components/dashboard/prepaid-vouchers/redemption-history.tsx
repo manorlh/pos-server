@@ -8,6 +8,7 @@ import { fetchPrepaidVoucher } from '@/lib/prepaidVouchersApi';
 import { itemText } from '@/lib/prepaidVoucherProducts';
 import { formatDateTime, isoDate } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
+import { RedemptionFlags } from './redemption-flags';
 import { cn } from '@/lib/utils';
 
 function time(iso: string | null | undefined): string {
@@ -46,11 +47,7 @@ export function RedemptionHistory({ voucherId }: { voucherId: string }) {
           {r.posUserName ? ` · ${r.posUserName}` : ''}
           {' — '}
           {r.uses ? discountUseText(r) : r.items.map(lineText).join(', ')}
-          {(r.flags ?? []).map((f) => (
-            <span key={f} className="ms-1 rounded bg-amber-100 px-1 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
-              {tk.has(`flag.${f}`) ? tk(`flag.${f}`) : f}
-            </span>
-          ))}
+          <RedemptionFlags flags={r.flags} />
           {r.forfeited.length ? (
             <span className="text-destructive">
               {' '}({t('forfeited', { items: r.forfeited.map(lineText).join(', ') })})

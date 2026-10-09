@@ -808,11 +808,30 @@ def _type_key(b: PrepaidVoucherBatch, names: Dict[str, str]) -> Tuple[str, str]:
 # ── "מימושים לפי קופה" ────────────────────────────────────────────────────────
 
 
+def without_test_batches(db: Session, tenant_id, batches: Sequence[PrepaidVoucherBatch]) -> Tuple[List[PrepaidVoucherBatch], int]:
+    """
+    [batches] less the staff test batches ("שוברי בדיקה", the helper's §18.5) — out of the commercial
+    reports, as out of every settlement — and how many were left out.
+    """
+    from app.services.prepaid_voucher_controls import test_batch_ids
+
+    tests = test_batch_ids(db, tenant_id)
+    if not tests:
+        return list(batches), 0
+    kept = [b for b in batches if str(b.id) not in tests]
+    return kept, len(batches) - len(kept)
+
+
 def tills_report(db: Session, user: User, tenant_id, scope: Scope, bucket: str = "day") -> Dict[str, Any]:
-    """One row per till: its shop, vouchers and items redeemed, the value per accounting mode."""
+    """
+    One row per till: its shop, vouchers and items redeemed, the value per accounting mode. Staff test
+    batches are left out (`testBatchesExcluded`: how many of the scope's).
+    """
     now = PV._now()
     zone = zone_of(db, tenant_id)
-    batches = scoped_batches(db, user, tenant_id, scope, now=now, zone=zone, by_redemption=False)
+    batches, excluded = without_test_batches(
+        db, tenant_id, scoped_batches(db, user, tenant_id, scope, now=now, zone=zone, by_redemption=False)
+    )
     by_id = {str(b.id): b for b in batches}
     rows = redemption_rows(db, batches, scope, zone, now=now)
     machines = _machine_names(db, {r.machine_id for r in rows if r.machine_id})
@@ -844,16 +863,22 @@ def tills_report(db: Session, user: User, tenant_id, scope: Scope, bucket: str =
         "totals": {**totals, "value": _values_by_mode(rows, by_id)},
         "series": series(rows, bucket, zone, date_from=scope.date_from, date_to=scope.date_to),
         "bucket": bucket if bucket in BUCKETS else "day",
+        "testBatchesExcluded": excluded,
     }
 
 
 def redemptions_list(db: Session, user: User, tenant_id, scope: Scope, *, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-    """The redemptions under [scope] (a till's, when `machineId` says so): time, voucher, batch, items, employee."""
+    """
+    The redemptions under [scope] (a till's, when `machineId` says so): time, voucher, batch, items, employee —
+    "מימושים לפי קופה"'s drill-down, so without the staff test batches, as the report.
+    """
     limit = max(1, min(int(limit), PAGE_MAX))
     offset = max(0, int(offset))
     now = PV._now()
     zone = zone_of(db, tenant_id)
-    batches = scoped_batches(db, user, tenant_id, scope, now=now, zone=zone, by_redemption=False)
+    batches, _excluded = without_test_batches(
+        db, tenant_id, scoped_batches(db, user, tenant_id, scope, now=now, zone=zone, by_redemption=False)
+    )
     by_id = {str(b.id): b for b in batches}
     rows = sorted(redemption_rows(db, batches, scope, zone, now=now), key=lambda r: r.at, reverse=True)
     page = rows[offset:offset + limit]

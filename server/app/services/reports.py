@@ -709,18 +709,11 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
     # their sum); a credit note's total_amount is already the money handed back.
     sale_gross = Transaction.total_amount
     sale_discount = func.coalesce(Transaction.document_discount, 0)
-    # A production voucher's deduction ("קיזוז שוברי הפקה"), per document.
-    from sqlalchemy import select as _select
+    # A production voucher's deduction ("קיזוז שוברי הפקה"), per document — not a staff test
+    # batch's, which stays a discount (as the Z: `shift_totals.staff_test_deduction`).
+    from app.services.shift_totals import production_deduction_expr
 
-    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount as _TVD
-
-    sale_deduction = func.coalesce(
-        _select(func.sum(func.abs(_TVD.discount_amount)))
-        .where(_TVD.transaction_id == Transaction.id, _TVD.kind == PRODUCTION_VOUCHER_DEDUCTION)
-        .correlate(Transaction)
-        .scalar_subquery(),
-        0,
-    )
+    sale_deduction = production_deduction_expr(tx_q.session)
 
     # Document-level figures. Deliberately NOT grouped by tender any more: a document
     # can now carry several, and grouping the document's own gross/discounts/tips by
