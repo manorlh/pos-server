@@ -109,6 +109,27 @@ def _shops_in_view(db: Session, user: User, tenant_id, *, company_id=None, shop_
     return [r[0] for r in rows if str(r[0]) == str(user.shop_id)]
 
 
+def _narrowing(db: Session, user: User):
+    """A manager of points of sale's areas / devices (app/services/stock_scope.py), or None."""
+    from app.services import stock_scope
+
+    scope = stock_scope.scope_of(db, user)
+    return scope if scope.narrowed else None
+
+
+def _covers(db: Session, scope, level: Optional[str], target_id) -> bool:
+    """The node (`area` / `machine`) is one of theirs; a shop, the kiosks, an event, the company never."""
+    from app.services import stock_locations as SL
+
+    level = {"area": "area", "machine": "machine", "kiosk": "machine"}.get(level or "")
+    if level is None or target_id is None:
+        return False
+    try:
+        return scope.covers_path(SL.path_of(db, level, target_id))
+    except LookupError:
+        return False
+
+
 def _check_target(db: Session, user: User, target: svc.Target, tenant_id) -> None:
     """
     The machine admins' scope rules: a company needs the company, anything else its shop; a manager
@@ -196,10 +217,14 @@ def list_blocks(
     else:
         shop = db.get(Shop, shop_id)
         companies = [shop.company_id] if shop is not None and shop.company_id else []
-    return svc.list_blocks(
+    rows = svc.list_blocks(
         db, tenant_id=active_tenant_id, shop_ids=shops, company_ids=companies, product_id=product_id,
         include_ended=include_ended,
     )
+    narrow = _narrowing(db, current_user)
+    if narrow is not None:
+        rows = [r for r in rows if _covers(db, narrow, r.get("scope"), r.get("scopeId"))]
+    return rows
 
 
 @router.get("/targets")
@@ -245,6 +270,13 @@ def list_targets(
             company_ok = True
         except HTTPException:
             company_ok = False
+    narrow = _narrowing(db, current_user)
+    if narrow is not None:
+        # A manager of points of sale picks among theirs only: no company, no event.
+        areas = [a for a in areas if _covers(db, narrow, "area", a.id)]
+        machines = [m for m in machines if _covers(db, narrow, "machine", m.id)]
+        events = []
+        company_ok = False
     zone, day_start = _zone_and_day_start(db, active_tenant_id, shop.id)
     return {
         "company": {"id": str(company.id), "name": company.name} if company is not None and company_ok else None,

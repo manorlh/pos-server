@@ -327,6 +327,31 @@ class TestPermissions:
             stock_admin.transfer(s.db, user, s.tid, product_id=s.P.id, source=s.lobby_loc, target=s.bar_loc, quantity=D(1))
         assert refused.value.status_code == 403
 
+    def test_their_devices_blocks_and_kiosk_hides_are_their_points_of_sale_only(self, s):
+        from app.routers import device_commands as DC
+        from app.routers import item_blocks as IB
+        from app.routers import kiosk_live as KL
+
+        for name in ("device_commands", "device_remote_states"):
+            if not s.db.get_bind().dialect.has_table(s.db.connection(), name):
+                Base.metadata.tables[name].create(s.db.get_bind())
+        user = self._bar_manager(s)
+        # Remote control: the bar's till only; naming the lobby's is refused.
+        assert [m.id for m in DC._devices(s.db, user, s.tid, shop_id=s.h_shop.id)] == [s.h1.id]
+        with pytest.raises(HTTPException) as refused:
+            DC._devices(s.db, user, s.tid, machine_ids=[s.h2.id])
+        assert refused.value.status_code == 403
+        # The block list: the bar's, not the shop's or the lobby's.
+        for scope, target in (("shop", s.h_shop.id), ("area", s.lobby.id), ("area", s.bar.id)):
+            sold_out.block(s.db, tenant_id=s.tid, product=s.P, target=sold_out.resolve_target(s.db, scope, target, s.tid))
+        s.db.commit()
+        rows = IB.list_blocks(None, s.h_shop.id, None, False, current_user=user, active_tenant_id=s.tid, db=s.db)
+        assert [(r["scope"], r["scopeId"]) for r in rows] == [("area", str(s.bar.id))]
+        # A quick kiosk hide is shop-wide: not theirs.
+        with pytest.raises(HTTPException) as refused:
+            KL._shop_checked(s.db, user, s.h_shop.id, s.tid)
+        assert refused.value.status_code == 403
+
     def test_their_resets_and_leftovers_are_their_points_of_sale_only(self, s):
         user = self._bar_manager(s)
         rows = [{"location": {"level": "area", "targetId": str(t)}} for t in (s.bar.id, s.lobby.id)]

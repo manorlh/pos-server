@@ -80,16 +80,34 @@ def _devices(db: Session, user: User, tenant_id, *, machine_ids=None, shop_id=No
         q = kiosk_control._scoped_machine_query(db, user, tenant_id)
     machines = [m for m in q.order_by(POSMachine.shop_id, POSMachine.pos_number, POSMachine.name).all()
                 if getattr(m, "is_fiscal", True) is not False and m.shop_id is not None]
+    narrow = _narrowing(db, user)
     allowed = []
     for m in machines:
         try:
             kiosk_control.check_machine_scope(db, user, m, tenant_id)
+            _check_covered(db, narrow, m)
         except HTTPException:
             if machine_ids:
                 raise
             continue
         allowed.append(m)
     return allowed
+
+
+def _narrowing(db: Session, user: User):
+    """A manager of points of sale's areas / devices (app/services/stock_scope.py), or None."""
+    from app.services import stock_scope
+
+    scope = stock_scope.scope_of(db, user)
+    return scope if scope.narrowed else None
+
+
+def _check_covered(db: Session, narrow, machine: POSMachine) -> None:
+    """403 when a manager of points of sale names a device outside theirs."""
+    from app.services import stock_locations as SL
+
+    if narrow is not None and not narrow.covers_path(SL.path_of_machine(db, machine)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
 
 
 @router.get("/devices")
@@ -166,6 +184,7 @@ def cancel_command(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="command_not_found")
     machine = db.get(POSMachine, row.machine_id)
     kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
+    _check_covered(db, _narrowing(db, current_user), machine)
     svc.cancel(db, row)
     db.commit()
     return svc.command_out(row)

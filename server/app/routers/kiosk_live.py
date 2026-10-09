@@ -74,6 +74,9 @@ def live_panel(
     db: Session = Depends(get_db),
 ):
     kiosks = kiosk_control.list_kiosks(db, current_user, active_tenant_id, company_id=company_id, shop_id=shop_id)
+    narrow = _narrowing(db, current_user)
+    if narrow is not None:
+        kiosks = [k for k in kiosks if _machine_covered(db, narrow, k.get("machineId"))]
     shop_ids = {k["shopId"] for k in kiosks if k.get("shopId")}
     if shop_id is not None:
         # A shop with no kiosk yet still shows its quick hides — once the user is known to reach it.
@@ -96,7 +99,7 @@ def put_banner(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    machine, device = kiosk_control.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     now = _now()
     end = _end(db, active_tenant_id, machine.shop_id, body.duration, now)
     svc.set_banner(device, body.message, end.until, kiosk_control.user_name(current_user), now)
@@ -112,11 +115,36 @@ def delete_banner(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    machine, device = kiosk_control.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     svc.set_banner(device, None, None, None)
     db.commit()
     _wake_shop_kiosks(db, machine.shop_id)
     return kiosk_control.summary(db, device)
+
+
+def _narrowing(db: Session, user: User):
+    """A manager of points of sale's areas / devices (app/services/stock_scope.py), or None."""
+    from app.services import stock_scope
+
+    scope = stock_scope.scope_of(db, user)
+    return scope if scope.narrowed else None
+
+
+def _machine_covered(db: Session, narrow, machine_id) -> bool:
+    from app.models.pos_machine import POSMachine
+    from app.services import stock_locations as SL
+
+    machine = db.get(POSMachine, uuid.UUID(str(machine_id))) if machine_id else None
+    return machine is not None and narrow.covers_path(SL.path_of_machine(db, machine))
+
+
+def _kiosk_checked(db: Session, user: User, machine_id, tenant_id):
+    """The kiosk, in the user's scope — a manager of points of sale: one of their devices."""
+    machine, device = kiosk_control.kiosk_for_dashboard(db, user, machine_id, tenant_id)
+    narrow = _narrowing(db, user)
+    if narrow is not None and not _machine_covered(db, narrow, machine.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
+    return machine, device
 
 
 def _shop_checked(db: Session, user: User, shop_id, tenant_id) -> Shop:
@@ -124,6 +152,9 @@ def _shop_checked(db: Session, user: User, shop_id, tenant_id) -> Shop:
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     kiosk_control.check_shop_scope(db, user, shop, tenant_id)
+    # A quick hide is shop-wide (every kiosk of the shop): not a manager of points of sale's.
+    if _narrowing(db, user) is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
     return shop
 
 
