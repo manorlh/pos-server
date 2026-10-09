@@ -43,12 +43,16 @@ def _columns(table: str) -> set:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
+    # `transactions` before `transaction_items` — the order every writer locks them in (review 09.10).
+    if 'voucher_memo' not in _columns(DOCUMENTS):
+        op.add_column(DOCUMENTS, sa.Column('voucher_memo', sa.Boolean(), nullable=False, server_default=sa.false()))
     have = _columns(ITEMS)
     for name, column in ITEM_COLUMNS:
         if name not in have:
             op.add_column(ITEMS, column())
-    if 'voucher_memo' not in _columns(DOCUMENTS):
-        op.add_column(DOCUMENTS, sa.Column('voucher_memo', sa.Boolean(), nullable=False, server_default=sa.false()))
 
 
 def downgrade() -> None:

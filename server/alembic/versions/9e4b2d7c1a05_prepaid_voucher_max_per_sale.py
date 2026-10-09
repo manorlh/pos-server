@@ -38,6 +38,9 @@ def _has(table: str) -> bool:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     for table in TABLES:
         if not _has(table):
             op.add_column(table, sa.Column(COLUMN, sa.Integer(), nullable=True))

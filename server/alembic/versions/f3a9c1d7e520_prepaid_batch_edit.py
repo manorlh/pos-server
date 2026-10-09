@@ -33,6 +33,9 @@ def _columns(table: str) -> set:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     if COLUMN not in _columns(BATCHES):
         op.add_column(BATCHES, sa.Column(COLUMN, sa.JSON(), nullable=True))
 

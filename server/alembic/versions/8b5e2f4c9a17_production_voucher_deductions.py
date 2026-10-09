@@ -45,6 +45,9 @@ def _columns() -> dict:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     cols = _columns()
     kind = cols.get('kind')
     length = getattr(kind['type'], 'length', None) if kind else None

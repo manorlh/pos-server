@@ -67,6 +67,9 @@ def _indexes(insp, table) -> set:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     insp = _inspect()
     if not _has_table(insp, TYPES):
         op.create_table(

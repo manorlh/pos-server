@@ -82,6 +82,9 @@ def _has_table(table: str) -> bool:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     have = _columns(REDEMPTIONS)
     for name, column in REDEMPTION_COLUMNS:
         if name not in have:

@@ -459,7 +459,6 @@ class PrepaidVoucherRedemption(Base):
         # The reports: redemptions of the batches in scope by time, per till, per voucher.
         Index("ix_prepaid_voucher_redemptions_batch_time", "batch_id", "redeemed_at"),
         Index("ix_prepaid_voucher_redemptions_machine_time", "machine_id", "redeemed_at"),
-        Index("ix_prepaid_voucher_redemptions_voucher", "voucher_id"),
         # An offline redemption is synced once, by the device's own id — per device (§7, review 09.10).
         Index("ux_prepaid_voucher_redemptions_device_client", "tenant_id", "machine_id", "client_redemption_id", unique=True),
     )

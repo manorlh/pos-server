@@ -440,4 +440,4 @@ class TestIndexesMigration:
         offline = MigrationContext.configure(dialect_name="postgresql", opts={"as_sql": True, "output_buffer": buf})
         with Operations.context(offline):
             module.upgrade()
-        assert buf.getvalue().count("CREATE INDEX") == 5
+        assert buf.getvalue().count("CREATE INDEX") == 4  # voucher_id has its own column index (review 09.10)

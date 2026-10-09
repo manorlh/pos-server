@@ -29,7 +29,7 @@ INDEXES = (
     ('ix_prepaid_vouchers_batch_status', 'prepaid_vouchers', ['batch_id', 'status']),
     ('ix_prepaid_voucher_redemptions_batch_time', 'prepaid_voucher_redemptions', ['batch_id', 'redeemed_at']),
     ('ix_prepaid_voucher_redemptions_machine_time', 'prepaid_voucher_redemptions', ['machine_id', 'redeemed_at']),
-    ('ix_prepaid_voucher_redemptions_voucher', 'prepaid_voucher_redemptions', ['voucher_id']),
+    # (No index of its own on redemptions' voucher_id: the column's own index, ix_…_voucher_id, serves — review 09.10.)
 )
 
 
@@ -44,6 +44,9 @@ def _existing(table: str) -> set:
 
 
 def upgrade() -> None:
+    if op.get_context().dialect.name == 'postgresql':
+        # Never wait behind a long query on a busy table: fail fast, the deploy retries (review 09.10).
+        op.execute(sa.text("SET LOCAL lock_timeout = '10s'"))
     for name, table, columns in INDEXES:
         if name not in _existing(table):
             op.create_index(name, table, columns)
