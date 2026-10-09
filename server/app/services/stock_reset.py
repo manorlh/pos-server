@@ -6,7 +6,7 @@ quantity.
   `reset_mode`): "set" ("קבע למלאי פתיחה", the default) sets the quantity to the opening one;
   "top_up" ("השלם ממחסן") tops it up by a transfer from the nearest managed location above that has
   stock — what it cannot give is the shortfall, and the location's low / out alert says so.
-* **When** — at the start of the business day: `businessDayStart` (POS settings, "05:00" when unset)
+* **When** — at the start of the business day: the system's one day start (04:00, as insights)
   in the shop's zone (Asia/Jerusalem unless the tenant says otherwise), DST-safe. A server-side
   pass (`run_due`, every minute) runs each location once per business day: `stock_resets.run_key`
   ("<level>:<id>:<day>") is unique, so two passes (two API processes) never both run it. Switching
@@ -79,7 +79,7 @@ class Clock:
 def business_day(now: datetime, clock: Clock) -> Tuple[date, datetime]:
     """(the business day `now` is in, when it started — UTC). DST-safe."""
     zone = block_durations.zone_of(clock.zone_name)
-    start_t = block_durations.parse_hhmm(clock.day_start) or block_durations.parse_hhmm(block_durations.DEFAULT_DAY_START)
+    start_t = block_durations.parse_hhmm(clock.day_start) or block_durations.parse_hhmm(block_durations.business_day_start())
     local = _aware(now).astimezone(zone)
     today_start = block_durations._local_at(local.date(), start_t, zone)
     if _aware(now) >= today_start:
@@ -89,26 +89,21 @@ def business_day(now: datetime, clock: Clock) -> Tuple[date, datetime]:
 
 
 def clock_for(db: Session, loc: Location) -> Clock:
-    """The location's shop zone and `businessDayStart` (a company location: the tenant's)."""
-    from types import SimpleNamespace
-
+    """The location's report zone and the system's one business-day start (04:00, as insights)."""
     from app.models.company import Company
     from app.models.shop import Shop
-    from app.models.tenant import Tenant
     from app.services.reports import resolve_report_timezone
-    from app.services.settings_merge import merge_all_settings_layers
 
+    day_start = block_durations.business_day_start()
     try:
         path = L.location_path(db, loc)
     except LookupError:
-        return Clock(block_durations.DEFAULT_ZONE, block_durations.DEFAULT_DAY_START)
+        return Clock(block_durations.DEFAULT_ZONE, day_start)
     shop = db.get(Shop, path.shop_id) if path.shop_id else None
     company = db.get(Company, path.company_id) if path.company_id else None
     tenant_id = shop.tenant_id if shop is not None else (company.tenant_id if company is not None else None)
-    tenant = db.get(Tenant, tenant_id) if tenant_id else None
-    merged = merge_all_settings_layers(company or SimpleNamespace(settings={}), shop, tenant)
     zone = resolve_report_timezone(db, tenant_id, None) if tenant_id else block_durations.DEFAULT_ZONE
-    return Clock(zone, merged.get(block_durations.SETTING_DAY_START) or block_durations.DEFAULT_DAY_START)
+    return Clock(zone, day_start)
 
 
 def run_key(loc: Location, day: date, manual_at: Optional[datetime] = None) -> str:

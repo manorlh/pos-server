@@ -170,20 +170,11 @@ def _check_mark(db: Session, user: User, mark: SoldOutMark, tenant_id) -> None:
 
 
 def _zone_and_day_start(db: Session, tenant_id, shop_id) -> tuple:
+    """The tenant's report zone and the system's one business-day start (04:00): no setting of a
+    shop, point of sale or company can make blocks end at another hour than the reset and targets."""
     from app.services.reports import resolve_report_timezone
-    from app.services.settings_merge import merge_all_settings_layers
-    from app.models.tenant import Tenant
-    from types import SimpleNamespace
 
-    zone = resolve_report_timezone(db, tenant_id, None)
-    day_start = None
-    shop = db.get(Shop, shop_id) if shop_id is not None else None
-    if shop is not None:
-        company = db.get(Company, shop.company_id) if shop.company_id else None
-        tenant = db.get(Tenant, shop.tenant_id) if shop.tenant_id else None
-        merged = merge_all_settings_layers(company or SimpleNamespace(settings={}), shop, tenant)
-        day_start = merged.get(block_durations.SETTING_DAY_START)
-    return zone, day_start
+    return resolve_report_timezone(db, tenant_id, None), block_durations.business_day_start()
 
 
 def _end(db: Session, tenant_id, shop_id, duration, now: datetime) -> block_durations.End:
@@ -303,7 +294,7 @@ def list_targets(
         "groupsAvailable": device_groups.available(),
         "groups": [],
         "timezone": zone,
-        "businessDayStart": day_start or block_durations.DEFAULT_DAY_START,
+        "businessDayStart": day_start,
         "presets": list(block_durations.PRESET_MINUTES),
         "extendBy": list(block_durations.EXTEND_MINUTES),
     }

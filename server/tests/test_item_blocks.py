@@ -22,7 +22,7 @@ import hashlib
 import json
 import pathlib
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -108,23 +108,22 @@ class TestDurations:
         assert same.rolled is True, "now itself is the past"
 
     def test_end_of_day_is_the_next_business_day_start(self):
+        assert D.business_day_start() == "04:00", "the one day start: insights' DEFAULT_DAY_START_HOUR"
         assert D.compute_end("end_of_day", NOW, zone_name="Asia/Jerusalem").until == datetime(
-            2026, 10, 10, 2, 0, tzinfo=timezone.utc
-        ), "05:00 tomorrow"
-        night = datetime(2026, 10, 9, 23, 30, tzinfo=timezone.utc)  # 02:30 local on the 10th
-        assert D.compute_end("end_of_day", night, zone_name="Asia/Jerusalem").until == datetime(
-            2026, 10, 10, 2, 0, tzinfo=timezone.utc
-        ), "a bar's night ends with the same morning"
-        assert D.compute_end("end_of_day", NOW, zone_name="Asia/Jerusalem", day_start="04:00").until == datetime(
             2026, 10, 10, 1, 0, tzinfo=timezone.utc
-        )
+        ), "04:00 tomorrow"
+        night = datetime(2026, 10, 9, 22, 30, tzinfo=timezone.utc)  # 01:30 local on the 10th
+        assert D.compute_end("end_of_day", night, zone_name="Asia/Jerusalem").until == datetime(
+            2026, 10, 10, 1, 0, tzinfo=timezone.utc
+        ), "a bar's night ends with the same morning"
+        assert D.business_today(night, "Asia/Jerusalem") == date(2026, 10, 9), "01:30 is still the 9th's business day"
 
     def test_daylight_saving_ends_overnight(self):
         # Israel leaves summer time on 25.10.2026 at 02:00 (back to 01:00): +03:00 → +02:00.
         evening = datetime(2026, 10, 24, 19, 0, tzinfo=timezone.utc)  # 22:00 local, summer time
         assert D.compute_end("end_of_day", evening, zone_name="Asia/Jerusalem").until == datetime(
-            2026, 10, 25, 3, 0, tzinfo=timezone.utc
-        ), "05:00 winter time"
+            2026, 10, 25, 2, 0, tzinfo=timezone.utc
+        ), "04:00 winter time"
         assert D.compute_end("time", evening, zone_name="Asia/Jerusalem", at="09:00").until == datetime(
             2026, 10, 25, 7, 0, tzinfo=timezone.utc
         )
@@ -427,7 +426,7 @@ class TestDashboard:
         assert {t["id"] for t in out["kiosks"]} == {str(b.h2.id)}
         assert str(b.h1.id) in {t["id"] for t in out["tills"]}
         assert [a["name"] for a in out["areas"]] == ["Bar"]
-        assert out["groupsAvailable"] is False and out["businessDayStart"] == "05:00"
+        assert out["groupsAvailable"] is False and out["businessDayStart"] == "04:00"
 
 
 def test_the_migrations_chain_on_one_head():

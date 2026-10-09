@@ -47,7 +47,8 @@ def test_the_trading_window_is_local_and_dst_safe():
 def test_a_night_past_midnight_counts_to_its_end_and_is_still_that_trading_day():
     z, day, utc = "Asia/Jerusalem", date(2026, 10, 9), timezone.utc
     # 18:00–02:00: the money runs to 02:00 on the 10th (IDT, UTC+3); an ordinary day is the calendar day.
-    assert svc.trading_range(day, "18:00", "02:00", z) == (datetime(2026, 10, 8, 21, 0, tzinfo=utc), datetime(2026, 10, 9, 23, 0, tzinfo=utc))
+    # The 9th's money starts where the 8th's night ended (02:00 on the 9th), never again at midnight.
+    assert svc.trading_range(day, "18:00", "02:00", z) == (datetime(2026, 10, 8, 23, 0, tzinfo=utc), datetime(2026, 10, 9, 23, 0, tzinfo=utc))
     assert svc.trading_range(day, "08:00", "23:00", z) == (datetime(2026, 10, 8, 21, 0, tzinfo=utc), datetime(2026, 10, 9, 21, 0, tzinfo=utc))
     assert svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 22, 30, tzinfo=utc))  # 01:30 local
     assert not svc.still_open_from(day, "18:00", "02:00", z, datetime(2026, 10, 9, 23, 30, tzinfo=utc))  # 02:30
@@ -128,7 +129,10 @@ class TestProgress:
         rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=4))  # 01:00 local
         shop = next(r for r in rows if r["scope"] == "shop")
         assert shop["periodKey"] == TODAY.isoformat() and shop["actual"] == 410.0
-        rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=6))  # 03:00: a new day
+        # 03:00 is still that business day (it starts at 04:00); 05:00 is the next one.
+        rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=6))
+        assert next(r for r in rows if r["scope"] == "shop")["periodKey"] == TODAY.isoformat()
+        rows = svc.progress(trading.db, [trading.shop.id], now=NOW + timedelta(hours=8))
         assert next(r for r in rows if r["scope"] == "shop")["periodKey"] == (TODAY + timedelta(days=1)).isoformat()
 
     def test_a_cashier_counts_their_documents(self, trading):

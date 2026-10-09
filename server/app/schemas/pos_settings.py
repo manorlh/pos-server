@@ -78,8 +78,6 @@ class PosSettingsV1Patch(BaseModel):
     #: "אזל אוטומטי": a product that tracks stock is blocked "אזל" by itself when the stock its
     #: devices sell from reaches 0 (app/services/sold_out.py). Unset = on.
     auto_sold_out_at_zero: Optional[bool] = Field(None, alias="autoSoldOutAtZero")
-    #: When the business day starts (local "HH:MM"): "עד סוף היום" ends there. Unset = "05:00".
-    business_day_start: Optional[str] = Field(None, alias="businessDayStart", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).

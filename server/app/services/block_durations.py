@@ -7,8 +7,9 @@ shop's time zone (Asia/Jerusalem unless the tenant says otherwise), daylight sav
                  1 to 7 days' worth.
 * `time`       — "עד שעה" (HH:MM, local): today at that time; a time that has passed (or is now)
                  rolls to tomorrow and says so (`rolled`), so the dialog can warn.
-* `end_of_day` — "עד סוף היום": the next start of the business day (`businessDayStart`, a POS
-                 settings key, "05:00" by default — a bar's night belongs to the day it began).
+* `end_of_day` — "עד סוף היום": the next start of the business day — the one day start the
+                 whole system uses (04:00, insights' `DEFAULT_DAY_START_HOUR`): a bar's night
+                 belongs to the day it began, for blocks, the daily reset and targets alike.
 
 The end is sent to the tills as an absolute instant; each till lifts the block by its own clock,
 connected or not. "הארך" adds minutes to the end (`extend`).
@@ -24,9 +25,22 @@ MODES = ("none", "minutes", "time", "end_of_day")
 PRESET_MINUTES = (15, 30, 60, 120, 240)
 EXTEND_MINUTES = (15, 30, 60)
 MAX_MINUTES = 7 * 24 * 60
-DEFAULT_DAY_START = "05:00"
 DEFAULT_ZONE = "Asia/Jerusalem"
-SETTING_DAY_START = "businessDayStart"
+
+
+def business_day_start() -> str:
+    """"HH:00" — when a business day starts, from the one source insights uses."""
+    from app.services.insights.service import DEFAULT_DAY_START_HOUR
+
+    return f"{int(DEFAULT_DAY_START_HOUR):02d}:00"
+
+
+def business_today(now: datetime, zone_name: Optional[str] = None) -> date:
+    """The business day `now` is in (local, the day starting at `business_day_start`), DST-safe."""
+    zone = zone_of(zone_name)
+    start = parse_hhmm(business_day_start())
+    local = (now if now.tzinfo is not None else now.replace(tzinfo=timezone.utc)).astimezone(zone)
+    return local.date() if now >= _local_at(local.date(), start, zone) else local.date() - timedelta(days=1)
 
 _HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -103,7 +117,7 @@ def compute_end(
             return End(_local_at(local_now.date() + timedelta(days=1), hhmm, zone), True, "time")
         return End(end, False, "time")
     if mode == "end_of_day":
-        start = parse_hhmm(day_start) or parse_hhmm(DEFAULT_DAY_START)
+        start = parse_hhmm(day_start) or parse_hhmm(business_day_start())
         end = _local_at(local_now.date(), start, zone)
         if end <= now:
             end = _local_at(local_now.date() + timedelta(days=1), start, zone)

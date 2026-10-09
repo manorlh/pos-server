@@ -108,10 +108,14 @@ def calendar_day(day: date, zone_name: str) -> Tuple[datetime, datetime]:
 def trading_range(day: date, start: str, end: str, zone_name: str) -> Tuple[datetime, datetime]:
     """
     The money a day target counts: the local calendar day, stretched to the trading window's end when
-    the window runs past midnight (a bar open 18:00–02:00 counts its sales up to 02:00 on the next day).
+    the window runs past midnight (a bar open 18:00–02:00 counts its sales up to 02:00 on the next day)
+    — and starting where the previous day's window ended, so that night's sales after midnight are
+    counted once (in the day that began them), never again in this one:
+    [max(D 00:00, end of D−1's window), max(D+1 00:00, end of D's window)).
     """
     a, b = calendar_day(day, zone_name)
-    return a, max(b, day_window(day, start, end, zone_name)[1])
+    previous_end = day_window(day - timedelta(days=1), start, end, zone_name)[1]
+    return max(a, previous_end), max(b, day_window(day, start, end, zone_name)[1])
 
 
 def still_open_from(day: date, start: str, end: str, zone_name: str, now: datetime) -> bool:
@@ -119,6 +123,11 @@ def still_open_from(day: date, start: str, end: str, zone_name: str, now: dateti
     _a, b = calendar_day(day, zone_name)
     window_end = day_window(day, start, end, zone_name)[1]
     return window_end > b and now < window_end
+
+
+def business_today(zone_name: str, now: Optional[datetime] = None) -> date:
+    """Today's business day (it starts at 04:00, as blocks, the reset and insights)."""
+    return block_durations.business_today(now or utc_now(), zone_name)
 
 
 def local_today(zone_name: str, now: Optional[datetime] = None) -> date:
@@ -239,7 +248,7 @@ def progress_of(db: Session, target: SalesTarget, *, now: Optional[datetime] = N
         machine_ids = [r[0] for r in db.query(ReportEventMachine.machine_id).filter(ReportEventMachine.event_id == event.id).all()]
         period_key = str(event.id)
     else:
-        day = day or local_today(zone, now)
+        day = day or business_today(zone, now)
         d_start, d_end = target.day_start or DEFAULT_DAY_START, target.day_end or DEFAULT_DAY_END
         start, end = trading_range(day, d_start, d_end, zone)
         window = day_window(day, d_start, d_end, zone)
@@ -311,7 +320,7 @@ def current_targets(db: Session, shop_ids: Sequence[Any], *, now: Optional[datet
         return []
     first = db.get(Shop, shop_ids[0])
     zone = _zone_for(db, first.tenant_id) if first is not None else block_durations.DEFAULT_ZONE
-    today = local_today(zone, now)
+    today = business_today(zone, now)
     yesterday = today - timedelta(days=1)
 
     def key(t: SalesTarget) -> Tuple[Any, str, Any, Any]:
@@ -442,8 +451,8 @@ def leaderboard(db: Session, machine: Any, *, metric: str = METRIC_SALES, now: O
         target, day = shop_day
         start, end = trading_range(day, target.day_start or DEFAULT_DAY_START, target.day_end or DEFAULT_DAY_END, zone)
     else:
-        day = local_today(zone, now)
-        start, end = calendar_day(day, zone)
+        day = business_today(zone, now)
+        start, end = trading_range(day, DEFAULT_DAY_START, DEFAULT_DAY_END, zone)
     q = _base_query(db, machine.tenant_id, machine.shop_id, start, end)
     if metric == METRIC_UPSELL:
         rows = (

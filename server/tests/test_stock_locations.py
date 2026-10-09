@@ -562,14 +562,15 @@ class TestDailyReset:
         assert stock_reset.run_due(s.db) == 0
         assert stock_reset.run(s.db, s.shop_loc, tenant_id=s.tid, trigger="schedule") is None
 
-    def test_the_business_day_starts_at_five_in_jerusalem_dst_included(self):
-        clock = stock_reset.Clock("Asia/Jerusalem", "05:00")
+    def test_the_business_day_starts_at_four_in_jerusalem_dst_included(self, s):
+        clock = stock_reset.clock_for(s.db, s.shop_loc)
+        assert clock.day_start == "04:00", "the one business day of blocks, the reset and targets"
         # 03:00 local on 10.10 belongs to the 9th's business day.
         day, start = stock_reset.business_day(datetime(2026, 10, 10, 0, 0, tzinfo=timezone.utc), clock)
-        assert (day, start) == (date(2026, 10, 9), datetime(2026, 10, 9, 2, 0, tzinfo=timezone.utc))
-        # Summer time ends 25.10 at 02:00: 05:00 that morning is 03:00 UTC.
+        assert (day, start) == (date(2026, 10, 9), datetime(2026, 10, 9, 1, 0, tzinfo=timezone.utc))
+        # Summer time ends 25.10 at 02:00: 04:00 that morning is 02:00 UTC.
         day, start = stock_reset.business_day(datetime(2026, 10, 25, 4, 0, tzinfo=timezone.utc), clock)
-        assert (day, start) == (date(2026, 10, 25), datetime(2026, 10, 25, 3, 0, tzinfo=timezone.utc))
+        assert (day, start) == (date(2026, 10, 25), datetime(2026, 10, 25, 2, 0, tzinfo=timezone.utc))
 
     def test_a_late_sale_of_yesterday_is_absorbed_and_lowers_the_leftover(self, s):
         _set(s, s.shop_loc, 3)

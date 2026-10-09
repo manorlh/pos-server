@@ -58,7 +58,6 @@ MANAGED_SETTING_KEYS = (
     # itself, the cloud's automatic block aside (app/services/sold_out.py) — and the business day's
     # start ("05:00" when unset).
     "autoSoldOutAtZero",
-    "businessDayStart",
     "tipsEnabled",
     "cashTipsEnabled",
     # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment
