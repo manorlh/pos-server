@@ -464,8 +464,8 @@ export default function ZReportsPage() {
         ) : !data || data.items.length === 0 ? (
           <li className="py-6 text-center text-sm text-muted-foreground">{t('noReports')}</li>
         ) : (
-          groups.map((group) => [
-          <ZDayGroupHeading key={`day-${group.day}`} day={group.day} basis={dateBasis} totals={totalsOfDay(group.day)} />,
+          groups.map((group, gi) => [
+          <ZDayGroupHeading key={`day-${gi}-${group.day}`} day={group.day} basis={dateBasis} totals={totalsOfDay(group.day)} />,
           ...group.rows.map((z) => {
             const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
             return (
@@ -579,9 +579,9 @@ export default function ZReportsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              groups.map((group) => [
+              groups.map((group, gi) => [
               <ZDayGroupRow
-                key={`day-${group.day}`}
+                key={`day-${gi}-${group.day}`}
                 day={group.day}
                 basis={dateBasis}
                 colSpan={COLS}
