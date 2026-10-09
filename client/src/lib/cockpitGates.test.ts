@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UNRESTRICTED, type DashboardAccess } from './dashboardAccess';
-import { MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, allowedEntries, gateAllows, pickVariant, sortAttention } from './cockpitGates';
+import { LIVE_CONTROL_GATES, MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, allowedEntries, gateAllows, pickVariant, remoteControlTabs, sortAttention } from './cockpitGates';
 
 /** "מנהל סניף / אירוע" as the server's template gives it. */
 const BRANCH_MANAGER: DashboardAccess = {
@@ -10,7 +10,7 @@ const BRANCH_MANAGER: DashboardAccess = {
   sections: {
     cockpit: 'view', reports: 'view', z: 'view', live_event: 'view', alerts: 'edit', prepaid_vouchers: 'view',
     promotions: 'view', quick_actions: 'edit', item_blocks: 'edit', device_control: 'edit', till_messages: 'edit',
-    kiosks: 'edit', stock: 'edit',
+    kiosks: 'view', stock: 'edit',
   },
 };
 const REPORTS_ONLY: DashboardAccess = { restricted: true, sections: { reports: 'view' } };
@@ -116,5 +116,40 @@ describe('"הודעה לקופות": one button, the sheet by what the user hold
     for (const [a, role] of cases) {
       assert.equal(gateAllows(TILL_MESSAGE_GATES.button, a, role), pickVariant(VARIANTS, a, role) !== undefined, JSON.stringify([a, role]));
     }
+  });
+});
+
+describe('"שליטה חיה": what each grant may read and do (the server\'s rules)', () => {
+  const access = (sections: DashboardAccess['sections']): DashboardAccess => ({ restricted: true, sections });
+
+  it('the remote control sheet: tills with device_control, kiosks with kiosks or device_control', () => {
+    assert.deepEqual(remoteControlTabs(access({ device_control: 'edit' }), 'shop_manager'), ['tills', 'kiosks']);
+    assert.deepEqual(remoteControlTabs(access({ kiosks: 'edit' }), 'shop_manager'), ['kiosks']);
+    assert.deepEqual(remoteControlTabs(access({ device_control: 'view', kiosks: 'view' }), 'shop_manager'), []);
+    assert.deepEqual(remoteControlTabs(BRANCH_MANAGER, 'shop_manager'), ['tills', 'kiosks']);
+    assert.deepEqual(remoteControlTabs(access({ device_control: 'edit' }), 'shift_supervisor'), [], 'the routes check the role too');
+  });
+
+  it('the button shows exactly when one of the halves does', () => {
+    const cases: [DashboardAccess, string][] = [
+      [access({ device_control: 'edit' }), 'shop_manager'],
+      [access({ kiosks: 'edit' }), 'company_manager'],
+      [access({ kiosks: 'view' }), 'shop_manager'],
+      [REPORTS_ONLY, 'company_manager'],
+      [BRANCH_MANAGER, 'cashier'],
+      [UNRESTRICTED, 'distributor'],
+    ];
+    for (const [a, role] of cases) {
+      assert.equal(gateAllows(LIVE_CONTROL_GATES.remoteButton, a, role), remoteControlTabs(a, role).length > 0, JSON.stringify([a, role]));
+    }
+  });
+
+  it('blocks and stock: read at view, act at edit', () => {
+    const viewer = access({ item_blocks: 'view', stock: 'view' });
+    assert.equal(gateAllows(LIVE_CONTROL_GATES.blocksRead, viewer, 'shop_manager'), true);
+    assert.equal(gateAllows(LIVE_CONTROL_GATES.blocksEdit, viewer, 'shop_manager'), false);
+    assert.equal(gateAllows(LIVE_CONTROL_GATES.stockEdit, viewer, 'shop_manager'), false);
+    assert.equal(gateAllows(LIVE_CONTROL_GATES.blocksEdit, BRANCH_MANAGER, 'shop_manager'), true);
+    assert.equal(gateAllows(LIVE_CONTROL_GATES.stockEdit, BRANCH_MANAGER, 'shop_manager'), true);
   });
 });

@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BoardCard, CardTitle, boardSurface } from '@/components/dashboard/control-board/board-ui';
+import { useCockpitFeatures } from './features';
 import { ATTENTION_PROVIDERS, COCKPIT_CARDS, QUICK_ACTIONS, TILL_DETAILS_ACTION, actionById } from './registry';
 import type { AttentionItem, AttentionProvider, CockpitAction, CockpitActionContext, CockpitScope } from './types';
 
@@ -31,6 +32,8 @@ interface CockpitContextValue {
   scope: CockpitScope;
   /** Opens an action's sheet in place (or the till's own sheet for `tillDetails`). */
   open: (actionId: string, context?: CockpitActionContext) => void;
+  /** Opens an attention item's own sheet in place (`AttentionAction.render`). */
+  openSheet: (render: (close: () => void) => React.ReactNode) => void;
 }
 
 const CockpitContext = createContext<CockpitContextValue | null>(null);
@@ -48,7 +51,9 @@ export function useCockpit(): CockpitContextValue {
 export function useAllowedActions(barOnly: boolean): CockpitAction[] {
   const access = useDashboardAccess();
   const role = useAuth((s) => s.user?.role);
+  const features = useCockpitFeatures();
   return allowedEntries(QUICK_ACTIONS, access, role)
+    .filter((a) => !a.feature || features[a.feature])
     .map((a): CockpitAction => {
       if (!a.variants) return a;
       const v = pickVariant(a.variants, access, role);
@@ -71,6 +76,8 @@ export function CockpitProvider({
 }) {
   const t = useTranslations('controlBoard.cockpit');
   const [opened, setOpened] = useState<{ actionId: string; context?: CockpitActionContext } | null>(null);
+  // An attention item's own sheet (`AttentionAction.render`), one at a time like the actions'.
+  const [custom, setCustom] = useState<{ render: (close: () => void) => React.ReactNode } | null>(null);
   const allowed = useAllowedActions(false);
   const open = useCallback(
     (actionId: string, context?: CockpitActionContext) => {
@@ -82,7 +89,8 @@ export function CockpitProvider({
     },
     [onOpenTill],
   );
-  const value = useMemo(() => ({ scope, open }), [open, scope]);
+  const openSheet = useCallback((render: (close: () => void) => React.ReactNode) => setCustom({ render }), []);
+  const value = useMemo(() => ({ scope, open, openSheet }), [open, openSheet, scope]);
   const action = opened ? allowed.find((a) => a.id === opened.actionId) : undefined;
   const Sheet = action?.Sheet ?? null;
   // A sheet that is its own dialog (`ownDialog`) is mounted as it is — never a dialog in a dialog.
@@ -90,6 +98,7 @@ export function CockpitProvider({
   return (
     <CockpitContext.Provider value={value}>
       {children}
+      {custom ? custom.render(() => setCustom(null)) : null}
       {action?.ownDialog && Sheet ? (
         <Sheet scope={scope} context={opened?.context} onDone={() => setOpened(null)} />
       ) : null}
@@ -174,7 +183,7 @@ const SEVERITY_STYLE = {
 
 export function AttentionFeed({ className, limit = 6 }: { className?: string; limit?: number }) {
   const t = useTranslations('controlBoard.cockpit');
-  const { scope, open } = useCockpit();
+  const { scope, open, openSheet } = useCockpit();
   const access = useDashboardAccess();
   const role = useAuth((s) => s.user?.role);
   const providers = allowedEntries(ATTENTION_PROVIDERS, access, role);
@@ -216,7 +225,7 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
             {shown.map((item) => {
               const style = SEVERITY_STYLE[item.severity];
               const buttons = item.actions.filter(
-                (a) => a.run !== undefined || a.actionId === TILL_DETAILS_ACTION || actionsAllowed.has(a.actionId),
+                (a) => a.run !== undefined || a.render !== undefined || a.actionId === TILL_DETAILS_ACTION || actionsAllowed.has(a.actionId),
               );
               return (
                 <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
@@ -233,7 +242,7 @@ export function AttentionFeed({ className, limit = 6 }: { className?: string; li
                         <button
                           key={`${b.actionId}:${b.labelKey}`}
                           type="button"
-                          onClick={() => (b.run ? b.run() : open(b.actionId, b.context))}
+                          onClick={() => (b.run ? b.run() : b.render ? openSheet(b.render) : open(b.actionId, b.context))}
                           className="inline-flex min-h-10 items-center rounded-full border border-cb-line bg-cb-card px-3 text-sm font-medium text-cb-blue-ink hover:bg-cb-soft"
                         >
                           {t(`itemActions.${b.labelKey}`)}

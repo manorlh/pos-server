@@ -14,14 +14,27 @@ import { useDevices } from './device-control-sheet';
 import { useStockAlertsOf } from './board-strip';
 import type { LiveControlScope } from './types';
 
-export function useLiveControlItems(scope: LiveControlScope): { items: LiveItem[]; isLoading: boolean } {
-  const blocks = useActiveBlocks(scope);
-  const devices = useDevices(scope);
-  const alerts = useStockAlertsOf(scope);
+/** What to read: each part only for a user the server lets read it (all, by default). */
+export interface LiveControlParts {
+  blocks?: boolean;
+  devices?: boolean;
+  stock?: boolean;
+}
+
+export function useLiveControlItems(
+  scope: LiveControlScope,
+  parts: LiveControlParts = {},
+): { items: LiveItem[]; isLoading: boolean } {
+  const { blocks: readBlocks = true, devices: readDevices = true, stock: readStock = true } = parts;
+  const blocks = useActiveBlocks(scope, undefined, readBlocks);
+  const devices = useDevices(scope, readDevices);
+  const alerts = useStockAlertsOf(scope, readStock);
   const now = useTick(30_000);
   const items = useMemo(
     () => [...liveItemsFrom(blocks.data ?? [], devices.data ?? [], now), ...lowStockItems(alerts.data ?? [])],
     [blocks.data, devices.data, alerts.data, now],
   );
-  return { items, isLoading: blocks.isPending || devices.isPending || alerts.isLoading };
+  // A part not read is not loading (a disabled query stays "pending" forever).
+  const loading = (readBlocks && blocks.isPending) || (readDevices && devices.isPending) || (readStock && alerts.isLoading);
+  return { items, isLoading: loading };
 }

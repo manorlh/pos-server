@@ -32,12 +32,14 @@ const TONE: Record<string, string> = {
   muted: 'text-muted-foreground',
 };
 
-export function useDevices(scope: LiveControlScope) {
+/** `enabled`: false for a user the server would refuse (the cockpit's feed asks only what each may read). */
+export function useDevices(scope: LiveControlScope, enabled = true) {
   const s = { companyId: scope.companyId ?? null, shopId: scope.shopId ?? null };
   return useQuery({
     queryKey: liveKeys.devices(s),
     queryFn: () => fetchDevices(s),
     refetchInterval: 10_000,
+    enabled,
   });
 }
 

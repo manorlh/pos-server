@@ -1134,7 +1134,16 @@
         "quickMessage": "הודעה מהירה",
         "quickPromo": "מבצע מהיר",
         "ackAlert": "טופל",
-        "openAlert": "פתיחה"
+        "openAlert": "פתיחה",
+        "extend15": "הארך +15",
+        "extend30": "הארך +30",
+        "extend60": "הארך +60",
+        "clearNow": "בטל עכשיו",
+        "unlock": "שחרר נעילה",
+        "retry": "שלח שוב",
+        "transferSuggested": "העבר את הכמות המוצעת",
+        "updateStock": "עדכן מלאי",
+        "block": "חסום / אזל"
       },
       "feed": {
         "title": "דורש תשומת לב",

@@ -3,7 +3,7 @@
  * Kept apart from registry.ts so a sheet or a provider can import them without a cycle.
  */
 
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { AttentionSeverity, CockpitGate } from '@/lib/cockpitGates';
 
@@ -58,9 +58,16 @@ export interface CockpitAction {
    * stays the button's own — the union of the variants'.
    */
   variants?: CockpitActionVariant[];
+  /**
+   * Shown only while the server has this feature on — `stockLocations`: `GET /stock/features`
+   * (STOCK_LOCATIONS_ENABLED, default off), read once by the cockpit (cockpit.tsx `useCockpitFeatures`).
+   */
+  feature?: CockpitFeature;
   /** In the quick-actions bar (else only from an item's buttons). */
   bar: boolean;
 }
+
+export type CockpitFeature = 'stockLocations';
 
 export interface CockpitActionVariant {
   gate: CockpitGate;
@@ -79,6 +86,11 @@ export interface AttentionAction {
    * "פתיחה"); shown whenever the provider offers it — the provider gates it on what the server allows.
    */
   run?: () => void;
+  /**
+   * Its own sheet, opened in place by the cockpit (an item whose sheet needs more than the shared
+   * context — a low-stock alert's location or transfer). The provider gates it like `run`.
+   */
+  render?: (close: () => void) => ReactNode;
 }
 
 export interface AttentionItem {

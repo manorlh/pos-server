@@ -26,13 +26,14 @@ export function useTick(ms = 15_000): number {
   return now;
 }
 
-export function useActiveBlocks(scope: LiveControlScope, productId?: string | null) {
+/** `enabled`: false for a user the server would refuse (the cockpit's feed asks only what each may read). */
+export function useActiveBlocks(scope: LiveControlScope, productId?: string | null, enabled = true) {
   const ids = { companyId: scope.companyId ?? null, shopId: scope.shopId ?? null, productId: productId ?? null };
   return useQuery({
     queryKey: liveKeys.blocks(ids),
     queryFn: () => fetchBlocks(ids),
     refetchInterval: 30_000,
-    enabled: !!(ids.companyId || ids.shopId || ids.productId),
+    enabled: enabled && !!(ids.companyId || ids.shopId || ids.productId),
   });
 }
 

@@ -90,3 +90,36 @@ export function sortAttention<T extends { id: string; severity: AttentionSeverit
       a.id.localeCompare(b.id),
   );
 }
+
+/**
+ * "שליטה חיה" (feat/live-control) — every route also checks the machine-admin roles
+ * (`kiosk_control.require_kiosk_role`); reading is the section at view, acting at edit:
+ *
+ * * blocks ("חסימות ואזל"): `/item-blocks*` — `item_blocks`;
+ * * tills' remote control: `/device-commands*` — `device_control`;
+ * * kiosks' live actions: `/kiosks/live*`, `/kiosks/{id}/commands`, `/kiosks/{id}/banner` —
+ *   `kiosks` or `device_control` (with remote control alone the server allows pause / resume, the
+ *   banner and quick hides only — a kiosk's Z stays with `kiosks`);
+ * * stock locations: `/stock/*` — `stock`.
+ */
+export const LIVE_CONTROL_GATES: Record<
+  'blocksRead' | 'blocksEdit' | 'devicesRead' | 'devicesEdit' | 'kiosksEdit' | 'remoteButton' | 'stockRead' | 'stockEdit',
+  CockpitGate
+> = {
+  blocksRead: { sections: ['item_blocks'], level: 'view', roles: MACHINE_ADMIN_ROLES },
+  blocksEdit: { sections: ['item_blocks'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  devicesRead: { sections: ['device_control'], level: 'view', roles: MACHINE_ADMIN_ROLES },
+  devicesEdit: { sections: ['device_control'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  kiosksEdit: { sections: ['kiosks', 'device_control'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  remoteButton: { sections: ['device_control', 'kiosks'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+  stockRead: { sections: ['stock'], level: 'view', roles: MACHINE_ADMIN_ROLES },
+  stockEdit: { sections: ['stock'], level: 'edit', roles: MACHINE_ADMIN_ROLES },
+};
+
+/** The halves of the one "שליטה בקופות וקיוסקים" sheet this user may use: tills, kiosks, or both. */
+export function remoteControlTabs(access: DashboardAccess, role: string | null | undefined): ('tills' | 'kiosks')[] {
+  const out: ('tills' | 'kiosks')[] = [];
+  if (gateAllows(LIVE_CONTROL_GATES.devicesEdit, access, role)) out.push('tills');
+  if (gateAllows(LIVE_CONTROL_GATES.kiosksEdit, access, role)) out.push('kiosks');
+  return out;
+}
