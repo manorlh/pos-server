@@ -822,17 +822,40 @@ def _settlement_lock(db: Session, tenant_id) -> None:
     db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
 
 
+def _production_of(db: Session, tenant_id, company_id, production_id=None, name: Optional[str] = None):
+    """The core's Production (`prepaid_productions`) an agreement names — by id, else by its name in the company."""
+    try:
+        from app.models.prepaid_voucher import PrepaidProduction
+    except Exception:  # noqa: BLE001 — a core without productions
+        return None
+    q = db.query(PrepaidProduction).filter(PrepaidProduction.tenant_id == tenant_id,
+                                           PrepaidProduction.company_id == company_id)
+    if production_id is not None:
+        return q.filter(PrepaidProduction.id == production_id).first()
+    if (name or "").strip():
+        return q.filter(PrepaidProduction.name == name.strip()).first()
+    return None
+
+
 def create_agreement(db: Session, user: User, tenant_id, body) -> PrepaidSettlementAgreement:
     _require(db, user, "edit")
     _settlement_lock(db, tenant_id)
     PV = _pv()
     if not PV._covers_company(db, user, body.company_id):
         raise ACC.http(status.HTTP_403_FORBIDDEN, PV.FORBIDDEN)
+    production = _production_of(db, tenant_id, body.company_id, body.production_id, body.production_name)
+    if body.production_id is not None and production is None:
+        raise ACC.http(status.HTTP_400_BAD_REQUEST, BAD_VALUE)
+    basis = body.billing_basis or "redemption"
+    if production is not None and "billing_basis" not in body.model_fields_set:
+        # The production says how it is billed (the core's §13): the agreement starts from it.
+        basis = production.billing_basis or "redemption"
     a = PrepaidSettlementAgreement(
         id=uuid.uuid4(), tenant_id=tenant_id, company_id=body.company_id, name=body.name.strip(),
-        production_name=body.production_name, production_id=body.production_id, event_name=body.event_name,
+        production_name=body.production_name or (production.name if production is not None else None),
+        production_id=production.id if production is not None else None, event_name=body.event_name,
         report_event_id=body.report_event_id, batch_ids=[str(b) for b in body.batch_ids] if body.batch_ids else None,
-        billing_basis=body.billing_basis or "redemption", period_from=body.period_from, period_to=body.period_to,
+        billing_basis=basis, period_from=body.period_from, period_to=body.period_to,
         currency=(body.currency or "ILS").upper(), cancelled_policy=body.cancelled_policy or "exclude",
         replacement_policy=body.replacement_policy or "free", status="active", notes=body.notes,
         created_by=user.id, created_by_name=ACC.user_name(user),

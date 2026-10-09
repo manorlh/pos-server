@@ -81,10 +81,11 @@ class PrepaidSettlementAgreement(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
     name = Column(String(200), nullable=False)
-    #: The production: the batches' `customer_name` today; `production_id` is the core's
-    #: Production entity (`prepaid_productions`) once it exists — no foreign key until then.
+    #: The production: the core's Production entity (`prepaid_productions`, the batches' `production_id`)
+    #: and/or its name (the batches' `customer_name`, kept in step with it — and the only link of a batch
+    #: made before productions).
     production_name = Column(String(200), nullable=True)
-    production_id = Column(UUID(as_uuid=True), nullable=True)
+    production_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_productions.id", ondelete="SET NULL"), nullable=True)
     #: The event: the batches' `event_name` text, and/or the report event (`report_events`).
     event_name = Column(String(200), nullable=True)
     report_event_id = Column(UUID(as_uuid=True), ForeignKey("report_events.id", ondelete="SET NULL"), nullable=True)

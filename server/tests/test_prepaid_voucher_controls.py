@@ -643,10 +643,11 @@ class TestMigration:
         from alembic.runtime.migration import MigrationContext
 
         module = self._module()
-        assert module.down_revision == "f3a9c1d7e520"
+        assert module.down_revision == "a7d4e9c2b158"
         engine = sa.create_engine("sqlite://")
         with engine.begin() as conn:
-            for t in ("tenants", "companies", "users", "report_events", "prepaid_voucher_batches", "prepaid_vouchers"):
+            for t in ("tenants", "companies", "users", "report_events", "prepaid_voucher_batches", "prepaid_vouchers",
+                      "prepaid_productions"):
                 conn.execute(sa.text(f"CREATE TABLE {t} (id CHAR(32) PRIMARY KEY)"))
             conn.execute(sa.text("CREATE TABLE prepaid_voucher_reservations (id CHAR(32) PRIMARY KEY, batch_id CHAR(32), "
                                  "status VARCHAR(16), expires_at TIMESTAMP)"))

@@ -375,6 +375,25 @@ class TestAgreement:
                                     report_event_id=None, batch_ids=None, **_ctx(w))
         assert [i["name"] for i in c["items"]] == ["ארוחות"]
 
+    def test_a_production_of_the_core_and_its_billing_basis(self, w):
+        from app.schemas.prepaid_voucher import PrepaidProductionCreate
+
+        prod = R.create_prepaid_production(PrepaidProductionCreate(companyId=w.company.id, name="הפקות כהן",
+                                                                   billingBasis="delivery"), **_ctx(w))
+        b = R.create_prepaid_voucher_batch(PrepaidVoucherBatchCreate(
+            name="כהן", companyId=w.company.id, productionId=prod["id"], count=2, tillValue=80, productionPrice=60,
+            pricing="fixed", redemptionAccounting="payment",
+            items=[{"productId": w.hotdog.id, "quantity": 1}, {"productId": w.drink.id, "quantity": 2}]), **_ctx(w))
+        deliver(w, b, 1, 2)
+        a = agreement(w, name="כהן", productionName=None, eventName=None, productionId=prod["id"])
+        # The production's basis (delivery) and name; its batch by the production's id.
+        assert (a["billingBasis"], a["productionName"], a["productionId"]) == ("delivery", "הפקות כהן", prod["id"])
+        assert (a["totals"]["chargeable"], a["totals"]["amountAgorot"]) == (2, 12_000)
+        # Said explicitly, the agreement's own basis wins.
+        a2 = agreement(w, name="אחר", productionName=None, eventName="x", billingBasis="redemption")
+        assert a2["billingBasis"] == "redemption"
+        assert refused(agreement, w, name="?", productionName=None, productionId=str(uuid.uuid4())).detail == ST.BAD_VALUE
+
     def test_the_scope_is_required_and_the_period_checked(self, w):
         e = refused(agreement, w, productionName=None, eventName=None)
         assert e.detail == ST.SCOPE_REQUIRED

@@ -1,7 +1,7 @@
 """production vouchers: settlement agreements, external invoices, deliveries, replacements, pauses, quotas, test batches
 
 Revision ID: e4b9d2a7c6f1
-Revises: f3a9c1d7e520
+Revises: a7d4e9c2b158
 Create Date: 2026-10-09
 
 The helper's part of production vouchers (spec §14, §16, §18; the contract's helper section) — new
@@ -29,7 +29,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'e4b9d2a7c6f1'
-down_revision: Union[str, Sequence[str], None] = 'f3a9c1d7e520'
+down_revision: Union[str, Sequence[str], None] = 'a7d4e9c2b158'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -55,7 +55,7 @@ def _tables():
             sa.Column('company_id', _uuid(), sa.ForeignKey('companies.id'), nullable=False),
             sa.Column('name', sa.String(200), nullable=False),
             sa.Column('production_name', sa.String(200), nullable=True),
-            sa.Column('production_id', _uuid(), nullable=True),
+            sa.Column('production_id', _uuid(), sa.ForeignKey('prepaid_productions.id', ondelete='SET NULL'), nullable=True),
             sa.Column('event_name', sa.String(200), nullable=True),
             sa.Column('report_event_id', _uuid(), sa.ForeignKey('report_events.id', ondelete='SET NULL'), nullable=True),
             sa.Column('batch_ids', sa.JSON(), nullable=True),
