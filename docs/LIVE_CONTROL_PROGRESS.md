@@ -64,6 +64,27 @@ non-blocking. Each till's request also reads as a device command (`commands`, th
 | A sale open / cancel mid-way | Covered: the till defers (`sale_open`, "ממתין למכירה פתוחה") and is asked again each beat; cancel ends the run, no Z, no number taken; closed shifts go to the next Z with the next number |
 | Shift modes | Shifts are per device; there is no per-cashier shift mode in the system |
 
+### "חסימת Z כשיש משמרות פתוחות" — `zRequireAllShiftsClosed` (same flag)
+
+Till parameter, company → shop → area, **default on**; `app/services/z_shift_guard.py`. While
+REMOTE_TILL_Z_ENABLED is off nothing applies and the tills receive it as `false`.
+
+- On: the cloud shop Z run takes every till — none left out at the start (`open_tills_block_z`),
+  "build without" refused (409 `z_requires_all_shifts_closed`), no build at expiry without a till,
+  the master till's "סגור" refused. Blocking tills shown with their state (מנותקת / משמרת פתוחה /
+  ממתין לקבלה) in the remote shop close and to the main till (`GET /sync/{m}/shop-z/shift-guard`).
+- The main till's local shop Z (Android `LocalShopZRunner`): refused before the round for a till
+  the round does not close, and after the round while the cloud still holds a shift open or
+  unaccepted ("נסה שוב"). With no connection the LAN round's own word stands (every participant
+  closed, none skipped) — decided, as the cloud cannot be asked.
+- Force: super admin only (403), typed reason (422) — `POST /z-runs/{run}/force`,
+  `POST /device-commands/shop-close/{run}/force`; the existing "build without": the Z's
+  `openTillsLeftOut` lists each till with who / when / `forcedReason`, a `shop_z_producer_forced`
+  exception records it, their shifts go into the next Z (numbering continues). Never in local mode.
+- A till's own Z ("Z לכל קופה") is the till itself, its close part of the Z — unchanged. Support's Z
+  for a dead till (`support_z.py`) was already the super admin's with reason and audit — unchanged.
+- Off: exactly today's behaviour. Tests: `tests/test_z_shift_guard.py`, Android `LocalShopZTest`.
+
 ## Saturday — decided at the Friday integration (09.10)
 
 The coordinator's decisions on the `integration/fri` merge; event-live's and the vouchers' items
