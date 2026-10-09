@@ -488,13 +488,17 @@ KIOSK_ACTION_SECTIONS = {
 
 
 def check_kiosk_action(db: Session, user, action: str) -> None:
-    """403 unless one of the action's sections is the user's at edit (app/services/dashboard_access.py)."""
+    """A user admitted through remote control alone gets its actions only (app/services/dashboard_access.py)."""
     from app.services import dashboard_access as DA
     from app.services import dashboard_sections as DS
 
     access = DA.effective_access(db, user)
     sections = KIOSK_ACTION_SECTIONS.get(action, ("kiosks",))
-    if not any(access.allows(section, DS.EDIT) for section in sections):
+    if any(access.allows(section, DS.EDIT) for section in sections):
+        return
+    # Admitted through remote control only: never past its own actions. (Neither section: the route's
+    # own check — the kiosks section — answers, as before remote control existed.)
+    if access.allows("device_control", DS.EDIT):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"code": "section_forbidden", "section": sections[0], "level": DS.EDIT},
