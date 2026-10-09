@@ -256,7 +256,8 @@ class TestMigration:
         heads = script.get_heads()
         assert len(heads) == 1
         assert revision in {r.revision for r in script.walk_revisions("base", heads[0])}
-        assert script.get_revision(revision).down_revision == "6b1e9d4f2a87"
+        # Written on 6b1e9d4f2a87; re-chained after the integration head c6d2e8f4a1b7 at the merge (09.10.2026).
+        assert script.get_revision(revision).down_revision == "c6d2e8f4a1b7"
 
     def test_every_existing_batch_gets_a_legacy_type_and_nothing_changes(self):
         import sqlalchemy as sa
