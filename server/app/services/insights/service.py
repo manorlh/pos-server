@@ -11,6 +11,7 @@ with its own weekday (the pace), never folded into a period's averages.
 """
 from __future__ import annotations
 
+import logging
 import uuid as uuid_mod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -585,6 +586,8 @@ def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
     if ctx.scope.machine_id is not None:
         out["cards"] = TS.only_machine(out["cards"], ctx.scope.machine_id)
         out["counts"] = {s: sum(1 for c in out["cards"] if c["severity"] == s) for s in ("critical", "warning")}
+    if window == "today" or (ctx.scope.event is not None and end >= now):
+        report_low_sales_alerts(ctx.db, out["cards"], business_day=ctx.today, event=ctx.scope.event, now=now)
     out["window"] = {
         "kind": window,
         "from": start.isoformat(),
@@ -593,6 +596,54 @@ def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
     }
     out["thresholds"] = th
     return out
+
+
+def report_low_sales_alerts(db: Session, cards: List[dict], *, business_day, event=None, now=None) -> int:
+    """
+    "קופה כמעט לא מוכרת" on the phone (feat/event-live's hook,
+    app/services/exception_alerts/external.py `report_till_low_sales`): every `till_low_sales`
+    card of a LIVE window — today's, or a live event's — goes into the exceptions log and through
+    the alert rules (SMS and push). One entry per till and business day (the log's dedupe key), so
+    it is safe on every read of the cards; a past window never reports. Never fails the read; the
+    new entries are committed here. Returns how many cards were reported.
+    """
+    from app.models.pos_machine import POSMachine
+    from app.services.exception_alerts import external as EXT
+
+    reported = 0
+    for card in cards:
+        if card.get("type") != "till_low_sales":
+            continue
+        params = card.get("params") or {}
+        machine_id = params.get("machineId")
+        try:
+            machine = db.get(POSMachine, uuid_mod.UUID(str(machine_id))) if machine_id else None
+        except ValueError:
+            machine = None
+        if machine is None:
+            continue
+        # The rule's money is integer agorot; the hook's figures are ₪.
+        per_hour = params.get("netPerHour")
+        peers = params.get("peersNetPerHour")
+        EXT.report_till_low_sales(
+            db,
+            machine=machine,
+            business_day=business_day,
+            net_per_hour=None if per_hour is None else per_hour / 100,
+            peers_median_per_hour=None if peers is None else peers / 100,
+            ratio_pct=params.get("ratioPct"),
+            event_id=getattr(event, "id", None),
+            details={"metric": params.get("metric"), "severity": card.get("severity"), "peers": params.get("peers")},
+            now=now,
+        )
+        reported += 1
+    if reported:
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 - an alert never fails the insights read
+            db.rollback()
+            logging.getLogger(__name__).exception("till_low_sales alerts: commit failed")
+    return reported
 
 
 #: The thresholds are the whole organization's (every company of the tenant): its super admin's.

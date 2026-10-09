@@ -434,3 +434,68 @@ class TestEventScope:
         e = event(w, w.tills[:2], NOW + timedelta(days=2), NOW + timedelta(days=2, hours=5))
         out = R.get_till_anomalies(window="period", p=params(event_id=e.id), **ctx(w))
         assert out["cards"] == [] and all(t["documents"] == 0 for g in out["groups"] for t in g["tills"])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The phone alert (feat/event-live's hook, app/services/exception_alerts/external.py)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestPhoneAlertHook:
+    """
+    A till that barely sells raises "קופה כמעט לא מוכרת" on the phone: the `till_low_sales` cards
+    of a live window (today's, or a live event's) go through `report_till_low_sales` into the
+    exceptions log and its alert rules — once per till and business day, however often the cards
+    are read; a past window never reports.
+    """
+
+    def _trading_today(self, w, quiet):
+        for till in w.tills:
+            w.shift(till, None, business_date=TODAY, opened_at=at(TODAY, 10))
+            for k in range(0 if till is quiet else 24):
+                sale(w, till, at(TODAY, 10 + k // 6, 5 + (k % 6) * 9), 50, cash=20)  # 10:05 … 13:50
+        w.db.commit()
+
+    def _entries(self, w):
+        from app.models.exception_alerts import ExceptionLogEntry
+
+        return w.db.query(ExceptionLogEntry).filter(ExceptionLogEntry.kind == "till_low_sales").all()
+
+    def test_today_reports_the_quiet_till_once(self, w):
+        quiet = w.tills[3]
+        self._trading_today(w, quiet)
+        out = R.get_till_anomalies(window="today", p=params(days=7), **ctx(w))
+        assert set(cards_of(out, "till_low_sales")) == {str(quiet.id)}
+        (entry,) = self._entries(w)
+        assert entry.machine_id == quiet.id and entry.source == "insight"
+        assert entry.dedupe_key == f"till_low_sales:{quiet.id}:{TODAY.isoformat()}"
+        # The cockpit reads the cards again every two minutes: still one entry (one alert).
+        R.get_till_anomalies(window="today", p=params(days=7), **ctx(w))
+        assert len(self._entries(w)) == 1
+
+    def test_a_past_window_never_reports(self, w):
+        quiet = w.tills[3]
+        trading_week(w, quiet=quiet)
+        out = R.get_till_anomalies(window="period", p=params(days=7), **ctx(w))
+        assert set(cards_of(out, "till_low_sales")) == {str(quiet.id)}
+        assert self._entries(w) == []
+
+    def test_only_low_sales_cards_of_known_tills_with_figures_in_shekels(self, w, monkeypatch):
+        from app.services.exception_alerts import external as EXT
+
+        calls = []
+        monkeypatch.setattr(EXT, "report_till_low_sales", lambda db, **kw: calls.append(kw))
+        till = w.tills[0]
+        cards = [
+            {"type": "till_cash", "params": {"machineId": str(till.id)}},
+            {"type": "till_low_sales", "severity": "warning", "params": {
+                "machineId": str(till.id), "netPerHour": 1250, "peersNetPerHour": 5000, "ratioPct": 25.0,
+                "metric": "net", "peers": 3,
+            }},
+            {"type": "till_low_sales", "params": {"machineId": str(uuid.uuid4())}},  # no such till
+        ]
+        assert S.report_low_sales_alerts(w.db, cards, business_day=TODAY, now=NOW) == 1
+        (kw,) = calls
+        assert kw["machine"].id == till.id and kw["business_day"] == TODAY
+        # The rule's money is agorot; the hook's figures are ₪.
+        assert kw["net_per_hour"] == 12.5 and kw["peers_median_per_hour"] == 50.0 and kw["ratio_pct"] == 25.0
