@@ -70,6 +70,16 @@ class TestAssign:
         assert refused(assign, w, b, till=w.tills[1]).detail == PVO.OFFLINE_ASSIGNED
         assert refused(assign, w, b, target="lan_host").detail in (PVO.OFFLINE_ASSIGNED, PVO.NO_MAIN_TILL)
 
+    def test_only_a_till_of_the_batchs_shops(self, w):
+        b = batch(w)
+        R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(shopIds=[w.shop.id]), **_ctx(w))
+        assert refused(assign, w, b, till=w.other_till).detail == PVO.WRONG_SHOP
+        out = R.prepaid_batch_offline_targets(b["id"], **_ctx(w))
+        assert out["offlineAllowed"] is True
+        (shop,) = out["shops"]
+        assert (shop["shopId"], [m["name"] for m in shop["machines"]]) == (str(w.shop.id), ["Till 1", "Till 2"])
+        assert assign(w, b)["machineName"] == "Till 1"
+
     def test_refused_everywhere_else_meanwhile(self, w):
         b = batch(w)
         code = vouchers(w, b)[0]["code"]

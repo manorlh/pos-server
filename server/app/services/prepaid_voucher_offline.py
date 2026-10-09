@@ -25,6 +25,7 @@ from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.models.pos_machine import POSMachine
+from app.models.shop import Shop
 from app.models.prepaid_voucher import (
     PrepaidVoucher,
     PrepaidVoucherBatch,
@@ -39,6 +40,8 @@ OFFLINE_ASSIGNED = "prepaid_voucher_offline_assigned"
 ASSIGNED_OFFLINE = "prepaid_voucher_assigned_offline"
 NO_MAIN_TILL = "prepaid_voucher_offline_no_main_till"
 REASON_REQUIRED = "prepaid_voucher_offline_reason_required"
+#: A device of a shop the batch is not valid in (or that the user does not see).
+WRONG_SHOP = "prepaid_voucher_offline_wrong_shop"
 TARGETS = ("machine", "lan_host")
 ASSIGNED_TEXT = "השובר משויך לעבודה ללא אינטרנט ב{device}"
 
@@ -95,6 +98,43 @@ def _out(db: Session, a: Optional[PrepaidVoucherOfflineAssignment]) -> Optional[
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 
+def _eligible_shops(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch) -> List[str]:
+    """The shops a device holding [batch] may be in: the batch's own (else its company's), that [user] sees."""
+    PV = _pv()
+    visible = PV._visible_shop_ids(db, user, tenant_id)
+    if batch.shop_ids:
+        shops = [str(s) for s in batch.shop_ids]
+    else:
+        group = PV._company_group(db, batch.company_id)
+        shops = [str(s) for (s, c) in db.query(Shop.id, Shop.company_id).filter(Shop.tenant_id == tenant_id) if str(c) in group]
+    return [s for s in shops if s in visible]
+
+
+def targets(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]:
+    """
+    Where [batch] may be assigned: the active tills of its shops the user sees (kiosks never — they
+    sell, they do not redeem offline), and per shop its LAN host (the main till), when it has one.
+    """
+    from app.services.main_till import main_till_of_shop
+    from app.services.printers import shop_machines
+
+    PV = _pv()
+    batch = PV.get_batch(db, user, tenant_id, batch_id)
+    out_shops = []
+    for sid in _eligible_shops(db, user, tenant_id, batch):
+        shop = db.get(Shop, PV._as_uuid(sid))
+        if shop is None:
+            continue
+        main = main_till_of_shop(db, shop.id)
+        tills = [m for m in shop_machines(db, shop.id) if not getattr(m, "is_kiosk", False)]
+        out_shops.append({
+            "shopId": sid, "shopName": shop.name,
+            "lanHost": {"machineId": str(main.id), "name": main.name} if main is not None else None,
+            "machines": [{"machineId": str(m.id), "name": m.name, "posNumber": m.pos_number} for m in tills],
+        })
+    return {"offlineAllowed": bool(getattr(batch, "offline_allowed", False)), "shops": out_shops}
+
+
 def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id: Optional[str] = None,
            shop_id: Optional[str] = None) -> Dict[str, Any]:
     PV = _pv()
@@ -103,11 +143,17 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
         raise PV._http(status.HTTP_409_CONFLICT, OFFLINE_NOT_ALLOWED)
     if target not in TARGETS:
         raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, "target must be machine or lan_host")
+    eligible = set(_eligible_shops(db, user, tenant_id, batch))
     if target == "machine":
         machine = db.query(POSMachine).filter(POSMachine.id == PV._as_uuid(machine_id)).first() if machine_id else None
         if machine is None or str(machine.tenant_id) != str(tenant_id):
             raise PV._http(status.HTTP_404_NOT_FOUND, "machine_not_found")
+        # Only a device of a shop the batch is valid in — and one the user sees.
+        if str(machine.shop_id) not in eligible:
+            raise PV._http(status.HTTP_409_CONFLICT, WRONG_SHOP)
     else:
+        if shop_id and str(PV._as_uuid(shop_id)) not in eligible:
+            raise PV._http(status.HTTP_409_CONFLICT, WRONG_SHOP)
         from app.services.main_till import main_till_of_shop
 
         shop = PV._as_uuid(shop_id) or (PV._as_uuid(batch.shop_ids[0]) if batch.shop_ids and len(batch.shop_ids) == 1 else None)

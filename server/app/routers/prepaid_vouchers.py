@@ -303,6 +303,19 @@ def release_prepaid_batch_offline(
     return out
 
 
+@router.get("/prepaid-vouchers/batches/{batch_id}/offline/targets")
+def prepaid_batch_offline_targets(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Where the batch may be assigned: the tills of its shops the user sees, and each shop's LAN host."""
+    from app.services import prepaid_voucher_offline as PVO
+
+    return PVO.targets(db, current_user, active_tenant_id, batch_id)
+
+
 @router.get("/prepaid-vouchers/batches/{batch_id}/offline")
 def get_prepaid_batch_offline(
     batch_id: str,
