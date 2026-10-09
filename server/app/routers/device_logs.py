@@ -7,7 +7,9 @@ POST /sync/{machine_id}/device-logs            {upload_id, reason, command_id?, 
                                                {id, received_at, duplicate} | 413 | 422 | 429
 
 Dashboard (route rule: `devices` or `device_control`, at view; the real check is here — the content
-for a super admin / a distributor of the organization, a request also for a `device_control` editor):
+for a super admin / a distributor of the organization (the routes that read it take the existing
+`get_current_distributor` role gate, then the organization), a request also for a `device_control`
+editor):
 
 GET  /device-logs                              ?tenantId&companyId&shopId&machineId&reason&dateFrom&dateTo&onlyNew
                                                → {items, total, newCount} (readers; the super admin's page)
@@ -31,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.middleware.auth import get_current_user, get_pos_machine_from_sync_machine_token
+from app.middleware.auth import get_current_distributor, get_current_user, get_pos_machine_from_sync_machine_token
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.services import command_idempotency as idem
@@ -106,7 +108,7 @@ def list_device_logs(
     only_new: bool = Query(False, alias="onlyNew"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_distributor),
     db: Session = Depends(get_db),
 ):
     """Every upload the user may read (a super admin: all organizations), newest first."""
@@ -176,7 +178,7 @@ def get_requests_status(
 @router.get("/{upload_id}")
 def get_device_log(
     upload_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_distributor),
     db: Session = Depends(get_db),
 ):
     row = svc.readable_upload(db, current_user, upload_id)
@@ -188,7 +190,7 @@ def get_device_log_lines(
     upload_id: uuid.UUID,
     q: Optional[str] = Query(None, max_length=200),
     limit: int = Query(svc.VIEW_LINES, ge=1, le=svc.VIEW_LINES),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_distributor),
     db: Session = Depends(get_db),
 ):
     """"צפה": the first 2000 lines; with `q`, the lines that contain it (the first 2000)."""
@@ -203,7 +205,7 @@ def get_device_log_lines(
 def download_device_log(
     upload_id: uuid.UUID,
     format: Literal["txt", "gz"] = Query("txt"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_distributor),
     db: Session = Depends(get_db),
 ):
     """"הורד": the log as text (inflated while streaming), or the `.log.gz` exactly as sent."""
