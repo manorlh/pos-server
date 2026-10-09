@@ -286,6 +286,19 @@ class TestAtomicWrites:
         rows = s.db.query(StockLevel).filter(StockLevel.product_id == s.P.id, StockLevel.level == "shop").all()
         assert len(rows) == 1 and rows[0].quantity == -2
 
+    def test_a_count_and_an_opening_at_a_fresh_location_make_one_row(self, s):
+        _levels(s, ["shop", "area"])
+        stock_service.set_quantity(s.db, tenant_id=s.tid, shop_id=None, product_id=s.P.id, target_quantity=D(6), location=s.bar_loc)
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.lobby_loc, [{"productId": str(s.P.id), "openingQuantity": 4}])
+        stock_admin.set_opening(s.db, s.users.admin, s.tid, s.bar_loc, [{"productId": str(s.P.id), "openingQuantity": 9}])
+        s.db.commit()
+        rows = s.db.query(StockLevel).filter(StockLevel.product_id == s.P.id, StockLevel.level == "area").all()
+        assert sorted((str(r.target_id), float(r.quantity), float(r.opening_quantity)) for r in rows) == sorted(
+            [(str(s.bar.id), 6.0, 9.0), (str(s.lobby.id), 0.0, 4.0)]
+        )
+        moved = s.db.query(StockMovement).filter(StockMovement.target_id == s.bar.id).all()
+        assert [m.delta for m in moved] == [6], "the count's movement is the full difference from 0"
+
     def test_a_count_is_exact_on_the_fresh_row(self, s):
         _set(s, s.shop_loc, 5)
         assert stock_service.level_at(s.db, s.shop_loc, s.P.id).quantity == 5
