@@ -158,6 +158,29 @@ class TestKioskLive:
         d.db.commit()
         return d
 
+    def test_remote_control_alone_pauses_a_kiosk_but_never_reaches_its_z(self, k):
+        from app.models.dashboard_access import DashboardAccessProfile
+        from app.routers import kiosks as KR
+        from app.services import dashboard_access as DA
+
+        if not k.db.get_bind().dialect.has_table(k.db.connection(), "dashboard_access_profiles"):
+            Base.metadata.tables["dashboard_access_profiles"].create(k.db.get_bind())
+        user = k.users.h_shop_manager
+        k.db.add(DashboardAccessProfile(user_id=user.id, full_access=False, sections={"device_control": "edit"}))
+        k.db.commit()
+        DA.forget(k.db)
+        for action in ("pause", "resume"):
+            KR.check_kiosk_action(k.db, user, action)
+        for action in ("till_z", "close_shift", "schedule", "bon_print"):
+            with pytest.raises(HTTPException) as refused:
+                KR.check_kiosk_action(k.db, user, action)
+            assert refused.value.status_code == 403, action
+        # The Z section (or the kiosks section) still produces a kiosk's Z, as before.
+        k.db.query(DashboardAccessProfile).filter(DashboardAccessProfile.user_id == user.id).update({"sections": {"z": "edit"}})
+        k.db.commit()
+        DA.forget(k.db)
+        KR.check_kiosk_action(k.db, user, "till_z")
+
     def test_a_kiosk_is_never_locked_or_signed_out_remotely(self, k):
         with pytest.raises(HTTPException) as refused:
             _send(k, "lock", machineIds=[k.h2.id])

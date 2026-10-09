@@ -473,6 +473,34 @@ def get_effective(
     return cfgsvc.effective_bundle(db, machine)
 
 
+#: Who may send which kiosk command (the route admits `kiosks` or `device_control`): remote control
+#: ("שליטה מרחוק") pauses and resumes only; a Z, closing a shift, the schedule and the bon desk stay
+#: with the kiosks section (a Z also with the Z section), as before remote control existed.
+KIOSK_ACTION_SECTIONS = {
+    "pause": ("kiosks", "device_control"),
+    "resume": ("kiosks", "device_control"),
+    "till_z": ("kiosks", "z"),
+    "close_shift": ("kiosks", "z"),
+    "schedule": ("kiosks",),
+    "bon_print": ("kiosks",),
+    "bon_handled": ("kiosks",),
+}
+
+
+def check_kiosk_action(db: Session, user, action: str) -> None:
+    """403 unless one of the action's sections is the user's at edit (app/services/dashboard_access.py)."""
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+
+    access = DA.effective_access(db, user)
+    sections = KIOSK_ACTION_SECTIONS.get(action, ("kiosks",))
+    if not any(access.allows(section, DS.EDIT) for section in sections):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "section_forbidden", "section": sections[0], "level": DS.EDIT},
+        )
+
+
 @router.post("/{machine_id}/commands", status_code=status.HTTP_201_CREATED)
 def post_kiosk_command(
     machine_id: uuid.UUID,
@@ -483,6 +511,7 @@ def post_kiosk_command(
     db: Session = Depends(get_db),
 ):
     """pause / resume (applied at once), close_shift / till_z (the existing channels; refusals pass through)."""
+    check_kiosk_action(db, current_user, body.action)
     machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
     result = svc.run_command(
         db,
