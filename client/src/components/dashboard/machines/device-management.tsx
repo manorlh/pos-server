@@ -15,6 +15,8 @@ import { Check, Copy, Loader2, Power, QrCode, ShieldCheck, Terminal } from 'luci
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { phaseOfReboot } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { formatDateTime } from '@/lib/format';
 import {
   ADB_ACCOUNTS_CHECK,
@@ -503,7 +505,14 @@ function RebootDialog({
       return data;
     },
     onSuccess: (data) => {
-      toast.success(data.created ? 'הבקשה נשלחה — המכשיר יופעל מחדש כשיהיה פנוי' : 'בקשה כבר ממתינה למכשיר');
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): followed in the background (its popup, the
+      // tray, the device's chip) — the dialog closes, nothing waits for the device.
+      const req = data?.rebootRequest;
+      if (req?.id) {
+        const p = phaseOfReboot(req.status, req.reason);
+        trackCommand({ kind: 'reboot', id: req.id, action: 'reboot', machineId, machineName: name || null, phase: p.phase, detail: p.detail });
+      }
+      if (!data?.created) toast.info('בקשה כבר ממתינה למכשיר');
       onDone();
       onClose();
     },

@@ -6,18 +6,27 @@
  * a banner on the screen without pausing, and quick hides of a product or a category on the shop's
  * kiosks ("הגריל סגור") until a time. `KioskControlPanel` is the body (the kiosks page's tab);
  * `KioskControlSheet` the same in a sheet.
+ *
+ * Pause / resume are fire-and-forget ("פקודות שנשלחו", lib/deviceCommandsStore.ts): the pause
+ * dialog closes at once, the answer is followed in the background (the tray, the kiosk row's
+ * chip), and only that kiosk's button is busy during its own HTTP call — other kiosks and
+ * actions stay available.
  */
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { EyeOff, Megaphone, Pause, Play, Wifi, WifiOff, X } from 'lucide-react';
+import { EyeOff, Loader2, Megaphone, Pause, Play, Wifi, WifiOff, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { phaseOfKiosk } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
+import type { KioskCommandOut } from '@/lib/kioskApi';
 import { cn } from '@/lib/utils';
 import { EXTEND_BY, durationValid, formatLeft, formatUntil, parseHhmm, secondsLeft, type DurationChoice } from '@/lib/liveControl';
 import {
@@ -45,29 +54,74 @@ export function useKioskLive(scope: LiveControlScope) {
   return useQuery({ queryKey: liveKeys.kiosks(s), queryFn: () => fetchKioskLive(s), refetchInterval: 10_000 });
 }
 
-function PauseDialog({ kiosk, onClose }: { kiosk: KioskLiveRow; onClose: () => void }) {
-  const qc = useQueryClient();
+/** The body of `kioskCommand` (POST /kiosks/{id}/commands). */
+type KioskLiveCommand = Parameters<typeof kioskCommand>[1];
+
+/** A pause / resume on its way: what was sent, and to which kiosk (fixed at the click). */
+interface KioskLiveSend {
+  kiosk: { machineId: string; name: string };
+  body: KioskLiveCommand;
+}
+
+const KIOSK_LIVE_COMMAND_KEY = ['kiosk-live-command'] as const;
+const SEND_FAILED: Record<KioskLiveCommand['action'], string> = { pause: 'העצירה נכשלה', resume: 'החידוש נכשל' };
+
+/**
+ * Pause / resume, fire-and-forget: each click is its own mutation (several kiosks at once are
+ * fine). The answer is tracked in "פקודות שנשלחו" (which pops its own small notice and puts the
+ * chip on the kiosk's row); a refusal or a failed call is an error toast. Nothing waits for the kiosk.
+ */
+function useKioskLiveCommand(onAnswered: () => void) {
+  const command = useMutation({
+    mutationKey: KIOSK_LIVE_COMMAND_KEY,
+    mutationFn: ({ kiosk, body }: KioskLiveSend): Promise<KioskCommandOut> => kioskCommand(kiosk.machineId, body),
+    onSuccess: (res, { kiosk, body }) => {
+      if (res?.status === 'refused') {
+        toast.error(`${kiosk.name}: ${res.detail || 'נדחה'}`);
+      } else if (res?.id) {
+        const p = phaseOfKiosk(res.status, res.detail);
+        trackCommand({
+          kind: 'kiosk',
+          id: res.id,
+          action: res.action ?? body.action,
+          machineId: kiosk.machineId,
+          machineName: kiosk.name,
+          phase: p.phase,
+          detail: p.detail,
+        });
+      }
+      onAnswered();
+    },
+    onError: (e, { body }) => toast.error(axiosErrorToToastMessage(e, SEND_FAILED[body.action])),
+  });
+  const pending = useMutationState({
+    filters: { mutationKey: KIOSK_LIVE_COMMAND_KEY, status: 'pending' },
+    select: (m) => (m.state.variables as KioskLiveSend | undefined)?.kiosk.machineId,
+  });
+  return {
+    send: (k: KioskLiveRow, body: KioskLiveCommand) => command.mutate({ kiosk: { machineId: k.machineId, name: k.name }, body }),
+    /** Only this kiosk's own POST on its way (≈1 s) — never the kiosk's answer. */
+    isSending: (machineId: string) => pending.includes(machineId),
+  };
+}
+
+function PauseDialog({ kiosk, onSend, onClose }: { kiosk: KioskLiveRow; onSend: (k: KioskLiveRow, body: KioskLiveCommand) => void; onClose: () => void }) {
   const [message, setMessage] = useState('');
   const [mode, setMode] = useState<'manual' | 'minutes' | 'time' | 'next_open'>('minutes');
   const [minutes, setMinutes] = useState<number>(15);
   const [at, setAt] = useState('');
   const ok = mode !== 'time' || parseHhmm(at) != null;
-  const pause = useMutation({
-    mutationFn: () =>
-      kioskCommand(kiosk.machineId, {
-        action: 'pause',
-        message: message.trim() || undefined,
-        untilMode: mode,
-        minutes: mode === 'minutes' ? minutes : undefined,
-        untilTime: mode === 'time' ? parseHhmm(at) ?? undefined : undefined,
-      }),
-    onSuccess: () => {
-      toast.success(`${kiosk.name} נעצר`);
-      qc.invalidateQueries({ queryKey: ['kiosks'] });
-      onClose();
-    },
-    onError: (e) => toast.error(axiosErrorToToastMessage(e, 'העצירה נכשלה')),
-  });
+  // Sent in the background; the dialog closes at once (no waiting for the kiosk).
+  const pause = () => {
+    onSend(kiosk, {
+      action: 'pause',
+      message: message.trim() || undefined,
+      untilMode: mode,
+      minutes: mode === 'minutes' ? minutes : undefined,
+      untilTime: mode === 'time' ? parseHhmm(at) ?? undefined : undefined,
+    });
+    onClose();
+  };
   const chip = (active: boolean) => cn('min-h-10 rounded-full border px-3 text-sm', active ? 'border-primary bg-primary text-primary-foreground' : 'bg-background hover:bg-muted');
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -91,7 +145,7 @@ function PauseDialog({ kiosk, onClose }: { kiosk: KioskLiveRow; onClose: () => v
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} className="min-h-11">ביטול</Button>
-          <Button onClick={() => pause.mutate()} disabled={!ok || pause.isPending} className="min-h-11">עצור</Button>
+          <Button onClick={pause} disabled={!ok} className="min-h-11">עצור</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -186,11 +240,7 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
   const live = useKioskLive(scope);
   const [dialog, setDialog] = useState<Dialogs>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: ['kiosks'] });
-  const resume = useMutation({
-    mutationFn: (k: KioskLiveRow) => kioskCommand(k.machineId, { action: 'resume' }),
-    onSuccess: () => { toast.success('הקיוסק חזר למכירה'); refresh(); },
-    onError: (e) => toast.error(axiosErrorToToastMessage(e, 'החידוש נכשל')),
-  });
+  const command = useKioskLiveCommand(() => void refresh());
   const dropBanner = useMutation({
     mutationFn: (k: KioskLiveRow) => clearKioskBanner(k.machineId),
     onSuccess: () => { toast.success('ההודעה הוסרה'); refresh(); },
@@ -223,12 +273,15 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
         {kiosks.map((k) => {
           const pausedLeft = formatLeft(secondsLeft(k.pausedUntil, now));
           const bannerLeft = formatLeft(secondsLeft(k.banner?.until ?? null, now));
+          const sending = command.isSending(k.machineId);
           return (
-            <div key={k.machineId} className={cn('space-y-2 rounded-xl border bg-card p-3 shadow-sm', k.paused && 'border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20')}>
-              <div className="flex flex-wrap items-center gap-1.5">
+            <div key={k.machineId} className={cn('min-w-0 space-y-2 rounded-xl border bg-card p-3 shadow-sm', k.paused && 'border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20')}>
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 <span className="font-medium">{k.name}</span>
                 {k.online ? <Badge variant="outline" className="gap-1"><Wifi className="size-3" aria-hidden />מחובר</Badge> : <Badge variant="secondary" className="gap-1"><WifiOff className="size-3" aria-hidden />לא מחובר</Badge>}
                 {k.paused ? <Badge variant="destructive">עצור{pausedLeft ? ` · ${pausedLeft}` : ''}</Badge> : <Badge variant="outline">פעיל</Badge>}
+                {/* The last command sent to this kiosk and where it stands ("פקודות שנשלחו"). */}
+                <DeviceCommandChip machineId={k.machineId} />
                 <span className="ms-auto text-xs text-muted-foreground">{k.ordersToday} הזמנות היום</span>
               </div>
               {k.paused && k.pauseMessage ? <p className="text-sm">“{k.pauseMessage}”</p> : null}
@@ -244,12 +297,12 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
               ) : null}
               <div className="flex flex-wrap gap-2">
                 {k.paused ? (
-                  <Button size="sm" className="min-h-10 gap-1" disabled={resume.isPending} onClick={() => resume.mutate(k)}>
-                    <Play className="size-4" aria-hidden />חדש מכירה
+                  <Button size="sm" className="min-h-10 gap-1" disabled={sending} onClick={() => command.send(k, { action: 'resume' })}>
+                    {sending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Play className="size-4" aria-hidden />}חדש מכירה
                   </Button>
                 ) : (
-                  <Button size="sm" variant="outline" className="min-h-10 gap-1" onClick={() => setDialog({ kind: 'pause', kiosk: k })}>
-                    <Pause className="size-4" aria-hidden />עצור
+                  <Button size="sm" variant="outline" className="min-h-10 gap-1" disabled={sending} onClick={() => setDialog({ kind: 'pause', kiosk: k })}>
+                    {sending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Pause className="size-4" aria-hidden />}עצור
                   </Button>
                 )}
                 <Button size="sm" variant="outline" className="min-h-10 gap-1" onClick={() => setDialog({ kind: 'banner', kiosk: k })}>
@@ -313,7 +366,7 @@ export function KioskControlPanel({ scope, context }: { scope: LiveControlScope;
         )}
       </section>
 
-      {dialog?.kind === 'pause' ? <PauseDialog kiosk={dialog.kiosk} onClose={() => setDialog(null)} /> : null}
+      {dialog?.kind === 'pause' ? <PauseDialog kiosk={dialog.kiosk} onSend={command.send} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'banner' ? <BannerDialog kiosk={dialog.kiosk} onClose={() => setDialog(null)} /> : null}
       {dialog?.kind === 'hide' && shopId ? <HideDialog shopId={shopId} context={context} onClose={() => setDialog(null)} /> : null}
     </div>

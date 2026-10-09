@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BoardCard, CardTitle, boardSurface } from '@/components/dashboard/control-board/board-ui';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { useCockpitFeatures } from './features';
 import { ATTENTION_PROVIDERS, COCKPIT_CARDS, QUICK_ACTIONS, TILL_DETAILS_ACTION, actionById } from './registry';
 import type { AttentionItem, AttentionProvider, CockpitAction, CockpitActionContext, CockpitScope } from './types';
@@ -314,7 +315,7 @@ export function DevicesStrip({
             const light = till.live?.status === 'offline_with_unsynced' ? 'bg-cb-red' : !till.online ? (till.openShift ? 'bg-cb-amber' : 'bg-cb-muted') : 'bg-cb-green';
             const n = till.registerNumber;
             return (
-              <li key={till.sales.id} className="snap-start">
+              <li key={till.sales.id} className="flex w-36 snap-start flex-col gap-1">
                 <button
                   type="button"
                   onClick={() => open(TILL_DETAILS_ACTION, { machineId: till.sales.id })}
@@ -334,6 +335,8 @@ export function DevicesStrip({
                     <span className="text-[11px] text-cb-muted">{till.online ? tB('tills.connected') : tB('tills.disconnected')}</span>
                   )}
                 </button>
+                {/* The last command sent to this till ("פקודות שנשלחו"); a sibling, not inside the button. */}
+                <DeviceCommandChip machineId={till.sales.id} />
               </li>
             );
           })}

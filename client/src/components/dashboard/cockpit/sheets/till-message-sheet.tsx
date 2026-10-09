@@ -5,6 +5,10 @@
  * (`POST /till-messages`, the till-messages page's own call), written in place — the till, the
  * point of sale, the shop or the company the cockpit looks at. Schedules, banners and the
  * history stay on the full page.
+ *
+ * Fire-and-forget: the POST (with one Idempotency-Key per message written — a retry after a
+ * network error reuses it) returns at once, the sheet closes, and delivery / "קראתי" are followed
+ * in the background by "פקודות שנשלחו" (lib/deviceCommandsStore.ts).
  */
 
 import { useState } from 'react';
@@ -14,6 +18,8 @@ import { toast } from 'sonner';
 import { Send } from 'lucide-react';
 import { sendTillMessage } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { newKey } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { useScope } from '@/lib/scope';
 import type { TillMessageLevel } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -24,9 +30,12 @@ const BODY_MAX = 500;
 
 export function TillMessageSheet({ scope, context, onDone }: CockpitActionProps) {
   const t = useTranslations('controlBoard.cockpit.tillMessage');
+  const tm = useTranslations('tillMessages');
   const s = useScope();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  // One key per message written (the sheet mounts per open): a retry of the same submit reuses it.
+  const [sendKey, setSendKey] = useState(() => newKey());
 
   const machineId = context?.machineId ?? scope.machineId;
   const target: { level: TillMessageLevel; id: string; name: string } | null = machineId
@@ -41,14 +50,37 @@ export function TillMessageSheet({ scope, context, onDone }: CockpitActionProps)
 
   const send = useMutation({
     mutationFn: () =>
-      sendTillMessage({
-        title: title.trim() || null,
-        body: body.trim(),
-        targetLevel: (target as { level: TillMessageLevel }).level,
-        targetId: (target as { id: string }).id,
-      }),
-    onSuccess: () => {
-      toast.success(t('sent'));
+      sendTillMessage(
+        {
+          title: title.trim() || null,
+          body: body.trim(),
+          targetLevel: (target as { level: TillMessageLevel }).level,
+          targetId: (target as { id: string }).id,
+        },
+        sendKey,
+      ),
+    onSuccess: (out) => {
+      setSendKey(newKey());
+      // Followed in the background ("פקודות שנשלחו" pops its own non-blocking notice — no toast).
+      if (out.id) {
+        const name = (out.targetName || target?.name || '').trim();
+        const total = out.counts?.total ?? 0;
+        trackCommand({
+          kind: 'till_message',
+          id: out.id,
+          action: 'till_message',
+          machineId: out.targetLevel === 'machine' ? out.targetId : null,
+          machineName: name
+            ? out.targetLevel === 'machine'
+              ? name
+              : `${tm(`levels.${out.targetLevel}`)} ${name}`
+            : total > 0
+              ? tm('tills', { count: total })
+              : null,
+        });
+      } else {
+        toast.success(t('sent'));
+      }
       onDone();
     },
     onError: (err) => toast.error(axiosErrorToToastMessage(err, t('failed'))),

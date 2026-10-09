@@ -41,6 +41,33 @@ test('remote control sends fire-and-forget: no "שולח…" wait, no actions di
   assert.doesNotMatch(slots, /mutate\(\(\) => sendDeviceCommand/);
 });
 
+test('dialogs that used to wait for the till send, track in the background and close', () => {
+  for (const [file, track] of [
+    ['components/dashboard/machines/remote-shift-close.tsx', 'trackShiftClose(next'],
+    ['components/dashboard/till-z/till-z-dialogs.tsx', 'trackTillZ(next'],
+    ['components/dashboard/machines/card-transmission.tsx', "kind: 'transmit'"],
+  ] as const) {
+    const s = src(file);
+    assert.ok(s.includes(track), `${file} tracks what it sent`);
+    assert.match(s, /handleOpenChange\(false\)|onOpenChange\(false\)/, `${file} closes after sending`);
+  }
+  for (const file of [
+    'components/dashboard/machines/device-management.tsx',
+    'components/dashboard/shifts/shift-close.tsx',
+    'components/dashboard/kiosks/kiosk-detail-dialog.tsx',
+    'components/dashboard/live-control/kiosk-control-sheet.tsx',
+    'app/dashboard/kitchen-printers/page.tsx',
+    'app/dashboard/till-messages/page.tsx',
+    'components/dashboard/cockpit/sheets/till-message-sheet.tsx',
+  ]) {
+    assert.match(src(file), /trackCommand\(|track[A-Z]\w+\(/, `${file} follows its command in the background`);
+  }
+  // The device rows carry the chip.
+  for (const file of ['components/dashboard/machines/machine-row.tsx', 'components/dashboard/cockpit/cockpit.tsx', 'components/dashboard/kiosks/kiosk-list.tsx']) {
+    assert.match(src(file), /<DeviceCommandChip /, `${file} shows the row's chip`);
+  }
+});
+
 test('every send carries an Idempotency-Key (a retry never sends twice)', () => {
   const store = src('lib/deviceCommandsStore.ts');
   assert.match(store, /'Idempotency-Key': key/);
