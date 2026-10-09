@@ -63,6 +63,8 @@ export function useAlertItems(scope: CockpitScope) {
   return {
     items,
     open: query.data?.open ?? 0,
+    /** The server's flags (`canAcknowledge`…), for lib/pushAlerts.ts `canAcknowledgeAlerts`. */
+    data: query.data,
     isLoading: query.isPending,
     isError: query.isError,
     acknowledge: (id: string) => ack.mutate(id),

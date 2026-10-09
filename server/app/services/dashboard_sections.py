@@ -181,7 +181,8 @@ BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
     "reports": VIEW,
     "z": VIEW,
     "live_event": VIEW,
-    "alerts": VIEW,
+    # Edit: they are the ones who handle an alert — marking it "טופל" (POST /push/alerts/{id}/ack).
+    "alerts": EDIT,
     "prepaid_vouchers": VIEW,
     "promotions": VIEW,
     "quick_actions": EDIT,

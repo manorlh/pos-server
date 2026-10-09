@@ -7,6 +7,8 @@
  * Pure (no React, no network, relative imports only) so `npm test` runs it with node:test.
  */
 
+import { canAccess, type DashboardAccess } from './dashboardAccess';
+
 export type AlertCategory = 'till_offline' | 'card_terminal' | 'large_void' | 'drawer_no_sale' | 'till_low_sales' | 'target_reached';
 
 export const ALERT_CATEGORIES: AlertCategory[] = [
@@ -211,6 +213,15 @@ export function alertHref(a: Pick<FeedAlert, 'kind' | 'code' | 'details'>, canOp
   const eventId = a.details && typeof a.details.eventId === 'string' ? a.details.eventId : null;
   if (a.kind === 'target_reached' && eventId) return `/dashboard/live-event/${eventId}`;
   return canOpenLog && a.code ? `/x/${a.code}` : null;
+}
+
+/**
+ * Whether "טופל" is offered — on the alerts page and in the cockpit alike, never by role: "התראות"
+ * at edit (the ack route's section) and the server's own `canAcknowledge` (it says exactly what
+ * `POST /push/alerts/{id}/ack` lets through). An older server without the flag: the section decides.
+ */
+export function canAcknowledgeAlerts(access: DashboardAccess, feed: Pick<AlertsFeed, 'canAcknowledge'> | null | undefined): boolean {
+  return canAccess(access, 'alerts', 'edit') && feed?.canAcknowledge !== false;
 }
 
 /** The open alerts, newest first, as the cockpit's attention feed (the ack action only when allowed). */

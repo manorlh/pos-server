@@ -295,10 +295,22 @@ def list_alerts(
     return {
         "alerts": out,
         "open": open_count,
-        "canAcknowledge": current_user.role not in NO_ACK_ROLES,
+        "canAcknowledge": may_acknowledge(db, current_user),
         # An alert's own page is the exceptions log's (`/x/<code>`): only with that section.
         "canOpenLog": P.may_open_log(db, current_user),
     }
+
+
+def may_acknowledge(db: Session, user: User) -> bool:
+    """
+    Whether `POST /alerts/{id}/ack` lets this user through — exactly its two checks: "התראות" at
+    edit (the route's section, app/services/dashboard_sections.py) and a role other than a
+    cashier's or a shift supervisor's (below). The feed's `canAcknowledge`, so the dashboard's
+    "טופל" (the alerts page, the cockpit) shows exactly when the server would take it.
+    """
+    from app.services import dashboard_access as DA
+
+    return user.role not in NO_ACK_ROLES and DA.effective_access(db, user).allows("alerts", "edit")
 
 
 @router.post("/alerts/{entry_id}/ack")

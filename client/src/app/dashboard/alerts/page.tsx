@@ -15,7 +15,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { BellRing, Check, ExternalLink, RotateCcw } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
-import { alertHref, historyTone, type AlertsFeed, type HistoryRow } from '@/lib/pushAlerts';
+import { alertHref, canAcknowledgeAlerts, historyTone, type AlertsFeed, type HistoryRow } from '@/lib/pushAlerts';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { acknowledgeAlert, fetchAlertsFeed, fetchPushHistory } from '@/lib/pushAlertsApi';
 import { formatShortDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -39,6 +40,8 @@ export default function AlertsPage() {
     queryFn: () => fetchAlertsFeed(scope, { open: show === 'open', days: show === 'open' ? 7 : 3, limit: 100 }),
     refetchInterval: 30_000,
   });
+  // "טופל": "התראות" at edit and the server's own flag — never by role (lib/pushAlerts.ts).
+  const canAck = canAcknowledgeAlerts(useDashboardAccess(), feed.data);
   const history = useQuery<HistoryRow[]>({ queryKey: ['push-history'], queryFn: () => fetchPushHistory(50), refetchInterval: 60_000 });
   const ack = useMutation({
     mutationFn: ({ id, done }: { id: string; done: boolean }) => acknowledgeAlert(id, done),
@@ -113,7 +116,7 @@ export default function AlertsPage() {
                       <ExternalLink className="size-4" aria-hidden />
                     </Link>
                   ) : null}
-                  {feed.data?.canAcknowledge !== false ? (
+                  {canAck ? (
                     <Button
                       variant="ghost"
                       size="sm"

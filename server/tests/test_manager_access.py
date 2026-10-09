@@ -45,9 +45,10 @@ def test_the_branch_manager_template():
     spec = DS.BUILTIN_TEMPLATES[DS.BRANCH_MANAGER_TEMPLATE]
     assert spec["label"] == "מנהל סניף / אירוע" and spec["fullAccess"] is False
     sections = spec["sections"]
-    for view in ("cockpit", "reports", "z", "live_event", "alerts", "prepaid_vouchers", "promotions"):
+    for view in ("cockpit", "reports", "z", "live_event", "prepaid_vouchers", "promotions"):
         assert sections[view] == DS.VIEW, view
-    for edit in ("quick_actions", "item_blocks", "device_control", "till_messages", "stock"):
+    # "alerts" at edit (the coordinator, 09.10.2026): the branch managers mark alerts "טופל".
+    for edit in ("quick_actions", "item_blocks", "device_control", "till_messages", "stock", "alerts"):
         assert sections[edit] == DS.EDIT, edit
     # Kiosks at view: edit would open a kiosk's Z, closing its shift and till↔kiosk conversion.
     assert sections["kiosks"] == DS.VIEW

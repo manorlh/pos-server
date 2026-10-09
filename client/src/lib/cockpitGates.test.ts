@@ -8,7 +8,7 @@ import { MACHINE_ADMIN_ROLES, OPEN_GATE, TILL_MESSAGE_GATES, allowedEntries, gat
 const BRANCH_MANAGER: DashboardAccess = {
   restricted: true,
   sections: {
-    cockpit: 'view', reports: 'view', z: 'view', live_event: 'view', alerts: 'view', prepaid_vouchers: 'view',
+    cockpit: 'view', reports: 'view', z: 'view', live_event: 'view', alerts: 'edit', prepaid_vouchers: 'view',
     promotions: 'view', quick_actions: 'edit', item_blocks: 'edit', device_control: 'edit', till_messages: 'edit',
     kiosks: 'edit', stock: 'edit',
   },

@@ -7,8 +7,8 @@
  *   scope's event, else the one event live now, on the full live screen; with none or several
  *   live, the picker (`/dashboard/live-event`).
  * * `pushAlerts` — the phone alerts' feed (`useAlertItems`), in the cockpit's AttentionItem
- *   shape; "טופל" and "פתיחה" act in place (`run`), "טופל" only with "התראות" at edit (the
- *   server's `POST /push/alerts/{id}/ack`).
+ *   shape; "טופל" and "פתיחה" act in place (`run`), "טופל" as on the alerts page
+ *   (lib/pushAlerts.ts `canAcknowledgeAlerts`: "התראות" at edit and the server's own flag).
  * * `forecast` — "תחזית ואיוש" (`ForecastCard`), the board's compact card.
  *
  * Their props are the event-live folder's `CockpitProps`, the cockpit's own (checked below).
@@ -17,8 +17,8 @@
 import { useMemo } from 'react';
 import { ForecastCard, LiveEventLauncher, useAlertItems } from '@/components/dashboard/event-live';
 import type { CockpitProps } from '@/components/dashboard/event-live';
-import { canAccess } from '@/lib/dashboardAccess';
 import { useDashboardAccess } from '@/lib/dashboardAccessApi';
+import { canAcknowledgeAlerts } from '@/lib/pushAlerts';
 import type { AttentionItem, AttentionSeverity, CockpitActionProps, CockpitScope } from './types';
 
 /**
@@ -47,8 +47,10 @@ const SEVERITY: Record<'high' | 'medium' | 'low', AttentionSeverity> = { high: '
 /** The `pushAlerts` provider: the open phone alerts of the scope, worst and newest first. */
 export function useAlertAttentionItems(scope: CockpitScope): { items: AttentionItem[]; loading: boolean } {
   const access = useDashboardAccess();
-  const canAck = canAccess(access, 'alerts', 'edit');
   const feed = useAlertItems(scope);
+  // As the alerts page: "התראות" at edit and the server's flag (useAlertItems already drops "טופל"
+  // when the server's flag is false) — never by role.
+  const canAck = canAcknowledgeAlerts(access, feed.data);
   const { run } = feed;
   const items = useMemo(
     () =>

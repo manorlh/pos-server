@@ -521,3 +521,57 @@ def test_sending_waits_for_the_commit_and_a_rollback_sends_nothing(w, monkeypatc
     w.db.rollback()
     w.db.commit()
     assert len(queued) == 1                   # the rolled-back one is never sent
+
+
+def test_who_may_mark_an_alert_handled_is_what_the_ack_route_lets_through(w, monkeypatch):
+    """
+    "טופל" — the coordinator, 09.10.2026: the branch managers handle the alerts. The feed's
+    `canAcknowledge` says exactly what POST /push/alerts/{id}/ack lets through: "התראות" at edit
+    (the route's section) and a role other than a cashier's / shift supervisor's — so the
+    dashboard (the alerts page, the cockpit) never offers a button the server refuses.
+    """
+    from app.models.dashboard_access import DashboardAccessProfile
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+
+    monkeypatch.setattr(R, "_now", lambda: NOW)
+
+    def with_sections(role, sections):
+        u = user(w, role, w.shop)
+        w.db.add(DashboardAccessProfile(user_id=u.id, full_access=False, sections=dict(sections)))
+        w.db.flush()
+        DA.forget(w.db)
+        return u
+
+    def feed(u):
+        return R.list_alerts(company_id=None, shop_id=None, area_id=None, machine_id=None, event_id=None, open_only=True,
+                             days=2, limit=50, current_user=u, active_tenant_id=w.tenant.id, db=w.db)
+
+    ack_rule = DS.rule_for("POST", "/push/alerts/{entry_id}/ack")
+    center = entry(w, "till_offline")
+
+    # A branch manager (the template, alerts at edit): offered, and let through.
+    manager = with_sections(UserRole.SHOP_MANAGER, DS.BRANCH_MANAGER_SECTIONS)
+    assert DS.BRANCH_MANAGER_SECTIONS["alerts"] == "edit" and DS.AREA_MANAGER_SECTIONS["alerts"] == "edit"
+    assert feed(manager)["canAcknowledge"] is True
+    assert DA.check_rule(DA.effective_access(w.db, manager), ack_rule, "POST") is None
+    done = R.acknowledge_alert(center.id, {}, current_user=manager, active_tenant_id=w.tenant.id, db=w.db)
+    assert done["acknowledged"] is True
+
+    # Alerts at view only: sees the feed (another open alert), is not offered "טופל", and the route refuses it.
+    entry(w, "drawer_open")
+    viewer = with_sections(UserRole.SHOP_MANAGER, {"alerts": "view"})
+    out = feed(viewer)
+    assert out["canAcknowledge"] is False and out["alerts"]
+    refusal = DA.check_rule(DA.effective_access(w.db, viewer), ack_rule, "POST")
+    assert refusal is not None and refusal.status_code == 403
+
+    # The role check stays the server's too: a shift supervisor with the section is not offered it.
+    supervisor = with_sections(UserRole.SHIFT_SUPERVISOR, {"alerts": "edit"})
+    assert feed(supervisor)["canAcknowledge"] is False
+    with pytest.raises(HTTPException) as err:
+        R.acknowledge_alert(center.id, {}, current_user=supervisor, active_tenant_id=w.tenant.id, db=w.db)
+    assert err.value.status_code == 403
+
+    # The organization manager's default is unchanged: no alerts at all.
+    assert "alerts" not in DS.ORG_MANAGER_SECTIONS

@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   alertHref,
   attentionItems,
+  canAcknowledgeAlerts,
   draftFromPrefs,
   historyTone,
   prefsBody,
@@ -18,6 +19,7 @@ import {
   type FeedAlert,
   type PushPreferences,
 } from './pushAlerts';
+import { UNRESTRICTED, type DashboardAccess } from './dashboardAccess';
 
 const env = { hasServiceWorker: true, hasPushManager: true, hasNotification: true, permission: 'default', userAgent: 'Chrome', standalone: false };
 
@@ -115,5 +117,31 @@ describe('the attention feed', () => {
     assert.equal(historyTone('sent'), 'sent');
     assert.equal(historyTone('suppressed_quiet_hours'), 'held');
     assert.equal(historyTone('failed'), 'failed');
+  });
+});
+
+describe('"טופל" — who may mark an alert handled (never by role)', () => {
+  // The server's template (app/services/dashboard_sections.py BRANCH_MANAGER_SECTIONS): alerts at edit.
+  const branchManager: DashboardAccess = { restricted: true, sections: { cockpit: 'view', reports: 'view', alerts: 'edit' } };
+  const alertsView: DashboardAccess = { restricted: true, sections: { alerts: 'view' } };
+
+  it('a branch manager may; a user with alerts at view only may not', () => {
+    assert.equal(canAcknowledgeAlerts(branchManager, { canAcknowledge: true }), true);
+    assert.equal(canAcknowledgeAlerts(alertsView, { canAcknowledge: true }), false);
+    assert.equal(canAcknowledgeAlerts({ restricted: true, sections: {} }, { canAcknowledge: true }), false);
+  });
+
+  it("the server's own flag has the last word (its role check), and an older server without it: the section", () => {
+    assert.equal(canAcknowledgeAlerts(branchManager, { canAcknowledge: false }), false);
+    assert.equal(canAcknowledgeAlerts(UNRESTRICTED, { canAcknowledge: false }), false);
+    assert.equal(canAcknowledgeAlerts(branchManager, {}), true);
+    assert.equal(canAcknowledgeAlerts(branchManager, undefined), true);
+    assert.equal(canAcknowledgeAlerts(UNRESTRICTED, { canAcknowledge: true }), true);
+  });
+
+  it('the feed without the ack action is what the page shows a view-only user', () => {
+    const feed: AlertsFeed = { open: 1, canAcknowledge: false, alerts: [alert({ id: 'a' })] };
+    const [item] = attentionItems(feed, () => '18:00');
+    assert.equal(item.actions.some((a) => a.actionId === 'ack'), false);
   });
 });
