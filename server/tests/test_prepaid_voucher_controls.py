@@ -643,7 +643,7 @@ class TestMigration:
         from alembic.runtime.migration import MigrationContext
 
         module = self._module()
-        assert module.down_revision == "a7d4e9c2b158"
+        assert module.down_revision == "c5d2a8e4f913"
         engine = sa.create_engine("sqlite://")
         with engine.begin() as conn:
             for t in ("tenants", "companies", "users", "report_events", "prepaid_voucher_batches", "prepaid_vouchers",

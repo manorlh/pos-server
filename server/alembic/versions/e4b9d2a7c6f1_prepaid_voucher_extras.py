@@ -1,7 +1,7 @@
 """production vouchers: settlement agreements, external invoices, deliveries, replacements, pauses, quotas, test batches
 
 Revision ID: e4b9d2a7c6f1
-Revises: a7d4e9c2b158
+Revises: c5d2a8e4f913
 Create Date: 2026-10-09
 
 The helper's part of production vouchers (spec §14, §16, §18; the contract's helper section) — new
@@ -29,7 +29,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = 'e4b9d2a7c6f1'
-down_revision: Union[str, Sequence[str], None] = 'a7d4e9c2b158'
+down_revision: Union[str, Sequence[str], None] = 'c5d2a8e4f913'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
