@@ -110,6 +110,77 @@ def _check_covered(db: Session, narrow, machine: POSMachine) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="outside_your_points_of_sale")
 
 
+# ── "סגירת משמרת / הפקת Z מרחוק" (app/services/remote_till_z.py, REMOTE_TILL_Z_ENABLED) ──
+
+
+class RemoteCloseIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: uuid.UUID = Field(..., alias="machineId")
+    #: The preview's `totalsKey` the manager confirmed: a sale since then refuses (409).
+    totals_key: str = Field(..., alias="totalsKey", min_length=1, max_length=64)
+
+
+def _remote_z_machine(db: Session, user: User, tenant_id, machine_id) -> POSMachine:
+    """The till for a remote close / Z: the shift admins' roles and scope (as the machines page's
+    close and Z), a manager of points of sale's own devices, and the Z section at edit."""
+    from app.routers.machines import machine_for_shift_admin
+    from app.services import dashboard_access as DA
+    from app.services import dashboard_sections as DS
+
+    machine = machine_for_shift_admin(db, machine_id, user, tenant_id)
+    _check_covered(db, _narrowing(db, user), machine)
+    if not DA.effective_access(db, user).allows("z", DS.EDIT):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail={"code": "section_forbidden", "section": "z", "level": DS.EDIT})
+    return machine
+
+
+@router.get("/features")
+def get_features(current_user: User = Depends(get_current_user)):
+    """What of remote control is on: `remoteTillZ` (REMOTE_TILL_Z_ENABLED, off by default)."""
+    from app.services import remote_till_z
+
+    return {"remoteTillZ": remote_till_z.enabled()}
+
+
+@router.get("/{machine_id}/close-preview")
+def get_close_preview(
+    machine_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """What the manager confirms before a remote close / Z: what the till will do, and its current totals."""
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    machine = _remote_z_machine(db, current_user, active_tenant_id, machine_id)
+    out = remote_till_z.preview(db, machine)
+    db.commit()  # requests expired on the way
+    return out
+
+
+@router.post("/close", status_code=status.HTTP_201_CREATED)
+def post_remote_close(
+    body: RemoteCloseIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """The confirmed remote close / Z: the till's existing flow, at rest only, never forced."""
+    from app.services import remote_till_z
+
+    remote_till_z.require_enabled()
+    machine = _remote_z_machine(db, current_user, active_tenant_id, body.machine_id)
+    try:
+        out = remote_till_z.request(db, current_user, machine, totals_key=body.totals_key)
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    return out
+
+
 @router.get("/devices")
 def list_devices(
     company_id: Optional[uuid.UUID] = Query(None, alias="companyId"),

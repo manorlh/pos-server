@@ -152,7 +152,7 @@ def _live_z_item(db: Session, machine_id: uuid.UUID) -> Optional[ZRunItem]:
 
 
 def request_close(
-    db: Session, user: User, machine: POSMachine, *, now: Optional[datetime] = None
+    db: Session, user: User, machine: POSMachine, *, wait_for_rest: bool = False, now: Optional[datetime] = None
 ) -> Tuple[ShiftCloseRequest, bool]:
     """
     Ask `machine` to close its open shift. Returns `(request, created)`.
@@ -175,6 +175,11 @@ def request_close(
 
     for existing in _pending_query(db, machine.id).order_by(ShiftCloseRequest.created_at.asc()).all():
         if not reconcile(db, existing, now=now):
+            if wait_for_rest and not existing.wait_for_rest:
+                # Remote control asked too: the pending one waits for rest from now on.
+                existing.wait_for_rest = True
+                db.flush()
+                _send(machine, existing, user, now)
             return existing, False
 
     open_shift = find_open_shift(db, machine.id)
@@ -194,6 +199,7 @@ def request_close(
         created_by_user_id=user.id,
         status=S.WAITING_CLOSE,
         expires_at=now + timedelta(hours=CLOSE_REQUEST_TTL_HOURS),
+        wait_for_rest=bool(wait_for_rest),
     )
     _name_shift(db, req, shift_id)
     db.add(req)
@@ -214,6 +220,7 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
         str(req.id),
         str(named_shift_id(req)) if named_shift_id(req) else None,
         z_runs._initiator(user),
+        wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
     )
     req.sent_at = now
 
