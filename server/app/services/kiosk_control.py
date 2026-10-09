@@ -663,7 +663,13 @@ def controlled_devices(db: Session, till: POSMachine) -> List[KioskDevice]:
         .order_by(KioskDevice.name, KioskDevice.machine_id)
         .all()
     )
-    return [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
+    mine = [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a till locked to its point of
+    # sale controls that area's kiosks and the shop's area-less ones, never another area's.
+    from app.services import area_lock
+
+    areas = area_lock.areas_of_machines(db, [d.machine_id for d in mine])
+    return area_lock.keep_shared_devices(db, till, mine, lambda d: areas.get(d.machine_id))
 
 
 def state_of(device: KioskDevice, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -925,6 +931,10 @@ def controller_target(db: Session, till: POSMachine, kiosk_machine_id: Any) -> T
     kiosk_machine = db.get(POSMachine, device.machine_id)
     if kiosk_machine is None or not kiosk_machine.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KIOSK_NOT_FOUND)
+    # Another point of sale's kiosk, while this till is locked to its own (403 `area_locked`).
+    from app.services import area_lock
+
+    area_lock.require_shared_device(db, till, kiosk_machine, "kiosk")
     return kiosk_machine, device
 
 

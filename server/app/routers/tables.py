@@ -225,7 +225,8 @@ def get_tables_reports(
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     if shop is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
-    return T.report(db, shop, date_from, date_to)
+    # Locked to its point of sale: that area's and the shop-wide zones' tables (area_lock.py).
+    return T.report(db, shop, date_from, date_to, machine=machine)
 
 
 @router.get("/sync/{machine_id}/tables/closed")
@@ -534,6 +535,7 @@ def till_create_reservation(
     if machine.shop_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="table_not_found")
     shop = db.get(Shop, machine.shop_id)
+    T.check_reservation_area(db, machine, body.table_id)
     r = T.create_reservation(db, shop, body, by_name=body.pos_user_name)
     db.commit()
     _wake(background_tasks, db, machine, None)
@@ -551,6 +553,7 @@ def till_reservation_status(
 ):
     """The party came ("הגיעו"), cancelled, or did not come."""
     r = T.get_reservation(db, reservation_id, machine.shop_id)
+    T.check_reservation_area(db, machine, r.table_id, kind="reservation")
     r.status = body.status
     r.updated_at = datetime.now(timezone.utc)
     db.commit()

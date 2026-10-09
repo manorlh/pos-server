@@ -1610,6 +1610,12 @@ def ready_orders(db: Session, machine: POSMachine) -> Dict[str, Any]:
         )
         .all()
     )
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till lists its point of
+    # sale's orders and those of the shop's area-less devices (stamped `area_id` at release).
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    orders = [o for o in orders if scope.covers_shared(o.area_id)]
     tasks, _, groups, _ = _bundle(db, orders)
     out = []
     for order in orders:
@@ -1674,6 +1680,11 @@ def ready_action(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     order = db.query(KitchenOrder).filter(KitchenOrder.id == body.order_id).first()
     if order is None or order.shop_id != machine.shop_id or order.tenant_id != machine.tenant_id:
         raise _refuse("order_not_found", status.HTTP_404_NOT_FOUND)
+    # Another point of sale's order, while this till is locked to its own (403 `area_locked`).
+    from app.services import area_lock
+
+    if not area_lock.scope_for(db, machine).covers_shared(order.area_id):
+        raise area_lock.refusal("order")
     now = _now()
     actor = body.actor_name or machine.name
     if body.type == "ready":

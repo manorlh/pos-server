@@ -520,7 +520,13 @@ def leaderboard(db: Session, machine: Any, *, metric: str = METRIC_SALES, now: O
     else:
         day = business_today(zone, now)
         start, end = trading_range(day, DEFAULT_DAY_START, DEFAULT_DAY_END, zone)
-    q = _base_query(db, machine.tenant_id, machine.shop_id, start, end)
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till ranks the cashiers
+    # of its point of sale's tills, against that point of sale's day target (none: no target).
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    area_ids = sorted(area_lock.area_machine_ids(db, scope), key=str) if scope.locked else None
+    q = _base_query(db, machine.tenant_id, machine.shop_id, start, end, machine_ids=area_ids)
     if metric == METRIC_UPSELL:
         rows = (
             q.join(TransactionItem, TransactionItem.transaction_id == Transaction.id)
@@ -538,5 +544,14 @@ def leaderboard(db: Session, machine: Any, *, metric: str = METRIC_SALES, now: O
         {"rank": i + 1, "cashierId": k, "name": _display_name(names.get(k)) or "עובד", "value": float(v)}
         for i, (k, v) in enumerate(ranked)
     ]
-    shop_target = next((p for p in progress(db, [machine.shop_id], now=now) if p["scope"] == "shop" and p["period"] == "day"), None)
+    if scope.locked:
+        shop_target = next(
+            (
+                p for p in progress(db, [machine.shop_id], now=now)
+                if p["scope"] == "area" and p["period"] == "day" and p.get("areaId") == str(scope.area_id)
+            ),
+            None,
+        )
+    else:
+        shop_target = next((p for p in progress(db, [machine.shop_id], now=now) if p["scope"] == "shop" and p["period"] == "day"), None)
     return {"metric": metric, "day": day.isoformat(), "cashiers": cashiers, "target": shop_target}

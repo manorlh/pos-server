@@ -89,7 +89,9 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
     """Field names and nullability are fixed by the Android ShopTransactionDto."""
     components = app.openapi()["components"]["schemas"]
     wrapper = components["ShopTransactionsResponse"]
-    assert set(wrapper["properties"]) == {"serverTime", "transactions"}
+    # `area` ("נעילת הקופה לנקודת המכירה שלה", app/services/area_lock.py): nullable and additive —
+    # the point of sale the list is narrowed to; unknown to (so ignored by) older tills.
+    assert set(wrapper["properties"]) == {"serverTime", "transactions", "area"}
 
     row = components["ShopTransactionRow"]["properties"]
     assert set(row) == {

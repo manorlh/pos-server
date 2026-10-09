@@ -335,6 +335,10 @@ def acknowledge(db: Session, till: POSMachine, alert_id: str, *, pos_user_name: 
     source = db.get(POSMachine, row.machine_id) if row is not None else None
     if row is None or source is None or row.tenant_id != till.tenant_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")
+    # Another point of sale's device, while this till is locked to its own (app/services/area_lock.py).
+    from app.services import area_lock
+
+    area_lock.require_shared_device(db, till, source, "device")
     cfg = KC.effective_config(db, source)
     if till.id not in {m.id for m in OPS.targets(db, source, cfg, "battery")}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")

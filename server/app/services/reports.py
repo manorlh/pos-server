@@ -1108,7 +1108,8 @@ def load_shop_transactions_for_machine(
     q: Optional[str] = None,
 ) -> Tuple[List[ShopTransactionRow], bool]:
     """
-    Recent documents from every terminal in the authenticated machine's own shop.
+    Recent documents from every terminal in the authenticated machine's own shop — of its
+    point of sale only while the till is locked to it (app/services/area_lock.py).
 
     Scope is derived **solely** from the authenticated machine row: `machine.shop_id`
     and `machine.tenant_id`. The caller cannot name a shop, tenant, or machine list —
@@ -1168,6 +1169,14 @@ def load_shop_transactions_for_machine(
         tenant_id = row[0] if row else None
     if tenant_id is not None:
         query = query.filter(Transaction.tenant_id == tenant_id)
+
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a till locked to its point of
+    # sale lists the documents of that area's tills only (their area now, like every till list).
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if scope.locked:
+        query = query.filter(POSMachine.area_id == scope.area_id)
 
     if q:
         needle = q.strip()

@@ -2459,6 +2459,29 @@ def _transaction_ids(order: TableOrder) -> List[str]:
     return ids
 
 
+def _order_zone_area(db: Session, order: TableOrder, zone_areas: Optional[Dict[Any, Any]] = None) -> Any:
+    """The area of the zone an order was on (its snapshot, else its table's zone now); None = shop-wide."""
+    zone_id = order.zone_id
+    if zone_id is None:
+        table = db.get(DiningTable, order.table_id) if order.table_id is not None else None
+        zone_id = table.zone_id if table is not None else None
+    if zone_id is None:
+        return None
+    if zone_areas is not None and zone_id in zone_areas:
+        return zone_areas[zone_id]
+    zone = db.get(TableZone, zone_id)
+    return zone.area_id if zone is not None else None
+
+
+def _area_locked_orders(db: Session, machine: POSMachine, orders: Sequence[TableOrder], zone_areas: Dict[Any, Any]) -> List[TableOrder]:
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if not scope.locked:
+        return list(orders)
+    return [o for o in orders if scope.covers_shared(_order_zone_area(db, o, zone_areas))]
+
+
 def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> List[dict]:
     """
     The till's "נסגרו היום": its shop's tables paid or cancelled in the last day, not merged
@@ -2481,7 +2504,11 @@ def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] =
         .limit(100)
         .all()
     )
-    zone_names = {z.id: z.name for z in db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()}
+    zones = db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()
+    zone_names = {z.id: z.name for z in zones}
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till restores the tables
+    # of its point of sale's zones and of the shop-wide ones, like the tables it sees.
+    rows = _area_locked_orders(db, machine, rows, {z.id: z.area_id for z in zones})
     return [
         {
             "orderId": str(o.id),
@@ -2522,6 +2549,11 @@ def mark_restored(
     order = db.get(TableOrder, _uuid(order_id))
     if order is None or order.shop_id != machine.shop_id:
         raise _not_found("order_not_found")
+    # Another point of sale's table, while this till is locked to its own (403 `area_locked`).
+    from app.services import area_lock
+
+    if not area_lock.scope_for(db, machine).covers_shared(_order_zone_area(db, order)):
+        raise area_lock.refusal("table")
     if order.status not in ("paid", "cancelled") or order.merged_into_id is not None:
         raise _conflict("order_not_closed")
     if order.restored_at is not None:
@@ -2537,7 +2569,7 @@ def mark_restored(
     return order
 
 
-def report(db: Session, shop: Shop, start: date, end: date) -> dict:
+def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional[POSMachine] = None) -> dict:
     """
     The tables report for the local days `start`..`end`: revenue and seating time per
     table and per zone (paid orders, by when they were paid), and cancellations by
@@ -2563,7 +2595,11 @@ def report(db: Session, shop: Shop, start: date, end: date) -> dict:
         )
         .all()
     )
-    zone_names = {z.id: z.name for z in db.query(TableZone).filter(TableZone.shop_id == shop.id).all()}
+    zones = db.query(TableZone).filter(TableZone.shop_id == shop.id).all()
+    zone_names = {z.id: z.name for z in zones}
+    if machine is not None:
+        # The till's own "דוחות שולחנות", locked to its point of sale (app/services/area_lock.py).
+        orders = _area_locked_orders(db, machine, orders, {z.id: z.area_id for z in zones})
     reason_names = {
         r.id: r.name for r in db.query(TableCancelReason).filter(TableCancelReason.tenant_id == shop.tenant_id).all()
     }
@@ -2797,6 +2833,25 @@ def _check_reservation_table(db: Session, shop_id: Any, table_id: Any) -> Option
     if table is None or table.shop_id != shop_id or table.archived_at is not None:
         raise _not_found("table_not_found")
     return table
+
+
+def check_reservation_area(db: Session, machine: POSMachine, table_id: Any, *, kind: str = "table") -> None:
+    """
+    A till's booking on a table of another point of sale's zone, while the till is locked to its
+    own (app/services/area_lock.py): 403 `area_locked`. A booking with no table, a shop-wide zone's
+    table, or an unknown table (refused later, as before) pass.
+    """
+    if table_id is None:
+        return
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if not scope.locked:
+        return
+    table = db.get(DiningTable, _uuid(table_id))
+    zone = db.get(TableZone, table.zone_id) if table is not None else None
+    if zone is not None and not scope.covers_shared(zone.area_id):
+        raise area_lock.refusal(kind)
 
 
 def _refuse_overlap(db: Session, r: TableReservation) -> None:
