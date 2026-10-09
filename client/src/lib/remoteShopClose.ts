@@ -31,6 +31,8 @@ export interface ShopCloseRow {
   closesWithShopZ?: boolean;
   /** What an open basket will do at this close ("עגלה פתוחה — תישמר כמכירה מושהית" / "… ממתין"). */
   openBasket?: string;
+  /** "כפה סגירה": this till's default mode (lib/remoteCloseForce.ts). */
+  force?: import('./remoteCloseForce').ForceMode;
   runItem?: { status: string; errorCode: string | null; words: string };
 }
 
@@ -62,6 +64,8 @@ export interface ShopCloseRunItem extends HeldSalesState {
   errorCode: string | null;
   words: string;
   online: boolean | null;
+  /** Asked forced ("כפה סגירה"); closed so, its words read "נסגר בכפייה מרחוק ע״י …". */
+  remoteForce?: boolean;
 }
 
 export interface ShopCloseRun {
@@ -135,6 +139,7 @@ export interface AreaShiftPreview {
     totalsKey?: string;
     totals?: { net: number } | null;
     openBasket?: string;
+    force?: import('./remoteCloseForce').ForceMode;
   }[];
 }
 

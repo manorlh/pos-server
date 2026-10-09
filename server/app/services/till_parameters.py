@@ -1540,6 +1540,12 @@ from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _HELD_SALES_SPECS)
 
+# "כפיית סגירה מרחוק כברירת מחדל" (app/services/remote_close_force.py): remote control's close or Z
+# forced from the moment the manager sends it (on); off waits for rest as before.
+from app.services.remote_close_force import PARAMETER_SPECS as _REMOTE_FORCE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_FORCE_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

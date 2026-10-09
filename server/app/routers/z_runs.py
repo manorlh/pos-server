@@ -360,7 +360,8 @@ def post_z_run_cancel(
     return ZR.run_to_out(db, run)
 
 
-def create_run_from_body(db: Session, current_user: User, active_tenant_id, body: ZRunCreateIn, *, wait_for_rest: bool = False):
+def create_run_from_body(db: Session, current_user: User, active_tenant_id, body: ZRunCreateIn, *, wait_for_rest: bool = False,
+                         remote_force: Optional[bool] = None):
     """
     The one way a shop's cloud Z run starts — the dashboard's wizard and remote control's "סגירת
     יום סניפית" alike (app/services/remote_till_z.py, `wait_for_rest`): the same refusals, the
@@ -404,6 +405,7 @@ def create_run_from_body(db: Session, current_user: User, active_tenant_id, body
             force=body.force,
             wait_for_rest=wait_for_rest,
             force_reason=body.force_reason,
+            remote_force=remote_force,
         )
         if body.confirm_cloud_data:
             _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)
