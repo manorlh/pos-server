@@ -468,7 +468,7 @@ export default function ProductsPage() {
                         {p.catalogLevel !== 'global' ? (
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
-                        {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                        {ticketBadge(p)}<ProductChannelBadge product={p} />
                         <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                       </div>
                     </TableCell>
@@ -554,7 +554,7 @@ export default function ProductsPage() {
                           {t('systemItemBadge')}
                         </Badge>
                       ) : null}
-                      {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                      {ticketBadge(p)}<ProductChannelBadge product={p} />
                       <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -854,7 +854,7 @@ export default function ProductsPage() {
               }
               onChange={(c) => setEditing((p) => ({ ...p, requiresManagerApproval: c }))}
             />
-            {/* "היכן הפריט נמכר": קופות וקיוסק / קיוסק בלבד / קופות בלבד (docs/SPEC_PRODUCT_CHANNELS.md). */}
+            {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי — sent as appearsIn with the whole product (specs/item-blocks-targets.md §11). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

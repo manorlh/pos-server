@@ -3,6 +3,7 @@
  */
 import { api } from '@/lib/api';
 import type {
+  BlockChannel,
   BlockKind,
   BlockScope,
   BlockTarget,
@@ -38,8 +39,10 @@ export interface BlockScopeIds {
   categoryId?: string | null;
   /** "חסומים כעת" of a point of sale: the blocks that reach a device of it. */
   areaId?: string | null;
-  /** As the block means it: "all" / "kiosks" / "tills". */
+  /** As the block means it for the devices: "all" / "kiosks" / "tills" / "none". */
   target?: BlockTarget | null;
+  /** The blocks that stop the item on this channel ("קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי"). */
+  channel?: BlockChannel | null;
 }
 
 export const liveKeys = {
@@ -52,6 +55,7 @@ export const liveKeys = {
       s.categoryId ?? null,
       s.areaId ?? null,
       s.target ?? null,
+      s.channel ?? null,
     ] as const,
   targets: (shopId: string) => ['item-blocks', 'targets', shopId] as const,
   devices: (s: { companyId?: string | null; shopId?: string | null }) => ['device-commands', 'devices', s.companyId ?? null, s.shopId ?? null] as const,
@@ -66,6 +70,7 @@ export async function fetchBlocks(s: BlockScopeIds, includeEnded = false): Promi
   if (s.categoryId) params.categoryId = s.categoryId;
   if (s.areaId) params.areaId = s.areaId;
   if (s.target) params.target = s.target;
+  if (s.channel) params.channel = s.channel;
   if (includeEnded) params.includeEnded = 'true';
   return (await api.get('/item-blocks', { params })).data;
 }
@@ -84,8 +89,11 @@ export type BlockItemRef = { productId: string; categoryId?: never } | { categor
 export async function createBlocks(
   body: BlockItemRef & {
     kind: BlockKind;
-    /** "קופות וקיוסקים" (default) / "קיוסקים בלבד" / "קופות בלבד", on every target's level. */
-    target?: BlockTarget;
+    /**
+     * Where, on every target's level: any of "קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי"
+     * (1..4; omitted = all four). The server derives the devices' `target` from it.
+     */
+    channels?: BlockChannel[];
     /** The kiosks' look; null = their own setting. */
     kioskDisplay?: KioskDisplay | null;
     note?: string;

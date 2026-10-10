@@ -2,10 +2,10 @@
 
 /**
  * "חסומים כעת" (specs/item-blocks-targets.md §5): every block in force in the scope — the item (a
- * product, or "מחלקה · …"), "אזל" / "חסום", the level and its name, the target when it is not
- * everyone ("קיוסקים בלבד"), the kiosks' look when set, until when with a live countdown ("עוד 47
+ * product, or "מחלקה · …"), "אזל" / "חסום", the level and its name, the channels when not all four
+ * ("קיוסק · תפריט דיגיטלי"), the kiosks' look when set, until when with a live countdown ("עוד 47
  * דק׳"), who set it and from where, the reason; "הארך" (+15/+30/+60) and "בטל" on each. Filters:
- * a product (its own blocks and its category's), a category, a point of sale, a target.
+ * a product (its own blocks and its category's), a category, a point of sale, a channel.
  */
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -16,9 +16,12 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
+  channelsLabel,
+  channelsOf,
   EXTEND_BY,
   formatLeft,
   formatUntil,
+  isAllChannels,
   itemLabel,
   KIOSK_LOOK_BADGES,
   kindLabel,
@@ -26,9 +29,7 @@ import {
   levelOf,
   originLabel,
   secondsLeft,
-  TARGET_LABELS,
-  targetOf,
-  type BlockTarget,
+  type BlockChannel,
   type ItemBlock,
 } from '@/lib/liveControl';
 import { clearBlock, extendBlock, fetchBlocks, liveKeys } from '@/lib/liveControlApi';
@@ -44,11 +45,11 @@ export function useTick(ms = 15_000): number {
   return now;
 }
 
-/** "חסומים כעת" narrowed: a category's blocks, those reaching a point of sale, a target. */
+/** "חסומים כעת" narrowed: a category's blocks, those reaching a point of sale, those on a channel. */
 export interface ActiveBlocksFilters {
   categoryId?: string | null;
   areaId?: string | null;
-  target?: BlockTarget | null;
+  channel?: BlockChannel | null;
 }
 
 /** `enabled`: false for a user the server would refuse (the cockpit's feed asks only what each may read). */
@@ -59,7 +60,7 @@ export function useActiveBlocks(scope: LiveControlScope, productId?: string | nu
     productId: productId ?? null,
     categoryId: filters.categoryId ?? null,
     areaId: filters.areaId ?? null,
-    target: filters.target ?? null,
+    channel: filters.channel ?? null,
   };
   return useQuery({
     queryKey: liveKeys.blocks(ids),
@@ -74,7 +75,7 @@ export function ActiveBlocksList({
   productId,
   categoryId,
   areaId,
-  target,
+  channel,
   emptyText = 'אין חסימות פעילות',
   compact = false,
 }: {
@@ -83,15 +84,15 @@ export function ActiveBlocksList({
   categoryId?: string | null;
   /** Only the blocks that reach a device of this point of sale. */
   areaId?: string | null;
-  /** Only the blocks of this target ("קיוסקים בלבד"…). */
-  target?: BlockTarget | null;
+  /** Only the blocks that stop the item on this channel ("קיוסק"…). */
+  channel?: BlockChannel | null;
   emptyText?: string;
   /** Inside an item's own sheet: the item's name is said once, above (a category's block still names it). */
   compact?: boolean;
 }) {
   const qc = useQueryClient();
   const now = useTick();
-  const blocks = useActiveBlocks(scope, productId, true, { categoryId, areaId, target });
+  const blocks = useActiveBlocks(scope, productId, true, { categoryId, areaId, channel });
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['item-blocks'] });
     qc.invalidateQueries({ queryKey: ['kiosks', 'live'] });
@@ -133,7 +134,7 @@ export function ActiveBlocksList({
       {rows.map((b: ItemBlock) => {
         const until = formatUntil(b.until, now);
         const left = formatLeft(secondsLeft(b.until, now));
-        const reach = targetOf(b);
+        const channels = channelsOf(b);
         const level = levelOf(b);
         const isCategory = b.itemType === 'category' || (b.itemType == null && !b.productId);
         // In an item's own sheet its name is above — a block of its category still says which.
@@ -151,8 +152,12 @@ export function ActiveBlocksList({
                 <div className="flex flex-wrap items-center gap-1.5">
                   {showItem ? <span className="font-medium">{itemLabel(b)}</span> : null}
                   <Badge variant={b.kind === 'blocked' ? 'destructive' : 'secondary'}>{kindLabel(b.kind)}</Badge>
-                  {reach !== 'all' ? <Badge variant="outline">{TARGET_LABELS[reach]}</Badge> : null}
-                  {b.kioskDisplay && reach !== 'tills' ? <Badge variant="outline">{KIOSK_LOOK_BADGES[b.kioskDisplay]}</Badge> : null}
+                  {!isAllChannels(channels) ? (
+                    <Badge variant="outline" title="ערוצים">
+                      {channelsLabel(channels)}
+                    </Badge>
+                  ) : null}
+                  {b.kioskDisplay && channels.includes('kiosk') ? <Badge variant="outline">{KIOSK_LOOK_BADGES[b.kioskDisplay]}</Badge> : null}
                   {b.source === 'auto' ? <Badge variant="outline">אוטומטי — מלאי 0</Badge> : null}
                 </div>
                 <p className="text-sm text-muted-foreground">

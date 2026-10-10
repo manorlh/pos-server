@@ -3,7 +3,7 @@
 /**
  * "מלאי" — stock along the hierarchy (company › shop › point of sale › till), in tabs:
  * "מלאי מהיר" (find, + / −, count, receive, transfer, block), "חסימות פעילות" ("חסומים כעת": "אזל" /
- * "חסום" in force, by point of sale and target), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
+ * "חסום" in force, by point of sale and channel), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
  * "הגדרות ניהול מלאי" (the managed levels, with the switch wizard) and "נשאר בסוף היום".
  * `?tab=` opens a tab (the board links to `?tab=blocks`).
  */
@@ -18,7 +18,7 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import { nodeKey, type StockNode } from '@/lib/stockLive';
 import { fetchStockFeatures } from '@/lib/stockLiveApi';
-import { TARGET_LABELS, type BlockTarget } from '@/lib/liveControl';
+import { BLOCK_CHANNELS, CHANNEL_LABELS, type BlockChannel } from '@/lib/liveControl';
 import { fetchBlockTargets, liveKeys } from '@/lib/liveControlApi';
 // "שליטה חיה" (components/dashboard/live-control): blocks, the stock sheet.
 import { ActiveBlocksList, BlockItemSheet, StockUpdateSheet } from '@/components/dashboard/live-control';
@@ -46,16 +46,14 @@ function tabOf(raw: string | null): StockTab {
   return TABS.some((t) => t.id === raw) ? (raw as StockTab) : 'quick';
 }
 
-const TARGET_FILTERS: BlockTarget[] = ['all', 'kiosks', 'tills'];
-
 /**
- * "חסומים כעת" (specs/item-blocks-targets.md §5): every block in force in the scope, narrowed to a
+ * "חסומים כעת" (specs/item-blocks-targets.md §5, §11): every block in force in the scope, narrowed to a
  * point of sale (the blocks that reach it: the company / shop, the point itself, its devices, an
- * event / a group with a device in it) and to a target.
+ * event / a group with a device in it) and to a channel (the blocks that stop the item there).
  */
 function BlocksNowTab({ scope }: { scope: { companyId: string | null; shopId: string | null } }) {
   const [areaPick, setAreaPick] = useState('');
-  const [targetPick, setTargetPick] = useState<BlockTarget | ''>('');
+  const [channelPick, setChannelPick] = useState<BlockChannel | ''>('');
   // The points of sale of the shop in scope (none to pick from for a company).
   const targets = useQuery({
     queryKey: liveKeys.targets(scope.shopId ?? ''),
@@ -91,16 +89,16 @@ function BlocksNowTab({ scope }: { scope: { companyId: string | null; shopId: st
           </label>
         ) : null}
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">יעד</span>
+          <span className="text-muted-foreground">ערוץ</span>
           <select
             className="h-11 w-full rounded-lg border bg-background px-3"
-            value={targetPick}
-            onChange={(e) => setTargetPick(e.target.value as BlockTarget | '')}
+            value={channelPick}
+            onChange={(e) => setChannelPick(e.target.value as BlockChannel | '')}
           >
             <option value="">הכול</option>
-            {TARGET_FILTERS.map((t) => (
-              <option key={t} value={t}>
-                {TARGET_LABELS[t]}
+            {BLOCK_CHANNELS.map((c) => (
+              <option key={c} value={c}>
+                {CHANNEL_LABELS[c]}
               </option>
             ))}
           </select>
@@ -109,8 +107,8 @@ function BlocksNowTab({ scope }: { scope: { companyId: string | null; shopId: st
       <ActiveBlocksList
         scope={scope}
         areaId={areaId || null}
-        target={targetPick || null}
-        emptyText={areaId || targetPick ? 'אין חסימות פעילות בסינון הזה' : 'אין חסימות פעילות'}
+        channel={channelPick || null}
+        emptyText={areaId || channelPick ? 'אין חסימות פעילות בסינון הזה' : 'אין חסימות פעילות'}
       />
     </section>
   );

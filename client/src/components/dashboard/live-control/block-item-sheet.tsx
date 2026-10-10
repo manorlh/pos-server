@@ -1,11 +1,12 @@
 'use client';
 
 /**
- * "חסום / אזל" — the one block dialog for every place (specs/item-blocks-targets.md §4.1; pos-server
- * app/routers/item_blocks.py): what (a product, or a whole category), where ("קופות וקיוסקים" /
- * "קיוסקים בלבד" / "קופות בלבד"), the level (the shop, points of sale, devices — tills and kiosks
- * together —, an event, device groups, the company), "אזל" or "חסום", the kiosks' look, how long,
- * and a reason. The item's blocks in force are listed under it, each removable on its own.
+ * "חסום / אזל" — the one block dialog for every place (specs/item-blocks-targets.md §4.1, §11; pos-server
+ * app/routers/item_blocks.py): what (a product, or a whole category), where (any of "קופה" / "קיוסק" /
+ * "הזמנות אונליין" / "תפריט דיגיטלי" — all four by default), the level (the shop, points of sale,
+ * devices — the tills and / or kiosks the channels name —, an event, device groups, the company),
+ * "אזל" or "חסום", the kiosks' look, how long, and a reason. The item's blocks in force are listed
+ * under it, each removable on its own.
  */
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -19,13 +20,17 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
 import { useScope } from '@/lib/scope';
 import {
+  BLOCK_CHANNELS,
+  CHANNEL_LABELS,
+  channelsLabel,
   durationValid,
   formatUntil,
+  isAllChannels,
   KIOSK_DISPLAY_LABELS,
-  TARGET_LABELS,
+  orderedChannels,
+  type BlockChannel,
   type BlockKind,
   type BlockScope,
-  type BlockTarget,
   type DurationChoice,
   type KioskDisplay,
 } from '@/lib/liveControl';
@@ -47,13 +52,16 @@ const LEVEL_OPTIONS: Record<Level, string> = {
   company: 'חברה',
 };
 
-const TARGETS: BlockTarget[] = ['all', 'kiosks', 'tills'];
+/** Levels that are devices: they reach the tills and kiosks only, never online ordering nor the menu. */
+const DEVICE_LEVELS: readonly Level[] = ['devices', 'event', 'groups'];
 
-const TARGET_HINTS: Record<BlockTarget, string> = {
-  all: 'כל המכשירים ברמה שנבחרה — קופות וקיוסקים.',
-  kiosks: 'הקופות ממשיכות למכור; רק הקיוסקים (הזמנה עצמית).',
-  tills: 'הקיוסקים ממשיכים למכור; רק הקופות.',
-};
+/** "איפה"'s line under the checkboxes: where it still sells. */
+function channelsHint(channels: readonly BlockChannel[]): string {
+  if (channels.length === 0) return 'בחרו לפחות ערוץ אחד.';
+  if (isAllChannels(channels)) return 'בכל הערוצים — קופות, קיוסקים, הזמנות אונליין ותפריט דיגיטלי.';
+  const open = BLOCK_CHANNELS.filter((c) => !channels.includes(c));
+  return `ממשיך להימכר ב: ${channelsLabel(open)}.`;
+}
 
 /** "תצוגה בקיוסק": the kiosk's own setting (null), hide, or show as sold out. */
 type LookKey = keyof typeof KIOSK_DISPLAY_LABELS;
@@ -66,13 +74,12 @@ interface Device {
   isKiosk: boolean;
 }
 
-/** The shop's tills and kiosks in one list, narrowed to the ones the target reaches. */
-function devicesOf(t: BlockTargets | undefined, target: BlockTarget): Device[] {
-  const all: Device[] = [
-    ...(t?.tills ?? []).map((m) => ({ id: m.id, name: m.name, posNumber: m.posNumber, isKiosk: false })),
-    ...(t?.kiosks ?? []).map((m) => ({ id: m.id, name: m.name, posNumber: m.posNumber, isKiosk: true })),
+/** The shop's tills (with "קופה" ticked) and kiosks (with "קיוסק") in one list. */
+function devicesOf(t: BlockTargets | undefined, channels: readonly BlockChannel[]): Device[] {
+  return [
+    ...(channels.includes('pos') ? t?.tills ?? [] : []).map((m) => ({ id: m.id, name: m.name, posNumber: m.posNumber, isKiosk: false })),
+    ...(channels.includes('kiosk') ? t?.kiosks ?? [] : []).map((m) => ({ id: m.id, name: m.name, posNumber: m.posNumber, isKiosk: true })),
   ];
-  return target === 'all' ? all : all.filter((d) => d.isKiosk === (target === 'kiosks'));
 }
 
 /** The `targets` the server takes for the level: one per place picked. */
@@ -100,10 +107,10 @@ function levelTargets(
   }
 }
 
-/** "נחסם (קיוסקים בלבד) עד 14:35" / "סומן אזל עד ביטול". */
-function savedMessage(kind: BlockKind, target: BlockTarget, until: string | null): string {
+/** "נחסם (קיוסק · תפריט דיגיטלי) עד 14:35" / "סומן אזל עד ביטול". */
+function savedMessage(kind: BlockKind, channels: readonly BlockChannel[], until: string | null): string {
   const at = formatUntil(until, Date.now());
-  const reach = target === 'all' ? '' : ` (${TARGET_LABELS[target]})`;
+  const reach = isAllChannels(channels) ? '' : ` (${channelsLabel(channels)})`;
   return `${kind === 'blocked' ? 'נחסם' : 'סומן אזל'}${reach}${at ? ` עד ${at}` : ' עד ביטול'}`;
 }
 
@@ -164,8 +171,8 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   const [category, setCategory] = useState<PickedItem | null>(context?.categoryId ? { id: context.categoryId, name: '' } : null);
   const [kind, setKind] = useState<BlockKind>('sold_out');
   const [note, setNote] = useState('');
-  // Null until chosen: "קיוסקים בלבד" when the context's device is a kiosk, else "קופות וקיוסקים".
-  const [targetPick, setTargetPick] = useState<BlockTarget | null>(null);
+  // Null until changed: "קיוסק" alone when the context's device is a kiosk, else all four.
+  const [channelsPick, setChannelsPick] = useState<BlockChannel[] | null>(null);
   const contextMachine = context?.machineId ?? null;
   const [levelPick, setLevelPick] = useState<Level>(contextMachine ? 'devices' : scope.areaId ? 'areas' : 'shop');
   const [picked, setPicked] = useState<Set<string>>(
@@ -195,14 +202,20 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
     enabled: !!shopId,
   });
   const t = targets.data;
-  // A device named by the context may be a kiosk: start on "קיוסקים בלבד" then.
+  // A device named by the context may be a kiosk: start on "קיוסק" alone then.
   const machineIsKiosk = !!contextMachine && !!t?.kiosks.some((k) => k.id === contextMachine);
-  const target: BlockTarget = targetPick ?? (machineIsKiosk ? 'kiosks' : 'all');
-  const devices = devicesOf(t, target);
+  const channels: BlockChannel[] = channelsPick ?? (machineIsKiosk ? ['kiosk'] : [...BLOCK_CHANNELS]);
+  const onDevices = channels.includes('pos') || channels.includes('kiosk');
+  const offDevices = channels.includes('online') || channels.includes('menu');
+  const devices = devicesOf(t, channels);
+  const setChannel = (c: BlockChannel, on: boolean) =>
+    setChannelsPick(orderedChannels(on ? [...channels, c] : channels.filter((x) => x !== c)));
 
-  const levels: Level[] = ['shop', 'areas', 'devices'];
-  if ((t?.events.length ?? 0) > 0) levels.push('event');
-  if ((t?.groups.length ?? 0) > 0) levels.push('groups');
+  // Devices, events and groups are tills and kiosks: offered only with "קופה" or "קיוסק" ticked.
+  const levels: Level[] = ['shop', 'areas'];
+  if (onDevices) levels.push('devices');
+  if (onDevices && (t?.events.length ?? 0) > 0) levels.push('event');
+  if (onDevices && (t?.groups.length ?? 0) > 0) levels.push('groups');
   if (t?.company) levels.push('company');
   const level: Level = levels.includes(levelPick) ? levelPick : 'shop';
   const chosen = levelTargets(level, { shopId, companyId: scope.companyId ?? null, eventId, picked, targets: t, devices });
@@ -210,7 +223,7 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   const item = itemType === 'category' ? category : product;
   const itemRef: BlockItemRef | null = !item ? null : itemType === 'category' ? { categoryId: item.id } : { productId: item.id };
   const itemName = item ? item.name || (itemType === 'category' ? categoryName.data : productName.data) || '…' : '';
-  const kioskDisplay = target === 'tills' ? null : look;
+  const kioskDisplay = channels.includes('kiosk') ? look : null;
 
   const toggle = (id: string, on: boolean) =>
     setPicked((prev) => {
@@ -225,14 +238,14 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
       createBlocks({
         ...itemRef!,
         kind,
-        target,
+        channels,
         kioskDisplay,
         note: note.trim() || undefined,
         targets: chosen,
         duration,
       }),
     onSuccess: (out) => {
-      toast.success(savedMessage(kind, target, out.until));
+      toast.success(savedMessage(kind, channels, out.until));
       qc.invalidateQueries({ queryKey: ['item-blocks'] });
       // The kiosks' "מוסתר עכשיו" lists every block that reaches them.
       qc.invalidateQueries({ queryKey: ['kiosks', 'live'] });
@@ -241,7 +254,7 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
     onError: (e) => toast.error(axiosErrorToToastMessage(e, 'החסימה נכשלה')),
   });
 
-  const canSave = !!itemRef && chosen.length > 0 && durationValid(duration) && !save.isPending;
+  const canSave = !!itemRef && channels.length > 0 && chosen.length > 0 && durationValid(duration) && !save.isPending;
   const listFor = (rows: { id: string; label: string }[]) =>
     rows.length === 0 ? (
       <p className="p-2 text-sm text-muted-foreground">אין בסניף</p>
@@ -293,14 +306,15 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
           </div>
 
           <div className="space-y-1.5">
-            <Label>איפה</Label>
-            <Chips
-              label="איפה"
-              value={target}
-              options={TARGETS.map((v) => ({ value: v, label: TARGET_LABELS[v] }))}
-              onChange={setTargetPick}
-            />
-            <p className="text-xs text-muted-foreground">{TARGET_HINTS[target]}</p>
+            <Label id="block-channels">איפה</Label>
+            <div className="grid grid-cols-2 gap-1 rounded-xl border p-1" role="group" aria-labelledby="block-channels">
+              {BLOCK_CHANNELS.map((c) => (
+                <Check key={c} checked={channels.includes(c)} onChange={(on) => setChannel(c, on)} label={CHANNEL_LABELS[c]} />
+              ))}
+            </div>
+            <p className={cn('text-xs', channels.length === 0 ? 'text-destructive' : 'text-muted-foreground')} role={channels.length === 0 ? 'alert' : undefined}>
+              {channelsHint(channels)}
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -323,6 +337,14 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
             ) : (
               <>
                 <Chips label="רמה" value={level} options={levels.map((v) => ({ value: v, label: LEVEL_OPTIONS[v] }))} onChange={setLevelPick} />
+                {!onDevices && channels.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">חסימה ברמת מכשיר, אירוע או קבוצה דורשת &quot;קופה&quot; או &quot;קיוסק&quot;.</p>
+                ) : null}
+                {offDevices && DEVICE_LEVELS.includes(level) ? (
+                  <p className="text-xs text-muted-foreground">
+                    ברמה הזו החסימה חלה רק על הקופות והקיוסקים; הזמנות אונליין ותפריט דיגיטלי נחסמים ברמת סניף, נקודת מכירה או חברה.
+                  </p>
+                ) : null}
                 {level === 'areas' ? listFor((t?.areas ?? []).map((a) => ({ id: a.id, label: a.name }))) : null}
                 {level === 'devices'
                   ? listFor(devices.map((d) => ({ id: d.id, label: `${d.isKiosk ? 'קיוסק' : 'קופה'} · ${named(d).label}` })))
@@ -366,7 +388,7 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
             </p>
           </div>
 
-          {target !== 'tills' ? (
+          {channels.includes('kiosk') ? (
             <div className="space-y-1.5">
               <Label>תצוגה בקיוסק</Label>
               <Chips

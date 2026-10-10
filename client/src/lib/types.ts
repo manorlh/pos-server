@@ -1066,6 +1066,12 @@ export interface Product {
    */
   salesChannel?: import('./productChannel').SalesChannel;
   /**
+   * "מופיע ב" (lib/productChannel.ts): any of pos / kiosk / online / menu. The server always sends
+   * it resolved (never set: from `salesChannel`, online and the menu off); saving it sets
+   * `salesChannel` from its pos / kiosk part.
+   */
+  appearsIn?: ('pos' | 'kiosk' | 'online' | 'menu')[];
+  /**
    * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
    * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
    */
