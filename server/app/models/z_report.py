@@ -40,6 +40,9 @@ class ZReport(Base):
     __tablename__ = "z_reports"
     __table_args__ = (
         Index("ix_z_reports_shop_business_date", "shop_id", "business_date"),
+        # "תאריך הפקת Z": the Zs a tenant produced in a local day or month, newest first
+        # (GET /z-reports?dateBasis=production, /z-reports/by-date/*) — a range on the instant.
+        Index("ix_z_reports_tenant_closed_at", "tenant_id", "closed_at"),
         # A shop's Z number names one document. Two rows with one number would make the
         # number meaningless, which is the one thing it exists to prevent.
         Index(

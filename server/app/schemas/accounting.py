@@ -93,6 +93,9 @@ class AccountingZRow(_Camel):
     shop_sequence_number: Optional[int] = None
     business_date: date
     closed_at: datetime
+    #: The local date the Z was produced (`closed_at` in the shop's timezone) — what
+    #: `dateBasis=production` lists by. The Z's export is the same either way.
+    production_date: Optional[date] = None
     net_sales: Optional[float] = None
     vat_total: Optional[float] = None
     exported: List[ExportedRef] = Field(default_factory=list)

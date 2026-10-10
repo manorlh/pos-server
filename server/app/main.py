@@ -446,6 +446,10 @@ app.include_router(machine_groups_router.router, prefix=_prefix)
 from app.routers import report_center as report_center_router  # noqa: E402
 
 app.include_router(report_center_router.router, prefix=_prefix)
+# Zs by the date they were produced ("תאריך הפקת Z"): the day's and the month's Zs with totals.
+from app.routers import z_by_date as z_by_date_router  # noqa: E402
+
+app.include_router(z_by_date_router.router, prefix=_prefix)
 # "תפקידים והרשאות" for till users and "מגירת מזומן" (docs/SPEC_ROLES_PERMISSIONS.md).
 from app.routers import till_roles as till_roles_router  # noqa: E402
 

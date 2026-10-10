@@ -597,7 +597,12 @@ def build_all_in_one(
     *,
     shop_ids: Sequence[uuid.UUID] = (),
     machine_ids: Sequence[uuid.UUID] = (),
+    z_date_basis: str = "business",
 ) -> Dict[str, Any]:
+    """
+    The report. `z_date_basis` picks which Zs its Z section lists over the window's days: by
+    business date, or by the local date each was produced (`production`). Nothing else moves.
+    """
     from app.services import z_table
 
     now = datetime.now(timezone.utc)
@@ -642,16 +647,23 @@ def build_all_in_one(
 
     catalog = items_and_categories(db, user, tenant_id, window, shop_ids, machine_ids)
 
+    from app.services.reports import _load_zoneinfo
+
+    production = z_date_basis == "production"
+    z_tz = _load_zoneinfo(window.tz_name)
     zq = z_table.filtered_z_query(
         db, user, tenant_id, from_date=window.from_date, to_date=window.to_date,
+        date_basis="production" if production else "business", tzinfo=z_tz,
         shop_ids=shop_ids, machine_ids=machine_ids,
     )
     zs = {"total": 0, "zs": [], "tills": [], "paymentMethods": []}
     if zq is not None:
-        rows = zq.order_by(ZReport.business_date.desc(), ZReport.closed_at.desc()).limit(z_table.Z_TABLE_MAX).all()
-        from app.services.reports import _load_zoneinfo
-
-        zs = z_table.build_z_table(db, rows, _load_zoneinfo(window.tz_name))
+        order = (
+            (ZReport.closed_at.desc(),) if production else (ZReport.business_date.desc(), ZReport.closed_at.desc())
+        )
+        rows = zq.order_by(*order).limit(z_table.Z_TABLE_MAX).all()
+        zs = z_table.build_z_table(db, rows, z_tz)
+    head["zDateBasis"] = "production" if production else "business"
 
     machines = machines_in_scope(db, user, tenant_id, shop_ids, machine_ids)
     transmissions = transmissions_section(db, machines, window)
