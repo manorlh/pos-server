@@ -368,17 +368,51 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         )
         if original is not None:
             details.append(_row("זיכוי עבור מסמך", document_number_from(*original)))
+    # "הפק חשבונית על שם לקוח": the new invoice names the till sale it replaces (§9(ב)).
+    reissue_of = getattr(tx, "reissue_of_transaction_id", None)
+    if reissue_of is not None and not credit:
+        replaced = (
+            db.query(Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number)
+            .filter(Transaction.id == reissue_of, Transaction.tenant_id == tx.tenant_id)
+            .first()
+        )
+        if replaced is not None:
+            details.append(_row("הופקה במקום מסמך", document_number_from(*replaced)))
     if tx.status in _STATUS_LABELS:
         details.append(_row("סטטוס", _STATUS_LABELS[tx.status], emphasis=True))
     customer_name = tx.customer_name or (tx.customer.name if tx.customer is not None else None)
     if customer_name:
         details.append(_row("שם הלקוח", customer_name))
-    if tx.customer is not None and tx.customer.vat_number:
-        details.append(_row("ח.פ. / ע.מ. לקוח", tx.customer.vat_number))
+    # The number the document itself printed first ("פרטי לקוח לחשבונית"), else the linked customer's.
+    customer_vat = getattr(tx, "customer_vat_number", None) or (
+        tx.customer.vat_number if tx.customer is not None else None
+    )
+    if customer_vat:
+        details.append(_row("ח.פ. / ע.מ. לקוח", customer_vat))
     if tx.customer_phone:
         details.append(_row("טלפון", tx.customer_phone))
     if tx.customer_address:
         details.append(_row("כתובת", tx.customer_address))
+    if getattr(tx, "customer_email", None):
+        details.append(_row("דוא\"ל", tx.customer_email))
+    # "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): what a till added to a COPY of this
+    # document after it was issued, apart and labelled as such — never as the document's own details.
+    if not credit:
+        from app.services import document_customer_details as _added
+
+        added = _added.latest_for_document(db, tx.tenant_id, tx.id)
+        # Only while the document's till has the option on: off means a copy prints none of it.
+        if added is not None and _added.parameter_on(db, tx):
+            who = f" ע״י {added.added_by_name}" if added.added_by_name else ""
+            details.append(_row(f"פרטי לקוח נוספו בתאריך {_stamp(added.added_at, zone)}{who}", "", emphasis=True))
+            details.append(_row("  שם הלקוח", added.customer_name))
+            details.append(_row("  ח.פ. / ע.מ. לקוח", added.customer_vat_number))
+            if added.customer_phone:
+                details.append(_row("  טלפון", added.customer_phone))
+            if added.customer_address:
+                details.append(_row("  כתובת", added.customer_address))
+            if added.customer_email:
+                details.append(_row("  דוא\"ל", added.customer_email))
 
     lines: List[PrintRow] = []
     for item in tx.items:

@@ -152,6 +152,7 @@ from app.models.till_design import TillDesignSettings
 # "תפקידים והרשאות" for till users (docs/SPEC_ROLES_PERMISSIONS.md).
 from app.models.till_role import TillRole, TillRoleChange
 from app.models.cash_drawer import CashDrawerEvent, CashMovement
+from app.models.transaction_customer_details import TransactionCustomerDetails
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (

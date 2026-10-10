@@ -58,6 +58,7 @@ class Transaction(Base):
         Index("ix_transactions_shift", "shift_id"),
         Index("ix_transactions_basket", "basket_id"),
         Index("ix_transactions_refund_of", "refund_of_transaction_id"),
+        Index("ix_transactions_reissue_of", "reissue_of_transaction_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True)  # client-generated
@@ -158,6 +159,11 @@ class Transaction(Base):
     customer_name = Column(String(255), nullable=True)
     customer_phone = Column(String(30), nullable=True)
     customer_address = Column(String(500), nullable=True)
+    #: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): the buyer's ח.פ. / ע.מ. and email
+    #: as the till printed them on the invoice — a snapshot like the three above. The tax
+    #: export files this number in C100 field 1215 when the document carries it.
+    customer_vat_number = Column(String(20), nullable=True)
+    customer_email = Column(String(255), nullable=True)
     cashier_id = Column(String(100), nullable=True)
     branch_id = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
@@ -177,6 +183,12 @@ class Transaction(Base):
     #: as the till sent it. Null on every other document. Not a foreign key, like the link
     #: above: a document is never refused over it.
     remote_credit_request_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    #: "הפק חשבונית על שם לקוח" (docs/SPEC_CUSTOMER_INVOICE.md): the original sale a document
+    #: re-issues in a customer's name. Set on both documents of the pair — the credit note that
+    #: cancels the original (which also carries `refund_of_transaction_id`) and the new invoice
+    #: that replaces it — so each names the original and the two find each other. Not a
+    #: foreign key, like the refund link: a document is never refused over a link.
+    reissue_of_transaction_id = Column(UUID(as_uuid=True), nullable=True)
     #: A credit for a sale that never really happened ("ללא החזר כספי — עסקה שלא בוצעה"):
     #: its tender mirrors the original's but no money moved — true when any of its legs
     #: says so (`TransactionPayment.no_money_movement`). Written server-side on ingest.
