@@ -249,6 +249,27 @@ export function waMeLink(phone: string | null | undefined, text: string): string
   return `https://wa.me/${digits}?text=${encodeURIComponent(text ?? '')}`;
 }
 
+/**
+ * The same message straight in WhatsApp Web (`web.whatsapp.com/send`), for an operator who works in the browser.
+ * No number: WhatsApp Web asks whom to send it to (a contact or a group).
+ */
+export function waWebLink(phone: string | null | undefined, text: string): string {
+  const digits = (phone ?? '').replace(/\D/g, '');
+  const phoneParam = digits ? `phone=${digits}&` : '';
+  return `https://web.whatsapp.com/send?${phoneParam}text=${encodeURIComponent(text ?? '')}`;
+}
+
+/** The import template to send to a customer to fill in: a CSV (BOM, opens in Excel) with the headers the import reads. */
+export function importTemplateCsv(mode: DistributionMode): string {
+  const third = mode === 'group' ? 'קבוצה' : 'כמות';
+  const rows = [
+    ['שם', 'טלפון', third],
+    ['ישראל ישראלי', '050-1234567', mode === 'group' ? '1' : '2'],
+    ['דנה כהן', '052-7654321', '1'],
+  ];
+  return '\uFEFF' + rows.map((r) => r.join(',')).join('\r\n') + '\r\n';
+}
+
 // ── Sharing the file itself ────────────────────────────────────────────────────
 
 /** What of `navigator` the share needs (a fake in tests). */
