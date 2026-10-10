@@ -97,6 +97,10 @@ class ShiftCloseIn(BaseModel):
     #: One key feeds the drawer: `cardTipsFromDrawer` (card tips paid to staff out of the
     #: drawer, present only when that till parameter was on), which a Z's expected cash
     #: subtracts (app/services/z_builder.py `card_tips_from_drawer`); it is not compared.
+    #: Three more feed it, whatever the parameter says at the close: `cashIn`, `cashOut` and
+    #: `deposits` — what the shift's movements came to (only the types that moved anything) — which
+    #: a Z's expected cash takes in only when "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" is on when
+    #: that Z is produced (app/services/z_expected_cash.py); not compared either.
     till: Optional[Dict[str, Any]] = None
     close_request_id: Optional[uuid.UUID] = Field(None, alias="closeRequestId")
     #: A training shift's close ("מצב הדרכה"): quarantined, answered like a real close.

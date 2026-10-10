@@ -125,6 +125,11 @@ describe('the main till’s local shop Z, through the cloud (pendingShopZPart)',
       expect(section.shiftIds).toEqual([shiftId]);
       expect(section.manifest).toMatchObject({ documents: 1, documentIds: [doc.id], totals: { gross: '42.00', card: '42.00' }, shiftIds: [shiftId] });
       expect(section.report).toMatchObject({ deviceRole: 'kiosk', grossSales: '42.00', transactionsCount: 1 });
+      // "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" never applies to a kiosk (no drawer, no Cash In / Out
+      // or deposits): its part carries no movements block, and its expected cash is float + cash + cash
+      // tips as ever — the cloud's Z and the main till's paper take it as it is.
+      expect(section.report).not.toHaveProperty('cashMovements');
+      expect(section.report).toMatchObject({ openingCash: '0.00', expectedCash: '0.00' });
       expect(svc.ledger.currentShift()).toBeNull();
 
       // Asked again (the beat repeats it until the cloud has it): the same answer, nothing closed.
