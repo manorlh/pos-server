@@ -185,6 +185,13 @@ SECTIONS: Tuple[Section, ...] = (
         "accounting", "הנהלת חשבונות", "ייצוא להנהלת חשבונות ומיפוי חשבונות.",
         ("/dashboard/accounting-export", "/dashboard/accounting-settings"),
     ),
+    # "ערוצים דיגיטליים" (P:\specs\digital-menu-ordering-cards-plan.md §21).
+    Section(
+        "digital_legal", "משפטי ונגישות",
+        "הצהרת נגישות, מדיניות פרטיות, תקנון ומדיניות עוגיות של התפריט הדיגיטלי, ההזמנות והכרטיסים. "
+        "צפייה: רואה ובודק פרסום; עריכה: עורך טיוטות ומפרסם אחרי \"נבדק\".",
+        ("/dashboard/digital-legal",),
+    ),
 )
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
@@ -575,6 +582,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/tenants*", S("organization")),
     # ── Dashboard users ──
     (_ALL, "/users*", S("users")),
+    # ── "משפטי ונגישות" (app/routers/digital_legal.py): a preview / contrast check only reads ──
+    ("POST", "/digital-legal/preview", S("digital_legal", level=VIEW)),
+    ("POST", "/digital-legal/theme-check", S("digital_legal", level=VIEW)),
+    (_ALL, "/digital-legal/*", S("digital_legal")),
 ]
 
 

@@ -277,6 +277,11 @@ app.include_router(notifications_router.till_router, prefix=_prefix)
 app.include_router(club_router.router, prefix=_prefix)
 app.include_router(club_router.till_router, prefix=_prefix)
 app.include_router(club_router.public_router, prefix=_prefix)
+# "משפטי ונגישות": the public channels' legal pages, cookie consent log and publication gate.
+from app.routers import digital_legal as digital_legal_router  # noqa: E402
+
+app.include_router(digital_legal_router.router, prefix=_prefix)
+app.include_router(digital_legal_router.public_router, prefix=_prefix)
 
 
 @app.on_event("startup")

@@ -45,7 +45,8 @@ export type SectionId =
   | 'attendance'
   | 'users'
   | 'branding'
-  | 'accounting';
+  | 'accounting'
+  | 'digital_legal';
 
 export interface DashboardSection {
   id: SectionId;
@@ -119,6 +120,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'users', pages: ['/dashboard/users'] },
   { id: 'branding', pages: ['/dashboard/branding'] },
   { id: 'accounting', pages: ['/dashboard/accounting-export', '/dashboard/accounting-settings'] },
+  // "ערוצים דיגיטליים": the public channels' legal pages and consent.
+  { id: 'digital_legal', pages: ['/dashboard/digital-legal'] },
 ];
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);

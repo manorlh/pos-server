@@ -144,6 +144,15 @@ GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
 POST /device-management/provisioning-qr -> devices:edit
+GET /digital-legal/catalog -> digital_legal:view
+GET /digital-legal/documents -> digital_legal:view
+POST /digital-legal/documents -> digital_legal:edit
+DELETE /digital-legal/documents/{document_id} -> digital_legal:edit
+PUT /digital-legal/documents/{document_id} -> digital_legal:edit
+POST /digital-legal/documents/{document_id}/publish -> digital_legal:edit
+POST /digital-legal/preview -> digital_legal:view
+GET /digital-legal/publication-check -> digital_legal:view
+POST /digital-legal/theme-check -> digital_legal:view
 GET /exception-alerts/dispatches -> exception_alerts:view
 GET /exception-alerts/provider -> exception_alerts:view
 GET /exception-alerts/rules -> exception_alerts:view

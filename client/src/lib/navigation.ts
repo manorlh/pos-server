@@ -282,6 +282,17 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // "ערוצים דיגיטליים" (P:\specs\digital-menu-ordering-cards-plan.md §21): the digital menu,
+    // online ordering and business cards join this group; their legal pages first, because no
+    // public page goes live without them.
+    id: 'digital',
+    labelKey: 'sections.digital',
+    items: [
+      // Company managers and up for a company; a shop's manager for their shop's overrides.
+      { href: '/dashboard/digital-legal', labelKey: 'digitalLegal', icon: ShieldCheck, gate: 'settingsWrite' },
+    ],
+  },
+  {
     id: 'settings',
     labelKey: 'sections.settings',
     items: [

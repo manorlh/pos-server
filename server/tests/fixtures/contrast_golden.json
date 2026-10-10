@@ -1,0 +1,295 @@
+{
+  "about": "WCAG contrast cases shared by server/app/services/digital_legal/contrast.py and client/src/lib/contrast.ts. Regenerate with the Python module; both tests read this file.",
+  "ratios": [
+    {
+      "fg": "#000000",
+      "bg": "#FFFFFF",
+      "ratio": 21.0
+    },
+    {
+      "fg": "#FFFFFF",
+      "bg": "#FFFFFF",
+      "ratio": 1.0
+    },
+    {
+      "fg": "#777777",
+      "bg": "#FFFFFF",
+      "ratio": 4.48
+    },
+    {
+      "fg": "#767676",
+      "bg": "#FFFFFF",
+      "ratio": 4.54
+    },
+    {
+      "fg": "#1F6FEB",
+      "bg": "#FFFFFF",
+      "ratio": 4.63
+    },
+    {
+      "fg": "#16A34A",
+      "bg": "#FFFFFF",
+      "ratio": 3.3
+    },
+    {
+      "fg": "#111827",
+      "bg": "#F9FAFB",
+      "ratio": 16.98
+    },
+    {
+      "fg": "#FFFFFF",
+      "bg": "#0A84FF",
+      "ratio": 3.65
+    },
+    {
+      "fg": "#fff",
+      "bg": "#000",
+      "ratio": 21.0
+    },
+    {
+      "fg": "#f00",
+      "bg": "#fff",
+      "ratio": 4.0
+    },
+    {
+      "fg": "#00000080",
+      "bg": "#FFFFFF",
+      "ratio": 4.0
+    },
+    {
+      "fg": "rgb(17, 24, 39)",
+      "bg": "rgb(255,255,255)",
+      "ratio": 17.74
+    },
+    {
+      "fg": "rgba(0,0,0,0.5)",
+      "bg": "#ffffff",
+      "ratio": 3.98
+    },
+    {
+      "fg": "#FFFFFF",
+      "bg": "#ffffff00",
+      "ratio": 1.0
+    },
+    {
+      "fg": "#595959",
+      "bg": "#FFFFFF",
+      "ratio": 7.0
+    },
+    {
+      "fg": "#E11D48",
+      "bg": "#111827",
+      "ratio": 3.78
+    },
+    {
+      "fg": "not-a-color",
+      "bg": "#FFFFFF",
+      "ratio": null
+    },
+    {
+      "fg": "#12345",
+      "bg": "#FFFFFF",
+      "ratio": null
+    },
+    {
+      "fg": "#FFFFFF",
+      "bg": "rgb(300,0,0)",
+      "ratio": null
+    }
+  ],
+  "themes": [
+    {
+      "name": "defaults",
+      "theme": {},
+      "ok": true,
+      "failures": [],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63
+      }
+    },
+    {
+      "name": "kiosk ios",
+      "theme": {
+        "primaryColor": "#0A84FF",
+        "accentColor": "#34C759"
+      },
+      "ok": false,
+      "failures": [
+        "button_text",
+        "link_on_background",
+        "accent_on_background"
+      ],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 3.65,
+        "link_on_background": 3.65,
+        "focus_on_background": 3.65,
+        "accent_on_background": 2.22
+      }
+    },
+    {
+      "name": "dark",
+      "theme": {
+        "backgroundColor": "#111827",
+        "surfaceColor": "#1F2937",
+        "textColor": "#F9FAFB",
+        "primaryColor": "#60A5FA",
+        "buttonColor": "#2563EB",
+        "buttonTextColor": "#FFFFFF"
+      },
+      "ok": true,
+      "failures": [],
+      "ratios": {
+        "text_on_background": 16.98,
+        "text_on_surface": 14.05,
+        "button_text": 5.17,
+        "link_on_background": 6.98,
+        "focus_on_background": 6.98
+      }
+    },
+    {
+      "name": "pale text",
+      "theme": {
+        "textColor": "#9CA3AF"
+      },
+      "ok": false,
+      "failures": [
+        "text_on_background",
+        "text_on_surface"
+      ],
+      "ratios": {
+        "text_on_background": 2.54,
+        "text_on_surface": 2.54,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63
+      }
+    },
+    {
+      "name": "yellow button",
+      "theme": {
+        "primaryColor": "#FACC15",
+        "buttonTextColor": "#FFFFFF"
+      },
+      "ok": false,
+      "failures": [
+        "button_text",
+        "link_on_background",
+        "focus_on_background"
+      ],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 1.53,
+        "link_on_background": 1.53,
+        "focus_on_background": 1.53
+      }
+    },
+    {
+      "name": "yellow button dark text",
+      "theme": {
+        "primaryColor": "#A16207",
+        "buttonColor": "#FACC15",
+        "buttonTextColor": "#111827"
+      },
+      "ok": true,
+      "failures": [],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 11.58,
+        "link_on_background": 4.92,
+        "focus_on_background": 4.92
+      }
+    },
+    {
+      "name": "muted",
+      "theme": {
+        "mutedTextColor": "#6B7280"
+      },
+      "ok": true,
+      "failures": [],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63,
+        "muted_text_on_background": 4.83
+      }
+    },
+    {
+      "name": "muted too light",
+      "theme": {
+        "mutedTextColor": "#A1A1AA"
+      },
+      "ok": false,
+      "failures": [
+        "muted_text_on_background"
+      ],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63,
+        "muted_text_on_background": 2.56
+      }
+    },
+    {
+      "name": "extra pairs",
+      "theme": {
+        "pairs": [
+          {
+            "id": "price_badge",
+            "fg": "#FFFFFF",
+            "bg": "#F97316",
+            "kind": "large"
+          },
+          {
+            "id": "sold_out",
+            "fg": "#B91C1C",
+            "bg": "#FEF2F2",
+            "kind": "text"
+          }
+        ]
+      },
+      "ok": false,
+      "failures": [
+        "price_badge"
+      ],
+      "ratios": {
+        "text_on_background": 17.74,
+        "text_on_surface": 17.74,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63,
+        "price_badge": 2.8,
+        "sold_out": 5.91
+      }
+    },
+    {
+      "name": "bad color",
+      "theme": {
+        "textColor": "blue-ish"
+      },
+      "ok": false,
+      "failures": [
+        "text_on_background",
+        "text_on_surface"
+      ],
+      "ratios": {
+        "text_on_background": null,
+        "text_on_surface": null,
+        "button_text": 4.63,
+        "link_on_background": 4.63,
+        "focus_on_background": 4.63
+      }
+    }
+  ]
+}

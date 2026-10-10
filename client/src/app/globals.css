@@ -252,6 +252,55 @@
   }
 }
 
+/*
+ * Public pages (components/public-legal/PublicPageShell.tsx, `data-public-root`): the visitor's
+ * "הפחתת תנועה" is honoured, and the optional accessibility toolbar's choices apply here
+ * (`data-a11y-*`; the text size itself is the document root's font size).
+ */
+@media (prefers-reduced-motion: reduce) {
+  [data-public-root] *,
+  [data-public-root] *::before,
+  [data-public-root] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-public-root][data-a11y-still] *,
+[data-public-root][data-a11y-still] *::before,
+[data-public-root][data-a11y-still] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+[data-public-root][data-a11y-links] a {
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+  outline: 2px dashed currentColor;
+  outline-offset: 2px;
+}
+[data-public-root][data-a11y-contrast],
+[data-public-root][data-a11y-contrast] * {
+  background-color: #000 !important;
+  color: #fff !important;
+  border-color: #fff !important;
+}
+[data-public-root][data-a11y-contrast] a,
+[data-public-root][data-a11y-contrast] a * {
+  color: #ffeb3b !important;
+}
+[data-public-root][data-a11y-contrast] img {
+  filter: contrast(1.2);
+}
+[data-public-root] :focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+[data-public-root][data-a11y-contrast] :focus-visible {
+  outline-color: #ffeb3b;
+}
+
 /* The phone's page: clear of the home bar and, in landscape, of the notch. */
 @media (max-width: 767px) {
   .ios-safe-main {

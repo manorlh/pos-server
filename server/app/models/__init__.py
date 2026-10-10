@@ -179,6 +179,8 @@ from app.models.command_request_key import CommandRequestKey
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
 from app.models.sales_target import SalesTarget, SalesTargetHit
+# "משפטי ונגישות" of the public digital channels (app/services/digital_legal/).
+from app.models.digital_legal import CookieConsentRecord, LegalDocument, MarketingConsentRecord
 
 __all__ = [
     "User", "UserRole",
@@ -270,4 +272,5 @@ __all__ = [
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
+    "LegalDocument", "CookieConsentRecord", "MarketingConsentRecord",
 ]
