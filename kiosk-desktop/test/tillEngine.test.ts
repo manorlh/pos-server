@@ -195,7 +195,8 @@ describe('cash: exact, with change, and the document', () => {
     await h.ok('sell.add', { productId: 'p-burger' });
     await h.ok('checkout.start');
     await h.ok('checkout.cash', { amountAgorot: 10_000 });
-    expect(h.state().checkout).toMatchObject({ phase: 'done', changeAgorot: 5800 });
+    // The done screen says what was handed over ("התקבל") and the change.
+    expect(h.state().checkout).toMatchObject({ phase: 'done', changeAgorot: 5800, tenderedAgorot: 10_000 });
     const [d] = docsOf(h);
     expect(d.payments).toEqual([{ method: 'cash', amountAgorot: 4200 }]);
     expect(d).toMatchObject({ tenderedAgorot: 10_000, changeAgorot: 5800 });

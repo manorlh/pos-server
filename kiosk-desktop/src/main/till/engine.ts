@@ -193,6 +193,8 @@ interface CheckoutRec {
   docId: string | null;
   documentRef: string | null;
   changeAgorot: number;
+  /** The cash handed over, on the done screen ("התקבל"): the document's `amountTendered`. */
+  tenderedAgorot: number;
   askPrint: boolean;
   printWarning: string | null;
   cardStatus: string | null;
@@ -217,6 +219,7 @@ const idleCheckout = (): CheckoutRec => ({
   docId: null,
   documentRef: null,
   changeAgorot: 0,
+  tenderedAgorot: 0,
   askPrint: false,
   printWarning: null,
   cardStatus: null,
@@ -988,6 +991,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     c.docId = doc.id;
     c.documentRef = formatDocNumber(doc.prefix, String(doc.number));
     c.changeAgorot = doc.changeAgorot ?? 0;
+    c.tenderedAgorot = doc.tenderedAgorot ?? 0;
     c.legs = legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, handedAgorot: l.method === 'cash' ? l.amountAgorot : 0, status: 'approved' as const }));
     c.cardStatus = null;
     c.cardError = null;
@@ -1384,7 +1388,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
         legs: c.legs.map((l) => ({ method: l.method, amountAgorot: l.amountAgorot, status: l.status })),
         documentRef: c.documentRef,
         documentId: c.phase === 'done' ? c.docId : null,
-        tenderedAgorot: handedTotal(approved),
+        tenderedAgorot: c.phase === 'done' ? c.tenderedAgorot : handedTotal(approved),
         askPrint: c.askPrint,
         printWarning: c.printWarning,
         cardStatus: c.cardStatus,
