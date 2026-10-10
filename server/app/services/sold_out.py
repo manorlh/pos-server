@@ -300,6 +300,9 @@ def blocks_for_machine(
     for mark in q.all():
         if not rules.covers(mark, till):
             continue
+        # "מופיע ב": a block for the web channels only reaches no device.
+        if not reaches_device_channel(mark, ctx.is_kiosk):
+            continue
         # An automatic "אזל" is about one stock location: it reaches only the devices that sell
         # the product from it (app/services/stock_locations.py `sell_from`).
         if mark.source == "auto" and not _sells_from(db, machine, mark, sells_from):
@@ -343,7 +346,7 @@ def kiosk_hidden(db: Session, machine: POSMachine, now: Optional[datetime] = Non
         m for m in db.query(SoldOutMark).filter(
             _scope_filter(ctx), in_force_filter(now), SoldOutMark.kiosk_display == rules.DISPLAY_HIDE,
         ).order_by(SoldOutMark.created_at).all()
-        if rules.covers(m, till)
+        if rules.covers(m, till) and reaches_device_channel(m, True)
     ]
     products: List[str] = []
     for m in marks:
@@ -378,6 +381,30 @@ def _sells_from(db: Session, machine: POSMachine, mark: SoldOutMark, cache: Dict
             cache[key] = SL.sell_from(cache["path"], managed)
     loc = cache[key]
     return loc is not None and loc.level == mark.scope and str(loc.target_id) == str(mark.scope_id)
+
+
+def reaches_device_channel(mark: Any, is_kiosk: bool) -> bool:
+    """
+    "מופיע ב": whether a block's channels include this device's — the kiosks', or the tills'. A block
+    with no channels of its own (every block before the web channels) reaches the devices its target
+    names, as always.
+    """
+    channels = getattr(mark, "channels", None) if not isinstance(mark, dict) else mark.get("channels")
+    if not isinstance(channels, (list, tuple)) or not channels:
+        return True
+    return ("kiosk" if is_kiosk else "pos") in channels
+
+
+def reach_of_channels(channels: Optional[Sequence[str]]) -> Optional[str]:
+    """The devices' target a set of channels projects to: tills and kiosks "all", kiosks "kiosks", tills "tills"."""
+    if not channels:
+        return None
+    pos, kiosk = "pos" in channels, "kiosk" in channels
+    if pos and not kiosk:
+        return rules.TARGET_TILLS
+    if kiosk and not pos:
+        return rules.TARGET_KIOSKS
+    return rules.TARGET_ALL
 
 
 def manual_in_force(blocks: Iterable[Any]) -> bool:
@@ -448,7 +475,13 @@ def devices_reached(db: Session, scope: str, scope_id: Any, target: Optional[str
 
 
 def mark_devices(db: Session, mark: SoldOutMark) -> List[POSMachine]:
-    return devices_reached(db, mark.scope, mark.scope_id, mark.target)
+    rows = devices_reached(db, mark.scope, mark.scope_id, mark.target)
+    channels = getattr(mark, "channels", None)
+    if not isinstance(channels, (list, tuple)) or not channels or not rows:
+        return rows
+    # "מופיע ב": only the devices whose channel the block covers (none for a web-only block).
+    kiosks = _kiosk_ids(db, [m.id for m in rows])
+    return [m for m in rows if reaches_device_channel(mark, m.id in kiosks)]
 
 
 def _level_devices(db: Session, scope: str, scope_id: Any) -> List[POSMachine]:
@@ -604,6 +637,8 @@ def block(
     reach: Optional[str] = None,
     display: Optional[str] = None,
     origin: Optional[str] = None,
+    channels: Optional[Sequence[str]] = None,
+    web_display: Optional[str] = None,
 ) -> SoldOutMark:
     """
     Block `product` — or every product of `category` — at the target's level for `reach` ("all" /
@@ -614,6 +649,15 @@ def block(
     now = now or utc_now()
     if kind not in SOLD_OUT_KINDS:
         raise _bad("invalid_kind", "סוג חסימה לא מוכר")
+    # "מופיע ב": channels named — the devices' target is their projection (none of the devices: "all",
+    # and the channels keep it off every device).
+    if channels is not None:
+        channels = [c for c in ("pos", "kiosk", "online", "menu") if c in set(channels)]
+        if not channels:
+            raise _bad("channels_required", "בחרו לפחות ערוץ אחד")
+        reach = reach_of_channels(channels) if target.scope not in ("kiosks", "kiosk") else rules.TARGET_KIOSKS
+    if web_display is not None and web_display not in ("hide", "label"):
+        raise _bad("invalid_display", "תצוגה באתר לא מוכרת")
     if (product is None) == (category is None):
         raise _bad("item_required", "בחרו פריט או מחלקה")
     if display is not None and display not in SOLD_OUT_DISPLAYS:
@@ -643,8 +687,10 @@ def block(
             SoldOutMark.source == source,
             in_force_filter(now),
         )
-        .first()
+        .all()
     )
+    # The same block is the same channels too (a block for other channels is another block).
+    existing = next((e for e in existing if (getattr(e, "channels", None) or None) == (channels or None)), None)
     who = by_name or _user_name(user)
     text = (note or "").strip()[:200] or None
     if existing is not None:
@@ -652,6 +698,7 @@ def block(
         existing.until_mode = until_mode
         existing.note = text
         existing.kiosk_display = display
+        existing.web_display = web_display
         existing.updated_at = now
         row = existing
     else:
@@ -668,6 +715,8 @@ def block(
             kind=kind,
             kiosk_display=display,
             origin=origin,
+            channels=channels,
+            web_display=web_display,
             until=until,
             until_mode=until_mode,
             source=source,
@@ -866,6 +915,9 @@ def mark_view(
         "itemType": "category" if is_category else "product",
         "itemName": (category.name if category is not None else None) if is_category else (product.name if product is not None else None),
         "origin": m.origin,
+        # "מופיע ב": the channels it covers (None: as `target` means — the devices only).
+        "channels": list(m.channels) if getattr(m, "channels", None) else None,
+        "webDisplay": getattr(m, "web_display", None),
         "productId": str(m.product_id) if m.product_id is not None else None,
         "productName": product.name if product is not None else None,
         "imageUrl": product.image_url if product is not None else None,

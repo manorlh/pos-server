@@ -15,6 +15,8 @@ export type SectionId =
   | 'reports'
   | 'z'
   | 'products'
+  | 'digital_menu'
+  | 'online_ordering'
   | 'cockpit'
   | 'quick_actions'
   | 'item_blocks'
@@ -79,6 +81,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
     ],
   },
+  // "תפריט דיגיטלי" / "הזמנות אונליין" (ערוצים דיגיטליים): their profiles, each its own section.
+  { id: 'digital_menu', pages: ['/dashboard/digital-menu'] },
+  { id: 'online_ordering', pages: ['/dashboard/online-ordering'] },
   // The manager's own ("הניהול שלי"): they gate what the cockpit (the home page) offers.
   { id: 'cockpit', pages: [] },
   // "פעולות מהירות": no page of its own — the quick message / promotion / happy hour sheets.

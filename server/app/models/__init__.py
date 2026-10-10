@@ -183,6 +183,8 @@ from app.models.sales_target import SalesTarget, SalesTargetHit
 from app.models.product_channel_override import ProductChannelOverride
 # "סדר תצוגה" — orderings and which channel uses which at a level (app/services/display_ordering.py).
 from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
+# "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
+from app.models.presentation_profile import PresentationAudit, PresentationProfile, PresentationRevision
 
 __all__ = [
     "User", "UserRole",
@@ -276,4 +278,5 @@ __all__ = [
     "SalesTarget", "SalesTargetHit",
     "ProductChannelOverride",
     "DisplayOrdering", "DisplayOrderingBinding",
+    "PresentationAudit", "PresentationProfile", "PresentationRevision",
 ]

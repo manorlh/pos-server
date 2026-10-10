@@ -582,12 +582,17 @@ def _write_kiosk(db: Session, level: str, target_id: Any, ordering: DisplayOrder
 
 
 def write_through(db: Session, ordering: DisplayOrdering, *, skip: Optional[DisplayOrderingBinding] = None,
-                  now: Optional[datetime] = None) -> Wake:
-    """Write the ordering into the keys of each of its tills' and kiosks' bindings (the caller commits)."""
+                  only: Optional[DisplayOrderingBinding] = None, now: Optional[datetime] = None) -> Wake:
+    """
+    Write the ordering into the keys of each of its tills' and kiosks' bindings (the caller commits) —
+    or, with `only`, of that one binding (a level just linked or copied: the others hold it already).
+    """
     now = now or _now()
     wake = Wake(pos=[], kiosks=[])
     for b in bindings_of(db, ordering.id):
         if skip is not None and b.id == skip.id:
+            continue
+        if only is not None and b.id != only.id:
             continue
         if b.channel == POS:
             keys = _write_pos(db, b.level, b.target_id, ordering, now)
@@ -714,8 +719,9 @@ def link(db: Session, target: Target, channel: str, source: Target, source_chann
         raise _bad("link_self", "אי אפשר לקשר סידור לעצמו")
     src = materialize(db, source, source_channel, user=user)
     ordering = db.get(DisplayOrdering, src.ordering_id)
-    bind(db, target, channel, ordering, user=user)
-    return write_through(db, ordering)
+    row = bind(db, target, channel, ordering, user=user)
+    # Only the level just linked takes the order: the source's levels hold it already.
+    return write_through(db, ordering, only=row)
 
 
 def unlink(db: Session, target: Target, channel: str, *, user: Any = None) -> Wake:
@@ -750,9 +756,9 @@ def copy_from(db: Session, target: Target, channel: str, source: Target, source_
         b.copied_at = _now()
     else:
         ordering = new_ordering(db, target.tenant_id, snap, company_id=target.company_id, user=user)
-        bind(db, target, channel, ordering, user=user,
-             copied_from=src_binding.ordering_id if src_binding is not None else None)
-    return write_through(db, ordering)
+        b = bind(db, target, channel, ordering, user=user,
+                 copied_from=src_binding.ordering_id if src_binding is not None else None)
+    return write_through(db, ordering, only=b)
 
 
 def clear(db: Session, target: Target, channel: str, *, user: Any = None) -> Wake:

@@ -145,6 +145,11 @@ app.include_router(product_channels_router.router, prefix=_prefix)
 from app.routers import display_orderings as display_orderings_router  # noqa: E402
 
 app.include_router(display_orderings_router.router, prefix=_prefix)
+# "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions, publication.
+from app.routers import presentation_profiles as presentation_profiles_router  # noqa: E402
+
+app.include_router(presentation_profiles_router.menu_router, prefix=_prefix)
+app.include_router(presentation_profiles_router.online_router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
 app.include_router(availability_reopen_router.router, prefix=_prefix)
 app.include_router(machine_catalog.router, prefix=_prefix)

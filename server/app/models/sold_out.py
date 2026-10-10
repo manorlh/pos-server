@@ -30,7 +30,7 @@ kiosk, a controlling till, a migrated "מוסתר בקיוסקים" row, the sto
 """
 import uuid
 
-from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import JSON, CheckConstraint, Column, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -76,6 +76,13 @@ class SoldOutMark(Base):
     kiosk_display = Column(String(8), nullable=True)
     #: Where it was set from (SOLD_OUT_ORIGINS); NULL before origins were kept.
     origin = Column(String(16), nullable=True)
+    #: "מופיע ב" — the channels this block covers (pos / kiosk / online / menu,
+    #: specs/digital-menu-ordering-cards-plan.md §4.3). NULL: as `target` always meant — the tills
+    #: and / or the kiosks, no web channel (app/services/digital_effective_rules.py `block_channels`).
+    #: `target` stays the devices' projection; a block without pos and kiosk reaches no device.
+    channels = Column(JSON, nullable=True)
+    #: Its look on the web channels: "hide" / "label"; NULL = the profile's default.
+    web_display = Column(String(8), nullable=True)
     #: "sold_out" | "blocked".
     kind = Column(String(16), nullable=False, default="sold_out", server_default="sold_out")
     #: Ends by itself then; NULL = until removed.

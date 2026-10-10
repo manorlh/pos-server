@@ -83,6 +83,10 @@ class CatalogMenu(Base):
     valid_to = Column(Date, nullable=True)
     #: A colour for the dashboard's chips ("#F59E0B"); nothing reads it on the till.
     color = Column(String(16), nullable=True)
+    #: The web channels it is offered on too — ["online", "menu"] (specs/digital-menu-ordering-cards-plan.md
+    #: §1). NULL / []: none — every menu so far. Never in a device's block: the tills and kiosks
+    #: read `channel` only, unchanged (app/services/digital_effective.py `web_menus`).
+    web_channels = Column(JSON, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

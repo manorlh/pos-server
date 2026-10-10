@@ -104,6 +104,10 @@ class BlockIn(_ItemIn):
     target: Reach = "all"
     #: The kiosks' look for this block; None = their `general.soldOutMode`.
     kiosk_display: Optional[Display] = Field(None, alias="kioskDisplay")
+    #: "מופיע ב": the channels it covers (any of pos / kiosk / online / menu); None = `target` as always.
+    channels: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, max_length=4)
+    #: Its look on the web channels ("hide" / "label"); None = the profile's default.
+    web_display: Optional[Literal["hide", "label"]] = Field(None, alias="webDisplay")
     note: Optional[str] = Field(None, max_length=200)
     targets: List[TargetIn] = Field(..., min_length=1, max_length=200)
     duration: DurationIn = Field(default_factory=DurationIn)
@@ -413,6 +417,7 @@ def create_blocks(
             db, tenant_id=active_tenant_id, product=product, category=category, target=target, kind=body.kind,
             until=end.until, until_mode=end.mode, note=body.note, user=current_user, now=now,
             reach=body.target, display=body.kiosk_display, origin="dashboard",
+            channels=body.channels, web_display=body.web_display,
         )
         for target in targets
     ]
