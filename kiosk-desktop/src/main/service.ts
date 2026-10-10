@@ -436,9 +436,11 @@ export class KioskService extends EventEmitter {
     const addr = typeof params.receiptPrinterAddress === 'string' ? params.receiptPrinterAddress.trim() : '';
     let printer = s.printer ?? null;
     if (!printer) {
-      // The cloud's "מדפסת חשבוניות — כתובת" when it is a network address, else the spooler.
+      // The cloud's "מדפסת חשבוניות — כתובת": a network address (IP[:port]); a Windows printer's NAME (a till has no technician
+      // corner to choose one on the device — a MAC, which Android's Bluetooth printer uses, is not a name); else the spooler's automatic choice.
       const m = /^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d+))?$/.exec(addr);
-      printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: null };
+      const mac = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(addr);
+      printer = m ? { transport: 'tcp', host: m[1], port: m[2] ? Number(m[2]) : 9100 } : { transport: 'spooler', queueName: addr && !mac ? addr : null };
     }
     return { printer, zoom: s.zoom ?? null };
   }

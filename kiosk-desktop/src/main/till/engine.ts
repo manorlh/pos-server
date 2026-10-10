@@ -1310,7 +1310,7 @@ export class KioskCoreTillEngine implements EngineEndpoint {
     this.openDialog({
       kind: 'manager_approval',
       title,
-      body: title,
+      body: '',
       fields: [{ name: 'pin', label: WORDS.managerCode, kind: 'pin' }],
       actions: [
         { id: 'approve', label: WORDS.approve, primary: true },
