@@ -29,7 +29,6 @@ overlap) the first of the two — Python's `fold=0`, java.time's default.
 from __future__ import annotations
 
 import uuid
-import weakref
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -274,40 +273,23 @@ class EndHours:
         return business_day(moment, tz_name, self.for_machine(machine_id))
 
 
-#: Per engine: whether the till parameters' tables exist (always, but in a test world built of
-#: a few tables) — an absent table is the default hour, never an error in a report.
-_TABLES_PRESENT: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
-
-
-def _parameters_present(db: Session) -> bool:
-    bind = db.get_bind()
-    engine = getattr(bind, "engine", bind)
-    try:
-        known = _TABLES_PRESENT.get(engine)
-    except TypeError:
-        known = None
-    if known is None:
-        from sqlalchemy import inspect as sa_inspect
-
-        try:
-            # On the session's own connection: a second checkout of a single-connection pool
-            # (SQLite in memory) would roll the session's transaction back on return.
-            known = bool(sa_inspect(db.connection()).has_table("till_parameters"))
-        except Exception:  # pragma: no cover - an unreadable catalogue: the default hour
-            known = False
-        try:
-            _TABLES_PRESENT[engine] = known
-        except TypeError:  # pragma: no cover
-            pass
-    return known
-
-
 def _parameter(db: Session):
+    """
+    The parameter's definition, or None. In a test world built of a few tables (SQLite) the
+    table may be missing: that is the default hour, never an error in a report. On Postgres the
+    table always exists, and an error there is not swallowed (it would leave the transaction
+    aborted).
+    """
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
     from app.models.till_parameter import TillParameter
 
-    if not _parameters_present(db):
+    try:
+        return db.query(TillParameter).filter(TillParameter.key == PARAMETER_KEY).first()
+    except (OperationalError, ProgrammingError):
+        if db.get_bind().dialect.name == "postgresql":
+            raise
         return None
-    return db.query(TillParameter).filter(TillParameter.key == PARAMETER_KEY).first()
 
 
 def _scope_default(parameter) -> int:
