@@ -14,7 +14,7 @@ import json
 import uuid
 import zipfile
 from collections import Counter, defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -148,7 +148,7 @@ class Books:
 
 # ── 1. Counts and totals per bar ──────────────────────────────────────────────
 
-def per_bar(books: Books) -> Dict[str, Any]:
+def per_bar(books: Books, z_mode: str = "area") -> Dict[str, Any]:
     from app.services.document_prefix import document_series_of
 
     by_bar: Dict[Any, list] = defaultdict(list)
@@ -160,7 +160,12 @@ def per_bar(books: Books) -> Dict[str, Any]:
         f = books.figures(docs)
         types = Counter(f"{t.document_type}/{Books.status(t)}" for t in docs)
         shifts = [s for s in books.shifts.values() if books.bar_of_area.get(s.area_id) == bar]
-        zs = [z for z in books.zs.values() if books.bar_of_area.get(z.area_id) == bar]
+        if z_mode == "shop":
+            # A shop Z has no area: the bar's Zs are the shop Zs that hold its shifts.
+            z_ids = {s.z_report_id for s in shifts if s.z_report_id is not None}
+            zs = [z for z in books.zs.values() if z.id in z_ids]
+        else:
+            zs = [z for z in books.zs.values() if books.bar_of_area.get(z.area_id) == bar]
         out[str(bar)] = {
             "bar": f"בר {bar}" if bar else "—",
             "documentsByTypeStatus": dict(sorted(types.items())),
@@ -177,7 +182,7 @@ def per_bar(books: Books) -> Dict[str, Any]:
 
 # ── 2. Fiscal invariants ──────────────────────────────────────────────────────
 
-def invariants(books: Books, checks: Checks, expected_nights: Dict[int, List[str]]) -> None:
+def invariants(books: Books, checks: Checks, expected_nights: Dict[int, List[str]], z_mode: str = "area") -> None:
     from app.services.document_prefix import document_series_of
 
     S = "invariants"
@@ -215,30 +220,69 @@ def invariants(books: Books, checks: Checks, expected_nights: Dict[int, List[str
                    or s.z_report_id not in books.zs]
     checks.add(S, "every shift closed and in exactly one Z", not open_or_unz,
                open_or_unz[:5] or {"shifts": len(books.shifts)})
-    wrong_area = [str(s.id) for s in books.shifts.values()
-                  if s.z_report_id in books.zs and books.zs[s.z_report_id].area_id != s.area_id]
-    checks.add(S, "each shift's Z is its own bar's (area) Z", not wrong_area, wrong_area[:5] or "all")
+    if z_mode == "area":
+        wrong_area = [str(s.id) for s in books.shifts.values()
+                      if s.z_report_id in books.zs and books.zs[s.z_report_id].area_id != s.area_id]
+        checks.add(S, "each shift's Z is its own bar's (area) Z", not wrong_area, wrong_area[:5] or "all")
+    else:
+        # Shop Z ("Z סניפי"): not an area's, not a till's — the branch's, and in its own night.
+        not_shop = [z.shop_sequence_number for z in books.zs.values()
+                    if z.area_id is not None or z.machine_id is not None or z.origin != "cloud"
+                    or ((z.header or {}).get("scope") or {}).get("kind") != "shop"]
+        checks.add(S, "every Z is a shop Z (no area, no till; header scope 'shop')", not not_shop,
+                   not_shop[:10] or {"zs": len(books.zs)})
+        wrong_night = [str(s.id) for s in books.shifts.values()
+                       if s.z_report_id in books.zs and books.zs[s.z_report_id].business_date != s.business_date]
+        checks.add(S, "each shift is in the shop Z of its own business night", not wrong_night,
+                   wrong_night[:5] or {"shifts": len(books.shifts)})
 
-    # (d) Z numbering: the shop's one gapless sequence; per bar strictly increasing; one Z per
-    #     bar per business night, exactly the nights it opened.
+    # (d) Z numbering: the shop's one gapless sequence; area mode — per bar strictly increasing, one
+    #     Z per bar per business night, exactly the nights it opened; shop mode — one Z per business
+    #     night, exactly the nights any bar opened, holding every shift of that night.
     zs = sorted(books.zs.values(), key=lambda z: z.shop_sequence_number or 0)
     numbers = [z.shop_sequence_number for z in zs]
     checks.add(S, "shop Z numbers 1..K, no gaps or repeats", numbers == list(range(1, len(numbers) + 1)),
                {"count": len(numbers), "first": numbers[:3], "last": numbers[-3:]})
-    per_area: Dict[Any, list] = defaultdict(list)
-    for z in zs:
-        per_area[books.bar_of_area.get(z.area_id)].append(z)
-    ok_order, nights_ok, detail = True, True, {}
-    for bar, rows in sorted(per_area.items(), key=lambda kv: (kv[0] is None, kv[0])):
-        nums = [z.shop_sequence_number for z in rows]
-        dates = [z.business_date.isoformat() for z in rows]
-        ok_order &= nums == sorted(nums) and len(set(nums)) == len(nums) and dates == sorted(dates)
-        nights_ok &= bar is not None and sorted(dates) == sorted(expected_nights.get(bar, [])) \
-            and len(set(dates)) == len(dates)
-        detail[f"בר {bar}"] = {"zs": len(rows), "numbers": f"{nums[0]}…{nums[-1]}" if nums else "-"}
-    checks.add(S, "per bar: Z numbers strictly increasing with the night", ok_order, detail)
-    checks.add(S, "per bar: exactly one Z for every night it opened", nights_ok,
-               {k: len(v) for k, v in expected_nights.items()})
+    if z_mode == "shop":
+        dates = [z.business_date.isoformat() for z in zs]
+        nights = sorted({n for ns in expected_nights.values() for n in ns})
+        checks.add(S, "shop Z numbers strictly increase with the business night", dates == sorted(dates),
+                   {"first": dates[:2], "last": dates[-2:]})
+        checks.add(S, "exactly one shop Z for every night the branch traded (any bar opened)",
+                   dates == nights, {"zs": len(dates), "nights": len(nights),
+                                     "missing": sorted(set(nights) - set(dates))[:5],
+                                     "extra": sorted(set(dates) - set(nights))[:5]})
+        by_night: Dict[Any, list] = defaultdict(list)
+        for s in books.shifts.values():
+            by_night[s.business_date.isoformat()].append(s)
+        bars_of_night = {n: {b for b, ns in expected_nights.items() if n in ns} for n in nights}
+        off = []
+        for z in zs:
+            tonight = by_night.get(z.business_date.isoformat(), [])
+            held = [s for s in tonight if s.z_report_id == z.id]
+            want_tills = {m.id for m in books.machines.values()
+                          if books.bar_of_area.get(m.area_id) in bars_of_night.get(z.business_date.isoformat(), set())}
+            if len(held) != len(tonight) or {s.machine_id for s in held} != want_tills:
+                off.append({"z": z.shop_sequence_number, "night": z.business_date.isoformat(),
+                            "shiftsThatNight": len(tonight), "inThisZ": len(held),
+                            "tillsInZ": len({s.machine_id for s in held}), "tillsThatTraded": len(want_tills)})
+        checks.add(S, "every shop Z holds all the shifts of its night and every till that traded",
+                   not off, off[:6] or {"zs": len(zs), "shifts": len(books.shifts)})
+    else:
+        per_area: Dict[Any, list] = defaultdict(list)
+        for z in zs:
+            per_area[books.bar_of_area.get(z.area_id)].append(z)
+        ok_order, nights_ok, detail = True, True, {}
+        for bar, rows in sorted(per_area.items(), key=lambda kv: (kv[0] is None, kv[0])):
+            nums = [z.shop_sequence_number for z in rows]
+            dates = [z.business_date.isoformat() for z in rows]
+            ok_order &= nums == sorted(nums) and len(set(nums)) == len(nums) and dates == sorted(dates)
+            nights_ok &= bar is not None and sorted(dates) == sorted(expected_nights.get(bar, [])) \
+                and len(set(dates)) == len(dates)
+            detail[f"בר {bar}"] = {"zs": len(rows), "numbers": f"{nums[0]}…{nums[-1]}" if nums else "-"}
+        checks.add(S, "per bar: Z numbers strictly increasing with the night", ok_order, detail)
+        checks.add(S, "per bar: exactly one Z for every night it opened", nights_ok,
+                   {k: len(v) for k, v in expected_nights.items()})
 
     # (e) Z totals = the sum of their documents.
     by_z: Dict[Any, list] = defaultdict(list)
@@ -453,14 +497,19 @@ def _d120(line):
     return {"1312": int(line[103:118])}
 
 
-def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Optional[Path]) -> Dict[str, Any]:
+def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Optional[Path],
+                 registration_number: Optional[str] = None, window: Optional[Tuple[date, date]] = None,
+                 dealer_type: str = "licensed") -> Dict[str, Any]:
     from app.services import tax_reports as TR
     from app.services.open_format.israeli_tax_id import israeli_9th_check_digit
     from app.services.open_format.tax_report_generator import duplicate_document_numbers
 
     S = "uniform file"
+    exempt = dealer_type == "exempt"
+    first, last = window or (P.MONTH_FIRST, P.MONTH_LAST)
+    full_month = (first, last) == (P.MONTH_FIRST, P.MONTH_LAST)
     ctx = TR.resolve_export_context(db, company=company, shop=None, mode="date-range",
-                                    from_date=P.MONTH_FIRST, to_date=P.MONTH_LAST)
+                                    from_date=first, to_date=last)
     result, tx_dicts, zip_bytes = TR.build_tax_open_format_export(db, tenant.id, ctx, company_id=company.id)
     ini, bk = list(result.ini_content), list(result.bkmv_content)
     info: Dict[str, Any] = {"recordCounts": dict(result.record_counts) if isinstance(result.record_counts, dict)
@@ -474,7 +523,7 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
     proc_date, proc_time = a000[382:390], a000[390:394]
     folder = f"OPENFRMT/{vat8}.{proc_date[2:4]}/{proc_date[4:8]}{proc_time}"
     if out_dir is not None:
-        target = out_dir / "uniform-2026-09"
+        target = out_dir / ("uniform-2026-09" if full_month else f"uniform-{first.isoformat()}_to_{last.isoformat()}")
         target.mkdir(parents=True, exist_ok=True)
         (target / "INI.TXT").write_bytes(ini_bytes)
         (target / "BKMVDATA.TXT").write_bytes(bk_bytes)
@@ -488,6 +537,8 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
         (tree / "BKMVDATA.zip").write_bytes(inner.getvalue())
         info["folder"] = str(target)
     info["layout"] = folder
+    if not full_month:
+        info["period"] = f"{first.isoformat()} – {last.isoformat()}"
 
     # Structure: lengths, record numbers, A000 / Z900 totals, INI summary = records.
     checks.eq(S, "A000 length 466", 466, len(a000))
@@ -503,6 +554,17 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
     checks.add(S, "INI summary lines = the records written, per type",
                all(summary.get(k) == v for k, v in counts.items()) and set(summary) == set(counts),
                {"ini": summary, "bkmv": dict(counts)})
+    if registration_number is not None:
+        # A000 1006 is the platform setting `openFormat.registrationNumber` (written by the seeder's
+        # --registration-number / DEMO_SOFTWARE_REGISTRATION_NUMBER): the file must carry exactly it —
+        # in the generator's A000 and in INI.TXT as delivered (the one place 1.31 writes it).
+        want = "".join(c for c in str(registration_number) if c.isdigit()).zfill(8)
+        ini_a000 = ini_bytes.decode("iso-8859-8").split("\r\n")[0]
+        checks.add(S, "A000 1006 software registration number = the configured one, not zeros",
+                   a000[56:64] == want and ini_a000[56:64] == want and want.strip("0") != "",
+                   {"expected": want, "generator": a000[56:64], "INI.TXT": ini_a000[56:64]})
+        in_bkmv = bk_bytes.count(want.encode("ascii"))
+        info["registrationNumberInBKMVDATA"] = in_bkmv
     vat9 = a000[24:33]
     checks.add(S, "ח.פ. in A000 has a valid check digit", israeli_9th_check_digit(vat9[:8]) == int(vat9[8]), vat9)
     checks.add(S, "every record carries the same ח.פ.",
@@ -523,7 +585,10 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
                 j += 1
             rows = [_d110(x) for x in body]
             problems = []
-            if sum(r["1267"] for r in rows) != head["1219"]:
+            if head["1203"] == "400":
+                if rows:  # an exempt dealer's receipt carries its header and payments only
+                    problems.append("D110 under a receipt")
+            elif sum(r["1267"] for r in rows) != head["1219"]:
                 problems.append("Σ1267≠1219")
             if head["1219"] + head["1220"] != head["1221"]:
                 problems.append("1219+1220≠1221")
@@ -547,33 +612,48 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
     checks.add(S, "no document number twice for a type (whole file)", not dup and not duplicate_document_numbers(tx_dicts),
                dup[:5] or len(keys))
     dates = sorted({h["1205"] for h, _r, _p in docs})
-    checks.add(S, "document dates inside 1–30.9.2026", dates[0] >= "20260901" and dates[-1] <= "20260930",
-               {"first": dates[0], "last": dates[-1]})
+    label = "1–30.9.2026" if full_month else f"{first.strftime('%d.%m')}–{last.strftime('%d.%m.%Y')}"
+    checks.add(S, f"document dates inside {label}",
+               bool(dates) and dates[0] >= first.strftime("%Y%m%d") and dates[-1] <= last.strftime("%Y%m%d"),
+               {"first": dates[0] if dates else None, "last": dates[-1] if dates else None})
 
     # Against the database: which documents and how much.
-    start = datetime.combine(P.MONTH_FIRST, datetime.min.time(), tzinfo=IL)
-    end = datetime.combine(date(2026, 10, 1), datetime.min.time(), tzinfo=IL)
+    start = datetime.combine(first, datetime.min.time(), tzinfo=IL)
+    end = datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=IL)
     db_docs = [t for t in books.docs.values() if start <= t.created_at < end and not t.duplicate_copy]
     tail = [t for t in books.docs.values() if t.created_at >= end]
-    checks.eq(S, "C100 records = the documents dated 1–30.9 (every status)", len(db_docs), len(docs))
+    checks.eq(S, "C100 records = the documents dated 1–30.9 (every status)" if full_month
+              else f"C100 records = the documents dated {label} (every status)", len(db_docs), len(docs))
     by_type = Counter(h["1203"] for h, _r, _p in docs)
-    db_types = Counter("330" if books.is_credit(t) else "320" for t in db_docs)
+    def filed_type(t) -> str:  # an exempt dealer's receipt and receipt refund are both filed as 400
+        if t.document_type in (400, -400):
+            return "400"
+        return "330" if books.is_credit(t) else "320"
+
+    db_types = Counter(filed_type(t) for t in db_docs)
     checks.add(S, "C100 per type = the database", dict(by_type) == dict(db_types),
                {"file": dict(by_type), "db": dict(db_types)})
     cancelled_file = sum(1 for h, _r, _p in docs if h["1228"] == "1")
     checks.eq(S, "cancelled documents flagged (1228 = 1)", sum(1 for t in db_docs if Books.status(t) == "cancelled"),
               cancelled_file)
     f = books.figures(db_docs)
-    sales_1223 = sum(h["1223"] for h, _r, _p in docs if h["1203"] == "320" and h["1228"] != "1")
-    credit_1223 = sum(h["1223"] for h, _r, _p in docs if h["1203"] == "330" and h["1228"] != "1")
-    vat_file = sum(h["1222"] for h, _r, _p in docs if h["1203"] == "320" and h["1228"] != "1") - \
-        sum(h["1222"] for h, _r, _p in docs if h["1203"] == "330" and h["1228"] != "1")
+    # A 400 with negative amounts is the exempt dealer's receipt refund (-400); positive, its sale.
+    live = [h for h, _r, _p in docs if h["1228"] != "1"]
+    sale_docs = [h for h in live if h["1203"] == "320" or (h["1203"] == "400" and h["1223"] >= 0)]
+    credit_docs = [h for h in live if h["1203"] == "330" or (h["1203"] == "400" and h["1223"] < 0)]
+    sales_1223 = sum(abs(h["1223"]) for h in sale_docs)
+    credit_1223 = sum(abs(h["1223"]) for h in credit_docs)
+    vat_file = sum(abs(h["1222"]) for h in sale_docs) - sum(abs(h["1222"]) for h in credit_docs)
+    receipt_refunds = sum(abs(h["1223"]) for h in credit_docs if h["1203"] == "400")
     checks.eq(S, "Σ 1223 of sales = Σ collected (DB)", f["collected"], Decimal(sales_1223) / 100)
     checks.eq(S, "Σ 1223 of credit notes = Σ refunds (DB)", f["refunds"], Decimal(credit_1223) / 100)
     checks.eq(S, "Σ 1222 VAT (sales − credits) = DB VAT", f["vat"], Decimal(vat_file) / 100)
     d120_total = sum(_d120(x)["1312"] for h, _r, pays in docs if h["1228"] != "1" for x in pays)
-    checks.eq(S, "Σ D120 = Σ sales collected (payments, tips excluded)", f["collected"], Decimal(d120_total) / 100)
-    lines_db = sum(len(books.items.get(t.id, [])) for t in db_docs)
+    # A receipt refund (-400) carries negative payments; a credit note (330) carries none.
+    checks.eq(S, "Σ D120 = Σ sales collected (payments, tips excluded)" if not exempt
+              else "Σ D120 = Σ receipts − Σ receipt refunds (payments, tips excluded)",
+              f["collected"] - Decimal(receipt_refunds) / 100, Decimal(d120_total) / 100)
+    lines_db = sum(len(books.items.get(t.id, [])) for t in db_docs if t.document_type not in (400, -400))
     checks.eq(S, "D110 records = document lines (DB)", lines_db, counts.get("D110", 0))
     b110 = [l for l in bk if l.startswith("B110")]
     if b110:
@@ -581,6 +661,12 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
         credit = sum(int(l[307:322]) for l in b110)
         checks.eq(S, "B110 debit = Σ sales (1223)", sales_1223, debit, tol=Decimal(1))
         checks.eq(S, "B110 credit = Σ credit notes (1223)", credit_1223, credit, tol=Decimal(1))
+    # The takings of exactly the documents the file holds (dated 1–30.9): the Z of the last night also
+    # holds what was issued after midnight (dated 1.10), which this file does not.
+    info["figures"] = {k: _js(f.get(k, D0)) for k in ("collected", "refunds", "vat", "cash", "card", "tips_cash",
+                                                        "tips_card")}
+    # The documents the file holds, by the type and status they are stored with (-400 = a receipt refund).
+    info["byStoredTypeStatus"] = dict(sorted(Counter(f"{t.document_type}/{Books.status(t)}" for t in db_docs).items()))
     info.update({"documents": len(docs), "byType": dict(by_type), "cancelled": cancelled_file,
                  "salesTotal": sales_1223 / 100, "creditTotal": credit_1223 / 100, "vat": vat_file / 100,
                  "A000": {"1006": a000[56:64], "1007": a000[64:84].strip(), "1008": a000[84:104].strip(),
@@ -591,11 +677,27 @@ def uniform_file(db, tenant, company, books: Books, checks: Checks, out_dir: Opt
 
 # ── Entry ─────────────────────────────────────────────────────────────────────
 
-def _expected_nights() -> Dict[int, List[str]]:
-    return {bar.index: [n.isoformat() for n in P.nights(bar)] for bar in P.BARS}
+def _expected_nights(days: Optional[List[date]] = None) -> Dict[int, List[str]]:
+    """The nights each bar traded — all of the month, or (a rehearsal) only the nights simulated."""
+    return {bar.index: [n.isoformat() for n in P.nights(bar) if days is None or n in days] for bar in P.BARS}
 
 
-def run(tenant_id, out_dir: Optional[Path], log) -> int:
+def shop_z_rows(books: Books) -> List[Dict[str, Any]]:
+    """The shop Zs as the product filed them (number, night, tills, shifts, takings), in number order."""
+    rows = []
+    for z in sorted(books.zs.values(), key=lambda z: z.shop_sequence_number or 0):
+        shifts = [s for s in books.shifts.values() if s.z_report_id == z.id]
+        rows.append({"number": z.shop_sequence_number, "businessDate": z.business_date.isoformat(),
+                     "tills": len({s.machine_id for s in shifts}), "shifts": len(shifts),
+                     "documents": z.transactions_count, "sales": d(z.total_sales), "refunds": d(z.total_refunds),
+                     "cash": d(z.total_cash_sales), "card": d(z.total_card_sales), "tips": d(z.total_tips),
+                     "tipsCash": d(z.total_cash_tips), "tipsCard": d(z.total_card_tips), "vat": d(z.vat_total)})
+    return rows
+
+
+def run(tenant_id, out_dir: Optional[Path], log, z_mode: str = "area", registration_number: Optional[str] = None,
+        days: Optional[List[date]] = None, dealer_type: str = "licensed",
+        export_window: Optional[Tuple[date, date]] = None) -> int:
     from app.database import SessionLocal
     from app.models.company import Company
     from app.models.shop import Shop
@@ -619,13 +721,22 @@ def run(tenant_id, out_dir: Optional[Path], log) -> int:
                                               "prefix": m.effective_document_prefix,
                                               "area": books.areas[m.area_id].name if m.area_id else None}
                                              for m in books.machines.values()], key=lambda x: x["name"])}
-        report["perBar"] = per_bar(books)
+        if z_mode == "shop":  # the area default writes exactly the report it always did
+            report["zMode"] = "shop"
+        if dealer_type != "licensed":
+            report["dealerType"] = dealer_type
+        if export_window is None and days:
+            export_window = (min(days), max(days))  # a rehearsal / short run: the file covers what was simulated
+        report["perBar"] = per_bar(books, z_mode)
         report["all"] = {k: _js(v) for k, v in books.figures(list(books.docs.values())).items()}
-        invariants(books, checks, _expected_nights())
+        if z_mode == "shop":
+            report["shopZs"] = shop_z_rows(books)
+        invariants(books, checks, _expected_nights(days), z_mode)
         window = resolve_report_window(db, tenant.id, from_date=P.MONTH_FIRST, to_date=date(2026, 10, 1))
         report["reconciliation"] = reconciliation(db, user, tenant.id, shop.id, window, checks)
         report["reports"] = reports(db, user, tenant, shop, books, checks, window)
-        report["uniformFile"] = uniform_file(db, tenant, company, books, checks, out_dir)
+        report["uniformFile"] = uniform_file(db, tenant, company, books, checks, out_dir, registration_number,
+                                           window=export_window, dealer_type=dealer_type)
         from app.models.attendance import AttendanceShift
 
         att = db.query(AttendanceShift).filter(AttendanceShift.shop_id == shop.id).all()
@@ -664,6 +775,25 @@ def summary_md(report: Dict[str, Any]) -> str:
         L.append(f"| {row['bar']} | {row['sales320']} | {row['creditNotes330']} | {row['cancelled320']} | "
                  f"{row['shifts']} | {row['zReports']} | {money(row['net'])} | {money(row['cash'])} | "
                  f"{money(row['card'])} | {money(row['tipsCash'])} | {money(row['tipsCard'])} | {money(row['vat'])} |")
+    if report.get("dealerType") == "exempt":
+        L += ["", "Dealer type: **exempt (עוסק פטור)** — no VAT; receipts (400) and receipt refunds (-400, filed as a 400 "
+                  "with negative amounts); a receipt carries no D110 lines and the file has no M100 records.", ""]
+    zs = report.get("shopZs")
+    if zs is not None:
+        L += ["", "Z mode: **shop Z (\"Z סניפי\")** — one Z per branch per business night; in the table above, "
+                  "\"Zs\" is the number of shop Zs holding that bar's shifts.", "",
+              f"## Shop Zs ({len(zs)}, numbered {zs[0]['number'] if zs else '-'}…{zs[-1]['number'] if zs else '-'})", "",
+              "| Z | night | tills | shifts | documents | sales ₪ | refunds ₪ | cash ₪ | card ₪ | tips cash ₪ | tips card ₪ | VAT ₪ |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for z in zs:
+            L.append(f"| {z['number']} | {z['businessDate']} | {z['tills']} | {z['shifts']} | {z['documents']} | "
+                     f"{money(z['sales'])} | {money(z['refunds'])} | {money(z['cash'])} | {money(z['card'])} | "
+                     f"{money(z['tipsCash'])} | {money(z['tipsCard'])} | {money(z['vat'])} |")
+        L.append(f"| **total** | | | {sum(z['shifts'] for z in zs)} | {sum(z['documents'] for z in zs)} | "
+                 f"{money(sum(z['sales'] for z in zs))} | {money(sum(z['refunds'] for z in zs))} | "
+                 f"{money(sum(z['cash'] for z in zs))} | {money(sum(z['card'] for z in zs))} | "
+                 f"{money(sum(z['tipsCash'] for z in zs))} | {money(sum(z['tipsCard'] for z in zs))} | "
+                 f"{money(sum(z['vat'] for z in zs))} |")
     checks = report.get("checks", [])
     L += ["", f"Checks: {sum(1 for c in checks if c['ok'])}/{len(checks)} passed.", ""]
     for c in checks:
@@ -671,7 +801,7 @@ def summary_md(report: Dict[str, Any]) -> str:
                  + ("" if c["ok"] else f" — `{json.dumps(c['detail'], ensure_ascii=False, default=_js)[:400]}`"))
     uf = report.get("uniformFile", {})
     if uf:
-        L += ["", "## Uniform file (September 2026)", "",
+        L += ["", f"## Uniform file ({uf.get('period') or 'September 2026'})", "",
               f"Records: {json.dumps(uf.get('recordCounts'), ensure_ascii=False, default=_js)}; "
               f"documents {uf.get('documents')} {json.dumps(uf.get('byType'), ensure_ascii=False)}; "
               f"cancelled {uf.get('cancelled')}; sales ₪{uf.get('salesTotal')}; credit notes ₪{uf.get('creditTotal')}; "

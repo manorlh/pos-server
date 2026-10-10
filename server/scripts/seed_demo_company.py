@@ -1,12 +1,29 @@
 """
 "חברת הדגמה — סימולציה למס הכנסה": a demo tenant with one branch, five bars (points of
-sale, each with its own area Z), ten virtual tills, 32 employees, a bar menu and one full
-month of trading (1.9.2026–30.9.2026), generated through the product's own code paths.
+sale), ten virtual tills, 32 employees, a bar menu and one full month of trading
+(1.9.2026–30.9.2026), generated through the product's own code paths.
 
     cd server
-    python -m scripts.seed_demo_company --db-name <database> [--dry-run]
-           [--codes-file PATH] [--out DIR] [--days 2026-09-01,2026-09-02] [--verify-only]
+    python -m scripts.seed_demo_company --db-name <database> [--dry-run] [--z-mode area|shop]
+           [--dealer-type licensed|exempt] [--export-window FROM,TO] [--codes-file PATH] [--out DIR] [--days 2026-09-01,2026-09-02] [--verify-only]
+           [--registration-number 12345678] [--open-format KEY=VALUE ...]
 
+* `--z-mode` — who the Zs are for. `area` (the default): each bar its own area Z, one per bar per
+  night. `shop` ("Z סניפי"): every till closes its shift and ONE Z for the whole branch is
+  produced per business night, numbered 1..K by the shop's counter. The documents are the same.
+* `--dealer-type` — "סוג עוסק" of the demo company. `licensed` (the default): VAT, tax invoice-receipts
+  (320) and credit notes (330). `exempt` (עוסק פטור): no VAT, receipts (400) and receipt refunds (-400) —
+  the types a VAT-registered business never issues, so they need a company of their own (and a database
+  of its own: the tenant name, slug and the fake ח.פ. differ from the licensed company's).
+* `--export-window FROM,TO` — the uniform file's period. Default: the month, or — with `--days` — the first
+  to the last of those nights.
+* `--registration-number` (env `DEMO_SOFTWARE_REGISTRATION_NUMBER`) and `--open-format KEY=VALUE`
+  (softwareName, softwareVersion, manufacturerName, manufacturerVatNumber, registrationNumber,
+  outputDrive): the platform setting `openFormat` that the uniform file's A000 1006–1012 are
+  written from, set through `PUT /system/open-format` as the super admin (merged over what is
+  stored — and platform-wide, like the setting itself). Without them the file carries whatever
+  the database already has: zeros in 1006 on a fresh one. The value is never in product code.
+  With `--verify-only` they re-write the setting, then the file is exported again.
 * DATABASE_URL (the process environment, else server/.env) names the database; `--db-name`
   must repeat its database name, so the target is always typed out.
 * Idempotent: when the demo tenant exists the seeder stops and changes nothing
@@ -82,6 +99,35 @@ def _super_admin(db):
     return admins[0]
 
 
+OPEN_FORMAT_KEYS = ("softwareName", "softwareVersion", "manufacturerName", "manufacturerVatNumber",
+                    "registrationNumber", "outputDrive")
+
+
+def _open_format_updates(args) -> dict:
+    """What `--open-format KEY=VALUE` and `--registration-number` ask the `openFormat` setting to hold."""
+    updates = {}
+    for item in args.open_format or []:
+        key, sep, value = item.partition("=")
+        if not sep or key not in OPEN_FORMAT_KEYS:
+            raise SystemExit(f"--open-format wants KEY=VALUE, KEY one of: {', '.join(OPEN_FORMAT_KEYS)}")
+        updates[key] = value
+    if args.registration_number:
+        updates["registrationNumber"] = args.registration_number
+    return updates
+
+
+def apply_open_format(api, updates: dict, log) -> None:
+    """The platform setting `openFormat` (A000 1006–1012), merged over what is stored, written through
+    the product's own `PUT /system/open-format` (validated there: 1006 is up to 8 digits, never zeros)."""
+    if not updates:
+        return
+    stored = api.admin("GET", "/system/open-format")
+    merged = {key: stored.get(key) for key in OPEN_FORMAT_KEYS}
+    merged.update(updates)
+    api.admin("PUT", "/system/open-format", merged)
+    log(f"platform setting openFormat written: {', '.join(sorted(updates))} (the others kept as stored)")
+
+
 def write_codes(path: Path, world, db_name: str) -> None:
     from scripts.demo_company import plan as P
 
@@ -110,7 +156,19 @@ def main() -> int:
     ap.add_argument("--codes-file", default=None)
     ap.add_argument("--out", default=None, help="where the verification report and the uniform file go")
     ap.add_argument("--days", default=None, help="only these dates (comma separated), for a quick rehearsal")
+    ap.add_argument("--z-mode", choices=("area", "shop"), default="area",
+                    help="area: each bar its own Z (default); shop: one Z per branch per business night")
+    ap.add_argument("--dealer-type", choices=("licensed", "exempt"), default="licensed",
+                    help="licensed: VAT, 320/330 (default); exempt: no VAT, receipts 400 / refunds -400")
+    ap.add_argument("--export-window", default=None, metavar="FROM,TO",
+                    help="the uniform file's period (YYYY-MM-DD,YYYY-MM-DD); default the month, or the --days span")
+    ap.add_argument("--registration-number", default=os.environ.get("DEMO_SOFTWARE_REGISTRATION_NUMBER") or None,
+                    help="A000 1006, the platform setting openFormat.registrationNumber (up to 8 digits)")
+    ap.add_argument("--open-format", action="append", default=None, metavar="KEY=VALUE",
+                    help="another openFormat field (A000 1007-1012); repeatable")
     args = ap.parse_args()
+    updates = _open_format_updates(args)
+    registration = updates.get("registrationNumber")
 
     url = _database_url()
     name = _db_name(url)
@@ -122,6 +180,7 @@ def main() -> int:
     from scripts.demo_company import clock as C
     from scripts.demo_company import plan as P
 
+    P.use_dealer_type(args.dealer_type)  # before anything reads the demo company's name / ח.פ.
     start = datetime.combine(P.SETUP_DAY, datetime.min.time()).replace(hour=10)
     from zoneinfo import ZoneInfo
 
@@ -147,6 +206,19 @@ def main() -> int:
         db.close()
 
     out_dir = Path(args.out) if args.out else None
+    days = None
+    if args.days:
+        from datetime import date
+
+        days = [date.fromisoformat(d.strip()) for d in args.days.split(",") if d.strip()]
+    window = None
+    if args.export_window:
+        from datetime import date
+
+        parts = [date.fromisoformat(d.strip()) for d in args.export_window.split(",") if d.strip()]
+        if len(parts) != 2 or parts[0] > parts[1]:
+            raise SystemExit("--export-window wants FROM,TO (YYYY-MM-DD,YYYY-MM-DD), FROM not after TO")
+        window = (parts[0], parts[1])
     if existing is not None and not args.verify_only:
         log(f"the demo tenant already exists ({existing.id} '{existing.name}') — nothing changed.")
         return 0
@@ -154,20 +226,35 @@ def main() -> int:
         if existing is None:
             log("no demo tenant to verify")
             return 4
+        if updates:
+            from scripts.demo_company.api import Api
+
+            api = Api(admin.id)
+            try:
+                apply_open_format(api, updates, log)
+            finally:
+                api.close()
         C.uninstall()
         from scripts.demo_company import verify as V
 
-        return V.run(existing.id, out_dir, log)
+        return V.run(existing.id, out_dir, log, z_mode=args.z_mode, registration_number=registration, days=days,
+                 dealer_type=args.dealer_type, export_window=window)
 
     if args.dry_run:
         log(f"DRY RUN — nothing written. ח.פ. to be used: {vat}")
         total = 0
+        every_night = set()
         for bar in P.BARS:
             nights = P.nights(bar)
             total += len(nights)
+            every_night.update(nights)
             log(f"  {bar.name}: {len(nights)} nights ({nights[0]} … {nights[-1]}), closed weekdays {bar.closed}")
+        zs = len(every_night) if args.z_mode == "shop" else total
         log(f"  bar-nights {total}, tills {len(P.BARS) * P.TILLS_PER_BAR}, people {len(P.people())}, "
-            f"menu {sum(len(i) for *_x, i in P.CATEGORIES)} products")
+            f"menu {sum(len(i) for *_x, i in P.CATEGORIES)} products; z-mode {args.z_mode}: {zs} Zs; "
+            f"dealer type {args.dealer_type}")
+        if updates:
+            log(f"  openFormat to be written: {', '.join(sorted(updates))}")
         return 0
 
     if not args.codes_file:
@@ -180,6 +267,7 @@ def main() -> int:
     T.use_timezone(IL)
     t0 = _time.time()
     api = Api(admin.id)
+    apply_open_format(api, updates, log)
     world = S.build(api, SessionLocal, vat, log)
     codes = Path(args.codes_file)
     write_codes(codes, world, name)
@@ -188,12 +276,11 @@ def main() -> int:
              "vatNumber": world.vat_number, "areas": {str(k): v for k, v in world.areas.items()},
              "tills": [{"id": t.id, "name": t.name, "bar": t.bar.index, "index": t.index, "posNumber": t.pos_number,
                         "prefix": t.prefix, "terminal": t.terminal} for t in world.tills]}
-    days = None
-    if args.days:
-        from datetime import date
-
-        days = [date.fromisoformat(d.strip()) for d in args.days.split(",") if d.strip()]
-    month = Month(api, world, clk, log)
+    if args.z_mode != "area":  # the area default keeps writing exactly the state it always did
+        state["zMode"] = args.z_mode
+    if args.dealer_type != "licensed":
+        state["dealerType"] = args.dealer_type
+    month = Month(api, world, clk, log, z_mode=args.z_mode)
     ledger = month.run(days)
     api.close()
     state["ledger"] = {"counts": ledger.counts, "zs": ledger.zs, "closes": ledger.closes,
@@ -207,7 +294,8 @@ def main() -> int:
     log(f"seeded in {state['ledger']['seconds']} s, {api.calls} API calls; counts {ledger.counts}")
     from scripts.demo_company import verify as V
 
-    return V.run(world.tenant_id, out_dir, log)
+    return V.run(world.tenant_id, out_dir, log, z_mode=args.z_mode, registration_number=registration, days=days,
+                 dealer_type=args.dealer_type, export_window=window)
 
 
 if __name__ == "__main__":

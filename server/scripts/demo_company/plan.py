@@ -33,6 +33,26 @@ VAT_SEED_BODY = 731_904  # the 6 digits after "51" tried first, then +1, +2 …
 #: 1.1.2025. The product has no date table; the managed setting is the rate tills charge.
 GLOBAL_TAX_RATE = 18
 
+#: "סוג עוסק" of the demo company: `licensed` (עוסק מורשה — VAT, tax invoice-receipts 320 and credit
+#: notes 330: the default) or `exempt` (עוסק פטור — no VAT, receipts 400 and receipt refunds -400,
+#: which a business of the other kind never issues). `use_dealer_type` switches it, with a name and a
+#: fake ח.פ. of its own, before anything else reads the identity.
+DEALER_TYPE = "licensed"
+DEALER_TYPES = ("licensed", "exempt")
+
+
+def use_dealer_type(dealer_type: str) -> None:
+    global DEALER_TYPE, TENANT_NAME, TENANT_SLUG, COMPANY_NAME, FOOTER_DEMO, VAT_SEED_BODY
+    if dealer_type not in DEALER_TYPES:
+        raise ValueError(f"dealer type must be one of {DEALER_TYPES}, not {dealer_type!r}")
+    DEALER_TYPE = dealer_type
+    if dealer_type == "exempt":
+        TENANT_NAME = COMPANY_NAME = "עוסק פטור הדגמה — סימולציה למס הכנסה"
+        TENANT_SLUG = "demo-income-tax-simulation-exempt"
+        FOOTER_DEMO = "עוסק פטור הדגמה — נתוני סימולציה בלבד"
+        VAT_SEED_BODY = 284_613  # not the licensed demo company's number
+
+
 TIMEZONE = "Asia/Jerusalem"
 RNG_SEED = 20260901
 
