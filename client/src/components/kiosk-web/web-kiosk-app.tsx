@@ -106,6 +106,7 @@ import {
 import { mealUpsellIds } from '@/kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@/kiosk-shared/upsell-window';
 import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
+import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@/lib/kioskMenus';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@/lib/kioskMoney';
 import {
   backAction,
@@ -323,7 +324,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   /* ---------------------------------------------------------- the catalog */
 
-  const view2 = useMemo(() => kioskCatalogView(view.catalog.categories, view.catalog.products, cfg), [view.catalog, cfg]);
+  // "תפריטים": the active menu's order is the kiosk's while it is on (the kiosk's own hidden items and pictures stay).
+  const view2 = useMemo(() => kioskCatalogView(view.catalog.categories, view.catalog.products, withMenuOrder(cfg, view.catalog.menu)), [view.catalog, cfg]);
   const required = useCallback((id: string) => (view.catalog.groups[id] ?? []).some((g) => g.min > 0), [view.catalog.groups]);
   // quickAdd "always" (the wall): the dishes whose options' defaults answer what they require (never a meal).
   const answered = useCallback(
@@ -355,8 +357,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   useEffect(() => {
     cartIdsRef.current = cart.map((l) => l.product.id);
   }, [cart]);
-  /** Every product the kiosk sells (a meal's component may sit in no category shown). */
-  const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
+  /** Every product the kiosk sells (a meal's component may sit in no category shown) — and what the active menu holds back. */
+  const soldById = useMemo(() => new Map([...(view.catalog.held ?? []), ...view.catalog.products].map((p) => [p.id, p])), [view.catalog.products, view.catalog.held]);
   const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
   /** A meal's window (menu.meals): each slot's products, a component's groups. */
   const mealOf = useCallback(
@@ -471,7 +473,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           productId: l.product.id,
           name: l.product.name,
           qty: l.qty,
-          baseAgorot: row?.priceAgorot ?? Math.round(l.product.price * 100),
+          // The dish's own price as the line was added at ("תפריטים": the menu's while it priced it).
+          baseAgorot: l.product.priceAgorot ?? row?.priceAgorot ?? Math.round(l.product.price * 100),
+          ...(l.product.menuId ? { catalogAgorot: l.product.catalogPriceAgorot, menuId: l.product.menuId, menuName: l.product.menuName ?? null, priceSource: l.product.priceSource ?? 'catalog' } : {}),
           unitAgorot: lineUnitAgorot(l),
           options: (l.options ?? []).map(option),
           note: l.note?.trim() || null,
@@ -577,7 +581,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       const d = detailsRef.current;
       const r = await bridge.startPayment({
         expectedTotalAgorot: shownAgorot,
-        lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
+        lines: lines.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), ...menuMemoryOf(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
         service: orderServiceOf(flowRef.current.service, cfgIn),
         customerName: d.name.trim() || null,
         customerPhone: d.phone.trim() || null,
@@ -646,7 +650,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     };
     // Even after a voucher: the cloud's word first (kiosk/basket-check), then the catalog as it is now.
     const check = await svc.checkBasket(
-      cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, unitAgorot: lineUnitAgorot(l), qty: l.qty, options: orderOptionsOf(l), meal: orderMealOf(l) })),
+      cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, unitAgorot: lineUnitAgorot(l), qty: l.qty, ...menuMemoryOf(l), options: orderOptionsOf(l), meal: orderMealOf(l) })),
       shownAgorot,
     );
     if (check.changes.length > 0 || check.totalMoved) {
@@ -693,7 +697,14 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   /* --------------------------------------------------------------- vouchers */
 
   /** A kiosk text: the business's, else the built-in one (lib/kioskTexts.ts). */
-  const txt = useCallback((key: KioskTextKey) => configuredText(cfg, 'he', key) ?? words.builtin(key), [cfg, words]);
+  // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+  const txt = useCallback(
+    (key: KioskTextKey) => {
+      const text = configuredText(cfg, 'he', key) ?? words.builtin(key);
+      return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
+    },
+    [cfg, words, view.catalog.menu],
+  );
 
   /** A voucher scanned, typed or read by the camera: the order's vouchers session applies it (goods as a leg of the payment, discount held for the order). */
   const redeem = useCallback(
@@ -895,8 +906,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         addLine({ key: defaultsLineKey(p.id), product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from);
         return;
       }
-      const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
-      addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
+      // The same dish at the same price under the same menu joins (Cart.add): after a menu switch a tap is a line of its own.
+      const plain = (l: PLine) => joinsPlainLine(l, p) && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
+      addLine({ key: plainLineKey(p), product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
     },
   };
 
@@ -1376,6 +1388,7 @@ function toP(p: WebKioskView['catalog']['products'][number], soldOut: boolean, r
     name: p.name,
     price: p.price,
     priceAgorot: p.priceAgorot,
+    ...(p.menuId ? { catalogPriceAgorot: p.catalogPriceAgorot, menuId: p.menuId, menuName: p.menuName ?? null, priceSource: p.priceSource ?? 'catalog' } : {}),
     imageUrl: p.imageUrl,
     imageLarge: p.imageLarge,
     soldOut,

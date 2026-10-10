@@ -95,6 +95,7 @@ import {
 import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
+import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@dash-lib/kioskMenus';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
 import { voucherCodeOf } from '@dash-lib/kioskWebOrders';
 import { DISCOUNT_PAY_HERE } from '@dash-lib/kioskVoucherClient';
@@ -288,7 +289,8 @@ export function KioskApp({ view }: { view: KioskView }) {
 
   const view2 = useMemo(() => {
     const products = view.catalog.products.map((p) => ({ ...p, available: p.available }));
-    return kioskCatalogView(view.catalog.categories, products, cfg);
+    // "תפריטים": the active menu's order is the kiosk's while it is on (the kiosk's own hidden items and pictures stay).
+    return kioskCatalogView(view.catalog.categories, products, withMenuOrder(cfg, view.catalog.menu));
   }, [view.catalog, cfg]);
   const required = useCallback((id: string) => (view.catalog.groups[id] ?? []).some((g) => g.min > 0), [view.catalog.groups]);
   // quickAdd "always" (the wall): the dishes whose options' defaults answer what they require (never a meal).
@@ -317,8 +319,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   useEffect(() => {
     cartIdsRef.current = cart.map((l) => l.product.id);
   }, [cart]);
-  /** Every product the kiosk sells (a meal's component may sit in no category shown). */
-  const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
+  /** Every product the kiosk sells (a meal's component may sit in no category shown) — and what the active menu holds back. */
+  const soldById = useMemo(() => new Map([...(view.catalog.held ?? []), ...view.catalog.products].map((p) => [p.id, p])), [view.catalog.products, view.catalog.held]);
   const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
   /** A meal's window (menu.meals): each slot's products, a component's groups. */
   const mealOf = useCallback(
@@ -468,7 +470,7 @@ export function KioskApp({ view }: { view: KioskView }) {
         : {}),
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: pricingRef.current.totalAgorot,
-      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
+      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), ...menuMemoryOf(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
       service: orderServiceOf(flowRef.current.service, cfgIn),
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
@@ -742,7 +744,11 @@ export function KioskApp({ view }: { view: KioskView }) {
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
     // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one.
-    txt: (key: KioskTextKey) => configuredText(cfg, 'he', key) ?? txtOf(undefined, key),
+    // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+    txt: (key: KioskTextKey) => {
+      const text = configuredText(cfg, 'he', key) ?? txtOf(undefined, key);
+      return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
+    },
     t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? t(key, values),
     kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
     // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
@@ -927,9 +933,10 @@ export function KioskApp({ view }: { view: KioskView }) {
       addLine({ key: defaultsLineKey(p.id), product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from);
       return;
     }
-    const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
-    // At most one plain line per dish (the next joins it), so its key is unique.
-    addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
+    // The same dish at the same price under the same menu joins (Cart.add): after a menu switch a tap is a line of its own.
+    const plain = (l: PLine) => joinsPlainLine(l, p) && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
+    // At most one plain line per dish, menu and price (the next joins it), so its key is unique.
+    addLine({ key: plainLineKey(p), product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
   };
 
   // Barcode scans (a USB HID scanner), 1D and 2D, no button first — the Android kiosk's rules (kioskScanner.tsx).
@@ -1261,6 +1268,7 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     name: p.name,
     price: p.price,
     priceAgorot: p.priceAgorot,
+    ...(p.menuId ? { catalogPriceAgorot: p.catalogPriceAgorot, menuId: p.menuId, menuName: p.menuName ?? null, priceSource: p.priceSource ?? 'catalog' } : {}),
     imageUrl: p.imageUrl,
     imageLarge: p.imageLarge,
     soldOut,

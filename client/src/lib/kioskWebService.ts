@@ -24,12 +24,13 @@ import { kioskOfflineBlocks, resolveKioskConfig, tsKioskPayMethods, voucherCanFi
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
 import { catalogNextChangeMs, stockLevelsOf } from './kioskSoldOut';
+import { basketSold } from './kioskBasketSold';
+import { basePriceOf, keptListPrice, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from './kioskMenus';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
   CLOUD_CHECK_TIMEOUT_MS,
   PRICE_CHANGED,
   PROMOTIONS_PULL_TIMEOUT_MS,
-  checkedBasePrice,
   cloudCheckRequest,
   overridesLive,
   overridesOf,
@@ -202,7 +203,7 @@ interface SnapshotState {
 
 type CatalogStore = CatalogIn & { serverTime: string | null };
 
-const EMPTY_CATALOG: CatalogStore = { products: [], categories: [], menu: null, machineCatalog: null, serverTime: null };
+const EMPTY_CATALOG: CatalogStore = { products: [], categories: [], menu: null, machineCatalog: null, catalogMenus: null, serverTime: null };
 
 interface HelpRequest {
   requestId: string;
@@ -268,6 +269,9 @@ export class WebKioskService {
   private stock: Record<string, number> = {};
   /** The timer that builds the view again at a block's end ("אזל" / "חסום" until a time, lifted offline too). */
   private saleTimer: unknown = null;
+  /** "תפריטים": the timer that looks at the kiosk's own clock at each minute boundary, and the menu the view was built for. */
+  private menuTimer: unknown = null;
+  private menuKey = '';
   private settings: { settings: Record<string, unknown>; businessInfo: Record<string, unknown> | null; settingsUpdatedAt: string | null } = {
     settings: {},
     businessInfo: null,
@@ -367,12 +371,16 @@ export class WebKioskService {
   start() {
     this.stopped = false;
     this.schedule(0);
+    // The view was built while stopped (pairing, a reload): the kiosk's clock is looked at from now on.
+    if (this.loaded && this.snapshot?.kiosk === true) this.scheduleMenuClock(this.now());
   }
 
   stop() {
     this.stopped = true;
     if (this.saleTimer !== null) this.clearTimer(this.saleTimer);
     this.saleTimer = null;
+    if (this.menuTimer !== null) this.clearTimer(this.menuTimer);
+    this.menuTimer = null;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
   }
@@ -404,6 +412,22 @@ export class WebKioskService {
       this.saleTimer = null;
       this.dirty();
     }, Math.max(1_000, at - nowMs + 250));
+  }
+
+  /**
+   * "תפריטים": the menu active now by the kiosk's OWN clock (offline too), looked at once per minute boundary — a handful
+   * of comparisons. The view is built again only when the answer changes (a menu starts, ends or yields to another).
+   */
+  private scheduleMenuClock(nowMs: number) {
+    if (this.menuTimer !== null) this.clearTimer(this.menuTimer);
+    this.menuTimer = this.stopped
+      ? null
+      : this.setTimer(() => {
+          this.menuTimer = null;
+          const at = this.now();
+          if (menuKeyAt(this.catalog.catalogMenus, at) !== this.menuKey) this.dirty();
+          else this.scheduleMenuClock(at);
+        }, msToNextMinute(nowMs));
   }
 
   private dirty() {
@@ -451,8 +475,10 @@ export class WebKioskService {
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const nowMs = this.now();
-    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const cat: WebCatalog = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
     if (phase === 'kiosk') this.scheduleSaleChange(catalogNextChangeMs(this.catalog.products, nowMs), nowMs);
+    this.menuKey = menuKeyAt(this.catalog.catalogMenus, nowMs);
+    if (phase === 'kiosk') this.scheduleMenuClock(nowMs);
     const categoryImages: Record<string, string> = {};
     if (cfg) {
       for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
@@ -818,7 +844,7 @@ export class WebKioskService {
     const r = await this.seen(await this.api.get<Record<string, unknown>>(this.machinePath(`catalog${since}`), { timeoutMs: 60_000 }));
     if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object') return;
     const b = r.body;
-    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu;
+    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu || !!b.catalogMenus;
     this.catalog = applyCatalogPull(this.catalog, b);
     await this.deps.store.set(KV.catalog, this.catalog);
     if (changed) this.dirty();
@@ -874,10 +900,16 @@ export class WebKioskService {
    * catalog; a changed set of promotions is pulled now (true). Offline, or no answer in time:
    * nothing — the kiosk's own catalog and promotions decide.
    */
-  private async cloudBasketCheck(lines: ReadonlyArray<{ productId: string; qty?: number }>): Promise<boolean> {
+  private async cloudBasketCheck(lines: ReadonlyArray<{ productId: string; qty?: number; listAgorot?: number | null; catalogAgorot?: number | null }>): Promise<boolean> {
     if (!this.creds || this.offline || lines.length === 0) return false;
-    const byId = new Map(this.view().catalog.products.map((p) => [p.id, p]));
-    const body = cloudCheckRequest(lines, (id) => byId.get(id)?.priceAgorot, this.promotions.etag);
+    const v = this.view();
+    // The base price each line remembers, without any menu: the cloud's word is about the catalog's price the customer saw
+    // (KioskPriceCheck.request: `line.product.basePrice`); the catalog held now only stands in for a line of an older screen.
+    const byId = new Map([...v.catalog.products, ...v.catalog.held].map((p) => [p.id, p]));
+    const body = cloudCheckRequest(lines, (id) => {
+      const p = byId.get(id);
+      return p ? basePriceOf(p) : undefined;
+    }, this.promotions.etag);
     const raw = await this.api.post<CloudVerdict>(this.machinePath('kiosk/basket-check'), body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
     // A slow answer is not an outage: only an answer goes through `seen`.
     if (raw.kind === 'offline') return false;
@@ -916,6 +948,10 @@ export class WebKioskService {
       productId: string;
       unitAgorot: number;
       qty?: number;
+      /** "תפריטים": the dish's own price as the line was added at, the catalog's then, and the menu it was added under. */
+      listAgorot?: number;
+      catalogAgorot?: number;
+      menuId?: string | null;
       options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
       meal?: { components: ReadonlyArray<{ slotId: string; productId: string; options?: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
     }>,
@@ -926,19 +962,26 @@ export class WebKioskService {
     const cloud = overridesLive(this.cloudBasket, this.now());
     const v = this.view();
     const byId = new Map(v.catalog.products.map((p) => [p.id, p]));
-    const sold = (id: string) => {
-      const p = byId.get(id);
-      return p && !p.soldOut && !cloud?.gone.has(id) ? p : null;
-    };
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in kioskWebService.test.ts.
+    const menuPrices = menuPriceSets(this.catalog.catalogMenus);
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (lib/kioskBasketSold.ts, the Android kiosk's KioskBasketLookup).
+    // A meal's component: found even when no screen shows it (hidden, not placed), but never blocked, sold out or gone.
+    const lookup = basketSold({ products: v.catalog.products, categories: v.catalog.categories, held: v.catalog.held, cfg: this.config(), gone: cloud?.gone });
+    const sold = (id: string, addedUnderMenu = false) => lookup.dish(id, addedUnderMenu);
+    const component = (id: string) => lookup.component(id);
     const changes: BasketChange[] = [];
     const priced: Array<{ key: string; productId: string; categoryId: string | null; unitAgorot: number; qty: number; noDiscount: boolean }> = [];
     for (const l of lines) {
-      const p = sold(l.productId);
+      const p = sold(l.productId, !!l.menuId);
       const slots = v.catalog.meals[l.productId] ?? [];
       const parts = l.meal?.components ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !sold(c.productId);
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !component(c.productId);
       });
       const groups = (p ? (v.catalog.groups[p.id] ?? []) : []).map(webMoneyGroup);
       const missing = l.options.some((o) => !groups.find((g) => g.id === o.groupId)?.options.some((x) => x.id === o.optionId));
@@ -952,7 +995,10 @@ export class WebKioskService {
         const pre = g.allowPre && (o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side') ? o.pre : null;
         (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre });
       }
-      let unit = checkedBasePrice(p.id, p.priceAgorot, cloud) + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
+      // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the
+      // basket is no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
+      const base = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), menuPrices.get(p.id));
+      let unit = base + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
       for (const c of parts) {
         const slot = slots.find((s) => s.id === c.slotId)!;
         const cg = (v.catalog.groups[c.productId] ?? []).map(webMoneyGroup);

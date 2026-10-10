@@ -1,0 +1,717 @@
+{
+  "about": "סדר תצוגה — the one ordering rule (app/services/display_ordering_rules.py). Change the rule, change this file and its SHA in tests/test_display_ordering.py.",
+  "version": 1,
+  "catalog": {
+    "categories": [
+      {
+        "id": "c-drinks",
+        "name": "שתייה",
+        "sortOrder": 2
+      },
+      {
+        "id": "c-food",
+        "name": "אוכל",
+        "sortOrder": 1
+      },
+      {
+        "id": "c-dessert",
+        "name": "קינוחים",
+        "sortOrder": 3
+      }
+    ],
+    "products": [
+      {
+        "id": "p-cola",
+        "categoryId": "c-drinks",
+        "name": "קולה",
+        "price": 9
+      },
+      {
+        "id": "p-water",
+        "categoryId": "c-drinks",
+        "name": "מים",
+        "price": 6
+      },
+      {
+        "id": "p-beer",
+        "categoryId": "c-drinks",
+        "name": "בירה",
+        "price": 24
+      },
+      {
+        "id": "p-burger",
+        "categoryId": "c-food",
+        "name": "המבורגר",
+        "price": 52
+      },
+      {
+        "id": "p-fries",
+        "categoryId": "c-food",
+        "name": "צ'יפס",
+        "price": 18
+      },
+      {
+        "id": "p-salad",
+        "categoryId": "c-food",
+        "name": "סלט",
+        "price": 38
+      },
+      {
+        "id": "p-cake",
+        "categoryId": "c-dessert",
+        "name": "עוגה",
+        "price": 28
+      }
+    ]
+  },
+  "arrange": [
+    {
+      "name": "no ordering: the catalog's order (sortOrder, names inside)",
+      "ordering": {},
+      "expect": {
+        "categories": [
+          "c-food",
+          "c-drinks",
+          "c-dessert"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger",
+            "p-salad",
+            "p-fries"
+          ],
+          "c-drinks": [
+            "p-beer",
+            "p-water",
+            "p-cola"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ]
+        }
+      }
+    },
+    {
+      "name": "manual positions, a product with none goes at the end",
+      "ordering": {
+        "categories": [
+          "c-drinks",
+          "c-food"
+        ],
+        "products": {
+          "c-drinks": [
+            "p-water",
+            "p-cola"
+          ]
+        }
+      },
+      "expect": {
+        "categories": [
+          "c-drinks",
+          "c-food",
+          "c-dessert"
+        ],
+        "products": {
+          "c-drinks": [
+            "p-water",
+            "p-cola",
+            "p-beer"
+          ],
+          "c-food": [
+            "p-burger",
+            "p-salad",
+            "p-fries"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ]
+        }
+      }
+    },
+    {
+      "name": "pinned first, in their own order",
+      "ordering": {
+        "categories": [
+          "c-food",
+          "c-drinks"
+        ],
+        "products": {
+          "c-food": [
+            "p-salad",
+            "p-burger",
+            "p-fries"
+          ]
+        },
+        "pinned": {
+          "categories": [
+            "c-dessert"
+          ],
+          "products": {
+            "c-food": [
+              "p-fries"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "categories": [
+          "c-dessert",
+          "c-food",
+          "c-drinks"
+        ],
+        "products": {
+          "c-dessert": [
+            "p-cake"
+          ],
+          "c-food": [
+            "p-fries",
+            "p-salad",
+            "p-burger"
+          ],
+          "c-drinks": [
+            "p-beer",
+            "p-water",
+            "p-cola"
+          ]
+        }
+      }
+    },
+    {
+      "name": "hidden and blocked are left out after ordering: the others keep their relative order",
+      "ordering": {
+        "products": {
+          "c-food": [
+            "p-salad",
+            "p-burger",
+            "p-fries"
+          ]
+        }
+      },
+      "hidden": [
+        "p-burger"
+      ],
+      "expect": {
+        "categories": [
+          "c-food",
+          "c-drinks",
+          "c-dessert"
+        ],
+        "products": {
+          "c-food": [
+            "p-salad",
+            "p-fries"
+          ],
+          "c-drinks": [
+            "p-beer",
+            "p-water",
+            "p-cola"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ]
+        }
+      }
+    },
+    {
+      "name": "a hidden category, and a category left empty, are dropped",
+      "ordering": {
+        "categories": [
+          "c-dessert",
+          "c-food",
+          "c-drinks"
+        ]
+      },
+      "hidden": [
+        "c-food",
+        "p-cake"
+      ],
+      "expect": {
+        "categories": [
+          "c-drinks"
+        ],
+        "products": {
+          "c-drinks": [
+            "p-beer",
+            "p-water",
+            "p-cola"
+          ]
+        }
+      }
+    },
+    {
+      "name": "new items by name",
+      "ordering": {
+        "products": {
+          "c-drinks": [
+            "p-water"
+          ]
+        },
+        "newItems": "by_name"
+      },
+      "expect": {
+        "categories": [
+          "c-food",
+          "c-dessert",
+          "c-drinks"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger",
+            "p-salad",
+            "p-fries"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ],
+          "c-drinks": [
+            "p-water",
+            "p-beer",
+            "p-cola"
+          ]
+        }
+      }
+    },
+    {
+      "name": "price ascending keeps the pinned first; ties fall back to the manual position",
+      "ordering": {
+        "products": {
+          "c-food": [
+            "p-salad",
+            "p-burger",
+            "p-fries"
+          ]
+        },
+        "pinned": {
+          "products": {
+            "c-food": [
+              "p-burger"
+            ]
+          }
+        }
+      },
+      "sort": "price_asc",
+      "expect": {
+        "categories": [
+          "c-food",
+          "c-drinks",
+          "c-dessert"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger",
+            "p-fries",
+            "p-salad"
+          ],
+          "c-drinks": [
+            "p-water",
+            "p-cola",
+            "p-beer"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ]
+        }
+      }
+    },
+    {
+      "name": "best sellers by rank, unranked last in manual order",
+      "ordering": {
+        "products": {
+          "c-drinks": [
+            "p-water",
+            "p-cola",
+            "p-beer"
+          ]
+        }
+      },
+      "sort": "best_sellers",
+      "rank": {
+        "p-beer": 40,
+        "p-cola": 40
+      },
+      "expect": {
+        "categories": [
+          "c-food",
+          "c-drinks",
+          "c-dessert"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger",
+            "p-salad",
+            "p-fries"
+          ],
+          "c-drinks": [
+            "p-cola",
+            "p-beer",
+            "p-water"
+          ],
+          "c-dessert": [
+            "p-cake"
+          ]
+        }
+      }
+    }
+  ],
+  "posImport": [
+    {
+      "name": "a till's flat list, interleaved across categories, reads per category",
+      "productOrder": [
+        "p-fries",
+        "p-cola",
+        "p-burger",
+        "p-water",
+        "ghost"
+      ],
+      "categoryOrder": [
+        "c-food",
+        "c-drinks"
+      ],
+      "expectImport": {
+        "categories": [
+          "c-food",
+          "c-drinks"
+        ],
+        "products": {
+          "c-food": [
+            "p-fries",
+            "p-burger"
+          ],
+          "c-drinks": [
+            "p-cola",
+            "p-water"
+          ]
+        },
+        "legacyFlat": [
+          "p-fries",
+          "p-cola",
+          "p-burger",
+          "p-water",
+          "ghost"
+        ]
+      },
+      "expectUnchangedWriteBack": {
+        "productOrder": [
+          "p-fries",
+          "p-cola",
+          "p-burger",
+          "p-water",
+          "ghost"
+        ],
+        "categoryOrder": [
+          "c-food",
+          "c-drinks"
+        ]
+      }
+    },
+    {
+      "name": "no categoryOrder: none (the catalog's)",
+      "productOrder": [
+        "p-water",
+        "p-cola"
+      ],
+      "categoryOrder": null,
+      "expectImport": {
+        "categories": [],
+        "products": {
+          "c-drinks": [
+            "p-water",
+            "p-cola"
+          ]
+        },
+        "legacyFlat": [
+          "p-water",
+          "p-cola"
+        ]
+      },
+      "expectUnchangedWriteBack": {
+        "productOrder": [
+          "p-water",
+          "p-cola"
+        ],
+        "categoryOrder": null
+      }
+    }
+  ],
+  "posWriteBack": [
+    {
+      "name": "one category reordered takes the places it held; the others keep theirs",
+      "legacyFlat": [
+        "p-fries",
+        "p-cola",
+        "p-burger",
+        "p-water",
+        "ghost"
+      ],
+      "ordering": {
+        "categories": [
+          "c-food",
+          "c-drinks"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger",
+            "p-fries"
+          ],
+          "c-drinks": [
+            "p-cola",
+            "p-water"
+          ]
+        }
+      },
+      "expect": {
+        "productOrder": [
+          "p-burger",
+          "p-cola",
+          "p-fries",
+          "p-water",
+          "ghost"
+        ],
+        "categoryOrder": [
+          "c-food",
+          "c-drinks"
+        ]
+      }
+    },
+    {
+      "name": "pinned are written as the first positions; a new id goes at the end",
+      "legacyFlat": [
+        "p-fries",
+        "p-cola",
+        "p-burger"
+      ],
+      "ordering": {
+        "products": {
+          "c-food": [
+            "p-fries",
+            "p-burger",
+            "p-salad"
+          ]
+        },
+        "pinned": {
+          "products": {
+            "c-food": [
+              "p-salad"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "productOrder": [
+          "p-salad",
+          "p-cola",
+          "p-fries",
+          "p-burger"
+        ],
+        "categoryOrder": null
+      }
+    },
+    {
+      "name": "never written before: categories in their order",
+      "legacyFlat": [],
+      "ordering": {
+        "categories": [
+          "c-drinks",
+          "c-food"
+        ],
+        "products": {
+          "c-food": [
+            "p-burger"
+          ],
+          "c-drinks": [
+            "p-water",
+            "p-cola"
+          ]
+        }
+      },
+      "expect": {
+        "productOrder": [
+          "p-water",
+          "p-cola",
+          "p-burger"
+        ],
+        "categoryOrder": [
+          "c-drinks",
+          "c-food"
+        ]
+      }
+    }
+  ],
+  "mergeShown": [
+    {
+      "full": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "shown": [
+        "c",
+        "a"
+      ],
+      "expect": [
+        "c",
+        "b",
+        "a",
+        "d"
+      ]
+    },
+    {
+      "full": [
+        "a",
+        "b"
+      ],
+      "shown": [
+        "b",
+        "x",
+        "a"
+      ],
+      "expect": [
+        "b",
+        "x",
+        "a"
+      ]
+    },
+    {
+      "full": [],
+      "shown": [
+        "x",
+        "y"
+      ],
+      "expect": [
+        "x",
+        "y"
+      ]
+    }
+  ],
+  "kiosk": [
+    {
+      "name": "the kiosk's keys read and write one to one",
+      "catalog": {
+        "categoryOrder": [
+          "c-food"
+        ],
+        "productOrder": {
+          "c-food": [
+            "p-fries",
+            "p-burger"
+          ],
+          "c-empty": []
+        }
+      },
+      "expect": {
+        "categoryOrder": [
+          "c-food"
+        ],
+        "productOrder": {
+          "c-food": [
+            "p-fries",
+            "p-burger"
+          ]
+        }
+      }
+    }
+  ],
+  "inherit": [
+    {
+      "name": "tills: the nearest flat list whole, the nearest categories",
+      "channel": "pos",
+      "chain": [
+        {
+          "products": {
+            "c-food": [
+              "p-fries"
+            ]
+          }
+        },
+        null,
+        {
+          "categories": [
+            "c-drinks"
+          ],
+          "products": {
+            "c-drinks": [
+              "p-water"
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "categories": [
+          "c-drinks"
+        ],
+        "products": {
+          "c-food": [
+            "p-fries"
+          ]
+        },
+        "pinned": {
+          "categories": [],
+          "products": {}
+        },
+        "newItems": "end"
+      }
+    },
+    {
+      "name": "kiosks and the web: per category, the nearest wins",
+      "channel": "kiosk",
+      "chain": [
+        {
+          "products": {
+            "c-food": [
+              "p-fries"
+            ]
+          }
+        },
+        {
+          "categories": [
+            "c-drinks"
+          ],
+          "products": {
+            "c-drinks": [
+              "p-water"
+            ],
+            "c-food": [
+              "p-burger"
+            ]
+          }
+        }
+      ],
+      "expect": {
+        "categories": [
+          "c-drinks"
+        ],
+        "products": {
+          "c-drinks": [
+            "p-water"
+          ],
+          "c-food": [
+            "p-fries"
+          ]
+        },
+        "pinned": {
+          "categories": [],
+          "products": {}
+        },
+        "newItems": "end"
+      }
+    },
+    {
+      "name": "nothing bound anywhere: empty (the catalog's order)",
+      "channel": "online",
+      "chain": [
+        null,
+        null
+      ],
+      "expect": {
+        "categories": [],
+        "products": {},
+        "pinned": {
+          "categories": [],
+          "products": {}
+        },
+        "newItems": "end"
+      }
+    }
+  ]
+}

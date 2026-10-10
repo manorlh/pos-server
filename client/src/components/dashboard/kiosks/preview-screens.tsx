@@ -112,6 +112,15 @@ export interface PProduct {
   price: number;
   /** The real kiosk: the exact price in agorot (`price` is for display). */
   priceAgorot?: number;
+  /**
+   * "תפריטים" (lib/kioskMenus.ts): while a menu is active `priceAgorot` is the menu's, `catalogPriceAgorot` is the
+   * catalog's, `menuId` / `menuName` the menu and `priceSource` where the price came from. A basket line is a copy of
+   * its product, so it remembers them: an open basket keeps its prices when the menu changes under it.
+   */
+  catalogPriceAgorot?: number;
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
   imageUrl: string | null;
   soldOut: boolean;
   description: string | null;

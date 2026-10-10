@@ -110,8 +110,16 @@ export interface WebOrderLine {
   productId: string;
   name: string;
   qty: number;
-  /** The dish's own price (its catalog price), per unit. */
+  /** The dish's own price per unit, as the line was added at — the active menu's while a menu priced it ("תפריטים"). */
   baseAgorot: number;
+  /**
+   * "תפריטים": the catalog's own price when the line was added under a menu, and the menu — an open basket keeps its
+   * price when the menu changes under it, and the sale records where it came from (lib/kioskMenus.ts).
+   */
+  catalogAgorot?: number;
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
   /** What one unit costs with its options. */
   unitAgorot: number;
   options: WebLineOption[];
@@ -194,6 +202,8 @@ export function heldSaleCodec(cartId: string, lines: readonly WebOrderLine[]): s
         sku: l.sku ?? l.productId.slice(0, 8),
         categoryId: l.categoryId ?? '',
         price: Math.round(l.baseAgorot),
+        // The menu the line was added under travels with the line, as the Android till's held sale (HeldSaleCodec).
+        ...(l.menuId ? { menuId: l.menuId, menuName: l.menuName ?? null, priceSource: l.priceSource === 'menu' ? 'menu' : 'catalog', ...(typeof l.catalogAgorot === 'number' ? { catalogPrice: Math.round(l.catalogAgorot) } : {}) } : {}),
         barcode: l.barcode,
         imageUrl: l.imageUrl,
         localImagePath: null,

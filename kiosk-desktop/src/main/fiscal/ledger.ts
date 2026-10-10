@@ -580,6 +580,12 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     }
     // The discount vouchers' share ("שוברי הנחה"): inside the same discount, a discount and never a tender.
     if ((l.voucherAgorot ?? 0) > 0) item.voucherDiscount = r2(l.voucherAgorot!);
+    // "תפריטים": the menu active when the line was added and where its price came from — the sales-by-menu report (SPEC_MENUS §6).
+    if (l.menuId) {
+      item.menuId = l.menuId;
+      if (l.menuName) item.menuName = l.menuName;
+      item.priceSource = l.priceSource ?? 'catalog';
+    }
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });

@@ -93,6 +93,11 @@ export interface BridgeBasketLine {
   productId: string;
   qty: number;
   unitAgorot: number;
+  /** "תפריטים" (lib/kioskMenus.ts menuMemoryOf): the dish's own price as the line was added at, the catalog's then, the menu. */
+  listAgorot?: number;
+  catalogAgorot?: number;
+  menuId?: string;
+  priceSource?: 'menu' | 'catalog';
   options: Array<{ groupId: string; optionId: string }>;
   notes: string[];
 }

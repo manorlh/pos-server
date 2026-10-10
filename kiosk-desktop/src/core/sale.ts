@@ -77,6 +77,15 @@ export interface SaleLine {
   promotionYieldedAgorot?: number;
   /** "כלול בשובר #7 (1)": the goods voucher that paid for the line, as the till's document marks it (coverByVoucher); never printed in the kitchen. */
   voucherMark?: string;
+  /**
+   * "תפריטים": the menu active when the line was added and where its price came from (`menu` / `catalog`) — the document's
+   * item carries them (`menuId` / `menuName` / `priceSource`) for the sales-by-menu report. Absent: no menu.
+   */
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
+  /** With a menu: the catalog's own price then (the till's held sale carries it as `catalogPrice`). */
+  catalogPriceAgorot?: number | null;
 }
 
 /** What one choice adds to one unit of the dish. */

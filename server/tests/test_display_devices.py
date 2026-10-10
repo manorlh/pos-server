@@ -325,6 +325,8 @@ OPEN_WRITES = {
     # "הפעל מחדש" (app/routers/device_management.py): any device-owner device, a screen too.
     ("POST", "/sync/{machine_id}/reboot/ack"),
     ("POST", "/sync/{machine_id}/till-reset/result"),
+    # "שם המכשיר" (docs/SPEC_PAIRING_QR.md §4): any device names itself, a screen too — no fiscal effect.
+    ("PATCH", "/sync/{machine_id}/name"),
     ("POST", "/sync/{machine_id}/messages/{message_id}/ack"),
     ("POST", "/sync/{machine_id}/events"),
     ("POST", "/sync/{machine_id}/attendance/actions"),

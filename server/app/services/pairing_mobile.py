@@ -17,6 +17,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
 from app.services.auth import create_machine_token, create_pairing_session_token
+from app.services.machine_names import settle_default_name
 from app.services.realtime_info import machine_realtime_connection_info
 from app.services.pairing import (
     PairingAssignmentError,
@@ -247,6 +248,8 @@ def claim_device_pairing(
     assigned = assign_machine_to_shop(db, pos_machine.id, resolved_shop_id)
     if not assigned:
         raise PairingMobileError("Failed to assign machine")
+    # A till that came with no name is "קופה N" now it has its number (docs/SPEC_PAIRING_QR.md §4).
+    settle_default_name(assigned)
 
     credentials = build_machine_credentials_payload(assigned)
     row.status = DevicePairingStatus.CLAIMED

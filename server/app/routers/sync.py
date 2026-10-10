@@ -1086,13 +1086,22 @@ def machine_set_product_order(
     area = db.get(ShopArea, machine.area_id) if machine.area_id else None
     if body.scope == "machine":
         write(machine)
+        touched = [("machine", machine.id)]
     elif body.scope == "area":
         write(area)
         clear(machine)
+        touched = [("area", area.id if area is not None else None), ("machine", machine.id)]
     else:
         write(shop)
         clear(area)
         clear(machine)
+        touched = [("shop", shop.id), ("area", area.id if area is not None else None), ("machine", machine.id)]
+    # "סדר תצוגה" (app/services/display_ordering.py): a bound level's ordering follows what the till
+    # wrote, and the levels linked to it get it too; a level the till cleared inherits now.
+    from app.services import display_ordering
+
+    db.flush()
+    display_ordering.wake_after_commit(db, display_ordering.after_pos_write(db, machine.tenant_id, touched))
     _audit(
         db,
         machine=machine,
@@ -1288,6 +1297,52 @@ def machine_set_pinpad_host(
     db.commit()
     if not out["unchanged"]:
         settings_notify.notify_machine_settings(db, machine, reason="pinpad_host")
+    return out
+
+
+class MachineNameIn(BaseModel):
+    """The till's own new name (app/services/machine_names.py, docs/SPEC_PAIRING_QR.md §4)."""
+
+    model_config = {"populate_by_name": True}
+
+    #: Cut generously here only to bound the body; the rule (1–100 characters) is `clean_machine_name`'s.
+    name: str = Field(..., max_length=500)
+    #: The till user who typed it, and the manager who approved it — the till's word, recorded as such.
+    operator_id: Optional[str] = Field(None, alias="operatorId", max_length=100)
+    approved_by_id: Optional[str] = Field(None, alias="approvedById", max_length=100)
+    #: When the till's own clock says it was changed (it may be delivered much later, from its outbox).
+    changed_at: Optional[datetime] = Field(None, alias="changedAt")
+
+
+@router.patch("/{machine_id}/name")
+def machine_set_name(
+    machine_id: str,
+    body: MachineNameIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "שם המכשיר" — the till renames itself, from its settings (a manager's change, checked at the till).
+
+    The machine token alone: the manager check happens at the till when the name is typed, offline too, and
+    a grant would have expired by the time a queued change is delivered. Any device may name itself, a
+    screen too. Last write wins; every change is a till event `machine_renamed` (from, to, who typed it,
+    who approved it, when the till says) and a log line. The same name again is `unchanged: true`, so the
+    till's outbox may resend. `422 name_required | name_too_long | name_invalid` (Hebrew `message`).
+    Answers `{"name", "previousName", "unchanged"}`; the dashboard shows it at once, and a dashboard rename
+    reaches the till on its next `GET /machines/me`.
+    """
+    from app.services import machine_names
+
+    try:
+        out = machine_names.rename_from_till(
+            db, machine, body.name,
+            operator_id=body.operator_id, approved_by_id=body.approved_by_id, changed_at=body.changed_at,
+        )
+    except machine_names.MachineNameRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    db.commit()
     return out
 
 

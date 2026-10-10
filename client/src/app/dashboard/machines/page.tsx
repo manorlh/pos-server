@@ -72,10 +72,13 @@ import {
   type PairingOutcome,
   type WorkConfigDraft,
 } from '@/lib/workConfig';
+import { buildPairingQr, expiryEpochSeconds, resolvePairingServer } from '@/lib/pairingCodeQr';
 import {
+  DEVICE_NAME_MAX,
   EMPTY_KDS_SCREEN,
   addDeviceMissing,
   deviceProfileErrorMessage,
+  expectedRegisterNumber,
   isFiscalRole,
   kioskDraftError,
   modelNeeded,
@@ -109,9 +112,15 @@ export default function MachinesPage() {
   const [pushOpen, setPushOpen] = useState(false);
   const [pushTarget, setPushTarget] = useState<'machine' | 'shop'>('machine');
   const [selectedMachine, setSelectedMachine] = useState<PosMachine | null>(null);
-  const [machineCode, setMachineCode] = useState('');
+  /**
+   * "שם המכשיר" — optional, a till's. Blank: the server names it ("קופה N" once it has its number).
+   * (The "קוד מכשיר" this field replaces was required but never sent: the server makes the machine's code.)
+   */
+  const [pairName, setPairName] = useState('');
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [pairingCodeId, setPairingCodeId] = useState<string | null>(null);
+  /** When the code expires (the server's `expiresAt`): the QR carries it, so the till can refuse a late scan. */
+  const [pairingExpiresAt, setPairingExpiresAt] = useState<string | null>(null);
   const [pairingComplete, setPairingComplete] = useState(false);
   const [pairCompanyId, setPairCompanyId] = useState('');
   const [pairShopId, setPairShopId] = useState('');
@@ -249,9 +258,10 @@ export default function MachinesPage() {
         : machines;
 
   const resetPairDialog = () => {
-    setMachineCode('');
+    setPairName('');
     setPairingCode(null);
     setPairingCodeId(null);
+    setPairingExpiresAt(null);
     setPairingComplete(false);
     setPairCompanyId('');
     setPairShopId('');
@@ -291,6 +301,7 @@ export default function MachinesPage() {
     onSuccess: (res) => {
       setPairingCode(res.data.code);
       setPairingCodeId(res.data.id);
+      setPairingExpiresAt(typeof res.data.expiresAt === 'string' ? res.data.expiresAt : null);
       setPairingComplete(false);
     },
     // A kiosk without a shop, or a controlling till that is not valid: the server's Hebrew.
@@ -300,7 +311,7 @@ export default function MachinesPage() {
   const pairDraft = {
     role: pairDeviceRole,
     model: pairDeviceModel,
-    machineCode,
+    name: pairName,
     companyId: pairCompanyId,
     shopId: pairShopId,
     platform: pairPlatform,
@@ -308,6 +319,29 @@ export default function MachinesPage() {
     mirrorTillId: pairMirrorTill,
   };
   const pairMissing = addDeviceMissing(pairDraft);
+  /** "הקופה תקבל מספר N": the server's own peek for the chosen shop, before anything is created. */
+  const pairExpectedNumber = expectedRegisterNumber(
+    { role: pairDeviceRole, shopId: pairShopId },
+    pairNextRegister,
+  );
+  /*
+   * The QR beside the code (docs/SPEC_PAIRING_QR.md): the API base the device must reach — the dashboard's own
+   * configured public API URL — with the code and its expiry, for the till's camera. Null (the code stays as
+   * text) when there is nothing a device could use: no public API URL (a development box on localhost).
+   * Android only: a Windows install and a browser have their own ways in.
+   */
+  const pairQrServer = resolvePairingServer(
+    process.env.NEXT_PUBLIC_API_URL,
+    typeof window === 'undefined' ? '' : window.location.origin,
+  );
+  const pairQr =
+    pairingCode && pairPlatform === 'android'
+      ? buildPairingQr({
+          server: pairQrServer ?? '',
+          code: pairingCode,
+          exp: expiryEpochSeconds(pairingExpiresAt) ?? 0,
+        })
+      : null;
   const pairWorkConfigPlan = pairShopId && pairDeviceRole ? workConfigPlanOf(pairWorkConfig, 'pairing') : null;
   const pairWorkConfigOutcomeText = pairingOutcomeText(pairWorkConfigOutcome);
   const pairMissingHint =
@@ -933,7 +967,21 @@ export default function MachinesPage() {
               ) : (
                 <>
                   <p className="text-muted-foreground text-sm">{t('pairInstruction')}</p>
-                  <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
+                  {/* The code, and beside it its QR for the till's camera ("סריקת קוד מהדשבורד" on the pairing screen). */}
+                  <div className="flex flex-wrap items-center justify-center gap-4">
+                    <p className="text-4xl font-mono font-bold tracking-widest text-primary">{pairingCode}</p>
+                    {pairQr ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="rounded-md bg-white p-2">
+                          <QRCodeSVG value={pairQr} size={148} level="M" />
+                        </div>
+                        <span className="text-xs text-muted-foreground">{t('pairQrHint')}</span>
+                      </div>
+                    ) : null}
+                  </div>
+                  {pairPlatform === 'android' && !pairQr ? (
+                    <p className="text-xs text-muted-foreground">{t('pairQrUnavailable')}</p>
+                  ) : null}
                   <p className="text-xs text-muted-foreground">{t('pairExpiry')}</p>
                   <p className="text-sm text-muted-foreground animate-pulse">{t('pairWaiting')}</p>
                   {/* "דפדפן (Web)": the kiosk's link and QR with the code (docs/SPEC_KIOSK.md §27). */}
@@ -957,14 +1005,8 @@ export default function MachinesPage() {
               ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
                   shop's next number moves on the moment this one is taken. A screen gets none. */}
-              {!pairingComplete &&
-              !pairIsDisplay &&
-              pairShopId &&
-              pairNextRegister &&
-              sameId(pairNextRegister.shopId, pairShopId) ? (
-                <p className="text-sm font-medium">
-                  {t('pairWillGetNumber', { number: pairNextRegister.nextRegisterNumber })}
-                </p>
+              {!pairingComplete && pairExpectedNumber !== null ? (
+                <p className="text-sm font-medium">{t('pairWillGetNumber', { number: pairExpectedNumber })}</p>
               ) : null}
               {pairingComplete ? (
                 <Button className="w-full" onClick={finishPairDialog}>
@@ -1038,15 +1080,25 @@ export default function MachinesPage() {
                       : t('deviceRole.webNoModel')
                     : t('deviceRole.windowsNoModel')}</p>
               )}
-              <div className="space-y-2">
-                <Label>{t('machineCode')}</Label>
-                <Input
-                  value={machineCode}
-                  onChange={(e) => setMachineCode(e.target.value)}
-                  placeholder={t('machineCodePlaceholder')}
-                />
-                <p className="text-xs text-muted-foreground">{t('machineCodeHint')}</p>
-              </div>
+              {/* "שם המכשיר" — optional, a till's. Blank: the server names it "קופה N" once it has its number. */}
+              {pairDeviceRole === 'till' ? (
+                <div className="space-y-2">
+                  <Label htmlFor="pair-device-name">{t('deviceName.label')}</Label>
+                  <Input
+                    id="pair-device-name"
+                    value={pairName}
+                    maxLength={DEVICE_NAME_MAX}
+                    onChange={(e) => setPairName(e.target.value)}
+                    placeholder={
+                      pairExpectedNumber !== null
+                        ? t('registerLabel', { number: pairExpectedNumber })
+                        : t('deviceName.placeholder')
+                    }
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">{t('deviceName.hint')}</p>
+                </div>
+              ) : null}
               <div className="space-y-3 rounded-lg border border-dashed p-3">
                 <div>
                   <p className="text-sm font-medium">
@@ -1105,14 +1157,16 @@ export default function MachinesPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {pairShopId &&
-                  !pairIsDisplay &&
-                  pairNextRegister &&
-                  sameId(pairNextRegister.shopId, pairShopId) ? (
-                    <p className="text-xs text-muted-foreground">
-                      {t('pairNextRegister', {
-                        label: t('registerLabel', { number: pairNextRegister.nextRegisterNumber }),
-                      })}
+                  {/* Before "צור": the number the server would give a till in this shop now — a peek, nothing reserved. */}
+                  {pairExpectedNumber !== null ? (
+                    <p
+                      role="status"
+                      className="rounded-md bg-primary/10 px-3 py-2 text-sm font-medium text-primary"
+                    >
+                      {t('pairWillGetNumber', { number: pairExpectedNumber })}
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {t('pairWillGetNumberHint')}
+                      </span>
                     </p>
                   ) : null}
                 </div>

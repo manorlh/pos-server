@@ -19,7 +19,6 @@ import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promoti
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { ofShekels } from '../core/money';
 import { bonDoc, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
@@ -80,7 +79,6 @@ import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { FunnelStore } from './kiosk/funnel';
 import {
   basketChanges,
-  checkedBasePrice,
   cloudCheckRequest,
   CLOUD_CHECK_TIMEOUT_MS,
   overridesLive,
@@ -94,6 +92,9 @@ import {
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
+import { basketSold } from '@dash-lib/kioskBasketSold';
+import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from '@dash-lib/kioskMenus';
+import type { MenuBlock } from '@dash-lib/menuSchedule';
 import type {
   AdminAction,
   AdminInfo,
@@ -389,6 +390,8 @@ export class KioskService extends EventEmitter {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    if (this.menuTimer) clearTimeout(this.menuTimer);
+    this.menuTimer = null;
     this.offUsbWatch();
     if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
@@ -549,10 +552,33 @@ export class KioskService extends EventEmitter {
   /** When the catalog's sale states change next by the clock alone (a block's end): the view is built again then. */
   private saleChangeAt: number | null = null;
 
+  /** "תפריטים": the block the view was built from, the menu it was built for, and the timer that looks at the clock at each minute. */
+  private menuBlock: MenuBlock | null = null;
+  private menuKey = '';
+  private menuTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * "תפריטים": the menu active now by the kiosk's OWN clock — offline too — looked at once per minute boundary (a handful of
+   * comparisons, no call, no catalog read). The view is built again only when the answer changes: a menu starts, ends, or
+   * yields to another (the Android kiosk's minute ticks, CatalogMenuRepository.minuteTicks).
+   */
+  private armMenuClock() {
+    if (this.menuTimer) clearTimeout(this.menuTimer);
+    this.menuTimer = null;
+    if (this.stopped || !hasMenus(this.menuBlock)) return;
+    this.menuTimer = setTimeout(() => {
+      this.menuTimer = null;
+      if (menuKeyAt(this.menuBlock, Date.now()) !== this.menuKey) this.dirty();
+      else this.armMenuClock();
+    }, msToNextMinute(Date.now()));
+    this.menuTimer.unref?.();
+  }
+
   private catalogData() {
     const now = Date.now();
     const catalog = this.cloud.catalog();
     this.saleChangeAt = catalogNextChangeMs(catalog.products, now);
+    this.menuBlock = (catalog.catalogMenus as MenuBlock | null | undefined) ?? null;
     return buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs: now });
   }
 
@@ -573,7 +599,11 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    // "תפריטים": the menu the screens were built for; the clock looks again at the next minute boundary. Only a view build
+    // sets it — a basket priced in between does not hide a menu change from the screens.
+    this.menuKey = `${cat.menu.mode}:${cat.menu.menuId ?? ''}`;
+    if (phase === 'kiosk') this.armMenuClock();
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');
@@ -855,10 +885,12 @@ export class KioskService extends EventEmitter {
     const id = this.machineId;
     if (!id || this.offlineNow || input.lines.length === 0) return;
     const cat = this.catalogData();
-    const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
+    const byId = new Map<string, KProduct>([...cat.products, ...cat.held].map((p) => [p.id, p]));
+    // The base price each line remembers, without any menu: the cloud's word is about the catalog's price the customer saw
+    // (KioskPriceCheck.request: `line.product.basePrice`); the catalog held now only stands in for a line of an older screen.
     const body = cloudCheckRequest(input.lines, (pid) => {
       const p = byId.get(pid);
-      return p ? ofShekels(p.price) : undefined;
+      return p ? basePriceOf(p) : undefined;
     }, this.cloud.promotionsEtag());
     const reply = await this.api.post<CloudVerdict>(`sync/${id}/kiosk/basket-check`, body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
     if (reply.kind !== 'ok' || !reply.body || !Array.isArray(reply.body.lines)) return;
@@ -1116,29 +1148,45 @@ export class KioskService extends EventEmitter {
   ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in test/kioskMenus.test.ts.
+    const heldById = new Map<string, KProduct>(cat.held.map((p) => [p.id, p]));
+    const block = this.menuBlock;
+    const menuPrices = menuPriceSets(block);
     const lines: SaleLine[] = [];
     const changes: BasketChange[] = [];
     const tracked = new Set<string>();
     // What the cloud said a moment ago wins over a catalog that has not caught up yet.
     const cloud = overridesLive(this.cloudBasket, Date.now());
-    const gone = (id: string, p: KProduct | undefined) => !p || p.soldOut || !!cloud?.gone.has(id);
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (client lib/kioskBasketSold.ts, the Android kiosk's
+    // KioskBasketLookup). A meal's component: found even when no screen shows it (hidden, not placed), but never blocked,
+    // sold out or gone.
+    const lookup = basketSold({ products: cat.products, categories: cat.categories, held: cat.held, cfg: this.config(), gone: cloud?.gone });
     for (const l of input.lines) {
-      const p = byId.get(l.productId);
+      const p = lookup.dish(l.productId, !!l.menuId);
       // A meal whose chosen component is no longer sold goes as a whole: the customer chooses again.
       const parts = l.meal?.components ?? [];
       const slots = cat.meals[l.productId] ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || gone(c.productId, byId.get(c.productId));
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !lookup.component(c.productId);
       });
-      if (!p || gone(l.productId, p) || brokenMeal) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
+      if (!p || brokenMeal) {
+        changes.push({ kind: 'removed', productId: l.productId, name: (byId.get(l.productId) ?? heldById.get(l.productId))?.name ?? '', key: l.key });
         continue;
       }
+      // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the basket is
+      // no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
+      const own = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), menuPrices.get(p.id));
+      // The menu the line says it was added under: only one this kiosk's block holds is recorded on the document.
+      const under = l.menuId ? menuById(block, l.menuId) : null;
       const options = this.chargedOptions(cat.groups[p.id] ?? [], l.options);
       const components = parts.map((c) => {
         const slot = slots.find((s) => s.id === c.slotId)!;
-        const cp = byId.get(c.productId)!;
+        const cp = (byId.get(c.productId) ?? heldById.get(c.productId))!;
         const groups = (cat.groups[cp.id] ?? []).map(moneyGroupOf);
         // The kiosk's meal: each component on its own defaults (MealDraft.start), or with the required choice the
         // customer answered in the meal window (MealDraft.updateDish) — priced by its groups here.
@@ -1151,7 +1199,7 @@ export class KioskService extends EventEmitter {
           productId: cp.id,
           name: cp.name,
           categoryId: cp.categoryId,
-          listPriceAgorot: checkedBasePrice(cp.id, cp.priceAgorot, cloud),
+          listPriceAgorot: pricesNow(cp, cloud?.prices.get(cp.id)).listAgorot,
           upchargeAgorot: slot.choices.find((x) => x.productId === cp.id)!.upchargeAgorot,
           options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre ?? null, chargedAgorot: o.chargedAgorot })),
         };
@@ -1162,13 +1210,21 @@ export class KioskService extends EventEmitter {
         productId: p.id,
         name: p.name,
         sku: p.sku,
-        basePriceAgorot: checkedBasePrice(p.id, p.priceAgorot, cloud),
+        basePriceAgorot: own,
         options,
         notes: l.notes.filter((n) => n.trim()),
         qty: Math.min(MAX_LINE_QTY, Math.max(1, Math.trunc(l.qty))),
         meal: components.length > 0 ? { productId: p.id, name: p.name, components } : null,
         categoryId: p.categoryId,
         noDiscount: p.noDiscount,
+        ...(under
+          ? {
+              menuId: l.menuId,
+              menuName: typeof under.name === 'string' ? under.name : null,
+              priceSource: l.priceSource === 'menu' ? ('menu' as const) : ('catalog' as const),
+              catalogPriceAgorot: pricesNow(p, cloud?.prices.get(p.id)).catalogAgorot,
+            }
+          : {}),
       });
     }
     // A price that moved since the screen showed it: shown to the customer, never charged as is.
@@ -1497,6 +1553,9 @@ export class KioskService extends EventEmitter {
         name: l.name,
         qty: l.qty,
         baseAgorot: l.basePriceAgorot,
+        ...(l.menuId
+          ? { menuId: l.menuId, menuName: l.menuName ?? null, priceSource: l.priceSource ?? 'catalog', ...(typeof l.catalogPriceAgorot === 'number' ? { catalogAgorot: l.catalogPriceAgorot } : {}) }
+          : {}),
         unitAgorot: unitAgorot(l),
         options: l.options.map(option),
         note: l.notes.join(' · ') || null,

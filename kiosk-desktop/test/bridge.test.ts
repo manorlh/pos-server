@@ -358,6 +358,15 @@ describe('the protocol (pure)', () => {
     // Vouchers that are not an order's are no payment at all (never charged as if there were none).
     expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }], vouchers: 'x' })).toBe(null);
     expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }], vouchers: { ...vouchers, saleRef: '' } })).toBe(null);
+    // "תפריטים": the price the line was added at and the menu it was added under pass through; nothing else does.
+    const menus = startPaymentInput({
+      lines: [
+        { key: 'k', productId: 'p', qty: 1, unitAgorot: 4000, listAgorot: 4000.4, catalogAgorot: 5400, menuId: 'lunch', priceSource: 'menu' },
+        { key: 'j', productId: 'q', qty: 1, listAgorot: 'x', catalogAgorot: null, menuId: '', priceSource: 'other' },
+      ],
+    });
+    expect(menus?.lines[0]).toMatchObject({ unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', priceSource: 'menu' });
+    expect(menus?.lines[1]).toEqual({ key: 'j', productId: 'q', qty: 1, options: [], notes: [] });
     expect(printablePage('bon', { kind: 'bon', lines: [] })).not.toBe(null);
     expect(printablePage('receipt', { kind: 'receipt' })).toBe(null);
     expect(printablePage('bon', { kind: 'slip' })).toBe(null);

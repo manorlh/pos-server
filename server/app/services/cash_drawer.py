@@ -43,6 +43,11 @@ NEAR_VARIANCE_MINUTES_KEY = "cashDrawer.nearVarianceMinutes"
 #: till freezes the amount on each shift's close (`till.cardTipsFromDrawer`); the cloud's
 #: drawer maths read that frozen amount, never this parameter (app/services/z_builder.py).
 CARD_TIPS_FROM_DRAWER_KEY = "cashDrawer.cardTipsFromDrawer"
+#: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (the owner, 10.10.2026): the Z's expected cash
+#: takes off the safe deposits and counts Cash In / Cash Out, as the till's X always did. Off by
+#: default ("ברירת מחדל שלא יופיע"). Resolved per till (company → shop → area → till) when a Z is
+#: produced — never read again for a Z already made (app/services/z_expected_cash.py).
+Z_EXPECTED_CASH_MOVEMENTS_KEY = "cashDrawer.zExpectedCashMovements"
 #: Not the drawer's only: how the till shows an action the user's role denies.
 DENIED_UI_KEY = "permissionsDeniedUi"
 DENIED_UI_HIDE = "הסתר"
@@ -138,6 +143,19 @@ CASH_DRAWER_PARAMETER_SPECS: Tuple[Dict[str, Any], ...] = (
             "\"טיפים באשראי ששולמו מהמגירה\" ו\"מזומן במגירה\", והמזומן הצפוי במגירה (בספירה, ב-Blind Count "
             "ובסגירת משמרת) מופחת בהם. הטיפים אינם הכנסה — המכירות, המע״מ וה-Z הפיסקלי לא משתנים. "
             "לא חל על קיוסקים."
+        ),
+    ),
+    dict(
+        key=Z_EXPECTED_CASH_MOVEMENTS_KEY, label="Z — מזומן צפוי כולל הפקדות ותנועות מזומן", value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: ה\"מזומן הצפוי\" ב-Z (Z לכל קופה, Z סניפי, Z לפי נקודת מכירה, והעתקים שלהם) מופחתות בו "
+            "הפקדות לכספת (\"הפקדה / ריקון חלקי\") ומחושבות בו תנועות המזומן (\"הכנסת מזומן\" ו\"הוצאת מזומן\") — "
+            "כמו שה-X של הקופה כבר מחשב. בשורות המגירה שב-Z מופיעות ההכנסות, ההוצאות וההפקדות, והן מסתכמות "
+            "במזומן הצפוי; ההפרש (נספר מול צפוי) נמדד מולו. זה נתון ניהולי בלבד: מספרי ה-Z, סכומי המסמכים, "
+            "המע״מ והקובץ האחיד לא משתנים. ברירת המחדל: כבוי — ה-Z נשאר בדיוק כפי שהיה. הערך נקבע ברגע שה-Z "
+            "מופק ונשמר עליו: Z שכבר הופק לא מחושב מחדש, וההפעלה חלה רק על Z שיופק אחריה. נקבע לחברה, לסניף, "
+            "לנקודת מכירה או לקופה. לא חל על קיוסקים."
         ),
     ),
     dict(

@@ -54,6 +54,11 @@ export interface CatalogSnapshot {
   categories: Array<Record<string, unknown>>;
   menu: Record<string, unknown> | null;
   machineCatalog: { mode?: string } | null;
+  /**
+   * "תפריטים": the `catalogMenus` block as the pull carried it (client lib/kioskMenus.ts) — whole when sent, kept when a delta
+   * carries none; null: none (a snapshot written before this field reads as none).
+   */
+  catalogMenus?: Record<string, unknown> | null;
   serverTime: string | null;
 }
 
@@ -187,7 +192,7 @@ export class CloudStore {
   }
 
   catalog(): CatalogSnapshot {
-    return this.read<CatalogSnapshot>(K.catalog) ?? { products: [], categories: [], menu: null, machineCatalog: null, serverTime: null };
+    return this.read<CatalogSnapshot>(K.catalog) ?? { products: [], categories: [], menu: null, machineCatalog: null, catalogMenus: null, serverTime: null };
   }
 
   /** A full pull replaces; a delta upserts by id (the menu only when sent). */
@@ -206,9 +211,12 @@ export class CloudStore {
       nextProducts = prev.products;
     }
     const menu = body.menu && typeof body.menu === 'object' ? (body.menu as Record<string, unknown>) : full ? null : prev.menu;
+    // "תפריטים": whole when sent (a full pull always sends it, even empty, so the kiosk clears); a delta that carries none keeps it.
+    const catalogMenus = body.catalogMenus && typeof body.catalogMenus === 'object' && !Array.isArray(body.catalogMenus) ? (body.catalogMenus as Record<string, unknown>) : (prev.catalogMenus ?? null);
     this.write(K.catalog, {
       products: nextProducts,
       categories: nextCategories,
+      catalogMenus,
       menu: menu ?? prev.menu,
       machineCatalog: (body.machineCatalog as CatalogSnapshot['machineCatalog']) ?? prev.machineCatalog,
       serverTime: typeof body.serverTime === 'string' ? body.serverTime : prev.serverTime,
