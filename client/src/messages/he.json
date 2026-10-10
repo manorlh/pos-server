@@ -13649,6 +13649,7 @@
       "requiresManagerApproval": "מחייב אישור מנהל במכירה",
       "allergens": "אלרגנים",
       "dietaryTags": "סימוני תזונה",
+      "appearsIn": "מופיע ב",
       "courseId": "שלב הגשה",
       "maxPerOrder": "מקסימום בהזמנה",
       "refillable": "מילוי חוזר",
