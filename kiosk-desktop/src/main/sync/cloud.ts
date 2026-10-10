@@ -103,6 +103,7 @@ const K = {
   params: 'cloud.parameters',
   paramsEtag: 'cloud.parametersEtag',
   catalog: 'cloud.catalog',
+  catalogMenus: 'cloud.catalogMenus',
   kiosk: 'cloud.kioskSnapshot',
   kioskSyncAt: 'cloud.kioskSyncAt',
   beat: 'cloud.heartbeat',
@@ -213,6 +214,23 @@ export class CloudStore {
       machineCatalog: (body.machineCatalog as CatalogSnapshot['machineCatalog']) ?? prev.machineCatalog,
       serverTime: typeof body.serverTime === 'string' ? body.serverTime : prev.serverTime,
     } satisfies CatalogSnapshot);
+    // "תפריטים": whole when the cloud sends the block; a delta pull that carries none keeps the last; a full pull that
+    // carries none (a cloud without menus) clears it — what a menu once said is never kept against the cloud's silence.
+    const block = body.catalogMenus;
+    if (block && typeof block === 'object' && !Array.isArray(block)) this.write(K.catalogMenus, block);
+    else if (full && this.catalogMenus() !== null) {
+      this.kv.delete(K.catalogMenus);
+      this.cache.set(K.catalogMenus, null);
+    }
+  }
+
+  /**
+   * "תפריטים": the `catalogMenus` block of the last catalog pull, as the cloud sent it (menus, the assignments along THIS
+   * till's chain, the fallback, its device groups) — read by core/till/menus.ts; null: none was ever sent.
+   * The same object until the next write (a memo may compare it by identity).
+   */
+  catalogMenus(): Record<string, unknown> | null {
+    return this.read<Record<string, unknown>>(K.catalogMenus);
   }
 
   /** The promotions as `GET /sync/{m}/promotions` sent them (read by lib/kioskMoney.ts promotionsOf). */
