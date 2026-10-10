@@ -247,6 +247,10 @@ def as_command(
         "deliveredAt": _iso(received_at),
         "doneAt": _iso(done_at),
         "expiresAt": _iso(expires_at),
+        # The same keys as device_commands.command_out (a test pins the shape): a Z run's command has no
+        # params / result (those belong to `upload_logs`).
+        "params": None,
+        "result": None,
     }
 
 
