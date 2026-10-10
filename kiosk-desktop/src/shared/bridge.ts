@@ -235,6 +235,20 @@ export interface AdminInfo {
    * DESKTOP_EXIT (else why not, Hebrew). Absent from a service that predates it.
    */
   desktopExit?: { allowed: boolean; reason: string | null };
+  /** "מצב עבודה: קיוסק / קופה" (core/workMode.ts): absent from a service that predates it. */
+  workMode?: AdminWorkMode;
+}
+
+/** The manager's "מצב עבודה" section: shown only where the owner allowed it (`enabled`). */
+export interface AdminWorkMode {
+  /** The owner's gate (`kioskTillModeEnabled`) is open for this device. */
+  enabled: boolean;
+  /** The mode now ("קיוסק" — this menu is the kiosk's; "קופה" is where the button leads). */
+  mode: 'kiosk' | 'till';
+  /** The "קופה" button exists: kiosk mode, the gate open. */
+  toTill: boolean;
+  /** The manager who opened this menu holds KIOSK_TILL_MODE: their code counts, no second one is asked. */
+  openerHolds: boolean;
 }
 
 export interface TechnicianInfo {
@@ -316,6 +330,11 @@ export type AdminAction =
   | { type: 'exitKiosk' }
   /** "יציאה לשולחן העבודה" from the menu: the same manager's DESKTOP_EXIT, no second code. */
   | { type: 'desktopExit' }
+  /**
+   * "מצב עבודה": to the till. Refused (`refusal`) over a customer's order or payment; always a manager's code with
+   * KIOSK_TILL_MODE — the one that opened this menu counts when it holds it, else `needsCode` asks for another (`code`).
+   */
+  | { type: 'workMode'; mode: 'till'; code?: string }
   /** "צימוד מסוף SynqPay": `pair` (the first code, or "שלח קוד חדש"); the serial when the kiosk cannot tell it. */
   | { type: 'synqpayPair'; serialNumber?: string | null }
   /** The 6 digits from the terminal's screen. */
@@ -326,6 +345,10 @@ export type AdminAction =
 export interface AdminActionResult {
   ok: boolean;
   message?: string;
+  /** "מצב עבודה": why the switch is refused now (core/workMode.ts `TillModeRefusal`). */
+  refusal?: string;
+  /** "מצב עבודה": a manager's code with KIOSK_TILL_MODE is needed (or the one typed was refused: `message` says why). */
+  needsCode?: boolean;
   /** SynqPay's pairing actions: where it stands now. */
   pairing?: SynqpayPairingView;
 }

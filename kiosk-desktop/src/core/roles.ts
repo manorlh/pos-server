@@ -12,6 +12,12 @@
  *
  * KDS and the board are NOT tills: no documents, no shifts, no Z, no payments (the cloud enforces
  * it too). `fiscal` says which roles may ever touch the ledger.
+ *
+ * "מצב עבודה: קיוסק / קופה" (core/workMode.ts, main/workMode.ts) moves a device between the two
+ * fiscal roles by the day's choice, never the cloud's role: a kiosk by role in its till session opens
+ * as the till; a till by role away in its kiosk mode opens as the kiosk (its kiosk snapshot, read as
+ * `kioskActive`, is the effective one — a till at home is no kiosk). Same machine, same series, same
+ * shift: nothing fiscal moves with the role.
  */
 
 import type { AppRole } from '../shared/roles';
@@ -29,7 +35,7 @@ export interface RoleInfo {
 
 export const ROLE_INFO: Record<AppRole, RoleInfo> = {
   kiosk: { label: 'קיוסק', fiscal: true, ready: true },
-  till: { label: 'קופה', fiscal: true, ready: false },
+  till: { label: 'קופה', fiscal: true, ready: true },
   kds: { label: 'מסך מטבח (KDS)', fiscal: false, ready: true },
   order_status_board: { label: 'מסך מוכן / לא מוכן', fiscal: false, ready: true },
   customer_display: { label: 'מסך לקוח', fiscal: false, ready: false },
@@ -51,16 +57,21 @@ export interface RoleFacts {
   paired: boolean;
   /** `machines/me` deviceRole (null before the first read). */
   deviceRole: unknown;
-  /** `kiosk/sync` answered `kiosk: true`. */
+  /**
+   * `kiosk/sync` answered `kiosk: true` — the EFFECTIVE word (core/workMode.ts): a till by role at home,
+   * whose kiosk-mode row answers `kiosk: true, homeRole: "till"`, is no kiosk until it works as one.
+   */
   kioskActive: boolean;
   /** `kds/device` answered a device (station / expo / manager / pickup), if it was asked. */
   kdsDevice: { role: string; isActive?: boolean } | null;
+  /** "מצב עבודה": a kiosk by role works as a till today (its till session) — it opens as the till. */
+  tillSession?: boolean;
 }
 
 /** The role to open in; null = not known yet (the "waiting" screen). */
 export function resolveRole(f: RoleFacts): AppRole | null {
   if (!f.paired) return null;
-  if (f.kioskActive) return 'kiosk';
+  if (f.kioskActive) return f.tillSession ? 'till' : 'kiosk';
   const cloud = normalizeRole(f.deviceRole);
   const kds = f.kdsDevice && f.kdsDevice.isActive !== false ? f.kdsDevice : null;
   const kdsRole: AppRole | null = kds ? (kds.role === 'pickup' ? 'order_status_board' : 'kds') : null;
