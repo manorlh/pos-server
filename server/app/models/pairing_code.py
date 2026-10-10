@@ -59,6 +59,10 @@ class PairingCode(Base):
     #: tablesMode, lanServerExcluded, link, enableLocalNetwork, receiptPrinter, workflowTargets}`),
     #: applied to the machine right after it pairs. Null: "לפי הסניף" — nothing to apply.
     work_config = Column(JSON, nullable=True)
+    #: The optional name typed in the add-device form (docs/SPEC_PAIRING_QR.md §4), for a till; the
+    #: machine gets it when the code is redeemed and it wins over a name the device itself sends.
+    #: Null: the server's default ("קופה N" once the machine has a number).
+    machine_name = Column(String(100), nullable=True)
     #: How that went: `{applied, changes, detail, message, at}` — shown on the device page.
     work_config_result = Column(JSON, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

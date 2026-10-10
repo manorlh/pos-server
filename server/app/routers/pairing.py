@@ -28,6 +28,7 @@ from app.services.pairing import (
     resolve_pairing_assignment,
 )
 from app.services.auth import create_machine_token
+from app.services.machine_names import settle_default_name
 from app.services.realtime_info import machine_realtime_connection_info
 
 router = APIRouter(prefix="/pairing", tags=["pairing"])
@@ -111,6 +112,8 @@ def generate_pairing_code(
             platform=body.platform or display_devices.PLATFORM_ANDROID,
             kds_options=kds_options,
             work_config=work_config,
+            # "שם המכשיר — לא חובה": a till's name from the form (already cleaned by the schema).
+            machine_name=body.name if device_role in (None, "till") else None,
         )
     except PairingAssignmentError as exc:
         raise HTTPException(
@@ -224,5 +227,10 @@ def assign_machine(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to assign machine. Machine may not exist or is not in paired status.",
         )
+
+    # A till added with no name is "קופה N" now it has its number in the shop.
+    if settle_default_name(machine):
+        db.commit()
+        db.refresh(machine)
 
     return machine

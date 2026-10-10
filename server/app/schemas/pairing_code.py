@@ -1,9 +1,10 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, Dict, Any
 import uuid
 from datetime import datetime
 
 from app.schemas.device_profile import KdsScreenOptionsIn, KioskOptionsIn
+from app.services.machine_names import MachineNameRefused, clean_machine_name
 from app.schemas.work_config import WorkConfigIn
 from app.schemas.pos_machine import DeviceModel, DevicePlatform, DeviceRole
 
@@ -34,6 +35,18 @@ class PairingCodeGenerateRequest(BaseModel):
     #: "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): a preset and overrides, applied to the
     #: machine right after it pairs. Absent / null: "לפי הסניף". Needs `shopId`.
     work_config: Optional[WorkConfigIn] = Field(None, alias="workConfig")
+    #: "שם המכשיר — לא חובה" (docs/SPEC_PAIRING_QR.md §4): a till's name, given when it is added.
+    #: Blank / absent: the server's default ("קופה N" once the machine has a number). The device that
+    #: redeems the code gets this name, whatever name it sends itself.
+    name: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, value: Optional[str]) -> Optional[str]:
+        try:
+            return clean_machine_name(value)
+        except MachineNameRefused as refused:
+            raise ValueError(refused.message) from refused
 
 
 class PairingCodeCreate(BaseModel):
@@ -69,6 +82,8 @@ class PairingCodeResponse(BaseModel):
     #: The plan the code carries, and — once a device redeemed it — how applying it went.
     work_config: Optional[Dict[str, Any]] = Field(None, alias="workConfig")
     work_config_result: Optional[Dict[str, Any]] = Field(None, alias="workConfigResult")
+    #: The name the code was given in the add-device form, if any.
+    machine_name: Optional[str] = Field(None, alias="machineName")
     expires_at: datetime = Field(..., alias="expiresAt")
     is_used: bool = Field(..., alias="isUsed")
     used_at: Optional[datetime] = Field(None, alias="usedAt")

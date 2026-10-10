@@ -1623,6 +1623,12 @@ from app.services.remote_close_force import PARAMETER_SPECS as _REMOTE_FORCE_SPE
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_FORCE_SPECS)
 
+# "קופה עצמאית — Z בלבד, בלי משמרות" and "לשאול קופה פותחת" (app/services/independent_z_only.py): read by the till only;
+# an independent till works with no shifts in its UI, its internal shift opened silently, every close a Z.
+from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ONLY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 

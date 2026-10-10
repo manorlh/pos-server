@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from app.models.z_report import ZReport
 from app.services import card_brands, offline_authorizations
+from app.services import z_expected_cash as ZEC
 
 TITLE = "דו״ח Z"
 #: The widest label that still leaves room for a value on 80 mm paper.
@@ -311,6 +312,47 @@ def _drawer_tips_rows(tips: Optional[Dict[str, Optional[Decimal]]]) -> List[Opti
     ]
 
 
+#: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" on paper, in the drawer block above the expected cash
+#: they are part of (app/services/z_expected_cash.py): Cash In adds, the others take off. The same
+#: words as the owner's Z layout ("דו״ח Z — גרסה 2", `z_sections.LABELS_HE`) and the X — one
+#: vocabulary whichever layout a Z prints in.
+CASH_IN_LABEL = "הכנסות מזומן"
+CASH_OUT_LABEL = "הוצאות"
+DEPOSIT_LABEL = "הפקדה לכספת"
+
+
+def cash_movements_of(z: ZReport) -> Optional[ZEC.Movements]:
+    """
+    The Cash In / Cash Out / deposits that went into a Z's expected cash, as the Z froze them: its
+    header's `cashMovements` block, else (a Z stored as a till printed it, a till's own section read
+    as a Z) the sum of its sections'. None when the parameter was off — then nothing is shown and
+    the Z reads exactly as it did before it. Never the parameter as it stands now.
+    """
+    header = getattr(z, "header", None) or {}
+    frozen = ZEC.movements_of_block(header.get(ZEC.BLOCK))
+    if frozen is not None:
+        return frozen
+    moved = [m for m in (ZEC.movements_of_block(s.get(ZEC.BLOCK)) for s in _sections_of(z)) if m is not None]
+    if not moved:
+        return None
+    total = ZEC.NONE
+    for m in moved:
+        total = ZEC.add(total, m)
+    return total
+
+
+def _movement_rows(movements: Optional[ZEC.Movements]) -> List[Optional[dict]]:
+    """The lines of the cash movements, each only when it moved something (a zero is no line)."""
+    if movements is None:
+        return []
+    cash_in, cash_out, deposits = movements
+    return [
+        row(CASH_IN_LABEL, signed(cash_in)) if cash_in else None,
+        row(CASH_OUT_LABEL, signed(-cash_out)) if cash_out else None,
+        row(DEPOSIT_LABEL, signed(-deposits)) if deposits else None,
+    ]
+
+
 def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     adjustments = None
     sections = _sections_of(z)
@@ -325,6 +367,8 @@ def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     return [
         row("קופה פותחת", money(z.opening_cash)),
         row("תנועות בין משמרות", signed(adjustments)) if adjustments else None,
+        # Only on a Z the parameter applied to: the movements that are part of the expected cash.
+        *_movement_rows(cash_movements_of(z)),
         row("מזומן צפוי", money(z.expected_cash), emphasis=True),
         row("מזומן שנספר", counted),
         # Withheld, not a balanced zero, when any drawer was not counted.
@@ -487,6 +531,7 @@ def _till_section(s: dict) -> dict:
             row("סה״כ נטו", money(net), emphasis=True),
             row("מזומן", money(s.get("totalCash"))),
             row("אשראי", money(s.get("totalCard"))),
+            *_movement_rows(ZEC.movements_of_block(s.get(ZEC.BLOCK))),
             row("מזומן צפוי", money(s.get("expectedCash"))),
             row("הפרש", "לא נספר" if uncounted else signed(s.get("overShort"))),
             *_drawer_tips_rows(_section_drawer_tips(s)),
@@ -937,6 +982,8 @@ class _TillAsZ:
             "promotionDiscountsTotal": s.get("promotionDiscountsTotal"),
             "voucherDiscountsTotal": s.get("voucherDiscountsTotal"),
             "productionVoucherDeductionsTotal": s.get("productionVoucherDeductionsTotal"),
+            # The till's own frozen movements block, read as a Z's header is (None: off).
+            ZEC.BLOCK: s.get(ZEC.BLOCK),
         }
         self.total_sales = _dec(s.get("totalSales"))
         self.total_refunds = _dec(s.get("totalRefunds"))
