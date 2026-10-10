@@ -4142,6 +4142,118 @@
       }
     },
     {
+      "name": "a meal's component answered in the meal window",
+      "tags": ["meals", "componentDefaults", "componentOps"],
+      "catalog": "bar",
+      "now": "2026-10-08T13:00",
+      "vatRate": 0.18,
+      "tip": {"enabled": true, "other": true, "percent": null, "otherAgorot": null},
+      "promotions": [],
+      "basket": [{"id": "L1", "productId": "steakmeal", "qty": 1, "componentOps": [["main", "steak", "toggle", "g-temp", "t-well"]]}],
+      "expected": {
+        "lines": [
+          {
+            "id": "L1",
+            "added": true,
+            "components": [
+              {
+                "slotId": "main",
+                "productId": "steak",
+                "upchargeAgorot": 0,
+                "options": [{"groupId": "g-temp", "optionId": "t-well", "qty": 1, "pre": null, "priceAgorot": 0, "chargedAgorot": 0}],
+                "extrasAgorot": 0
+              },
+              {"slotId": "side", "productId": "fries", "upchargeAgorot": 0, "options": [], "extrasAgorot": 0}
+            ],
+            "unitAgorot": 10900,
+            "qty": 1,
+            "grossAgorot": 10900,
+            "promotionAgorot": 0,
+            "promotionId": null,
+            "promotionName": null,
+            "totalAgorot": 10900,
+            "cartSubLines": ["סטייק: עשוי", "צ'יפס"],
+            "receiptSubLines": [["סטייק", null], ["צ'יפס", null]],
+            "document": {
+              "unitPrice": 109.0,
+              "totalPrice": 109.0,
+              "promotionDiscount": null,
+              "promotionId": null,
+              "promotionName": null,
+              "noDiscount": 0,
+              "details": {
+                "basePrice": 109,
+                "entitlements": [
+                  {"included": 1, "remaining": 0, "slotId": "main", "slotName": "סטייק", "used": 1},
+                  {"included": 1, "remaining": 0, "slotId": "side", "slotName": "תוספת", "used": 1}
+                ],
+                "lineRef": "L1",
+                "meal": {
+                  "components": [
+                    {
+                      "categoryId": "misc",
+                      "listPrice": 88,
+                      "modifiers": [
+                        {
+                          "charged": 0,
+                          "groupId": "g-temp",
+                          "groupName": "מידת עשייה לסטייק",
+                          "kind": "choice",
+                          "name": "עשוי",
+                          "optionId": "t-well",
+                          "pre": null,
+                          "price": 0,
+                          "qty": 1
+                        }
+                      ],
+                      "name": "סטייק",
+                      "productId": "steak",
+                      "qty": 1,
+                      "slotId": "main",
+                      "slotName": "סטייק",
+                      "upcharge": 0
+                    },
+                    {
+                      "categoryId": "sides",
+                      "listPrice": 14.5,
+                      "modifiers": [],
+                      "name": "צ'יפס",
+                      "productId": "fries",
+                      "qty": 1,
+                      "slotId": "side",
+                      "slotName": "תוספת",
+                      "upcharge": 0
+                    }
+                  ],
+                  "name": "ארוחת סטייק",
+                  "productId": "steakmeal",
+                  "slots": [
+                    {"productIds": ["steak"], "quantity": 1, "slotId": "main", "slotName": "סטייק"},
+                    {"productIds": ["fries"], "quantity": 1, "slotId": "side", "slotName": "תוספת"}
+                  ]
+                },
+                "modifiers": [],
+                "v": 1
+              }
+            }
+          }
+        ],
+        "applied": [],
+        "giftOffers": [],
+        "near": [],
+        "rewardsAvailable": [],
+        "grossAgorot": 10900,
+        "promotionAgorot": 0,
+        "totalAgorot": 10900,
+        "netAgorot": 9237,
+        "vatAgorot": 1663,
+        "tipAgorot": 0,
+        "dueAgorot": 10900,
+        "itemCount": 1,
+        "document": {"documentDiscount": null, "netAmount": 92.37, "vatAmount": 16.63, "tipAmount": 0.0, "promotions": null}
+      }
+    },
+    {
       "name": "two meals on one line",
       "tags": ["meals", "lineQty"],
       "catalog": "bar",
@@ -10518,6 +10630,476 @@
         "itemCount": 1,
         "document": {"documentDiscount": null, "netAmount": 0.13, "vatAmount": 0.02, "tipAmount": 0.0, "promotions": null}
       }
+    }
+  ],
+  "soldOut": [
+    {
+      "name": "a plain product sells",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": null, "inStock": true, "trackStock": false, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "locked by its availability",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": false, "lockAvailable": false, "inStock": true, "trackStock": false, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "isAvailable folds a hand block, the lock is what counts",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": false, "lockAvailable": true, "inStock": true, "trackStock": false, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "an older cloud: no lockAvailable, isAvailable decides",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": false, "lockAvailable": null, "inStock": true, "trackStock": false, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "delisted",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": null, "inStock": false, "trackStock": false, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "a sold-out block by hand",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": false,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b1",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "sold_out", "reason": "manual", "blockId": "b1", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "the cloud's automatic sold-out (stock reached 0) is not in isAvailable",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b2",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "auto",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "sold_out", "reason": "auto", "blockId": "b2", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "a hard block",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b3",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "blocked",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "blocked", "reason": null, "blockId": "b3", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "a block until later today, still in force",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b4",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T15:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {
+        "soldOut": true,
+        "decision": {"state": "sold_out", "reason": "manual", "blockId": "b4", "untilMs": 1791471600000},
+        "nextEndMs": 1791471600000
+      }
+    },
+    {
+      "name": "a block whose end has passed: sold again, offline",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": false,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b5",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T12:59:59Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "the end itself is no longer in force",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b6",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T13:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "an end with an offset",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b7",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T17:30:00+03:00",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {
+        "soldOut": true,
+        "decision": {"state": "sold_out", "reason": "manual", "blockId": "b7", "untilMs": 1791469800000},
+        "nextEndMs": 1791469800000
+      }
+    },
+    {
+      "name": "an end with no zone reads as UTC",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b8",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T12:30:00",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "an end that cannot be read: in force",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b9",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "tomorrow",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "sold_out", "reason": "manual", "blockId": "b9", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "a kiosk-only block reaches the kiosk",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b10",
+            "scope": "kiosks",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "sold_out", "reason": "manual", "blockId": "b10", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "this kiosk's own block",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b11",
+            "scope": "kiosk",
+            "scopeId": "S1",
+            "kind": "blocked",
+            "source": "manual",
+            "until": "2026-10-08T20:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {
+        "soldOut": true,
+        "decision": {"state": "blocked", "reason": null, "blockId": "b11", "untilMs": 1791489600000},
+        "nextEndMs": 1791489600000
+      }
+    },
+    {
+      "name": "blocked wins over sold out; the nearest scope is shown",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b12",
+            "scope": "company",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          },
+          {
+            "id": "b13",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "blocked",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          },
+          {
+            "id": "b14",
+            "scope": "kiosk",
+            "scopeId": "S1",
+            "kind": "blocked",
+            "source": "manual",
+            "until": null,
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "blocked", "reason": null, "blockId": "b14", "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "of two ends the soonest is when to look again",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {
+        "id": "p",
+        "isAvailable": true,
+        "lockAvailable": true,
+        "inStock": true,
+        "trackStock": false,
+        "blocks": [
+          {
+            "id": "b15",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T14:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          },
+          {
+            "id": "b16",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "blocked",
+            "source": "manual",
+            "until": "2026-10-08T16:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          },
+          {
+            "id": "b17",
+            "scope": "shop",
+            "scopeId": "S1",
+            "kind": "sold_out",
+            "source": "manual",
+            "until": "2026-10-08T11:00:00Z",
+            "createdAt": "2026-10-08T09:00:00Z",
+            "by": "מנהל",
+            "note": null
+          }
+        ]
+      },
+      "stock": null,
+      "expected": {
+        "soldOut": true,
+        "decision": {"state": "blocked", "reason": null, "blockId": "b16", "untilMs": 1791475200000},
+        "nextEndMs": 1791468000000
+      }
+    },
+    {
+      "name": "stock tracked and none here",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": true, "inStock": true, "trackStock": true, "blocks": []},
+      "stock": 0.0,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "stock tracked, no level at all",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": true, "inStock": true, "trackStock": true, "blocks": []},
+      "stock": null,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "stock tracked, some left",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": true, "inStock": true, "trackStock": true, "blocks": []},
+      "stock": 3.0,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "stock tracked, below zero",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": true, "inStock": true, "trackStock": true, "blocks": []},
+      "stock": -2.0,
+      "expected": {"soldOut": true, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
+    },
+    {
+      "name": "stock not tracked: none is fine",
+      "now": "2026-10-08T13:00:00Z",
+      "row": {"id": "p", "isAvailable": true, "lockAvailable": true, "inStock": true, "trackStock": false, "blocks": []},
+      "stock": 0.0,
+      "expected": {"soldOut": false, "decision": {"state": "available", "reason": null, "blockId": null, "untilMs": null}, "nextEndMs": null}
     }
   ]
 }

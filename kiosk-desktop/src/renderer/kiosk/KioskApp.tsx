@@ -88,9 +88,11 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   useKioskRenderProfile,
+  UpsellWindow,
 } from '@kiosk-shared/index';
 // "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
-import { basketUpsell, mealUpsellIds } from '@kiosk-shared/basket-upsell';
+import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
+import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
 import { dueAgorot as dueOf, newId, voucherCodeOf, type VoucherLeg } from '@dash-lib/kioskWebOrders';
@@ -276,6 +278,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
   const product = productId && productAt === flow.screen ? (allProducts.find((p) => p.id === productId) ?? null) : null;
+  /** A line now added through a window's sheet: it opens no window of its own, the flow's "added" follows. */
+  const upsellTaking = useRef(false);
+  /** The order's product ids (what a window never offers again). */
+  const cartIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    cartIdsRef.current = cart.map((l) => l.product.id);
+  }, [cart]);
   /** Every product the kiosk sells (a meal's component may sit in no category shown). */
   const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
   const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
@@ -340,6 +349,9 @@ export function KioskApp({ view }: { view: KioskView }) {
 
   // Back to rest: the order's own state cleared.
   const resting = !['service', 'catalog', 'cart', 'confirm', 'details', 'pay', 'success'].includes(flow.screen);
+  // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
+  // when the basket opens and on the way to payment — never a strip on the basket.
+  const upsellWin = useKioskUpsell(cfg, view.catalog.upsellRules, allProducts, resting, { shown: (w) => funnel.upsell('shown', w.moment, w.offer.rule.id, w.offer.productIds[0] ?? null) });
   useEffect(() => {
     if (!resting) return;
     setCart([]);
@@ -568,6 +580,11 @@ export function KioskApp({ view }: { view: KioskView }) {
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
+    // An upsell window: "לא תודה" — unless it is "חובה" (answered only, never backed out of).
+    if (upsellWin.window) {
+      if (!upsellWin.window.required) finishUpsell();
+      return;
+    }
     const a = backAction(flow, rules);
     if (a === 'confirm_leave') setLeaveAsk(true);
     else if (a === 'cancel_payment') {
@@ -583,10 +600,17 @@ export function KioskApp({ view }: { view: KioskView }) {
       if (s === 'attract') dispatch({ type: 'start' });
       else if (s === 'service' && pendingService.current) dispatch({ type: 'chooseService', service: pendingService.current });
       else dispatch({ type: 'backToCatalog' });
-    } else if (target === 'cart') dispatch({ type: 'openCart' });
+    } else if (target === 'cart') {
+      dispatch({ type: 'openCart' });
+      // The basket's step ("מעבר בין מסכים" to_cart): its window over the basket.
+      upsellWin.atStep('to_cart', cartIdsRef.current);
+    }
     // "מינימום הזמנה": refused under the minimum, as the Android kiosk's checkout (the button shows why).
     else if (target === 'pay') {
-      if (!belowMinimumOrder(cfg.payment.minOrderAgorot, pricingRef.current.totalAgorot)) dispatch({ type: 'checkout' });
+      if (belowMinimumOrder(cfg.payment.minOrderAgorot, pricingRef.current.totalAgorot)) return;
+      // The way to payment ("to_pay", every order's rules): its window first, the payment after its answer.
+      if (upsellWin.atStep('to_pay', cartIdsRef.current)) return;
+      dispatch({ type: 'checkout' });
     }
     else if (target === 'attract') dispatch({ type: 'reset' });
   };
@@ -764,16 +788,16 @@ export function KioskApp({ view }: { view: KioskView }) {
   }, []);
   const justAddedTimer = useRef<number | null>(null);
   /** `merge`: the cart line this one joins (the same plain dish, as on the till). */
-  const addLine = (line: PLine, from: DOMRect | null, merge?: (l: PLine) => boolean) => {
+  /** `quiet`: a line taken straight from an upsell window — the window says what follows, not the add. */
+  const addLine = (line: PLine, from: DOMRect | null, merge?: (l: PLine) => boolean, quiet = false) => {
     setCart((c) => {
       const i = merge ? c.findIndex(merge) : -1;
       return i >= 0 ? c.map((l, j) => (j === i ? { ...l, qty: l.qty + line.qty } : l)) : [...c, line];
     });
     setJustAdded(line.product.id);
-    // From the basket's offers: an upsell taken.
-    const fromUpsell = flowRef.current.screen === 'cart' && upsellRef.current.some((u) => u.id === line.product.id);
+    // Taken from an upsell window (a direct add, or the sheet it opened).
+    const fromUpsell = quiet || upsellTaking.current;
     funnel.itemAdd(line.product.id, line.qty, fromUpsell, lineUnitAgorot(line));
-    if (fromUpsell) funnel.upsell('accepted', 'steps', null, line.product.id);
     if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
     justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
     const box = screenRef.current?.getBoundingClientRect();
@@ -789,8 +813,38 @@ export function KioskApp({ view }: { view: KioskView }) {
       setCartBump((n) => n + 1);
     }
     setProductId(null);
+    if (quiet) return;
+    const taken = upsellTaking.current;
+    upsellTaking.current = false;
+    // A line of the customer's own: its window first (KioskViewModel.afterAdd); the flow's "added" after its answer.
+    if (!taken && upsellWin.afterAdd(line.product.id, line.product.categoryId, [...cart.map((l) => l.product.id), line.product.id])) return;
     dispatchFlow({ event: { type: 'itemAdded' }, cartEmpty: false });
   };
+  /** The window closed ("לא תודה", "המשך", or its one item taken): what it held back goes on. */
+  const finishUpsell = () => {
+    const then = upsellWin.close();
+    if (then === 'item_added') dispatchFlow({ event: { type: 'itemAdded' }, cartEmpty: false });
+    else if (then === 'checkout') dispatch({ type: 'checkout' });
+  };
+  /** "הוסף" on one of the window's items (KioskViewModel.takeUpsell): straight in on its defaults, else its sheet. */
+  const takeUpsell = (p: PProduct, from: DOMRect | null) => {
+    const w = upsellWin.window;
+    if (!w || p.soldOut) return;
+    funnel.upsell('accepted', w.moment, w.offer.rule.id, p.id);
+    const d = p.addPath === 'direct' ? defaultsLine(p, groupsOf(p.id)) : null;
+    if (d) {
+      upsellSeq.current += 1;
+      const key = `upsell-${w.offer.rule.id}-${p.id}-${upsellSeq.current}`;
+      addLine({ key, product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from, undefined, true);
+      if (w.offer.productIds.length <= 1) finishUpsell();
+      else upsellWin.taken(p.id);
+      return;
+    }
+    upsellWin.close();
+    upsellTaking.current = true;
+    openSheetFor(p.id);
+  };
+  const upsellSeq = useRef(0);
   m.quickAdd = (p, from) => {
     // quickAdd "always" (the wall): a dish with a required choice goes in on its options' defaults — a
     // line of its own, as the window adds it; a choice with no default opens the window.
@@ -827,20 +881,6 @@ export function KioskApp({ view }: { view: KioskView }) {
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
     onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,
   });
-
-  // "חובה / רשות / כבוי" (payment.stepModes.upsellSteps): the basket's offers are that moment's.
-  const upsellOn = stepMode(cfg, 'upsellSteps') !== 'off';
-  const upsell = useMemo(() => (upsellOn ? upsellFor(view, cfg, cart, allProducts) : []), [upsellOn, view, cfg, cart, allProducts]);
-  const upsellRef = useRef(upsell);
-  upsellRef.current = upsell;
-  const upsellShown = useRef<string | null>(null);
-  useEffect(() => {
-    if (flow.screen !== 'cart' || upsell.length === 0) return;
-    const key = `${funnel.session}:${visit}`;
-    if (upsellShown.current === key) return;
-    upsellShown.current = key;
-    funnel.upsell('shown', 'steps', null, upsell[0].id);
-  }, [flow.screen, upsell, funnel, visit]);
 
   /* ------------------------------------------------------------ the screen */
 
@@ -941,7 +981,7 @@ export function KioskApp({ view }: { view: KioskView }) {
               </GuidedFrame>
             ) : s === 'cart' ? (
               <GuidedFrame m={m} screen={s}>
-                <CartScreen m={m} upsell={upsell} />
+                <CartScreen m={m} upsell={NO_BASKET_OFFERS} />
               </GuidedFrame>
             ) : s === 'details' ? (
               <DetailsScreen
@@ -988,7 +1028,7 @@ export function KioskApp({ view }: { view: KioskView }) {
               // "יצאתי לנוח… תכף אשוב" (paused / closed): the pause's own message and end, as the cloud sent them.
               <PausedScreen
                 m={m}
-                variant={s === 'closed' ? 'closed' : s === 'no_payment' ? 'noPayment' : 'paused'}
+                variant={s === 'closed' ? 'closed' : s === 'no_payment' ? (view.state.noPaymentReason === 'offline' ? 'offline' : 'noPayment') : 'paused'}
                 pause={{ message: view.state.pausedMessage, until: view.state.pausedUntil }}
               />
             )
@@ -996,6 +1036,23 @@ export function KioskApp({ view }: { view: KioskView }) {
           )}
         />
         </ReachFrame>
+        {upsellWin.window ? (
+          <ReachSheets m={m}>
+            <UpsellWindow
+              m={m}
+              title={upsellTitle(upsellWin.window, m.txt('upsellTitle'))}
+              text={upsellText(upsellWin.window)}
+              imageUrl={upsellImage(upsellWin.window)}
+              items={upsellWin.window.offer.productIds.map((id) => allProducts.find((x) => x.id === id)).filter((x): x is PProduct => !!x)}
+              added={upsellWin.window.added}
+              showPrice={upsellWin.window.offer.rule.showPrice}
+              required={upsellWin.window.required}
+              onAdd={takeUpsell}
+              onContinue={finishUpsell}
+              onSkip={finishUpsell}
+            />
+          </ReachSheets>
+        ) : null}
         {(screen === 'catalog' || screen === 'cart') && product ? (
           <ReachSheets m={m}>
           <LayoutProductSheet
@@ -1005,7 +1062,10 @@ export function KioskApp({ view }: { view: KioskView }) {
             groups={groupsOf(product.id)}
             allergens={view.catalog.products.find((p) => p.id === product.id)?.allergens ?? []}
             quickNotes={view.catalog.quickNotes[product.id] ?? []}
-            onClose={() => setProductId(null)}
+            onClose={() => {
+              upsellTaking.current = false;
+              setProductId(null);
+            }}
             onAdd={addLine}
           />
           </ReachSheets>
@@ -1152,13 +1212,23 @@ function pGroupsOf(groups: KioskView['catalog']['groups'][string]): PGroup[] {
   }));
 }
 
-/**
- * The basket's offers: the Android kiosk's rules (kiosk-shared/basket-upsell.ts, lib/kioskUpsellRules.ts) —
- * the menu's `upsells` + `kioskUpsells` on the kiosk, their days, hours and priority, `upsell.maxShown`.
- */
-function upsellFor(view: KioskView, cfg: KioskConfig, cart: PLine[], all: PProduct[]): PProduct[] {
-  return basketUpsell(view.catalog.upsellRules, cfg.upsell?.maxShown, cart, all).products;
+/** The window's question: the rule's own ("האם הצעת שתייה?"), its message, else the kiosk's "upsellTitle". */
+function upsellTitle(w: UpsellWindowState, fallback: string): string {
+  return w.offer.rule.prompt || w.offer.rule.message || fallback;
 }
+
+/** The message under a question of its own. */
+function upsellText(w: UpsellWindowState): string | null {
+  return w.offer.rule.prompt && w.offer.rule.message !== w.offer.rule.prompt ? w.offer.rule.message : null;
+}
+
+/** The window's picture: the item's own picture (the screens never load a network URL). */
+function upsellImage(_w: UpsellWindowState): string | null {
+  return null;
+}
+
+/** No strip of offers on the basket: the Android kiosk asks them in a window (kiosk-shared/upsell-window.ts). */
+const NO_BASKET_OFFERS: PProduct[] = [];
 
 /** The dish's free note: looks like a field, shows the note; a tap opens the kiosk's window ("הערות למנה"). */
 function NoteField({ m, value, onOpen }: { m: PreviewModel; value: string; onOpen: () => void }) {

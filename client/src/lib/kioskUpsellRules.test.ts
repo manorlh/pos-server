@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { kioskBasketUpsells, kioskUpsellOffer, upsellActiveAt, upsellChoices, upsellMayOffer, upsellRulesOf, upsellTriggers, type UpsellProduct } from './kioskUpsellRules';
 import { nameValid, phoneValid } from './kioskCustomer';
 import { menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories } from './kioskMoney';
+import { kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish } from './kioskConfig';
 
 const catalog: UpsellProduct[] = [
   { id: 'burger', categoryId: 'burgers', soldOut: false },
@@ -130,5 +131,24 @@ describe('the menu as the Android till reads it (Menu.groupsFor / notesFor, Menu
     assert.equal(menuGroupOf({ id: 'g', kind: 'choice', minSelect: 1, maxSelect: null, options: [] })?.maxSelect, null);
     assert.equal(menuGroupOf({ id: 'g', kind: 'choice', maxSelect: 1, options: [{ id: 'o', price: 1, maxQty: 0.5 }] })?.options[0].maxQty, null);
     assert.equal(menuGroupOf({ id: '', kind: 'addon' }), null);
+  });
+});
+
+describe('a voucher only where its order can be finished (no dead end on the TS kiosks)', () => {
+  it('with the till to pay at, the voucher stays; with the card and vouchers alone it is not offered', () => {
+    assert.deepEqual(tsKioskPayMethods(['card', 'voucher', 'cash_at_till']), ['card', 'voucher', 'cash_at_till']);
+    assert.deepEqual(tsKioskPayMethods(['card', 'voucher']), ['card']);
+    assert.deepEqual(tsKioskPayMethods(['voucher', 'cash_at_till']), ['voucher', 'cash_at_till']);
+    assert.deepEqual(tsKioskPayMethods(['card', 'split_card', 'voucher', 'cash_at_till']), ['card', 'voucher', 'cash_at_till']);
+    assert.equal(voucherCanFinish(['card', 'voucher']), false);
+  });
+});
+
+describe('"חסימת הזמנות כשאין אינטרנט" (KioskPayBlock.OFFLINE)', () => {
+  it('offline with it on: no orders; off, or online: never', () => {
+    assert.equal(kioskOfflineBlocks({ blockWhenOffline: true }, true), true);
+    assert.equal(kioskOfflineBlocks({ blockWhenOffline: true }, false), false);
+    assert.equal(kioskOfflineBlocks({ blockWhenOffline: false }, true), false);
+    assert.equal(kioskOfflineBlocks(null, true), false);
   });
 });

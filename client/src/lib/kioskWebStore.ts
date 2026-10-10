@@ -33,6 +33,8 @@ export const KV = {
   catalog: 'r2m.kiosk.catalog',
   /** "מבצעים": `GET /sync/{m}/promotions` as it came, with its ETag. */
   promotions: 'r2m.kiosk.promotions',
+  /** The shop's stock levels (`GET /sync/{m}/stock`), by product id: what "אזל" counts by. */
+  stock: 'r2m.kiosk.stock',
   settings: 'r2m.kiosk.settings',
   parameters: 'r2m.kiosk.parameters',
   pickup: 'r2m.kiosk.pickup',

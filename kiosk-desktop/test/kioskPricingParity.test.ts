@@ -18,7 +18,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { chosenOptions, dishOnDefaults, picksValid } from '@dash-lib/kioskMoney';
+import { chosenOptions, picksValid } from '@dash-lib/kioskMoney';
 import {
   KIOSK_PRICING_PARITY_SHA256,
   corpusDate,
@@ -67,12 +67,18 @@ describe.runIf(existsSync(FIXTURE))('the kiosk pricing parity corpus (Android en
   /** What the Windows screens send for each line the customer could add (the sheet's and the meal window's own rules). */
   function screenLines(cat: KioskCatalogData, s: CorpusScenario) {
     const groupsOf = (id: string) => (cat.groups[id] ?? []).map(moneyGroupOf);
-    const priceOf = (id: string) => cat.products.find((p) => p.id === id)!.priceAgorot;
     return s.basket.map((l) => {
       const slots = cat.meals[l.productId];
       if (slots && slots.length > 0) {
-        const { chosen, valid } = mealAfter(slots, l.taps, (id) => dishOnDefaults(priceOf(id), groupsOf(id)) !== null);
-        const components = slots.flatMap((sl) => chosen[sl.id].map((productId) => ({ slotId: sl.id, productId })));
+        const { chosen, picks, valid } = mealAfter(slots, l, groupsOf);
+        // Each component with its choices, as the meal window sends them (preview-dish.ts orderMealOf).
+        const components = slots.flatMap((sl) =>
+          chosen[sl.id].map((productId) => ({
+            slotId: sl.id,
+            productId,
+            options: chosenOptions(groupsOf(productId), picks(sl.id, productId)).map((o) => ({ groupId: o.groupId, optionId: o.optionId, qty: o.qty, pre: o.pre })),
+          })),
+        );
         return { added: valid, input: { key: l.id, productId: l.productId, qty: l.qty, notes: [], options: [], meal: { components } } };
       }
       const groups = groupsOf(l.productId);
@@ -134,6 +140,34 @@ describe.runIf(existsSync(FIXTURE))('the kiosk pricing parity corpus (Android en
         expect((wire.promotions as Row[] | undefined) ?? null).toEqual(x.document.promotions);
         // The card leg is the goods; the tip rides beside it (the cloud refuses legs that do not sum).
         expect(((wire.payments as Row[])[0] as Row).amount).toBe(r2(totals.totalAgorot));
+      } finally {
+        svc.stop();
+      }
+    });
+  }
+});
+
+describe.runIf(existsSync(FIXTURE))('"אזל" / "חסום" (the corpus sold-out cases), through the Windows kiosk catalog', () => {
+  const text = existsSync(FIXTURE) ? readFileSync(FIXTURE, 'utf8') : '{}';
+  const cases = ((JSON.parse(text) as { soldOut?: Array<{ name: string; now: string; row: Row; stock: number | null; expected: { soldOut: boolean } }> }).soldOut ?? []);
+  for (const c of cases) {
+    it(c.name, () => {
+      const svc = new KioskService({ dataDir: mkdtempSync(path.join(os.tmpdir(), 'kd-soldout-')), appVersion: '0.3.0', deviceInfo: {}, transport: noPrinter, downloader: async () => { throw new Error('no media'); } });
+      try {
+        const row: Row = { ...c.row, id: 'p1', name: 'פריט', price: 10, categoryId: 'c1' };
+        svc.cloud.applyCatalog({ syncType: 'full', products: [row], categories: [{ id: 'c1', name: 'c1', isActive: true }], menu: null, machineCatalog: { mode: 'all' }, serverTime: 'x' });
+        if (c.stock !== null) svc.cloud.mergeStockLevels({ p1: c.stock });
+        const realNow = Date.now;
+        Date.now = () => Date.parse(c.now);
+        try {
+          const cat = (svc as unknown as { catalogData(): KioskCatalogData }).catalogData();
+          const p = cat.products.find((x) => x.id === 'p1');
+          // Delisted: not on the kiosk at all (sellableOnKiosk); else shown greyed or hidden by soldOutMode.
+          if (row.inStock === false) expect(p).toBeUndefined();
+          else expect(p?.soldOut).toBe(c.expected.soldOut);
+        } finally {
+          Date.now = realNow;
+        }
       } finally {
         svc.stop();
       }

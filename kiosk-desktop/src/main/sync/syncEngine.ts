@@ -11,6 +11,7 @@
  *  - nothing here is on the customer's path: the screens only ever read the local copies.
  */
 
+import { stockLevelsOf } from '@dash-lib/kioskSoldOut';
 import { apiBase, tokenRevoked, type Api, type ApiReply } from './api';
 import { docResults, FINAL_ON_REFUSAL, plan, type Outbox, type OutboxRow } from './outbox';
 import type { CloudStore, Credentials, MachineMe } from './cloud';
@@ -34,6 +35,8 @@ export interface RemoteHooks {
   onCatalog(): void;
   /** The promotions changed (the basket is priced with them, lib/kioskMoney.ts). */
   onPromotions?(): void;
+  /** The stock levels changed ("אזל" counts by them). */
+  onStock?(): void;
   onSettings(): void;
   onParameters(): void;
   /** Remote instructions from the heartbeat. */
@@ -233,6 +236,7 @@ export class SyncEngine {
     if (Date.now() - this.lastKioskSyncAttempt >= KIOSK_SYNC_MS) await this.kioskSync();
     await this.pullCatalog(false);
     await this.pullPromotions();
+    await this.pullStock();
   }
 
   async fullSync(): Promise<void> {
@@ -242,6 +246,7 @@ export class SyncEngine {
     await this.kioskSync();
     await this.pullCatalog(true);
     await this.pullPromotions();
+    await this.pullStock();
     await this.pullPosUsers();
   }
 
@@ -304,6 +309,16 @@ export class SyncEngine {
     const list = Array.isArray(reply.body.promotions) ? (reply.body.promotions as Array<Record<string, unknown>>).filter((p) => !!p && typeof p === 'object') : [];
     this.cloud.setPromotions(list, typeof reply.body.etag === 'string' ? reply.body.etag : null);
     this.hooks.onPromotions?.();
+  }
+
+  /**
+   * The shop's stock levels (`GET /sync/{m}/stock`, whole, as the Android till pulls them): a product that
+   * tracks stock with none here is "אזל" on the kiosk (lib/kioskSoldOut.ts). Offline, the last levels stay.
+   */
+  async pullStock(): Promise<void> {
+    const reply = await this.api.get<Record<string, unknown>>(this.machinePath('stock'), { timeoutMs: 20_000 });
+    if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return;
+    if (this.cloud.mergeStockLevels(stockLevelsOf(reply.body))) this.hooks.onStock?.();
   }
 
   async pullPosUsers(): Promise<void> {

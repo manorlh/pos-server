@@ -197,6 +197,11 @@ export function orderOptionsOf(l: Pick<PLine, 'options'>): Array<{ groupId: stri
 }
 
 /** A meal line's components as an order sends them (each slot's product; its choices are its defaults). */
-export function orderMealOf(l: Pick<PLine, 'meal'>): { components: Array<{ slotId: string; productId: string }> } | null {
-  return l.meal && l.meal.components.length > 0 ? { components: l.meal.components.map((c) => ({ slotId: c.slotId, productId: c.productId })) } : null;
+export function orderMealOf(
+  l: Pick<PLine, 'meal'>,
+): { components: Array<{ slotId: string; productId: string; options?: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null {
+  // Each component with its choices (its defaults, or a required choice answered in the meal window — MealDraft.updateDish).
+  return l.meal && l.meal.components.length > 0
+    ? { components: l.meal.components.map((c) => ({ slotId: c.slotId, productId: c.productId, options: (c.options ?? []).map((o) => ({ groupId: o.groupId, optionId: o.optionId, qty: o.qty ?? 1, pre: o.pre ?? null })) })) }
+    : null;
 }

@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildWebCatalog, type WebCatalog } from './kioskWebCatalog';
-import { cartSubLines, chosenOptions, defaultPicks, dishOnDefaults, dishUnitAgorot, mealUnitAgorot, picksValid, priceKioskOrder, promotionsOf, receiptSubLines, type ChosenOption } from './kioskMoney';
+import { cartSubLines, chosenOptions, dishUnitAgorot, mealUnitAgorot, picksValid, priceKioskOrder, promotionsOf, receiptSubLines, type ChosenOption } from './kioskMoney';
 import {
   KIOSK_PRICING_PARITY_SHA256,
   corpusNow,
@@ -53,12 +53,10 @@ function webLineOf(cat: WebCatalog, l: CorpusBasketLine) {
   };
   const slots = cat.meals[p.id];
   if (slots && slots.length > 0) {
-    const priceOf = (id: string) => cat.products.find((x) => x.id === id)!.priceAgorot;
-    const { chosen, valid } = mealAfter(slots, l.taps, (id) => dishOnDefaults(priceOf(id), groupsOf(id)) !== null);
+    const { chosen, picks, valid } = mealAfter(slots, l, groupsOf);
     const components = slots.flatMap((s) =>
       chosen[s.id].map((pid) => {
-        const groups = groupsOf(pid);
-        const options = chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
+        const options = chosenOptions(groupsOf(pid), picks(s.id, pid));
         return { slot: s, product: cat.products.find((x) => x.id === pid)!, upchargeAgorot: s.choices.find((x) => x.productId === pid)!.upchargeAgorot, options };
       }),
     );

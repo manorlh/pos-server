@@ -20,9 +20,10 @@
  * drive it with a fake fetch and a memory store.
  */
 
-import { resolveKioskConfig, singleCardPayMethods, type KioskConfig, type PaymentMethod } from './kioskConfig';
+import { kioskOfflineBlocks, resolveKioskConfig, tsKioskPayMethods, voucherCanFinish, type KioskConfig, type PaymentMethod } from './kioskConfig';
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
+import { catalogNextChangeMs, stockLevelsOf } from './kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
   CLOUD_CHECK_TIMEOUT_MS,
@@ -97,6 +98,8 @@ export interface WebKioskView {
     pausedUntil: string | null;
     /** Nothing this browser can take money with: the kiosk rests on "התשלום אינו זמין כרגע". */
     noPayment: boolean;
+    /** Why there is no payment: offline with "חסימת הזמנות כשאין אינטרנט" on, or nothing to take (null: there is). */
+    noPaymentReason?: 'offline' | 'terminal' | null;
     offline: boolean;
     offlineSince: number | null;
   };
@@ -219,7 +222,7 @@ interface HelpRequest {
  * bridge that takes cards now (it sells offline too, as the Windows kiosk); a voucher only online.
  */
 export function usableMethods(methods: readonly PaymentMethod[], online: boolean, cardReady = false): PaymentMethod[] {
-  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online) || (m === 'card' && cardReady));
+  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods)) || (m === 'card' && cardReady));
 }
 
 /** The browser kiosk sells when its customers can pay at the till, or by card through the bridge (a voucher never pays it all for sure). */
@@ -248,12 +251,28 @@ export function webMoneyGroup(g: WebGroup): MenuGroup {
   };
 }
 
+/** The picks of `options` over `groups` (unknown ones left out; "מעט / הרבה / בצד" only where the group allows it). */
+function picksOf(groups: readonly MenuGroup[], options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: string | null }>): Record<string, OptionPick[]> {
+  const picks: Record<string, OptionPick[]> = {};
+  for (const o of options) {
+    const g = groups.find((x) => x.id === o.groupId);
+    if (!g || !g.options.some((x) => x.id === o.optionId)) continue;
+    const pre = g.allowPre && (o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side') ? o.pre : null;
+    (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre });
+  }
+  return picks;
+}
+
 export class WebKioskService {
   private creds: KioskCredentials | null = null;
   private machine: Record<string, unknown> | null = null;
   private snapshot: Record<string, unknown> | null = null;
   private catalog: CatalogStore = EMPTY_CATALOG;
   private promotions: { etag: string | null; list: Array<Record<string, unknown>> } = { etag: null, list: [] };
+  /** The shop's stock levels by product id (lib/kioskSoldOut.ts: a product that tracks stock with none here is "אזל"). */
+  private stock: Record<string, number> = {};
+  /** The timer that builds the view again at a block's end ("אזל" / "חסום" until a time, lifted offline too). */
+  private saleTimer: unknown = null;
   private settings: { settings: Record<string, unknown>; businessInfo: Record<string, unknown> | null; settingsUpdatedAt: string | null } = {
     settings: {},
     businessInfo: null,
@@ -335,6 +354,7 @@ export class WebKioskService {
     this.snapshot = await s.get<Record<string, unknown>>(KV.snapshot);
     this.catalog = (await s.get<CatalogStore>(KV.catalog)) ?? EMPTY_CATALOG;
     this.promotions = (await s.get<WebKioskService['promotions']>(KV.promotions)) ?? this.promotions;
+    this.stock = (await s.get<Record<string, number>>(KV.stock)) ?? {};
     this.settings = (await s.get<WebKioskService['settings']>(KV.settings)) ?? this.settings;
     this.parameters = (await s.get<Record<string, unknown>>(KV.parameters)) ?? {};
     for (const key of await s.keys(KV.orderPrefix)) {
@@ -356,6 +376,8 @@ export class WebKioskService {
 
   stop() {
     this.stopped = true;
+    if (this.saleTimer !== null) this.clearTimer(this.saleTimer);
+    this.saleTimer = null;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
   }
@@ -378,6 +400,15 @@ export class WebKioskService {
   on(fn: (v: WebKioskView) => void): () => void {
     this.listeners.add(fn);
     return () => void this.listeners.delete(fn);
+  }
+
+  /** "אזל" / "חסום" until a time: the view is built again at the soonest end (KioskCatalogView by the kiosk's clock). */
+  private scheduleSaleChange(at: number | null, nowMs: number) {
+    if (this.saleTimer !== null) this.clearTimer(this.saleTimer);
+    this.saleTimer = at === null || this.stopped ? null : this.setTimer(() => {
+      this.saleTimer = null;
+      this.dirty();
+    }, Math.max(1_000, at - nowMs + 250));
   }
 
   private dirty() {
@@ -424,7 +455,9 @@ export class WebKioskService {
     const kiosk = this.snapshot?.kiosk === true;
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
-    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const nowMs = this.now();
+    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    if (phase === 'kiosk') this.scheduleSaleChange(catalogNextChangeMs(this.catalog.products, nowMs), nowMs);
     const categoryImages: Record<string, string> = {};
     if (cfg) {
       for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
@@ -433,7 +466,7 @@ export class WebKioskService {
       }
     }
     // One card per document here (and through the bridge): never "split_card" (singleCardPayMethods).
-    const methods = cfg ? singleCardPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]);
+    const methods = cfg ? tsKioskPayMethods(cfg.payment.methods) : (['card'] as PaymentMethod[]);
     const bs = this.bridgeState();
     const cardReady = this.cardReady();
     const paused = this.pausedState();
@@ -463,13 +496,15 @@ export class WebKioskService {
         paused: paused.paused,
         pausedMessage: paused.message,
         pausedUntil: paused.until,
-        noPayment: !webSells(methods, cardReady),
+        // Nothing it can take — or offline with "חסימת הזמנות כשאין אינטרנט" on (kioskOfflineBlocks, the Android kiosk's).
+        noPayment: !webSells(methods, cardReady) || (!!cfg && kioskOfflineBlocks(cfg.general, this.offline)),
+        noPaymentReason: cfg && kioskOfflineBlocks(cfg.general, this.offline) ? 'offline' : !webSells(methods, cardReady) ? 'terminal' : null,
         offline: this.offline,
         offlineSince: this.offlineSince,
       },
       pay: {
         methods,
-        usable: usableMethods(methods, !this.offline, cardReady),
+        usable: cfg && kioskOfflineBlocks(cfg.general, this.offline) ? [] : usableMethods(methods, !this.offline, cardReady),
         cardOff: cardReady ? null : ((bs ? bridgeCardReason(bs, creds?.machineId ?? null) : null) ?? 'browser'),
       },
       bridge: bs
@@ -544,7 +579,7 @@ export class WebKioskService {
     this.promotions = { etag: null, list: [] };
     this.parameters = {};
     this.help = null;
-    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.promotions, KV.settings, KV.parameters]) await this.deps.store.del(key);
+    for (const key of [KV.credentials, KV.machine, KV.snapshot, KV.snapshotAt, KV.catalog, KV.promotions, KV.stock, KV.settings, KV.parameters]) await this.deps.store.del(key);
     this.dirty();
   }
 
@@ -595,6 +630,7 @@ export class WebKioskService {
           await this.pullSettings(false);
           await this.pullCatalog(false);
           await this.pullPromotions();
+          await this.pullStock();
         }
       }
       if (this.creds && !this.offline) await this.flush();
@@ -623,6 +659,7 @@ export class WebKioskService {
     await this.pullParameters();
     await this.pullCatalog(true);
     await this.pullPromotions();
+    await this.pullStock();
   }
 
   private async pullMachine() {
@@ -804,6 +841,18 @@ export class WebKioskService {
     this.dirty();
   }
 
+  /** The shop's stock levels (`GET /sync/{m}/stock`, whole, as the Android till pulls them); offline, the last ones stay. */
+  private async pullStock() {
+    if (!this.creds) return;
+    const r = await this.seen(await this.api.get<Record<string, unknown>>(this.machinePath('stock'), { timeoutMs: 20_000 }));
+    if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object') return;
+    const levels = stockLevelsOf(r.body);
+    if (!Object.keys(levels).some((id) => this.stock[id] !== levels[id])) return;
+    this.stock = { ...this.stock, ...levels };
+    await this.deps.store.set(KV.stock, this.stock);
+    this.dirty();
+  }
+
   /* ------------------------------------------------------------ the screens */
 
   reportFlow(f: FlowReport) {
@@ -873,7 +922,7 @@ export class WebKioskService {
       unitAgorot: number;
       qty?: number;
       options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
-      meal?: { components: ReadonlyArray<{ slotId: string; productId: string }> } | null;
+      meal?: { components: ReadonlyArray<{ slotId: string; productId: string; options?: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
     }>,
     shownAgorot: number | null = null,
     now: Date | null = null,
@@ -912,7 +961,9 @@ export class WebKioskService {
       for (const c of parts) {
         const slot = slots.find((s) => s.id === c.slotId)!;
         const cg = (v.catalog.groups[c.productId] ?? []).map(webMoneyGroup);
-        unit += slot.choices.find((x) => x.productId === c.productId)!.upchargeAgorot + chosenOptions(cg, Object.fromEntries(cg.map((g) => [g.id, defaultPicks(g)]))).reduce((s, o) => s + o.chargedAgorot, 0);
+        // The component on its defaults, or with the required choice answered in the meal window (MealDraft.updateDish).
+        const own = c.options && c.options.length > 0 ? picksOf(cg, c.options) : null;
+        unit += slot.choices.find((x) => x.productId === c.productId)!.upchargeAgorot + chosenOptions(cg, own ?? Object.fromEntries(cg.map((g) => [g.id, defaultPicks(g)]))).reduce((s, o) => s + o.chargedAgorot, 0);
       }
       if (unit !== l.unitAgorot) changes.push({ kind: 'repriced', productId: l.productId, name: p.name, key: l.key, from: l.unitAgorot, to: unit });
       priced.push({ key: l.key, productId: p.id, categoryId: p.categoryId, unitAgorot: unit, qty: l.qty ?? 1, noDiscount: p.noDiscount });

@@ -16,6 +16,7 @@ import {
   defaultPicks,
   mealPick,
   mealSlotProblem,
+  picksValid,
   togglePick,
   type ChosenOption,
   type LocalDateTime,
@@ -25,7 +26,7 @@ import {
 } from './kioskMoney';
 
 /** The corpus's SHA-256, its line endings read as LF — the same constant as pos-android's KioskPricingCorpusTest.GOLDEN_SHA256. */
-export const KIOSK_PRICING_PARITY_SHA256 = 'ad99ab6a5fc090d8f141b6527235ed6b5ebc19e9dcc0e36f5edc5f754b3ca72f';
+export const KIOSK_PRICING_PARITY_SHA256 = '2448b069922eb90575a9db7590595bdc20d2115634a1f78ae7627d84703a82e6';
 
 type Row = Record<string, unknown>;
 
@@ -46,6 +47,8 @@ export interface CorpusBasketLine {
   ops?: Array<[string, string, string, number?]>;
   /** The meal window's slot taps after the defaults: [slotId, productId]. */
   taps?: Array<[string, string]>;
+  /** A component's own required choice answered in the meal window: [slotId, productId, "toggle", groupId, optionId]. */
+  componentOps?: Array<[string, string, string, string, string]>;
 }
 
 export interface CorpusLine {
@@ -133,14 +136,33 @@ export function picksAfter(groups: readonly MenuGroup[], ops: CorpusBasketLine['
   return picks;
 }
 
-/** The meal window's taps from each slot's defaults (MealDraft.start → pick); whether it may go in (MealDraft.isValid). */
-export function mealAfter(slots: readonly MealSlot[], taps: CorpusBasketLine['taps'], componentValid: (productId: string) => boolean): { chosen: Record<string, string[]>; valid: boolean } {
+/**
+ * The meal window's taps from each slot's defaults (MealDraft.start → pick), then the components' own
+ * answers (MealDraft.updateDish → toggle); whether it may go in (MealDraft.isValid). `groupsOf`: a
+ * component's groups; each component's picks start on their defaults.
+ */
+export function mealAfter(
+  slots: readonly MealSlot[],
+  line: Pick<CorpusBasketLine, 'taps' | 'componentOps'>,
+  groupsOf: (productId: string) => MenuGroup[],
+): { chosen: Record<string, string[]>; picks: (slotId: string, productId: string) => Record<string, OptionPick[]>; valid: boolean } {
   const chosen: Record<string, string[]> = Object.fromEntries(slots.map((s) => [s.id, defaultMealChoices(s)]));
-  for (const [slotId, productId] of taps ?? []) {
+  for (const [slotId, productId] of line.taps ?? []) {
     const s = slots.find((x) => x.id === slotId);
     if (s) chosen[s.id] = mealPick(s, chosen[s.id], productId);
   }
-  return { chosen, valid: !slots.some((s) => mealSlotProblem(s, chosen[s.id], componentValid)) };
+  const answered: Record<string, Record<string, OptionPick[]>> = {};
+  const picks = (slotId: string, productId: string) =>
+    answered[`${slotId}:${productId}`] ?? Object.fromEntries(groupsOf(productId).map((g) => [g.id, defaultPicks(g)]));
+  for (const [slotId, productId, op, groupId, optionId] of line.componentOps ?? []) {
+    if (op !== 'toggle') throw new Error(`unknown op ${op}`);
+    const g = groupsOf(productId).find((x) => x.id === groupId);
+    if (!g) continue;
+    const now = picks(slotId, productId);
+    answered[`${slotId}:${productId}`] = { ...now, [g.id]: togglePick(g, now[g.id] ?? [], optionId) };
+  }
+  const valid = !slots.some((s) => mealSlotProblem(s, chosen[s.id], (pid) => picksValid(groupsOf(pid), picks(s.id, pid))));
+  return { chosen, picks, valid };
 }
 
 export function optionRow(o: Pick<ChosenOption, 'groupId' | 'optionId' | 'qty' | 'pre' | 'priceAgorot' | 'chargedAgorot'>): CorpusOption {

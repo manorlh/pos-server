@@ -7,8 +7,8 @@
  *  - the shared screens each one renders, and the props it passes each one;
  *  - the screens' model (`const m: PreviewModel = { … }`): the same keys;
  *  - the money and the offers through the ONE shared code — the order's tip
- *    (kiosk-shared/checkout-rules.ts), the basket's offers and the meal upsell
- *    (kiosk-shared/basket-upsell.ts) — never a local copy.
+ *    (kiosk-shared/checkout-rules.ts), the upsell window (kiosk-shared/upsell-window.ts) and the meal
+ *    upsell (kiosk-shared/basket-upsell.ts) — never a local copy.
  *
  * A difference that belongs to one platform is listed below with its reason.
  */
@@ -113,8 +113,14 @@ describe('the Windows and the browser kiosk hosts draw the shared screens alike'
       ['windows', WINDOWS],
       ['web', WEB],
     ] as const) {
-      expect(src, host).toMatch(/import \{ basketUpsell, mealUpsellIds \} from '(?:@kiosk-shared|@\/kiosk-shared)\/basket-upsell';/);
-      expect(src, host).toMatch(/return basketUpsell\(view\.catalog\.upsellRules, cfg\.upsell\?\.maxShown, cart, all\)\.products;/);
+      expect(src, host).toMatch(/import \{ mealUpsellIds \} from '(?:@kiosk-shared|@\/kiosk-shared)\/basket-upsell';/);
+      // "הגדלת מכירה" as the Android kiosk asks it: the shared window, never a strip on the basket.
+      expect(src, host).toMatch(/useKioskUpsell\(cfg, view\.catalog\.upsellRules, allProducts, resting, /);
+      expect(src, host).toMatch(/<CartScreen m=\{m\} upsell=\{NO_BASKET_OFFERS\} \/>/);
+      expect(src, host).toMatch(/if \(!taken && upsellWin\.afterAdd\(/);
+      expect(src, host).toMatch(/if \(upsellWin\.atStep\('to_pay', cartIdsRef\.current\)\) return;/);
+      expect(src, host).toMatch(/upsellWin\.atStep\('to_cart', cartIdsRef\.current\);/);
+      expect(src, host).toMatch(/if \(!upsellWin\.window\.required\) finishUpsell\(\);/);
       expect(src, host).toMatch(/mealUpsellIds\(view\.catalog\.upsellRules, productId, view\.catalog\.meals,/);
       // Every tip the host charges or shows: the shared rule with the config's switches.
       const tips = [...src.matchAll(/tipOfDetails\(([^)]*)\)/g)].map((m) => m[1]);

@@ -22,6 +22,7 @@
 
 import { agorotOfShekels, mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes } from './kioskMoney';
 import { upsellRulesOf, type KioskUpsellRule } from './kioskUpsellRules';
+import { kioskSoldOut, rowAvailable, type SaleState } from './kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from './restrictedItems';
 
 export const ALLERGEN_HE: Record<string, string> = {
@@ -161,7 +162,12 @@ export interface CatalogIn {
   machineCatalog: { mode?: string } | null;
 }
 
-export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unknown>): WebCatalog {
+export function buildWebCatalog(
+  catalog: CatalogIn,
+  settings: Record<string, unknown>,
+  /** This kiosk's stock levels and clock ("אזל" / "חסום"); absent: none here, now. */
+  sale: SaleState = { stock: {}, nowMs: Date.now() },
+): WebCatalog {
   const mode = catalog.machineCatalog?.mode ?? 'all';
   // "מחייב אישור מנהל במכירה", resolved over every category the catalog sent (lib/restrictedItems.ts).
   const restricted = restrictedCategoryIds(
@@ -202,7 +208,9 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
     .map((p) => {
       const url = str(p.imageUrl);
-      const available = p.isAvailable !== false;
+      // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
+      // delisted, the stock it tracks here, a block in force by the kiosk's clock.
+      const available = rowAvailable(p);
       const tags = new Set(Array.isArray(p.dietaryTags) ? (p.dietaryTags as string[]) : []);
       const allergens = Array.isArray(p.allergens) ? (p.allergens as unknown[]).filter((a): a is string => typeof a === 'string') : [];
       return {
@@ -213,7 +221,7 @@ export function buildWebCatalog(catalog: CatalogIn, settings: Record<string, unk
         noDiscount: p.noDiscount === true,
         imageUrl: sizedImage(url, 480),
         imageLarge: sizedImage(url, 960),
-        soldOut: !available,
+        soldOut: kioskSoldOut(p, sale.stock[String(p.id)], sale.nowMs),
         available,
         description: str(p.description),
         categoryId: (p.categoryId as string) ?? null,

@@ -54,6 +54,8 @@ export interface KioskView {
     pausedUntil: string | null;
     /** The kiosk's terminal cannot charge (none / unreachable). */
     noPayment: boolean;
+    /** Why there is no payment: offline with "חסימת הזמנות כשאין אינטרנט" on, or no terminal (null: there is). */
+    noPaymentReason?: 'offline' | 'terminal' | null;
     terminal: string;
     offline: boolean;
     offlineSince: number | null;
@@ -95,8 +97,11 @@ export interface OrderLineIn {
   notes: string[];
   /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
   unitAgorot?: number;
-  /** A meal: the product chosen in each slot (each on its own defaults) — priced here from the catalog. */
-  meal?: { components: Array<{ slotId: string; productId: string }> } | null;
+  /**
+   * A meal: the product chosen in each slot with its choices (its defaults, or a required choice answered in
+   * the meal window; absent: its defaults) — priced here from the catalog.
+   */
+  meal?: { components: Array<{ slotId: string; productId: string; options?: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
 }
 
 export interface StartPaymentIn {

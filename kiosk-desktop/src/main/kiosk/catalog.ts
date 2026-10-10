@@ -20,6 +20,7 @@
 
 import { mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes, type MenuGroup } from '@dash-lib/kioskMoney';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
+import { kioskSoldOut, rowAvailable, type SaleState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
 import { ofShekels } from '../../core/money';
@@ -161,6 +162,8 @@ export function buildKioskCatalog(
   catalog: { products: Row[]; categories: Row[]; menu: Row | null; machineCatalog: { mode?: string } | null },
   settings: Record<string, unknown>,
   localImage: (url: string | null, size: 'card' | 'large') => string | null,
+  /** This kiosk's stock levels and clock ("אזל" / "חסום"); absent: none here, now. */
+  sale: SaleState = { stock: {}, nowMs: Date.now() },
 ): KioskCatalogData {
   const mode = catalog.machineCatalog?.mode ?? 'all';
   const restricted = restrictedOf(catalog.categories);
@@ -185,7 +188,9 @@ export function buildKioskCatalog(
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
     .map((p) => {
       const url = str(p.imageUrl);
-      const available = p.isAvailable !== false;
+      // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
+      // delisted, the stock it tracks here, a block in force by the kiosk's clock.
+      const available = rowAvailable(p);
       const tags = Array.isArray(p.dietaryTags) ? new Set(p.dietaryTags as string[]) : new Set<string>();
       return {
         id: String(p.id),
@@ -195,7 +200,7 @@ export function buildKioskCatalog(
         noDiscount: p.noDiscount === true,
         imageUrl: localImage(url, 'card'),
         imageLarge: localImage(url, 'large'),
-        soldOut: !available,
+        soldOut: kioskSoldOut(p, sale.stock[String(p.id)], sale.nowMs),
         available,
         description: str(p.description),
         categoryId: (p.categoryId as string) ?? null,

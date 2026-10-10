@@ -13,7 +13,8 @@ import { ERROR_COLOR, errorFx, revealIn } from '@/components/dashboard/kiosks/pr
 import { BigButton, OptionRow, ProductImage, Stepper, cardStyle, textSize, type PGroup, type PLine, type PMeal, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { initialPicks, lineOptionsOf, menuGroupOfP, useDishSheet } from '@/components/dashboard/kiosks/preview-dish';
 import { reachLow } from '@/lib/kioskLayout';
-import { chosenOptions, mealPick, mealSlotProblem, mealUnitAgorot, optionText, type MealSlot } from '@/lib/kioskMoney';
+import { chosenOptions, mealPick, mealSlotProblem, mealUnitAgorot, optionText, picksValid, type MealSlot } from '@/lib/kioskMoney';
+import { MealComponentChoices, answerKey, answerToggle, componentsToAnswer, type MealAnswers } from '../meal-component-choices';
 import { kt, unitOf } from './parts';
 
 /** The dish one group at a time; the last step adds, with the quantity. */
@@ -280,6 +281,8 @@ export function MealSheet({
   );
   const [step, setStep] = useState(0);
   const [qty, setQty] = useState(1);
+  // A component's own required choice answered here (MealDraft.toAnswer / updateDish): by slot and product.
+  const [answers, setAnswers] = useState<MealAnswers>({});
   const [error, setError] = useState(false);
   /** A component on its own groups' defaults (MealDraft.start → DishDraft.start), priced. */
   const componentOf = (slotIndex: number, productId: string) => {
@@ -287,7 +290,7 @@ export function MealSheet({
     const choice = slot.choices.find((c) => c.product.id === productId);
     const groups = meal.groupsOf(productId);
     const money = groups.map(menuGroupOfP);
-    const picks = initialPicks(groups);
+    const picks = answers[answerKey(slot.id, productId)] ?? initialPicks(groups);
     const options = chosenOptions(money, picks);
     return {
       slotId: slot.id,
@@ -296,10 +299,23 @@ export function MealSheet({
       name: choice?.product.name ?? '',
       upchargeAgorot: choice?.upchargeAgorot ?? 0,
       options: lineOptionsOf(options),
-      valid: money.every((g) => (picks[g.id] ?? []).length >= g.minSelect),
+      valid: picksValid(money, picks),
     };
   };
   const components = slots.flatMap((s, i) => (chosen[s.id] ?? []).map((pid) => componentOf(i, pid)));
+  /** The slot's components whose defaults leave a required choice open, with what is picked in them now. */
+  const answerItems = (slotIndex: number) => {
+    const s = slots[slotIndex];
+    const choiceOf = (pid: string) => meal.slots[slotIndex].choices.find((c) => c.product.id === pid)?.product;
+    const moneyOf = (pid: string) => meal.groupsOf(pid).map(menuGroupOfP);
+    const base = (pid: string) => choiceOf(pid)?.priceAgorot ?? Math.round((choiceOf(pid)?.price ?? 0) * 100);
+    return componentsToAnswer(chosen[s.id] ?? [], base, moneyOf).map((pid) => ({
+      key: answerKey(s.id, pid),
+      name: choiceOf(pid)?.name ?? '',
+      groups: moneyOf(pid),
+      picks: answers[answerKey(s.id, pid)] ?? initialPicks(meal.groupsOf(pid)),
+    }));
+  };
   const unitAgorot = mealUnitAgorot(
     product.priceAgorot ?? Math.round(product.price * 100),
     components.map((c) => ({ upchargeAgorot: c.upchargeAgorot, options: c.options.map((o) => ({ chargedAgorot: o.chargedAgorot ?? 0 })) })),
@@ -468,6 +484,15 @@ export function MealSheet({
                   );
                 })}
               </div>
+              <MealComponentChoices
+                m={m}
+                error={error}
+                items={answerItems(at)}
+                onToggle={(key, g, optionId) => {
+                  if (!err) setError(false);
+                  setAnswers((a) => answerToggle(a, key, g, initialPicks(meal.groupsOf(key.slice(key.indexOf(':') + 1))), optionId));
+                }}
+              />
             </>
           ) : (
             <div className="space-y-2">

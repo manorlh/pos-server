@@ -31,7 +31,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CORPUS = FIXTURES / "kiosk_pricing_parity.json"
 #: The corpus's SHA-256 (LF) — the same constant as pos-android KioskPricingCorpusTest.GOLDEN_SHA256 and
 #: client lib/kioskPricingCorpus.ts KIOSK_PRICING_PARITY_SHA256. Regenerate, never edit by hand.
-CORPUS_SHA256 = "ad99ab6a5fc090d8f141b6527235ed6b5ebc19e9dcc0e36f5edc5f754b3ca72f"
+CORPUS_SHA256 = "2448b069922eb90575a9db7590595bdc20d2115634a1f78ae7627d84703a82e6"
 
 
 def _text() -> str:
