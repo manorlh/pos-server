@@ -3,6 +3,7 @@
  * The screens never reach the network: everything they show comes from here, from local data.
  */
 
+import type { KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import type { MealSlot } from '@dash-lib/kioskMoney';
 import type { PaymentMethod } from '@dash-lib/kioskConfig';
 import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
@@ -38,6 +39,8 @@ export interface KioskView {
     groups: Record<string, KGroup[]>;
     quickNotes: Record<string, string[]>;
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
+    /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (client lib/kioskUpsellRules.ts); absent: none. */
+    upsellRules?: KioskUpsellRule[];
     /** Kiosk category pictures (local) by category id. */
     categoryImages: Record<string, string>;
     /** The meals' slots by meal product id (client/src/lib/kioskMoney.ts MealSlot). */
@@ -51,6 +54,8 @@ export interface KioskView {
     pausedUntil: string | null;
     /** The kiosk's terminal cannot charge (none / unreachable). */
     noPayment: boolean;
+    /** Why there is no payment: offline with "חסימת הזמנות כשאין אינטרנט" on, or no terminal (null: there is). */
+    noPaymentReason?: 'offline' | 'terminal' | null;
     terminal: string;
     offline: boolean;
     offlineSince: number | null;
@@ -92,8 +97,11 @@ export interface OrderLineIn {
   notes: string[];
   /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
   unitAgorot?: number;
-  /** A meal: the product chosen in each slot (each on its own defaults) — priced here from the catalog. */
-  meal?: { components: Array<{ slotId: string; productId: string }> } | null;
+  /**
+   * A meal: the product chosen in each slot with its choices (its defaults, or a required choice answered in
+   * the meal window; absent: its defaults) — priced here from the catalog.
+   */
+  meal?: { components: Array<{ slotId: string; productId: string; options?: Array<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
 }
 
 export interface StartPaymentIn {

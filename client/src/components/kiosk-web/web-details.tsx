@@ -12,28 +12,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import { tipPercentAgorot, type CheckoutStep } from '@/lib/kioskConfig';
+import { type CheckoutStep } from '@/lib/kioskConfig';
 import { DetailsStep, KioskSwap, PayMethodStep, TipScreen, detailsFields, type DetailsField, type KioskLivePayMethod, type PreviewModel } from '@/kiosk-shared';
+// The details' value, the tip charged and the phone rule: ONE copy with the Windows kiosk (kiosk-shared/checkout-rules.ts).
+import { phoneValid, tipOfDetails, type DetailsValue } from '@/kiosk-shared/checkout-rules';
 
-export interface DetailsValue {
-  name: string;
-  phone: string;
-  table: string;
-  tipPct: number | null;
-  tipAgorot: number | null;
-}
-
-export const NO_DETAILS: DetailsValue = { name: '', phone: '', table: '', tipPct: null, tipAgorot: null };
-
-/** The tip as chosen, in agorot (a preset's percent of the goods, or the amount typed). */
-export function tipOfDetails(v: Pick<DetailsValue, 'tipPct' | 'tipAgorot'>, goodsAgorot: number): number {
-  return v.tipAgorot !== null ? v.tipAgorot : tipPercentAgorot(goodsAgorot, v.tipPct);
-}
-
-/** The phone the customer may leave: Israeli digits, 9–10 (as the kiosks' phoneValid). */
-export function phoneValid(raw: string): boolean {
-  return /^0\d{8,9}$/.test(raw.replace(/[\s-]/g, ''));
-}
+export { NO_DETAILS, phoneValid, tipOfDetails, type DetailsValue } from '@/kiosk-shared/checkout-rules';
 
 export function WebDetailsScreen({
   m,
@@ -70,7 +54,7 @@ export function WebDetailsScreen({
   const last = index >= steps.length - 1;
   const next = () => (last ? onDone() : setAt(index + 1));
   const back = index > 0 ? () => setAt(index - 1) : onBack;
-  const total = goodsAgorot + tipOfDetails(value, goodsAgorot);
+  const total = goodsAgorot + tipOfDetails(value, goodsAgorot, m.cfg.payment);
   const toPay = last && !afterPay;
   const button = toPay ? `${m.txt('checkoutCta')} · ${m.money(total / 100)}` : m.txt('entryContinue');
 

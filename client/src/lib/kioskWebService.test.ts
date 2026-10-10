@@ -220,7 +220,8 @@ describe('the honest pay methods', () => {
       body: { kiosk: true, configVersion: 'v3', config: { payment: { methods: ['voucher', 'split_card'] } }, state: {} },
     });
     await svc.kioskSync();
-    assert.deepEqual(svc.view().pay.methods, ['card', 'voucher']);
+    // The card beside the voucher (the cloud's repair) — and the voucher not offered: with no till to pay at, its order could not be finished (voucherCanFinish).
+    assert.deepEqual(svc.view().pay.methods, ['card']);
     assert.ok(!svc.view().pay.usable.includes('split_card'));
     assert.equal(svc.view().state.noPayment, true);
   });

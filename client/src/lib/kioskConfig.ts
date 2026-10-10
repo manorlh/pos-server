@@ -2378,6 +2378,32 @@ export function payMethodAsk(methods: readonly PaymentMethod[], usable: readonly
   return { asks: true, optional: mode === 'optional', fallback };
 }
 
+/**
+ * A voucher is offered only where the order it leaves can be finished: at the till ("מזומן בקופה"). The
+ * Windows and browser kiosks redeem a voucher towards an order the till collects; neither writes a sale
+ * with voucher legs and a card leg of its own (the Android kiosk does — PARITY-kiosk-2026-10-09.md), so
+ * with the card and vouchers alone a voucher would leave the customer with no way to pay the rest, and a
+ * voucher that pays it all with no till to send the order to.
+ */
+export function voucherCanFinish(methods: readonly PaymentMethod[]): boolean {
+  return methods.includes('cash_at_till');
+}
+
+/**
+ * "חסימת הזמנות כשאין אינטרנט" (`general.blockWhenOffline`, the Android kiosk's KioskPayBlock.OFFLINE): offline with it
+ * on, the kiosk takes no orders at all — not by card, not to the till — and rests on its "offline" screen. Off (the
+ * default), no internet never stops it.
+ */
+export function kioskOfflineBlocks(general: { blockWhenOffline?: boolean } | null | undefined, offline: boolean): boolean {
+  return offline && general?.blockWhenOffline === true;
+}
+
+/** The methods a TypeScript kiosk offers of the configured ones: one card per document, a voucher only where it can finish. */
+export function tsKioskPayMethods(methods: readonly unknown[] | null | undefined): PaymentMethod[] {
+  const one = singleCardPayMethods(methods);
+  return voucherCanFinish(one) ? one : one.filter((m) => m !== 'voucher');
+}
+
 /** Left to pay after the vouchers, in agorot: the order and its tip less them, never below zero. */
 export function kioskRemainderAgorot(goodsAgorot: number, tipAgorot: number, voucherAgorot: readonly number[]): number {
   const vouchers = voucherAgorot.reduce((sum, v) => sum + Math.max(0, Math.trunc(v)), 0);

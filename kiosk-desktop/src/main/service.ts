@@ -10,8 +10,9 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { kioskPayMethods, resolveKioskConfig, singleCardPayMethods, type PaymentMethod } from '@dash-lib/kioskConfig';
+import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
 import { orderCode, orderDue, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
@@ -538,8 +539,14 @@ export class KioskService extends EventEmitter {
     return { css, family: fam };
   }
 
+  /** When the catalog's sale states change next by the clock alone (a block's end): the view is built again then. */
+  private saleChangeAt: number | null = null;
+
   private catalogData() {
-    return buildKioskCatalog(this.cloud.catalog(), this.settingsMap(), (url, size) => this.localMediaUrl(url, size));
+    const now = Date.now();
+    const catalog = this.cloud.catalog();
+    this.saleChangeAt = catalogNextChangeMs(catalog.products, now);
+    return buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs: now });
   }
 
   private pausedState(): { paused: boolean; message: string | null; until: string | null } {
@@ -559,7 +566,7 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');
@@ -591,8 +598,10 @@ export class KioskService extends EventEmitter {
         paused: paused.paused,
         pausedMessage: paused.message,
         pausedUntil: paused.until,
-        // No terminal set up at all; a health check that did not answer is tried on the press.
-        noPayment: !this.pay.configured,
+        // No terminal set up at all (a health check that did not answer is tried on the press), or offline with
+        // "חסימת הזמנות כשאין אינטרנט" on (kioskOfflineBlocks — the Android kiosk's KioskPayBlock.OFFLINE).
+        noPayment: !this.pay.configured || this.offlineBlocked(cfg),
+        noPaymentReason: this.offlineBlocked(cfg) ? 'offline' : !this.pay.configured ? 'terminal' : null,
         terminal: this.pay.monitor.state,
         offline: this.offlineNow,
         offlineSince: this.offline.since,
@@ -686,6 +695,7 @@ export class KioskService extends EventEmitter {
         this.dirty();
       },
       onPromotions: () => this.dirty(),
+      onStock: () => this.dirty(),
       onSettings: () => {
         this.applyProvider();
         this.dirty();
@@ -1119,8 +1129,10 @@ export class KioskService extends EventEmitter {
         const slot = slots.find((s) => s.id === c.slotId)!;
         const cp = byId.get(c.productId)!;
         const groups = (cat.groups[cp.id] ?? []).map(moneyGroupOf);
-        // The kiosk's meal: each component on its own defaults (MealDraft.start).
-        const chosen = chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
+        // The kiosk's meal: each component on its own defaults (MealDraft.start), or with the required choice the
+        // customer answered in the meal window (MealDraft.updateDish) — priced by its groups here.
+        const own = c.options && c.options.length > 0 ? this.chargedOptions(cat.groups[cp.id] ?? [], c.options) : null;
+        const chosen = own ?? chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
         if (cp.trackStock) tracked.add(cp.id);
         return {
           slotId: slot.id,
@@ -1130,7 +1142,7 @@ export class KioskService extends EventEmitter {
           categoryId: cp.categoryId,
           listPriceAgorot: checkedBasePrice(cp.id, cp.priceAgorot, cloud),
           upchargeAgorot: slot.choices.find((x) => x.productId === cp.id)!.upchargeAgorot,
-          options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre, chargedAgorot: o.chargedAgorot })),
+          options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre ?? null, chargedAgorot: o.chargedAgorot })),
         };
       });
       if (p.trackStock) tracked.add(p.id);
@@ -1208,7 +1220,7 @@ export class KioskService extends EventEmitter {
     const cfg = this.config();
     const operator = this.operator();
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
     const totals = saleTotals(lines, this.vatRate(), tip);
     if (totals.chargeAgorot < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
     this.ledger.openShift(operator);
@@ -1350,8 +1362,13 @@ export class KioskService extends EventEmitter {
    * document here (DocDraft.card): "פיצול תשלום בכרטיסים" (split_card) is never offered
    * (singleCardPayMethods) — and never usable.
    */
+  /** Offline with "חסימת הזמנות כשאין אינטרנט" on: no orders at all. */
+  private offlineBlocked(cfg: { general?: { blockWhenOffline?: boolean } } | null): boolean {
+    return !!cfg && kioskOfflineBlocks(cfg.general, this.offlineNow);
+  }
+
   private payView(kiosk: boolean): KioskView['pay'] {
-    const methods = kiosk ? singleCardPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    const methods = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
@@ -1363,9 +1380,11 @@ export class KioskService extends EventEmitter {
           ? 'לא הוגדר מסופון אשראי לקיוסק'
           : 'מסופון האשראי לא זמין כרגע';
     const usable = methods.filter((m) =>
-      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow : m === 'cash_at_till' ? this.fiscalRole : false,
+      // A voucher only where its order can be finished: at the till (voucherCanFinish) — never a dead end.
+      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow && voucherCanFinish(methods) : m === 'cash_at_till' ? this.fiscalRole : false,
     );
-    return { methods, usable, cardOff };
+    // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why).
+    return { methods, usable: kiosk && this.offlineBlocked(this.config()) ? [] : usable, cardOff };
   }
 
   /** The basket priced here (priceBasket) as the till's held sale carries it (client lib/kioskWebOrders.ts WebOrderLine). */
@@ -1435,7 +1454,7 @@ export class KioskService extends EventEmitter {
       return { ok: false, reason: 'changed', changes: [], totalAgorot: goods };
     }
     if (lines.length === 0) return { ok: false, reason: 'empty', message: 'הסל ריק' };
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
     const vouchers = (Array.isArray(input.vouchers) ? input.vouchers : []).filter((v) => v && typeof v.redemptionId === 'string' && Number.isInteger(v.amountAgorot) && v.amountAgorot >= 0);
     if (vouchers.reduce((s, v) => s + v.amountAgorot, 0) > goods + tip) return { ok: false, reason: 'error', message: 'השוברים עולים על ההזמנה' };
     const now = Date.now();
@@ -2012,6 +2031,11 @@ export class KioskService extends EventEmitter {
     const was = this.offlineNow;
     this.offlineNow = this.paired && this.offline.update({ networkUp: this.platform.networkUp(), lastCloudOkAtMs: this.sync.status.lastBeatOkAt, startedAtMs: this.startedAt, nowMs: Date.now() });
     if (was !== this.offlineNow) this.dirty();
+    // "אזל" / "חסום" until a time: lifted here at its time, offline too (KioskCatalogView by the kiosk's clock).
+    if (this.saleChangeAt !== null && Date.now() >= this.saleChangeAt) {
+      this.saleChangeAt = null;
+      this.dirty();
+    }
     this.refreshBonStates();
   }
 

@@ -100,14 +100,15 @@ describe('what this kiosk can take now', () => {
     }
   });
 
-  it('only split_card and a voucher: as a method it does not know — the card beside the voucher', () => {
+  it('only split_card and a voucher: the card beside it, and no voucher with no till to finish its order', () => {
     const { fetchFn } = fakeCloud();
     const svc = kiosk(fetchFn, { methods: ['voucher', 'split_card'] });
     try {
       const pay = svc.view().pay;
-      expect(pay.methods).toEqual(['card', 'voucher']);
+      // A voucher could not be finished here (no "מזומן בקופה"): never a dead end (voucherCanFinish).
+      expect(pay.methods).toEqual(['card']);
       expect(pay.usable).not.toContain('split_card');
-      expect(pay.usable).toEqual(['voucher']);
+      expect(pay.usable).not.toContain('voucher');
     } finally {
       svc.stop();
     }

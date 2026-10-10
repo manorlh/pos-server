@@ -18,7 +18,9 @@
  * `kioskCatalogView` (client/src/lib/kioskConfig.ts), exactly as the dashboard preview does.
  */
 
-import { mealsOf, menuGroupOf, type MealSlot, type MenuGroup } from '@dash-lib/kioskMoney';
+import { mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes, type MenuGroup } from '@dash-lib/kioskMoney';
+import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
+import { kioskSoldOut, rowAvailable, type SaleState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
 import { ofShekels } from '../../core/money';
@@ -108,6 +110,8 @@ export interface KioskCatalogData {
   quickNotes: Record<string, string[]>;
   /** Upsell candidates by trigger: product ids offered for a product, a category, or any order. */
   upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
+  /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (`upsells` + `kioskUpsells`, lib/kioskUpsellRules.ts). */
+  upsellRules: KioskUpsellRule[];
 }
 
 type Row = Record<string, unknown>;
@@ -158,6 +162,8 @@ export function buildKioskCatalog(
   catalog: { products: Row[]; categories: Row[]; menu: Row | null; machineCatalog: { mode?: string } | null },
   settings: Record<string, unknown>,
   localImage: (url: string | null, size: 'card' | 'large') => string | null,
+  /** This kiosk's stock levels and clock ("אזל" / "חסום"); absent: none here, now. */
+  sale: SaleState = { stock: {}, nowMs: Date.now() },
 ): KioskCatalogData {
   const mode = catalog.machineCatalog?.mode ?? 'all';
   const restricted = restrictedOf(catalog.categories);
@@ -182,7 +188,9 @@ export function buildKioskCatalog(
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
     .map((p) => {
       const url = str(p.imageUrl);
-      const available = p.isAvailable !== false;
+      // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
+      // delisted, the stock it tracks here, a block in force by the kiosk's clock.
+      const available = rowAvailable(p);
       const tags = Array.isArray(p.dietaryTags) ? new Set(p.dietaryTags as string[]) : new Set<string>();
       return {
         id: String(p.id),
@@ -192,7 +200,7 @@ export function buildKioskCatalog(
         noDiscount: p.noDiscount === true,
         imageUrl: localImage(url, 'card'),
         imageLarge: localImage(url, 'large'),
-        soldOut: !available,
+        soldOut: kioskSoldOut(p, sale.stock[String(p.id)], sale.nowMs),
         available,
         description: str(p.description),
         categoryId: (p.categoryId as string) ?? null,
@@ -223,17 +231,18 @@ export function buildKioskCatalog(
     });
   }
   const links = (menu.links ?? {}) as { categories?: Record<string, string[]>; products?: Record<string, string[]> };
-  const notes = (menu.notes ?? {}) as { all?: Row[]; categories?: Record<string, Row[]>; products?: Record<string, Row[]> };
-  const noteTexts = (list: Row[] | undefined) => (Array.isArray(list) ? list.map((n) => str(n.text)).filter((t): t is string => !!t) : []);
+  const parentOf = parentOfCategories(catalog.categories.filter((c) => c.deleted !== true));
+  const notes = (menu.notes ?? {}) as MenuNotes;
   const groups: Record<string, KGroup[]> = {};
   const quickNotes: Record<string, string[]> = {};
   for (const p of products) {
-    const own = links.products?.[p.id];
-    const ids = Array.isArray(own) ? own : p.categoryId ? (links.categories?.[p.categoryId] ?? []) : [];
+    // Menu.groupsFor: the product's own list, else the nearest category up its tree that has one.
+    const ids = menuGroupIdsFor(links, [p.id], p.categoryId, parentOf);
     const list = ids.map((id) => groupsById.get(id)).filter((g): g is KGroup => !!g && g.options.length > 0);
     if (list.length > 0) groups[p.id] = list;
-    const q = [...noteTexts(notes.all), ...(p.categoryId ? noteTexts(notes.categories?.[p.categoryId]) : []), ...noteTexts(notes.products?.[p.id])];
-    if (q.length > 0) quickNotes[p.id] = Array.from(new Set(q));
+    // Menu.notesFor: its own chips, else the nearest category's up the tree; then the shop's for every dish.
+    const q = menuNotesFor(notes, [p.id], p.categoryId, parentOf);
+    if (q.length > 0) quickNotes[p.id] = q;
   }
   const upsells = (Array.isArray(menu.upsells) ? (menu.upsells as Row[]) : []).map((u) => {
     const options = Array.isArray(u.options) ? (u.options as Row[]) : [];
@@ -253,7 +262,7 @@ export function buildKioskCatalog(
     const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
     if (usable.length > 0) meals[id] = usable;
   }
-  return { categories, products, groups, meals, quickNotes, upsells };
+  return { categories, products, groups, meals, quickNotes, upsells, upsellRules: upsellRulesOf(menu) };
 }
 
 /** The pictures the kiosk keeps for its catalog (not of what it hides or does not sell). */

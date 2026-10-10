@@ -16,6 +16,9 @@ import { KioskService } from '../src/main/service';
 import type { BasketChange, StartPaymentIn } from '../src/shared/bridge';
 import type { Transport } from '../src/main/printer/transports';
 
+/** Tips on, with "סכום אחר" (the config's payment). */
+const ON = { tipEnabled: true, tipOther: true };
+
 const here = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
 const FIXTURE = path.join(here, '..', '..', 'server', 'tests', 'fixtures', 'kiosk_money_golden.json');
 /** The same constant as client/src/lib/kioskMoney.test.ts and server tests/test_kiosk_money_golden.py. */
@@ -108,7 +111,7 @@ describe.runIf(existsSync(FIXTURE))('the kiosk money golden fixture, through the
         expect(lines.map((l) => ({ id: l.key, promotionAgorot: l.promotionAgorot ?? 0, promotionId: l.promotionId ?? null, totalAgorot: unitAgorot(l) * l.qty - (l.promotionAgorot ?? 0) }))).toEqual(c.expected.lines);
         expect(promotions.map((a) => ({ promotionId: a.promotionId, applications: a.applications, discountAgorot: a.discountAgorot }))).toEqual(c.expected.applied);
         const goods = saleTotals(lines, c.vatRate);
-        const tip = tipToCharge(goods.totalAgorot, c.tipPct, null);
+        const tip = tipToCharge(ON, goods.totalAgorot, c.tipPct, null);
         expect(tip).toBe(c.expected.tipAgorot);
         const totals = saleTotals(lines, c.vatRate, tip);
         expect({ total: totals.totalAgorot, net: totals.netAgorot, vat: totals.vatAgorot, discount: totals.discountAgorot }).toEqual({

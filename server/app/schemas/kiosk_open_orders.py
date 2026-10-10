@@ -90,6 +90,10 @@ class KioskOpenOrderIn(_In):
         # Agorot only: what the till takes is the order and its tip less the vouchers.
         if sum(v.amount_agorot for v in self.vouchers) != self.voucher_agorot:
             raise ValueError("voucherAgorot must be the sum of the vouchers")
+        # The Android kiosk's tip (KioskTip / KioskCustomer.tipOf, client lib/kioskMoney.ts kioskTipAgorot): a preset
+        # is at most 50% of the order and "סכום אחר" never more than it — a larger tip is not one a kiosk can ask.
+        if self.tip_agorot > self.total_agorot:
+            raise ValueError("tipAgorot is never more than totalAgorot")
         if self.total_agorot + self.tip_agorot - self.voucher_agorot != self.due_agorot:
             raise ValueError("dueAgorot must be totalAgorot + tipAgorot - voucherAgorot")
         if len({v.redemption_id for v in self.vouchers}) != len(self.vouchers):
