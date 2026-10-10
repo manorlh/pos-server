@@ -738,7 +738,7 @@ export function KioskPreview({
               <KioskStatusBar
                 m={model}
                 screen={screen === 'paused' ? pausedVariant : screen}
-                pickup={screen === 'success' ? pickupLabel(config.pickup.prefix, Number.isFinite(config.pickup.start) ? config.pickup.start : 1) : null}
+                pickup={screen === 'success' ? pickupLabel(config.pickup.prefix, Number.isFinite(config.pickup.start) ? config.pickup.start : 1, config.pickup.labelFormat) : null}
                 top={frame === 'phone' ? 28 : 0}
               />
               {/* "מעבר בין מסכים": the screen swaps with the chosen transition (the product sheet belongs to the catalog). */}

@@ -311,6 +311,16 @@ def _check_policy(body: KdsReleaseIn, config: Dict[str, Any], order: Optional[Ki
         raise _refuse("release_requires_payment")
 
 
+def pickup_label_out(order: KitchenOrder) -> Dict[str, Any]:
+    """
+    `{"pickupLabel": "A-17"}` for an order a kiosk numbered — the label its slip printed ("A-17",
+    or "17" with the kiosk's "מספר בלבד") — and nothing for any other: the screens show it over
+    `#pickupNumber`, and every answer about an order without one stays as it was (the golden corpus).
+    """
+    label = (getattr(order, "pickup_label", None) or "").strip()
+    return {"pickupLabel": label} if label else {}
+
+
 def _header(order: KitchenOrder, body: KdsReleaseIn) -> None:
     for attr, value in (
         ("display_ref", body.display_ref),
@@ -323,6 +333,7 @@ def _header(order: KitchenOrder, body: KdsReleaseIn) -> None:
         ("contact_phone", body.contact_phone),
         ("order_note", body.order_note),
         ("transaction_number", body.transaction_number),
+        ("pickup_label", body.pickup_label),
     ):
         if value is not None:
             setattr(order, attr, value)
@@ -831,6 +842,7 @@ def _set_ready(
         "source": order.source,
         "displayRef": order.display_ref,
         "pickupNumber": order.pickup_number,
+        **pickup_label_out(order),
         "workflowMode": order.workflow_mode,
         "configVersion": order.config_version,
         "readyAt": _iso(now),
@@ -1318,6 +1330,7 @@ def order_out(
         "pickupName": order.pickup_name,
         "orderNote": order.order_note,
         "pickupNumber": order.pickup_number,
+        **pickup_label_out(order),
         "workflowMode": order.workflow_mode,
         "configVersion": order.config_version,
         "paid": bool(order.paid),
@@ -1515,7 +1528,8 @@ def pickup_board(
     for order in orders:
         if (as_utc(order.created_at) or now) < now - BOARD_WINDOW:
             continue
-        number = order.pickup_number if order.pickup_number is not None else order.display_ref
+        # The kiosk's label as its slip printed it ("A-17", or "17" with "מספר בלבד"), else the number.
+        number = order.pickup_label or (order.pickup_number if order.pickup_number is not None else order.display_ref)
         if number is None:
             continue
         if not in_scope(order, {"areaIds": areas, "machineIds": machines}):
@@ -1637,6 +1651,7 @@ def ready_orders(db: Session, machine: POSMachine) -> Dict[str, Any]:
             "sourceRef": order.source_ref,
             "displayRef": order.display_ref,
             "pickupNumber": order.pickup_number,
+            **pickup_label_out(order),
             "tableRef": order.table_ref,
             "serviceType": order.service_type,
             "pickupName": order.pickup_name,

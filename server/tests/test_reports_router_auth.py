@@ -109,6 +109,11 @@ def test_shop_transactions_response_matches_the_shipped_till_contract() -> None:
         # "קידומת מסמכים" (docs/SPEC_DOCUMENT_PREFIX.md): the number as printed, `2-57`.
         # Nullable and additive the same way.
         "documentNumber",
+        # A kiosk order's pickup number ("A-17" / "17") and its business date, and why `q`
+        # found the row ("document" / "pickup"). Nullable and additive the same way.
+        "pickupLabel",
+        "pickupBusinessDate",
+        "matchedBy",
     }
 
 

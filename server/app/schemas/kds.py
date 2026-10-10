@@ -65,6 +65,8 @@ class KdsReleaseIn(_Body):
     contact_phone: Optional[str] = Field(None, alias="contactPhone", max_length=30)
     order_note: Optional[str] = Field(None, alias="orderNote", max_length=300)
     pickup_number: Optional[int] = Field(None, alias="pickupNumber", ge=1, le=9999)
+    #: A kiosk's label for that number, as its slip printed it ("A-17"; "17" with "מספר בלבד").
+    pickup_label: Optional[str] = Field(None, alias="pickupLabel", max_length=32)
     transaction_number: Optional[str] = Field(None, alias="transactionNumber", max_length=50)
     actor_name: Optional[str] = Field(None, alias="actorName", max_length=TEXT_MAX)
     items: List[KdsItemIn] = Field(default_factory=list, max_length=ITEMS_MAX)

@@ -40,6 +40,7 @@ import {
   printReceiptDocuments,
 } from '@/components/print/receipt-print-document';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { KioskPickupBadges } from '@/components/dashboard/kiosks/kiosk-pickup-badges';
 import { FailedPaymentsTable } from '@/components/dashboard/failed-payments/failed-payments-table';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { fetchTransactionsExport } from '@/lib/reportCenterApi';
@@ -284,9 +285,9 @@ export default function TransactionsPage() {
         <div className="grid gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <Label className="text-xs">{t('searchText')}</Label>
+            {/* Text, not decimal: a kiosk order's pickup number has a letter ("A-17"). */}
             <Input
               value={q}
-              inputMode="decimal"
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
             />
           </div>
@@ -474,6 +475,7 @@ export default function TransactionsPage() {
                     <Badge variant={statusVariant(tx.status)}>{t(`statusLabels.${tx.status}`)}</Badge>
                     <OfflineOutcomeBadge outcome={tx.offlineOutcome} />
                     <RemoteCreditBadges tx={tx} />
+                    <KioskPickupBadges pickup={tx.kioskPickup} matchedBy={tx.matchedBy} query={searchQ} />
                   </div>
                 </button>
               </li>
@@ -524,6 +526,7 @@ export default function TransactionsPage() {
                       {tx.basketId && (
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
+                      <KioskPickupBadges pickup={tx.kioskPickup} matchedBy={tx.matchedBy} query={searchQ} className="ms-2" />
                     </TableCell>
                     <TableCell>{machine?.name ?? tx.machineId.slice(0, 8)}</TableCell>
                     <TableCell>{tx.cashierId ?? '—'}</TableCell>

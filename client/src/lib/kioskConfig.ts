@@ -610,11 +610,21 @@ export interface KioskPrinting {
 
 export type PickupScope = 'kiosk' | 'shop';
 
+/**
+ * "מספר הזמנה": with the kiosk's letter ("A-17", the default — today's) or the number alone ("17",
+ * the owner 09.10.2026). The number alone always comes from the shop's shared daily counter
+ * (`repairKioskConfig` forces `scope: 'shop'`), so two kiosks never both say "17" that day.
+ */
+export type PickupLabelFormat = 'prefixed' | 'number';
+
+export const PICKUP_LABEL_FORMATS: readonly PickupLabelFormat[] = ['prefixed', 'number'];
+
 export interface KioskPickup {
   scope: PickupScope;
   prefix: string;
   start: number;
   max: number;
+  labelFormat: PickupLabelFormat;
 }
 
 export interface KioskTimers {
@@ -991,7 +1001,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     bonAutoRetryMin: 10,
     bonOnKiosk: false,
   },
-  pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999 },
+  pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999, labelFormat: 'prefixed' },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
   club: { enabled: false, joinUrl: '', title: '', body: '' },
   operations: { autoCloseAt: '', pausedTitle: '', pausedBody: '', closeWithShopZ: false },
@@ -1451,6 +1461,8 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
     pickup.start = KIOSK_DEFAULTS.pickup.start;
     pickup.max = KIOSK_DEFAULTS.pickup.max;
   }
+  // "מספר בלבד": the number alone always comes from the shop's shared counter (unique that day).
+  if (pickup.labelFormat === 'number') pickup.scope = 'shop';
   if (printing.bonMode === 'single' && !printing.bonPrinterId) printing.bonMode = 'routing';
   if (club.enabled && !/^https?:\/\/\S+$/i.test(club.joinUrl || '')) club.enabled = false;
   payment.methods = kioskPayMethods(payment.methods);
@@ -1930,6 +1942,7 @@ export function validateKioskConfig(
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);
+  checkEnum(e, 'pickup.labelFormat', pk.labelFormat, PICKUP_LABEL_FORMATS);
   if (typeof pk.prefix !== 'string' || pk.prefix.length > L.pickupPrefixMax || !PREFIX.test(pk.prefix)) {
     e.push({ path: 'pickup.prefix', code: 'pickupPrefix', params: { max: L.pickupPrefixMax } });
   }
@@ -2002,8 +2015,13 @@ export function validateKioskConfig(
 
 /* --------------------------------------------------------------- helpers */
 
-/** The pickup number as printed: "A-17" with prefix "A", "17" without. */
-export function pickupLabel(prefix: string | null | undefined, n: number): string {
+/**
+ * The pickup number as printed: "A-17" with prefix "A", "17" without — and "17" whatever the
+ * prefix with `format: 'number'` ("מספר בלבד"). The server's kiosk_pickup.pickup_label, the
+ * Android KioskPickup.label, kiosk-desktop core/kioskOrders.ts — one rule.
+ */
+export function pickupLabel(prefix: string | null | undefined, n: number, format?: PickupLabelFormat | null): string {
+  if (format === 'number') return String(n);
   const p = (prefix ?? '').trim();
   return p ? `${p}-${n}` : String(n);
 }

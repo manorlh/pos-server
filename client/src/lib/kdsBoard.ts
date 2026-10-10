@@ -101,9 +101,14 @@ export function pendingChanges(order: KdsOrder): KdsChange[] {
   return order.changes.filter((c) => c.requiresAck && !c.acked);
 }
 
-/** The card's headline: the table, the pickup number, the order's reference. */
+/**
+ * The card's headline: the table, the pickup number, the order's reference. A kiosk's order says
+ * what its slip says ("A-17", or "17" with the kiosk's "מספר בלבד"); any other, `#17`.
+ */
 export function orderTitle(order: KdsOrder): string {
   if (order.tableRef) return order.displayRef && order.displayRef.includes(order.tableRef) ? order.displayRef : `שולחן ${order.tableRef}`;
+  const label = order.pickupLabel?.trim();
+  if (label) return label;
   if (order.pickupNumber) return `#${order.pickupNumber}`;
   return order.displayRef ?? order.id.slice(0, 6);
 }

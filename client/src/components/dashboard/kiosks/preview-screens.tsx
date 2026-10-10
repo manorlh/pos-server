@@ -3233,7 +3233,7 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
 export function SuccessScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const live = m.live?.success;
-  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1);
+  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1, cfg.pickup.labelFormat);
   const messages = messagesFor(cfg, 'success', ['banner', 'notice'], m.nowMs);
   // The real kiosk: the question only while it is still asked; what happened to the receipt after.
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;

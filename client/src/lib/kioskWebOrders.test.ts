@@ -113,6 +113,9 @@ describe('pickup numbers', () => {
   it('labels with the prefix, and an offline shop number with L', () => {
     assert.equal(pickupLabelOf('A', 17), 'A-17');
     assert.equal(pickupLabelOf('', 17), '17');
+    // "מספר בלבד" (pickup.labelFormat): the number alone, whatever the prefix.
+    assert.equal(pickupLabelOf('A', 17, 'number'), '17');
+    assert.equal(pickupLabelOf('A', 17, 'prefixed'), 'A-17');
     assert.equal(offlinePickupLabel('A', 4), 'AL-4');
     assert.equal(offlinePickupLabel(null, 4), 'L-4');
     assert.equal(localDate(new Date(2026, 9, 7, 23, 59).getTime()), '2026-10-07');
