@@ -6,6 +6,8 @@
  *    not "מחייב אישור מנהל במכירה" (itself or a category above it — client/src/lib/restrictedItems.ts;
  *    such a category disappears with everything beneath it: nobody at a kiosk types a manager's code),
  *    on this till's list when the machine catalog is "selected", in an active category;
+ *  - never the general item, an open-price product or a weighed one (client lib/kioskSellable.ts — one rule for both
+ *    TypeScript kiosks, the Android kiosk's KioskCatalogView.build: a customer keys no price and weighs nothing);
  *  - "אזל" = not available (`isAvailable` false);
  *  - modifier groups by the menu links (a product's own list, [] = none, else its category's), with
  *    the rules that price them (free choices, quantities, "מעט / הרבה / בצד") and the meals' slots —
@@ -28,6 +30,7 @@ import { mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories
 import { hasMenus, layMenu, menuInputsOf, type KioskMenuState } from '@dash-lib/kioskMenus';
 import type { MenuBlock } from '@dash-lib/menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
+import { sellableOnKiosk } from '@dash-lib/kioskSellable';
 import { kioskSoldOut, rowAvailable, type SaleState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
@@ -170,19 +173,8 @@ function restrictedRow(p: Row, restricted: ReadonlySet<string>): boolean {
   );
 }
 
-/**
- * Is this product sold on a kiosk at all. `menuActive`: a menu places it, and a menu beats the machine's own list
- * ("גובר על הכל", SPEC_MENUS §3.3) — everything else (delisted, "קופות בלבד", "מחייב אישור מנהל") stays.
- */
-export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | undefined, menuActive = false): boolean {
-  if (p.deleted === true) return false;
-  if (p.inStock === false) return false;
-  if (p.salesChannel === 'pos_only') return false;
-  // "מחייב אישור מנהל במכירה" — its own flag here; its category's in buildKioskCatalog / catalogMedia.
-  if (p.requiresManagerApproval === true) return false;
-  if (!menuActive && machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
-  return true;
-}
+/** Is this product sold on a kiosk at all — the one rule of client lib/kioskSellable.ts, shared with the browser kiosk. */
+export { sellableOnKiosk };
 
 export function buildKioskCatalog(
   catalog: { products: Row[]; categories: Row[]; menu: Row | null; machineCatalog: { mode?: string } | null; catalogMenus?: MenuBlock | null },

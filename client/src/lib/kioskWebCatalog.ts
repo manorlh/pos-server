@@ -7,6 +7,8 @@
  *    (`salesChannel` pos_only), not "מחייב אישור מנהל במכירה" (itself or a category above it,
  *    lib/restrictedItems.ts — such a category disappears with everything beneath it), on this till's
  *    list when the machine catalog is "selected", in an active category; "אזל" = not available;
+ *    never the general item, an open-price product or a weighed one (lib/kioskSellable.ts — one rule for both
+ *    TypeScript kiosks, the Android kiosk's KioskCatalogView.build: a customer keys no price and weighs nothing);
  *  - modifier groups by the menu links (a product's own list, [] = none, else its category's), with
  *    the rules that price them (free choices, quantities, "מעט / הרבה / בצד") and the meals' slots —
  *    read by the shared money rules (lib/kioskMoney.ts, the Android till's, ported once);
@@ -28,6 +30,7 @@
 
 import { agorotOfShekels, mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes } from './kioskMoney';
 import { layMenu, menuInputsOf, type KioskMenuState } from './kioskMenus';
+import { sellableOnKiosk } from './kioskSellable';
 import type { MenuBlock } from './menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from './kioskUpsellRules';
 import { kioskSoldOut, rowAvailable, type SaleState } from './kioskSoldOut';
@@ -165,19 +168,8 @@ export function sizedImage(url: string | null, width: number): string | null {
   return `${m[1]}c_limit,w_${width},f_auto,q_auto/${m[2]}`;
 }
 
-/**
- * Is this product sold on a kiosk at all. `menuActive`: a menu places it, and a menu beats the machine's own
- * list ("גובר על הכל", SPEC_MENUS §3.3) — everything else (delisted, "קופות בלבד", "מחייב אישור מנהל") stays.
- */
-export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | undefined, menuActive = false): boolean {
-  if (p.deleted === true) return false;
-  if (p.inStock === false) return false;
-  if (p.salesChannel === 'pos_only') return false;
-  // "מחייב אישור מנהל במכירה": nobody at a kiosk can type a manager's code (its category: buildWebCatalog).
-  if (p.requiresManagerApproval === true) return false;
-  if (!menuActive && machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
-  return true;
-}
+/** Is this product sold on a kiosk at all — the one rule of lib/kioskSellable.ts, shared with the Windows kiosk. */
+export { sellableOnKiosk };
 
 export interface CatalogIn {
   products: Row[];
