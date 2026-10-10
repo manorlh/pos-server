@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import { fetchZPrintDocument, fetchZReport } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
+import { cashMovementRows } from '@/lib/zCashMovements';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/format';
 import type { Money, Shift, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -274,6 +275,12 @@ function TillCard({
                 <SignedMoney value={s.betweenShiftAdjustments} />
               </MoneyRow>
             ) : null}
+            {/* "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": only on a Z the parameter applied to. */}
+            {cashMovementRows(s.cashMovements).map((r) => (
+              <MoneyRow key={r.key} label={t(r.key)}>
+                <SignedMoney value={r.value} />
+              </MoneyRow>
+            ))}
             <MoneyRow label={t('expectedCash')} value={s.expectedCash} />
             <MoneyRow label={t('actualCash')}>
               {uncounted ? (
@@ -545,6 +552,11 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
                   <SignedMoney value={z.betweenShiftAdjustments} />
                 </MoneyRow>
               ) : null}
+              {cashMovementRows(z.cashMovements).map((r) => (
+                <MoneyRow key={r.key} label={t(r.key)}>
+                  <SignedMoney value={r.value} />
+                </MoneyRow>
+              ))}
               <MoneyRow label={t('expectedCash')} value={z.expectedCash} />
               <MoneyRow label={t('actualCash')}>
                 {withheld ? (

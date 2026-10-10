@@ -2041,6 +2041,13 @@ export interface ZReport {
   /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
   drawerCash?: Money | null;
   /**
+   * "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (till parameter `cashDrawer.zExpectedCashMovements`):
+   * the Cash In / Cash Out / safe deposits that are part of `expectedCash`, as the Z froze them when
+   * it was produced (summed over the tills the parameter applied to). Null/absent when it was off —
+   * `expectedCash` then does not move with them, as ever. A management figure only.
+   */
+  cashMovements?: import('./zCashMovements').ZCashMovements | null;
+  /**
    * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
    * on a legacy Z): shown as nothing, never as zero.
    */
@@ -2249,6 +2256,8 @@ export interface ZReportMachineSection {
   cardTipsFromDrawer?: Money | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
   drawerCash?: Money | null;
+  /** This till's Cash In / Cash Out / deposits inside expectedCash; absent when the parameter was off for it. */
+  cashMovements?: import('./zCashMovements').ZCashMovements | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;
