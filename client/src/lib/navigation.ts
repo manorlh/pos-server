@@ -38,6 +38,7 @@ import {
   FilePlus2,
   FileText,
   GitCompareArrows,
+  Globe,
   ListChecks,
   RadioTower,
   Grid3x3,
@@ -166,6 +167,16 @@ export const NAV_SECTIONS: NavSection[] = [
       // drill-down. They are top-level routes to match where they appear.
       { href: '/dashboard/assortment', labelKey: 'assortment', icon: ListFilter },
       { href: '/dashboard/stock', labelKey: 'stock', icon: Boxes },
+    ],
+  },
+  {
+    // "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the view-only digital menu and
+    // the online ordering site — their profiles, each its own dashboard section.
+    id: 'digital',
+    labelKey: 'sections.digital',
+    items: [
+      { href: '/dashboard/digital-menu', labelKey: 'digitalMenu', icon: QrCode },
+      { href: '/dashboard/online-ordering', labelKey: 'onlineOrdering', icon: Globe },
     ],
   },
   {
