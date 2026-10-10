@@ -473,6 +473,10 @@ from app.routers import cash_drawer as cash_drawer_router  # noqa: E402
 
 app.include_router(cash_drawer_router.till_router, prefix=_prefix)
 app.include_router(cash_drawer_router.router, prefix=_prefix)
+# "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): the details a till added to a copy.
+from app.routers import document_customer_details as document_customer_details_router  # noqa: E402
+
+app.include_router(document_customer_details_router.till_router, prefix=_prefix)
 
 # ── Event and owner awareness (feat/event-live) ──
 # "מצב אירוע חי": the event's live screen (app/services/report_events/live.py).

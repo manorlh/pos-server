@@ -154,6 +154,23 @@ def is_refund_document(
     return is_credit_document_type(document_type) or refund_of_transaction_id is not None
 
 
+def no_money_original_of(doc) -> Optional[object]:
+    """
+    The original a no-money leg of [doc] is weighed against in the X / Z: a credit's refund
+    link, or the re-issued sale of a re-issue's new invoice ("הפק חשבונית על שם לקוח",
+    docs/SPEC_CUSTOMER_INVOICE.md). None otherwise — a no-money leg on any other sale counts
+    in its own tender, as it always did. The one rule for `shift_totals` and `z_sections`: a
+    credit and the invoice that replaces it must land in the same bucket, or the pair would
+    not net to nothing.
+    """
+    if is_refund_document(
+        document_type=doc.document_type,
+        refund_of_transaction_id=doc.refund_of_transaction_id,
+    ):
+        return doc.refund_of_transaction_id
+    return getattr(doc, "reissue_of_transaction_id", None)
+
+
 def _dec(value) -> Decimal:
     if value is None:
         return Decimal("0")

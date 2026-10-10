@@ -68,6 +68,7 @@ export function transactionsSheet(
     col(t, 'shiftNumber', 'number'),
     col(t, 'zNumber', 'number'),
     col(t, 'customer', 'text', 16),
+    col(t, 'customerVatNumber', 'text', 14),
   ];
   return {
     name,
@@ -79,12 +80,13 @@ export function transactionsSheet(
       r.totalAmount, r.documentDiscount, r.collected, r.signedAmount, r.vatAmount, r.netOfVat, r.tipAmount,
       r.cash, r.card, r.productionVoucher ?? null, r.other, r.cardBrands.join(', ') || null, r.cardLast4.join(', ') || null,
       r.approvalNumbers.join(', ') || null, r.refundOf, r.shiftNumber, r.zNumber, r.customerName,
+      r.customerVatNumber || null,
     ]),
     totals: [
       t('total'), `${rows.length}`, null, null, null, null, null, null, null,
       sum(rows.map((r) => r.totalAmount)), sum(rows.map((r) => r.documentDiscount)), null,
       sum(rows.map((r) => r.signedAmount)), null, null, sum(rows.map((r) => r.tipAmount)),
-      null, null, null, null, null, null, null, null, null, null, null,
+      null, null, null, null, null, null, null, null, null, null, null, null,
     ],
   };
 }

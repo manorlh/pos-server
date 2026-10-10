@@ -113,11 +113,14 @@ const exportRow = (over: Partial<TransactionExportRow>): TransactionExportRow =>
   paymentMethod: 'cash', totalAmount: '117.00', documentDiscount: '0.00', collected: '117.00', signedAmount: '117.00',
   vatAmount: '17.85', netOfVat: '99.15', vatRate: '18.00', tipAmount: '0.00', tipPaymentMethod: null, cash: '112.00',
   card: '0.00', other: '0.00', exchange: '0.00', productionVoucher: '5.00', legs: 2, cardBrands: [], cardLast4: [],
-  approvalNumbers: [], refundOf: null, shiftNumber: 1, zNumber: null, customerName: 'אקמי בע״מ', mealKind: null, ...over,
+  approvalNumbers: [], refundOf: null, shiftNumber: 1, zNumber: null, customerName: 'אקמי בע״מ',
+  customerVatNumber: '515151512', mealKind: null, ...over,
 });
 
-test('the transactions sheet: a cell under every header, the voucher money in its own column', () => {
-  const sheet = transactionsSheet([exportRow({}), exportRow({ productionVoucher: undefined, customerName: null })], t, 'x', {
+test('the transactions sheet: a cell under every header, the voucher money and the number of the buyer each in its own column', () => {
+  const sheet = transactionsSheet(
+    [exportRow({}), exportRow({ productionVoucher: undefined, customerVatNumber: null, customerName: null })],
+    t, 'x', {
     documentType: (n) => `type:${n}`, status: (s) => s, method: (m) => m,
   });
   const headers = sheet.columns.map((c) => c.header);
@@ -125,8 +128,11 @@ test('the transactions sheet: a cell under every header, the voucher money in it
   assert.ok(sheet.rows.every((r) => r.length === headers.length));
   assert.equal(sheet.totals?.length, headers.length);
   const at = (h: string) => headers.indexOf(h);
+  assert.equal(sheet.rows[0][at('customerVatNumber')], '515151512');
+  assert.equal(sheet.rows[1][at('customerVatNumber')], null);
+  assert.equal(sheet.rows[0][at('customer')], 'אקמי בע״מ');
+  // The production-voucher column holds its own money, not the next column's.
   assert.equal(sheet.rows[0][at('productionVoucher')], '5.00');
   assert.equal(sheet.rows[0][at('other')], '0.00');
-  assert.equal(sheet.rows[0][at('customer')], 'אקמי בע״מ');
   assert.equal(sheet.rows[1][at('productionVoucher')], null);
 });

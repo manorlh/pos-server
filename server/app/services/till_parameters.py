@@ -37,6 +37,14 @@ from app.models.till_parameter import (
 from app.services.ably_notify import publish_settings_notify
 from app.services.areas import as_utc
 
+#: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): above this sale amount before VAT the
+#: till requires the buyer's name and ח.פ. / ע.מ.; and how many days back an invoice may be
+#: re-issued in a customer's name from the till's history. Both empty (off) by default.
+INVOICE_CUSTOMER_REQUIRED_ABOVE_KEY = "invoiceCustomerRequiredAbove"
+INVOICE_REISSUE_MAX_DAYS_KEY = "invoiceReissueMaxDays"
+#: "הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)" (§3.5): the history's "הדפס העתק עם פרטי לקוח". Off by default.
+INVOICE_COPY_WITH_DETAILS_KEY = "invoiceCopyWithCustomerDetails"
+
 #: The Ably `settings` notify reason for any change to parameters or their values.
 NOTIFY_REASON = "till_parameters_updated"
 
@@ -1511,6 +1519,43 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         description=(
             "כשמופעל: לחיצה על \"מועדון\" פותחת קודם את חיפוש הלקוחות (לפי טלפון או שם), וההנחה ניתנת "
             "רק אחרי שיוך לקוח. כבוי — שיוך לקוח רשות."
+        ),
+    ),
+    # "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md) — read by the till only.
+    BuiltinParameter(
+        key=INVOICE_CUSTOMER_REQUIRED_ABOVE_KEY,
+        label="פרטי לקוח לחשבונית — חובה מעל סכום",
+        value_type="decimal",
+        default_value=None,
+        description=(
+            "סכום בשקלים, לפני מע\"מ. מכירה שסכומה לפני מע\"מ גבוה ממנו לא תשולם בלי שם הלקוח ומספר ח.פ. / ע.מ. "
+            "על החשבונית (\"פרטי לקוח לחשבונית\" בתפריט ההזמנה או במסך התשלום). ריק — כבוי. "
+            "ערך מומלץ: 5000 — הסף של חשבוניות ישראל (מספר הקצאה, מ-1.6.2026) ושל הפירוט בדוח המפורט למע\"מ. "
+            "מכירה קמעונית לצרכן אינה חייבת בפרטי קונה, ולכן כבוי כברירת מחדל."
+        ),
+    ),
+    BuiltinParameter(
+        key=INVOICE_REISSUE_MAX_DAYS_KEY,
+        label="הפקת חשבונית על שם לקוח — עד כמה ימים אחורה",
+        value_type="integer",
+        default_value=None,
+        description=(
+            "מההיסטוריה בקופה: \"הפק חשבונית על שם לקוח\" מזכה את המסמך המקורי ומפיקה חשבונית חדשה עם פרטי הלקוח "
+            "(בלי תנועת כסף). מסמך ישן יותר ממספר הימים הזה יידחה. ריק — בלי מגבלה (לא נמצאה מגבלת זמן בדין "
+            "להוצאת חשבונית זיכוי; ההתאמה נרשמת בתקופת הדיווח שבה הוצא הזיכוי)."
+        ),
+    ),
+    BuiltinParameter(
+        key=INVOICE_COPY_WITH_DETAILS_KEY,
+        label="הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסמך מכירה שהושלם, בהיסטוריה בקופה, מופיע \"הדפס העתק עם פרטי לקוח\". הפרטים (שם, ח.פ. / ע.מ., "
+            "ופרטים רשות) נשמרים בנפרד מהמסמך, עם מי הוסיף אותם ומתי, ומודפסים על העתק בלבד, מסומן \"העתק\", עם השורה "
+            "\"פרטי לקוח נוספו בתאריך … ע\"י …\". המסמך המקורי, סכומיו והקובץ במבנה האחיד אינם משתנים, וההדפסה של המקור "
+            "אינה מציגה אותם. הבעלים אישר ב-10.10.2026; מומלץ לקבל אישור בכתב מרואה החשבון. ניתן להגדיר לארגון, לחברה, "
+            "לסניף, לנקודת מכירה או לקופה בודדת."
         ),
     ),
 )
