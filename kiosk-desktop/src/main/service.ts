@@ -883,7 +883,8 @@ export class KioskService extends EventEmitter {
     if (!id || this.offlineNow || input.lines.length === 0) return;
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>([...cat.products, ...cat.held].map((p) => [p.id, p]));
-    // The base price the kiosk holds, without any menu: the cloud's word is about the catalog's price (KioskPriceCheck.request).
+    // The base price each line remembers, without any menu: the cloud's word is about the catalog's price the customer saw
+    // (KioskPriceCheck.request: `line.product.basePrice`); the catalog held now only stands in for a line of an older screen.
     const body = cloudCheckRequest(input.lines, (pid) => {
       const p = byId.get(pid);
       return p ? basePriceOf(p) : undefined;
@@ -1143,6 +1144,10 @@ export class KioskService extends EventEmitter {
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
     // "תפריטים": what the active menu does not place is held, not gone — a line added under a menu that has since left its
     // product out stays while it is still sold here (KioskBasketCheck.of's `outsideMenu`), a meal's component too.
+    // "Still sold here" is the kiosk's own catalog rules (`held` / `products`: channel, manager's code, category, delisting,
+    // the products no kiosk sells) and the cloud's word — NOT the Android kiosk's `anyProduct` (every product the till lists,
+    // never patched by the cloud), which keeps and charges such a line after the product turned "קופות בלבד" etc.
+    // Deliberately stricter than Android: docs/SPEC_MENUS.md §5.1, pinned in test/kioskMenus.test.ts.
     const heldById = new Map<string, KProduct>(cat.held.map((p) => [p.id, p]));
     const block = this.menuBlock;
     const menuPrices = menuPriceSets(block);

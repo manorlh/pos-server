@@ -364,6 +364,19 @@ export function keptListPrice(
 }
 
 /**
+ * The catalog's price a basket line REMEMBERS — the dish's price without any menu, as it stood when the line was added
+ * (agorot): the Android kiosk's `line.product.basePrice` (`catalogPrice ?: price`, KioskPriceCheck.request), the figure
+ * the cloud is asked about before the charge. Not the catalog's price now: that is what the cloud may say has moved.
+ * `catalogAgorot` under a menu, else the line's own price (no menu: that IS the catalog's); a line of an older screen,
+ * with neither: undefined (the caller falls back to the catalog it holds).
+ */
+export function lineCatalogAgorot(line: { listAgorot?: number | null; catalogAgorot?: number | null }): number | undefined {
+  const own = typeof line.catalogAgorot === 'number' && Number.isFinite(line.catalogAgorot) ? line.catalogAgorot : null;
+  if (own !== null) return own;
+  return typeof line.listAgorot === 'number' && Number.isFinite(line.listAgorot) ? line.listAgorot : undefined;
+}
+
+/**
  * What a sold line records of the menu (`priceSource`, CatalogMenus.kt PriceSource.of): nothing when no menu was
  * active when it was added; `menu` — the menu's price; `catalog` — the catalog's, inside a menu.
  */

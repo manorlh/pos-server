@@ -824,6 +824,88 @@ describe('"תפריטים" on the browser kiosk (docs/SPEC_MENUS.md, lib/kioskMe
     assert.deepEqual([under.changes, under.totalAgorot], [[], 800]);
   });
 
+  it('a line added under a menu goes once its product is no longer sold on the kiosk at all — the Android kiosk keeps it (anyProduct), this one must not', async () => {
+    // docs/SPEC_MENUS.md: a line added under a menu stays "as long as the product is still sold here". Android's `outsideMenu`
+    // is every product the till lists, so it keeps a "קופות בלבד" / manager's-code / delisted line and PAYS it; here the line
+    // stays only while the kiosk's own catalog rules (not the menu's placing) still sell the product.
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    const pull = async (products: Array<Record<string, unknown>>, categories: Array<Record<string, unknown>> = []) => {
+      cloud.handlers['GET sync/m1/catalog'] = () => ({ status: 200, body: { syncType: 'delta', serverTime: '2026-10-07T09:00:01Z', products, categories } });
+      await svc.syncNow();
+    };
+    const dish = (id: string, over: Record<string, unknown> = {}, categoryId = 'c2') => ({ id, categoryId, name: id, price: 10, ...over });
+    const ids = ['x-pos', 'x-mgr', 'x-cat', 'x-mgrcat', 'x-out', 'x-open', 'x-weigh', 'x-general'];
+    // Lunch is on (it lists only the burger): these are sold by the catalog, held, and a line added under lunch stays.
+    await pull(ids.map((id) => dish(id, {}, id === 'x-cat' ? 'c3' : id === 'x-mgrcat' ? 'c4' : 'c2')), [{ id: 'c3', name: 'ג', isActive: true }, { id: 'c4', name: 'ד', isActive: true }]);
+    const lines = ids.map((id) => ({ key: id, productId: id, unitAgorot: 1000, listAgorot: 1000, catalogAgorot: 1000, menuId: 'lunch', options: [] }));
+    assert.deepEqual((await svc.checkBasket(lines)).changes, []);
+    // Then the shop stops selling each at a kiosk — one way each.
+    await pull(
+      [
+        dish('x-pos', { salesChannel: 'pos_only' }),
+        dish('x-mgr', { requiresManagerApproval: true }),
+        dish('x-cat', {}, 'c3'),
+        dish('x-mgrcat', {}, 'c4'),
+        dish('x-out', { inStock: false }),
+        dish('x-open', { isOpenPrice: true }),
+        dish('x-weigh', { isWeighed: true }),
+        dish('x-general', { isGeneral: true }),
+      ],
+      [{ id: 'c3', name: 'ג', isActive: false }, { id: 'c4', name: 'ד', isActive: true, requiresManagerApproval: true }],
+    );
+    const r = await svc.checkBasket(lines);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), ids.map((id) => ['removed', id]));
+    assert.equal(r.totalAgorot, 0);
+    // The same lines added with no menu go too: no way back for them.
+    const plain = await svc.checkBasket(lines.map((l) => ({ ...l, menuId: null })));
+    assert.deepEqual(plain.changes.map((c) => [c.kind, c.key]), ids.map((id) => ['removed', id]));
+  });
+
+  it('the cloud\'s word beats a held line: the pasta is held by the menu, the cloud says it is gone — removed (Android\'s outsideMenu lookup ignores the cloud)', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    assert.deepEqual(svc.view().catalog.held.map((p) => p.id), ['p2', 'p4']);
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({
+      status: 200,
+      body: { ok: false, lines: [{ productId: 'p2', available: false, reason: 'not_on_kiosk', priceAgorot: null, priceChanged: false }, { productId: 'p4', available: true, reason: null, priceAgorot: 800, priceChanged: false }] },
+    });
+    const r = await svc.checkBasket([
+      { key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast', options: [] },
+      { key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast', options: [] },
+    ]);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'pasta']]);
+    assert.equal(r.totalAgorot, 800);
+  });
+
+  it('the cloud is asked the catalog price each LINE remembers — what the customer saw — not the catalog\'s now (Android: line.product.basePrice)', async () => {
+    const { cloud, svc } = await started('2026-10-07T10:30:00');
+    const asked: unknown[] = [];
+    // The cloud as it is: the burger is 54 now; a line is "changed" when the price it was sent differs.
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = (c) => {
+      const lines = c.body?.lines as Array<{ productId: string; unitPriceAgorot?: number }>;
+      asked.push(lines);
+      return { status: 200, body: { ok: false, lines: lines.map((l) => ({ productId: l.productId, available: true, reason: null, priceAgorot: 5400, priceChanged: l.unitPriceAgorot !== 5400 })) } };
+    };
+    const r = await svc.checkBasket([
+      // Added when the burger was 50, with no menu: it remembers 50.
+      { key: 'a', productId: 'p1', unitAgorot: 5000, listAgorot: 5000, options: [] },
+      // Added under lunch at the menu's 40, the catalog's 52 then: it remembers 52 — not the menu's 40.
+      { key: 'b', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5200, menuId: 'lunch', options: [] },
+      // A line of an older screen remembers nothing: the catalog the kiosk holds stands in.
+      { key: 'c', productId: 'p1', unitAgorot: 5400, options: [] },
+      // Two units of the same dish: one line, its quantity.
+      { key: 'd', productId: 'p1', unitAgorot: 5400, listAgorot: 5400, qty: 2, options: [] },
+    ]);
+    assert.deepEqual(asked, [[
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5000 },
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5200 },
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5400 },
+      { productId: 'p1', quantity: 2, unitPriceAgorot: 5400 },
+    ]]);
+    // What the cloud says moved is shown, as before: 50 → 54 and the lunch line (52 then) → the catalog's 54.
+    assert.deepEqual(r.changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key])), [['a', 5000, 5400], ['b', 4000, 5400]]);
+  });
+
   it('"אזל" still removes a line inside a menu', async () => {
     const { cloud, svc } = await started('2026-10-07T12:00:00');
     cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({

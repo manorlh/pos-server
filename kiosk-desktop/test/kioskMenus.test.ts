@@ -298,6 +298,113 @@ describe('the Windows kiosk\'s service and "תפריטים"', () => {
     svc.stop();
   });
 
+  it('a line added under a menu goes once its product is no longer sold on the kiosk at all — the Android kiosk keeps it (anyProduct), this one must not', () => {
+    // docs/SPEC_MENUS.md: a line added under a menu stays "as long as the product is still sold here". Android's `outsideMenu`
+    // is every product the till lists, so it keeps a "קופות בלבד" / manager's-code / delisted line and PAYS it; here the line
+    // stays only while the kiosk's own catalog rules (not the menu's placing) still sell the product.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const svc = kiosk();
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    const dish = (id: string, over: Row = {}, categoryId = 'c2') => ({ id, categoryId, name: id, price: 10, ...over });
+    const ids = ['x-pos', 'x-mgr', 'x-cat', 'x-mgrcat', 'x-out', 'x-open', 'x-weigh', 'x-general'];
+    // Lunch is on (it lists only the burger): these are sold by the catalog, held, and a line added under lunch stays.
+    svc.cloud.applyCatalog({
+      syncType: 'delta',
+      products: ids.map((id) => dish(id, {}, id === 'x-cat' ? 'c3' : id === 'x-mgrcat' ? 'c4' : 'c2')),
+      categories: [{ id: 'c3', name: 'ג', isActive: true }, { id: 'c4', name: 'ד', isActive: true }],
+    });
+    const lines = ids.map((id) => line({ key: id, productId: id, unitAgorot: 1000, listAgorot: 1000, catalogAgorot: 1000, menuId: 'lunch' }));
+    expect(priceOf(svc, basket(lines)).changes).toEqual([]);
+    // Then the shop stops selling each at a kiosk — one way each.
+    svc.cloud.applyCatalog({
+      syncType: 'delta',
+      products: [
+        dish('x-pos', { salesChannel: 'pos_only' }),
+        dish('x-mgr', { requiresManagerApproval: true }),
+        dish('x-cat', {}, 'c3'),
+        dish('x-mgrcat', {}, 'c4'),
+        dish('x-out', { inStock: false }),
+        dish('x-open', { isOpenPrice: true }),
+        dish('x-weigh', { isWeighed: true }),
+        dish('x-general', { isGeneral: true }),
+      ],
+      categories: [{ id: 'c3', name: 'ג', isActive: false }, { id: 'c4', name: 'ד', isActive: true, requiresManagerApproval: true }],
+    });
+    const r = priceOf(svc, basket(lines));
+    expect(r.changes.map((c) => [c.kind, c.key])).toEqual(ids.map((id) => ['removed', id]));
+    expect(r.lines).toEqual([]);
+    // The same lines added with no menu go too: no way back for them.
+    expect(priceOf(svc, basket(lines.map((l) => ({ ...l, menuId: undefined })))).changes.map((c) => [c.kind, c.key])).toEqual(ids.map((id) => ['removed', id]));
+    svc.stop();
+  });
+
+  it('the cloud\'s word beats a held line: the pasta is held by the menu, the cloud says it is gone — removed (Android\'s outsideMenu lookup ignores the cloud)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const svc = paired(kiosk());
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    expect(dataOf(svc).held.map((p) => p.id)).toEqual(['p2', 'p4']);
+    vi.spyOn(svc.api, 'post').mockImplementation(
+      async () =>
+        ({
+          kind: 'ok',
+          status: 200,
+          headers: new Headers(),
+          body: { ok: false, lines: [{ productId: 'p2', available: false, reason: 'not_on_kiosk', priceAgorot: null, priceChanged: false }, { productId: 'p4', available: true, reason: null, priceAgorot: 800, priceChanged: false }] },
+        }) as never,
+    );
+    // The cloud's verdict pulls the catalog (ok: false): no real call from a test.
+    vi.spyOn(svc.sync, 'pullCatalog').mockResolvedValue(undefined as never);
+    const input = basket([
+      line({ key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast' }),
+      line({ key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast' }),
+    ]);
+    await (svc as unknown as { cloudBasketCheck(i: StartPaymentIn): Promise<void> }).cloudBasketCheck(input);
+    const r = priceOf(svc, input);
+    expect(r.changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'pasta']]);
+    expect(r.lines.map((l) => l.key)).toEqual(['drink']);
+    svc.stop();
+  });
+
+  it('asks the cloud the catalog price each line REMEMBERS — what the customer saw — not the catalog\'s now (Android: line.product.basePrice)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const svc = paired(kiosk());
+    vi.setSystemTime(localMs('2026-10-07T10:30:00'));
+    const asked: Array<{ path: string; body: unknown }> = [];
+    // The cloud as it is: the burger is 54 now; a line is "changed" when the price it was sent differs.
+    vi.spyOn(svc.api, 'post').mockImplementation(async (path, body) => {
+      asked.push({ path, body });
+      const lines = (body as { lines: Array<{ productId: string; unitPriceAgorot?: number }> }).lines;
+      return { kind: 'ok', status: 200, headers: new Headers(), body: { ok: true, lines: lines.map((l) => ({ productId: l.productId, available: true, reason: null, priceAgorot: 5400, priceChanged: l.unitPriceAgorot !== 5400 })) } } as never;
+    });
+    const input = basket([
+      // Added when the burger was 50, with no menu: it remembers 50.
+      line({ key: 'a', unitAgorot: 5000, listAgorot: 5000 }),
+      // Added under lunch at the menu's 40, the catalog's 52 then: it remembers 52 — not the menu's 40.
+      line({ key: 'b', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5200, menuId: 'lunch' }),
+      // A line of an older screen remembers nothing: the catalog the kiosk holds stands in.
+      line({ key: 'c', unitAgorot: 5400 }),
+      // Two units of the same dish: one line, its quantity.
+      line({ key: 'd', unitAgorot: 5400, listAgorot: 5400, qty: 2 }),
+    ]);
+    await (svc as unknown as { cloudBasketCheck(i: StartPaymentIn): Promise<void> }).cloudBasketCheck(input);
+    expect(asked).toEqual([
+      {
+        path: 'sync/m1/kiosk/basket-check',
+        body: {
+          lines: [
+            { productId: 'p1', quantity: 1, unitPriceAgorot: 5000 },
+            { productId: 'p1', quantity: 1, unitPriceAgorot: 5200 },
+            { productId: 'p1', quantity: 1, unitPriceAgorot: 5400 },
+            { productId: 'p1', quantity: 2, unitPriceAgorot: 5400 },
+          ],
+        },
+      },
+    ]);
+    // What the cloud says moved is shown, as before: 50 → 54 and the lunch line (52 then) → the catalog's 54.
+    expect(priceOf(svc, input).changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key]))).toEqual([['a', 5000, 5400], ['b', 4000, 5400]]);
+    svc.stop();
+  });
+
   it('"אזל" still removes a line inside a menu', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const svc = kiosk();
