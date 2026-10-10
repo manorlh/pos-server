@@ -1475,7 +1475,7 @@ from app.services.device_identity import CELLULAR_PARAMETER_SPECS as _CELLULAR_S
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CELLULAR_SPECS)
 
-# "הדפסת עסקאות שלא הושלמו בדוחות" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
+# "הדפסת עסקאות שלא הושלמו בדוח משמרת / Z" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
 from app.services.failed_payments import FAILED_PAYMENTS_PARAMETER_SPECS as _FAILED_PAYMENTS_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FAILED_PAYMENTS_SPECS)
