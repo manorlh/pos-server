@@ -16656,14 +16656,20 @@
     "noHistory": "אין שינויים עדיין.",
     "historyBy": "{actor}",
     "actions": {
-      "profile.create": "נקבעו הרשאות",
-      "profile.update": "עודכנו הרשאות",
-      "profile.company": "הוחלפה החברה הראשית",
-      "membership.add": "נוסף ארגון",
-      "membership.remove": "הוסר ארגון",
-      "template.create": "נוצר פרופיל",
-      "template.update": "עודכן פרופיל",
-      "template.delete": "נמחק פרופיל"
+      "profile": {
+        "create": "נקבעו הרשאות",
+        "update": "עודכנו הרשאות",
+        "company": "הוחלפה החברה הראשית"
+      },
+      "membership": {
+        "add": "נוסף ארגון",
+        "remove": "הוסר ארגון"
+      },
+      "template": {
+        "create": "נוצר פרופיל",
+        "update": "עודכן פרופיל",
+        "delete": "נמחק פרופיל"
+      }
     },
     "saved": "ההרשאות נשמרו",
     "templateSaved": "פרופיל ההרשאות נשמר",
