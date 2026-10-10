@@ -72,6 +72,8 @@ class MenuIn(_Body):
     valid_from: Optional[date] = Field(None, alias="validFrom")
     valid_to: Optional[date] = Field(None, alias="validTo")
     color: Optional[str] = None
+    #: The web channels it is offered on too ("online" / "menu"); None = leave as it is.
+    web_channels: Optional[List[Literal["online", "menu"]]] = Field(None, alias="webChannels")
     categories: List[MenuCategoryIn] = Field(default_factory=list, max_length=CATEGORIES_MAX)
     products: List[MenuProductIn] = Field(default_factory=list, max_length=PRODUCTS_MAX)
 

@@ -61,7 +61,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX, Globe } from 'lucide-react';
 // "חסום / אזל" on a product (components/dashboard/live-control).
 import { BlockItemSheet, ProductBlocksSection } from '@/components/dashboard/live-control';
 import { useScope } from '@/lib/scope';
@@ -382,6 +382,10 @@ export default function ProductsPage() {
               <FileSpreadsheet className="h-4 w-4 ms-1" /> {t('importExport')}
             </Link>
           ) : null}
+          {/* "מופיע ב — עריכה בכמות": the four channels of many products, "all matching" on the server. */}
+          <Link href="/dashboard/products/channels" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Globe className="h-4 w-4 ms-1" /> {t('channelsBulk')}
+          </Link>
           {/* "אשף הקמת מוצר": a dish with its add-ons, its "בלי", a meal and its notes, in one pass. */}
           <Link href="/dashboard/products/wizard" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             <Sparkles className="h-4 w-4 ms-1" /> {t('wizard')}

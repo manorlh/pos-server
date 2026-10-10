@@ -39,6 +39,7 @@ import {
   FilePlus2,
   FileText,
   GitCompareArrows,
+  Globe,
   ListChecks,
   RadioTower,
   Grid3x3,
@@ -159,6 +160,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
       // "תפריטים": sales menus by schedule (בוקר, צהריים, הפי האוור…) and where they apply.
       { href: '/dashboard/menus', labelKey: 'catalogMenus', icon: BookOpenText },
+      // "סדר תצוגה": one order for the tills, the kiosks, online ordering and the digital menu —
+      // linked, independent or copied once (lib/displayOrdering.ts).
+      { href: '/dashboard/display-order', labelKey: 'displayOrder', icon: ListOrdered },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.
@@ -290,6 +294,9 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'digital',
     labelKey: 'sections.digital',
     items: [
+      // "תפריט דיגיטלי" / "הזמנות אונליין": their profiles, each its own dashboard section.
+      { href: '/dashboard/digital-menu', labelKey: 'digitalMenu', icon: QrCode },
+      { href: '/dashboard/online-ordering', labelKey: 'onlineOrdering', icon: Globe },
       // "כרטיסי ביקור דיגיטליים": cards for the company, branches, sales points and staff — editor
       // with live preview, publication, QR and the enquiries inbox; the kiosk pages' roles.
       {

@@ -46,6 +46,8 @@ export interface CatalogMenu {
   validFrom: string | null;
   validTo: string | null;
   color: string | null;
+  /** The web channels it is offered on too ("הזמנות אונליין" / "תפריט דיגיטלי"); [] — none. */
+  webChannels?: ('online' | 'menu')[];
   sortOrder: number;
   categories: CatalogMenuCategory[];
   products: CatalogMenuProduct[];
@@ -72,6 +74,8 @@ export interface CatalogMenuInput {
   validFrom: string | null;
   validTo: string | null;
   color: string | null;
+  /** The web channels it is offered on too; left out — as it is. */
+  webChannels?: ('online' | 'menu')[];
   /** In the order shown. */
   categories: { categoryId: string; allProducts: boolean }[];
   /** In the order shown: by category, then within it. */

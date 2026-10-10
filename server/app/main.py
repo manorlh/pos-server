@@ -150,6 +150,21 @@ app.include_router(pairing.router, prefix=_prefix)
 app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
+# "מופיע ב — עריכה בכמות": the bulk screen over item-blocks' "מופיע ב" (products.appears_in).
+from app.routers import product_channels as product_channels_router  # noqa: E402
+
+app.include_router(product_channels_router.router, prefix=_prefix)
+# "סדר תצוגה" — one ordering model for the tills, the kiosks, online ordering and the digital menu.
+from app.routers import display_orderings as display_orderings_router  # noqa: E402
+
+app.include_router(display_orderings_router.router, prefix=_prefix)
+# "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions, publication; and their public read API.
+from app.routers import presentation_profiles as presentation_profiles_router  # noqa: E402
+from app.routers import public_digital as public_digital_router  # noqa: E402
+
+app.include_router(presentation_profiles_router.menu_router, prefix=_prefix)
+app.include_router(presentation_profiles_router.online_router, prefix=_prefix)
+app.include_router(public_digital_router.public_router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
 app.include_router(availability_reopen_router.router, prefix=_prefix)
 app.include_router(machine_catalog.router, prefix=_prefix)

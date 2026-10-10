@@ -1086,13 +1086,22 @@ def machine_set_product_order(
     area = db.get(ShopArea, machine.area_id) if machine.area_id else None
     if body.scope == "machine":
         write(machine)
+        touched = [("machine", machine.id)]
     elif body.scope == "area":
         write(area)
         clear(machine)
+        touched = [("area", area.id if area is not None else None), ("machine", machine.id)]
     else:
         write(shop)
         clear(area)
         clear(machine)
+        touched = [("shop", shop.id), ("area", area.id if area is not None else None), ("machine", machine.id)]
+    # "סדר תצוגה" (app/services/display_ordering.py): a bound level's ordering follows what the till
+    # wrote, and the levels linked to it get it too; a level the till cleared inherits now.
+    from app.services import display_ordering
+
+    db.flush()
+    display_ordering.wake_after_commit(db, display_ordering.after_pos_write(db, machine.tenant_id, touched))
     _audit(
         db,
         machine=machine,
