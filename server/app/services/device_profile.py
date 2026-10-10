@@ -141,7 +141,7 @@ def effective_role(db: Optional[Session], machine: POSMachine) -> str:
 
 def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[str, Any]:
     """The role and model fields of the machines list and the machine page."""
-    from app.models.pos_machine import detect_device_model, device_driver_pending, device_has_cash_drawer_port
+    from app.models.pos_machine import device_driver_pending, device_has_cash_drawer_port, reported_device_model
 
     model = getattr(machine, "device_model", None)
     screen = DD.kds_device_of(None, machine)
@@ -155,7 +155,7 @@ def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[s
         "kdsScreen": DD.kds_screen_fields(screen),
         "kioskEnabled": bool(device.enabled) if device is not None else None,
         "deviceModelChosen": getattr(machine, "device_model_chosen", None),
-        "deviceModelReported": detect_device_model(getattr(machine, "device_info", None)),
+        "deviceModelReported": reported_device_model(getattr(machine, "device_info", None), model),
         "hasCashDrawerPort": device_has_cash_drawer_port(model),
         "deviceDriverPending": device_driver_pending(model),
     }

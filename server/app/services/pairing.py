@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.pairing_code import PairingCode
-from app.models.pos_machine import POSMachine, PairingStatus, detect_device_model
+from app.models.pos_machine import POSMachine, PairingStatus, paired_device_model
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
@@ -197,7 +197,7 @@ def validate_pairing_code(
             return None
         # The replacement unit may be other hardware; a code with no model, from a device
         # that does not name one, keeps the old one.
-        replacement_model = detect_device_model(device_info) or pairing_code.device_model
+        replacement_model = paired_device_model(device_info, pairing_code.device_model)
         if replacement_model:
             pos_machine.device_model = replacement_model
         if pairing_code.device_model:
@@ -300,7 +300,7 @@ def create_pos_machine(
         device_info=device_info,
         # The hardware's own word wins over a model chosen on the dashboard: a tablet
         # paired with a code generated for a 55F is still a tablet.
-        device_model=detect_device_model(device_info) or device_model,
+        device_model=paired_device_model(device_info, device_model),
         # What the dashboard chose, kept so the machine page can say when the hardware
         # named another model (docs/SPEC_DEVICE_ROLE_MODEL.md §4).
         device_model_chosen=device_model,
