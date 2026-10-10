@@ -311,3 +311,31 @@
     print-color-adjust: exact;
   }
 }
+
+/* "כרטיסי ביקור" (components/business-cards/card-view.tsx): a card's sections rise in — never for a
+   visitor who asked the system for reduced motion, never when the card's motion is off, and never
+   in the editor's "reduced motion" simulation. */
+@keyframes bc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--bc-rise, 10px)) scale(var(--bc-rise-scale, 1));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  [data-bc-motion='subtle'] .bc-anim,
+  [data-bc-motion='lively'] .bc-anim {
+    animation: bc-rise var(--bc-motion-ms, 450ms) cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: calc(var(--bc-i, 0) * 70ms);
+  }
+  [data-bc-motion='lively'] {
+    --bc-rise: 22px;
+    --bc-rise-scale: 0.97;
+  }
+}
+[data-bc-reduced-motion='true'] .bc-anim {
+  animation: none !important;
+}
