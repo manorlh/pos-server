@@ -9,6 +9,12 @@ specs/item-blocks-targets.md. `sold_out_marks` gains:
   exactly one of the two.
 * `kiosk_display` ("hide" | "grey" | NULL) — the kiosks' look for this block.
 * `origin` — where it was set from.
+* `channels` (JSON) — where the block stops the item, any of pos / kiosk / online / menu (the
+  owner, 10.10). Backfilled from the target: all → pos + kiosk, kiosks (and the older kiosks /
+  kiosk scopes) → kiosk, tills → pos. `target` stays, written from the channels for the devices.
+
+`products.appears_in` (JSON, NULL) — "מופיע ב": the channels a product appears in; NULL keeps
+today's behaviour (`sales_channel` for the tills and the kiosk; not online, not in the menu).
 
 "מוסתר בקיוסקים" (`kiosk_quick_hides`) folds into the same list: every row still in force is copied
 under the SAME id as a shop-level, kiosks-only "חסום" with the look "hide" (a product as its global
@@ -44,17 +50,26 @@ BACKFILL_TARGET = (
     "WHERE scope IN ('kiosks', 'kiosk') AND target <> 'kiosks'"
 )
 
+#: What each target meant, as channels (app/services/sold_out_rules.py `TARGET_CHANNELS`) — three
+#: statements, in this order: a bare literal is a json value in Postgres (a CASE would be text).
+BACKFILL_CHANNELS = (
+    "UPDATE sold_out_marks SET channels = '[\"kiosk\"]' "
+    "WHERE channels IS NULL AND (scope IN ('kiosks', 'kiosk') OR target = 'kiosks')",
+    "UPDATE sold_out_marks SET channels = '[\"pos\"]' WHERE channels IS NULL AND target = 'tills'",
+    "UPDATE sold_out_marks SET channels = '[\"pos\", \"kiosk\"]' WHERE channels IS NULL",
+)
+
 COPY_HIDES = """
 INSERT INTO sold_out_marks (
-    id, tenant_id, company_id, shop_id, product_id, category_id, scope, scope_id, target, kind,
-    kiosk_display, origin, until, until_mode, source, note, created_by_user_id, created_by_name,
-    created_at, updated_at
+    id, tenant_id, company_id, shop_id, product_id, category_id, scope, scope_id, target, channels,
+    kind, kiosk_display, origin, until, until_mode, source, note, created_by_user_id,
+    created_by_name, created_at, updated_at
 )
 SELECT
     h.id, h.tenant_id, s.company_id, h.shop_id,
     CASE WHEN h.kind = 'product' THEN COALESCE(p.global_product_id, p.id) END,
     CASE WHEN h.kind = 'category' THEN c.id END,
-    'shop', h.shop_id, 'kiosks', 'blocked',
+    'shop', h.shop_id, 'kiosks', '["kiosk"]', 'blocked',
     'hide', 'kiosk_hide', h.until, NULL, 'manual', h.note, h.created_by_user_id, h.created_by_name,
     h.created_at, CURRENT_TIMESTAMP
 FROM kiosk_quick_hides h
@@ -87,6 +102,11 @@ def upgrade() -> None:
         op.add_column(TABLE, sa.Column("kiosk_display", sa.String(8), nullable=True))
     if "origin" not in have:
         op.add_column(TABLE, sa.Column("origin", sa.String(16), nullable=True))
+    if "channels" not in have:
+        op.add_column(TABLE, sa.Column("channels", sa.JSON(), nullable=True))
+    products = set() if insp is None else {c["name"] for c in insp.get_columns("products")}
+    if "appears_in" not in products:
+        op.add_column("products", sa.Column("appears_in", sa.JSON(), nullable=True))
     op.alter_column(TABLE, "product_id", existing_type=uuid, nullable=True)
 
     indexes = set() if insp is None else {i["name"] for i in insp.get_indexes(TABLE)}
@@ -97,6 +117,8 @@ def upgrade() -> None:
         op.create_check_constraint(CHECK, TABLE, "(product_id IS NULL) <> (category_id IS NULL)")
 
     op.execute(BACKFILL_TARGET)
+    for statement in BACKFILL_CHANNELS:
+        op.execute(statement)
     if insp is None or insp.has_table(HIDES):
         op.execute(COPY_HIDES)
 
@@ -109,5 +131,6 @@ def downgrade() -> None:
     op.drop_constraint(CHECK, TABLE, type_="check")
     op.drop_index(INDEX, table_name=TABLE)
     op.alter_column(TABLE, "product_id", existing_type=postgresql.UUID(as_uuid=True), nullable=False)
-    for name in ("origin", "kiosk_display", "category_id", "target"):
+    for name in ("channels", "origin", "kiosk_display", "category_id", "target"):
         op.drop_column(TABLE, name)
+    op.drop_column("products", "appears_in")

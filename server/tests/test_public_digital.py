@@ -14,10 +14,9 @@ from starlette.requests import Request
 
 from app.routers import public_digital as PUB
 from app.services import presentation_profiles as PP
-from app.services import product_channels as PC
 from app.services import public_digital_cache as cache
 
-from test_digital_effective import _create, _drinks, _select, dw  # noqa: F401
+from test_digital_effective import _create, _drinks, _select, _set, dw  # noqa: F401
 from test_product_availability import world  # noqa: F401
 
 
@@ -69,7 +68,7 @@ class TestPublicApi:
 
     def test_a_direct_link_to_a_hidden_product_is_neutral(self, dw):
         p = self._published(dw)
-        PC.apply(dw.P, {"menu": False})
+        _set(dw.P, menu=False)
         dw.db.commit()
         cache.clear()
         resp = PUB.public_product("menu", p.slug, str(dw.P.id), self._request(), db=dw.db)

@@ -8,17 +8,18 @@ Four conditions, then what they mean:
 
 1. **active** — the catalog sells it here: the product exists and is available (its own flag and the
    company / shop / point-of-sale locks), the shop lists it, its category is on;
-2. **channelAllowed** — "מופיע ב" for this channel at this shop / point of sale
-   (app/services/product_channels.py);
+2. **channelAllowed** — the product's "מופיע ב" names this channel (item-blocks' model:
+   `products.appears_in`, app/services/product_channels.py `appears`);
 3. **inProfile** — the profile selects it (`select`), a time menu offered on this channel includes it
    when one is active, and — for a published revision — it was exposed at publication (or its
    category takes future products automatically);
-4. **available** — no block in force reaches it in this channel ("חסום" / "אזל", their 4-channel
-   targets), stock (when tracked, with "אזל אוטומטי" on) is above 0, and — to order — the profile
-   takes orders now for this service.
+4. **available** — the blocks' own rule says so for this channel at this place: item-blocks'
+   `sold_out_rules.decide` with a `Till` of the web channel (`sold_out_marks.channels`; "חסום" before
+   "אזל"; tracked stock at 0 with "אזל אוטומטי" on) — and, to order, the profile takes orders now for
+   this service.
 
-**display**: `hide` when 1–3 fail or a block asks to hide; else `label` (shown with "אזל" / "לא
-זמין") when 4 fails for stock or a block; else `show`. **orderable** only in the online channel,
+**display**: `hide` when 1–3 fail, or when 4 fails and a block in force asks to hide ("הסתר") or the
+profile hides that state; else `label` (shown with "אזל" / "לא זמין") when 4 fails; else `show`. **orderable** only in the online channel,
 only `show`, only while orders are taken. `reasons` are for the dashboard (codes); `publicReason`
 is the only text a customer is sent — never a block's internal note.
 """
@@ -154,41 +155,34 @@ def select(
     return Selected(False, R_NOT_SELECTED)
 
 
-# ── Blocks in four channels ──────────────────────────────────────────────────
+# ── Blocks: item-blocks' rule, for a channel with no device ─────────────────
 
 
-def block_channels(block: Any) -> Set[str]:
-    """
-    The channels a block covers: its own `channels` when it has them; else its target read as
-    the devices it was written for — "all" → tills and kiosks, "kiosks" → kiosks, "tills" → tills
-    (no block written before the web channels reaches them: no inheritance between channels).
-    An automatic "אזל" (stock reached 0) is every channel's.
-    """
-    raw = block.get("channels") if isinstance(block, Mapping) else getattr(block, "channels", None)
-    source = block.get("source") if isinstance(block, Mapping) else getattr(block, "source", None)
-    if source == "auto":
-        # "אזל אוטומטי": the stock ran out — every channel selling from that stock.
-        return {POS, KIOSK, ONLINE, MENU}
-    if isinstance(raw, (list, tuple)) and raw:
-        return {str(c) for c in raw if c in (POS, KIOSK, ONLINE, MENU)}
-    target = (block.get("target") if isinstance(block, Mapping) else getattr(block, "target", None)) or "all"
-    scope = block.get("scope") if isinstance(block, Mapping) else getattr(block, "scope", None)
-    if scope in ("kiosks", "kiosk"):
-        return {KIOSK}
-    if target == "kiosks":
-        return {KIOSK}
-    if target == "tills":
-        return {POS}
-    return {POS, KIOSK}
+def availability(
+    blocks: Sequence[Any],
+    now: Any,
+    *,
+    channel: str,
+    company_id: Optional[str],
+    shop_id: Optional[str],
+    area_id: Optional[str],
+    product_id: str,
+    category_chain: Sequence[str],
+    track_stock: bool = False,
+    stock: Optional[float] = None,
+    auto_setting: Any = None,
+):
+    """item-blocks' decision (`sold_out_rules.decide`) for this channel at this place — the canonical rule."""
+    from app.services import sold_out_rules as rules
 
+    from datetime import datetime, timezone
 
-def web_display_of(block: Any) -> Optional[str]:
-    """A block's own look on the web: "hide" / "label", or None (the profile's default)."""
-    raw = block.get("webDisplay") if isinstance(block, Mapping) else getattr(block, "web_display", None)
-    if raw in (HIDE, LABEL):
-        return raw
-    kiosk = block.get("kioskDisplay") if isinstance(block, Mapping) else getattr(block, "kiosk_display", None)
-    return HIDE if kiosk == "hide" else None
+    till = rules.Till(company_id=company_id, shop_id=shop_id, area_id=area_id, channel=channel)
+    moment = rules.parse_time(now) or datetime.now(timezone.utc)
+    return rules.decide(
+        blocks, moment, till=till, setting=auto_setting, track_stock=track_stock, stock=stock,
+        item=rules.Item(product_id, tuple(category_chain)),
+    )
 
 
 # ── The decision ─────────────────────────────────────────────────────────────
@@ -204,14 +198,14 @@ class Facts:
     available: bool = True          # the catalog flag and the company / shop / area locks
     listed: bool = True             # the shop's assortment lists it (and it is sold there)
     category_active: bool = True
-    channel_allowed: bool = True
+    channel_allowed: bool = True    # "מופיע ב" names the channel (product_channels.appears)
     selected: Selected = field(default_factory=lambda: Selected(True))
     exposed: bool = True            # in the published exposure (or a future-taking category)
     menu: Optional[str] = None      # None (no time menu) | "in" | "out" | "none" (fallback sells nothing)
-    blocks: Sequence[Any] = ()      # blocks in force reaching this place (any channel)
+    blocks: Sequence[Any] = ()      # blocks in force at this place (sold_out_marks rows / their mappings)
     track_stock: bool = False
     stock: Optional[float] = None
-    auto_sold_out: bool = True
+    auto_setting: Any = None        # "אזל אוטומטי" as stored (None: on)
 
 
 @dataclass
@@ -219,11 +213,15 @@ class Context:
     channel: str = ONLINE
     service: Optional[str] = None
     services: Sequence[str] = ()    # the profile's service types
-    order_open: bool = True         # the profile's order hours at `at`
+    order_open: bool = True         # the profile's order hours at `now`
     published: bool = True          # a public request (exposure applies); a draft preview: False
     sold_out_display: str = LABEL   # the profile's default for "אזל"
     blocked_display: str = LABEL    # … and for "חסום"
     lang: str = "he"
+    now: Any = None                 # the instant (ISO-8601 or aware datetime) the blocks are read at
+    company_id: Optional[str] = None
+    shop_id: Optional[str] = None
+    area_id: Optional[str] = None
 
 
 @dataclass
@@ -268,29 +266,27 @@ def decide(f: Facts, ctx: Context) -> Decision:
         reasons.append(R_NO_MENU)
     hidden = bool(reasons)
 
-    # 4. available: the blocks reaching this channel; "חסום" before "אזל".
-    live = [b for b in f.blocks if ctx.channel in block_channels(b)]
-    hard = [b for b in live if (b.get("kind") if isinstance(b, Mapping) else getattr(b, "kind", None)) == "blocked"]
-    soft = [b for b in live if b not in hard]
-    decided_by = None
+    # 4. available: item-blocks' own rule, for this channel at this place.
+    d = availability(
+        f.blocks, ctx.now, channel=ctx.channel, company_id=ctx.company_id, shop_id=ctx.shop_id,
+        area_id=ctx.area_id, product_id=f.product_id, category_chain=f.category_chain,
+        track_stock=f.track_stock, stock=f.stock, auto_setting=f.auto_setting,
+    )
     unavailable = None
-    if hard:
-        unavailable, decided_by = R_BLOCKED, hard[0]
-        reasons.append(R_BLOCKED)
-    elif soft:
-        unavailable, decided_by = R_SOLD_OUT, soft[0]
-        reasons.append(R_SOLD_OUT)
-    elif f.auto_sold_out and f.track_stock and (f.stock if f.stock is not None else 0.0) <= 0:
-        unavailable = R_STOCK
-        reasons.append(R_STOCK)
+    if d.state == "blocked":
+        unavailable = R_BLOCKED
+    elif d.state == "sold_out":
+        unavailable = R_STOCK if d.reason == "stock" else R_SOLD_OUT
+    if unavailable is not None:
+        reasons.append(unavailable)
 
     if hidden:
-        return Decision(HIDE, False, reasons, None, decided_by)
+        return Decision(HIDE, False, reasons, None, d.block)
     if unavailable is not None:
-        asked = [web_display_of(b) for b in (hard or soft)]
         default = ctx.blocked_display if unavailable == R_BLOCKED else ctx.sold_out_display
-        display = HIDE if HIDE in asked or default == HIDE else LABEL
-        return Decision(display, False, reasons, _public(unavailable, ctx.lang) if display == LABEL else None, decided_by)
+        # A block's own "הסתר" (its kiosk look, "hide") hides it on the web too.
+        display = HIDE if d.display == "hide" or default == HIDE else LABEL
+        return Decision(display, False, reasons, _public(unavailable, ctx.lang) if display == LABEL else None, d.block)
 
     # Shown: may it be ordered now?
     if ctx.channel != ONLINE:

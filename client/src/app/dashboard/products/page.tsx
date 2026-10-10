@@ -155,9 +155,6 @@ function buildSavePayload(
   // back is not a scope change. Only a scope the form actually set is sent.
   delete payload.shopScope;
   if (shopScope) payload.shopScope = shopScope;
-  // "מופיע ב": the four switches go as `channels`; the older code says less ("none" is not one of
-  // the codes a form sends), so it is not echoed when they are.
-  if (payload.channels) delete payload.salesChannel;
   if (shopPrices && shopPrices.length > 0) payload.shopPrices = shopPrices;
   return payload;
 }
@@ -861,7 +858,7 @@ export default function ProductsPage() {
               }
               onChange={(c) => setEditing((p) => ({ ...p, requiresManagerApproval: c }))}
             />
-            {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי, and the exceptions per shop (lib/productChannels.ts). */}
+            {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי — sent as appearsIn with the whole product (specs/item-blocks-targets.md §11). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

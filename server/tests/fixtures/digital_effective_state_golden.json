@@ -1,6 +1,6 @@
 {
-  "about": "The effective state of a product in a digital channel (app/services/digital_effective_rules.py). Change the rule, change this file and its SHA in tests/test_digital_effective.py.",
-  "version": 1,
+  "about": "The effective state of a product in a digital channel (app/services/digital_effective_rules.py); its blocks are read by item-blocks' own rule (app/services/sold_out_rules.py decide, sold_out_marks.channels). Change the rule, change this file and its SHA in tests/test_digital_effective.py.",
+  "version": 2,
   "cases": [
     {
       "name": "online: selected, allowed, available, open — orderable",
@@ -17,6 +17,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -64,6 +68,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "menu",
         "published": true
       },
@@ -108,6 +116,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -158,6 +170,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -208,6 +224,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -243,7 +263,7 @@
       }
     },
     {
-      "name": "'מופיע ב' off for the channel here: hidden",
+      "name": "'מופיע ב' does not name the channel: hidden",
       "facts": {
         "product_id": "p-cola",
         "category_chain": [
@@ -258,6 +278,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -307,6 +331,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -356,6 +384,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -408,6 +440,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -458,6 +494,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -504,6 +544,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -552,6 +596,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -602,6 +650,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -637,7 +689,7 @@
       }
     },
     {
-      "name": "a block written for the tills and kiosks (no channels) does not reach the web",
+      "name": "a block on all four channels: labelled online",
       "facts": {
         "product_id": "p-cola",
         "category_chain": [
@@ -645,11 +697,20 @@
         ],
         "blocks": [
           {
-            "id": "b-all",
+            "id": "b-all4",
             "kind": "blocked",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
-            "source": "manual"
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "pos",
+              "kiosk",
+              "online",
+              "menu"
+            ]
           }
         ],
         "selected": {
@@ -659,6 +720,78 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
+        "channel": "online",
+        "service": "takeaway",
+        "services": [
+          "takeaway",
+          "dine_in"
+        ],
+        "order_open": true,
+        "published": true
+      },
+      "expect": {
+        "display": "label",
+        "orderable": false,
+        "reasons": [
+          "blocked"
+        ],
+        "publicReason": "לא זמין כרגע",
+        "block": "b-all4"
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
+      "name": "a block on the tills and kiosks only does not reach the web",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-devices",
+            "kind": "blocked",
+            "scope": "shop",
+            "scopeId": "sh-1",
+            "target": "all",
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "pos",
+              "kiosk"
+            ]
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -692,6 +825,64 @@
       }
     },
     {
+      "name": "a block written before channels (target all = tills + kiosks) does not reach the web",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-old",
+            "kind": "blocked",
+            "scope": "shop",
+            "scopeId": "sh-1",
+            "target": "all",
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00"
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
+        "channel": "menu",
+        "published": true
+      },
+      "expect": {
+        "display": "show",
+        "orderable": false,
+        "reasons": [
+          "view_only"
+        ],
+        "publicReason": null,
+        "block": null
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
       "name": "a block for the digital menu: labelled there",
       "facts": {
         "product_id": "p-cola",
@@ -703,8 +894,11 @@
             "id": "b-menu",
             "kind": "blocked",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "menu"
             ]
@@ -717,6 +911,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "menu",
         "published": true
       },
@@ -757,8 +955,11 @@
             "id": "b-menu",
             "kind": "blocked",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "menu"
             ]
@@ -771,6 +972,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -804,7 +1009,7 @@
       }
     },
     {
-      "name": "a block asking to hide on the web: hidden, no public reason",
+      "name": "a point-of-sale block asking to hide: hidden, no public reason",
       "facts": {
         "product_id": "p-cola",
         "category_chain": [
@@ -812,15 +1017,18 @@
         ],
         "blocks": [
           {
-            "id": "b-online",
+            "id": "b-online-hide",
             "kind": "blocked",
             "scope": "area",
+            "scopeId": "ar-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "kioskDisplay": "hide",
             "channels": [
               "online"
-            ],
-            "webDisplay": "hide"
+            ]
           }
         ],
         "selected": {
@@ -830,6 +1038,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -846,7 +1058,73 @@
           "blocked"
         ],
         "publicReason": null,
-        "block": "b-online"
+        "block": "b-online-hide"
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
+      "name": "the same block, another point of sale of the shop: not reached",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-online-hide",
+            "kind": "blocked",
+            "scope": "area",
+            "scopeId": "ar-1",
+            "target": "all",
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "kioskDisplay": "hide",
+            "channels": [
+              "online"
+            ]
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-2",
+        "channel": "online",
+        "service": "takeaway",
+        "services": [
+          "takeaway",
+          "dine_in"
+        ],
+        "order_open": true,
+        "published": true
+      },
+      "expect": {
+        "display": "show",
+        "orderable": true,
+        "reasons": [],
+        "publicReason": null,
+        "block": null
       },
       "selection": {
         "selection": {
@@ -876,8 +1154,11 @@
             "id": "s-web",
             "kind": "sold_out",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "online",
               "menu"
@@ -891,6 +1172,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -937,21 +1222,30 @@
             "id": "s-web",
             "kind": "sold_out",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "online",
               "menu"
             ]
           },
           {
-            "id": "b-menu",
+            "id": "b-all4",
             "kind": "blocked",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
-              "online"
+              "pos",
+              "kiosk",
+              "online",
+              "menu"
             ]
           }
         ],
@@ -962,6 +1256,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -978,7 +1276,7 @@
           "blocked"
         ],
         "publicReason": "לא זמין כרגע",
-        "block": "b-menu"
+        "block": "b-all4"
       },
       "selection": {
         "selection": {
@@ -997,7 +1295,7 @@
       }
     },
     {
-      "name": "the automatic 'אזל' (stock reached 0) is every channel's",
+      "name": "the automatic 'אזל' (stock reached 0) is on every channel",
       "facts": {
         "product_id": "p-cola",
         "category_chain": [
@@ -1008,8 +1306,17 @@
             "id": "s-auto",
             "kind": "sold_out",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
-            "source": "auto"
+            "source": "auto",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "pos",
+              "kiosk",
+              "online",
+              "menu"
+            ]
           }
         ],
         "selected": {
@@ -1019,6 +1326,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "menu",
         "published": true
       },
@@ -1059,9 +1370,15 @@
             "id": "k-hide",
             "kind": "blocked",
             "scope": "kiosks",
+            "scopeId": "sh-1",
             "target": "kiosks",
             "source": "manual",
-            "kioskDisplay": "hide"
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "kioskDisplay": "hide",
+            "channels": [
+              "kiosk"
+            ]
           }
         ],
         "selected": {
@@ -1071,6 +1388,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1086,6 +1407,200 @@
         "reasons": [],
         "publicReason": null,
         "block": null
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
+      "name": "the company's block reaches its shop",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-company",
+            "kind": "blocked",
+            "scope": "company",
+            "scopeId": "co-1",
+            "target": "all",
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "online"
+            ]
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
+        "channel": "online",
+        "service": "takeaway",
+        "services": [
+          "takeaway",
+          "dine_in"
+        ],
+        "order_open": true,
+        "published": true
+      },
+      "expect": {
+        "display": "label",
+        "orderable": false,
+        "reasons": [
+          "blocked"
+        ],
+        "publicReason": "לא זמין כרגע",
+        "block": "b-company"
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
+      "name": "another shop's block does not",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-other",
+            "kind": "blocked",
+            "scope": "shop",
+            "scopeId": "sh-2",
+            "target": "all",
+            "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "online"
+            ]
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
+        "channel": "online",
+        "service": "takeaway",
+        "services": [
+          "takeaway",
+          "dine_in"
+        ],
+        "order_open": true,
+        "published": true
+      },
+      "expect": {
+        "display": "show",
+        "orderable": true,
+        "reasons": [],
+        "publicReason": null,
+        "block": null
+      },
+      "selection": {
+        "selection": {
+          "mode": "independent",
+          "categories": [
+            {
+              "id": "c-drinks",
+              "includeFuture": false
+            }
+          ],
+          "products": [],
+          "excludes": []
+        },
+        "parent": null,
+        "kioskHidden": null
+      }
+    },
+    {
+      "name": "a block on its category",
+      "facts": {
+        "product_id": "p-cola",
+        "category_chain": [
+          "c-drinks"
+        ],
+        "blocks": [
+          {
+            "id": "b-cat",
+            "kind": "blocked",
+            "scope": "shop",
+            "scopeId": "sh-1",
+            "target": "all",
+            "source": "manual",
+            "productId": null,
+            "createdAt": "2026-10-11T08:00:00+00:00",
+            "channels": [
+              "menu"
+            ],
+            "categoryId": "c-drinks"
+          }
+        ],
+        "selected": {
+          "selected": true,
+          "reason": null,
+          "include_future": false
+        }
+      },
+      "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
+        "channel": "menu",
+        "published": true
+      },
+      "expect": {
+        "display": "label",
+        "orderable": false,
+        "reasons": [
+          "blocked"
+        ],
+        "publicReason": "לא זמין כרגע",
+        "block": "b-cat"
       },
       "selection": {
         "selection": {
@@ -1120,6 +1635,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1163,7 +1682,7 @@
         ],
         "track_stock": true,
         "stock": 0,
-        "auto_sold_out": false,
+        "auto_setting": false,
         "selected": {
           "selected": true,
           "reason": null,
@@ -1172,6 +1691,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1216,8 +1739,11 @@
             "id": "s-web",
             "kind": "sold_out",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "online",
               "menu"
@@ -1231,6 +1757,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1281,6 +1811,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1330,6 +1864,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "dine_in",
         "services": [
@@ -1375,8 +1913,11 @@
             "id": "s-web",
             "kind": "sold_out",
             "scope": "shop",
+            "scopeId": "sh-1",
             "target": "all",
             "source": "manual",
+            "productId": "p-cola",
+            "createdAt": "2026-10-11T08:00:00+00:00",
             "channels": [
               "online",
               "menu"
@@ -1390,6 +1931,10 @@
         }
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1440,6 +1985,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1483,6 +2032,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1529,6 +2082,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1578,6 +2135,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1628,6 +2189,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1679,6 +2244,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1726,6 +2295,10 @@
         "blocks": []
       },
       "context": {
+        "now": "2026-10-11T09:00:00+00:00",
+        "company_id": "co-1",
+        "shop_id": "sh-1",
+        "area_id": "ar-1",
         "channel": "online",
         "service": "takeaway",
         "services": [
@@ -1757,88 +2330,6 @@
         "parent": null,
         "kioskHidden": null
       }
-    }
-  ],
-  "blockChannels": [
-    {
-      "block": {
-        "id": "b-all",
-        "kind": "blocked",
-        "scope": "shop",
-        "target": "all",
-        "source": "manual"
-      },
-      "expect": [
-        "kiosk",
-        "pos"
-      ]
-    },
-    {
-      "block": {
-        "id": "b-all",
-        "kind": "blocked",
-        "scope": "shop",
-        "target": "kiosks",
-        "source": "manual"
-      },
-      "expect": [
-        "kiosk"
-      ]
-    },
-    {
-      "block": {
-        "id": "b-all",
-        "kind": "blocked",
-        "scope": "shop",
-        "target": "tills",
-        "source": "manual"
-      },
-      "expect": [
-        "pos"
-      ]
-    },
-    {
-      "block": {
-        "id": "k-hide",
-        "kind": "blocked",
-        "scope": "kiosks",
-        "target": "kiosks",
-        "source": "manual",
-        "kioskDisplay": "hide"
-      },
-      "expect": [
-        "kiosk"
-      ]
-    },
-    {
-      "block": {
-        "id": "b-menu",
-        "kind": "blocked",
-        "scope": "shop",
-        "target": "all",
-        "source": "manual",
-        "channels": [
-          "menu"
-        ]
-      },
-      "expect": [
-        "menu"
-      ]
-    },
-    {
-      "block": {
-        "id": "s-auto",
-        "kind": "sold_out",
-        "scope": "shop",
-        "target": "all",
-        "source": "auto"
-      },
-      "expect": [
-        "kiosk",
-        "menu",
-        "online",
-        "pos"
-      ]
     }
   ]
 }

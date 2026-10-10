@@ -110,7 +110,7 @@ export async function fetchTillCatalog(machineId: string): Promise<KioskSourceCa
     machineName: data.machineName,
     categories: categories.map((c) => ({ id: String(c.id), name: c.name, sortOrder: c.sortOrder ?? 0 })),
     products: (data.products ?? [])
-      .filter((p) => p.onTill !== false && p.salesChannel !== 'kiosk_only' && p.salesChannel !== 'none')
+      .filter((p) => p.onTill !== false && p.salesChannel !== 'kiosk_only')
       .map((p) => ({
         id: String(p.productId),
         name: p.name,

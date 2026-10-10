@@ -5,24 +5,26 @@ Dashboard (section `item_blocks`: view for reads, edit for writes; the roles and
 machine admins — a super admin, a distributor, a company manager over their companies' shops, a
 shop manager over their shop — app/services/kiosk_control.py `check_*_scope`):
 
-GET    /item-blocks                ?companyId=&shopId=&productId=&categoryId=&areaId=&target=&includeEnded= → [Block]
+GET    /item-blocks                ?companyId=&shopId=&productId=&categoryId=&areaId=&target=&channel=&includeEnded= → [Block]
 GET    /item-blocks/targets        ?shopId= → what the scope picker offers
+GET    /item-blocks/resolve        ?shopId=&channel=&productIds=a,b&areaId= → {product id: {appears, state, …}}
 POST   /item-blocks/end-preview    {mode, minutes?, at?, shopId?} → {until, rolled}
-POST   /item-blocks                {productId | categoryId, kind, target?, kioskDisplay?, note?,
-                                    targets: [{scope, scopeId}], duration} → [Block]
+POST   /item-blocks                {productId | categoryId, kind, channels? | target?, kioskDisplay?,
+                                    note?, targets: [{scope, scopeId}], duration} → [Block]
 POST   /item-blocks/{id}/extend    {minutes} → Block
 DELETE /item-blocks/{id}           → Block ("בטל עכשיו")
 POST   /item-blocks/clear          {productId | categoryId, shopId?, companyId?} → {cleared} (every block of the item)
 
-`target` — "all" ("קופות וקיוסקים", the default) · "kiosks" ("קיוסקים בלבד") · "tills" ("קופות
-בלבד"), on top of each target's level (specs/item-blocks-targets.md). An older `kiosks` / `kiosk`
-scope still works and is written as shop / machine + kiosks.
+`channels` — any of "pos" ("קופה"), "kiosk" ("קיוסק"), "online" ("הזמנות אונליין"), "menu" ("תפריט
+דיגיטלי"); omitted: all four — on top of each target's level (specs/item-blocks-targets.md). A
+client that sends `target` instead ("all" / "kiosks" / "tills") means pos + kiosk / kiosk / pos. An
+older `kiosks` / `kiosk` scope still works and is written as shop / machine + kiosk.
 
 Devices (`till_router`, the till's own token; a till, a kiosk's staff screen, a controlling till's
 kiosk panel — specs/item-blocks-targets.md §4):
 
 GET  /sync/{m}/item-blocks                 ?kioskId= → {blocks, context, areaDevices, events, presets…}
-POST /sync/{m}/item-blocks                 {productId | categoryId, kind, target, level, levelId?,
+POST /sync/{m}/item-blocks                 {productId | categoryId, kind, channels | target, level, levelId?,
                                             kioskDisplay?, note?, duration, kioskId?} → {block, until, rolled}
 POST /sync/{m}/item-blocks/{id}/clear      → Block
 
@@ -65,6 +67,7 @@ router = APIRouter(prefix="/item-blocks", tags=["item-blocks"])
 till_router = APIRouter(prefix="/sync", tags=["item-blocks"])
 
 Reach = Literal["all", "kiosks", "tills"]
+Channel = Literal["pos", "kiosk", "online", "menu"]
 Display = Literal["hide", "grey"]
 
 
@@ -100,14 +103,12 @@ class _ItemIn(BaseModel):
 
 class BlockIn(_ItemIn):
     kind: Literal["sold_out", "blocked"] = "sold_out"
-    #: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד", on every target's level.
-    target: Reach = "all"
+    #: Where at every target's level: "קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי"; omitted: all four.
+    channels: Optional[List[Channel]] = Field(None, min_length=1, max_length=4)
+    #: Before channels: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד" (used when `channels` is omitted).
+    target: Optional[Reach] = None
     #: The kiosks' look for this block; None = their `general.soldOutMode`.
     kiosk_display: Optional[Display] = Field(None, alias="kioskDisplay")
-    #: "מופיע ב": the channels it covers (any of pos / kiosk / online / menu); None = `target` as always.
-    channels: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, max_length=4)
-    #: Its look on the web channels ("hide" / "label"); None = the profile's default.
-    web_display: Optional[Literal["hide", "label"]] = Field(None, alias="webDisplay")
     note: Optional[str] = Field(None, max_length=200)
     targets: List[TargetIn] = Field(..., min_length=1, max_length=200)
     duration: DurationIn = Field(default_factory=DurationIn)
@@ -259,7 +260,8 @@ def list_blocks(
     include_ended: bool = Query(False, alias="includeEnded"),
     category_id: Annotated[Optional[uuid.UUID], Query(alias="categoryId")] = None,
     area_id: Annotated[Optional[uuid.UUID], Query(alias="areaId")] = None,
-    target: Annotated[Optional[Reach], Query()] = None,
+    target: Annotated[Optional[Literal["all", "kiosks", "tills", "none"]], Query()] = None,
+    channel: Annotated[Optional[Channel], Query()] = None,
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -277,7 +279,7 @@ def list_blocks(
         product_id = svc.global_product(db, product_id, active_tenant_id).id
     rows = svc.list_blocks(
         db, tenant_id=active_tenant_id, shop_ids=shops, company_ids=companies, product_id=product_id,
-        include_ended=include_ended, category_id=category_id, area_id=area_id, target=target,
+        include_ended=include_ended, category_id=category_id, area_id=area_id, target=target, channel=channel,
     )
     narrow = _narrowing(db, current_user)
     if narrow is not None:
@@ -382,6 +384,31 @@ def list_targets(
     }
 
 
+@router.get("/resolve")
+def resolve_channel(
+    shop_id: uuid.UUID = Query(..., alias="shopId"),
+    channel: Channel = Query(...),
+    product_ids: str = Query(..., alias="productIds", max_length=20000),
+    area_id: Annotated[Optional[uuid.UUID], Query(alias="areaId")] = None,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The resolver for one channel (specs/item-blocks-targets.md): per product, whether it appears on
+    the channel ("מופיע ב") and what the blocks in force reaching that channel at the shop decide.
+    Online ordering and the digital menu call app/services/sold_out.py `resolve_channel` directly.
+    """
+    shop = db.get(Shop, shop_id)
+    if shop is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    kiosk_control.check_shop_scope(db, current_user, shop, active_tenant_id)
+    ids = [p.strip() for p in product_ids.split(",") if p.strip()][:500]
+    return svc.resolve_channel(
+        db, tenant_id=active_tenant_id, shop_id=shop.id, channel=channel, product_ids=ids, area_id=area_id,
+    )
+
+
 @router.post("/end-preview")
 def end_preview(
     body: EndPreviewIn,
@@ -416,8 +443,7 @@ def create_blocks(
         svc.block(
             db, tenant_id=active_tenant_id, product=product, category=category, target=target, kind=body.kind,
             until=end.until, until_mode=end.mode, note=body.note, user=current_user, now=now,
-            reach=body.target, display=body.kiosk_display, origin="dashboard",
-            channels=body.channels, web_display=body.web_display,
+            reach=body.target, channels=body.channels, display=body.kiosk_display, origin="dashboard",
         )
         for target in targets
     ]
@@ -510,7 +536,9 @@ def clear_block(
 
 class DeviceBlockIn(_ItemIn):
     kind: Literal["sold_out", "blocked"] = "sold_out"
-    target: Reach = "all"
+    #: "קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי"; omitted: `target`'s, else all four.
+    channels: Optional[List[Channel]] = Field(None, min_length=1, max_length=4)
+    target: Optional[Reach] = None
     #: The level: the shop, a point of sale (the device's own by default), a device, an event.
     level: Literal["shop", "area", "machine", "event"] = "area"
     level_id: Optional[uuid.UUID] = Field(None, alias="levelId")
@@ -721,10 +749,13 @@ def device_block(
     row = svc.block(
         db, tenant_id=machine.tenant_id, product=product, category=category, target=target, kind=body.kind,
         until=end.until, until_mode=end.mode, note=body.note, by_name=_approver_name(machine, approver), now=now,
-        reach="kiosks" if kiosks_only else body.target, display=body.kiosk_display, origin=origin,
+        reach=None if kiosks_only else body.target,
+        # A kiosk (or a till acting for one) blocks for the kiosks alone.
+        channels=["kiosk"] if kiosks_only else body.channels,
+        display=body.kiosk_display, origin=origin,
     )
     db.commit()
-    if kiosks_only or body.kiosk_display == "hide":
+    if "kiosk" in svc.channels_of(row):
         _wake_kiosks_of(db, row)
     view = _view(db, [row], now)[0]
     return {"block": {**view, "removable": device_may_clear(machine, row)}, "until": end.until.isoformat() if end.until else None, "rolled": end.rolled}
@@ -754,7 +785,7 @@ def device_clear(
         )
     svc.clear(db, mark, by_name=_approver_name(machine, approver), now=now)
     db.commit()
-    if mark.kiosk_display == "hide" or svc.target_of(mark) != "tills":
+    if "kiosk" in svc.channels_of(mark):
         _wake_kiosks_of(db, mark)
     return {**_view(db, [mark], now)[0], "removable": False}
 

@@ -179,8 +179,6 @@ from app.models.command_request_key import CommandRequestKey
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
 from app.models.sales_target import SalesTarget, SalesTargetHit
-# "מופיע ב" — a shop's / point of sale's exception to a product's channels (app/services/product_channels.py).
-from app.models.product_channel_override import ProductChannelOverride
 # "סדר תצוגה" — orderings and which channel uses which at a level (app/services/display_ordering.py).
 from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
 # "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
@@ -276,7 +274,6 @@ __all__ = [
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
-    "ProductChannelOverride",
     "DisplayOrdering", "DisplayOrderingBinding",
     "PresentationAudit", "PresentationProfile", "PresentationRevision",
 ]

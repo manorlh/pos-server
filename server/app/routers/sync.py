@@ -273,10 +273,6 @@ def get_catalog_sync(
     published = review_pull.published
     if published is not None:
         products, categories = published.products, published.categories
-        # "מופיע ב": the publication holds each product's stored code; this device reads its own.
-        from app.services import product_channels
-
-        products = product_channels.project_rows(db, machine, list(products or []))
     else:
         products = get_products_for_sync(db, tid, mqid, since=review_pull.live_since)
         categories = get_categories_for_sync(db, tid, mqid, since=review_pull.live_since)
@@ -631,6 +627,12 @@ def machine_update_cloud_product(
         validate_open_price_update(product, master_fields)
         for field, value in master_fields.items():
             setattr(product, field, value)
+        # The till's dialog writes "היכן הפריט נמכר": a product with its own "מופיע ב" keeps its
+        # online / menu channels (app/services/product_channels.py).
+        if "sales_channel" in master_fields:
+            from app.services import product_channels
+
+            product_channels.apply(product, sales_channel_changed=True)
 
     if override_fields:
         override = _override_for(db, shop.id, product.id)

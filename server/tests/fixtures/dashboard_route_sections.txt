@@ -229,6 +229,7 @@ GET /item-blocks -> item_blocks:view
 POST /item-blocks -> item_blocks:edit
 POST /item-blocks/clear -> item_blocks:edit
 POST /item-blocks/end-preview -> item_blocks:view
+GET /item-blocks/resolve -> item_blocks:view
 GET /item-blocks/targets -> item_blocks:view
 DELETE /item-blocks/{block_id} -> item_blocks:edit
 POST /item-blocks/{block_id}/extend -> item_blocks:edit
@@ -474,8 +475,7 @@ GET /producer/events/{event_id} -> producer
 GET /producer/events/{event_id}/settlement -> producer
 GET /producer/events/{event_id}/vouchers -> producer
 POST /product-channels/bulk -> products:edit
-GET /product-channels/products/{product_id} -> products:view
-PUT /product-channels/products/{product_id} -> products:edit
+GET /product-channels/list -> products:view
 GET /products -> products|quick_actions|promotions:view
 POST /products -> products:edit
 POST /products/availability-summary -> products|item_blocks:view

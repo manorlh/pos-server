@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * "מופיע ב — עריכה בכמות": the four channels of many products at once (lib/productChannels.ts,
- * pos-server app/routers/product_channels.py `POST /product-channels/bulk`).
+ * "מופיע ב — עריכה בכמות": the four channels of many products at once, over item-blocks' "מופיע ב"
+ * (`appearsIn`, lib/productChannel.ts) — lib/productChannels.ts, pos-server app/routers/product_channels.py.
  *
  * The list filters on the server (search, category, each channel on / off). A change acts on the
  * rows ticked (across pages) or on "כל התוצאות" — every product matching the filter, pages never
@@ -22,13 +22,14 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   CHANNELS,
   CHANNEL_LABEL_KEYS,
+  appearsInChannel,
   bulkBody,
-  channelsOf,
   type BulkFilter,
   type BulkResult,
   type Channel,
+  type ChannelRow,
 } from '@/lib/productChannels';
-import type { Category, Product, ProductListResponse } from '@/lib/types';
+import type { Category } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -78,15 +79,14 @@ export default function ProductChannelsBulkPage() {
     queryKey: ['categories'],
     queryFn: () => api.get('/categories').then((r) => r.data),
   });
-  const { data, isLoading } = useQuery<ProductListResponse>({
+  const { data, isLoading } = useQuery<{ total: number; items: ChannelRow[] }>({
     queryKey: ['product-channels-list', filterKey, page],
     queryFn: () =>
       api
-        .get('/products', {
+        .get('/product-channels/list', {
           params: {
             page,
             pageSize: PAGE_SIZE,
-            catalogLevel: 'global',
             search: filter.search || undefined,
             categoryIds: filter.categoryIds,
             channelOn: filter.channelOn,
@@ -97,7 +97,7 @@ export default function ProductChannelsBulkPage() {
         .then((r) => r.data),
     placeholderData: (prev) => prev,
   });
-  const products: Product[] = data?.items ?? [];
+  const products: ChannelRow[] = data?.items ?? [];
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageIds = products.map((p) => p.id);
@@ -300,7 +300,6 @@ export default function ProductChannelsBulkPage() {
               <TableRow><TableCell colSpan={6} className="text-muted-foreground">{t('noResults')}</TableCell></TableRow>
             ) : (
               products.map((p) => {
-                const ch = channelsOf(p);
                 return (
                   <TableRow key={p.id}>
                     <TableCell>
@@ -315,7 +314,7 @@ export default function ProductChannelsBulkPage() {
                     <TableCell>{p.name}</TableCell>
                     {CHANNELS.map((c) => (
                       <TableCell key={c} className="text-center">
-                        {ch[c] ? (
+                        {appearsInChannel(p, c) ? (
                           <span className="inline-flex items-center gap-1 text-[#1E7B34]"><Check className="h-4 w-4" aria-hidden />{t('shown')}</span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-muted-foreground"><Minus className="h-4 w-4" aria-hidden />{t('notShown')}</span>

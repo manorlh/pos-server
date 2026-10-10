@@ -419,7 +419,7 @@ export async function fetchKioskSourceCatalog(machineId: string): Promise<KioskS
     categories: categories.map((c) => ({ id: String(c.id), name: c.name, sortOrder: c.sortOrder ?? 0 })),
     products: (data.products ?? [])
       // "קופות בלבד" is left out, as the kiosk itself leaves it out — and so is "מחייב אישור מנהל במכירה".
-      .filter((p) => p.onTill !== false && p.salesChannel !== 'pos_only' && p.salesChannel !== 'none' && p.requiresManagerApproval !== true)
+      .filter((p) => p.onTill !== false && p.salesChannel !== 'pos_only' && p.requiresManagerApproval !== true)
       .map((p) => ({
         id: String(p.productId),
         name: p.name,

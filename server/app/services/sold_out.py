@@ -12,6 +12,10 @@ Blocks on a product — "אזל" (sold out) and "חסום" (blocked) — for any
   `kiosks` (every kiosk of a shop) and `kiosk` (one kiosk) stay readable as shop / machine + kiosks;
   new blocks are written as level + target. Which devices a block reaches: `devices_reached` (the
   cloud) and the shared `sold_out_rules.covers` (the cloud and the till, pinned by the golden fixture).
+* **Channels** (the owner, 10.10) — a block stops the item on any of pos / kiosk / online / menu
+  (`channels`; a new block: all four). `target` stays, written from the channels for the devices
+  that read only it. Online ordering and the digital menu have no device: they ask
+  `resolve_channel`, with the product's "מופיע ב" (app/services/product_channels.py).
 * **What** — a product, or a category: every product in it or below it (`category_chains`). Each
   product row a device gets carries its category's blocks too, so the device needs no tree.
 * **One list** — "מוסתר בקיוסקים" (app/services/kiosk_live.py) writes here as a shop-level,
@@ -52,7 +56,7 @@ from app.models.report_event import ReportEvent, ReportEventMachine
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.sold_out import (
-    SOLD_OUT_DISPLAYS, SOLD_OUT_KINDS, SOLD_OUT_ORIGINS, SOLD_OUT_SCOPES, SOLD_OUT_TARGETS, SoldOutMark,
+    SOLD_OUT_CHANNELS, SOLD_OUT_DISPLAYS, SOLD_OUT_KINDS, SOLD_OUT_ORIGINS, SOLD_OUT_SCOPES, SOLD_OUT_TARGETS, SoldOutMark,
 )
 from app.services import device_groups
 from app.services import sold_out_rules as rules
@@ -300,9 +304,6 @@ def blocks_for_machine(
     for mark in q.all():
         if not rules.covers(mark, till):
             continue
-        # "מופיע ב": a block for the web channels only reaches no device.
-        if not reaches_device_channel(mark, ctx.is_kiosk):
-            continue
         # An automatic "אזל" is about one stock location: it reaches only the devices that sell
         # the product from it (app/services/stock_locations.py `sell_from`).
         if mark.source == "auto" and not _sells_from(db, machine, mark, sells_from):
@@ -346,7 +347,7 @@ def kiosk_hidden(db: Session, machine: POSMachine, now: Optional[datetime] = Non
         m for m in db.query(SoldOutMark).filter(
             _scope_filter(ctx), in_force_filter(now), SoldOutMark.kiosk_display == rules.DISPLAY_HIDE,
         ).order_by(SoldOutMark.created_at).all()
-        if rules.covers(m, till) and reaches_device_channel(m, True)
+        if rules.covers(m, till)
     ]
     products: List[str] = []
     for m in marks:
@@ -383,30 +384,6 @@ def _sells_from(db: Session, machine: POSMachine, mark: SoldOutMark, cache: Dict
     return loc is not None and loc.level == mark.scope and str(loc.target_id) == str(mark.scope_id)
 
 
-def reaches_device_channel(mark: Any, is_kiosk: bool) -> bool:
-    """
-    "מופיע ב": whether a block's channels include this device's — the kiosks', or the tills'. A block
-    with no channels of its own (every block before the web channels) reaches the devices its target
-    names, as always.
-    """
-    channels = getattr(mark, "channels", None) if not isinstance(mark, dict) else mark.get("channels")
-    if not isinstance(channels, (list, tuple)) or not channels:
-        return True
-    return ("kiosk" if is_kiosk else "pos") in channels
-
-
-def reach_of_channels(channels: Optional[Sequence[str]]) -> Optional[str]:
-    """The devices' target a set of channels projects to: tills and kiosks "all", kiosks "kiosks", tills "tills"."""
-    if not channels:
-        return None
-    pos, kiosk = "pos" in channels, "kiosk" in channels
-    if pos and not kiosk:
-        return rules.TARGET_TILLS
-    if kiosk and not pos:
-        return rules.TARGET_KIOSKS
-    return rules.TARGET_ALL
-
-
 def manual_in_force(blocks: Iterable[Any]) -> bool:
     """Any block set by hand among these (an automatic "אזל" is never folded into `isAvailable`)."""
     return any((getattr(b, "source", None) or "manual") != "auto" for b in blocks)
@@ -417,10 +394,14 @@ def kiosk_display(blocks: Iterable[Any]) -> Optional[str]:
     return rules.display_of(list(blocks))
 
 
+def channels_of(mark: Any) -> tuple:
+    """The channels a block stops the item on (one written before channels: what its target meant)."""
+    return rules.channels_of(mark)
+
+
 def target_of(mark: Any) -> str:
-    """The target a block means: "all" / "kiosks" / "tills" (an older kiosks / kiosk scope: kiosks)."""
-    level, target = rules.level_of(mark)
-    return target or rules.TARGET_KIOSKS
+    """What the block's channels mean for the devices: "all" / "kiosks" / "tills" / "none"."""
+    return rules.target_for(channels_of(mark))
 
 
 def level_of(mark: Any) -> str:
@@ -434,7 +415,8 @@ def block_out(mark: SoldOutMark) -> Dict[str, Any]:
         "id": str(mark.id),
         "scope": mark.scope,
         "scopeId": str(mark.scope_id),
-        "target": mark.target or rules.TARGET_ALL,
+        "target": target_of(mark),
+        "channels": list(channels_of(mark)),
         "kind": mark.kind or "sold_out",
         "source": mark.source,
         "until": _iso(mark.until),
@@ -462,26 +444,23 @@ def _kiosk_ids(db: Session, machine_ids: Iterable[Any]) -> set:
     }
 
 
-def devices_reached(db: Session, scope: str, scope_id: Any, target: Optional[str] = None) -> List[POSMachine]:
-    """The active devices a block of this scope and target reaches now."""
-    level, reach = rules.level_of({"scope": scope, "target": target})
-    if reach is None or reach not in rules.TARGETS:
+def devices_reached(
+    db: Session, scope: str, scope_id: Any, target: Optional[str] = None, channels: Any = None,
+) -> List[POSMachine]:
+    """The active devices a block of this scope and channels (or, before channels, target) reaches now."""
+    named = set(rules.channels_of({"scope": scope, "target": target, "channels": channels}))
+    if rules.CH_POS not in named and rules.CH_KIOSK not in named:
         return []
-    rows = _level_devices(db, level, scope_id)
-    if reach == rules.TARGET_ALL or not rows:
+    rows = _level_devices(db, rules.level_name({"scope": scope}), scope_id)
+    if (rules.CH_POS in named and rules.CH_KIOSK in named) or not rows:
         return rows
     kiosks = _kiosk_ids(db, [m.id for m in rows])
-    return [m for m in rows if rules.target_reaches(reach, m.id in kiosks)]
+    want = rules.CH_KIOSK if rules.CH_KIOSK in named else rules.CH_POS
+    return [m for m in rows if (rules.CH_KIOSK if m.id in kiosks else rules.CH_POS) == want]
 
 
 def mark_devices(db: Session, mark: SoldOutMark) -> List[POSMachine]:
-    rows = devices_reached(db, mark.scope, mark.scope_id, mark.target)
-    channels = getattr(mark, "channels", None)
-    if not isinstance(channels, (list, tuple)) or not channels or not rows:
-        return rows
-    # "מופיע ב": only the devices whose channel the block covers (none for a web-only block).
-    kiosks = _kiosk_ids(db, [m.id for m in rows])
-    return [m for m in rows if reaches_device_channel(mark, m.id in kiosks)]
+    return devices_reached(db, mark.scope, mark.scope_id, mark.target, mark.channels)
 
 
 def _level_devices(db: Session, scope: str, scope_id: Any) -> List[POSMachine]:
@@ -638,59 +617,65 @@ def block(
     display: Optional[str] = None,
     origin: Optional[str] = None,
     channels: Optional[Sequence[str]] = None,
-    web_display: Optional[str] = None,
 ) -> SoldOutMark:
     """
-    Block `product` — or every product of `category` — at the target's level for `reach` ("all" /
-    "kiosks" / "tills"; an older kiosks / kiosk target means kiosks) — the caller commits. A block in
-    force of the same item, level, reach, kind and source is updated (new end, reason and look)
-    rather than doubled. 422 for an end that has passed already, or a reach the target contradicts.
+    Block `product` — or every product of `category` — at the target's level on `channels` (pos /
+    kiosk / online / menu; none given: what `reach` meant — "all" pos + kiosk, "kiosks", "tills" —
+    else all four; an older kiosks / kiosk target means the kiosks) — the caller commits. A block in
+    force of the same item, level, channels, kind and source is updated (new end, reason and look)
+    rather than doubled. 422 for an end that has passed already, or channels the target contradicts.
     """
     now = now or utc_now()
     if kind not in SOLD_OUT_KINDS:
         raise _bad("invalid_kind", "סוג חסימה לא מוכר")
-    # "מופיע ב": channels named — the devices' target is their projection (none of the devices: "all",
-    # and the channels keep it off every device).
-    if channels is not None:
-        channels = [c for c in ("pos", "kiosk", "online", "menu") if c in set(channels)]
-        if not channels:
-            raise _bad("channels_required", "בחרו לפחות ערוץ אחד")
-        reach = reach_of_channels(channels) if target.scope not in ("kiosks", "kiosk") else rules.TARGET_KIOSKS
-    if web_display is not None and web_display not in ("hide", "label"):
-        raise _bad("invalid_display", "תצוגה באתר לא מוכרת")
     if (product is None) == (category is None):
         raise _bad("item_required", "בחרו פריט או מחלקה")
     if display is not None and display not in SOLD_OUT_DISPLAYS:
         raise _bad("invalid_display", "תצוגה בקיוסק לא מוכרת")
     if origin is not None and origin not in SOLD_OUT_ORIGINS:
         origin = None
+    if channels is not None:
+        unknown = [c for c in channels if c not in SOLD_OUT_CHANNELS]
+        if unknown:
+            raise _bad("invalid_channel", "ערוץ לא מוכר")
+        wanted = tuple(channels)
+    elif reach is not None:
+        if reach not in rules.TARGETS:
+            raise _bad("invalid_target", "יעד לא מוכר")
+        wanted = rules.TARGET_CHANNELS[reach]
+    else:
+        wanted = rules.CHANNELS
     try:
-        level, reach = rules.normalize(target.scope, reach)
-    except ValueError:
+        level, named = rules.normalize_channels(target.scope, wanted)
+    except ValueError as refused:
+        if str(refused) == "channels_required":
+            raise _bad("channels_required", "בחרו לפחות ערוץ אחד: קופה, קיוסק, הזמנות אונליין או תפריט דיגיטלי")
         raise _bad("target_conflict", "\"כל הקיוסקים\" לא יכול להיות \"קופות בלבד\"")
+    reach = rules.target_for(named)
     if reach not in SOLD_OUT_TARGETS:
         raise _bad("invalid_target", "יעד לא מוכר")
     until = _aware(until)
     if until is not None and until <= now:
         raise _bad("until_passed", "שעת הסיום כבר עברה")
     # The same block written under an older scope ("כל הקיוסקים" / "קיוסק") is the same block.
-    older = {"shop": "kiosks", "machine": "kiosk"}.get(level) if reach == rules.TARGET_KIOSKS else None
+    older = {"shop": "kiosks", "machine": "kiosk"}.get(level) if named == (rules.CH_KIOSK,) else None
     item = SoldOutMark.product_id == product.id if product is not None else SoldOutMark.category_id == category.id
-    existing = (
-        db.query(SoldOutMark)
-        .filter(
-            item,
-            SoldOutMark.scope.in_([level] + ([older] if older else [])),
-            SoldOutMark.scope_id == target.scope_id,
-            SoldOutMark.target == reach,
-            SoldOutMark.kind == kind,
-            SoldOutMark.source == source,
-            in_force_filter(now),
-        )
-        .all()
+    existing = next(
+        (
+            m for m in db.query(SoldOutMark)
+            .filter(
+                item,
+                SoldOutMark.scope.in_([level] + ([older] if older else [])),
+                SoldOutMark.scope_id == target.scope_id,
+                SoldOutMark.kind == kind,
+                SoldOutMark.source == source,
+                in_force_filter(now),
+            )
+            .all()
+            if channels_of(m) == named
+        ),
+        None,
     )
-    # The same block is the same channels too (a block for other channels is another block).
-    existing = next((e for e in existing if (getattr(e, "channels", None) or None) == (channels or None)), None)
     who = by_name or _user_name(user)
     text = (note or "").strip()[:200] or None
     if existing is not None:
@@ -698,7 +683,6 @@ def block(
         existing.until_mode = until_mode
         existing.note = text
         existing.kiosk_display = display
-        existing.web_display = web_display
         existing.updated_at = now
         row = existing
     else:
@@ -712,11 +696,10 @@ def block(
             scope=level,
             scope_id=target.scope_id,
             target=reach,
+            channels=list(named),
             kind=kind,
             kiosk_display=display,
             origin=origin,
-            channels=channels,
-            web_display=web_display,
             until=until,
             until_mode=until_mode,
             source=source,
@@ -912,12 +895,10 @@ def mark_view(
         # The level and whom at it, an older kiosks / kiosk scope read as shop / machine + kiosks.
         "level": level_of(m),
         "target": target_of(m),
+        "channels": list(channels_of(m)),
         "itemType": "category" if is_category else "product",
         "itemName": (category.name if category is not None else None) if is_category else (product.name if product is not None else None),
         "origin": m.origin,
-        # "מופיע ב": the channels it covers (None: as `target` means — the devices only).
-        "channels": list(m.channels) if getattr(m, "channels", None) else None,
-        "webDisplay": getattr(m, "web_display", None),
         "productId": str(m.product_id) if m.product_id is not None else None,
         "productName": product.name if product is not None else None,
         "imageUrl": product.image_url if product is not None else None,
@@ -997,6 +978,7 @@ def list_blocks(
     category_id: Any = None,
     area_id: Any = None,
     target: Optional[str] = None,
+    channel: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     The blocks in force (or, `include_ended`, also those removed or ended in the last day) of these
@@ -1025,11 +1007,6 @@ def list_blocks(
         q = q.filter(item)
     if category_id is not None:
         q = q.filter(SoldOutMark.category_id == category_id)
-    if target is not None:
-        if target == rules.TARGET_KIOSKS:
-            q = q.filter(or_(SoldOutMark.target == target, SoldOutMark.scope.in_(["kiosks", "kiosk"])))
-        else:
-            q = q.filter(SoldOutMark.target == target, SoldOutMark.scope.notin_(["kiosks", "kiosk"]))
     if include_ended:
         from datetime import timedelta
 
@@ -1037,6 +1014,11 @@ def list_blocks(
     else:
         q = q.filter(in_force_filter(now))
     marks = q.order_by(SoldOutMark.created_at.desc()).limit(limit).all()
+    # As the block means it now: its channels (one written before channels: what its target meant).
+    if target is not None:
+        marks = [m for m in marks if target_of(m) == target]
+    if channel is not None:
+        marks = [m for m in marks if channel in channels_of(m)]
     if area_id is not None:
         area = db.get(ShopArea, _uuid(area_id))
         if area is None:
@@ -1045,3 +1027,72 @@ def list_blocks(
         cache: Dict[Any, Any] = {}
         marks = [m for m in marks if reaches_area(db, m, area, company_id=shop.company_id if shop else None, cache=cache)]
     return views(db, marks, now)
+
+
+# ── The channels with no device: online ordering, the digital menu ────────────
+
+
+def resolve_channel(
+    db: Session,
+    *,
+    tenant_id: Any,
+    shop_id: Any,
+    channel: str,
+    product_ids: Sequence[Any],
+    area_id: Any = None,
+    now: Optional[datetime] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    What one channel shows of these products at a shop (and, `area_id`, a point of sale): for each,
+    `appears` — its "מופיע ב" names the channel (app/services/product_channels.py) — and what the
+    blocks in force that reach that channel there decide (the shared rule, with a `Till` of that
+    channel: the shop's and its company's blocks, the point of sale's, a category's too). For online
+    ordering and the digital menu, which call this; any channel works (pos / kiosk: what a till /
+    a kiosk of the shop with no device-level block would see).
+
+    `{product id: {appears, state, sellable, overridable, reason, until, display, block}}`.
+    """
+    from app.services import product_channels
+
+    now = now or utc_now()
+    if channel not in rules.CHANNELS:
+        raise _bad("invalid_channel", "ערוץ לא מוכר")
+    shop = db.get(Shop, _uuid(shop_id)) if shop_id is not None else None
+    if shop is None or (tenant_id is not None and str(shop.tenant_id) != str(tenant_id)):
+        raise _bad("shop_not_found", "הסניף לא נמצא", status.HTTP_404_NOT_FOUND)
+    ids = [i for i in (_uuid(p) for p in product_ids) if i is not None]
+    products = {p.id: p for p in db.query(Product).filter(Product.id.in_(ids)).all()} if ids else {}
+    chains = product_category_chains(db, list(products))
+    marks: List[SoldOutMark] = []
+    if products and tables_ready(db):
+        places = [SoldOutMark.shop_id == shop.id]
+        if shop.company_id is not None:
+            places.append(and_(SoldOutMark.scope == "company", SoldOutMark.company_id == shop.company_id))
+        cats = {c for chain in chains.values() for c in chain}
+        item = SoldOutMark.product_id.in_(list(products))
+        if cats:
+            item = or_(item, SoldOutMark.category_id.in_([_uuid(c) for c in cats]))
+        marks = db.query(SoldOutMark).filter(or_(*places), item, in_force_filter(now)).all()
+    till = rules.Till(
+        company_id=str(shop.company_id) if shop.company_id else None,
+        shop_id=str(shop.id),
+        area_id=str(area_id) if area_id is not None else None,
+        channel=channel,
+    )
+    out: Dict[str, Dict[str, Any]] = {}
+    for pid, product in products.items():
+        decision = rules.decide(
+            marks, now, till=till, item=rules.Item(str(pid), tuple(chains.get(str(pid), ()))),
+        )
+        shown = decision.block
+        out[str(pid)] = {
+            "appears": product_channels.appears(product, channel),
+            "state": decision.state,
+            "sellable": decision.sellable,
+            "overridable": decision.overridable,
+            "reason": decision.reason,
+            "until": _iso(decision.until),
+            "display": decision.display,
+            "block": block_out(shown) if shown is not None else None,
+        }
+    return out

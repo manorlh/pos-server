@@ -9,11 +9,17 @@ tests/fixtures/sold_out_golden.json (pos-android keeps the same bytes in app/src
 its `SoldOutRules` must agree case by case). The owner's options and precedence:
 specs/item-blocks-targets.md.
 
-**Two axes.** A block has a **level** (`scope` / `scopeId`) and a **target** — whom at that level:
+**Two axes.** A block has a **level** (`scope` / `scopeId`) and **channels** — where at that
+level it stops the item, any of four (the owner, 10.10): `pos` ("קופה"), `kiosk` ("קיוסק"),
+`online` ("הזמנות אונליין"), `menu` ("תפריט דיגיטלי"). A new block names all four unless told
+otherwise. A till is the `pos` channel, a kiosk the `kiosk` channel; online ordering and the digital
+menu have no device — they ask `decide` with a `Till` of their own `channel` (the resolver,
+app/services/sold_out.py `resolve_channel`).
 
-* `all` (the default) — "קופות וקיוסקים": every device the level reaches;
-* `kiosks` — "קיוסקים בלבד": only the devices that are kiosks — the tills keep selling;
-* `tills` — "קופות בלבד": only the devices that are not kiosks — the kiosks keep selling.
+A block written before channels has a **target** instead, read as channels: `all` ("קופות
+וקיוסקים") = pos + kiosk, `kiosks` ("קיוסקים בלבד") = kiosk, `tills` ("קופות בלבד") = pos. Every
+block still carries the target its channels mean for the devices (`target_for`), so a device that
+reads only the target keeps working.
 
 **Levels** (`scope`):
 
@@ -58,9 +64,16 @@ AVAILABLE, SOLD_OUT, BLOCKED = "available", "sold_out", "blocked"
 KINDS = (SOLD_OUT, BLOCKED)
 MANUAL, AUTO, STOCK = "manual", "auto", "stock"
 
-#: Whom at the level: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד".
+#: Whom at the level, before channels: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד".
 TARGET_ALL, TARGET_KIOSKS, TARGET_TILLS = "all", "kiosks", "tills"
 TARGETS = (TARGET_ALL, TARGET_KIOSKS, TARGET_TILLS)
+#: The target of a block for neither tills nor kiosks (online ordering / the digital menu only).
+TARGET_NONE = "none"
+#: The four channels, in their order: "קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי".
+CH_POS, CH_KIOSK, CH_ONLINE, CH_MENU = "pos", "kiosk", "online", "menu"
+CHANNELS = (CH_POS, CH_KIOSK, CH_ONLINE, CH_MENU)
+#: What each target meant, as channels.
+TARGET_CHANNELS = {TARGET_ALL: (CH_POS, CH_KIOSK), TARGET_KIOSKS: (CH_KIOSK,), TARGET_TILLS: (CH_POS,)}
 #: A kiosk's own look for one block: "הסתר" / "הצג כאזל"; None = `general.soldOutMode`.
 DISPLAY_HIDE, DISPLAY_GREY = "hide", "grey"
 DISPLAYS = (DISPLAY_HIDE, DISPLAY_GREY)
@@ -85,6 +98,13 @@ class Till:
     is_kiosk: bool = False
     event_ids: Sequence[str] = field(default_factory=tuple)
     group_ids: Sequence[str] = field(default_factory=tuple)
+    #: The channel it asks for: None = its device's ("kiosk" for a kiosk, else "pos"); "online" /
+    #: "menu" for online ordering and the digital menu.
+    channel: Optional[str] = None
+
+    @property
+    def device_channel(self) -> str:
+        return self.channel or (CH_KIOSK if self.is_kiosk else CH_POS)
 
 
 @dataclass(frozen=True)
@@ -162,6 +182,32 @@ _ATTRS = {
 }
 
 
+def channels_in(value: Any) -> Optional[tuple]:
+    """A channels value (a list, or "pos,kiosk") in the channels' order, unknown ones dropped; None if absent."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",")]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        items = [str(v) for v in value]
+    else:
+        return None
+    named = set(items)
+    return tuple(c for c in CHANNELS if c in named)
+
+
+def target_for(channels: Iterable[str]) -> str:
+    """The target a device that predates channels reads for these channels."""
+    named = set(channels)
+    if CH_POS in named and CH_KIOSK in named:
+        return TARGET_ALL
+    if CH_KIOSK in named:
+        return TARGET_KIOSKS
+    if CH_POS in named:
+        return TARGET_TILLS
+    return TARGET_NONE
+
+
 def _get(block: Any, key: str) -> Any:
     if isinstance(block, Mapping):
         return block.get(key)
@@ -205,6 +251,42 @@ def normalize(scope: str, target: Optional[str]) -> tuple:
     return (scope, target)
 
 
+def level_name(block: Any) -> str:
+    """The level alone (an older kiosks / kiosk scope: shop / machine)."""
+    scope = _get(block, "scope")
+    legacy = LEGACY_SCOPES.get(scope)
+    return legacy[0] if legacy is not None else scope
+
+
+def channels_of(block: Any) -> tuple:
+    """
+    The channels a block stops the item on: its own `channels`; a block with none, what its
+    target meant (no target = all = pos + kiosk). An older kiosks / kiosk scope is for kiosks only
+    (with target tills it contradicts itself: none).
+    """
+    own = channels_in(_get(block, "channels"))
+    if own is None:
+        _level, target = level_of(block)
+        return TARGET_CHANNELS.get(target, ())
+    if _get(block, "scope") in LEGACY_SCOPES:
+        return tuple(c for c in own if c == CH_KIOSK)
+    return own
+
+
+def normalize_channels(scope: str, channels: Iterable[str]) -> tuple:
+    """`(level, channels)` a new block is written as; ValueError for none left (an older kiosks scope: kiosk only)."""
+    named = channels_in(list(channels)) or ()
+    legacy = LEGACY_SCOPES.get(scope)
+    if legacy is not None:
+        named = tuple(c for c in named if c == CH_KIOSK)
+        if not named:
+            raise ValueError("target_conflict")
+        return (legacy[0], named)
+    if not named:
+        raise ValueError("channels_required")
+    return (scope, named)
+
+
 def target_reaches(target: Optional[str], is_kiosk: bool) -> bool:
     """Whom a target reaches: a kiosk, or a device that is not one."""
     if target == TARGET_ALL:
@@ -233,9 +315,8 @@ def level_covers(level: Any, sid: str, till: Till) -> bool:
 
 
 def covers(block: Any, till: Till) -> bool:
-    """Whether `block` reaches this device: its level covers it, and its target is for it."""
-    level, target = level_of(block)
-    return target_reaches(target, till.is_kiosk) and level_covers(level, str(_get(block, "scopeId")), till)
+    """Whether `block` reaches this device (or channel): its level covers it, and its channels name it."""
+    return till.device_channel in channels_of(block) and level_covers(level_name(block), str(_get(block, "scopeId")), till)
 
 
 def applies(block: Any, item: Optional[Item]) -> bool:

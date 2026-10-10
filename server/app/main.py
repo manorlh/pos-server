@@ -137,7 +137,7 @@ app.include_router(pairing.router, prefix=_prefix)
 app.include_router(pairing_mobile.router, prefix=_prefix)
 app.include_router(elevation.router, prefix=_prefix)
 app.include_router(products.router, prefix=_prefix)
-# "מופיע ב" — a product's four channels, their exceptions and the bulk screen.
+# "מופיע ב — עריכה בכמות": the bulk screen over item-blocks' "מופיע ב" (products.appears_in).
 from app.routers import product_channels as product_channels_router  # noqa: E402
 
 app.include_router(product_channels_router.router, prefix=_prefix)

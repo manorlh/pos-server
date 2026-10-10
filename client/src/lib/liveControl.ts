@@ -8,8 +8,16 @@
 
 export type BlockScope = 'company' | 'shop' | 'kiosks' | 'area' | 'group' | 'event' | 'machine' | 'kiosk';
 export type BlockKind = 'sold_out' | 'blocked';
-/** Whom at the level: "קופות וקיוסקים" (the default) · "קיוסקים בלבד" · "קופות בלבד" (specs/item-blocks-targets.md §2). */
-export type BlockTarget = 'all' | 'kiosks' | 'tills';
+/**
+ * Where a block stops the item (specs/item-blocks-targets.md §11): "קופה", "קיוסק", "הזמנות אונליין",
+ * "תפריט דיגיטלי" — any of the four; a new block: all four.
+ */
+export type BlockChannel = 'pos' | 'kiosk' | 'online' | 'menu';
+/**
+ * What the channels mean for the devices (§2, kept for older devices): "all" = קופה + קיוסק ·
+ * "kiosks" = קיוסק · "tills" = קופה · "none" = neither (online ordering / the digital menu only).
+ */
+export type BlockTarget = 'all' | 'kiosks' | 'tills' | 'none';
 /** The kiosks' look for one block; null = the kiosk's own `general.soldOutMode`. */
 export type KioskDisplay = 'hide' | 'grey';
 /** The level a block is at (the older scopes `kiosks` / `kiosk` read as shop / machine). */
@@ -37,7 +45,10 @@ export interface ItemBlock {
   scopeName: string | null;
   secondsLeft: number | null;
   inForce: boolean;
+  /** Derived by the server from `channels`, for older devices. */
   target?: BlockTarget;
+  /** The channels it stops the item on; absent on a block from an older server (read by its target). */
+  channels?: BlockChannel[];
   level?: BlockLevel;
   itemType?: 'product' | 'category';
   /** The product's name, or the category's. */
@@ -167,6 +178,17 @@ export const TARGET_LABELS: Record<BlockTarget, string> = {
   all: 'קופות וקיוסקים',
   kiosks: 'קיוסקים בלבד',
   tills: 'קופות בלבד',
+  none: 'אונליין ותפריט בלבד',
+};
+
+/** The four channels, in their order (the dialog's checkboxes, the labels' order). */
+export const BLOCK_CHANNELS: readonly BlockChannel[] = ['pos', 'kiosk', 'online', 'menu'];
+
+export const CHANNEL_LABELS: Record<BlockChannel, string> = {
+  pos: 'קופה',
+  kiosk: 'קיוסק',
+  online: 'הזמנות אונליין',
+  menu: 'תפריט דיגיטלי',
 };
 
 /** "תצוגה בקיוסק" — the key `null` is the kiosk's own setting. */
@@ -202,10 +224,73 @@ export function originLabel(origin: string | null | undefined): string | null {
 
 const LEGACY_KIOSK_SCOPES: readonly BlockScope[] = ['kiosks', 'kiosk'];
 
-/** Whom the block reaches: its `target`, an older kiosks / kiosk scope (written before targets) the kiosks. */
-export function targetOf(b: Pick<ItemBlock, 'scope'> & { target?: BlockTarget | null }): BlockTarget {
-  if (LEGACY_KIOSK_SCOPES.includes(b.scope) && (!b.target || b.target === 'all')) return 'kiosks';
-  return b.target ?? 'all';
+/** What each target meant, as channels (a block written before channels). */
+const TARGET_CHANNELS: Record<BlockTarget, readonly BlockChannel[]> = {
+  all: ['pos', 'kiosk'],
+  kiosks: ['kiosk'],
+  tills: ['pos'],
+  none: [],
+};
+
+type ChannelsOfInput = Pick<ItemBlock, 'scope'> & { target?: BlockTarget | null; channels?: readonly string[] | null };
+
+/** Known channels only, each once, in the channels' order. */
+export function orderedChannels(list: Iterable<string>): BlockChannel[] {
+  const named = new Set(list);
+  return BLOCK_CHANNELS.filter((c) => named.has(c));
+}
+
+/**
+ * The channels a block stops the item on, as pos-server sold_out_rules.py `channels_of` reads them:
+ * its own `channels`; one without (an older server / row), what its target meant — "all" (or none)
+ * = קופה + קיוסק, never online nor the menu. An older kiosks / kiosk scope is for kiosks only.
+ */
+export function channelsOf(b: ChannelsOfInput): BlockChannel[] {
+  const legacy = LEGACY_KIOSK_SCOPES.includes(b.scope);
+  if (Array.isArray(b.channels)) {
+    const own = orderedChannels(b.channels);
+    return legacy ? own.filter((c) => c === 'kiosk') : own;
+  }
+  const target = b.target ?? 'all';
+  // "All the shop's kiosks" for the tills only contradicts itself: nothing, never wider.
+  if (legacy) return target === 'all' || target === 'kiosks' ? ['kiosk'] : [];
+  return [...(TARGET_CHANNELS[target] ?? TARGET_CHANNELS.all)];
+}
+
+/** What the channels mean for the devices (pos-server `target_for`). */
+export function targetForChannels(channels: readonly BlockChannel[]): BlockTarget {
+  const pos = channels.includes('pos');
+  const kiosk = channels.includes('kiosk');
+  if (pos && kiosk) return 'all';
+  if (kiosk) return 'kiosks';
+  if (pos) return 'tills';
+  return 'none';
+}
+
+/** Whom of the devices the block reaches: from its channels (an older kiosks / kiosk scope: the kiosks). */
+export function targetOf(b: ChannelsOfInput): BlockTarget {
+  return targetForChannels(channelsOf(b));
+}
+
+/** Every one of the four. */
+export function isAllChannels(channels: readonly BlockChannel[]): boolean {
+  return BLOCK_CHANNELS.every((c) => channels.includes(c));
+}
+
+/** "כל הערוצים" for all four, else "קיוסק · תפריט דיגיטלי" (in the channels' order); "אף ערוץ" for none. */
+export function channelsLabel(channels: readonly BlockChannel[]): string {
+  const named = orderedChannels(channels);
+  if (named.length === 0) return 'אף ערוץ';
+  if (named.length === BLOCK_CHANNELS.length) return 'כל הערוצים';
+  return named.map((c) => CHANNEL_LABELS[c]).join(' · ');
+}
+
+/** The summary's words for channels that are not all four: "רק קיוסק", "רק קופה, קיוסק ותפריט דיגיטלי". */
+function onlyChannelsPhrase(channels: readonly BlockChannel[]): string {
+  const labels = orderedChannels(channels).map((c) => CHANNEL_LABELS[c]);
+  if (labels.length === 0) return 'אף ערוץ';
+  if (labels.length === 1) return `רק ${labels[0]}`;
+  return `רק ${labels.slice(0, -1).join(', ')} ו${labels[labels.length - 1]}`;
 }
 
 /** The level the block is at: its `level`, an older kiosks / kiosk scope as shop / machine. */
@@ -231,15 +316,22 @@ export function itemLabel(
   return b.itemName ?? b.productName ?? '';
 }
 
-/** One line about a block: "אזל · נקודת מכירה · בר · קיוסקים בלבד · עד 14:35 (עוד 47 דק׳)" (the target only when not all). */
+/**
+ * One line about a block: "אזל · נקודת מכירה · בר · רק קיוסק ותפריט דיגיטלי · עד 14:35 (עוד 47 דק׳)"
+ * (the channels only when not all four).
+ */
 export function blockSummary(
-  b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'> & { target?: BlockTarget | null; level?: BlockLevel | null },
+  b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'> & {
+    target?: BlockTarget | null;
+    channels?: readonly string[] | null;
+    level?: BlockLevel | null;
+  },
   nowMs: number,
   timeZone?: string,
 ): string {
   const parts = [kindLabel(b.kind), levelLabel(b)];
-  const target = targetOf(b);
-  if (target !== 'all') parts.push(TARGET_LABELS[target]);
+  const channels = channelsOf(b);
+  if (!isAllChannels(channels)) parts.push(onlyChannelsPhrase(channels));
   const until = formatUntil(b.until, nowMs, timeZone);
   const left = formatLeft(secondsLeft(b.until, nowMs));
   parts.push(until ? `עד ${until}${left ? ` (${left})` : ''}` : 'עד ביטול');

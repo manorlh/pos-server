@@ -38,7 +38,6 @@ from app.models.pos_machine import POSMachine
 from app.services import general_item
 from app.services import item_ticket
 from app.services import product_alerts
-from app.services import product_channels
 from app.services import product_list_filters as list_filters
 from app.services import product_shop_scope as scope_svc
 from app.services.catalog_notify import (
@@ -344,25 +343,12 @@ def list_products(
             description='"company:<id>", "shop:<id>", "area:<id>" or "machine:<id>"',
         ),
     ] = None,
-    channel_on: Annotated[
-        Optional[List[str]],
-        Query(alias="channelOn", description='"מופיע ב": products whose default for these channels is on'),
-    ] = None,
-    channel_off: Annotated[
-        Optional[List[str]],
-        Query(alias="channelOff", description='"מופיע ב": products whose default for these channels is off'),
-    ] = None,
 ):
     """
     The catalog, a page at a time. Search and filters are described in
     `app/services/product_list_filters.py`; every one of them is part of the one query.
     """
     query = db.query(Product).filter(Product.tenant_id == active_tenant_id)
-    for wanted, on in ((channel_on, True), (channel_off, False)):
-        for channel in [c for c in (wanted or []) if c]:
-            if channel not in product_channels.CHANNELS:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown channel")
-            query = query.filter(product_channels.condition(Product, channel, on))
 
     # A tenant-wide product carries no company at all, so membership alone hid every
     # global row from every merchant-side role: a shop manager authorised to edit the
@@ -486,12 +472,11 @@ def create_product(
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
-    # "מופיע ב": the channels sent over `salesChannel`; online and the digital menu stay off
-    # unless asked (app/services/product_channels.py).
-    product.channel_online = False
-    product.channel_menu = False
-    if data.appears_in:
-        product_channels.apply(product, data.appears_in)
+    # "מופיע ב" (app/services/product_channels.py): when sent, it decides `sales_channel` too.
+    if data.appears_in is not None:
+        from app.services import product_channels
+
+        product_channels.apply(product, appears=product_channels.clean(data.appears_in))
     # An explicit id so the shop rows below can reference it before the insert.
     product.id = uuid_mod.uuid4()
     # "הודעות לעובד" / "פריטים נלווים": only what the request sent.
@@ -598,9 +583,15 @@ def update_product(
 
     for field, value in updates.items():
         setattr(product, field, value)
-    # "מופיע ב" (not in `updates`): only the channels sent change.
-    if data.appears_in:
-        product_channels.apply(product, data.appears_in)
+    # "מופיע ב" (app/services/product_channels.py): sent, it sets `sales_channel` too; a new
+    # `sales_channel` alone moves the pos / kiosk part of a product with its own list.
+    from app.services import product_channels
+
+    product_channels.apply(
+        product,
+        appears=product_channels.clean(data.appears_in) if data.appears_in is not None else None,
+        sales_channel_changed="sales_channel" in updates,
+    )
     # "הודעות לעובד" / "פריטים נלווים" (not in `updates`): what the request sent, validated.
     product_alerts.apply(db, product, data, active_tenant_id)
 

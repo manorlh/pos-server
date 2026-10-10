@@ -50,7 +50,7 @@ from test_product_availability import world  # noqa: F401
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "digital_effective_state_golden.json"
 #: The LF-normalised bytes' SHA-256 of the resolver's golden cases.
-GOLDEN_SHA256 = "828805a76276948e5f581f0bb92ea2c74cc52a5f0ebfe7c8bfee0ffbdd0018d2"
+GOLDEN_SHA256 = "5bddce4d98345db994c1b0250bd0477de369812124a746a457617002c642cece"
 
 NOW = datetime(2026, 10, 11, 9, 0, tzinfo=timezone.utc)  # Sunday 12:00 in Israel
 
@@ -82,12 +82,10 @@ def test_the_rule_gives_each_golden_answer(case):
     assert (d.display, d.orderable, d.reasons, d.public_reason) == (
         expect["display"], expect["orderable"], expect["reasons"], expect["publicReason"],
     )
-    assert ((d.block or {}).get("id") if d.block else None) == expect["block"]
-
-
-def test_block_channels():
-    for case in _golden()["blockChannels"]:
-        assert sorted(ER.block_channels(case["block"])) == case["expect"]
+    block_id = None
+    if d.block is not None:
+        block_id = d.block.get("id") if isinstance(d.block, dict) else getattr(d.block, "id", None)
+    assert block_id == expect["block"]
 
 
 # ── On a real session ────────────────────────────────────────────────────────
@@ -96,7 +94,7 @@ def test_block_channels():
 _EXTRA = (
     "kiosk_devices", "kiosk_settings", "sold_out_marks", "report_events", "report_event_machines",
     "machine_groups", "machine_group_members", "stock_levels", "display_orderings", "display_ordering_bindings",
-    "presentation_profiles", "presentation_revisions", "presentation_audit", "product_channel_overrides",
+    "presentation_profiles", "presentation_revisions", "presentation_audit",
     "catalog_menus", "catalog_menu_categories", "catalog_menu_products", "catalog_menu_assignments",
     "catalog_menu_fallbacks", "catalog_menu_sync_state", "sync_logs",
 )
@@ -109,8 +107,7 @@ def dw(world, monkeypatch):  # noqa: F811
     for name in _EXTRA:
         if name in Base.metadata.tables and not db.get_bind().dialect.has_table(db.connection(), name):
             Base.metadata.tables[name].create(db.get_bind())
-    for mod in (PC, PP):
-        mod._READY.clear()
+    PP._READY.clear()
     DO._READY = None
     cache.clear()
     world.signals = []
@@ -121,9 +118,9 @@ def dw(world, monkeypatch):  # noqa: F811
     db.flush()
     world.h1.area_id = bar.id
     db.add(KioskDevice(machine_id=world.h2.id, tenant_id=world.tid, shop_id=world.h_shop.id, name="Kiosk", enabled=True))
-    # Both on the digital menu and online.
+    # Both on the digital menu and online ("מופיע ב", item-blocks' model).
     for p in (world.P, world.Q):
-        PC.apply(p, {"online": True, "menu": True})
+        PC.apply(p, appears=list(PC.CHANNELS))
     world.rows.p_h.price = 12
     db.commit()
     world.bar = bar
@@ -145,6 +142,14 @@ def _select(w, p, selection, **content):
     d = PP.draft_of(w.db, p)
     PP.put_draft(w.db, p, content={**(d.content or {}), "selection": selection, **content}, field_states=None, version=d.version)
     w.db.commit()
+
+
+def _set(product, **channels):
+    """Switch channels of "מופיע ב" (item-blocks' model) on or off, the others as they are."""
+    now = list(PC.appears_in(product))
+    for c, on in channels.items():
+        now = [x for x in now if x != c] + ([c] if on else [])
+    PC.apply(product, appears=[c for c in PC.CHANNELS if c in now])
 
 
 def _view(w, p, *, mode="public", channel=None, at=NOW, **kw):
@@ -301,50 +306,49 @@ class TestResolver:
         assert out["categories"][0]["products"] == sorted([str(dw.P.id), str(dw.Q.id)], key=lambda i: {str(dw.P.id): "Cola", str(dw.Q.id): "Soda"}[i])
 
     def test_a_product_switched_on_after_publication_waits(self, dw):
-        PC.apply(dw.Q, {"menu": False})
+        _set(dw.Q, menu=False)
         dw.db.commit()
         p = self._published(dw)
-        PC.apply(dw.Q, {"menu": True})
+        _set(dw.Q, menu=True)
         dw.db.commit()
         row = _view(dw, p)["products"][str(dw.Q.id)]
         assert (row["display"], row["reasons"]) == ("hide", ["not_published"])
         assert _view(dw, p, mode="preview")["products"][str(dw.Q.id)]["display"] == "show", "the preview shows it"
         # Switching it off acts at once.
-        PC.apply(dw.P, {"menu": False})
+        _set(dw.P, menu=False)
         dw.db.commit()
         assert _view(dw, p)["products"][str(dw.P.id)]["reasons"] == ["channel_off"]
 
     def test_a_category_taking_future_products_needs_no_publication(self, dw):
-        PC.apply(dw.Q, {"menu": False})
+        _set(dw.Q, menu=False)
         dw.db.commit()
         p = self._published(dw, selection=_drinks(dw, future=True))
-        PC.apply(dw.Q, {"menu": True})
+        _set(dw.Q, menu=True)
         dw.db.commit()
         assert _view(dw, p)["products"][str(dw.Q.id)]["display"] == "show"
 
     def test_a_web_block_reaches_the_web_and_no_till_a_till_block_not_the_web(self, dw):
         p = self._published(dw)
-        web = SO.block(dw.db, tenant_id=dw.tid, product=dw.P, target=SO.resolve_target(dw.db, "shop", dw.h_shop.id, dw.tid),
-                       kind="blocked", channels=["menu"], now=NOW)
-        till = SO.block(dw.db, tenant_id=dw.tid, product=dw.Q, target=SO.resolve_target(dw.db, "shop", dw.h_shop.id, dw.tid),
-                        kind="blocked", now=NOW)
+        shop = SO.resolve_target(dw.db, "shop", dw.h_shop.id, dw.tid)
+        web = SO.block(dw.db, tenant_id=dw.tid, product=dw.P, target=shop, kind="blocked", channels=["menu"], now=NOW)
+        till = SO.block(dw.db, tenant_id=dw.tid, product=dw.Q, target=shop, kind="blocked", channels=["pos", "kiosk"], now=NOW)
         dw.db.commit()
-        assert web.target == "all" and web.channels == ["menu"]
+        assert web.channels == ["menu"] and till.channels == ["pos", "kiosk"], "item-blocks' own channels"
         out = _view(dw, p)
         assert (out["products"][str(dw.P.id)]["display"], out["products"][str(dw.P.id)]["publicReason"]) == ("label", "לא זמין כרגע")
         assert out["products"][str(dw.Q.id)]["display"] == "show", "a block for the tills and kiosks is not the web's"
         till_rows = {r["globalProductId"]: r for r in S.get_products_for_sync(dw.db, str(dw.tid), str(dw.h1.id))}
         assert [b["id"] for b in till_rows[str(dw.P.id)]["blocks"]] == [], "the web-only block never reaches a till"
-        assert till_rows[str(dw.P.id)]["isAvailable"] is True
         assert [b["id"] for b in till_rows[str(dw.Q.id)]["blocks"]] == [str(till.id)]
-        assert set(till_rows[str(dw.Q.id)]["blocks"][0]) == {
-            "id", "scope", "scopeId", "target", "kind", "source", "until", "createdAt", "by", "note", "productId",
-            "categoryId", "kioskDisplay",
-        }, "the block a till reads has the keys it always had"
+        # A block with no channels of its own (before channels): its target — the devices only.
+        old = SO.block(dw.db, tenant_id=dw.tid, product=dw.Q, target=shop, kind="sold_out", reach="all", now=NOW)
+        dw.db.commit()
+        assert old.channels == ["pos", "kiosk"]
+        assert _view(dw, p)["products"][str(dw.Q.id)]["display"] == "show"
         # An internal note never reaches the public view.
         assert "note" not in json.dumps(DE.public_view(out), ensure_ascii=False)
 
-    def test_online_hours_service_and_the_shop_override(self, dw):
+    def test_online_hours_service_and_appears_in(self, dw):
         p = self._published(dw, kind="online", schedule={"order": {"takeaway": {"ranges": [["13:00", "22:00"]]}}})
         closed = _view(dw, p, service="takeaway")
         assert closed["open"] == {"access": True, "order": False}
@@ -353,13 +357,11 @@ class TestResolver:
         later = _view(dw, p, service="takeaway", at=datetime(2026, 10, 11, 11, 0, tzinfo=timezone.utc))
         assert later["products"][str(dw.P.id)]["orderable"] is True
         assert _view(dw, p, service="dine_in")["products"][str(dw.P.id)]["reasons"] == ["service_unavailable"]
-        from app.models.product_channel_override import ProductChannelOverride
-
-        dw.db.add(ProductChannelOverride(id=uuid.uuid4(), tenant_id=dw.tid, product_id=dw.P.id, level="area",
-                                         target_id=dw.bar.id, channel="online", allowed=False))
+        # "מופיע ב" without online: off at once (item-blocks' model, no publication needed to switch off).
+        _set(dw.P, online=False)
         dw.db.commit()
-        assert _view(dw, p, area_id=dw.bar.id)["products"][str(dw.P.id)]["reasons"][0] == "channel_off"
-        assert _view(dw, p)["products"][str(dw.P.id)]["display"] == "show", "the shop as a whole still has it"
+        assert _view(dw, p, service="takeaway", at=datetime(2026, 10, 11, 11, 0, tzinfo=timezone.utc))[
+            "products"][str(dw.P.id)]["reasons"] == ["channel_off"]
 
     def test_a_time_menu_offered_on_the_web(self, dw):
         p = self._published(dw)

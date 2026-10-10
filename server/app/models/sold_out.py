@@ -41,8 +41,11 @@ SOLD_OUT_SCOPES = ("company", "shop", "kiosks", "event", "group", "area", "kiosk
 SOLD_OUT_KINDS = ("sold_out", "blocked")
 #: Who set it: a person, or the stock reaching 0.
 SOLD_OUT_SOURCES = ("manual", "auto")
-#: Whom at the level: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד".
-SOLD_OUT_TARGETS = ("all", "kiosks", "tills")
+#: Whom at the level, before channels: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד" (and "none":
+#: neither — online ordering / the digital menu only).
+SOLD_OUT_TARGETS = ("all", "kiosks", "tills", "none")
+#: The channels a block stops an item on (app/services/sold_out_rules.py `CHANNELS`).
+SOLD_OUT_CHANNELS = ("pos", "kiosk", "online", "menu")
 #: The kiosks' look for one block: "הסתר" / "הצג כאזל" (NULL = `general.soldOutMode`).
 SOLD_OUT_DISPLAYS = ("hide", "grey")
 #: Where a block was set from.
@@ -70,19 +73,15 @@ class SoldOutMark(Base):
     category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="CASCADE"), nullable=True)
     scope = Column(String(16), nullable=False)
     scope_id = Column(UUID(as_uuid=True), nullable=False)
-    #: "all" | "kiosks" | "tills" — whom at the level.
+    #: "all" | "kiosks" | "tills" | "none" — what `channels` mean for the devices (a device that
+    #: predates channels reads only this).
     target = Column(String(8), nullable=False, default="all", server_default="all")
+    #: ["pos", "kiosk", "online", "menu"] — where the block stops the item; NULL: what `target` meant.
+    channels = Column(JSON, nullable=True)
     #: The kiosks' look: "hide" | "grey"; NULL = `general.soldOutMode`.
     kiosk_display = Column(String(8), nullable=True)
     #: Where it was set from (SOLD_OUT_ORIGINS); NULL before origins were kept.
     origin = Column(String(16), nullable=True)
-    #: "מופיע ב" — the channels this block covers (pos / kiosk / online / menu,
-    #: specs/digital-menu-ordering-cards-plan.md §4.3). NULL: as `target` always meant — the tills
-    #: and / or the kiosks, no web channel (app/services/digital_effective_rules.py `block_channels`).
-    #: `target` stays the devices' projection; a block without pos and kiosk reaches no device.
-    channels = Column(JSON, nullable=True)
-    #: Its look on the web channels: "hide" / "label"; NULL = the profile's default.
-    web_display = Column(String(8), nullable=True)
     #: "sold_out" | "blocked".
     kind = Column(String(16), nullable=False, default="sold_out", server_default="sold_out")
     #: Ends by itself then; NULL = until removed.

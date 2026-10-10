@@ -6,11 +6,12 @@ Given a context — tenant, shop, point of sale, profile (and its revision), cha
 time — it gathers, from the engines that already exist, what decides each product, and asks the
 rule: the catalog and the shop's assortment (`shop_product_overrides`), the availability locks
 (company / shop / point of sale, app/services/product_availability.py) and the categories' switches,
-"מופיע ב" with its exceptions (app/services/product_channels.py), the profile's selection and
-publication, the time menus offered on this web channel (`catalog_menus.web_channels`, the menus'
-own rule app/services/catalog_menu_rules.py), the blocks in force ("חסום" / "אזל" with their
-4-channel targets, app/services/sold_out.py) and stock, the profile's hours. The order comes from
-"סדר תצוגה" (app/services/display_ordering.py).
+"מופיע ב" (item-blocks' model, the canonical one: `products.appears_in`,
+app/services/product_channels.py), the profile's selection and publication, the time menus offered on
+this web channel (`catalog_menus.web_channels`, the menus' own rule app/services/catalog_menu_rules.py),
+the blocks in force ("חסום" / "אזל": item-blocks' `sold_out_marks.channels` and their own rule,
+app/services/sold_out_rules.py `decide` with a `Till` of the web channel) and stock, the profile's
+hours. The order comes from "סדר תצוגה" (app/services/display_ordering.py).
 
 One code path for three requests: the public page (the published revision — `mode="public"`), the
 editor's preview (the draft, with a test context — `mode="preview"`) and an order's validation
@@ -193,45 +194,38 @@ def _categories(db: Session, place: Place, category_ids: Iterable[Any]) -> Tuple
     return rows, active, chains
 
 
-def _blocks(db: Session, place: Place, products: Sequence[Product], chains: Mapping[str, List[str]], now: datetime) -> Dict[str, List[Dict[str, Any]]]:
-    """The blocks in force at this place (company / shop / point of sale), per product — its own and its categories'."""
+def _blocks(db: Session, place: Place, products: Sequence[Product], chains: Mapping[str, List[str]], now: datetime) -> Dict[str, List[Any]]:
+    """
+    The blocks in force at this place, per product (its own and its categories') — item-blocks' rows as
+    they are (`sold_out_marks`, with their `channels`); their own rule decides which reach the channel
+    (app/services/sold_out.py `resolve_channel` reads the same: the shop's, and its company's).
+    """
     from app.models.sold_out import SoldOutMark
     from app.services import sold_out as SO
 
     if not SO.tables_ready(db):
         return {}
-    pairs = []
-    if place.company_id is not None:
-        pairs.append(("company", place.company_id))
+    places = []
     if place.shop_id is not None:
-        pairs += [("shop", place.shop_id), ("kiosks", place.shop_id)]
-    if place.area_id is not None:
-        pairs.append(("area", place.area_id))
-    if not pairs:
+        places.append(SoldOutMark.shop_id == place.shop_id)
+    if place.company_id is not None:
+        places.append(and_(SoldOutMark.scope == "company", SoldOutMark.company_id == place.company_id))
+    if not places:
         return {}
     pids = [p.id for p in products]
     cats = {c for chain in chains.values() for c in chain}
     item = SoldOutMark.product_id.in_(pids)
     if cats:
         item = or_(item, SoldOutMark.category_id.in_([_uuid(c) for c in cats]))
-    q = db.query(SoldOutMark).filter(
-        or_(*[and_(SoldOutMark.scope == s, SoldOutMark.scope_id == i) for s, i in pairs]),
-        SO.in_force_filter(now),
-        item,
-    )
-    by_product: Dict[str, List[Dict[str, Any]]] = {}
-    by_category: Dict[str, List[Dict[str, Any]]] = {}
+    q = db.query(SoldOutMark).filter(or_(*places), SO.in_force_filter(now), item)
+    by_product: Dict[str, List[Any]] = {}
+    by_category: Dict[str, List[Any]] = {}
     for m in q.all():
-        row = {
-            **SO.block_out(m),
-            "channels": getattr(m, "channels", None),
-            "webDisplay": getattr(m, "web_display", None),
-        }
         if m.product_id is not None:
-            by_product.setdefault(str(m.product_id), []).append(row)
+            by_product.setdefault(str(m.product_id), []).append(m)
         elif m.category_id is not None:
-            by_category.setdefault(str(m.category_id), []).append(row)
-    out: Dict[str, List[Dict[str, Any]]] = {}
+            by_category.setdefault(str(m.category_id), []).append(m)
+    out: Dict[str, List[Any]] = {}
     for p in products:
         found = list(by_product.get(str(p.id), []))
         for c in chains.get(str(p.category_id), []):
@@ -452,7 +446,6 @@ def resolve(db: Session, req: Request) -> Dict[str, Any]:
     products, shop_rows = _catalog(db, place)
     available = _available(db, place, products, shop_rows)
     cats, cat_active, chains = _categories(db, place, {p.category_id for p in products})
-    overrides = PC.overrides_for(db, [p.id for p in products], shop_id=place.shop_id, area_id=place.area_id)
     blocks = _blocks(db, place, products, chains, now)
     stock, auto = _stock(db, place, products)
     menu = web_menus(db, place, channel, local_at)
@@ -477,14 +470,14 @@ def resolve(db: Session, req: Request) -> Dict[str, Any]:
         channel=channel, service=req.service, services=list(profile.service_types or []),
         order_open=open_now["order"], published=exposure is not None,
         sold_out_display=display.get("soldOut") or ER.LABEL, blocked_display=display.get("blocked") or ER.LABEL, lang=lang,
+        now=now, company_id=str(place.company_id) if place.company_id else None,
+        shop_id=str(place.shop_id) if place.shop_id else None, area_id=str(place.area_id) if place.area_id else None,
     )
     overrides_public = content.get("productOverrides") or {}
     rows: Dict[str, Dict[str, Any]] = {}
     for p in products:
         pid = str(p.id)
         chain = chains.get(str(p.category_id), [str(p.category_id)] if p.category_id else [])
-        defaults = PC.of(p)
-        eff_channels = PC.resolve(defaults, overrides.get(pid, []), shop_id=place.shop_id, area_id=place.area_id)
         sel = ER.select(selection, pid, chain, parent=parent(pid, chain) if parent else None, kiosk_hidden=hidden_kiosk)
         shop_row = shop_rows.get(pid)
         if menu is None:
@@ -501,14 +494,16 @@ def resolve(db: Session, req: Request) -> Dict[str, Any]:
             available=available.get(pid, True),
             listed=(shop_row is None and place.shop_id is None) or bool(getattr(shop_row, "is_listed", False)),
             category_active=cat_active.get(str(p.category_id), True),
-            channel_allowed=eff_channels[channel].allowed,
+            # "מופיע ב": item-blocks' model (products.appears_in, product_channels.appears).
+            channel_allowed=PC.appears(p, channel),
             selected=sel,
             exposed=pid in exposed_ids,
             menu=menu_state,
             blocks=blocks.get(pid, []),
-            track_stock=bool(p.track_stock),
+            # Stock where this place sells from (a company page has none: no stock rule).
+            track_stock=bool(p.track_stock) and place.shop_id is not None,
             stock=stock.get(pid),
-            auto_sold_out=auto,
+            auto_setting=auto,
         )
         d = ER.decide(facts, ctx)
         public = overrides_public.get(pid) if isinstance(overrides_public.get(pid), Mapping) else {}
@@ -535,7 +530,7 @@ def resolve(db: Session, req: Request) -> Dict[str, Any]:
             "orderable": d.orderable,
             "publicReason": d.public_reason,
             "reasons": d.reasons,
-            "channelSource": eff_channels[channel].source,
+            "appearsIn": list(PC.appears_in(p)),
             "selected": sel.selected,
         }
 

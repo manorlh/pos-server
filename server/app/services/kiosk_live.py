@@ -113,7 +113,7 @@ def active_hides(db: Session, shop_ids: Sequence[Any], now: Optional[datetime] =
         .order_by(SoldOutMark.created_at.desc())
         .all()
     )
-    return [m for m in marks if sold_out.target_of(m) in ("all", "kiosks")]
+    return [m for m in marks if "kiosk" in sold_out.channels_of(m)]
 
 
 def hides_out(db: Session, rows: Sequence[SoldOutMark], now: Optional[datetime] = None) -> List[Dict[str, Any]]:
@@ -165,7 +165,7 @@ def hide(
     target = sold_out.resolve_target(db, "shop", shop_id, tenant_id)
     return sold_out.block(
         db, tenant_id=tenant_id, product=product, category=category, target=target, kind="blocked",
-        until=until, note=note, user=user, now=now, reach="kiosks", display="hide", origin="dashboard",
+        until=until, note=note, user=user, now=now, channels=["kiosk"], display="hide", origin="dashboard",
     )
 
 
