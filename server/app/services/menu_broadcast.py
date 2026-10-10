@@ -1048,6 +1048,19 @@ def _on_menu(row: Optional[Dict[str, Any]]) -> bool:
     return row is not None and bool(row.get("shopListed", True))
 
 
+def _device_appears(row: Optional[Dict[str, Any]]) -> Optional[List[str]]:
+    """
+    The tills' and kiosks' part of a row's "מופיע ב" — what a broadcast changes for them (online
+    and the digital menu are not theirs). None for a row published before `appearsIn`.
+    """
+    from app.services import product_channels
+
+    appears = (row or {}).get("appearsIn")
+    if not isinstance(appears, list):
+        return None
+    return [c for c in (product_channels.POS, product_channels.KIOSK) if c in appears]
+
+
 def _gate_available(gate: Optional[Dict[str, Any]]) -> Optional[bool]:
     if gate is None:
         return None
@@ -1095,6 +1108,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return bool(value)
         if field_name == "dietaryTags":
             return dietary.labels(value)
+        if field_name == "appearsIn":
+            from app.services import product_channels
+
+            return [product_channels.LABELS_HE.get(c, c) for c in value or []]
         return value
 
     def by_name(keys, *maps):
@@ -1127,11 +1144,17 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             for f in _PRODUCT_FIELDS
             if not _same(a.get(f), b.get(f))
         ]
+        # "מופיע ב": the tills' and the kiosks' part, as each kind reads it — a till's
+        # `salesChannel` alone misses a product put on (or taken off) the kiosks only.
+        appears_before, appears_after = _device_appears(a), _device_appears(b)
+        by_appears = appears_before is not None and appears_after is not None
         changes += [
             _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
             for f in _PRODUCT_NEW_FIELDS
-            if f in a and f in b and not _same(a.get(f), b.get(f))
+            if f in a and f in b and not _same(a.get(f), b.get(f)) and not (by_appears and f == "salesChannel")
         ]
+        if by_appears and appears_before != appears_after:
+            changes.append(_change("appearsIn", shown("appearsIn", appears_before, True), shown("appearsIn", appears_after)))
         if changes:
             out["products"].append(_item("changed", key, name, changes))
         before, after = _gate_available(og.get(key)), _gate_available(ng.get(key))

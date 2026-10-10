@@ -18,6 +18,8 @@ What each test pins, and how it could look fine while doing damage:
   kiosk only after "אישור ושידור", and never moves a till.
 * **Locked rows** — a product the broadcast dropped is sent locked as the kiosk reads it.
 * **Older publications** — a row published before "מופיע ב" (no `appearsIn`) keeps its stored code.
+* **The review** — the tills' and the kiosks' part of "מופיע ב" is a change of its own (a till's
+  `salesChannel` alone misses a product put on the kiosks only), once, never online or the menu.
 
 Runs on the in-memory SQLite world of tests/shift_world.py (every table, foreign keys on).
 """
@@ -181,3 +183,51 @@ class TestLockedRowsAndOlderPublications:
         m.db.commit()
         assert sold_as(pull(m, m.t2), m.burger) == SC.KIOSK_ONLY
         assert sold_as(pull(m, m.t1), m.burger) == SC.KIOSK_ONLY
+
+
+# ── The review shows the kiosks' part ────────────────────────────────────────
+
+
+def product_changes(m, product):
+    """What the review screen lists for `product` under "מוצרים"."""
+    items = [i for i in B.preview(m.db, m.shop)["sections"]["products"] if i["id"] == str(product.id)]
+    return [c for i in items for c in i["changes"]]
+
+
+class TestTheReviewShowsTheKiosksPart:
+    def test_a_product_put_on_the_kiosks_only_is_a_change(self, m):
+        """A till's `salesChannel` is "kiosk_only" before and after: only "מופיע ב" shows it."""
+        set_appears(m, m.burger, ["online"])
+        tables_on(m)
+        pull(m, m.t1)
+        set_appears(m, m.burger, ["kiosk", "online"])
+        assert product_changes(m, m.burger) == [{"field": "appearsIn", "before": [], "after": ["קיוסק"]}]
+
+    def test_one_line_not_two_when_the_tills_code_moves_too(self, m):
+        set_appears(m, m.burger, ["pos", "kiosk"])
+        tables_on(m)
+        pull(m, m.t1)
+        set_appears(m, m.burger, ["pos"])
+        assert product_changes(m, m.burger) == [
+            {"field": "appearsIn", "before": ["קופה", "קיוסק"], "after": ["קופה"]},
+        ]
+
+    def test_online_and_the_menu_are_not_the_tills_change(self, m):
+        set_appears(m, m.burger, ["pos", "kiosk"])
+        tables_on(m)
+        pull(m, m.t1)
+        set_appears(m, m.burger, ["pos", "kiosk", "online", "menu"])
+        assert product_changes(m, m.burger) == []
+
+    def test_against_a_publication_before_appears_in_the_code_is_compared(self, m):
+        tables_on(m)
+        pull(m, m.t1)
+        publication = publications(m)[0]
+        snapshot = dict(publication.snapshot)
+        products = {k: {f: v for f, v in row.items() if f != "appearsIn"} for k, row in snapshot["products"].items()}
+        snapshot["products"] = products
+        publication.snapshot = snapshot
+        flag_modified(publication, "snapshot")
+        m.db.commit()
+        set_appears(m, m.burger, ["pos"])
+        assert product_changes(m, m.burger) == [{"field": "salesChannel", "before": SC.ALL, "after": SC.POS_ONLY}]
