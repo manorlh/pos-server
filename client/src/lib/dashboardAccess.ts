@@ -30,6 +30,7 @@ export type SectionId =
   | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
+  | 'business_cards'
   | 'notifications'
   | 'till_messages'
   | 'exception_alerts'
@@ -104,6 +105,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
   { id: 'customers', pages: ['/dashboard/club'] },
+  { id: 'business_cards', pages: ['/dashboard/business-cards'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },

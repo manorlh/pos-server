@@ -145,6 +145,12 @@ SECTIONS: Tuple[Section, ...] = (
     ),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
     Section("customers", "לקוחות ומועדון", "מועדון לקוחות, חברים ולקוחות.", ("/dashboard/club",)),
+    Section(
+        "business_cards", "כרטיסי ביקור",
+        "כרטיסי ביקור דיגיטליים לחברה, סניף, נקודת מכירה ואנשי צוות: עורך, פרסום, QR ופניות. "
+        "צפייה: רואה כרטיסים, נתונים ופניות; עריכה: עורך, מפרסם, משהה ומטפל בפניות.",
+        ("/dashboard/business-cards",),
+    ),
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
@@ -412,6 +418,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/zcredit-reconciliation*", S("reports", "z")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
+    # "כרטיסי ביקור": the preview's VCF is a simulation of the draft — a viewer may look at it.
+    ("POST", "/business-cards/{}/preview-vcard", S("business_cards", level=VIEW)),
+    (_ALL, "/business-cards*", S("business_cards")),
     (_ALL, "/customers*", S("customers")),
     (_ALL, "/notifications*", S("notifications")),
     # "הודעות לקופות" only — a message here may be full screen. A manager with only "פעולות מהירות"

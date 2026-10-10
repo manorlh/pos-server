@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Base URL of the public club sign-up page (QR codes point to <base>/<token>).
     # Empty = <pairing_mobile_app_base_url>/join.
     club_join_base_url: str = ""
+    # Base URL of the public digital business cards (<base>/<slug>; QR codes, VCF "URL:").
+    # Empty = <pairing_mobile_app_base_url>/c (app/services/business_cards.py).
+    business_card_base_url: str = ""
 
     # "התראות SMS על חריגות" (app/services/exception_alerts). Which SMS provider the
     # exception alerts use: "dry_run" (the default — nothing leaves the server; every

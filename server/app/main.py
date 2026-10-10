@@ -485,6 +485,13 @@ from app.routers import voucher_distribution as voucher_distribution_router  # n
 app.include_router(voucher_distribution_router.router, prefix=_prefix)
 app.include_router(voucher_distribution_router.public_router, prefix=_prefix)
 
+# "כרטיסי ביקור דיגיטליים" (app/routers/business_cards.py): the cards' dashboard editor and the
+# public card `/c/<slug>` (page, VCF, cookie-free counters, enquiry form).
+from app.routers import business_cards as business_cards_router  # noqa: E402
+
+app.include_router(business_cards_router.router, prefix=_prefix)
+app.include_router(business_cards_router.public_router, prefix=_prefix)
+
 
 @app.on_event("startup")
 def start_whatsapp_distribution_worker():

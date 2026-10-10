@@ -32,6 +32,7 @@ import {
   CalendarRange,
   Clock,
   Coins,
+  Contact,
   CreditCard,
   Download,
   FileBarChart,
@@ -281,6 +282,23 @@ export const NAV_SECTIONS: NavSection[] = [
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },
+    ],
+  },
+  {
+    // "ערוצים דיגיטליים" (P:/specs/digital-menu-ordering-cards-plan.md §21): the public digital
+    // surfaces — digital menu, online ordering, business cards and their legal pages — one group.
+    id: 'digital',
+    labelKey: 'sections.digital',
+    items: [
+      // "כרטיסי ביקור דיגיטליים": cards for the company, branches, sales points and staff — editor
+      // with live preview, publication, QR and the enquiries inbox; the kiosk pages' roles.
+      {
+        href: '/dashboard/business-cards',
+        labelKey: 'businessCards',
+        icon: Contact,
+        gate: 'settingsWrite',
+        matchPrefixes: ['/dashboard/business-cards/'],
+      },
     ],
   },
   {

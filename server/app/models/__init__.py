@@ -280,3 +280,5 @@ __all__ = [
     "SalesTarget", "SalesTargetHit",
     "CustomerDisplayState",
 ]
+# "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).
+from app.models import business_card as _business_card  # noqa: F401,E402
