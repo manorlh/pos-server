@@ -96,7 +96,11 @@ import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
-import { dueAgorot as dueOf, newId, voucherCodeOf, type VoucherLeg } from '@dash-lib/kioskWebOrders';
+import { voucherCodeOf } from '@dash-lib/kioskWebOrders';
+import { DISCOUNT_PAY_HERE } from '@dash-lib/kioskVoucherClient';
+import type { VoucherSessionDeps, VoucherWords } from '@dash-lib/kioskVoucherSession';
+import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
+import { useKioskVouchers } from '@kiosk-shared/use-vouchers';
 import {
   backAction,
   busy as flowBusy,
@@ -136,16 +140,17 @@ const ADMIN_ZONE = 48;
 
 type FlowAction = { event: KioskEvent; cartEmpty: boolean };
 
-/** "מזומן בקופה" and the vouchers of this order (main/kiosk/payAtTill.ts). */
+/**
+ * "מזומן בקופה" and the vouchers of this order (main/kiosk/payAtTill.ts). The order's own vouchers — goods ones as legs of
+ * the payment, discount ones held for it — are the vouchers session's (lib/kioskVoucherSession.ts, shared with the browser
+ * kiosk); `busy` / `note` / `error` here are the Android-hosted path's (the APK holds them).
+ */
 interface TillState {
-  vouchers: VoucherLeg[];
   busy: boolean;
   note: string | null;
   error: string | null;
   /** The voucher's code typed in the kiosk's window. */
   entry: boolean;
-  /** A one-time voucher only partly taken: the customer is asked (its code). */
-  forfeit: string | null;
   /** The order sent to the tills. */
   placed: Extract<PlaceOrderOut, { ok: true }> | null;
   /**
@@ -155,7 +160,7 @@ interface TillState {
   native: VoucherAnswer | null;
 }
 
-const NO_TILL: TillState = { vouchers: [], busy: false, note: null, error: null, entry: false, forfeit: null, placed: null, native: null };
+const NO_TILL: TillState = { busy: false, note: null, error: null, entry: false, placed: null, native: null };
 
 /** Screens outside the checkout: an order that reaches one before it went to the tills gives its vouchers back. */
 const LEAVES_CHECKOUT: ReadonlySet<string> = new Set(['attract', 'paused', 'closed', 'no_payment', 'setup', 'service', 'catalog', 'cart', 'confirm']);
@@ -340,10 +345,50 @@ export function KioskApp({ view }: { view: KioskView }) {
   // "מבצעים": the basket priced as it will be charged (kioskMoney.ts — the till's promotions), by the minute.
   const promotions = useMemo(() => promotionsOf(view.catalog.promotions ?? []), [view.catalog.promotions]);
   const minute = Math.floor(nowMs / 60_000);
-  const { pricing } = useMemo(
-    () => basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true),
+  // The discount vouchers held for the order ("שוברי הנחה", lib/kioskVouchers.ts) come after the promotions, in the order applied.
+  const price = useCallback(
+    (discounts: readonly AppliedDiscountVoucher[]) =>
+      basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true, discounts),
     [cart, promotions, minute, soldById],
   );
+  /** A basket line as the goods vouchers read it (the dish's own price: a voucher covers it, the paid extras are paid). */
+  const voucherLine = useCallback(
+    (key: string) => {
+      const l = cartRef.current.find((x) => x.key === key);
+      return l ? { productId: l.product.id, baseAgorot: soldById.get(l.product.id)?.priceAgorot ?? Math.round(l.product.price * 100), name: l.product.name } : null;
+    },
+    [soldById],
+  );
+  const tipOnGoods = useCallback((goods: number) => tipOfDetails(details, goods, cfg.payment), [details, cfg.payment]);
+  /** A voucher scanned or typed, through the service (it prices the basket itself) — set below, once the basket's input exists. */
+  const voucherCall = useRef<VoucherSessionDeps<ReturnType<typeof basketPricing>>['call'] | null>(null);
+  const voucherWords = useMemo<VoucherWords>(
+    () => ({
+      checking: t('voucherChecking'),
+      appliedLeg: (agorot) => t('voucherAppliedNote', { amount: formatMoney(agorot / 100) }),
+      appliedDiscount: (serial, agorot) => t('voucherDiscountApplied', { serial, amount: formatMoney(agorot / 100) }),
+      offline: configuredText(cfg, 'he', 'voucherOffline') ?? txtOf(undefined, 'voucherOffline'),
+      noMatch: configuredText(cfg, 'he', 'voucherNoMatch') ?? txtOf(undefined, 'voucherNoMatch'),
+      reason: voucherReason,
+      codeOf: (raw) => scannedVoucherCode(raw) ?? voucherCodeOf(raw),
+    }),
+    [cfg],
+  );
+  const { session: voucherSession, view: vView } = useKioskVouchers({
+    price,
+    lineInfo: voucherLine,
+    tipOf: tipOnGoods,
+    call: (input) => (voucherCall.current ? voucherCall.current(input) : Promise.resolve({ kind: 'offline' as const })),
+    reverse: (id) => void kiosk.reverseVoucher?.(id),
+    release: (vouchers) => void kiosk.releaseDiscounts?.(vouchers),
+    words: voucherWords,
+    // The vouchers pay all and no tip is left: the document is written by the vouchers alone (no terminal), once, on this answer.
+    onCovered: () => {
+      methodRef.current = 'card';
+      dispatch({ type: 'detailsDone' });
+    },
+  });
+  const { pricing } = vView.price;
   const pricingRef = useRef(pricing);
   pricingRef.current = pricing;
 
@@ -392,27 +437,35 @@ export function KioskApp({ view }: { view: KioskView }) {
     setEntry(null);
     setReachToggled(false);
     setTill(NO_TILL);
+    voucherSession.reset();
     methodRef.current = null;
-  }, [resting]);
+  }, [resting, voucherSession]);
 
-  // Out of the checkout before the order went to the tills: its vouchers back on themselves.
+  // Out of the checkout before the order was paid or went to the tills: its vouchers back on themselves (a discount voucher's
+  // hold released, a goods voucher reversed). An order the card (or the vouchers) paid keeps them: they are on its document.
   const prevScreen = useRef(flow.screen);
+  const payNow = useRef(pay);
+  payNow.current = pay;
   useEffect(() => {
     const was = prevScreen.current;
     prevScreen.current = flow.screen;
-    if (was === flow.screen || LEAVES_CHECKOUT.has(was) || !LEAVES_CHECKOUT.has(flow.screen) || tillRef.current.placed) return;
-    for (const v of tillRef.current.vouchers) void kiosk.reverseVoucher?.(v.redemptionId);
+    if (was === flow.screen || LEAVES_CHECKOUT.has(was) || !LEAVES_CHECKOUT.has(flow.screen) || tillRef.current.placed || payNow.current?.phase === 'approved') return;
+    voucherSession.giveBack();
     setTill(NO_TILL);
     methodRef.current = null;
-  }, [flow.screen]);
+  }, [flow.screen, voucherSession]);
 
   useEffect(() => setVisit((v) => v + 1), [flow.screen]);
 
   /* -------------------------------------------------------------- payment */
 
-  /** The basket as the service takes it (it prices it again from its own catalog). */
+  /** The basket as the service takes it (it prices it again from its own catalog); [withVouchers]: the order's vouchers ride with it. */
   const paymentInput = useCallback(
-    (): StartPaymentIn => ({
+    (withVouchers = false): StartPaymentIn => ({
+      // The vouchers of the order: the service prices the sale with the discount ones and recounts the goods ones as legs.
+      ...(withVouchers && voucherSession.state.legs.length + voucherSession.state.discounts.length > 0
+        ? { vouchers: { legs: voucherSession.state.legs, discounts: voucherSession.state.discounts, saleRef: voucherSession.state.saleRef } }
+        : {}),
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: pricingRef.current.totalAgorot,
       lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
@@ -424,8 +477,12 @@ export function KioskApp({ view }: { view: KioskView }) {
       tipPct: details.tipAgorot === null ? details.tipPct : null,
       tipAgorot: details.tipAgorot,
     }),
-    [details, cfgIn],
+    [details, cfgIn, voucherSession],
   );
+  voucherCall.current = (input) =>
+    kiosk.redeemVoucher
+      ? kiosk.redeemVoucher({ code: input.code, basket: paymentInput(), earlier: input.earlier, discounts: input.discounts, forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId, saleRef: input.saleRef })
+      : Promise.resolve({ kind: 'offline' as const });
 
   const startPayment = useCallback(async () => {
     dispatch({ type: 'paymentStarted' });
@@ -434,11 +491,12 @@ export function KioskApp({ view }: { view: KioskView }) {
     const shownAgorot = pricingRef.current.totalAgorot;
     funnel.noteTip(tipOfDetails(details, shownAgorot, cfg.payment));
     const input = paymentInput();
-    // "מזומן בקופה": the order to the shop's tills, with its vouchers (no document here).
+    // "מזומן בקופה": the order to the shop's tills, with its vouchers (no document here). By card, the vouchers are legs of
+    // the document (goods) and a discount on it (discount ones): the card is charged what they leave.
     const cash = (methodRef.current ?? fallbackMethod) === 'cash_at_till';
     const r: PlaceOrderOut | Awaited<ReturnType<typeof kiosk.startPayment>> = cash
-      ? ((await kiosk.placeOpenOrder?.({ ...input, vouchers: tillRef.current.vouchers })) ?? { ok: false, reason: 'error', message: t('placeFailed') })
-      : await kiosk.startPayment(input);
+      ? ((await kiosk.placeOpenOrder?.({ ...input, vouchers: voucherSession.state.legs, discounts: voucherSession.state.discounts })) ?? { ok: false, reason: 'error', message: t('placeFailed') })
+      : await kiosk.startPayment(paymentInput(true));
     if (r.ok) {
       if (cash && 'pickupLabel' in r) {
         setTill((p) => ({ ...p, placed: r }));
@@ -472,20 +530,16 @@ export function KioskApp({ view }: { view: KioskView }) {
       // The new total, to confirm before anything is charged.
       if (typeof r.totalAgorot === 'number' && r.totalAgorot !== shownAgorot) lines.push(t('basketNewTotal', { total: formatMoney(r.totalAgorot / 100) }));
       // Back to the basket: a voucher already taken goes back with the checkout, to be scanned again.
-      if (tillRef.current.vouchers.length > 0 || (tillRef.current.native?.vouchers.length ?? 0) > 0) lines.push(t('basketVouchersBack'));
+      if (voucherSession.state.legs.length + voucherSession.state.discounts.length > 0 || (tillRef.current.native?.vouchers.length ?? 0) > 0) lines.push(t('basketVouchersBack'));
       setChanges(lines.length > 0 ? lines : [t('basketNewTotal', { total: formatMoney((r.totalAgorot ?? shownAgorot) / 100) })]);
       return;
     }
     setPayBlocked('message' in r ? r.message || t('placeFailed') : t('placeFailed'));
-  }, [details, dispatch, funnel, paymentInput, fallbackMethod, cfg.payment]);
+  }, [details, dispatch, funnel, paymentInput, fallbackMethod, cfg.payment, voucherSession]);
 
   /* --------------------------------------------------------------- vouchers */
 
-  /** A screen text: the business's, else the built-in one. */
-  const screenText = useCallback((key: KioskTextKey) => configuredText(cfg, 'he', key) ?? txtOf(undefined, key), [cfg]);
-
-  const voucherAttempt = useRef<{ code: string; id: string } | null>(null);
-  /** A voucher scanned or typed: redeemed online for this basket (the service prices it). */
+  /** A voucher scanned or typed: Android — the APK holds it; here — the order's vouchers session applies it (goods as a leg, discount held). */
   const redeem = useCallback(
     async (raw: string, forfeitRest = false) => {
       const code = scannedVoucherCode(raw) ?? voucherCodeOf(raw);
@@ -493,7 +547,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       if (kiosk.voucherApply) {
         // Android: the APK redeems it and holds it (its own path, the payment books it), and answers
         // with the order's vouchers and what is left to pay.
-        setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false, forfeit: null }));
+        setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false }));
         const had = new Set((tillRef.current.native?.vouchers ?? []).map((v) => v.serial));
         const a = await kiosk.voucherApply({ code, payment: paymentInput() });
         if (!a) {
@@ -512,28 +566,10 @@ export function KioskApp({ view }: { view: KioskView }) {
         return;
       }
       if (!kiosk.redeemVoucher) return;
-      if (!voucherAttempt.current || voucherAttempt.current.code !== code) voucherAttempt.current = { code, id: newId() };
-      setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false, forfeit: null }));
-      const r = await kiosk.redeemVoucher({ code, basket: paymentInput(), earlier: tillRef.current.vouchers, forfeitRest, clientRequestId: voucherAttempt.current.id });
-      if (r.kind === 'ok') {
-        voucherAttempt.current = null;
-        const legs = [...tillRef.current.vouchers, r.leg];
-        tillRef.current = { ...tillRef.current, vouchers: legs };
-        setTill((p) => ({ ...p, busy: false, error: null, vouchers: legs, note: t('voucherAppliedNote', { amount: formatMoney(r.leg.amountAgorot / 100) }) }));
-        // Everything paid by the vouchers (no tip left): the order goes to the tills by itself — once, on this answer.
-        const goods = pricingRef.current.totalAgorot;
-        if (dueOf(goods, tipOfDetails(details, goods, cfg.payment), legs) === 0) {
-          methodRef.current = 'cash_at_till';
-          dispatch({ type: 'detailsDone' });
-        }
-        return;
-      }
-      const error =
-        r.kind === 'offline' ? screenText('voucherOffline') : r.kind === 'no_match' ? screenText('voucherNoMatch') : r.kind === 'forfeit' ? null : voucherReason(r.reason, r.message);
-      if (r.kind !== 'offline') voucherAttempt.current = r.kind === 'forfeit' ? voucherAttempt.current : null;
-      setTill((p) => ({ ...p, busy: false, note: null, error, forfeit: r.kind === 'forfeit' ? code : null }));
+      setTill((p) => ({ ...p, entry: false }));
+      await voucherSession.redeem(raw, forfeitRest);
     },
-    [details, dispatch, paymentInput, screenText, cfg.payment],
+    [dispatch, paymentInput, voucherSession],
   );
 
   /** Android: a voucher off the order — the APK gives its hold back and answers the order's vouchers now. */
@@ -756,12 +792,15 @@ export function KioskApp({ view }: { view: KioskView }) {
   const tipNow = tipOfDetails(details, goodsAgorot, cfg.payment);
   // Android: what the APK says is left (its vouchers, the tip included) once one is on the order.
   const native = till.native && till.native.vouchers.length > 0 ? till.native : null;
-  const dueNow = native ? native.dueAgorot : dueOf(goodsAgorot, tipNow, till.vouchers);
+  const dueNow = native ? native.dueAgorot : vView.dueAgorot;
   const atPayMethod = flow.screen === 'details' && flow.detailsNext === 'pay';
   const usable = new Set(payInfo.usable);
+  const vState = vView.state;
+  // A voucher being checked: the order's session, or the APK's.
+  const vBusy = till.busy || vState.busy;
   const voucherOffered = usable.has('voucher') && dueNow > 0;
-  // The card's tile: never with a voucher (one tender per document here — the rest is paid at the till).
-  const cardOff = till.vouchers.length > 0 ? t('cardWithVoucher') : payInfo.cardOff;
+  // The card's tile: a voucher is a leg of the document and the card pays the rest (the Android kiosk's way).
+  const cardOff = payInfo.cardOff;
   const payMethodLive: KioskLivePayMethod | null = detailsSteps.includes('payMethod')
     ? {
         steps: detailsSteps,
@@ -771,14 +810,19 @@ export function KioskApp({ view }: { view: KioskView }) {
         })),
         goodsAgorot: native?.totalAgorot ?? goodsAgorot,
         tipAgorot: tipNow,
+        // The goods vouchers (legs: what each pays) and, apart, the discount ones (already off the order's total).
         vouchers: native
           ? native.vouchers.map((v) => ({ id: String(v.serial), serial: v.serial, amountAgorot: v.amountAgorot, title: v.title, lines: v.lines }))
-          : till.vouchers.map((v) => ({ id: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot, label: v.eventName })),
+          : vView.rows.filter((r) => !vState.discounts.some((d) => d.reservationId === r.id)),
+        discounts: native ? [] : vView.rows.filter((r) => vState.discounts.some((d) => d.reservationId === r.id)),
         dueAgorot: dueNow,
         onPick: (method) => {
           setLastTouch(Date.now());
           if (method === 'voucher') setTill((p) => ({ ...p, entry: true, error: null, note: null }));
-          else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
+          else if (method === 'cash_at_till' && vState.discounts.length > 0) {
+            // A discount voucher is held for this kiosk's own payment: not taken to a till (removed first).
+            setTill((p) => ({ ...p, error: DISCOUNT_PAY_HERE, note: null }));
+          } else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
             methodRef.current = method;
             dispatch({ type: 'detailsDone' });
           }
@@ -788,12 +832,11 @@ export function KioskApp({ view }: { view: KioskView }) {
             void removeNative(Number(id));
             return;
           }
-          void kiosk.reverseVoucher?.(id);
-          setTill((p) => ({ ...p, vouchers: p.vouchers.filter((v) => v.redemptionId !== id), note: null }));
+          voucherSession.remove(id);
         },
-        busy: till.busy,
-        note: till.note,
-        error: till.error,
+        busy: vBusy,
+        note: till.note ?? vState.note,
+        error: till.error ?? vState.error,
         // "רשות": passed with the default method.
         skip:
           payAsk.optional && payAsk.fallback && payAsk.fallback !== 'voucher' && !(payAsk.fallback === 'card' && cardOff !== null)
@@ -909,7 +952,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
-    onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,
+    onVoucher: atPayMethod && voucherOffered && !vBusy ? (code) => void redeem(code) : null,
   });
 
   /* ------------------------------------------------------------ the screen */
@@ -1185,13 +1228,13 @@ export function KioskApp({ view }: { view: KioskView }) {
           onClose={() => setTill((p) => ({ ...p, entry: false }))}
         />
       ) : null}
-      {till.forfeit && atPayMethod ? (
+      {vState.forfeit && atPayMethod ? (
         <Dialog
           m={m}
           title={m.txt('voucherTitle')}
           body={m.txt('voucherForfeit')}
-          primary={{ label: t('voucherForfeitYes'), onClick: () => void redeem(till.forfeit ?? '', true) }}
-          secondary={{ label: t('voucherForfeitNo'), onClick: () => setTill((p) => ({ ...p, forfeit: null })) }}
+          primary={{ label: t('voucherForfeitYes'), onClick: () => void redeem(vState.forfeit ?? '', true) }}
+          secondary={{ label: t('voucherForfeitNo'), onClick: () => voucherSession.dismissForfeit() }}
         />
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}

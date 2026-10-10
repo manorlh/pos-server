@@ -49,16 +49,13 @@ import {
   orderDue,
   orderNeedsUpload,
   pickupLabelOf,
-  voucherAmount,
-  voucherForfeits,
-  voucherTake,
   type OpenOrder,
   type OpenOrdersAnswer,
-  type VoucherItem,
   type VoucherLeg,
-  type VoucherTaken,
   type WebOrderLine,
 } from './kioskWebOrders';
+import { DISCOUNT_PAY_HERE, redeemVoucherCode, releaseDiscount, type VoucherPost, type VoucherResult } from './kioskVoucherClient';
+import type { AppliedDiscountVoucher } from './kioskVouchers';
 import { KV, type KvStore } from './kioskWebStore';
 import { bridgeCardReady, bridgeCardReason, bridgeFiscalFor, type BridgeAgent, type BridgeMachine, type BridgeState } from './kioskBridge';
 
@@ -165,12 +162,7 @@ export type BasketChange =
   | { kind: 'removed'; productId: string; name: string; key: string }
   | { kind: 'repriced'; productId: string; name: string; key: string; from: number; to: number };
 
-export type VoucherResult =
-  | { kind: 'ok'; leg: VoucherLeg }
-  | { kind: 'forfeit' }
-  | { kind: 'no_match' }
-  | { kind: 'offline' }
-  | { kind: 'refused'; reason: string };
+export type { VoucherResult };
 
 export type PlaceResult =
   | { ok: true; order: OpenOrder; dueAgorot: number; pending: boolean }
@@ -198,6 +190,8 @@ export interface PlaceInput {
   customerPhone: string | null;
   tipAgorot: number;
   vouchers: VoucherLeg[];
+  /** Discount vouchers held for the order ("שוברי הנחה"): an order with one is paid here, never handed to a till. */
+  discounts?: readonly AppliedDiscountVoucher[];
 }
 
 interface SnapshotState {
@@ -219,10 +213,11 @@ interface HelpRequest {
 
 /**
  * What the browser can take of the configured methods: the card only through a paired Windows
- * bridge that takes cards now (it sells offline too, as the Windows kiosk); a voucher only online.
+ * bridge that takes cards now (it sells offline too, as the Windows kiosk); a voucher only online, and only
+ * where the order it leaves can be finished (voucherCanFinish: at the till, or by card through the bridge).
  */
 export function usableMethods(methods: readonly PaymentMethod[], online: boolean, cardReady = false): PaymentMethod[] {
-  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods)) || (m === 'card' && cardReady));
+  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods, cardReady)) || (m === 'card' && cardReady));
 }
 
 /** The browser kiosk sells when its customers can pay at the till, or by card through the bridge (a voucher never pays it all for sure). */
@@ -985,69 +980,48 @@ export class WebKioskService {
     return { id, name };
   }
 
-  /**
-   * A voucher scanned or typed: looked up, then redeemed online against what the basket holds that
-   * earlier vouchers did not take (`clientRequestId`: a retry never redeems twice).
-   */
-  async redeemVoucher(input: { code: string; lines: readonly WebOrderLine[]; earlier: readonly VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
+  /** The cloud's voucher calls for the shared voucher flow (lib/kioskVoucherClient.ts): this kiosk's machine path, its replies read as online / offline. */
+  private readonly voucherPost: VoucherPost = async (path, body, timeoutMs) => {
     if (!this.creds) return { kind: 'offline' };
-    const looked = await this.seen(await this.api.post<Record<string, unknown>>(this.machinePath('prepaid-vouchers/lookup'), { code: input.code }, { timeoutMs: 12_000 }));
-    if (looked.kind === 'offline') return { kind: 'offline' };
-    if (looked.kind === 'refused') return { kind: 'refused', reason: looked.detail ?? (looked.status === 404 ? 'prepaid_voucher_not_found' : `http_${looked.status}`) };
-    const dto = looked.body ?? {};
-    if (dto.redeemable === false) return { kind: 'refused', reason: typeof dto.reason === 'string' ? dto.reason : typeof dto.status === 'string' ? `prepaid_voucher_${dto.status}` : 'not_redeemable' };
-    const items: VoucherItem[] = (Array.isArray(dto.items) ? (dto.items as Array<Record<string, unknown>>) : [])
-      .filter((it) => typeof it.productId === 'string')
-      .map((it) => ({
-        productId: String(it.productId),
-        tillProductId: typeof it.tillProductId === 'string' ? it.tillProductId : null,
-        name: String(it.name ?? ''),
-        quantity: Number(it.quantity) || 0,
-        remaining: Number(it.remaining) || 0,
-      }));
-    const take = voucherTake(items, input.lines, input.earlier);
-    if (take.size === 0) return { kind: 'no_match' };
-    if (!input.forfeitRest && voucherForfeits(dto.splitAllowed === true, items, take)) return { kind: 'forfeit' };
-    const op = this.operator();
-    const r = await this.seen(
-      await this.api.post<Record<string, unknown>>(
-        this.machinePath('prepaid-vouchers/redeem'),
-        {
-          code: input.code,
-          items: [...take.entries()].map(([productId, quantity]) => ({ productId, quantity })),
-          clientRequestId: input.clientRequestId,
-          forfeitRest: input.forfeitRest === true,
-          posUserId: op.id,
-          posUserName: op.name,
-        },
-        { timeoutMs: 15_000 },
-      ),
-    );
-    if (r.kind === 'offline') return { kind: 'offline' };
-    if (r.kind === 'refused') return { kind: 'refused', reason: r.detail ?? `http_${r.status}` };
-    const res = r.body ?? {};
-    const redemptionId = typeof res.redemptionId === 'string' ? res.redemptionId : null;
-    if (!redemptionId) return { kind: 'refused', reason: 'bad_answer' };
-    const redeemed: VoucherTaken[] = (Array.isArray(res.redeemed) ? (res.redeemed as Array<Record<string, unknown>>) : [])
-      .filter((x) => typeof x.productId === 'string')
-      .map((x) => ({ productId: String(x.productId), tillProductId: typeof x.tillProductId === 'string' ? x.tillProductId : null, name: typeof x.name === 'string' ? x.name : null, quantity: Number(x.quantity) || 0 }));
-    const amount = voucherAmount([...input.lines], [...input.earlier], redeemed);
-    if (amount <= 0) {
-      // Nothing of the basket it could pay: never kept for nothing.
-      await this.reverseVoucher(redemptionId);
-      return { kind: 'no_match' };
-    }
-    const voucher = (res.voucher ?? dto) as { serial?: unknown; eventName?: unknown };
-    return {
-      kind: 'ok',
-      leg: {
-        redemptionId,
-        serial: typeof voucher.serial === 'number' ? voucher.serial : 0,
-        amountAgorot: amount,
-        eventName: typeof voucher.eventName === 'string' ? voucher.eventName : null,
-        redeemed,
-      },
-    };
+    const r = await this.seen(await this.api.post<Record<string, unknown>>(this.machinePath(path), body, { timeoutMs }));
+    if (r.kind === 'ok') return { kind: 'ok', body: r.body as never };
+    if (r.kind === 'refused') return { kind: 'refused', status: r.status, body: r.body, detail: r.detail };
+    return { kind: 'offline' };
+  };
+
+  /**
+   * A voucher scanned or typed: looked up (this kiosk applies goods and both discount kinds), then — by what it is —
+   * redeemed online against what the basket holds that earlier vouchers did not take (`clientRequestId`: a retry
+   * never redeems twice), or held in the cloud as a discount on this order (`reserve`).
+   */
+  async redeemVoucher(input: {
+    code: string;
+    lines: readonly WebOrderLine[];
+    earlier: readonly VoucherLeg[];
+    discounts?: readonly AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    /** This order's id, the same for every voucher of the checkout. */
+    saleRef?: string;
+  }): Promise<VoucherResult> {
+    if (!this.creds) return { kind: 'offline' };
+    return redeemVoucherCode(this.voucherPost, {
+      code: input.code,
+      lines: input.lines,
+      earlier: input.earlier,
+      discounts: input.discounts ?? [],
+      forfeitRest: input.forfeitRest,
+      clientRequestId: input.clientRequestId,
+      saleRef: input.saleRef ?? input.clientRequestId,
+      operator: this.operator(),
+      newId,
+      reverse: (id) => this.reverseVoucher(id),
+    });
+  }
+
+  /** Discount vouchers given back (removed, the order left): the cloud lets the hold go; best effort, retried. */
+  releaseDiscounts(vouchers: readonly Pick<AppliedDiscountVoucher, 'reservationId'>[]): void {
+    for (const v of vouchers) void releaseDiscount(this.voucherPost, v);
   }
 
   /** The voucher goes back on itself (removed, the order left, the kiosk reset); kept until the cloud answers. */
@@ -1108,6 +1082,8 @@ export class WebKioskService {
   async placeOpenOrder(input: PlaceInput): Promise<PlaceResult> {
     if (!this.creds) return { ok: false, reason: 'error', message: 'הקיוסק אינו מצומד' };
     if (input.lines.length === 0) return { ok: false, reason: 'empty', message: '' };
+    // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
+    if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'rejected', message: DISCOUNT_PAY_HERE };
     const cfg = this.config();
     const now = this.now();
     const localId = newId();

@@ -129,15 +129,18 @@ export interface WebOrderLine {
   promotionAgorot?: number;
   promotionId?: string | null;
   promotionName?: string | null;
+  /** The line's share of the discount vouchers ("שוברי הנחה", kioskVouchers.ts), agorot, and the promotion share that gave way to one. */
+  voucherAgorot?: number;
+  promotionYieldedAgorot?: number;
 }
 
-/** What the line costs: unit × qty, less its share of the promotions. */
-export function lineTotalAgorot(l: Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number }): number {
-  return Math.round(l.qty * l.unitAgorot) - Math.max(0, l.promotionAgorot ?? 0);
+/** What the line costs: unit × qty, less its share of the promotions and the discount vouchers. */
+export function lineTotalAgorot(l: Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number; voucherAgorot?: number }): number {
+  return Math.round(l.qty * l.unitAgorot) - Math.max(0, l.promotionAgorot ?? 0) - Math.max(0, l.voucherAgorot ?? 0);
 }
 
-/** What the goods cost, after the promotions. */
-export function goodsAgorot(lines: ReadonlyArray<Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number }>): number {
+/** What the goods cost, after the promotions and the discount vouchers. */
+export function goodsAgorot(lines: ReadonlyArray<Pick<WebOrderLine, 'qty' | 'unitAgorot'> & { promotionAgorot?: number; voucherAgorot?: number }>): number {
   return lines.reduce((s, l) => s + lineTotalAgorot(l), 0);
 }
 
@@ -277,47 +280,102 @@ export interface VoucherLeg {
   amountAgorot: number;
   eventName: string | null;
   redeemed: VoucherTaken[];
+  /** "כולל תוספות": the voucher covers a line whole, its paid options with it (the batch's setting). */
+  includeExtras?: boolean;
+  /** How the stacking rules see it (its batch's stacking, the count a sale may hold) — kioskVouchers.ts. */
+  inSale?: { voucherId: string; batchId: string; kind: 'items' | 'order_discount' | 'item_discount'; stacking: 'single' | 'distinct_batches' | 'unlimited'; maxPerSale?: number | null };
 }
+
+/** A basket line as the goods vouchers read it: what it is, how many, what a unit costs, and the shares taken off it. */
+export type CoverLine = Pick<WebOrderLine, 'key' | 'productId' | 'qty' | 'unitAgorot' | 'baseAgorot'> & { promotionAgorot?: number; voucherAgorot?: number };
 
 const matches = (line: Pick<WebOrderLine, 'productId'>, item: { productId: string; tillProductId?: string | null }) =>
   line.productId === item.productId || (!!item.tillProductId && line.productId === item.tillProductId);
 
 /** What a voucher covers of a line: the line's total (after its promotions) in the share of its price that is the dish's own. */
-export function voucherCoverable(l: Pick<WebOrderLine, 'qty' | 'unitAgorot' | 'baseAgorot'> & { promotionAgorot?: number }): number {
+export function voucherCoverable(l: Pick<WebOrderLine, 'qty' | 'unitAgorot' | 'baseAgorot'> & { promotionAgorot?: number; voucherAgorot?: number }, includeExtras = false): number {
   const total = lineTotalAgorot(l);
-  if (l.unitAgorot <= 0 || l.baseAgorot >= l.unitAgorot) return total;
+  if (includeExtras || l.unitAgorot <= 0 || l.baseAgorot >= l.unitAgorot) return total;
   return Math.round((total * l.baseAgorot) / l.unitAgorot);
 }
 
-/** Units of each line the earlier vouchers already took (by line key), walking the basket in order. */
-export function coveredUnits(lines: readonly WebOrderLine[], legs: readonly Pick<VoucherLeg, 'redeemed'>[]): Map<string, number> {
-  const used = new Map<string, number>();
-  for (const leg of legs) {
-    for (const r of leg.redeemed) {
-      let left = r.quantity;
-      for (const l of lines) {
-        if (left <= 0) break;
-        if (!matches(l, r)) continue;
-        const free = l.qty - (used.get(l.key) ?? 0);
-        if (free <= 0) continue;
-        const take = Math.min(left, free);
-        left -= take;
-        used.set(l.key, (used.get(l.key) ?? 0) + take);
-      }
-    }
-  }
-  return used;
+/** The mark a voucher leaves on a line it covered: "כלול בשובר #7", or "כלול בשובר #7 (1)" when it took part of the line's units (domain VOUCHER_LINE_NOTE_PREFIX). */
+export const VOUCHER_LINE_NOTE_PREFIX = 'כלול בשובר';
+
+/** "2", "0.5", "1.25" — no trailing zeros, to the gram (prepaidQtyText). */
+export function voucherQtyText(quantity: number): string {
+  return String(Math.round(quantity * 1000) / 1000);
 }
 
 /**
- * Per voucher product, how many to take now: what is left on it, no more than the basket holds of
- * it less what earlier vouchers of this order took (KioskPayRemainder.take). Nothing → empty.
+ * [value] times [factor] rounded once, HALF_UP — the till's `Agorot.times(Double)`: BigDecimal(value) × BigDecimal.valueOf(factor), whole agorot.
+ * Never `Math.round(value * factor)`: a float product lands a hair under the half often enough to matter.
  */
-export function voucherTake(items: readonly VoucherItem[], lines: readonly WebOrderLine[], earlier: readonly Pick<VoucherLeg, 'redeemed'>[]): Map<string, number> {
-  const used = coveredUnits(lines, earlier);
+export function timesHalfUp(value: number, factor: number): number {
+  if (!(factor > 0) || value <= 0) return 0;
+  if (factor === 1) return value;
+  // BigDecimal.valueOf(double) is the double's shortest decimal form — what JavaScript prints.
+  const m = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(String(factor));
+  if (!m) return Math.round(value * factor);
+  const frac = m[2] ?? '';
+  // No BigInt literals or `**` on them: the app's tsconfig targets older than ES2020.
+  const big = (n: number | string) => BigInt(n);
+  const pow10 = (n: number) => {
+    let r = big(1);
+    for (let i = 0; i < n; i++) r *= big(10);
+    return r;
+  };
+  const digits = big(m[1] + frac);
+  const scale = frac.length - Number(m[3] ?? 0);
+  let num = big(Math.trunc(value)) * digits;
+  let den = big(1);
+  if (scale >= 0) den = pow10(scale);
+  else num *= pow10(-scale);
+  const two = big(2);
+  return Number((two * num + den) / (two * den));
+}
+
+/** A goods voucher as the coverage reads it: its number, what the cloud took of it, whether it covers a dish's paid extras too. */
+export type CoverLeg = Pick<VoucherLeg, 'serial' | 'redeemed'> & { includeExtras?: boolean };
+
+/**
+ * What goods vouchers cover of a basket, in the order taken (pos-android ui/checkout/SplitTender.kt `coverByVoucher`): each
+ * redeemed product is matched to the basket's lines in order and covers them at what the line costs net (the dish's own price
+ * unless the voucher includes its extras, `voucherCoverable`); the line is MARKED ("כלול בשובר #7", with "(n)" when only part
+ * of its units) and is that voucher's whole — no other voucher takes from a marked line, as on the Android kiosk and till
+ * (a second voucher for the other unit of a line finds nothing to cover). `values`: what each covers (before the goods still
+ * owed cap it); `marks`: the note each covered line carries.
+ */
+export function coverLegs(lines: readonly CoverLine[], legs: readonly CoverLeg[]): { values: number[]; marks: Map<string, string> } {
+  const marks = new Map<string, string>();
+  const values: number[] = [];
+  for (const leg of legs) {
+    let value = 0;
+    for (const r of leg.redeemed) {
+      let left = r.quantity;
+      for (const l of lines) {
+        if (left <= 1e-9) break;
+        if (l.qty <= 0 || !matches(l, r) || marks.has(l.key)) continue;
+        const take = Math.min(left, l.qty);
+        left -= take;
+        value += timesHalfUp(voucherCoverable(l, leg.includeExtras === true), take / l.qty);
+        marks.set(l.key, `${VOUCHER_LINE_NOTE_PREFIX} #${leg.serial}${take >= l.qty - 1e-9 ? '' : ` (${voucherQtyText(take)})`}`);
+      }
+    }
+    values.push(value);
+  }
+  return { values, marks };
+}
+
+/**
+ * Per voucher product, how many to take now: what is left on it, no more than the basket holds of it in lines no earlier voucher
+ * marked (KioskPayRemainder.take over the marked basket). Nothing → empty.
+ */
+export function voucherTake(items: readonly VoucherItem[], lines: readonly CoverLine[], earlier: readonly CoverLeg[]): Map<string, number> {
+  const { marks } = coverLegs(lines, earlier);
   const out = new Map<string, number>();
   for (const it of items) {
-    const inBasket = lines.filter((l) => matches(l, it)).reduce((n, l) => n + l.qty - (used.get(l.key) ?? 0), 0);
+    const inBasket = lines.filter((l) => l.qty > 0 && matches(l, it) && !marks.has(l.key)).reduce((n, l) => n + l.qty, 0);
     const q = Math.min(Math.max(0, it.remaining), Math.max(0, inBasket) - (out.get(it.productId) ?? 0));
     if (q > 0) out.set(it.productId, (out.get(it.productId) ?? 0) + q);
   }
@@ -330,24 +388,37 @@ export function voucherForfeits(splitAllowed: boolean, items: readonly VoucherIt
 }
 
 /** What the new redemption pays: the goods it covers (after the earlier ones), never more than the goods still unpaid. */
-export function voucherAmount(lines: readonly WebOrderLine[], earlier: readonly VoucherLeg[], redeemed: readonly VoucherTaken[]): number {
-  const used = coveredUnits(lines, earlier);
-  let covered = 0;
-  for (const r of redeemed) {
-    let left = r.quantity;
-    for (const l of lines) {
-      if (left <= 0) break;
-      if (!matches(l, r)) continue;
-      const free = l.qty - (used.get(l.key) ?? 0);
-      if (free <= 0) continue;
-      const take = Math.min(left, free);
-      left -= take;
-      used.set(l.key, (used.get(l.key) ?? 0) + take);
-      covered += Math.round((voucherCoverable(l) * take) / l.qty);
-    }
-  }
+export function voucherAmount(
+  lines: readonly CoverLine[],
+  earlier: readonly (CoverLeg & Pick<VoucherLeg, 'amountAgorot'>)[],
+  redeemed: readonly VoucherTaken[],
+  includeExtras = false,
+): number {
+  const { values } = coverLegs(lines, [...earlier, { serial: 0, redeemed: [...redeemed], includeExtras }]);
   const already = earlier.reduce((s, v) => s + v.amountAgorot, 0);
-  return Math.max(0, Math.min(covered, goodsAgorot(lines) - already));
+  return Math.max(0, Math.min(values[values.length - 1] ?? 0, goodsAgorot(lines) - already));
+}
+
+/**
+ * The goods vouchers' legs worked out again from the basket as it stands (the Android payment's own recount,
+ * CheckoutViewModel.applyVoucher): each voucher worth what it covers of the lines now — the promotions' and the discount
+ * vouchers' shares out —, in the order taken, never more than the goods still owed. A discount voucher added or taken off
+ * after a goods voucher moves what the goods voucher is worth; the screens show this, the document carries this.
+ */
+export function recountLegs<T extends CoverLeg & Pick<VoucherLeg, 'amountAgorot'>>(lines: readonly CoverLine[], legs: readonly T[]): T[] {
+  const { values } = coverLegs(lines, legs);
+  const goods = goodsAgorot(lines);
+  let paid = 0;
+  return legs.map((v, i) => {
+    const amount = Math.max(0, Math.min(values[i] ?? 0, goods - paid));
+    paid += amount;
+    return { ...v, amountAgorot: amount };
+  });
+}
+
+/** The notes the covered lines carry on the document, by the line's key ("כלול בשובר #7 (1)"). */
+export function legMarks(lines: readonly CoverLine[], legs: readonly CoverLeg[]): Map<string, string> {
+  return coverLegs(lines, legs).marks;
 }
 
 /** Left to pay: the goods and the tip less the vouchers, never below zero. */

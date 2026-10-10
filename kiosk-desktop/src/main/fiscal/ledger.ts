@@ -6,11 +6,16 @@
  *    the terminal is touched; approved → `completed`, declined/not found → `cancelled` (the number
  *    is burned, never reused; a retry is a new document); unknown → stays `pending` and blocks;
  *  - only final documents go to the outbox (one `transaction` row, at completion or void);
+ *  - vouchers (docs/SPEC_VOUCHER_PRODUCTION.md §7): a discount voucher is a discount on the document
+ *    (`items[].voucherDiscount`, `voucherDiscounts[]`, inside `documentDiscount`), a goods voucher a
+ *    `production_voucher` payment leg beside the card for what it does not cover — a sale the vouchers
+ *    pay whole is completed with no card at all;
  *  - shifts open and close as the kiosk itself (`kiosk:<machineId>`), float 0; the close freezes the
  *    X and goes to the outbox after the shift's documents.
  */
 
 import { randomUUID } from 'node:crypto';
+import type { VoucherOutcome } from '@dash-lib/kioskVouchers';
 import { DocumentCounters, seriesOf, type CounterStore } from '../../core/documentNumbers';
 import { localDate } from '../../core/kioskOrders';
 import { toShekels } from '../../core/money';
@@ -54,6 +59,13 @@ export interface DocDraft {
   totals: SaleTotals;
   /** The promotions the sale was priced with ("מבצעים"): what the receipt prints and the cloud reports. */
   promotions?: AppliedPromotionRow[];
+  /** The discount vouchers that took something off the sale ("שוברי הנחה"): what each took, the hold the document confirms. */
+  voucherDiscounts?: DocVoucherDiscount[];
+  /** The goods vouchers that paid part of it: each its own `production_voucher` leg; the card pays the rest. */
+  voucherLegs?: DocVoucherLeg[];
+  /** Discount vouchers held for the sale that took nothing off it: given back once the sale is written. */
+  voucherReleases?: string[];
+  /** The card's leg; null with the vouchers alone paying the sale (nothing was charged). */
   card: ApprovedCard | null;
   paymentId: string;
   /** The lookup's evidence on a voided document. */
@@ -74,6 +86,56 @@ export interface ShiftRow {
   close_accepted_at: string | null;
   z_report_id: string | null;
   z_number: number | null;
+}
+
+/** One discount voucher on the document (VoucherDiscountJson): the reservation it confirms, what it took, and from which lines. */
+export interface DocVoucherDiscount {
+  reservationId: string;
+  voucherId: string;
+  batchId: string;
+  serial: number;
+  batchName: string;
+  kind: 'order_discount' | 'item_discount';
+  uses: number;
+  amountAgorot: number;
+  /** By the basket line's key (the document's item is the line's index). */
+  lines: Array<{ lineKey: string; amountAgorot: number }>;
+}
+
+/** One goods voucher that paid towards the document: its redemption (linked once the sale is written) and what it paid. */
+export interface DocVoucherLeg {
+  redemptionId: string;
+  serial: number;
+  amountAgorot: number;
+}
+
+/** What the vouchers' legs pay. */
+export function legsAgorot(d: Pick<DocDraft, 'voucherLegs'>): number {
+  return (d.voucherLegs ?? []).reduce((s, l) => s + Math.max(0, l.amountAgorot), 0);
+}
+
+/** What is left of the goods after every discount for the card: the goods less the legs, never below zero. */
+export function cardPrincipalAgorot(d: Pick<DocDraft, 'totals' | 'voucherLegs'>): number {
+  return Math.max(0, d.totals.totalAgorot - legsAgorot(d));
+}
+
+/** The vouchers' outcomes as the document keeps them: those that took something off, their lines by the basket's key. */
+export function docVoucherDiscounts(outcomes: readonly VoucherOutcome[]): DocVoucherDiscount[] {
+  return outcomes
+    .filter((o) => o.amountAgorot > 0)
+    .map((o) => ({
+      reservationId: o.voucher.reservationId,
+      voucherId: o.voucher.voucherId,
+      batchId: o.voucher.batchId,
+      serial: o.voucher.serial,
+      batchName: o.voucher.batchName,
+      kind: o.voucher.benefit.kind === 'item_discount' ? ('item_discount' as const) : ('order_discount' as const),
+      uses: o.voucher.uses,
+      amountAgorot: o.amountAgorot,
+      lines: Object.entries(o.shares)
+        .filter(([, a]) => a > 0)
+        .map(([lineKey, amountAgorot]) => ({ lineKey, amountAgorot })),
+    }));
 }
 
 /** One promotion on the document (PromotionJson): how often it applied and what it took off. */
@@ -268,6 +330,9 @@ export class Ledger {
     tracked: string[];
     totals: SaleTotals;
     promotions?: AppliedPromotionRow[];
+    voucherDiscounts?: DocVoucherDiscount[];
+    voucherReleases?: string[];
+    voucherLegs?: DocVoucherLeg[];
     now?: Date;
   }): DocDraft | null {
     return this.db.tx(() => {
@@ -294,6 +359,9 @@ export class Ledger {
         tracked: input.tracked,
         totals: input.totals,
         ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
+        ...(input.voucherDiscounts && input.voucherDiscounts.length > 0 ? { voucherDiscounts: input.voucherDiscounts } : {}),
+        ...(input.voucherLegs && input.voucherLegs.length > 0 ? { voucherLegs: input.voucherLegs } : {}),
+        ...(input.voucherReleases && input.voucherReleases.length > 0 ? { voucherReleases: input.voucherReleases } : {}),
         card: null,
         paymentId: randomUUID(),
         voidMeta: null,
@@ -323,8 +391,11 @@ export class Ledger {
     return row ? (JSON.parse(row.payload) as DocDraft) : null;
   }
 
-  /** Approved: completed with its card leg, in one transaction with its outbox row. Only from pending. */
-  completeCardSale(id: string, card: ApprovedCard, now = new Date()): DocDraft | null {
+  /**
+   * Approved: completed with its card leg (none when the vouchers paid the whole sale), in one transaction with its
+   * outbox row. Only from pending.
+   */
+  completeCardSale(id: string, card: ApprovedCard | null, now = new Date()): DocDraft | null {
     return this.db.tx(() => {
       const d = this.doc(id);
       if (!d || d.status !== 'pending') return d;
@@ -412,8 +483,15 @@ export function xDocOf(d: DocDraft): XDoc {
     grossAgorot: d.totals.grossAgorot,
     itemsQty: d.lines.reduce((s, l) => s + l.qty, 0),
     documentDiscountAgorot: d.totals.discountAgorot,
-    payments: d.status === 'completed' && d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [],
-    paymentMethod: 'card',
+    // The vouchers' legs and the card's (what is left of the goods): the X counts the card's, never the vouchers'.
+    payments:
+      d.status === 'completed'
+        ? [
+            ...(d.voucherLegs ?? []).map((l) => ({ method: 'production_voucher', amountAgorot: l.amountAgorot })),
+            ...(d.card ? [{ method: 'card', amountAgorot: cardPrincipalAgorot(d) }] : []),
+          ]
+        : [],
+    paymentMethod: d.card || (d.voucherLegs ?? []).length === 0 ? 'card' : 'production_voucher',
     vatAgorot: d.totals.vatAgorot,
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
@@ -491,13 +569,17 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
             }
           : {}),
       };
-      if (l.notes.length > 0) item.notes = l.notes.join(' · ');
     }
+    // The customer's notes, after the mark of the goods voucher that paid for the line ("כלול בשובר #7 (1) · בלי בצל") — as the till's line note.
+    const noteParts = [...(l.voucherMark ? [l.voucherMark] : []), ...l.notes];
+    if (noteParts.length > 0) item.notes = noteParts.join(' · ');
     // The promotions' share ("מבצעים"): inside the document's discount, never in totalPrice.
     if ((l.promotionAgorot ?? 0) > 0) {
       item.promotionDiscount = r2(l.promotionAgorot!);
       if (l.promotionId) item.promotionId = l.promotionId;
     }
+    // The discount vouchers' share ("שוברי הנחה"): inside the same discount, a discount and never a tender.
+    if ((l.voucherAgorot ?? 0) > 0) item.voucherDiscount = r2(l.voucherAgorot!);
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });
@@ -509,7 +591,8 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     status: d.status,
     documentType: d.documentType,
     documentProductionDate: d.createdAt,
-    paymentMethod: 'card',
+    // A sale the vouchers paid whole names them, as the till's (CheckoutViewModel: PRODUCTION_VOUCHER); else the card's.
+    paymentMethod: !d.card && (d.voucherLegs ?? []).length > 0 ? 'production_voucher' : 'card',
     tipAmount: r2(d.totals.tipAgorot),
     tipPaymentMethod: d.totals.tipAgorot > 0 ? 'card' : undefined,
     totalAmount: r2(d.totals.grossAgorot),
@@ -525,23 +608,55 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     items,
+    // The discount vouchers ("שוברי הנחה"): what each took, the lines it took it from, the hold the document confirms.
+    ...(d.voucherDiscounts && d.voucherDiscounts.length > 0
+      ? {
+          voucherDiscounts: d.voucherDiscounts.map((v) => ({
+            reservationId: v.reservationId,
+            voucherId: v.voucherId,
+            batchId: v.batchId,
+            serial: v.serial,
+            batchName: v.batchName,
+            kind: v.kind,
+            uses: v.uses,
+            amount: r2(v.amountAgorot),
+            lines: v.lines.flatMap((l) => {
+              const i = d.lines.findIndex((x) => x.key === l.lineKey);
+              return i >= 0 && d.itemIds[i] ? [{ itemId: d.itemIds[i], amount: r2(l.amountAgorot) }] : [];
+            }),
+          })),
+        }
+      : {}),
     // The promotions ("מבצעים") the sale was priced with.
     ...(d.promotions && d.promotions.length > 0
       ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
       : {}),
   };
-  if (d.status === 'completed' && d.card) {
+  if (d.status === 'completed' && (d.card || (d.voucherLegs ?? []).length > 0)) {
+    const legs = (d.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
+    // The goods vouchers' legs first ("שובר הפקה"), then the card's for what they did not cover: the legs add up to the goods after discounts.
     wire.payments = [
-      {
-        id: d.paymentId,
-        sequence: 1,
-        method: 'card',
-        amount: r2(d.totals.totalAgorot),
-        nayaxMeta: flattenMeta(d.card.meta),
-        creditPayments: d.card.payments ?? undefined,
-        cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+      ...legs.map((l, i) => ({
+        id: stableUuid(`${d.id}:voucher:${l.redemptionId}`),
+        sequence: i + 1,
+        method: 'production_voucher',
+        amount: r2(l.amountAgorot),
         createdAt: d.updatedAt,
-      },
+      })),
+      ...(d.card
+        ? [
+            {
+              id: d.paymentId,
+              sequence: legs.length + 1,
+              method: 'card',
+              amount: r2(cardPrincipalAgorot(d)),
+              nayaxMeta: flattenMeta(d.card.meta),
+              creditPayments: d.card.payments ?? undefined,
+              cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+              createdAt: d.updatedAt,
+            },
+          ]
+        : []),
     ];
     const moves = d.lines
       .map((l, i) => ({ l, i }))

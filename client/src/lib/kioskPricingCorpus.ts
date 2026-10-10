@@ -24,9 +24,10 @@ import {
   type MenuGroup,
   type OptionPick,
 } from './kioskMoney';
+import { voucherBenefitOf, voucherStackingOf, type AppliedDiscountVoucher } from './kioskVouchers';
 
 /** The corpus's SHA-256, its line endings read as LF — the same constant as pos-android's KioskPricingCorpusTest.GOLDEN_SHA256. */
-export const KIOSK_PRICING_PARITY_SHA256 = '2448b069922eb90575a9db7590595bdc20d2115634a1f78ae7627d84703a82e6';
+export const KIOSK_PRICING_PARITY_SHA256 = '871bece763440a0066ead952942a2242b1057ba09093060d33785aa915444ba4';
 
 type Row = Record<string, unknown>;
 
@@ -99,15 +100,105 @@ export interface CorpusScenario {
   };
 }
 
+/** A discount voucher the cloud holds for the order, as the corpus names it (what `reserve` answered, with the lookup's `benefit`). */
+export interface CorpusVoucherSpec {
+  voucherId: string;
+  batchId: string;
+  serial: number;
+  batchName: string;
+  stacking: string;
+  uses: number;
+  benefit: Row;
+}
+
+/** "שוברי הנחה": the basket as the promotions priced it, then the vouchers in the order applied (Cart.withVoucherDiscounts). */
+export interface CorpusVoucherCase {
+  name: string;
+  tags: string[];
+  catalog: string;
+  now: string;
+  vatRate: number;
+  tipPercent: number | null;
+  promotions: string[];
+  basket: CorpusBasketLine[];
+  vouchers: CorpusVoucherSpec[];
+  expected: {
+    outcomes: Array<{ voucherId: string; amountAgorot: number; shares: Record<string, number>; skipped: Array<[string, string]>; refusal: string | null }>;
+    lines: Array<{ id: string; unitAgorot: number; grossAgorot: number; promotionAgorot: number; promotionYieldedAgorot: number; voucherAgorot: number; totalAgorot: number }>;
+    applied: Array<{ promotionId: string; name: string; type: string; applications: number; discountAgorot: number }>;
+    grossAgorot: number;
+    promotionAgorot: number;
+    voucherAgorot: number;
+    totalAgorot: number;
+    netAgorot: number;
+    vatAgorot: number;
+    tipAgorot: number;
+    dueAgorot: number;
+    itemCount: number;
+    /** The sale document's fields (buildTransaction / buildItems, shekels): the discount, the items' shares, `voucherDiscounts[]` (an item's id is its basket line's). */
+    document: {
+      documentDiscount: number | null;
+      netAmount: number;
+      vatAmount: number;
+      tipAmount: number;
+      promotions: Row[] | null;
+      items: Array<{ id: string; promotionDiscount: number | null; promotionId: string | null; voucherDiscount: number | null }>;
+      voucherDiscounts: Row[] | null;
+    };
+  };
+}
+
+/** "שובר פריטים" as a leg of the payment: what each voucher is worth against the priced basket, the marks it leaves, what is left to pay. */
+export interface CorpusGoodsCase {
+  name: string;
+  tags: string[];
+  catalog: string;
+  promotions: string[];
+  tipPercent: number | null;
+  basket: CorpusBasketLine[];
+  vouchers: CorpusVoucherSpec[];
+  legs: Array<{ serial: number; includeExtras: boolean; redeemed: Array<[string, number]> }>;
+  expected: {
+    legs: Array<{ serial: number; valueAgorot: number; amountAgorot: number }>;
+    /** By basket line: the note a covered line carries ("כלול בשובר #7 (1)"), null when none. */
+    notes: Record<string, string | null>;
+    totalAgorot: number;
+    tipAgorot: number;
+    goodsDueAgorot: number;
+    dueAgorot: number;
+  };
+}
+
 export interface Corpus {
   format: string;
   catalogs: Record<string, { categories: Row[]; products: Row[]; menu: Row }>;
   promotionLibrary: Row[];
   scenarios: CorpusScenario[];
+  vouchers?: CorpusVoucherCase[];
+  goodsVouchers?: CorpusGoodsCase[];
+}
+
+/** The discount voucher of a corpus case as the kiosks hold it for an order (AppliedVoucher). */
+export function appliedVoucherOf(v: CorpusVoucherSpec): AppliedDiscountVoucher {
+  const benefit = voucherBenefitOf(v.benefit);
+  if (!benefit) throw new Error(`voucher ${v.voucherId}: no benefit`);
+  return {
+    reservationId: `r-${v.voucherId}`,
+    clientRequestId: `c-${v.voucherId}`,
+    voucherId: v.voucherId,
+    code: `CODE-${v.voucherId}`,
+    serial: v.serial,
+    batchId: v.batchId,
+    batchName: v.batchName,
+    stacking: voucherStackingOf(v.stacking),
+    benefit,
+    uses: v.uses,
+    expiresAt: null,
+  };
 }
 
 /** The scenario's promotions, as the cloud sends them, in the scenario's order. */
-export function scenarioPromotions(corpus: Corpus, s: CorpusScenario): Row[] {
+export function scenarioPromotions(corpus: Corpus, s: Pick<CorpusScenario, 'promotions'>): Row[] {
   const library = new Map(corpus.promotionLibrary.map((p) => [String(p.id), p] as const));
   return s.promotions.map((id) => library.get(id)).filter((p): p is Row => !!p);
 }

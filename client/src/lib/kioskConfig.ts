@@ -2387,14 +2387,14 @@ export function payMethodAsk(methods: readonly PaymentMethod[], usable: readonly
 }
 
 /**
- * A voucher is offered only where the order it leaves can be finished: at the till ("מזומן בקופה"). The
- * Windows and browser kiosks redeem a voucher towards an order the till collects; neither writes a sale
- * with voucher legs and a card leg of its own (the Android kiosk does — PARITY-kiosk-2026-10-09.md), so
- * with the card and vouchers alone a voucher would leave the customer with no way to pay the rest, and a
- * voucher that pays it all with no till to send the order to.
+ * A voucher is offered where the order it leaves can be finished (the Android kiosk's rule, its terminal pays the rest):
+ * by the card — the Windows kiosk writes ONE document with the vouchers as legs and the card for what is left, the
+ * browser kiosk does the same through its bridge —, or at the till ("מזומן בקופה"). With neither, a voucher would leave
+ * the customer with no way to pay what it does not cover. [cardUsable]: the card can be charged now (a terminal
+ * that answers, a bridge that takes cards); true when the caller has not looked.
  */
-export function voucherCanFinish(methods: readonly PaymentMethod[]): boolean {
-  return methods.includes('cash_at_till');
+export function voucherCanFinish(methods: readonly PaymentMethod[], cardUsable = true): boolean {
+  return methods.includes('cash_at_till') || (cardUsable && methods.includes('card'));
 }
 
 /**

@@ -11,7 +11,9 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
-import { orderCode, orderDue, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { legMarks, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { DISCOUNT_PAY_HERE, startVouchersOf } from '@dash-lib/kioskVoucherClient';
+import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '@dash-lib/kioskVouchers';
 import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
@@ -56,7 +58,7 @@ import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
 import { Outbox, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
-import { documentWire, Ledger, type AppliedPromotionRow, type DocDraft } from './fiscal/ledger';
+import { docVoucherDiscounts, documentWire, Ledger, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
@@ -1108,7 +1110,10 @@ export class KioskService extends EventEmitter {
    * "הרבה"), a meal's components on their defaults with their upcharges, then the promotions — each
    * line's share is the document's discount. The screen's figures are only compared, never trusted.
    */
-  private priceBasket(input: StartPaymentIn, now = new Date()): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[] } {
+  private priceBasket(
+    input: StartPaymentIn,
+    now = new Date(),
+  ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
     const lines: SaleLine[] = [];
@@ -1169,11 +1174,13 @@ export class KioskService extends EventEmitter {
     // A price that moved since the screen showed it: shown to the customer, never charged as is.
     const priced = new Map(lines.map((x) => [x.key, { name: x.name, unitAgorot: unitAgorot(x) }] as const));
     for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
-    // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price).
+    // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price) — then the discount
+    // vouchers held for the order ("שוברי הנחה"), in the order applied (`withPromotions(...).withVoucherDiscounts()`).
     const promo = priceKioskBasket(
       lines.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true })),
       promotionsOf(this.cloud.promotions()),
       localDateTimeOf(now),
+      input.vouchers?.discounts ?? [],
     );
     const shares = new Map(promo.lines.map((x) => [x.id, x] as const));
     for (const x of lines) {
@@ -1183,9 +1190,11 @@ export class KioskService extends EventEmitter {
         x.promotionId = share.promotionId;
         x.promotionName = share.promotionName;
       }
+      if (share && share.voucherAgorot > 0) x.voucherAgorot = share.voucherAgorot;
+      if (share && share.promotionYieldedAgorot > 0) x.promotionYieldedAgorot = share.promotionYieldedAgorot;
     }
     const promotions = promo.applied.map((a) => ({ promotionId: a.promotionId, name: a.name, type: a.type, applications: a.applications, discountAgorot: a.discountAgorot }));
-    return { lines, changes, tracked: [...tracked], promotions };
+    return { lines, changes, tracked: [...tracked], promotions, voucherOutcomes: promo.voucherOutcomes };
   }
 
   /** A dish's choices from its catalog groups, priced per unit of the dish (kioskMoney.ts pickCharges); unknown ones dropped. */
@@ -1209,15 +1218,29 @@ export class KioskService extends EventEmitter {
     // A screen (KDS, order status board) is not a till: it never sells.
     if (!this.fiscalRole) return { ok: false, reason: 'error', message: 'מכשיר תצוגה אינו קופה' };
     if (this.pay.cardInFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
-    // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
-    if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
-    if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
+    // The vouchers of the order (goods ones as legs, discount ones held for it), read field by field: the
+    // browser kiosk's bridge sends them over HTTP.
+    const vouchers = input.vouchers === undefined ? null : startVouchersOf(input.vouchers);
+    if (input.vouchers !== undefined && !vouchers) return { ok: false, reason: 'error', message: 'השוברים של ההזמנה אינם תקינים' };
+    const withVouchers = !!vouchers && vouchers.legs.length + vouchers.discounts.length > 0;
+    const terminalRefusal = (): StartPaymentOut | null => {
+      // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
+      if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
+      if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
+      return null;
+    };
+    // The card is asked for what the vouchers do not pay: with none on the order, before anything else (as always);
+    // with some, once the order is priced — a sale they pay whole touches no terminal.
+    if (!withVouchers) {
+      const refused = terminalRefusal();
+      if (refused) return refused;
+    }
     // The cloud's word first, when it answers in time (core/basketCheck.ts).
     await this.cloudBasketCheck(input).catch(() => undefined);
-    const { lines, changes, tracked, promotions } = this.priceBasket(input);
+    const { lines, changes, tracked, promotions, voucherOutcomes } = this.priceBasket({ ...input, vouchers: vouchers ?? undefined });
     const nowTotal = saleTotals(lines, this.vatRate()).totalAgorot;
     if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: nowTotal };
-    // The total the customer saw: never a different one charged.
+    // The total the customer saw (after the promotions and the discount vouchers): never a different one charged.
     const shownTotal = input.expectedTotalAgorot;
     if (typeof shownTotal === 'number' && Number.isFinite(shownTotal) && Math.round(shownTotal) !== nowTotal) {
       return { ok: false, reason: 'changed', changes: [], totalAgorot: nowTotal };
@@ -1227,8 +1250,22 @@ export class KioskService extends EventEmitter {
     const operator = this.operator();
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
     const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
+    // The goods vouchers' legs, worked out again from the basket as it stands now (CheckoutViewModel.applyVoucher): the
+    // card pays the rest of the goods and the tip; the vouchers never pay the tip.
+    const { legs, marks } = this.legsOf(lines, vouchers?.legs ?? []);
+    // "כלול בשובר #N": each line a goods voucher paid for carries its mark on the document (coverByVoucher).
+    for (const l of lines) {
+      const mark = marks.get(l.key);
+      if (mark) l.voucherMark = mark;
+    }
     const totals = saleTotals(lines, this.vatRate(), tip);
-    if (totals.chargeAgorot < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
+    const principal = Math.max(0, goods - legs.reduce((s, l) => s + l.amountAgorot, 0));
+    const chargeAgorot = principal + tip;
+    if (goods + tip < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
+    if (withVouchers && chargeAgorot > 0) {
+      const refused = terminalRefusal();
+      if (refused) return refused;
+    }
     this.ledger.openShift(operator);
     const now = Date.now();
     const order: KioskOrder = {
@@ -1270,12 +1307,54 @@ export class KioskService extends EventEmitter {
       tracked,
       totals,
       promotions,
+      voucherDiscounts: docVoucherDiscounts(voucherOutcomes),
+      // A discount voucher that took nothing off this basket (it fell under its minimum): held, and given back once the sale is written.
+      voucherReleases: voucherOutcomes.filter((o) => o.amountAgorot <= 0).map((o) => o.voucher.reservationId),
+      voucherLegs: legs,
     });
     if (!doc) return { ok: false, reason: 'no_shift', message: 'אין משמרת פתוחה' };
     this.orders.update(order.localId, (o) => ({ ...o, transactionId: doc.id }));
-    this.progress({ orderId: order.localId, phase: 'starting', message: null, amountAgorot: totals.chargeAgorot, canCancel: true, cancelling: false });
-    void this.runCharge(order.localId, doc, totals.chargeAgorot, tip);
-    return { ok: true, orderId: order.localId, amountAgorot: totals.chargeAgorot };
+    if (chargeAgorot < 1) {
+      // The vouchers paid it all: the document is complete at once, with their legs and no card (the till's confirmCash with legs).
+      const done = this.ledger.completeCardSale(doc.id, null);
+      if (!done) return { ok: false, reason: 'error', message: 'המסמך לא נשמר' };
+      void this.afterApproval(order.localId, done, false);
+      return { ok: true, orderId: order.localId, amountAgorot: 0 };
+    }
+    this.progress({ orderId: order.localId, phase: 'starting', message: null, amountAgorot: chargeAgorot, canCancel: true, cancelling: false });
+    void this.runCharge(order.localId, doc, chargeAgorot, tip);
+    return { ok: true, orderId: order.localId, amountAgorot: chargeAgorot };
+  }
+
+  /**
+   * The goods vouchers' legs as this basket pays them: each voucher worth what it covers of the lines as they stand now
+   * (the promotions' and the discount vouchers' shares out), in the order taken, never more than the goods still owed —
+   * what the Android payment works out again at its start (CheckoutViewModel.applyVoucher). A voucher that covers
+   * nothing any more goes back on itself.
+   */
+  private legsOf(lines: SaleLine[], taken: readonly VoucherLeg[]): { legs: DocVoucherLeg[]; marks: Map<string, string> } {
+    if (taken.length === 0) return { legs: [], marks: new Map() };
+    const basket = this.webLines(lines);
+    const done = recountLegs(basket, taken);
+    for (const v of done) if (v.amountAgorot <= 0) void this.payAtTill.reverse(v.redemptionId);
+    const paid = done.filter((v) => v.amountAgorot > 0);
+    return {
+      legs: paid.map((v) => ({ redemptionId: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot })),
+      marks: legMarks(basket, paid),
+    };
+  }
+
+  /**
+   * The sale was written: its discount vouchers confirmed (their uses taken) — or given back when the basket
+   * ended up taking nothing off by them —, its goods vouchers linked to its document. Best effort, retried; the
+   * document itself confirms the vouchers in the cloud as well, through the outbox, if this never lands.
+   */
+  private settleVouchers(doc: DocDraft): void {
+    const discounts = doc.voucherDiscounts ?? [];
+    const releases = doc.voucherReleases ?? [];
+    const legs = doc.voucherLegs ?? [];
+    if (discounts.length + releases.length + legs.length === 0) return;
+    void this.payAtTill.settle(doc.id, discounts, releases, legs).catch((e: unknown) => this.log(`vouchers of ${doc.id}: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   private progress(p: PayProgress) {
@@ -1324,6 +1403,8 @@ export class KioskService extends EventEmitter {
 
   /** Money taken: the order paid, its pickup number, the bon (once), the slip, the receipt by policy. */
   private async afterApproval(orderId: string, doc: DocDraft, recovered: boolean) {
+    // Its vouchers: confirmed with this document (a sale recovered after a restart too).
+    this.settleVouchers(doc);
     const me = this.cloud.machine();
     const number = formatDocNumber(doc.prefix, String(doc.number));
     let order = this.orders.update(orderId, (o) => ({ ...o, paid: true, paidAt: doc.updatedAt, transactionId: doc.id, transactionNumber: number, recovered }));
@@ -1386,8 +1467,9 @@ export class KioskService extends EventEmitter {
           ? 'לא הוגדר מסופון אשראי לקיוסק'
           : 'מסופון האשראי לא זמין כרגע';
     const usable = methods.filter((m) =>
-      // A voucher only where its order can be finished: at the till (voucherCanFinish) — never a dead end.
-      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow && voucherCanFinish(methods) : m === 'cash_at_till' ? this.fiscalRole : false,
+      // A voucher only where its order can be finished: by the card (the vouchers are legs of the document) or at the till
+      // (voucherCanFinish) — never a dead end.
+      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow && voucherCanFinish(methods, this.fiscalRole && cardOff === null) : m === 'cash_at_till' ? this.fiscalRole : false,
     );
     // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why).
     return { methods, usable: kiosk && this.offlineBlocked(this.config()) ? [] : usable, cardOff };
@@ -1428,19 +1510,47 @@ export class KioskService extends EventEmitter {
           : null,
         noDiscount: l.noDiscount === true,
         ...((l.promotionAgorot ?? 0) > 0 ? { promotionAgorot: l.promotionAgorot, promotionId: l.promotionId ?? null, promotionName: l.promotionName ?? null } : {}),
+        ...((l.voucherAgorot ?? 0) > 0 ? { voucherAgorot: l.voucherAgorot } : {}),
+        // The promotion's share that gave way to a voucher: the rules read the basket as the promotions priced it.
+        ...((l.promotionYieldedAgorot ?? 0) > 0 ? { promotionYieldedAgorot: l.promotionYieldedAgorot, promotionId: l.promotionId ?? null } : {}),
       };
     });
   }
 
-  /** A voucher for this basket, redeemed online (kiosk/payAtTill.ts); the basket priced here. */
-  async redeemVoucher(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
+  /**
+   * A voucher for this basket (kiosk/payAtTill.ts; the basket priced here with the discount vouchers already on the order):
+   * goods redeemed online, or a discount voucher held in the cloud for this order.
+   */
+  async redeemVoucher(input: {
+    code: string;
+    basket: StartPaymentIn;
+    earlier: VoucherLeg[];
+    discounts?: AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    saleRef?: string;
+  }): Promise<VoucherResult> {
     if (!this.fiscalRole || !this.isKiosk()) return { kind: 'refused', reason: 'not_a_kiosk' };
-    const { lines } = this.priceBasket(input.basket);
-    return this.payAtTill.redeem({ code: input.code, lines: this.webLines(lines), earlier: input.earlier ?? [], forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId });
+    const discounts = input.discounts ?? [];
+    const { lines } = this.priceBasket({ ...input.basket, vouchers: { legs: [], discounts, saleRef: input.saleRef ?? input.clientRequestId } });
+    return this.payAtTill.redeem({
+      code: input.code,
+      lines: this.webLines(lines),
+      earlier: input.earlier ?? [],
+      discounts,
+      forfeitRest: input.forfeitRest,
+      clientRequestId: input.clientRequestId,
+      saleRef: input.saleRef,
+    });
   }
 
   async reverseVoucher(redemptionId: string): Promise<void> {
     if (typeof redemptionId === 'string' && redemptionId) await this.payAtTill.reverse(redemptionId);
+  }
+
+  /** Discount vouchers given back (removed from the order, the order left): the cloud lets the hold go. */
+  async releaseDiscounts(vouchers: Array<{ reservationId: string }>): Promise<void> {
+    this.payAtTill.releaseDiscounts((Array.isArray(vouchers) ? vouchers : []).filter((v) => v && typeof v.reservationId === 'string' && v.reservationId));
   }
 
   /**
@@ -1452,8 +1562,11 @@ export class KioskService extends EventEmitter {
     if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
     const cfg = this.config();
     if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
-    await this.cloudBasketCheck(input).catch(() => undefined);
-    const { lines, changes } = this.priceBasket(input);
+    // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
+    if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'error', message: DISCOUNT_PAY_HERE };
+    const basket: StartPaymentIn = { ...input, vouchers: undefined };
+    await this.cloudBasketCheck(basket).catch(() => undefined);
+    const { lines, changes } = this.priceBasket(basket);
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
     if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: goods };
     if (typeof input.expectedTotalAgorot === 'number' && Number.isFinite(input.expectedTotalAgorot) && Math.round(input.expectedTotalAgorot) !== goods) {
@@ -1825,6 +1938,9 @@ export class KioskService extends EventEmitter {
         tipAgorot: doc.totals.tipAgorot,
         // "הנחת מבצע: <שם>" — the promotions the sale was priced with.
         promotions: (doc.promotions ?? []).map((p) => ({ name: p.name, discountAgorot: p.discountAgorot })),
+        // "שובר #12 — פסטיבל הקיץ" under the items (a discount) and "שובר הפקה" among the payments (the goods vouchers' legs).
+        voucherDiscounts: (doc.voucherDiscounts ?? []).map((v) => ({ label: voucherLabel(v.serial, v.batchName), amountAgorot: v.amountAgorot })),
+        voucherLegs: (doc.voucherLegs ?? []).map((l) => ({ amountAgorot: l.amountAgorot })),
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
