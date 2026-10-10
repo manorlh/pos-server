@@ -39,6 +39,9 @@ export function setTheme(mode: ThemeMode) {
 }
 
 function subscribe(onChange: () => void) {
+  // Once mounted, put the class back: a client re-render of <html> (React regenerating the tree
+  // after a hydration mismatch) drops the one THEME_INIT_SCRIPT added before the first paint.
+  apply(read());
   listeners.add(onChange);
   // Another tab switched: follow it.
   const onStorage = (e: StorageEvent) => {
