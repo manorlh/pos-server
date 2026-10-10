@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import logging
 import os
 import pathlib
 import uuid
@@ -618,7 +619,18 @@ def _render(*args, downgrade=False) -> str:
     buf = io.StringIO()
     cfg = Config(os.path.join(_HERE, "alembic.ini"), output_buffer=buf)
     cfg.set_main_option("script_location", os.path.join(_HERE, "alembic"))
-    (command.downgrade if downgrade else command.upgrade)(cfg, *args, sql=True)
+    # alembic's env.py runs fileConfig(), which disables every existing logger: put them back,
+    # or a later test's caplog sees nothing (tests/test_device_management.py).
+    root = logging.getLogger()
+    saved = {n: lg.disabled for n, lg in logging.Logger.manager.loggerDict.items() if isinstance(lg, logging.Logger)}
+    handlers, level = list(root.handlers), root.level
+    try:
+        (command.downgrade if downgrade else command.upgrade)(cfg, *args, sql=True)
+    finally:
+        for n, disabled in saved.items():
+            logging.getLogger(n).disabled = disabled
+        root.handlers[:] = handlers
+        root.setLevel(level)
     return " ".join(buf.getvalue().split())
 
 
