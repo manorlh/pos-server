@@ -498,6 +498,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/kiosks*", S("kiosks")),
     # Remote control of tills and kiosks (app/routers/device_commands.py).
     (_ALL, "/device-commands*", S("device_control")),
+    # "שליחת לוגים לענן" (app/routers/device_logs.py): the device page's "לוגים" and the super
+    # admin's "לוגים ממכשירים". Any of the two at view lets the route's own rule run: the content
+    # for a super admin / a distributor of the organization only, a request also for a
+    # `device_control` editor (checked there at edit) — never the content for them.
+    (_ALL, "/device-logs*", S("devices", "device_control", level=VIEW)),
     # "חסימות ואזל" (app/routers/item_blocks.py).
     ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
     (_ALL, "/item-blocks*", S("item_blocks")),

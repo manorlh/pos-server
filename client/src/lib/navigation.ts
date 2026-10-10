@@ -360,6 +360,13 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Download,
         gate: 'superAdmin',
       },
+      // "לוגים ממכשירים": every device's logs sent to support — the super admin's (content is private).
+      {
+        href: '/dashboard/device-logs',
+        labelKey: 'deviceLogs',
+        icon: ScrollText,
+        gate: 'superAdmin',
+      },
       { href: '/dashboard/profile', labelKey: 'profile', icon: User },
     ],
   },

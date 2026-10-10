@@ -224,6 +224,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what it holds that the cloud
     #: copy has not got yet. Sent only while it serves the LAN; absent leaves it as it was.
     lan_sync: Optional[HeartbeatLanSync] = Field(None, alias="lanSync")
+    #: What this build can do, e.g. ["device_logs_v1"] ("שליחת לוגים לענן"), cleaned in
+    #: app/services/device_logs.py `apply_heartbeat`. Absent (an older build): as it was.
+    capabilities: Optional[List[Any]] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

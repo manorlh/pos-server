@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
     exception_alerts_worker_enabled: bool = True
 
+    # "שליחת לוגים לענן" (app/services/device_logs.py): uploaded device logs older than this many
+    # days are deleted by the nightly pass. 0 = kept for ever.
+    device_logs_retention_days: int = 30
+
     # "התראות לטלפון" (Web Push, app/services/webpush.py): the VAPID key pair, base64url — the
     # 65-byte public point and the 32-byte private scalar (`python -m scripts.generate_vapid_keys`).
     # Set only in the environment; never committed. Both empty = phone alerts off.

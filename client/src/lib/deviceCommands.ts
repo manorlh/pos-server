@@ -19,7 +19,8 @@ export type CommandKind =
   | 'till_z' //        POST /machines/{id}/till-z, and a remote Z
   | 'transmit' //      POST /machines/{id}/transmit
   | 'reboot' //        POST /machines/{id}/reboot
-  | 'till_message'; // POST /till-messages
+  | 'till_message' //  POST /till-messages
+  | 'device_logs'; //  POST /device-logs/requests ("בקש לוגים": an upload_logs command)
 
 /** `unknown`: followed for hours with no answer — the tray gives up ("לא ידוע — בדוק במכשיר"). */
 export type CommandPhase = 'sending' | 'sent' | 'received' | 'done' | 'failed' | 'expired' | 'cancelled' | 'unknown';
@@ -103,6 +104,7 @@ const ACTION_LABELS: Record<string, string> = {
   transmit: 'שידור עסקאות',
   reboot: 'הפעלה מחדש של המכשיר',
   till_message: 'הודעה לקופות',
+  upload_logs: 'בקשת לוגים',
 };
 
 export function actionLabelOf(action: string): string {
@@ -167,6 +169,15 @@ export function phaseOfDevice(status: string, detail?: string | null): PhaseUpda
     default:
       return { phase: 'sent', detail: null };
   }
+}
+
+/**
+ * "בקש לוגים" (`GET /device-logs/requests/status`): an `upload_logs` command — נשלח → התקבל במכשיר →
+ * "הלוג התקבל" once its upload arrived (`received`), never the log's content.
+ */
+export function phaseOfDeviceLogs(status: string, received: boolean, detail?: string | null): PhaseUpdate {
+  if (received) return { phase: 'done', detail: 'הלוג התקבל' };
+  return phaseOfDevice(status, detail);
 }
 
 /** `card_attempt_commands`: pending (delivered or not) → done / failed / not_found / busy; expired / cancelled. */
