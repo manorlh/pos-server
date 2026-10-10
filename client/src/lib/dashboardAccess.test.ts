@@ -65,7 +65,7 @@ describe('sectionForPath — which section a page belongs to', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'navigation.ts'), 'utf8');
     const hrefs = [...source.matchAll(/href: '(\/dashboard[^']*)'/g)].map((m) => m[1]);
     assert.ok(hrefs.length > 40, 'read the menu');
-    const outside = new Set(['/dashboard/profile', '/dashboard/access-settings', '/dashboard/till-parameters', '/dashboard/app-updates']);
+    const outside = new Set(['/dashboard/profile', '/dashboard/access-settings', '/dashboard/till-parameters', '/dashboard/app-updates', '/dashboard/device-logs']);
     const orphans = hrefs.filter((href) => sectionForPath(href) === undefined && !outside.has(href));
     assert.deepEqual(orphans, [], 'a new menu entry needs a section in DASHBOARD_SECTIONS (and the server)');
     for (const section of DASHBOARD_SECTIONS) {

@@ -60,7 +60,8 @@ KIOSK_ROLES = frozenset({
 #: Who sees a customer's phone in full on the orders list.
 FULL_PHONE_ROLES = frozenset({UserRole.SUPER_ADMIN, UserRole.COMPANY_MANAGER})
 
-FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin", "setup", "no_payment")
+#: `till_mode`: the device works as a till today ("מצב עבודה: קופה", app/services/kiosk_till_mode.py).
+FLOW_STATES = ("attract", "ordering", "paying", "success", "paused", "closed", "admin", "setup", "no_payment", "till_mode")
 BON_PRINTER_STATES = ("ok", "warn", "error", "none")
 
 NOT_KIOSK_CONTROLLER = "not_kiosk_controller"
@@ -165,7 +166,9 @@ def get_device(db: Session, machine_id: Any) -> Optional[KioskDevice]:
 
 
 def is_kiosk(db: Session, machine: POSMachine) -> bool:
-    return get_device(db, machine.id) is not None
+    """A kiosk by role — a till's kiosk-mode row ("מצב עבודה", home_role "till") is not one."""
+    device = get_device(db, machine.id)
+    return device is not None and device.home_role is None
 
 
 def kiosk_for_dashboard(db: Session, user: User, machine_id: Any, tenant_id) -> Tuple[POSMachine, KioskDevice]:
@@ -234,7 +237,8 @@ def convert(
     now: Optional[datetime] = None,
 ) -> KioskDevice:
     """Make this till a self-order kiosk. The caller commits (and notifies, see `lock_device_targets`)."""
-    if get_device(db, machine.id) is not None:
+    existing = get_device(db, machine.id)
+    if existing is not None and existing.home_role is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_kiosk")
     # A display device (a KDS / the board) is no till, so no kiosk either: a new pairing.
     if getattr(machine, "is_fiscal", True) is False:
@@ -246,7 +250,17 @@ def convert(
     ):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="machine_not_assigned")
     controllers = validate_controllers(db, machine, controller_ids)
-    device = KioskDevice(
+    if existing is not None:
+        # A till that worked as a kiosk some days ("מצב עבודה") becomes a kiosk by role: its row (config,
+        # state, orders) is kept and promoted — never a second row.
+        existing.home_role = None
+        existing.enabled = True
+        existing.name = _clean_name(name, existing.name or machine.name)
+        existing.controller_machine_ids = controllers
+        device = existing
+    else:
+        device = None
+    device = device or KioskDevice(
         machine_id=machine.id,
         tenant_id=machine.tenant_id,
         shop_id=machine.shop_id,
@@ -258,7 +272,8 @@ def convert(
         created_at=_now(now),
         created_by_user_id=getattr(user, "id", None),
     )
-    db.add(device)
+    if existing is None:
+        db.add(device)
     # A kiosk controls nothing: drop it from every other kiosk's controllers.
     for other in db.query(KioskDevice).filter(
         KioskDevice.tenant_id == machine.tenant_id, KioskDevice.machine_id != machine.id
@@ -378,7 +393,7 @@ def _terminal_identity(machine: POSMachine, settings: Any, lock_of: Any) -> Dict
 
 def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """KioskSummary for each device (contract §2.2), batched."""
-    from app.services import till_z
+    from app.services import kiosk_till_mode, till_z
     from app.services.shifts import open_shifts_for_machines
 
     devices = list(devices)
@@ -488,6 +503,11 @@ def summaries(db: Session, devices: Sequence[KioskDevice], *, now: Optional[date
             # "פתיחה אוטומטית": the kiosk's hours and automatic Z, for the controlling till's form.
             "schedule": _schedule_of(db, machine),
             "flowState": st.get("flowState"),
+            # The role it was given: "kiosk", or "till" — a till its owner lets work as a kiosk (§5.10).
+            "homeRole": d.home_role or "kiosk",
+            # "מצב עבודה: קיוסק / קופה": the owner's gate, the mode now, a switch waiting (kiosk_till_mode.py).
+            "tillMode": kiosk_till_mode.summary_part(db, machine, st),
+            "display": st.get("display"),
             "shiftOpen": bool(shift_open),
             "zMode": till_z.z_mode_of(machine),
             "printerStatus": machine.printer_status,
@@ -566,7 +586,7 @@ def candidates(db: Session, user: User, tenant_id, *, shop_id=None, now: Optiona
         .filter(
             POSMachine.pairing_status == PairingStatus.ASSIGNED,
             POSMachine.shop_id.isnot(None),
-            ~POSMachine.id.in_(db.query(KioskDevice.machine_id)),
+            ~POSMachine.id.in_(db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))),
         )
     )
     if shop_id is not None:
@@ -653,6 +673,15 @@ def clean_status(raw: Any) -> Dict[str, Any]:
     health = clean_health(raw.get("health"))
     if health:
         out["health"] = health
+    # "מצב עבודה: קופה" and the screen the kiosk lays itself out on (app/services/kiosk_till_mode.py).
+    from app.services import kiosk_till_mode
+
+    till_mode = kiosk_till_mode.clean_till_mode(raw.get("tillMode"))
+    if till_mode is not None:
+        out["tillMode"] = till_mode
+    display = kiosk_till_mode.clean_display(raw.get("display"))
+    if display is not None:
+        out["display"] = display
     return out
 
 
@@ -667,7 +696,13 @@ def controlled_devices(db: Session, till: POSMachine) -> List[KioskDevice]:
         .order_by(KioskDevice.name, KioskDevice.machine_id)
         .all()
     )
-    return [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
+    mine = [d for d in devices if str(till.id) in {str(c) for c in (d.controller_machine_ids or [])}]
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a till locked to its point of
+    # sale controls that area's kiosks and the shop's area-less ones, never another area's.
+    from app.services import area_lock
+
+    areas = area_lock.areas_of_machines(db, [d.machine_id for d in mine])
+    return area_lock.keep_shared_devices(db, till, mine, lambda d: areas.get(d.machine_id))
 
 
 def state_of(device: KioskDevice, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -713,6 +748,12 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
     """`POST /sync/{id}/kiosk/sync`: every till may call it; a non-kiosk gets `kiosk: false`. The caller commits."""
     now = _now(now)
     device = get_device(db, machine.id)
+    if device is None and isinstance(raw_status, dict) and raw_status.get("requestKioskMode") is True:
+        # "מצב עבודה" on a till (P:/specs/kiosk-landscape-till-mode.md §5.10): the till asks for the kiosk mode
+        # its owner allowed — its kiosk-mode row is made now (home_role "till"; it stays a till by role).
+        from app.services import kiosk_till_mode
+
+        device = kiosk_till_mode.ensure_home_till_row(db, machine, now=now)
     if device is not None:
         if raw_status is not None:
             cleaned = clean_status(raw_status)
@@ -721,13 +762,15 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
                 device.applied_config_version = cleaned["appliedConfigVersion"]
         previous_seen = device.last_kiosk_sync_at
         device.last_kiosk_sync_at = now
-        # Back after a gap: its offline exception closed, or recorded (app/services/kiosk_offline.py).
-        try:
-            from app.services import kiosk_offline
+        # Back after a gap: its offline exception closed, or recorded (app/services/kiosk_offline.py). A till's
+        # kiosk-mode row is a till's: its gaps are a till's business, never a kiosk offline.
+        if device.home_role is None:
+            try:
+                from app.services import kiosk_offline
 
-            kiosk_offline.note_back(db, machine, device, cfgsvc.effective_config(db, machine), previous_seen, now=now)
-        except Exception:  # noqa: BLE001 - an alert never fails the sync
-            logger.exception("kiosk offline alert failed for %s", machine.id)
+                kiosk_offline.note_back(db, machine, device, cfgsvc.effective_config(db, machine), previous_seen, now=now)
+            except Exception:  # noqa: BLE001 - an alert never fails the sync
+                logger.exception("kiosk offline alert failed for %s", machine.id)
         # The machine row is the authority on where the kiosk stands.
         if machine.shop_id is not None and device.shop_id != machine.shop_id:
             device.shop_id = machine.shop_id
@@ -745,6 +788,8 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
     ops = kiosk_ops.on_kiosk_sync(db, machine, device, raw_status, bundle["config"], now=now)
     return {
         "kiosk": True,
+        # "מצב עבודה": the role the device opens in — "kiosk", or "till" for a till's kiosk-mode row.
+        "homeRole": device.home_role or "kiosk",
         "serverTime": _iso(now),
         "machineId": str(machine.id),
         "name": device.name,
@@ -762,6 +807,8 @@ def kiosk_sync(db: Session, machine: POSMachine, raw_status: Any, *, now: Option
         "alerts": ops["alerts"],
         "closeRequest": ops["closeRequest"],
         "bonCommands": ops["bonCommands"],
+        # "מצב עבודה" from the dashboard: {id, mode, by} or null (kiosk_till_mode.py).
+        "workMode": ops.get("workMode"),
     }
 
 
@@ -899,16 +946,89 @@ def order_out(row: KioskOrder, *, full_phone: bool) -> Dict[str, Any]:
     }
 
 
-def list_orders(db: Session, user: User, machine: POSMachine, day: Optional[date]) -> List[Dict[str, Any]]:
+#: How far back the dashboard's kiosk order search looks (business days up to the chosen date).
+ORDER_SEARCH_DAYS = 30
+ORDER_SEARCH_MAX = 200
+
+
+def list_orders(
+    db: Session, user: User, machine: POSMachine, day: Optional[date], q: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    The kiosk's orders of a business date. With `q` — a pickup number ("17", "A17", "A-17",
+    "a-17": app/services/kiosk_pickup.py) or a document number (a substring) — the matching
+    orders of the last ORDER_SEARCH_DAYS business days up to `day` instead, newest first: the
+    same pickup number comes back every day, so each row says its date, and `matchedBy` says
+    whether the pickup number or the document number found it.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import or_
+
+    from app.services import kiosk_pickup
+
     day = day or business_today(db, machine.tenant_id)
+    full = getattr(user, "role", None) in FULL_PHONE_ROLES
+    needle = (q or "").strip()
+    if not needle:
+        rows = (
+            db.query(KioskOrder)
+            .filter(KioskOrder.machine_id == machine.id, KioskOrder.business_date == day)
+            .order_by(KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+            .all()
+        )
+        return [order_out(r, full_phone=full) for r in rows]
+    pickup = kiosk_pickup.parse_pickup_query(needle)
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    by_document = KioskOrder.transaction_number.ilike(f"%{escaped}%", escape="\\")
+    match = or_(kiosk_pickup.order_match_clause(pickup), by_document) if pickup is not None else by_document
     rows = (
         db.query(KioskOrder)
-        .filter(KioskOrder.machine_id == machine.id, KioskOrder.business_date == day)
-        .order_by(KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .filter(
+            KioskOrder.machine_id == machine.id,
+            KioskOrder.business_date <= day,
+            KioskOrder.business_date > day - timedelta(days=ORDER_SEARCH_DAYS),
+            match,
+        )
+        .order_by(KioskOrder.business_date.desc(), KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .limit(ORDER_SEARCH_MAX)
         .all()
     )
-    full = getattr(user, "role", None) in FULL_PHONE_ROLES
-    return [order_out(r, full_phone=full) for r in rows]
+    out = []
+    for r in rows:
+        found = []
+        if pickup is not None and pickup.matches(r.pickup_label, r.pickup_number):
+            found.append("pickup")
+        if needle.lower() in str(r.transaction_number or "").lower():
+            found.append("document")
+        out.append({**order_out(r, full_phone=full), "matchedBy": found})
+    return out
+
+
+#: "היסטוריית עסקאות" on a controlling till: at most this many business days back, and orders listed.
+TILL_HISTORY_MAX_DAYS = 7
+TILL_HISTORY_MAX_ORDERS = 300
+
+
+def till_order_history(db: Session, kiosk_machine: POSMachine, days: int = 1, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """
+    The kiosk's orders of today and the [days] − 1 business days before it, newest first, as a controlling till's
+    "היסטוריית עסקאות" lists them (P:/specs/kiosk-landscape-till-mode.md §5.12) — the phone masked always (a
+    till is no dashboard user); each with its local id, for "הדפס שוב את הבון" / "הדפס העתק קבלה".
+    """
+    from datetime import timedelta as _td
+
+    days = max(1, min(int(days or 1), TILL_HISTORY_MAX_DAYS))
+    today = business_today(db, kiosk_machine.tenant_id, now=now)
+    first = today - _td(days=days - 1)
+    rows = (
+        db.query(KioskOrder)
+        .filter(KioskOrder.machine_id == kiosk_machine.id, KioskOrder.business_date >= first, KioskOrder.business_date <= today)
+        .order_by(KioskOrder.business_date.desc(), KioskOrder.paid_at.desc(), KioskOrder.local_id.desc())
+        .limit(TILL_HISTORY_MAX_ORDERS)
+        .all()
+    )
+    return [order_out(r, full_phone=False) for r in rows]
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -929,6 +1049,10 @@ def controller_target(db: Session, till: POSMachine, kiosk_machine_id: Any) -> T
     kiosk_machine = db.get(POSMachine, device.machine_id)
     if kiosk_machine is None or not kiosk_machine.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=KIOSK_NOT_FOUND)
+    # Another point of sale's kiosk, while this till is locked to its own (403 `area_locked`).
+    from app.services import area_lock
+
+    area_lock.require_shared_device(db, till, kiosk_machine, "kiosk")
     return kiosk_machine, device
 
 
@@ -1139,6 +1263,30 @@ def run_command(
             db.rollback()
             return CommandResult(audit("refused", detail=refused.body["detail"]), refused)
         return CommandResult(audit("applied", detail=detail))
+    if action in ("enter_till", "return_kiosk"):
+        # "מצב עבודה: קיוסק / קופה" from the dashboard (kiosk_till_mode.py), both ways: only where the owner's
+        # gate is open; handed to the kiosk on its next kiosk/sync, carried out when no sale or customer holds it.
+        from app.services import kiosk_ops, kiosk_till_mode
+
+        try:
+            mode = kiosk_till_mode.check_work_mode(db, kiosk_machine, action)
+        except KioskCommandRefused as refused:
+            return CommandResult(audit("refused", detail=refused.body["detail"]), refused)
+        row = audit("requested", detail=f"mode={mode}")
+        kiosk_ops.wake_machine(kiosk_machine, "kiosk_work_mode")
+        return CommandResult(row)
+    if action in ("reprint_bon", "reprint_receipt"):
+        # "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" (the owner, 09.10.2026): the order's local id or
+        # "last" in the message; done by the kiosk on its next kiosk/sync and recorded there as "הדפסה חוזרת".
+        from app.services import kiosk_ops
+
+        message = message or "last"
+        if message != "last" and kiosk_ops.kiosk_order(db, kiosk_machine, message) is None:
+            error = KioskCommandRefused(status.HTTP_404_NOT_FOUND, "order_not_found", "ההזמנה לא נמצאה בקיוסק")
+            return CommandResult(audit("refused", detail="order_not_found"), error)
+        row = audit("requested", detail=f"order {message}")
+        kiosk_ops.wake_machine(kiosk_machine, "kiosk_bon")
+        return CommandResult(row)
     if action in ("bon_print", "bon_handled"):
         # "הדפס עכשיו" / "סמן כטופל" for an unprinted bon: handed to the kiosk on its next
         # kiosk/sync, which does it and says so (kiosk_ops.py); audited here.

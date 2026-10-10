@@ -970,7 +970,7 @@ def _kiosk_ids(db: Session, machine_ids: Sequence) -> Set[str]:
     if not machine_ids:
         return set()
     return {
-        str(r[0]) for r in db.query(KioskDevice.machine_id).filter(
+        str(r[0]) for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(
             KioskDevice.machine_id.in_(list(machine_ids)), KioskDevice.enabled.is_(True),
         ).all()
     }

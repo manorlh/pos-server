@@ -52,6 +52,9 @@ class Transaction(Base):
         Index("ix_transactions_claimed_shift", "claimed_shift_id"),
         Index("ix_transactions_number_conflict_of", "number_conflict_of"),
         Index("ix_transactions_machine_created_at", "machine_id", "created_at"),
+        # The dashboard's sales figures: a tenant / its shops over a time window.
+        Index("ix_transactions_tenant_created_at", "tenant_id", "created_at"),
+        Index("ix_transactions_shop_created_at", "shop_id", "created_at"),
         Index("ix_transactions_shift", "shift_id"),
         Index("ix_transactions_basket", "basket_id"),
         Index("ix_transactions_refund_of", "refund_of_transaction_id"),

@@ -169,6 +169,11 @@ export interface KdsOrder {
   pickupName: string | null;
   orderNote: string | null;
   pickupNumber: number | null;
+  /**
+   * A kiosk order's label as its slip printed it — "A-17", or "17" with the kiosk's "מספר בלבד";
+   * absent for any other order. The card's headline over `#pickupNumber`.
+   */
+  pickupLabel?: string | null;
   workflowMode: string;
   paid: boolean;
   status: string;

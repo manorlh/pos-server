@@ -519,7 +519,8 @@ def test_the_migrations_chain_on_one_head():
     assert script.get_revision("8d5f3b0e2a74").down_revision == "e8b3f5a1c7d2"
     assert script.get_revision("9e6a4c1f3b85").down_revision == "8d5f3b0e2a74"
     # specs/item-blocks-targets.md: targets, category blocks, the quick hides folded in.
-    assert script.get_revision("c7d1a9e4f2b6").down_revision == "b8e2d4f6a1c3"
+    # Re-chained at the integration (10.10.2026) after kiosk-landscape's b7d3f1a9c5e8; written on b8e2d4f6a1c3.
+    assert script.get_revision("c7d1a9e4f2b6").down_revision == "b7d3f1a9c5e8"
 
 
 # ── Targets, categories, the kiosks' look, devices (specs/item-blocks-targets.md) ──
@@ -691,7 +692,9 @@ def dev(b):
     """The world with till users: a manager (legacy: everything), a cashier (asks a manager), another shop's manager."""
     from app.models.pos_user import PosUser, PosUserRole
 
-    for name in ("employee_roles", "till_roles", "pos_users"):
+    # till_parameters / values: a controlling till is checked against areaScopeLock (feat/area-lock, merged
+    # beside this branch at the integration; app/services/area_lock.py reads the parameter).
+    for name in ("employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values"):
         if name in Base.metadata.tables and not b.db.get_bind().dialect.has_table(b.db.connection(), name):
             Base.metadata.tables[name].create(b.db.get_bind())
     b.mgr = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, username="mgr", first_name="Dana",

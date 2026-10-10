@@ -17,13 +17,14 @@
  * already holds — so "closing" is not all an operator has to decide whether to wait.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { cancelZRun, fetchZRun, proceedZRun } from '@/lib/api';
+import { cancelZRun, fetchZRun, forceZRunCloudRefunds, proceedZRun } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { formatDate, formatDateTime } from '@/lib/format';
 import { findBySameId } from '@/lib/entityLookup';
 import { useScope } from '@/lib/scope';
@@ -31,6 +32,7 @@ import type { ZRun, ZRunItemStatus } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TillCloseProgress } from '@/components/dashboard/close-progress';
 import { useZErrorText } from './z-errors';
@@ -107,6 +109,17 @@ export function ZRunProgress({ runId }: { runId: string }) {
     onSuccess: settle,
     onError: (e) => toast.error(errors.forError(e)),
   });
+  // "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": support releases the refunds holding the run (a reason).
+  const { user } = useAuth();
+  const [refundReason, setRefundReason] = useState('');
+  const forceRefunds = useMutation({
+    mutationFn: () => forceZRunCloudRefunds(runId, refundReason.trim()),
+    onSuccess: (next) => {
+      setRefundReason('');
+      settle(next);
+    },
+    onError: (e) => toast.error(errors.forError(e)),
+  });
 
   if (isLoading) return <Skeleton className="h-40 w-full" />;
   // Only an error with nothing to show replaces the card; a failed poll of a run already
@@ -159,6 +172,36 @@ export function ZRunProgress({ runId }: { runId: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <OpenTillsRecord left={run.openTillsLeftOut} />
+        {(run.pendingCloudRefunds ?? []).length > 0 ? (
+          <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs dark:border-amber-800 dark:bg-amber-950">
+            {(run.pendingCloudRefunds ?? []).map((r) => (
+              <p key={r.refundId}>
+                <span className="font-medium">{r.words}</span>
+                {' · '}
+                {r.landsInThisZ ? t('cloudRefundLands', { till: r.machineName ?? '—' }) : r.message}
+              </p>
+            ))}
+            {run.cloudRefundsHold && run.status === 'waiting' && user?.role === 'super_admin' ? (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Input
+                  className="h-8 max-w-xs"
+                  value={refundReason}
+                  maxLength={300}
+                  placeholder={t('cloudRefundReason')}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={refundReason.trim().length < 5 || forceRefunds.isPending}
+                  onClick={() => forceRefunds.mutate()}
+                >
+                  {t('cloudRefundForce')}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {isError ? (
           <p className="text-xs text-destructive">{t('pollFailed', { error: errors.forError(error) })}</p>
         ) : null}

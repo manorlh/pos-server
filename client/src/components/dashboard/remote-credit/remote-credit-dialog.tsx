@@ -39,6 +39,7 @@ import {
   isCancellableRemoteCredit,
   isPendingRemoteCredit,
   newCommandId,
+  remoteCreditPollMs,
   remoteCreditStatusVariant,
   selectionAmount,
   selectionProblems,
@@ -505,7 +506,8 @@ export function RemoteCreditStatusView({
     refetchInterval: (q) => {
       const code = httpStatus(q.state.error);
       if (code === 403 || code === 404) return false;
-      return q.state.data && !isPendingRemoteCredit(q.state.data.status) ? false : 2000;
+      // 2 s at first, slower while a till stays silent (lib/remoteCredit.ts).
+      return remoteCreditPollMs(q.state.data, Date.now());
     },
   });
 

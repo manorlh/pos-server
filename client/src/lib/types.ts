@@ -632,7 +632,7 @@ export interface PosMachine {
    * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
    * it. `kioskEnabled` false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | null;
   kioskEnabled?: boolean | null;
   /**
    * False for a display device (a KDS / the board): not a till, not an accounting system —
@@ -1529,6 +1529,13 @@ export interface Transaction {
   /** List rows: the brands (מותג) of its card legs. */
   cardBrands?: string[];
   /**
+   * List rows: the kiosk order this document paid — its pickup number as the slip printed it
+   * ("A-17", or "17" with "מספר בלבד") and its business date (the number comes back every day).
+   */
+  kioskPickup?: { label: string; number: number; businessDate: string | null } | null;
+  /** List rows, with a free search: why it was found — its number or amount, or its kiosk order's pickup number. */
+  matchedBy?: Array<'document' | 'pickup'> | null;
+  /**
    * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
    * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
    */
@@ -1806,7 +1813,31 @@ export interface ZRun {
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
   /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
   force?: boolean;
+  /**
+   * "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (pos-server app/services/cloud_refund_z_gate.py): the
+   * credit notes the run's tills still owe; `cloudRefundsHold` while one holds the Z.
+   */
+  pendingCloudRefunds?: CloudRefundPending[];
+  cloudRefundsHold?: boolean;
+  cloudRefundsMessage?: string | null;
   items: ZRunItem[];
+}
+
+/** A cloud card refund whose credit note a till of a Z still owes ("זיכוי אשראי מהענן ממתין להפקה (₪X)"). */
+export interface CloudRefundPending {
+  refundId: string;
+  transactionId?: string;
+  amount: string;
+  originalDocumentNumber?: string | null;
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  /** The Z closes that till's open shift: the till issues the note into it first (shown, not holding). */
+  landsInThisZ: boolean;
+  words: string;
+  message: string;
+  /** Only on a refund that does not hold its Z (`cloudCardRefundBlocksNextZ` off). */
+  warning?: string;
 }
 
 export type ShiftCloseRequestStatus =
@@ -2253,6 +2284,13 @@ export interface ZReportDetail extends ZReport {
   /** Per waiter ("פירוט לפי מלצר"): a table's sales by its waiter, any other by its cashier. */
   byWaiter?: ZWaiterRow[];
   byWaiterSource?: 'stored' | 'documents' | null;
+  /**
+   * "דו״ח Z — גרסה 2" (pos-server app/services/z_sections.py): the owner's sections, as the
+   * till and the cloud print them (lib/zReportSections.ts). stored — frozen at build (or as a
+   * local shop Z was printed); documents — read now, for a Z built before them.
+   */
+  reportSections?: import('./zReportSections').ZReportSections | null;
+  reportSectionsSource?: 'stored' | 'documents' | null;
 }
 
 /** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */

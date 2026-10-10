@@ -265,6 +265,13 @@ def test_money_that_does_not_add_up_is_refused_alone(w):
     assert out["rejected"][0]["localId"] == "bad" and out["rejected"][0]["reason"].startswith("invalid")
 
 
+def test_a_tip_above_the_order_is_refused_alone(w):
+    # The kiosks' tip rule (KioskTip): "סכום אחר" is never more than the order, a preset at most 50%.
+    out = post(w, order("big-tip", total=6200, tip=6300), order("fair-tip", total=6200, tip=6200))
+    assert out["accepted"] == ["fair-tip"]
+    assert out["rejected"][0]["localId"] == "big-tip" and out["rejected"][0]["reason"].startswith("invalid")
+
+
 def test_posting_again_changes_nothing_of_the_snapshot(w):
     post(w, order())
     changed = order(total=9900)

@@ -2,7 +2,8 @@
 
 /**
  * "תצוגה חיה": the shop's open kitchen orders as the Expo sees them — read only,
- * polled every 5 seconds (`GET /kds/shops/{shop}/board`, pos-server SPEC_KDS.md §8).
+ * polled every 10 seconds (`GET /kds/shops/{shop}/board`, pos-server SPEC_KDS.md §8); the
+ * kitchen's own screens are the KDS devices, not this view. Paused while the tab is hidden.
  * Each card: the order's reference, source, mode and group state, its tasks per
  * station with state and quantity, unrouted items, and how long it has been waiting
  * (orange / red by the stations' thresholds).
@@ -17,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 
-const POLL_MS = 5_000;
+const POLL_MS = 10_000;
 const DEFAULT_WARN = 10;
 const DEFAULT_LATE = 20;
 
@@ -143,8 +144,10 @@ function OrderCard({
   const ready = order.groupState === 'ready_for_pickup';
   const tone = ready ? 'ready' : minutes !== null && minutes >= late ? 'late' : minutes !== null && minutes >= warn ? 'warn' : 'ok';
 
-  const title =
-    order.pickupNumber !== null && order.pickupNumber !== undefined
+  // A kiosk's order: its label as the slip printed it ("A-17", or "17" with "מספר בלבד").
+  const title = order.pickupLabel?.trim()
+    ? order.pickupLabel.trim()
+    : order.pickupNumber !== null && order.pickupNumber !== undefined
       ? t('pickupNo', { n: order.pickupNumber })
       : order.displayRef || (order.tableRef ? t('table', { ref: order.tableRef }) : order.sourceRef);
 

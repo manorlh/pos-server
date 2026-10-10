@@ -137,7 +137,8 @@ def test_cloud_source_one_action_each_till_at_rest_and_the_next_number(z):
     assert out["totals"]["totalSales"] == 200.0 and out["totals"]["transactions"] == 3
     assert [r["net"] for r in out["inShopZ"]] == [140.0, 60.0]
     assert out["nextShopZNumber"] == before + 1
-    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None, "forceStartAllowed": False}
+    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None, "forceStartAllowed": False,
+                                "forceCloudRefundAllowed": False}
 
     run = start(z)
     assert run.wait_for_rest is True and run.force_close is False
@@ -152,7 +153,8 @@ def test_cloud_source_one_action_each_till_at_rest_and_the_next_number(z):
     till_closes(z, z.t1, s1)
     progress = svc.run_progress(z.db, run, now=NOW)
     words = {i["machineId"]: i["words"] for i in progress["items"]}
-    assert words == {z.t1.id: "נסגר", z.t2.id: "ממתין למכירה פתוחה"}
+    # Forced by default ("כפה סגירה", remote_close_force.py): the closed till reads who forced it.
+    assert words == {z.t1.id: "נסגר בכפייה מרחוק ע״י admin", z.t2.id: "ממתין למכירה פתוחה"}
     assert progress["status"] == ZRunStatus.WAITING and progress["words"] == "ממתין לקופות"
     # The heartbeat keeps offering it until the sale is done.
     assert remote_close.take_pending_close_shift(z.db, z.t2, now=NOW)["waitForRest"] is True
@@ -452,7 +454,7 @@ def test_the_routes_preview_start_and_read_progress(z):
     till_closes(z, z.t1, s)
     z.db.commit()
     progress = R.get_shop_close(run["id"], **_ctx(z))
-    assert progress["status"] == ZRunStatus.COMPLETED and progress["items"][0]["words"] == "נסגר"
+    assert progress["status"] == ZRunStatus.COMPLETED and progress["items"][0]["words"] == "נסגר בכפייה מרחוק ע״י admin"
 
 
 def test_each_till_reads_as_a_sent_command_for_the_shared_status_chip(z):

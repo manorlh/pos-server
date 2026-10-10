@@ -24,6 +24,7 @@ import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/fo
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
 import { hasDrawerTips } from '@/lib/drawerTips';
+import { zSectionLines, type ZReportSections, type ZSectionsLabels } from '@/lib/zReportSections';
 import {
   hasBetweenShiftAdjustments,
   usePaymentMethodLabel,
@@ -66,6 +67,34 @@ function Payments({ breakdown }: { breakdown: Record<string, Money> | null | und
     <>
       {entries.map(([method, amount]) => (
         <Row key={method} label={label(method)} value={formatCurrency(amount)} />
+      ))}
+    </>
+  );
+}
+
+/** The owner's sections (lib/zReportSections.ts) as A4 sections: the same lines as the till's paper. */
+function ZSectionsPrintBlocks({ sections, exempt }: { sections: ZReportSections; exempt: boolean }) {
+  const t = useTranslations('zReports.reportSections');
+  const blocks = zSectionLines(sections, t.raw('labels') as ZSectionsLabels, {
+    exempt,
+    fmt: (v) => formatCurrency(v),
+    stamp: (iso) => formatDateTime(iso),
+  });
+  return (
+    <>
+      {blocks.map(([title, rows]) => (
+        <Section key={title} title={title}>
+          <table className="w-full text-xs">
+            <tbody>
+              {rows.map(([label, value, bold], i) => (
+                <tr key={`${label}-${i}`} className={`border-b border-neutral-300 ${bold ? 'font-bold' : ''}`}>
+                  <td className={`py-0.5 pe-4 ${label.startsWith('  ') ? 'ps-3' : ''}`}>{label.trim()}</td>
+                  <td className="py-0.5 text-end tabular-nums">{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
       ))}
     </>
   );
@@ -291,6 +320,11 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
         <p className={offline.declinedCount > 0 ? 'mt-2 font-bold' : 'mt-1'}>{offlineLine(offline)}</p>
       ) : null}
 
+      {/* "דו״ח Z — גרסה 2": the owner's sections, the lines the till and the cloud print. */}
+      {z.reportSections ? (
+        <ZSectionsPrintBlocks sections={z.reportSections} exempt={z.business?.dealerType === 'exempt'} />
+      ) : (
+      <>
       <Section title={t('totalsTitle')}>
         <table className="w-full text-xs">
           <tbody>
@@ -350,6 +384,8 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
           </tbody>
         </table>
       </Section>
+      </>
+      )}
 
       {z.perMachine.map((s) => (
         <TillSection key={s.machineId} s={s} dealerType={z.business?.dealerType} />

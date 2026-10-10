@@ -7,10 +7,14 @@ The safeguards (the owner's):
 * **Never automatic.** Only a dashboard user who holds remote control and the Z section asks it,
   for one till, after confirming that till's current totals: the preview's `totalsKey` must still
   match when the request is made (a sale since then → 409 `totals_changed` with the new figures).
-* **Only when no sale or card payment is open.** The request is the existing till-Z / shift-close
-  request (app/services/till_z.py, app/services/shift_close_requests.py) with `wait_for_rest`: the
-  till holds it while a basket, a payment screen or a card is open (a `deferred` ack) and runs it at
-  rest. Never `force` — never closes mid-sale.
+* **Forced from the moment it is sent — by default** (app/services/remote_close_force.py, the owner
+  09.10.2026). The request is the existing till-Z / shift-close request (app/services/till_z.py,
+  app/services/shift_close_requests.py) with `wait_for_rest` and `remote_force` — the till's
+  `remoteCloseForceByDefault`, or the manager's tick for this request: the till parks an open basket,
+  carries its held sales, leaves an untouched payment screen as a cashier's cancel does — and never
+  closes over a card in flight or documents not yet written. Unticked (or the parameter off, or a
+  build without `remote_close_force_v1`): it holds the request while a basket, a payment screen or a
+  card is open (a `deferred` ack) and runs it at rest. Never §9's `force`.
 * **The till's existing Z flow.** A till in `zMode = till` closes its shift, transmits its card
   deals and asks the cloud for its Z number — strictly sequential in its run (z_sequence) — and
   prints; a till in the shop's Z (`zMode = cloud`) is offered a shift close only, its shift then
@@ -68,7 +72,7 @@ def _refuse_device(db: Session, machine: POSMachine) -> None:
 
     if getattr(machine, "is_fiscal", True) is False:
         raise HTTPException(status_code=422, detail={"code": "not_fiscal", "message": "מכשיר תצוגה אינו מפיק Z"})
-    if db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id == machine.id).first() is not None:
+    if db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id == machine.id).first() is not None:
         raise HTTPException(status_code=422, detail={"code": "kiosk_use_kiosks", "message": "קיוסק נסגר מלשונית הקיוסקים"})
 
 
@@ -128,6 +132,7 @@ def _pending(db: Session, machine: POSMachine, kind: str, user: Any = None) -> O
 
     return {"kind": kind, "id": str(req.id), "status": req.status, "errorCode": req.error_code,
             "waitForRest": bool(req.wait_for_rest), "createdAt": _iso(req.created_at),
+            "remoteForce": bool(getattr(req, "remote_force", False)),
             # "ממתין — מכירות מושהות (N)": the till's deferral, and whether it was let close keeping them.
             "heldSales": held_sales_close.held_count(req.error_code, req.error_message),
             "heldSalesList": getattr(req, "held_sales", None) or [],
@@ -160,6 +165,14 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None,
         why = TOO_OLD_TEXT
     elif kind == KIND_TILL_Z and _forced_pending(db, machine):
         why = FORCED_PENDING_TEXT
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a credit note this till still owes. A close issues
+    # it into the closing shift first (`landsInThisZ`); a Z with no shift to close cannot have it.
+    from app.services import cloud_refund_z_gate as CRG
+
+    cloud_refunds = CRG.pending(db, [machine.id], closing=[machine.id] if CRG.closes_open_shift(db, machine) else [])
+    held = [r for r in cloud_refunds if not r["landsInThisZ"]]
+    if why is None and kind == KIND_TILL_Z and held:
+        why = CRG.message_of(held)
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -178,9 +191,12 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None,
         "nextZNumber": (last + 1) if last is not None else None,
         "pending": _pending(db, machine, kind, user),
         "openBasket": _open_basket_words(db, machine, False),
+        # "כפה סגירה": this till's default mode (its `remoteCloseForceByDefault`) and whether its build can.
+        "force": _force_out(db, machine),
         "totalsKey": _key(kind, [s.id for s in shifts], totals),
         "canRequest": why is None,
         "whyNot": why,
+        "pendingCloudRefunds": cloud_refunds,
     }
 
 
@@ -238,6 +254,10 @@ def as_command(
         "deliveredAt": _iso(received_at),
         "doneAt": _iso(done_at),
         "expiresAt": _iso(expires_at),
+        # The same keys as device_commands.command_out (a test pins the shape): a Z run's command has no
+        # params / result (those belong to `upload_logs`).
+        "params": None,
+        "result": None,
     }
 
 
@@ -338,11 +358,14 @@ def _local_mode(db: Session, machine: POSMachine) -> bool:
 LOCAL_MODE_SHIFT_TEXT = "לא זמין עדיין: ברשת מקומית המשמרות נסגרות דרך הקופה הראשית"
 
 
-def request(db: Session, user: Any, machine: POSMachine, *, totals_key: str, now: Optional[datetime] = None) -> Dict[str, Any]:
+def request(db: Session, user: Any, machine: POSMachine, *, totals_key: str, force: Optional[bool] = None,
+            now: Optional[datetime] = None) -> Dict[str, Any]:
     """
     The confirmed request: the figures still as confirmed, then the existing request with
-    `wait_for_rest` (never `force`). The caller commits.
+    `wait_for_rest` and "כפה סגירה" — [force], the manager's tick for this request, or the till's
+    `remoteCloseForceByDefault` (never §9's `force`). The caller commits.
     """
+    from app.services import remote_close_force
     from app.services import shift_close_requests as close_requests
     from app.services import till_z
 
@@ -355,17 +378,37 @@ def request(db: Session, user: Any, machine: POSMachine, *, totals_key: str, now
             "message": "הסכומים בקופה השתנו מאז שאושרו — בדקו שוב ואשרו",
             "preview": current,
         })
+    forced = remote_close_force.effective(db, machine, force)
     if current["kind"] == KIND_TILL_Z:
         try:
-            req, created = till_z.request_for_machine(db, user, machine, force=False, wait_for_rest=True, now=now)
+            req, created = till_z.request_for_machine(db, user, machine, force=False, wait_for_rest=True,
+                                                      remote_force=forced, now=now)
         except till_z.TillZRefused as refused:
             raise HTTPException(status_code=refused.status_code, detail=refused.body)
         out = till_z.request_to_out(db, req, now=now)
     else:
-        req, created = close_requests.request_close(db, user, machine, wait_for_rest=True, now=now)
+        req, created = close_requests.request_close(db, user, machine, wait_for_rest=True, remote_force=forced, now=now)
         out = close_requests.request_to_out(db, req, now=now)
+    _log_sent(machine, user, current["kind"], req, forced, force)
     return {"kind": current["kind"], "created": created, "request": out, "confirmed": current,
-            "command": _request_command(current["kind"], out, user)}
+            "remoteForce": forced, "command": _request_command(current["kind"], out, user)}
+
+
+def _force_out(db: Session, machine: POSMachine, *, kiosk: bool = False) -> Dict[str, Any]:
+    from app.services import remote_close_force
+
+    return remote_close_force.mode_out(db, machine, kiosk=kiosk)
+
+
+def _log_sent(machine: POSMachine, user: Any, kind: str, req: Any, forced: bool, override: Optional[bool]) -> None:
+    """The server's log of who sent which close, and in which mode (the till logs the close itself)."""
+    import logging
+
+    logging.getLogger(__name__).info(
+        "remote %s %s for till %s by %s: %s%s", kind, req.id, machine.id, who(user),
+        "forced" if forced else "at rest",
+        "" if override is None else (" (ticked for this request)" if override else " (unticked for this request)"),
+    )
 
 
 # ── "סגירת יום סניפית": the shop's day close, by its configuration ────────────────────────────
@@ -396,7 +439,7 @@ def _kiosk_ids(db: Session, machines: List[POSMachine]) -> set:
     ids = [m.id for m in machines]
     if not ids:
         return set()
-    return {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+    return {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
 
 
 def _open_basket_words(db: Session, machine: POSMachine, kiosk: bool) -> str:
@@ -498,12 +541,20 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
     # The run's log: each held sale a till discarded on "בטל מכירות מושהות וסגור".
     events = held_sales_close.cancelled_events(db, [i["id"] for i in out["items"]],
                                                [i["machineId"] for i in out["items"]])
+    from app.services import remote_close_force
+
+    forced_rows = {str(i.id): bool(getattr(i, "remote_force", False)) for i in run.items}
     for item in out["items"]:
         item["heldSalesCancelled"] = events.get(str(item["id"]), [])
+        # "כפה סגירה": asked forced; closed so — "נסגר בכפייה מרחוק ע״י <מנהל>".
+        item["remoteForce"] = forced_rows.get(str(item["id"]), False)
+        forced_done = item["remoteForce"] and item["status"] == "ready"
+        if forced_done:
+            item["words"] = remote_close_force.forced_words(by)
         # One command per till, the run its batch: the shared chip / tray reads these.
         commands.append(as_command(
             id=item["id"], machine_id=item["machineId"], batch_id=run.id, action=ACTION_SHOP_CLOSE,
-            status_value=item["status"], detail=item["errorCode"], created_by=by,
+            status_value=item["status"], detail=item["words"] if forced_done else item["errorCode"], created_by=by,
             created_at=run.created_at, sent_at=item["sentAt"], received_at=item["receivedAt"],
             done_at=item["readyAt"], expires_at=run.expires_at,
         ))
@@ -544,6 +595,8 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
         and ZR._all_tills_required(db, run, guard=False) is None
         and _super_admin(user)
     )
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": support may release the refunds holding the run.
+    out["forceCloudRefundsAllowed"] = bool(out.get("cloudRefundsHold")) and _super_admin(user)
     st = out["status"]
     out["words"] = (
         f"הושלם — Z סניפי מס' {out['zNumber']}" if st == ZRunStatus.COMPLETED and out.get("zNumber") is not None
@@ -573,6 +626,8 @@ WAIT_WORDS = {
     "printing": "ממתין למדפסת",
     "kiosk_ordering": "לקוח מזמין בקיוסק",
     "kiosk_paying": "לקוח משלם בקיוסק",
+    # A forced close (remote_close_force.py) past its bounded wait for documents not yet written.
+    "documents_pending": "ממתין למסמכים שטרם נכתבו בקופה",
 }
 
 
@@ -687,6 +742,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
                    else None if shifts else "אין משמרות שעוד לא נכללו ב-Z")
             row["action"] = {"kind": KIND_TILL_Z, "label": "הפקת Z לקופה", "available": why is None, "whyNot": why}
             row["openBasket"] = _open_basket_words(db, m, m.id in kiosks)
+            row["force"] = _force_out(db, m, kiosk=m.id in kiosks)
             if m.id in kiosks:
                 # "סגירה יחד עם ה-Z הסניפי" (kiosk_ops): the run asks it to close and make its own Z.
                 row["closesWithShopZ"] = _closes_with_shop_z(db, m)
@@ -702,6 +758,7 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
                 row["needsUpdate"] = True
             row["action"] = {"kind": KIND_CLOSE_SHIFT, "label": "סגירת משמרת", "available": why is None, "whyNot": why}
             row["openBasket"] = _open_basket_words(db, m, m.id in kiosks)
+            row["force"] = _force_out(db, m, kiosk=m.id in kiosks)
             in_shop_z.append(row)
     # What the build takes besides (z_builder, document_filing.shop_leftovers): the shop-Z documents
     # of tills that make their own Z now — a waiting bucket, late documents — in this shop Z.
@@ -747,6 +804,12 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
     force_start = bool(why is None and unknown and _super_admin(user))
     if why is None and unknown:
         why = "ממתין לקופות במצב לא ידוע: " + ", ".join(b["name"] or "" for b in unknown)
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a credit note a till of this Z still owes (and will
+    # not issue into the shift this close closes) holds it; a super admin may start with a reason.
+    cloud_refunds = cloud_refund_guard_out(db, shop, area_id=area_id)
+    force_cloud_refund = bool(why is None and cloud_refunds["hold"] and _super_admin(user))
+    if why is None and cloud_refunds["hold"]:
+        why = cloud_refunds["message"]
     raw = "|".join([str(shop.id), str(area_id or ""), ",".join(sorted(str(x) for x in shop_shift_ids)), str(totals["transactions"]),
                     f'{totals["totalSales"]:.2f}', f'{totals["totalRefunds"]:.2f}', str(totals["lastDocument"] or "")])
     area_name = None
@@ -773,9 +836,37 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         # "חסימת Z כשיש משמרות פתוחות": on here? and which tills hold the Z now (the close waits
         # for every one of them; only a super admin forces past one that never comes back).
         "shiftGuard": guard,
+        # Cloud card refunds whose credit note a till of this Z still owes: each with its line
+        # ("זיכוי אשראי מהענן ממתין להפקה (₪X)"); `hold` when one holds the close.
+        "cloudRefundGuard": cloud_refunds,
         "shopClose": {"label": AREA_CLOSE_LABEL if area_id is not None else SHOP_CLOSE_LABEL,
-                      "available": why is None, "whyNot": why, "forceStartAllowed": force_start},
+                      "available": why is None, "whyNot": why, "forceStartAllowed": force_start,
+                      "forceCloudRefundAllowed": force_cloud_refund},
         "totalsKey": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20],
+    }
+
+
+def cloud_refund_guard_out(db: Session, shop: Any, *, area_id: Any = None) -> Dict[str, Any]:
+    """
+    "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" for a day close of the shop (or area): the credit notes
+    its tills still owe. A till whose open shift the close closes issues its notes into it first
+    (`landsInThisZ`, shown only); any other holds the Z. `warnings`: notes that do not hold it
+    (their till's `cloudCardRefundBlocksNextZ` is off).
+    """
+    from app.services import cloud_refund_z_gate as CRG
+    from app.services import z_runs as ZR
+
+    if not CRG.enabled():
+        return {"pending": [], "hold": False, "message": None, "warnings": []}
+    scope = CRG.shop_scope(db, shop, area_id)
+    closing = [m.id for m in scope if ZR.is_seated_in(m, shop.id) and CRG.closes_open_shift(db, m)]
+    pending = CRG.pending(db, [m.id for m in scope], closing=closing)
+    held = [p for p in pending if not p["landsInThisZ"]]
+    return {
+        "pending": pending,
+        "hold": bool(held),
+        "message": CRG.message_of(held) if held else None,
+        "warnings": CRG.not_blocking(db, [m.id for m in scope]),
     }
 
 
@@ -802,21 +893,32 @@ def shop_request(
     confirm_open_tills: bool = False,
     confirm_cloud_data: bool = False,
     force_reason: Optional[str] = None,
+    force_cloud_refund_reason: Optional[str] = None,
     area_id: Any = None,
+    force: Optional[bool] = None,
     now: Optional[datetime] = None,
 ):
     """
     The confirmed day close: the figures still as confirmed, then the shop's cloud Z run through
     the wizard's own path (the same refusals and confirmations), every till of the shop Z asked to
-    close at rest (`wait_for_rest`, never forced). The Z is built by the run as always — numbered
-    by z_sequence, strictly next. The caller commits. Returns the run or a refusal response.
+    close — "כפה סגירה" by [force] (the manager's tick for this close), else by each till's own
+    `remoteCloseForceByDefault`; unforced, at rest (`wait_for_rest`). Never §9's `force`. The Z is
+    built by the run as always — numbered by z_sequence, strictly next. The caller commits. Returns
+    the run or a refusal response.
+
+    A cloud card refund whose credit note the Z would go without ("זיכוי באשראי מהענן — חובה לפני
+    ה-Z הבא") refuses it (409 `pending_cloud_card_refund`, the run's own start check), forced close or
+    not — "כפה סגירה" does not bypass it; a super admin passes `force_cloud_refund_reason`.
     """
     from app.routers.z_runs import create_run_from_body
     from app.schemas.z_run import ZRunCreateIn, ZRunMachineIn
     from app.services import z_runs as ZR
 
     current = shop_preview(db, shop, now=now, user=user, area_id=area_id)
-    if not current["shopClose"]["available"] and not (force_reason and current["shopClose"].get("forceStartAllowed")):
+    forced_ok = (force_reason and current["shopClose"].get("forceStartAllowed")) or (
+        force_cloud_refund_reason and current["shopClose"].get("forceCloudRefundAllowed")
+    )
+    if not current["shopClose"]["available"] and not forced_ok:
         raise HTTPException(status_code=409, detail={"code": "shop_close_unavailable",
                                                      "message": current["shopClose"]["whyNot"], "preview": current})
     if not totals_key or totals_key != current["totalsKey"]:
@@ -832,8 +934,9 @@ def shop_request(
         confirmOpenTills=confirm_open_tills,
         confirmCloudData=confirm_cloud_data,
         forceReason=force_reason,
+        forceCloudRefundReason=force_cloud_refund_reason,
     )
-    return create_run_from_body(db, user, tenant_id, body, wait_for_rest=True)
+    return create_run_from_body(db, user, tenant_id, body, wait_for_rest=True, remote_force=force)
 
 # ── "סגירת משמרות לנקודת מכירה": every till of an area, each its own remote shift close ─────
 
@@ -861,13 +964,13 @@ def area_shift_preview(db: Session, shop: Any, area_id: Any, *, user: Any = None
         if p["kind"] != KIND_CLOSE_SHIFT:
             p = {**p, "canRequest": False, "whyNot": "Z משלה — מ\"סגירה / Z\" בשורת הקופה"}
         rows.append({k: p.get(k) for k in ("machineId", "name", "posNumber", "kind", "online", "openShift", "totals",
-                                            "pending", "openBasket", "totalsKey", "canRequest", "whyNot")})
+                                            "pending", "openBasket", "force", "totalsKey", "canRequest", "whyNot")})
     return {"shopId": str(shop.id), "areaId": str(area_id), "label": AREA_SHIFTS_LABEL, "tills": rows,
             "available": any(r["canRequest"] for r in rows)}
 
 
 def area_shift_request(db: Session, user: Any, shop: Any, area_id: Any, totals_keys: Dict[str, str],
-                       *, now: Optional[datetime] = None) -> Dict[str, Any]:
+                       *, force: Optional[bool] = None, now: Optional[datetime] = None) -> Dict[str, Any]:
     """
     Each confirmed till of the area gets its own remote shift close (its totals as confirmed, at rest,
     never forced); one that can't (its totals changed, nothing open, …) says why — the others go on.
@@ -887,7 +990,7 @@ def area_shift_request(db: Session, user: Any, shop: Any, area_id: Any, totals_k
             with db.begin_nested():
                 if kind_of(m) != KIND_CLOSE_SHIFT:
                     raise HTTPException(status_code=409, detail={"code": "own_z", "message": "Z משלה — לא בסגירת משמרות"})
-                out = request(db, user, m, totals_key=key, now=now)
+                out = request(db, user, m, totals_key=key, force=force, now=now)
             results.append({"machineId": str(m.id), "ok": True, "command": out["command"]})
         except HTTPException as refused:
             detail = refused.detail if isinstance(refused.detail, dict) else {"message": str(refused.detail)}

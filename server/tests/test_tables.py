@@ -64,6 +64,7 @@ from app.schemas.tables import (
 )
 from app.services import ably_notify
 from app.services import tables as T
+from app.services import tables_state as TS
 from app.services import till_parameters as TP
 from app.services import z_runs as ZR
 from app.services.permissions import Scope
@@ -103,6 +104,15 @@ def w(monkeypatch):
         ably_notify, "publish_notify",
         lambda tenant_id, machine_id, event, body: world.woken.append((machine_id, event)),
     )
+    # The tables signal: one batch request (app/services/tables_state.py), sent at once here.
+    world.signals = []
+    monkeypatch.setattr(TS, "NOTIFY_WINDOW_S", 0.0)
+
+    def batch(channels, event, body):
+        world.signals.append((list(channels), event, dict(body)))
+        world.woken.extend((c.rsplit(":", 1)[-1], event) for c in channels if ":shop:" not in c)
+
+    monkeypatch.setattr(ably_notify, "publish_batch", batch)
 
     world.hall = T.create_zone(db, world.shop, ZoneCreate(shopId=world.shop.id, name="אולם", layout="map"))
     world.t = {}

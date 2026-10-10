@@ -86,7 +86,13 @@ from starlette.middleware.gzip import GZipMiddleware
 
 settings = get_settings()
 
-Base.metadata.create_all(bind=engine)
+# Local dev: the schema follows the models at start (DB_CREATE_ALL, on by default). Production
+# (Fly): off — `alembic upgrade head` runs as the release command, and create_all only slowed
+# every start (P:/specs/performance-review-2026-10.md #2).
+from app.config import create_all_on_startup  # noqa: E402
+
+if create_all_on_startup(settings):
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="POS Cloud",
@@ -100,6 +106,12 @@ from app.services.display_devices import DeviceNotFiscal, not_fiscal_handler  # 
 
 app.add_exception_handler(DeviceNotFiscal, not_fiscal_handler)
 
+# "נעילת הקופה לנקודת המכירה שלה": `{"detail": "area_locked", "message": <Hebrew>, "kind": …}` for a
+# till acting on another area's document / table / kiosk (app/services/area_lock.py).
+from app.services.area_lock import AreaLocked, area_locked_handler  # noqa: E402
+
+app.add_exception_handler(AreaLocked, area_locked_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -111,7 +123,8 @@ app.add_middleware(RequestContextMiddleware)
 # Compressed answers: a till pulls the tables' state (≈140 KB at 200 tables) every few
 # seconds, and the catalog on every sync — gzip takes them to a tenth. OkHttp asks for it
 # and unpacks it by itself; small answers are left as they are.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Level 6, not the default 9: nearly the same size for a fraction of the CPU (review #2).
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 _prefix = settings.api_v1_prefix
 
@@ -177,6 +190,11 @@ app.include_router(targets_router.router, prefix=_prefix)
 app.include_router(targets_router.till_router, prefix=_prefix)
 app.include_router(device_commands_router.router, prefix=_prefix)
 app.include_router(device_commands_router.till_router, prefix=_prefix)
+# "שליחת לוגים לענן" (app/routers/device_logs.py): a device's logs for support, and "בקש לוגים".
+from app.routers import device_logs as device_logs_router  # noqa: E402
+
+app.include_router(device_logs_router.router, prefix=_prefix)
+app.include_router(device_logs_router.till_router, prefix=_prefix)
 app.include_router(tips.router, prefix=_prefix)
 app.include_router(tax_reports.router, prefix=_prefix)
 # After tax_reports: both mount under /reports, and the literal /reports/tax/...
@@ -245,6 +263,10 @@ app.include_router(remote_credits_router.router, prefix=_prefix)
 from app.routers import cloud_card_refunds as cloud_card_refunds_router  # noqa: E402
 
 app.include_router(cloud_card_refunds_router.router, prefix=_prefix)
+# "התאמת אשראי מול Z-Credit" (docs/SPEC_ZCREDIT.md "חלק ג׳"): read-only against the terminal's report.
+from app.routers import zcredit_reconciliation as zcredit_reconciliation_router  # noqa: E402
+
+app.include_router(zcredit_reconciliation_router.router, prefix=_prefix)
 app.include_router(promotions_router.router, prefix=_prefix)
 app.include_router(tables_router.router, prefix=_prefix)
 app.include_router(printers_router.router, prefix=_prefix)
@@ -349,6 +371,18 @@ def start_sales_targets_worker():
 
 
 @app.on_event("startup")
+def start_zcredit_reconcile_worker():
+    """
+    "התאמת אשראי מול Z-Credit" nightly per terminal (app/services/zcredit_reconcile_worker.py);
+    ZCREDIT_RECONCILE_WORKER_ENABLED=false stops it. Read-only toward Z-Credit.
+    """
+    from app.database import SessionLocal
+    from app.services.zcredit_reconcile_worker import start_background_worker as start_zc_recon_worker
+
+    start_zc_recon_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_exception_alerts_worker():
     """The digests of rate-limited / quiet-hours alerts; EXCEPTION_ALERTS_WORKER_ENABLED=false stops it."""
     if not getattr(settings, "exception_alerts_worker_enabled", True):
@@ -357,6 +391,15 @@ def start_exception_alerts_worker():
     from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
 
     start_alerts_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_device_logs_retention_worker():
+    """Uploaded device logs past DEVICE_LOGS_RETENTION_DAYS, deleted nightly; DEVICE_LOGS_RETENTION_WORKER_ENABLED=false stops it."""
+    from app.database import SessionLocal
+    from app.services.device_logs_retention import start_background_worker as start_logs_retention
+
+    start_logs_retention(SessionLocal)
 # KDS and "תצורת עבודה לעמדה" (docs/SPEC_KDS.md): releases, screens, the workflow card.
 from app.routers import kds as kds_router  # noqa: E402
 
@@ -382,6 +425,12 @@ from app.routers import till_design as till_design_router  # noqa: E402
 
 app.include_router(till_design_router.till_router, prefix=_prefix)
 app.include_router(till_design_router.router, prefix=_prefix)
+# "מסך לקוח" (app/routers/customer_display.py, P:/specs/customer-display.md): the settings layers,
+# the devices' configuration and the cloud relay of a till's customer screen.
+from app.routers import customer_display as customer_display_router  # noqa: E402
+
+app.include_router(customer_display_router.till_router, prefix=_prefix)
+app.include_router(customer_display_router.router, prefix=_prefix)
 # A kiosk's alerts on the tills ("התראות לקופות", app/routers/kiosk_alerts.py).
 from app.routers import kiosk_alerts as kiosk_alerts_router  # noqa: E402
 
@@ -412,6 +461,10 @@ app.include_router(machine_groups_router.router, prefix=_prefix)
 from app.routers import report_center as report_center_router  # noqa: E402
 
 app.include_router(report_center_router.router, prefix=_prefix)
+# Zs by the date they were produced ("תאריך הפקת Z"): the day's and the month's Zs with totals.
+from app.routers import z_by_date as z_by_date_router  # noqa: E402
+
+app.include_router(z_by_date_router.router, prefix=_prefix)
 # "תפקידים והרשאות" for till users and "מגירת מזומן" (docs/SPEC_ROLES_PERMISSIONS.md).
 from app.routers import till_roles as till_roles_router  # noqa: E402
 
@@ -446,6 +499,13 @@ from app.routers import voucher_distribution as voucher_distribution_router  # n
 
 app.include_router(voucher_distribution_router.router, prefix=_prefix)
 app.include_router(voucher_distribution_router.public_router, prefix=_prefix)
+
+# "כרטיסי ביקור דיגיטליים" (app/routers/business_cards.py): the cards' dashboard editor and the
+# public card `/c/<slug>` (page, VCF, cookie-free counters, enquiry form).
+from app.routers import business_cards as business_cards_router  # noqa: E402
+
+app.include_router(business_cards_router.router, prefix=_prefix)
+app.include_router(business_cards_router.public_router, prefix=_prefix)
 
 
 @app.on_event("startup")
@@ -489,3 +549,21 @@ def root():
 def health_check():
     body = {"status": "healthy", "ably_enabled": ably_enabled()}
     return body
+
+
+@app.get("/health/ready")
+def readiness_check():
+    """
+    The process AND its database: one `SELECT 1` (fly.toml's machine check — a deploy goes on
+    only once the new machine reaches the database). 503 when it cannot.
+    """
+    from fastapi.responses import JSONResponse
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:  # noqa: BLE001 - the answer is the check
+        logger.warning("readiness: database unreachable", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "unavailable", "database": False})
+    return {"status": "ready", "database": True}

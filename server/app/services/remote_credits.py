@@ -520,8 +520,14 @@ def open_shift_of(db: Session, machine: POSMachine) -> Optional[dict]:
     return None
 
 
-def target_refusal(db: Session, original: Transaction, machine: POSMachine) -> Optional[HTTPException]:
-    """Why `machine` cannot issue a credit for `original`, or None."""
+def target_refusal(
+    db: Session, original: Transaction, machine: POSMachine, *, require_open_shift: bool = True
+) -> Optional[HTTPException]:
+    """
+    Why `machine` cannot issue a credit for `original`, or None. `require_open_shift=False`:
+    every rule but the open shift (a cloud card refund's note may wait for the till's next
+    shift, app/services/cloud_card_refunds.py `card_target_refusal`).
+    """
     from app.services import device_profile
     from app.services import display_devices as DD
 
@@ -536,13 +542,22 @@ def target_refusal(db: Session, original: Transaction, machine: POSMachine) -> O
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     if shop is not None and getattr(shop, "training_mode", False):
         return _refuse("target_in_training", "הסניף במצב הדרכה — זיכוי אמיתי לא יוצא מקופה בהדרכה.")
-    if open_shift_of(db, machine) is None:
-        return _refuse("target_no_open_shift", "אין בקופה משמרת פתוחה. פתחו משמרת בקופה או בחרו קופה אחרת.")
+    if require_open_shift and open_shift_of(db, machine) is None:
+        return _refuse("target_no_open_shift", NO_OPEN_SHIFT_MESSAGE)
     return None
 
 
-def eligible_targets(db: Session, original: Transaction, may_use, *, now: Optional[datetime] = None) -> List[dict]:
-    """The tills that may issue this credit, the original's own first, then by shop and number."""
+NO_OPEN_SHIFT_MESSAGE = "אין בקופה משמרת פתוחה. פתחו משמרת בקופה או בחרו קופה אחרת."
+
+
+def eligible_targets(
+    db: Session, original: Transaction, may_use, *, now: Optional[datetime] = None, refusal=None
+) -> List[dict]:
+    """
+    The tills that may issue this credit, the original's own first, then by shop and number.
+    `refusal(machine)`: another eligibility rule than `target_refusal` (a cloud card refund's).
+    """
+    refusal = refusal or (lambda m: target_refusal(db, original, m))
     now = _now(now)
     company = original_company(db, original)
     if company is None:
@@ -570,7 +585,7 @@ def eligible_targets(db: Session, original: Transaction, may_use, *, now: Option
     )
     out = []
     for m in machines:
-        if target_refusal(db, original, m) is not None or not may_use(m):
+        if refusal(m) is not None or not may_use(m):
             continue
         shop = shops.get(m.shop_id)
         out.append(
@@ -580,6 +595,7 @@ def eligible_targets(db: Session, original: Transaction, may_use, *, now: Option
                 "posNumber": m.pos_number,
                 "shopId": str(m.shop_id),
                 "shopName": shop.name if shop is not None else None,
+                "areaId": str(m.area_id) if getattr(m, "area_id", None) else None,
                 "online": is_online(m.last_heartbeat_at, now=now),
                 "lastHeartbeatAt": _utc(m.last_heartbeat_at),
                 "openShift": open_shift_of(db, m),
@@ -817,7 +833,8 @@ def create_for_card_refund(
     request to `machine`, its lines and money the refund's, its tender the refunded card leg.
 
     No check refuses it here — the money already moved, so the note must be asked for. The
-    target was checked before the refund (an open shift, the same business, a till), and the
+    target was checked before the refund (the same business, a till; an open shift, or a till
+    that holds the note for its next shift — `cloud_card_refunds.card_target_refusal`), and the
     till checks again: a till that refuses it fails the request, and the refund is sent to
     another till from the dashboard. Lives as long as a request may (`MAX_TTL_HOURS`).
     """
@@ -1186,13 +1203,19 @@ def apply_ack(
         req.status = S.RECEIVED
         req.sent_at = req.sent_at or now
         req.received_at = req.received_at or now
+        was_code = req.error_code
         if phase == "deferred":
             req.error_code = (error_code or "deferred")[:64]
+            req.error_message = error_message
+        elif phase == "waiting" and error_code:
+            # A `card_refunded` request the till holds for its next shift ("ממתין למשמרת הבאה",
+            # SPEC_REMOTE_CREDIT.md §11.8): why it waits, as the till said it.
+            req.error_code = error_code[:64]
             req.error_message = error_message
         else:
             req.error_code = None
             req.error_message = None
-        if first or phase == "deferred":
+        if first or phase == "deferred" or (phase == "waiting" and error_code and error_code != was_code):
             _event(
                 db, req, phase, actor="till", machine_id=machine.id,
                 detail=error_message or error_code, now=now,

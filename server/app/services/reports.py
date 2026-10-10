@@ -1108,7 +1108,8 @@ def load_shop_transactions_for_machine(
     q: Optional[str] = None,
 ) -> Tuple[List[ShopTransactionRow], bool]:
     """
-    Recent documents from every terminal in the authenticated machine's own shop.
+    Recent documents from every terminal in the authenticated machine's own shop — of its
+    point of sale only while the till is locked to it (app/services/area_lock.py).
 
     Scope is derived **solely** from the authenticated machine row: `machine.shop_id`
     and `machine.tenant_id`. The caller cannot name a shop, tenant, or machine list —
@@ -1169,12 +1170,31 @@ def load_shop_transactions_for_machine(
     if tenant_id is not None:
         query = query.filter(Transaction.tenant_id == tenant_id)
 
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a till locked to its point of
+    # sale lists the documents of that area's tills only (their area now, like every till list).
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if scope.locked:
+        query = query.filter(POSMachine.area_id == scope.area_id)
+
+    from app.services import kiosk_pickup
+
+    pickup = kiosk_pickup.parse_pickup_query(q) if q else None
     if q:
         needle = q.strip()
+        # "17", "A17", "A-17", "a-17": the documents of the shop's kiosk orders of that pickup
+        # number (the kiosk's own sale, or the till's that took a pay-at-till order).
+        pickup_ids = (
+            kiosk_pickup.transaction_ids_for(db, pickup, tenant_id=tenant_id, shop_id=machine.shop_id, from_date=since.date())
+            if pickup is not None
+            else []
+        )
+        by_pickup = [Transaction.id.in_(pickup_ids)] if pickup_ids else []
         # `20000057`: number 57 of the till whose prefix is 2 (docs/SPEC_DOCUMENT_PREFIX.md).
         prefixed = prefixed_number_clause(needle) if needle else None
         if prefixed is not None:
-            query = query.filter(prefixed)
+            query = query.filter(or_(prefixed, *by_pickup))
             needle = ""
         if needle:
             like = f"%{needle}%"
@@ -1186,6 +1206,7 @@ def load_shop_transactions_for_machine(
                 or_(
                     Transaction.transaction_number.ilike(like),
                     cast(Transaction.total_amount, String).like(like),
+                    *by_pickup,
                 )
             )
 
@@ -1198,9 +1219,12 @@ def load_shop_transactions_for_machine(
     rows = rows[:SHOP_TRANSACTIONS_ROW_CAP]
 
     pos_users = _load_cashier_names(db, [r.cashier_id for r in rows])
+    pickups = kiosk_pickup.pickups_by_transaction(db, [r.id for r in rows])
 
     out: List[ShopTransactionRow] = []
     for r in rows:
+        found = pickups.get(str(r.id))
+        matched_by = kiosk_pickup.search_matches(q, r.transaction_number, r.total_amount, found)
         status_val = r.status.value if hasattr(r.status, "value") else (
             str(r.status) if r.status is not None else None
         )
@@ -1218,6 +1242,9 @@ def load_shop_transactions_for_machine(
                 created_at=r.created_at.isoformat() if r.created_at else None,
                 basket_id=str(r.basket_id) if r.basket_id else None,
                 document_number=document_number_from(r.transaction_number, r.document_prefix, r.pos_number),
+                pickup_label=found["label"] if found else None,
+                pickup_business_date=found["businessDate"] if found else None,
+                matched_by=matched_by,
             )
         )
     return out, truncated

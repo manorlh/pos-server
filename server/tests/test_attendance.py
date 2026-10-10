@@ -761,6 +761,144 @@ class TestRoles:
         assert listed["canEdit"] is False
 
 
+# ── "קוד עובד בכל פעולה" and "שעון נוכחות" (the owner, 09.10: "חייב קוד") ──────
+
+
+class TestCodePerAction:
+    """
+    `attendanceRequireCodePerAction`: on by default, resolved through the layers like every
+    till parameter. The till checks the code (offline, as its sign-in does) and says how
+    each action was confirmed; the cloud keeps that on the shift once per action, flags what
+    a manager should see, and reports a manager acting for an employee as an exception.
+    """
+
+    def test_built_in_on_by_default_with_a_hebrew_label(self, w):
+        params = TP.till_parameters_for_machine(w.db, w.tills[0]).parameters
+        assert params[S.PARAM_REQUIRE_CODE] is True
+        assert S.policy_for_machine(w.db, w.tills[0]).require_code_per_action is True
+        spec = {p.key: p for p in TP.BUILTIN_PARAMETERS}[S.PARAM_REQUIRE_CODE]
+        assert spec.value_type == "boolean" and spec.default_value is True
+        assert spec.label.startswith("נוכחות") and "קוד" in spec.label
+        assert "שעון נוכחות" in spec.description and "מנהל" in spec.description
+        # The clock on the sign-in screen is described where attendance is turned on.
+        assert "שעון נוכחות" in {p.key: p for p in TP.BUILTIN_PARAMETERS}[S.PARAM_ENABLED].description
+
+    def test_resolved_company_shop_area_till(self, w):
+        from app.models.shop_area import ShopArea
+
+        area = ShopArea(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=w.shop.id, name="בר")
+        w.db.add(area)
+        w.db.flush()
+        w.tills[0].area_id = area.id
+        w.db.commit()
+
+        def resolved():
+            w.db.expire_all()
+            return S.policy_for_machine(w.db, w.tills[0]).require_code_per_action
+
+        set_param(w, S.PARAM_REQUIRE_CODE, False, "company", w.company.id)
+        assert resolved() is False
+        set_param(w, S.PARAM_REQUIRE_CODE, True, "shop", w.shop.id)
+        assert resolved() is True
+        set_param(w, S.PARAM_REQUIRE_CODE, False, "area", area.id)
+        assert resolved() is False
+        set_param(w, S.PARAM_REQUIRE_CODE, True, "machine", w.tills[0].id)
+        assert resolved() is True
+        # The other till of the shop has no area value: the shop's.
+        assert S.policy_for_machine(w.db, w.tills[1]).require_code_per_action is True
+
+    def test_values_as_text(self):
+        assert S.policy_of({S.PARAM_REQUIRE_CODE: "לא"}).require_code_per_action is False
+        assert S.policy_of({}).require_code_per_action is True
+
+    def test_each_action_is_logged_once_with_how_it_was_confirmed(self, w):
+        sid = uuid.uuid4()
+        clock = {"verifiedBy": "code", "origin": "clock"}
+        body = {
+            "id": str(uuid.uuid4()), "type": "clock_in", "posUserId": str(w.dana.id), "shiftId": str(sid),
+            "at": now().isoformat(), "sentAt": now().isoformat(), **clock,
+        }
+        for _ in range(2):  # the outbox delivers it twice
+            R.post_attendance_action(
+                machine_id=str(w.tills[0].id), body=AttendanceActionIn.model_validate(body), response=Response(),
+                machine=w.tills[0], db=w.db,
+            )
+        bid = uuid.uuid4()
+        act(w, w.tills[1], w.dana, "break_start", shift_id=sid, break_id=bid, verifiedBy="code", origin="session")
+        row = shift_row(w, sid)
+        log = row.details["actionLog"]
+        assert [(e["type"], e["verifiedBy"], e["origin"]) for e in log] == [
+            ("clock_in", "code", "clock"),
+            ("break_start", "code", "session"),
+        ]
+        assert log[1]["machineId"] == str(w.tills[1].id)
+        assert not {S.FLAG_NO_CODE, S.FLAG_ON_BEHALF} & set(row.flags or [])
+
+    def test_a_session_action_without_the_code_is_flagged_where_required(self, w):
+        sid, _ = clock_in(w, w.dana)
+        act(w, w.tills[0], w.dana, "break_start", shift_id=sid, break_id=uuid.uuid4(), verifiedBy="session",
+            origin="session")
+        assert S.FLAG_NO_CODE in shift_row(w, sid).flags
+
+    def test_with_the_parameter_off_a_session_action_is_fine(self, w):
+        set_param(w, S.PARAM_REQUIRE_CODE, False)
+        sid, _ = clock_in(w, w.dana)
+        act(w, w.tills[0], w.dana, "clock_out", shift_id=sid, verifiedBy="session", origin="session")
+        row = shift_row(w, sid)
+        assert S.FLAG_NO_CODE not in (row.flags or [])
+        assert row.details["actionLog"][-1]["verifiedBy"] == "session"
+
+    def test_an_older_till_sends_nothing_and_nothing_is_logged(self, w):
+        sid, _ = clock_in(w, w.dana)
+        row = shift_row(w, sid)
+        assert "actionLog" not in (row.details or {}) and S.FLAG_NO_CODE not in (row.flags or [])
+
+    def test_a_manager_acting_for_an_employee_is_logged_flagged_and_reported(self, w):
+        sid, _ = clock_in(w, w.dana, at=now() - timedelta(hours=3))
+        out, code = act(
+            w, w.tills[0], w.dana, "clock_out", shift_id=sid, verifiedBy="manager", origin="session",
+            onBehalf={"posUserId": str(w.boss.id), "name": "רותי", "reason": "on_behalf"},
+        )
+        assert code == 201 and out["shift"]["status"] == "finished"
+        row = shift_row(w, sid)
+        entry = row.details["actionLog"][-1]
+        assert entry["verifiedBy"] == "manager"
+        assert entry["onBehalf"] == {"posUserId": str(w.boss.id), "name": "רותי מנהלת", "verified": True}
+        assert S.FLAG_ON_BEHALF in row.flags and S.FLAG_APPROVAL_UNVERIFIED not in row.flags
+        exc = w.db.query(AuditException).filter(AuditException.exception_type == S.EXCEPTION_TYPE).one()
+        assert exc.details["kind"] == "on_behalf" and exc.details["action"] == "clock_out"
+        assert "יציאה באישור מנהל" in exc.details["summary"] and "רותי" in exc.details["summary"]
+
+    def test_one_acting_for_another_who_is_no_manager_is_flagged(self, w):
+        sid, _ = clock_in(w, w.dana)
+        act(w, w.tills[0], w.dana, "break_start", shift_id=sid, break_id=uuid.uuid4(), verifiedBy="manager",
+            origin="session", onBehalf={"posUserId": str(w.yossi.id), "name": "יוסי", "reason": "on_behalf"})
+        flags = shift_row(w, sid).flags
+        assert S.FLAG_ON_BEHALF in flags and S.FLAG_APPROVAL_UNVERIFIED in flags
+
+    def test_a_correction_requested_at_the_clock_is_logged_on_its_shift(self, w):
+        sid, _ = clock_in(w, w.dana)
+        out, code = act(
+            w, w.tills[0], w.dana, "correction_request", shift_id=sid, verifiedBy="code", origin="clock",
+            correction={"id": str(uuid.uuid4()), "kind": "wrong_time", "field": "clock_in",
+                        "requestedTime": (now() - timedelta(minutes=30)).isoformat(), "reason": "שכחתי"},
+        )
+        assert code == 201 and out["adjustment"]["status"] == "pending"
+        assert shift_row(w, sid).details["actionLog"][-1]["type"] == "correction_request"
+
+    def test_an_unknown_word_is_kept_not_refused(self, w):
+        sid, _ = clock_in(w, w.dana)
+        _, code = act(w, w.tills[0], w.dana, "break_start", shift_id=sid, break_id=uuid.uuid4(),
+                      verifiedBy="card", origin="clock")
+        assert code == 201
+        assert shift_row(w, sid).details["actionLog"][-1]["verifiedBy"] == "card"
+
+    def test_no_code_ever_reaches_the_cloud(self):
+        fields = {f.alias or name for name, f in AttendanceActionIn.model_fields.items()}
+        fields |= set(AttendanceActionIn.model_fields)
+        assert not {f for f in fields if any(w in f.lower() for w in ("pin", "code", "password"))}
+
+
 # ── The wiring ──────────────────────────────────────────────────────────────
 
 

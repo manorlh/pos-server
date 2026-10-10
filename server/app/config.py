@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Base URL of the public club sign-up page (QR codes point to <base>/<token>).
     # Empty = <pairing_mobile_app_base_url>/join.
     club_join_base_url: str = ""
+    # Base URL of the public digital business cards (<base>/<slug>; QR codes, VCF "URL:").
+    # Empty = <pairing_mobile_app_base_url>/c (app/services/business_cards.py).
+    business_card_base_url: str = ""
 
     # "התראות SMS על חריגות" (app/services/exception_alerts). Which SMS provider the
     # exception alerts use: "dry_run" (the default — nothing leaves the server; every
@@ -57,6 +60,10 @@ class Settings(BaseSettings):
     exception_alerts_link_base_url: str = ""
     # The background digest pass (rate-limited / quiet-hours alerts summed up afterwards).
     exception_alerts_worker_enabled: bool = True
+
+    # "שליחת לוגים לענן" (app/services/device_logs.py): uploaded device logs older than this many
+    # days are deleted by the nightly pass. 0 = kept for ever.
+    device_logs_retention_days: int = 30
 
     # "התראות לטלפון" (Web Push, app/services/webpush.py): the VAPID key pair, base64url — the
     # 65-byte public point and the 32-byte private scalar (`python -m scripts.generate_vapid_keys`).
@@ -78,6 +85,10 @@ class Settings(BaseSettings):
     log_body_max_bytes: int = 4096
     cors_origins: List[str] = ["http://localhost:3000", "http://localhost:8080"]
     port: int = 8001
+    # `Base.metadata.create_all` when the API starts (DB_CREATE_ALL). Unset: on for local dev,
+    # off on Fly (FLY_APP_NAME set) — there `alembic upgrade head` (the release command) owns
+    # the schema, and create_all only made every cold start slower (≈230 tables inspected).
+    db_create_all: Optional[bool] = None
     
     # Pairing
     pairing_code_length: int = 8
@@ -133,4 +144,13 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def create_all_on_startup(settings: Settings) -> bool:
+    """`DB_CREATE_ALL` as set; unset → on locally, off on Fly (production)."""
+    import os
+
+    if settings.db_create_all is not None:
+        return bool(settings.db_create_all)
+    return not os.environ.get("FLY_APP_NAME")
 

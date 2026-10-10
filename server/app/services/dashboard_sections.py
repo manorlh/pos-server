@@ -57,8 +57,8 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard", "/dashboard/live-items", "/dashboard/compare", "/dashboard/insights",
             "/dashboard/insights/kiosks", "/dashboard/transactions", "/dashboard/day-summary",
-            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/transmissions",
-            "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
+            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/zcredit-reconciliation",
+            "/dashboard/transmissions", "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
             "/dashboard/cashier-sales", "/dashboard/area-sales", "/dashboard/tips",
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
@@ -159,6 +159,12 @@ SECTIONS: Tuple[Section, ...] = (
     ),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
     Section("customers", "לקוחות ומועדון", "מועדון לקוחות, חברים ולקוחות.", ("/dashboard/club",)),
+    Section(
+        "business_cards", "כרטיסי ביקור",
+        "כרטיסי ביקור דיגיטליים לחברה, סניף, נקודת מכירה ואנשי צוות: עורך, פרסום, QR ופניות. "
+        "צפייה: רואה כרטיסים, נתונים ופניות; עריכה: עורך, מפרסם, משהה ומטפל בפניות.",
+        ("/dashboard/business-cards",),
+    ),
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
@@ -186,7 +192,7 @@ SECTIONS: Tuple[Section, ...] = (
         "till_settings", "הגדרות קופות",
         "הגדרות הקופות לפי רמה (ארגון, חברה, סניף, עמדה, קופה): אמצעי תשלום, חריגים, מצב הדרכה "
         "ופרמטרי מגירת המזומן.",
-        ("/dashboard/payment-methods", "/dashboard/exception-settings"),
+        ("/dashboard/payment-methods", "/dashboard/exception-settings", "/dashboard/customer-display"),
     ),
     Section(
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
@@ -432,8 +438,15 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # A payment's decision commands are the transactions page's, not the cockpit's (it reads the list).
     (_GET, "/failed-payments/*", S("reports", "z", level=VIEW)),
     (_ALL, "/failed-payments/*", S("reports")),
+    # "התאמת אשראי מול Z-Credit": read with the reports — its open count also on the cockpit; "הרץ
+    # התאמה עכשיו" and "טופל" are edits of the same people as a remote credit.
+    (_GET, "/zcredit-reconciliation/attention", S("reports", "z", "cockpit", level=VIEW)),
+    (_ALL, "/zcredit-reconciliation*", S("reports", "z")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
+    # "כרטיסי ביקור": the preview's VCF is a simulation of the draft — a viewer may look at it.
+    ("POST", "/business-cards/{}/preview-vcard", S("business_cards", level=VIEW)),
+    (_ALL, "/business-cards*", S("business_cards")),
     (_ALL, "/customers*", S("customers")),
     (_ALL, "/notifications*", S("notifications")),
     # "הודעות לקופות" only — a message here may be full screen. A manager with only "פעולות מהירות"
@@ -524,10 +537,17 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/kiosks*", S("kiosks")),
     # Remote control of tills and kiosks (app/routers/device_commands.py).
     (_ALL, "/device-commands*", S("device_control")),
+    # "שליחת לוגים לענן" (app/routers/device_logs.py): the device page's "לוגים" and the super
+    # admin's "לוגים ממכשירים". Any of the two at view lets the route's own rule run: the content
+    # for a super admin / a distributor of the organization only, a request also for a
+    # `device_control` editor (checked there at edit) — never the content for them.
+    (_ALL, "/device-logs*", S("devices", "device_control", level=VIEW)),
     # "חסימות ואזל" (app/routers/item_blocks.py).
     ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
+    # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
+    (_ALL, "/customer-display/*", S("till_settings", "devices")),
     # ── Devices ──
     ("POST", "/device-management/*", S("devices")),
     (_ALL, "/pairing/*", S("devices")),

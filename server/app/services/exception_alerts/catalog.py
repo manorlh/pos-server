@@ -73,6 +73,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("local_shop_z_till_unsynced", "קופה לא השלימה סנכרון ל-Z סניפי", "medium", "audit_exception", link="z"),
     Kind("shop_z_producer_forced", "הפקת ה-Z הסניפי הועברה בכפייה", "high", "audit_exception"),
     Kind("z_forced_open_shifts", "Z סניפי הופק בכפייה בלי קופות שלא נסגרו", "high", "audit_exception", link="z"),
+    Kind("z_forced_pending_cloud_refund", "Z הופק בכפייה לפני שזיכוי אשראי מהענן הופק", "high", "audit_exception", amount=True, link="z"),
     Kind("close_keep_held_sales", "סגירה מרחוק עם מכירות מושהות", "medium", "audit_exception"),
     Kind("support_z_produced", "Z הופק מהענן ע״י התמיכה", "high", "audit_exception", link="z"),
     Kind("till_reset", "איפוס נתוני קופה ע״י התמיכה", "high", "audit_exception"),
@@ -80,6 +81,7 @@ KINDS: Tuple[Kind, ...] = (
     Kind("till_replaced", "הוחלפה קופה", "medium", "audit_exception"),
     Kind("kiosk_offline", "קיוסק לא מחובר", "high", "audit_exception"),
     Kind("till_offline", "קופה לא מחוברת", "high", "audit_exception"),
+    Kind("zcredit_recon", "אי-התאמה מול Z-Credit (חיוב בלי מסמך / מסמך בלי חיוב)", "high", "audit_exception", amount=True),
     # Listed by the exception rules as planned; nothing reports them yet.
     Kind("price_override", "שינוי מחיר ידני", "medium", "audit_exception", amount=True, link="document"),
     Kind("card_failures", "כשלי חיוב באשראי", "medium", "audit_exception"),
@@ -94,6 +96,9 @@ KINDS: Tuple[Kind, ...] = (
     Kind("terminal_mismatch", "מסוף אשראי לא תואם", "high", "kiosk_alert"),
     Kind("kiosk_terminal", "תקלת מסוף אשראי בקיוסק", "medium", "kiosk_alert"),
     Kind("kiosk_printer", "תקלת מדפסת בקיוסק", "low", "kiosk_alert"),
+    # "בון לא הודפס" (app/services/bon_alerts.py): a ticket of any till's or kiosk's print queue
+    # that needs a person — not printed, cut short, a round in doubt, not taken by the KDS.
+    Kind("bon_unprinted", "בון לא הודפס", "high", "kitchen_bon"),
     Kind("device_battery", "סוללה חלשה במכשיר", "low", "battery"),
     Kind("training_mode", "מצב הדרכה הופעל / כובה", "medium", "training"),
     Kind("training_dropped", "מסמכי הדרכה מקופה שלא במצב הדרכה", "high", "training"),
@@ -125,7 +130,7 @@ KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
 #: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
 #: a target reached; the phone alerts carry them).
-OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached"})
+OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted"})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")

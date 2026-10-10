@@ -171,6 +171,18 @@ class TestCatalogue:
         assert "DESKTOP_EXIT" not in TP.LEGACY_SENIOR_CODES
         assert TP.legacy_role_for(TP.DEFAULTS[TP.MANAGER]) == "shop_manager"
 
+    def test_switching_a_kiosk_to_the_till_is_a_managers(self):
+        """KIOSK_TILL_MODE ("מצב עבודה: קיוסק / קופה", P:/specs/kiosk-landscape-till-mode.md §5.3): managers only, no scope."""
+        spec = TP.PERMISSIONS_BY_CODE["KIOSK_TILL_MODE"]
+        assert spec.label == "מעבר למצב קופה בקיוסק" and spec.group == "admin" and spec.scope is None
+        assert spec.devices == (TP.DEVICE_TILL, TP.DEVICE_TABLET, TP.DEVICE_WINDOWS)
+        states = {key: TP.DEFAULTS[key]["KIOSK_TILL_MODE"] for key in TP.BUILTIN_BY_KEY}
+        assert states == {
+            TP.WAITER: D, TP.CASHIER: D, TP.SUPERVISOR: D, TP.MANAGER: A,
+            TP.LEGACY_CASHIER: D, TP.LEGACY_MANAGER: A,
+        }
+        assert "KIOSK_TILL_MODE" not in TP.LEGACY_SENIOR_CODES
+
     def test_the_catalogue_names_the_windows_device(self):
         out = TP.catalogue_out()
         assert {"key": "windows", "label": "Windows"} in out["devices"]
@@ -220,8 +232,9 @@ class TestLegacy:
         # ITEM_BLOCK: "חסימת פריט / אזל" (specs/item-blocks-targets.md) — a cashier on a manager's code.
         assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
-        # except approving others and leaving the Windows kiosk, which were a manager's alone.
-        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}
+        # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
+        # manager's alone (the kiosk's admin opened for a manager's code only).
+        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 
     def test_a_legacy_shop_manager_may_do_everything(self):

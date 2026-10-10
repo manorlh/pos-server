@@ -197,6 +197,11 @@ def disable_training_mode(
     )
     out = {**result, "status": TM.status_out(db, shop, current_user)}
     table_targets = tables_service.notify_targets(db, shop.id) if result["deleted"]["tableOrders"] else None
+    if table_targets is not None:
+        # The tills' tables state changed: a new version (app/services/tables_state.py), last.
+        from app.services import tables_state as TS
+
+        TS.bump(db, shop.id)
     catalog_targets = DM.catalog_targets(db, shop.tenant_id) if result.get("demoMenu") else None
     db.commit()
     background_tasks.add_task(_notify_flag, str(shop.id), str(shop.tenant_id), table_targets)

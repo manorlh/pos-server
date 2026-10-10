@@ -32,6 +32,7 @@ export type SectionId =
   | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
+  | 'business_cards'
   | 'notifications'
   | 'till_messages'
   | 'exception_alerts'
@@ -64,7 +65,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard', '/dashboard/live-items', '/dashboard/compare', '/dashboard/insights',
       '/dashboard/insights/kiosks', '/dashboard/transactions', '/dashboard/day-summary',
-      '/dashboard/all-in-one', '/dashboard/reconciliation', '/dashboard/transmissions',
+      '/dashboard/all-in-one', '/dashboard/reconciliation', '/dashboard/zcredit-reconciliation',
+      '/dashboard/transmissions',
       '/dashboard/events', '/dashboard/offline-transactions', '/dashboard/product-sales',
       '/dashboard/cashier-sales', '/dashboard/area-sales', '/dashboard/tips',
       '/dashboard/sales-by-payment', '/dashboard/card-brands', '/dashboard/promotions-report',
@@ -108,6 +110,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
   { id: 'customers', pages: ['/dashboard/club'] },
+  { id: 'business_cards', pages: ['/dashboard/business-cards'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
@@ -118,7 +121,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'till_design', pages: ['/dashboard/till-design'] },
   { id: 'kds', pages: ['/dashboard/kds', '/dashboard/workflow'] },
   { id: 'printers', pages: ['/dashboard/kitchen-printers'] },
-  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings'] },
+  { id: 'till_settings', pages: ['/dashboard/payment-methods', '/dashboard/exception-settings', '/dashboard/customer-display'] },
   { id: 'pos_users', pages: ['/dashboard/pos-users', '/dashboard/till-roles'] },
   { id: 'attendance', pages: ['/dashboard/attendance'] },
   { id: 'users', pages: ['/dashboard/users'] },

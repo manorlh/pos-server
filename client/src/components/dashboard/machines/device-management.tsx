@@ -9,6 +9,7 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
 import { Check, Copy, Loader2, Power, QrCode, ShieldCheck, Terminal } from 'lucide-react';
@@ -44,8 +45,10 @@ import {
   type WifiSecurity,
   type WithDeviceManagement,
 } from '@/lib/deviceManagement';
+import { deviceTypeOptions } from '@/lib/deviceModelSearch';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -138,6 +141,9 @@ function Steps({ items }: { items: string[] }) {
   );
 }
 
+/** "סוג המכשיר", searchable by name, id, maker (also in Hebrew) and deviceTypeFor's words. */
+const DEVICE_TYPE_OPTIONS = deviceTypeOptions();
+
 /**
  * "איך מפעילים": the adb command per device type (with the checks before it), or the QR for a
  * factory-reset device. `shopId` (or the device's own) picks the release the QR installs.
@@ -153,6 +159,7 @@ export function SilentUpdateHelpDialog({
   target?: DeviceManagementTarget | null;
   shopId?: string | null;
 }) {
+  const tc = useTranslations('combobox.deviceType');
   const guessed = target ? deviceTypeFor(target) : null;
   const [tab, setTab] = useState<'adb' | 'qr'>('adb');
   const [typeId, setTypeId] = useState<string>(guessed?.id ?? DEVICE_TYPES[0].id);
@@ -224,19 +231,17 @@ export function SilentUpdateHelpDialog({
         {tab === 'adb' ? (
           <div className="space-y-3 text-sm">
             <div className="space-y-1">
-              <Label>סוג המכשיר</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {DEVICE_TYPES.map((t) => (
-                  <Button
-                    key={t.id}
-                    size="sm"
-                    variant={t.id === type.id ? 'default' : 'outline'}
-                    onClick={() => setTypeId(t.id)}
-                  >
-                    {t.name} · {t.android}
-                  </Button>
-                ))}
-              </div>
+              <Label htmlFor="silent-update-device-type">סוג המכשיר</Label>
+              <Combobox
+                id="silent-update-device-type"
+                aria-label="סוג המכשיר"
+                options={DEVICE_TYPE_OPTIONS}
+                value={type.id}
+                onValueChange={(next) => {
+                  if (next) setTypeId(next);
+                }}
+                emptyText={tc('noResults')}
+              />
             </div>
             <div className="space-y-1">
               <p className="font-medium">1. בדיקות לפני (מחשב עם adb, המכשיר מחובר ב-USB):</p>

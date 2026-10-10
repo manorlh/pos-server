@@ -13,6 +13,7 @@
   "contactPhone": "0501234567",
   "transactionNumber": "40000057",
   "pickupNumber": 17,
+  "pickupLabel": "A-17",
   "items": [
     {
       "lineKey": "l1:0",

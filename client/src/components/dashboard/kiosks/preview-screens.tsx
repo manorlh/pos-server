@@ -291,6 +291,13 @@ export type Translate = (key: string, values?: Record<string, string | number>) 
 
 export interface PreviewModel {
   cfg: KioskConfig;
+  /**
+   * The kiosk in landscape (lib/displayProfile.ts kioskDisplay; P:/specs/kiosk-landscape-till-mode.md §4): the
+   * screens with a bottom area lay it beside the body (the order and its total next to the lines), and the
+   * centred screens keep a readable width. Absent / false: the screens as today (portrait).
+   */
+  twoColumns?: boolean;
+  contentMaxWidth?: number | null;
   c: ResolvedThemeColors;
   radius: number;
   btnRadius: number;
@@ -856,6 +863,23 @@ export function CountUp({ value, ms, format }: { value: number; ms: number; form
 
 /** The scrolling body of a screen, with an optional sticky bottom area ("כיתוב רץ": `top` over the body, `bottom` above that area). */
 function ScreenBody({ children, footer, m, top, bottom }: { children: ReactNode; footer?: ReactNode; m: PreviewModel; top?: ReactNode; bottom?: ReactNode }) {
+  if (m.twoColumns) {
+    // Landscape (§4.5): the body beside its bottom area — the action within reach at the bottom of the side column.
+    return (
+      <div className="flex h-full flex-col">
+        {top}
+        <div className="mx-auto flex min-h-0 w-full flex-1 gap-4" style={m.contentMaxWidth ? { maxWidth: m.contentMaxWidth } : undefined}>
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-width:none]">{children}</div>
+          {footer ? (
+            <div className="flex shrink-0 flex-col justify-end p-3" style={{ width: '36%', minWidth: 200 }}>
+              {footer}
+            </div>
+          ) : null}
+        </div>
+        {bottom}
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col">
       {top}
@@ -3233,7 +3257,7 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
 export function SuccessScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const live = m.live?.success;
-  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1);
+  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1, cfg.pickup.labelFormat);
   const messages = messagesFor(cfg, 'success', ['banner', 'notice'], m.nowMs);
   // The real kiosk: the question only while it is still asked; what happened to the receipt after.
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;

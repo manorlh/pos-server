@@ -16,11 +16,11 @@ class _Camel(BaseModel):
 
 
 class AttendanceApprovalIn(_Camel):
-    """A manager's PIN at the till (checked there, offline), for a clock-out."""
+    """A manager's PIN at the till (checked there, offline): a clock-out's approval, or `onBehalf`."""
 
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
     name: Optional[str] = Field(None, max_length=200)
-    #: open_tables | require_manager
+    #: open_tables | require_manager | on_behalf
     reason: Optional[str] = Field(None, max_length=60)
 
 
@@ -70,6 +70,15 @@ class AttendanceActionIn(_Camel):
     open_tables: Optional[List[AttendanceOpenTableIn]] = Field(None, alias="openTables", max_length=200)
     reason: Optional[str] = Field(None, max_length=2000)
     correction: Optional[AttendanceCorrectionIn] = None
+    #: "קוד עובד בכל פעולה": how the till confirmed the action — `code` (the employee's own
+    #: code at that moment), `manager` (a manager's code, acting for them: `onBehalf`) or
+    #: `session` (the till's signed-in session only). Plain text, not a closed list: a newer
+    #: till's word (a card, say) must not park its outbox row. Never the code itself.
+    verified_by: Optional[str] = Field(None, alias="verifiedBy", max_length=20)
+    #: `clock` ("שעון נוכחות" on the sign-in screen) | `session` (inside a signed-in session).
+    origin: Optional[str] = Field(None, max_length=20)
+    #: The manager who acted for the employee, by their code at the till (offline, as `approval`).
+    on_behalf: Optional[AttendanceApprovalIn] = Field(None, alias="onBehalf")
 
 
 # ── The dashboard ────────────────────────────────────────────────────────────

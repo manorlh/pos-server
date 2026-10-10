@@ -111,6 +111,7 @@ const K = {
   usersShape: 'cloud.posUsersShape',
   promotions: 'cloud.promotions',
   promotionsEtag: 'cloud.promotionsEtag',
+  stock: 'cloud.stockLevels',
 } as const;
 
 export class CloudStore {
@@ -226,6 +227,20 @@ export class CloudStore {
   setPromotions(list: Array<Record<string, unknown>>, etag: string | null) {
     this.write(K.promotions, list);
     if (etag) this.kv.set(K.promotionsEtag, etag);
+  }
+
+  /** This shop's stock levels (`GET /sync/{m}/stock`), by product id: what "אזל" counts by (lib/kioskSoldOut.ts). */
+  stockLevels(): Record<string, number> {
+    return this.read<Record<string, number>>(K.stock) ?? {};
+  }
+
+  /** Levels as pulled; a product the pull does not name keeps its last level (the Android till's upsert). */
+  mergeStockLevels(levels: Record<string, number>): boolean {
+    const prev = this.stockLevels();
+    const next = { ...prev, ...levels };
+    const changed = Object.keys(levels).some((id) => prev[id] !== levels[id]);
+    if (changed) this.write(K.stock, next);
+    return changed;
   }
 
   kioskSnapshot(): Record<string, unknown> | null {

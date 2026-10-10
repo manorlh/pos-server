@@ -317,7 +317,7 @@ def tills_view(
         if area_ids else []
     )
     areas = {a.id: a.name for a in area_rows}
-    kiosks = {k for (k,) in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()} if ids else set()
+    kiosks = {k for (k,) in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()} if ids else set()
     groups_of: Dict[uuid.UUID, List[str]] = {}
     group_rows: List[MachineGroup] = []
     if ids and shop.company_id is not None:

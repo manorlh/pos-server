@@ -294,7 +294,8 @@ def make_router(kind: str, prefix: str) -> APIRouter:
             db.query(KioskDevice, POSMachine, Shop)
             .join(POSMachine, POSMachine.id == KioskDevice.machine_id)
             .join(Shop, Shop.id == KioskDevice.shop_id)
-            .filter(KioskDevice.tenant_id == active_tenant_id, KioskDevice.enabled.is_(True))
+            # A till's kiosk-mode row (its home role is the till) is no kiosk to follow.
+            .filter(KioskDevice.tenant_id == active_tenant_id, KioskDevice.enabled.is_(True), KioskDevice.home_role.is_(None))
             .order_by(Shop.name, POSMachine.name)
             .all()
         )

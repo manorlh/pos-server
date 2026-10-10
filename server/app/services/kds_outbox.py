@@ -65,6 +65,7 @@ def order_contact(db: Session, event: OutboxEvent) -> Optional[Dict[str, Any]]:
         "phone": order.contact_phone,
         "pickupName": order.pickup_name,
         "pickupNumber": order.pickup_number,
+        "pickupLabel": getattr(order, "pickup_label", None),
         "displayRef": order.display_ref,
         "shopId": str(order.shop_id),
         "shopName": shop.name if shop else None,

@@ -579,7 +579,8 @@ def build_z(
     the header as `openTillsLeftOut`, so the Z itself says what it does not cover.
 
     Every Z, cloud or till, freezes its per-waiter breakdown on the header (`byWaiter`,
-    app/services/z_waiters.py).
+    app/services/z_waiters.py), and its presentation sections — on the header for the whole
+    Z and on each till's section for that till (`reportSections`, app/services/z_sections.py).
     """
     if shop_id is None:
         raise ZBuildRefused("no_shop", "A Z is per shop; this run has none.")
@@ -667,6 +668,18 @@ def build_z(
         # till's authorization runs reported them by build time. Informational too.
         section["offline"] = offline_block(db, machine, shifts)
     cash = z_cash_summary([shifts for _m, shifts in per_machine])
+    # "דו״ח Z — גרסה 2" (app/services/z_sections.py): the presentation sections — the whole Z's
+    # and each till's — from the same documents, the drawer above and the transmission blocks.
+    # Presentation only, frozen like the other breakdowns; never a condition on the Z: a failure
+    # leaves them out and the Z prints as before.
+    from app.services.z_sections import sections_for_z
+
+    report_sections, till_report_sections = sections_for_z(
+        db, shop_id=shop_id, per_machine=per_machine, sections=sections,
+    )
+    for section, part in zip(sections, till_report_sections):
+        if part is not None:
+            section["reportSections"] = part
 
     # 4. Number, write, claim.
     if business_date is None:
@@ -753,6 +766,9 @@ def build_z(
             z.header = {**z.header, "testVoucherDeductionsTotal": _money(overall.test_voucher_deductions_total)}
         # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
+        # The Z's presentation sections ("דו״ח Z — גרסה 2"), when they could be built.
+        if report_sections is not None:
+            z.header = {**z.header, "reportSections": report_sections}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
         # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already

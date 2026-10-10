@@ -30,7 +30,12 @@ from app.models.pos_machine import POSMachine
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.routers.remote_credits import _may_use, _original_or_404
-from app.schemas.cloud_card_refund import CloudCardRefundCreateIn, CloudCardRefundResendIn, CloudCardRefundResolveIn
+from app.schemas.cloud_card_refund import (
+    CloudCardRefundCreateIn,
+    CloudCardRefundReleaseIn,
+    CloudCardRefundResendIn,
+    CloudCardRefundResolveIn,
+)
 from app.services import cloud_card_refunds as svc
 from app.services import remote_credits as rc
 from app.services.scoping import scope_query_by_user, scope_transactions_by_user
@@ -79,8 +84,7 @@ def prepare_cloud_card_refund(
     original = _original_or_404(db, transaction_id, current_user, active_tenant_id)
     if rc.expire_overdue(db):
         db.commit()
-    targets = rc.eligible_targets(db, original, _may_use(db, current_user, active_tenant_id))
-    return svc.prepare_out(db, original, targets)
+    return svc.prepare_out(db, original, _may_use(db, current_user, active_tenant_id))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -209,6 +213,31 @@ def resend_cloud_card_refund(
     row = _refund_or_404(db, refund_id, current_user, active_tenant_id)
     target = _target_or_404(db, body.machine_id, current_user, active_tenant_id)
     svc.resend(db, row, current_user, target, force=body.force)
+    db.commit()
+    db.refresh(row)
+    return svc.refund_to_out(db, row, events=True)
+
+
+@router.post("/{refund_id}/release-z")
+def release_cloud_card_refund_from_z(
+    refund_id: uuid.UUID,
+    body: CloudCardRefundReleaseIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py):
+    a super admin, a typed reason — the next Z of the note's till goes ahead without it (recorded on
+    the refund and as an exception), and the note goes into the Z after. 403 for anyone else, 422
+    without a reason. A cloud Z run that waited only for it is built now.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    row = _refund_or_404(db, refund_id, current_user, active_tenant_id)
+    svc.release_z(db, row, current_user, body.reason)
+    db.flush()
+    G.retry_runs_of(db, [row.target_machine_id])
     db.commit()
     db.refresh(row)
     return svc.refund_to_out(db, row, events=True)

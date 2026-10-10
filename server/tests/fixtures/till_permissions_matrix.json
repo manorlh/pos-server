@@ -45,7 +45,8 @@
     "CARD_UNRESOLVED",
     "KIOSK_CONTROL",
     "KIOSK_UNLOCK",
-    "DESKTOP_EXIT"
+    "DESKTOP_EXIT",
+    "KIOSK_TILL_MODE"
   ],
   "scopes": {
     "attendance:manage": "ATTENDANCE_MANAGE",
@@ -113,7 +114,8 @@
         "CARD_UNRESOLVED": "approval",
         "KIOSK_CONTROL": "deny",
         "KIOSK_UNLOCK": "deny",
-        "DESKTOP_EXIT": "deny"
+        "DESKTOP_EXIT": "deny",
+        "KIOSK_TILL_MODE": "deny"
       },
       "limits": {}
     },
@@ -163,7 +165,8 @@
         "CARD_UNRESOLVED": "approval",
         "KIOSK_CONTROL": "approval",
         "KIOSK_UNLOCK": "approval",
-        "DESKTOP_EXIT": "deny"
+        "DESKTOP_EXIT": "deny",
+        "KIOSK_TILL_MODE": "deny"
       },
       "limits": {}
     },
@@ -213,7 +216,8 @@
         "CARD_UNRESOLVED": "allow",
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "approval",
-        "DESKTOP_EXIT": "deny"
+        "DESKTOP_EXIT": "deny",
+        "KIOSK_TILL_MODE": "deny"
       },
       "limits": {
         "CASH_DRAWER.CASH_OUT": {
@@ -273,7 +277,8 @@
         "CARD_UNRESOLVED": "allow",
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "allow",
-        "DESKTOP_EXIT": "allow"
+        "DESKTOP_EXIT": "allow",
+        "KIOSK_TILL_MODE": "allow"
       },
       "limits": {}
     },
@@ -323,7 +328,8 @@
         "CARD_UNRESOLVED": "approval",
         "KIOSK_CONTROL": "approval",
         "KIOSK_UNLOCK": "approval",
-        "DESKTOP_EXIT": "deny"
+        "DESKTOP_EXIT": "deny",
+        "KIOSK_TILL_MODE": "deny"
       },
       "limits": {}
     },
@@ -373,7 +379,8 @@
         "CARD_UNRESOLVED": "allow",
         "KIOSK_CONTROL": "allow",
         "KIOSK_UNLOCK": "allow",
-        "DESKTOP_EXIT": "allow"
+        "DESKTOP_EXIT": "allow",
+        "KIOSK_TILL_MODE": "allow"
       },
       "limits": {}
     }

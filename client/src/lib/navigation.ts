@@ -32,6 +32,7 @@ import {
   CalendarRange,
   Clock,
   Coins,
+  Contact,
   CreditCard,
   Download,
   FileBarChart,
@@ -170,16 +171,6 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    // "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the view-only digital menu and
-    // the online ordering site — their profiles, each its own dashboard section.
-    id: 'digital',
-    labelKey: 'sections.digital',
-    items: [
-      { href: '/dashboard/digital-menu', labelKey: 'digitalMenu', icon: QrCode },
-      { href: '/dashboard/online-ordering', labelKey: 'onlineOrdering', icon: Globe },
-    ],
-  },
-  {
     id: 'reports',
     labelKey: 'sections.reports',
     items: [
@@ -211,6 +202,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // documents ↔ Zs ↔ card transmissions, and the transmissions across tills.
       { href: '/dashboard/all-in-one', labelKey: 'allInOne', icon: ListChecks },
       { href: '/dashboard/reconciliation', labelKey: 'reconciliation', icon: GitCompareArrows },
+      // "התאמת אשראי מול Z-Credit": our card legs against the Z-Credit terminal's own report.
+      { href: '/dashboard/zcredit-reconciliation', labelKey: 'zcreditReconciliation', icon: CreditCard },
       { href: '/dashboard/transmissions', labelKey: 'transmissions', icon: RadioTower },
       // Temporary events: a shop's tills grouped for a report only, with the producer's
       // report, reconciliations and the confirmation that freezes it (docs/SPEC_EVENTS.md).
@@ -296,6 +289,26 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // "ערוצים דיגיטליים" (P:/specs/digital-menu-ordering-cards-plan.md §21): the public digital
+    // surfaces — digital menu, online ordering, business cards and their legal pages — one group.
+    id: 'digital',
+    labelKey: 'sections.digital',
+    items: [
+      // "תפריט דיגיטלי" / "הזמנות אונליין": their profiles, each its own dashboard section.
+      { href: '/dashboard/digital-menu', labelKey: 'digitalMenu', icon: QrCode },
+      { href: '/dashboard/online-ordering', labelKey: 'onlineOrdering', icon: Globe },
+      // "כרטיסי ביקור דיגיטליים": cards for the company, branches, sales points and staff — editor
+      // with live preview, publication, QR and the enquiries inbox; the kiosk pages' roles.
+      {
+        href: '/dashboard/business-cards',
+        labelKey: 'businessCards',
+        icon: Contact,
+        gate: 'settingsWrite',
+        matchPrefixes: ['/dashboard/business-cards/'],
+      },
+    ],
+  },
+  {
     id: 'settings',
     labelKey: 'sections.settings',
     items: [
@@ -352,6 +365,8 @@ export const NAV_SECTIONS: NavSection[] = [
       },
       // "תצורת עבודה" (direct sale / order process, targets) per level, and the KDS screens.
       { href: '/dashboard/workflow', labelKey: 'workflowMode', icon: Workflow, gate: 'settingsWrite' },
+      // "מסך לקוח": the customer-facing screen — a till's second screen or a paired device — per level.
+      { href: '/dashboard/customer-display', labelKey: 'customerDisplay', icon: MonitorSmartphone, gate: 'settingsWrite' },
       { href: '/dashboard/kds', labelKey: 'kds', icon: MonitorPlay, gate: 'settingsWrite' },
       // Global definitions every tenant's tills read; only a super admin sets them.
       {
@@ -372,6 +387,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/app-updates',
         labelKey: 'appUpdates',
         icon: Download,
+        gate: 'superAdmin',
+      },
+      // "לוגים ממכשירים": every device's logs sent to support — the super admin's (content is private).
+      {
+        href: '/dashboard/device-logs',
+        labelKey: 'deviceLogs',
+        icon: ScrollText,
         gate: 'superAdmin',
       },
       { href: '/dashboard/profile', labelKey: 'profile', icon: User },

@@ -217,6 +217,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "במחשב Windows (קיוסק / קופה): יציאה ממסך מלא לשולחן העבודה בקוד מנהל, לא בזמן הזמנה או "
                    "תשלום. החזרה — מהאייקון ליד השעון או מקיצור הדרך \"חזרה לקיוסק\", בלי קוד. כל יציאה נרשמת.",
                    devices=(DEVICE_WINDOWS,)),
+    # "מצב עבודה: קיוסק / קופה" (P:\specs\kiosk-landscape-till-mode.md §5.3): a manager's code switches
+    # a kiosk device to the till, checked on the device against the roster (offline too) — no scope.
+    PermissionSpec("KIOSK_TILL_MODE", "מעבר למצב קופה בקיוסק", "admin",
+                   "בניהול הקיוסק: מעבר המכשיר ל\"מצב עבודה: קופה\" (כשהבעלים אפשר זאת — kioskTillModeEnabled). "
+                   "המסמכים נרשמים על שם העובד שנכנס; אותה מכונה, אותה סדרה ואותם חוקי Z. לא באמצע הזמנה או תשלום.",
+                   devices=(DEVICE_TILL, DEVICE_TABLET, DEVICE_WINDOWS)),
 )
 # fmt: on
 
@@ -281,7 +287,7 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
-LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"})
+LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"})
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -347,6 +353,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     # The owner (08.10.2026): managers, not cashiers. "approval" means nothing here — the
     # Windows pad already asks for a manager's own code.
     "DESKTOP_EXIT":                      (D, D, D, A),
+    # The owner (09.10.2026): a manager switches a kiosk to the till ("מצב עבודה"); the others never.
+    "KIOSK_TILL_MODE":                   (D, D, D, A),
 }
 # fmt: on
 

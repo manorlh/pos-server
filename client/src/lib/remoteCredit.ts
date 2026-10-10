@@ -119,6 +119,18 @@ export interface RemoteCreditTarget {
   lastHeartbeatAt?: string | null;
   openShift?: { id: string; openedAt?: string | null; sequenceNumber?: number | null } | null;
   isOriginalTill: boolean;
+  areaId?: string | null;
+  /**
+   * A cloud card refund's target only (SPEC_REMOTE_CREDIT.md §11.8): where its credit note lands —
+   * the open shift, or (`cloudCardRefundLanding = open_or_next_shift`) the till's next shift — in
+   * the server's words ("ייכנס למשמרת הבאה בקופה X — חובה לפני ה-Z הבא").
+   */
+  landing?: 'open_shift' | 'next_shift' | null;
+  landingWords?: string | null;
+  /** `cloudCardRefundBlocksNextZ` of that till: its next Z waits for the note. */
+  blocksNextZ?: boolean;
+  /** Shares the sale's Z-Credit terminal (its branch / point of sale); always true for a till's own terminal. */
+  sameBranch?: boolean;
 }
 
 export interface RemoteCreditPrepareLine {
@@ -158,6 +170,8 @@ export interface RemoteCreditPrepare {
   pendingRequests: RemoteCreditRequest[];
   reasons: { code: string; label: string }[];
   preparedExpiryHours: number;
+  /** A cloud card refund's prepare only: the till the server proposes for the credit note (§11.8). */
+  defaultTargetId?: string | null;
 }
 
 export interface RemoteCreditCreateBody {
@@ -191,6 +205,23 @@ export type SelectionProblem =
 
 export function isPendingRemoteCredit(status: RemoteCreditStatus | null | undefined): boolean {
   return !!status && PENDING_REMOTE_CREDIT.has(status);
+}
+
+/**
+ * How often the dialog asks for a request it follows: every 2 s for its first half minute (a
+ * till online answers within seconds), every 5 s up to three minutes, then every 15 s (a till
+ * offline — it is handed the request on its next beat). `false`: not pending, no more polling.
+ */
+export function remoteCreditPollMs(
+  req: Pick<RemoteCreditRequest, 'status' | 'createdAt'> | null | undefined,
+  nowMs: number,
+): number | false {
+  if (req && !isPendingRemoteCredit(req.status)) return false;
+  const created = req ? Date.parse(req.createdAt) : NaN;
+  const age = Number.isNaN(created) ? 0 : Math.max(0, nowMs - created);
+  if (age < 30_000) return 2000;
+  if (age < 180_000) return 5000;
+  return 15_000;
 }
 
 export function remoteCreditStatusVariant(

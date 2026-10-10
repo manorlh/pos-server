@@ -230,6 +230,87 @@ export function sendDeviceCommand(input: SendDeviceCommandInput, key: string = D
   return key;
 }
 
+// ── "בקש לוגים" (POST /device-logs/requests) ────────────────────────────────
+
+/** A logs request as the server answers it (lib/deviceLogs.ts `LogsRequest`). */
+export interface DeviceLogsRequestRow {
+  id: string;
+  machineId: string;
+  status: string;
+  detail?: string | null;
+  received?: boolean;
+}
+
+export interface SendDeviceLogsRequestInput {
+  machineId: string;
+  machineName?: string | null;
+  /** 15–1440 (the server's default 120 when absent). */
+  minutes?: number;
+  /** After the server answered (e.g. refresh the device's "לוגים"). */
+  onSent?: (row: DeviceLogsRequestRow) => void;
+  /** Show it in the small centred popup (default true). */
+  popup?: boolean;
+}
+
+/**
+ * "בקש לוגים": fire-and-forget like every command — queues an `upload_logs` command for one
+ * device and returns the send's key at once; the popup / tray / row chip follow it (נשלח →
+ * התקבל במכשיר → הלוג התקבל). Never awaits the device, never throws, never opens a modal.
+ */
+export function sendDeviceLogsRequest(input: SendDeviceLogsRequestInput, key: string = DC.newKey()): string {
+  const body: Record<string, unknown> = { machineId: input.machineId };
+  if (input.minutes != null) body.minutes = input.minutes;
+  const label = DC.actionLabelOf('upload_logs');
+  const popupAt = input.popup === false ? null : Date.now();
+  if (!find(key)) {
+    update((list) =>
+      DC.upsert(
+        list,
+        entry({
+          key,
+          kind: 'device_logs',
+          action: 'upload_logs',
+          label,
+          phase: 'sending',
+          machineId: input.machineId,
+          machineName: input.machineName ?? null,
+          resend: { path: '/device-logs/requests', body },
+          popupAt,
+        }),
+      ),
+    );
+  } else {
+    update((list) =>
+      list.map((c) => (c.key === key ? { ...c, phase: 'sending' as const, sendError: null, updatedAt: Date.now(), popupAt } : c)),
+    );
+  }
+  api
+    .post<DeviceLogsRequestRow>('/device-logs/requests', body, idempotencyHeaders(key))
+    .then(({ data }) => {
+      const now = Date.now();
+      const p = DC.phaseOfDeviceLogs(data.status, !!data.received, data.detail);
+      const made = entry({
+        key: `${key}:${data.id}`,
+        kind: 'device_logs',
+        id: data.id,
+        action: 'upload_logs',
+        label,
+        machineId: data.machineId ?? input.machineId,
+        machineName: input.machineName ?? null,
+        phase: p.phase,
+        detail: p.detail,
+        sentAt: now,
+        updatedAt: now,
+        resend: { path: '/device-logs/requests', body },
+        popupAt: find(key)?.popupAt ?? null,
+      });
+      update((list) => DC.resolveSend(list, key, [made]));
+      input.onSent?.(data);
+    })
+    .catch((err) => sendFailed(key, err, label, DC.retryableSendError(httpStatus(err))));
+  return key;
+}
+
 /**
  * "נסה שוב": a send that never got an answer is re-sent with its own key (the server answers
  * with the first command if it did arrive — never twice); a command the device failed or that
@@ -238,6 +319,13 @@ export function sendDeviceCommand(input: SendDeviceCommandInput, key: string = D
 export function retryCommand(key: string): void {
   const c = find(key);
   if (!c?.resend) return;
+  if (c.kind === 'device_logs') {
+    const b = c.resend.body as { machineId: string; minutes?: number };
+    const input = { machineId: b.machineId, minutes: b.minutes, machineName: c.machineName };
+    if (c.sendError) sendDeviceLogsRequest(input, key);
+    else sendDeviceLogsRequest(input);
+    return;
+  }
   const body = c.resend.body as SendDeviceCommandInput & { machineIds?: string[] };
   if (c.kind !== 'device') return;
   const names = c.machineId && c.machineName ? { [c.machineId]: c.machineName } : undefined;
@@ -249,7 +337,7 @@ export function retryCommand(key: string): void {
 }
 
 export function canRetry(c: TrackedCommand): boolean {
-  if (c.kind !== 'device' || !c.resend) return false;
+  if ((c.kind !== 'device' && c.kind !== 'device_logs') || !c.resend) return false;
   return c.sendError != null || c.phase === 'failed' || c.phase === 'expired';
 }
 
@@ -357,6 +445,11 @@ const READERS: Record<CommandKind, Reader> = {
     const { data } = await api.get<{ items: { id: string; status: string; detail?: string | null }[] }>(`/device-commands/status?${idsQuery(ids)}`);
     return new Map((data?.items ?? []).map((r) => [r.id, DC.phaseOfDevice(r.status, r.detail)]));
   },
+  device_logs: async (open) => {
+    const ids = open.map((c) => c.id as string);
+    const { data } = await api.get<{ items: DeviceLogsRequestRow[] }>(`/device-logs/requests/status?${idsQuery(ids)}`);
+    return new Map((data?.items ?? []).map((r) => [r.id, DC.phaseOfDeviceLogs(r.status, !!r.received, r.detail)]));
+  },
   card: async (open) => {
     const ids = open.map((c) => c.id as string);
     type CardRow = Parameters<typeof DC.phaseOfCard>[0] & { id: string };
@@ -425,8 +518,8 @@ const READERS: Record<CommandKind, Reader> = {
 async function requestReader(open: TrackedCommand[], path: (id: string) => string): Promise<Map<string, PhaseUpdate>> {
   const out = new Map<string, PhaseUpdate>();
   await each(open, async (c) => {
-    const { data } = await api.get<{ status: string; errorMessage?: string | null }>(path(c.id as string));
-    if (data?.status) out.set(c.id as string, DC.phaseOfRequest(data.status, data.errorMessage));
+    const { data } = await api.get<{ status: string; errorMessage?: string | null; forcedWords?: string | null }>(path(c.id as string));
+    if (data?.status) out.set(c.id as string, DC.phaseOfRequest(data.status, data.errorMessage, data.forcedWords));
   });
   return out;
 }
@@ -470,6 +563,7 @@ export const REFRESH_PREFIXES: Record<CommandKind, string[]> = {
   transmit: ['machines', 'machine', 'transmit', 'transmissions'],
   reboot: ['machines', 'machine'],
   till_message: ['till-messages'],
+  device_logs: ['device-logs'],
 };
 
 // ── The hook ─────────────────────────────────────────────────────────────────

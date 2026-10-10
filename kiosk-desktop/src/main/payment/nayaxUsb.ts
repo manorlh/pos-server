@@ -147,12 +147,14 @@ export class TcSerialLink {
   call: CallFn = async (json, timeoutMs) => {
     const id = `u${++this.seq}`;
     const outgoing = withId(json, id);
-    if (outgoing === null) return { ok: false, error: 'not a JSON-RPC frame' };
+    if (outgoing === null) return { ok: false, error: 'not a JSON-RPC frame', notSent: true };
     let l: OpenLink;
     try {
       l = await this.getLink();
     } catch (e) {
-      return { ok: false, error: `אין חיבור למסוף (${this.label}): ${message(e)}` };
+      // The link never opened (no serialport package, no such port, the port busy): the frame
+      // never left — not sent, never "unknown" (CallResult.notSent).
+      return { ok: false, error: `אין חיבור למסוף (${this.label}): ${message(e)}`, notSent: true };
     }
     return new Promise<CallResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -178,7 +180,8 @@ export class TcSerialLink {
         l.pending.delete(id);
         clearTimeout(timer);
         l.close(`write failed: ${message(e)}`);
-        resolve({ ok: false, error: message(e) });
+        // The write was refused (the link closed under us): nothing was written — not sent.
+        resolve({ ok: false, error: message(e), notSent: true });
       }
     });
   };

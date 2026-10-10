@@ -62,7 +62,7 @@ def kiosk_machine_ids(db: Session, machine_ids: Optional[Iterable[Any]] = None) 
     """The machines that are kiosks (of [machine_ids], or all)."""
     from app.models.kiosk import KioskDevice
 
-    query = db.query(KioskDevice.machine_id)
+    query = db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
     if machine_ids is not None:
         ids = [m for m in machine_ids if m is not None]
         if not ids:

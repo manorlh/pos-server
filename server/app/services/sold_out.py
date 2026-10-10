@@ -146,7 +146,8 @@ def is_kiosk(db: Session, machine: POSMachine) -> bool:
     from app.models.kiosk import KioskDevice
 
     device = db.get(KioskDevice, machine.id)
-    return device is not None and bool(device.enabled)
+    # A till's kiosk-mode row (home_role "till") is no kiosk role.
+    return device is not None and bool(device.enabled) and getattr(device, "home_role", None) is None
 
 
 def event_ids_of(db: Session, machine_id: Any) -> List[Any]:
@@ -439,7 +440,7 @@ def _kiosk_ids(db: Session, machine_ids: Iterable[Any]) -> set:
     if not ids:
         return set()
     return {
-        r[0] for r in db.query(KioskDevice.machine_id)
+        r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
         .filter(KioskDevice.machine_id.in_(ids), KioskDevice.enabled.is_(True)).all()
     }
 

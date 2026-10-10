@@ -130,9 +130,13 @@ export async function fetchClosePreview(machineId: string): Promise<import('@/li
   return (await api.get(`/device-commands/${machineId}/close-preview`)).data;
 }
 
-/** The confirmed close / Z: refused (409 totals_changed) when the till's totals moved since. */
-export async function requestRemoteClose(machineId: string, totalsKey: string) {
-  return (await api.post('/device-commands/close', { machineId, totalsKey })).data as { kind: string; created: boolean };
+/**
+ * The confirmed close / Z: refused (409 totals_changed) when the till's totals moved since. [force]: "כפה
+ * סגירה" for this request (lib/remoteCloseForce.ts); absent — the till's `remoteCloseForceByDefault`.
+ */
+export async function requestRemoteClose(machineId: string, totalsKey: string, force?: boolean) {
+  const body = force === undefined ? { machineId, totalsKey } : { machineId, totalsKey, force };
+  return (await api.post('/device-commands/close', body)).data as { kind: string; created: boolean; remoteForce?: boolean };
 }
 
 /** "סגירת יום סניפית": the shop by its configuration, the run under way (lib/remoteShopClose.ts). */
@@ -151,7 +155,7 @@ export async function fetchAreaShiftPreview(shopId: string, areaId: string): Pro
 }
 
 /** Each confirmed till its own remote shift close; per-till results (one failing never stops the others). */
-export async function requestAreaShiftClose(body: { shopId: string; areaId: string; totalsKeys: Record<string, string> }) {
+export async function requestAreaShiftClose(body: { shopId: string; areaId: string; totalsKeys: Record<string, string>; force?: boolean }) {
   return (await api.post('/device-commands/area-shift-close', body)).data as {
     results: { machineId: string; ok: boolean; code?: string; message?: string }[];
   };
@@ -165,8 +169,12 @@ export async function requestShopClose(body: {
   confirmCloudData?: boolean;
   /** A super admin starting past tills in "מצב לא ידוע". */
   forceReason?: string;
+  /** A super admin starting past cloud card refunds whose credit note the Z would go without. */
+  forceCloudRefundReason?: string;
   /** "סגירת יום לנקודת מכירה": that point of sale's area Z. */
   areaId?: string;
+  /** "כפה סגירה" for every till of this close; absent — each till's own default. */
+  force?: boolean;
 }) {
   return (await api.post('/device-commands/shop-close', body)).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
@@ -188,6 +196,11 @@ export async function proceedShopClose(runId: string, excludeMachineIds: string[
 /** Support's force past "חסימת Z כשיש משמרות פתוחות": a super admin, a typed reason (403 / 422 otherwise). */
 export async function forceShopClose(runId: string, excludeMachineIds: string[], reason: string) {
   return (await api.post(`/device-commands/shop-close/${runId}/force`, { excludeMachineIds, reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
+/** Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" while the day close waits (a typed reason). */
+export async function forceShopCloseCloudRefunds(runId: string, reason: string) {
+  return (await api.post(`/device-commands/shop-close/${runId}/force-cloud-refunds`, { reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
 
 /** "סגור והשאר מושהות" (pos-server held_sales_close.py): the shop's parameter, or support with a reason. */

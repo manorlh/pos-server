@@ -24,6 +24,7 @@ DEVICE_ACTIONS = (
     "sign_out",         # "נתק משתמש": after the sale in progress
     "restart_app",      # "הפעל מחדש את האפליקציה": only at rest
     "install_update",   # "התקן עדכון עכשיו": only when one is ready, only at rest
+    "upload_logs",      # "בקש לוגים": collected and uploaded in the background, any time (params {minutes})
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
@@ -60,6 +61,10 @@ class DeviceCommand(Base):
     #: A lock / unlock: the device's lock as it was before it (locked, message, when, by whom), for
     #: a cancel to put back exactly (app/services/device_commands.py `cancel`).
     prev_state = Column(JSONB, nullable=True)
+    #: The action's parameters: `upload_logs` → {"minutes": 15–1440}.
+    params = Column(JSONB, nullable=True)
+    #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py).
+    result = Column(JSONB, nullable=True)
 
 
 class DeviceRemoteState(Base):

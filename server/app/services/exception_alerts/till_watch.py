@@ -114,7 +114,7 @@ def scan(db: Session, *, now: Optional[datetime] = None) -> int:
     """One pass: new outages recorded, returns closed. Returns how many rows it wrote or changed. Caller commits."""
     now = _utc(now) or datetime.now(timezone.utc)
     changed = 0
-    kiosks = db.query(KioskDevice.machine_id)
+    kiosks = db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
     trading = db.query(Shift.machine_id).filter(Shift.status == ShiftStatus.OPEN, Shift.opened_at > now - SHIFT_MAX_AGE)
     candidates = (
         db.query(POSMachine)

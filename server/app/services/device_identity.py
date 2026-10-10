@@ -337,7 +337,7 @@ def _scope(query, db: Session, user: User, active_tenant_id: Any, tenant_filter:
 
 
 def _is_kiosk():
-    return exists().where(KioskDevice.machine_id == POSMachine.id)
+    return exists().where(KioskDevice.machine_id == POSMachine.id, KioskDevice.home_role.is_(None))
 
 
 def search_query(db: Session, user: User, active_tenant_id: Any, f: SearchFilters, *, now: Optional[datetime] = None):
@@ -477,7 +477,7 @@ def search(
     )
     ids = [m.id for m, *_ in rows]
     kiosk_ids = (
-        {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()} if ids else set()
+        {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()} if ids else set()
     )
     return {
         "items": [search_row(m, s, c, t, kiosk_ids, now) for m, s, c, t in rows],

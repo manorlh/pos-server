@@ -757,6 +757,11 @@ def post_my_heartbeat(
     device_identity.apply_heartbeat(machine, body, request)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
+    # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
+    if body is not None and body.capabilities is not None:
+        from app.services import device_logs
+
+        device_logs.apply_heartbeat(machine, body.capabilities, body.app_version)
     # The dashboard's "הפעל מחדש", while it waits (a device-owner till only; the till decides when).
     pending_reboot = device_management.take_pending_reboot(machine)
     # Zs closed at the till with no connection, not uploaded yet (offline till Z §4.4).

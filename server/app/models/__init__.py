@@ -60,6 +60,8 @@ from app.models.failed_payment import FailedPaymentAttempt
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
 # "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card.
 from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundEvent
+# "התאמת אשראי מול Z-Credit" (docs/SPEC_ZCREDIT.md "חלק ג׳"): our card legs against the terminal's report.
+from app.models.zcredit_reconciliation import ZCreditReconItem, ZCreditReconRun
 from app.models.document_refusal import DocumentRefusal
 # "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts).
 from app.models.exception_alerts import (
@@ -87,6 +89,7 @@ from app.models.prepaid_voucher import (
 from app.models import prepaid_voucher_extras  # noqa: F401,E402
 from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
+from app.models.tables_state import TablesStateVersion  # noqa: F401
 from app.models.platform_setting import PlatformSetting
 from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
 from app.models.menu import (
@@ -175,6 +178,8 @@ from app.models.kiosk_live import KioskQuickHide
 from app.models.device_command import DeviceCommand, DeviceRemoteState
 # "פקודות שנשלחו": the dashboard's Idempotency-Key per command request (app/services/command_idempotency.py).
 from app.models.command_request_key import CommandRequestKey
+# "שליחת לוגים לענן": a device's logs, uploaded for support (app/services/device_logs.py).
+from app.models.device_log_upload import DeviceLogUpload
 # Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
@@ -183,6 +188,8 @@ from app.models.sales_target import SalesTarget, SalesTargetHit
 from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
 # "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
 from app.models.presentation_profile import PresentationAudit, PresentationProfile, PresentationRevision
+# "מסך לקוח": the cloud relay of a till's customer screen (app/services/customer_display.py).
+from app.models.customer_display import CustomerDisplayState
 
 __all__ = [
     "User", "UserRole",
@@ -265,15 +272,19 @@ __all__ = [
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "CloudCardRefund", "CloudCardRefundEvent",
+    "ZCreditReconRun", "ZCreditReconItem",
     "DocumentRefusal",
     "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
-    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
     "DisplayOrdering", "DisplayOrderingBinding",
     "PresentationAudit", "PresentationProfile", "PresentationRevision",
+    "CustomerDisplayState",
 ]
+# "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).
+from app.models import business_card as _business_card  # noqa: F401,E402

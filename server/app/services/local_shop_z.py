@@ -1182,8 +1182,14 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
     z.totals_mismatch = False
     header = dict(z.header or {})
     for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal",
-                "productionVoucherDeductionsTotal", "testVoucherDeductionsTotal", "byWaiter"):
+                "productionVoucherDeductionsTotal", "testVoucherDeductionsTotal", "byWaiter",
+                "reportSections"):
         header.pop(key, None)
+    # "דו״ח Z — גרסה 2": the shop's sections exactly as the main till printed them (its tills'
+    # own are on their sections, `report.reportSections`); none from an older till.
+    printed_sections = body.report.get("reportSections") if isinstance(body.report, dict) else None
+    if isinstance(printed_sections, dict):
+        header["reportSections"] = printed_sections
     if printed_drawer:
         # The drawer as printed: card tips paid out of it ("cardTipsFromDrawer") and its cash
         # ("drawerCash") are then read from the printed sections, never the cloud's build.

@@ -87,6 +87,10 @@ class Credentials:
     password: str = field(repr=False)
     #: The settings layer the password came from (tenant … machine), for the audit trail.
     source: Optional[str] = None
+    #: The settings layer the terminal number came from: `machine` is a till's own terminal;
+    #: `area` / `shop` / `company` / `tenant` a terminal its point of sale or branch shares
+    #: (which till issues a cloud refund's credit note, cloud_card_refunds.default_target).
+    terminal_source: Optional[str] = None
 
     @property
     def masked_terminal(self) -> str:

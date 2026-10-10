@@ -61,7 +61,7 @@ def _wake_shop_kiosks(db: Session, shop_id) -> None:
     from app.models.kiosk import KioskDevice
     from app.services import kiosk_menu
 
-    ids = [r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.shop_id == shop_id).all()]
+    ids = [r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.shop_id == shop_id).all()]
     try:
         kiosk_menu.wake_kiosks(db.get(Shop, shop_id).tenant_id, [str(i) for i in ids])
     except Exception:  # noqa: BLE001 - their next kiosk sync takes it anyway

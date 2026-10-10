@@ -6,7 +6,7 @@ schemas (`app/schemas/dashboard.py`) so the UI gets one number format across eve
 report surface. The fiscal export path keeps Decimal; these are management reports.
 """
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -255,6 +255,14 @@ class ShopTransactionRow(BaseModel):
     #: The number as its till printed it, `20000057` (docs/SPEC_DOCUMENT_PREFIX.md).
     #: Additive and nullable like `basketId`; a till shows it in place of the bare number.
     document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The kiosk order the document paid, as its slip printed the number ("A-17", or "17" with
+    #: "מספר בלבד"), and that order's business date (the number comes back every day). Additive
+    #: and nullable like `basketId`: null for any other document.
+    pickup_label: Optional[str] = Field(None, alias="pickupLabel")
+    pickup_business_date: Optional[str] = Field(None, alias="pickupBusinessDate")
+    #: Why `q` found it: "document" (its number or amount) and / or "pickup" (its kiosk order's
+    #: pickup number — "17", "A17", "A-17"). Null without a search.
+    matched_by: Optional[List[str]] = Field(None, alias="matchedBy")
 
 
 class ShopTransactionsResponse(BaseModel):
@@ -262,6 +270,10 @@ class ShopTransactionsResponse(BaseModel):
 
     server_time: str = Field(..., alias="serverTime")
     transactions: List[ShopTransactionRow]
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): `{areaId, areaName}` when the
+    # list is narrowed to the till's point of sale; null = the whole shop (as before). Additive —
+    # older tills ignore it.
+    area: Optional[Dict[str, Optional[str]]] = None
 
 
 # ── 2f. Day summary — several tills' Z reports rolled into one day ────────────

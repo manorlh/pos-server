@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from app.config import get_settings
 from app.models.pos_machine import POSMachine
@@ -37,6 +37,69 @@ def machine_channel_for(machine: POSMachine) -> Optional[str]:
     if not machine.tenant_id:
         return None
     return machine_channel(str(machine.tenant_id), str(machine.id))
+
+
+def shop_channel(tenant_id: str, shop_id: str) -> str:
+    """
+    The shop's channel: the coalesced "tables" signal, sent once for every till of the shop
+    (app/services/tables_state.py). Subscribe-only on every till's token of that shop.
+    """
+    return f"pos:{tenant_id}:shop:{shop_id}"
+
+
+def shop_channel_for(machine: POSMachine) -> Optional[str]:
+    if not machine.tenant_id or not machine.shop_id:
+        return None
+    return shop_channel(str(machine.tenant_id), str(machine.shop_id))
+
+
+#: Ably's batch publish takes up to 100 channels in one request.
+BATCH_CHANNELS = 100
+
+
+def _batch_failures(response: Any) -> int:
+    """`failureCount` of a batch publish answer (protocol 2+), 0 when it cannot be read."""
+    try:
+        return sum(int((item or {}).get("failureCount") or 0) for item in (response.items or []))
+    except Exception:  # noqa: BLE001 - the answer's shape is Ably's
+        return 0
+
+
+def publish_batch(channels: List[str], event: str, body: dict[str, Any]) -> None:
+    """
+    One message to many channels in ONE Ably request (REST batch publish, `POST /messages`)
+    instead of a request per channel. Falls back to one publish per channel if the batch
+    request itself fails. Best effort, like every notify.
+    """
+    client = _rest()
+    if not client or not channels:
+        if channels:
+            logger.debug("Ably not configured — skip %s to %d channel(s)", event, len(channels))
+        return
+    import json
+
+    from ably import api_version
+
+    message = {"name": event, "data": json.dumps(body), "encoding": "json"}
+    for start in range(0, len(channels), BATCH_CHANNELS):
+        chunk = channels[start:start + BATCH_CHANNELS]
+        try:
+            response = client.request(
+                "POST", "/messages", api_version, body={"channels": chunk, "messages": [message]},
+            )
+            if not response.success:
+                raise RuntimeError(f"{response.status_code} {response.error_code} {response.error_message}")
+            failed = _batch_failures(response)
+            if failed:
+                logger.warning("Ably batch event=%s: %d of %d channel(s) refused", event, failed, len(chunk))
+            logger.debug("Ably batch → %d channel(s) event=%s", len(chunk), event)
+        except Exception as exc:  # noqa: BLE001 - fall back to one publish per channel
+            logger.warning("Ably batch publish failed (%s); publishing per channel", exc)
+            for name in chunk:
+                try:
+                    client.channels.get(name).publish(event, body)
+                except Exception as inner:  # noqa: BLE001
+                    logger.error("Ably publish failed channel=%s event=%s: %s", name, event, inner)
 
 
 def _notify_base() -> dict[str, Any]:
@@ -113,6 +176,7 @@ def publish_close_shift_notify(
     wait_for_rest: bool = False,
     keep_held_sales: bool = False,
     cancel_held_sales: Optional[dict] = None,
+    remote_force: bool = False,
 ) -> None:
     """
     Ask a till to close its open shift so a Z can include it (docs/SHIFTS_API.md §1.7).
@@ -136,6 +200,10 @@ def publish_close_shift_notify(
     if cancel_held_sales:
         # "בטל מכירות מושהות וסגור": exactly these ids, the reason, who (held_sales_close.py).
         body["cancelHeldSales"] = cancel_held_sales
+    if remote_force:
+        # "כפה סגירה" (app/services/remote_close_force.py): beside `waitForRest` — a till without
+        # the capability ignores it and waits for rest.
+        body["remoteForce"] = True
     publish_notify(tenant_id, machine_id, "close-shift", body)
 
 
@@ -166,6 +234,7 @@ def publish_till_z_notify(
     wait_for_rest: bool = False,
     keep_held_sales: bool = False,
     cancel_held_sales: Optional[dict] = None,
+    remote_force: bool = False,
 ) -> None:
     """
     Ask a till in `zMode = till` to produce its own Z now (docs/SHIFTS_API.md §5.3).
@@ -184,6 +253,8 @@ def publish_till_z_notify(
         body["keepHeldSales"] = True
     if cancel_held_sales:
         body["cancelHeldSales"] = cancel_held_sales
+    if remote_force:
+        body["remoteForce"] = True
     publish_notify(tenant_id, machine_id, "till-z", body)
 
 
@@ -234,12 +305,17 @@ def create_token_request_for_machine(machine: POSMachine) -> dict[str, Any]:
     if not client:
         raise RuntimeError("Ably is not configured (set ABLY_API_KEY)")
 
+    # history too: the till attaches with rewind=1 to catch a close-shift
+    # published while it was reconnecting, and rewind needs history.
+    capability = {channel: ["subscribe", "history"]}
+    shop = shop_channel_for(machine)
+    if shop:
+        # The shop's coalesced "tables" signal (app/services/tables_state.py).
+        capability[shop] = ["subscribe", "history"]
     token_request = client.auth.create_token_request(
         {
             "client_id": client_id,
-            # history too: the till attaches with rewind=1 to catch a close-shift
-            # published while it was reconnecting, and rewind needs history.
-            "capability": {channel: ["subscribe", "history"]},
+            "capability": capability,
             "ttl": 24 * 60 * 60 * 1000,
         }
     )

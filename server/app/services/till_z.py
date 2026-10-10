@@ -377,6 +377,15 @@ def produce_till_z(
     if item is not None:
         raise _conflict(f"z_run_in_progress:{item.run_id}")
 
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py): a credit note this
+    # till still owes, or one it issued in a shift this Z does not take, refuses the Z — nothing
+    # drawn. The till issues its notes before it closes; support may release one from the Z.
+    from app.services import cloud_refund_z_gate as CRG
+
+    held = CRG.blockers(db, [machine.id]) + CRG.notes_left_behind(db, machine, [s.id for s in included])
+    if held:
+        raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": CRG.REFUSED_CODE, **CRG.refusal_body(held, can_force=False)})
+
     named = _find_pending_for_till(db, machine, body.till_z_request_id)
     try:
         z = build_z(
@@ -417,6 +426,7 @@ def produce_till_z(
         logger.warning("till Z %s of machine %s: the till's figures differ %s", z.id, machine.id, body.till)
     _note_card_transmission(db, machine, z, body)
     _complete_requests(db, machine, z, body.till_z_request_id, now)
+    CRG.consume(db, [machine.id], z.id, path="till_z", now=now)
     db.flush()
     return z, "created"
 
@@ -693,6 +703,11 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
         )
     _note_card_transmission(db, machine, z, body)
     _complete_requests(db, machine, z, body.till_z_request_id, now)
+    # Printed already: never refused for a cloud card refund's note (the till could not know of
+    # it offline, SPEC_REMOTE_CREDIT.md §11.11); a release it went ahead on is used up.
+    from app.services import cloud_refund_z_gate as CRG
+
+    CRG.consume(db, [machine.id], z.id, path="till_z_offline", now=now)
     # One fewer on its way up; the next beat says the till's own count.
     if machine.offline_till_z_pending:
         machine.offline_till_z_pending = max(0, int(machine.offline_till_z_pending) - 1)
@@ -1002,6 +1017,7 @@ def request_for_machine(
     *,
     force: bool = False,
     wait_for_rest: bool = False,
+    remote_force: bool = False,
     now: Optional[datetime] = None,
 ) -> Tuple[TillZRequest, bool]:
     """
@@ -1013,15 +1029,30 @@ def request_for_machine(
     now = _now(now)
     expire_overdue(db, now=now)
     _check_requestable(machine)
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a credit note the till owes and cannot issue into a
+    # shift this Z closes (it has none open) would make a Z without it — refused up front, as the
+    # till's own Z call would be (`produce_till_z`).
+    from app.services import cloud_refund_z_gate as CRG
+
+    held = CRG.blockers(db, [machine.id], closing=[machine.id] if CRG.closes_open_shift(db, machine) else [])
+    if held:
+        raise TillZRefused(status.HTTP_409_CONFLICT, {"detail": CRG.REFUSED_CODE, **CRG.refusal_body(held, user=user)})
     existing = _pending_query(db, machine.id).order_by(TillZRequest.created_at.asc()).first()
     if existing is not None:
         if force and not existing.force_close:
             existing.force_close = True
             db.flush()
             _send(machine, existing, now)
+        changed = False
         if wait_for_rest and not existing.wait_for_rest and not existing.force_close:
             # Remote control asked too: the pending one waits for rest from now on.
             existing.wait_for_rest = True
+            changed = True
+        if wait_for_rest and not existing.force_close and bool(existing.remote_force) != bool(remote_force):
+            # Remote control asked again: its latest word on "כפה סגירה" stands (remote_close_force.py).
+            existing.remote_force = bool(remote_force)
+            changed = True
+        if changed:
             db.flush()
             _send(machine, existing, now)
         return existing, False
@@ -1035,6 +1066,7 @@ def request_for_machine(
         status=S.WAITING,
         force_close=bool(force),
         wait_for_rest=bool(wait_for_rest) and not force,
+        remote_force=bool(remote_force) and bool(wait_for_rest) and not force,
         expires_at=now + timedelta(hours=TILL_Z_REQUEST_TTL_HOURS),
         created_at=now,
         updated_at=now,
@@ -1103,6 +1135,7 @@ def _send(machine: POSMachine, req: TillZRequest, now: datetime) -> None:
         wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
         keep_held_sales=bool(getattr(req, "keep_held_sales", False)),
         cancel_held_sales=z_runs_cancel_command(req),
+        remote_force=bool(getattr(req, "remote_force", False)),
     )
     # Only once the request is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(req), lambda: publish_till_z_notify(*args, **kw))
@@ -1232,6 +1265,9 @@ def take_pending(db: Session, machine: POSMachine, *, now: Optional[datetime] = 
         out["keepHeldSales"] = True
     if z_runs_cancel_command(req):
         out["cancelHeldSales"] = z_runs_cancel_command(req)
+    if getattr(req, "remote_force", False):
+        # "כפה סגירה" (app/services/remote_close_force.py), beside `waitForRest`.
+        out["remoteForce"] = True
     return out
 
 
@@ -1285,5 +1321,14 @@ def request_to_out(db: Session, req: TillZRequest, *, now: Optional[datetime] = 
         "zReportId": req.z_report_id,
         "machineSequenceNumber": z.machine_sequence_number if z is not None else None,
         "force": bool(req.force_close),
+        "remoteForce": bool(getattr(req, "remote_force", False)),
+        "forcedWords": _forced_words(req),
         **till_backlog(machine, now=now),
     }
+
+
+def _forced_words(req: TillZRequest) -> Optional[str]:
+    """A request completed in the forced mode: "נסגר בכפייה מרחוק ע״י <מנהל>"."""
+    from app.services import remote_close_force
+
+    return remote_close_force.done_words(req) if req.status == S.COMPLETED else None

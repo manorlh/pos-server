@@ -57,6 +57,10 @@ GET    /sync/{m}/print-jobs/pending              → jobs this till prints (hand
 POST   /sync/{m}/print-jobs/{id}/ack             → done / failed
 POST   /sync/{m}/print-jobs/{id}/cancel          → the sender takes back a job no till took yet
 GET    /sync/{m}/print-jobs/status?ids=a,b       → the sender's view of its jobs
+POST   /sync/{m}/kitchen/bon-alerts              → the till's tickets that did not print (and
+                                                    those a person handled): "בון לא הודפס" on
+                                                    the dashboard's alerts and cockpit
+                                                    (app/services/bon_alerts.py)
 
 Every configuration write wakes the shop's tills after the commit (Ably `settings`,
 reason `printers_updated`); a new job wakes its printing till (Ably `print-job`).
@@ -82,6 +86,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
 from app.schemas.kitchen_printers import (
+    BonAlertsIn,
     CategoryRoutesIn,
     KitchenOptionsIn,
     KitchenPrintersPatch,
@@ -675,6 +680,25 @@ def cancel_print_job(
 ):
     """The sender's own job: `cancelled` true when no till ever took it (it will never print)."""
     out = K.cancel_job(db, machine, job_id)
+    db.commit()
+    return out
+
+
+@router.post("/sync/{machine_id}/kitchen/bon-alerts")
+def report_bon_alerts(
+    machine_id: str,
+    body: BonAlertsIn,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    `{"bons": [{id, state, reason, printerName, title, items, attempts, since, error, handledBy}],
+    "complete": true}` → `{"open", "recorded", "resolved"}`. Idempotent: the till sends it on
+    every change of its queue and on its heartbeat.
+    """
+    from app.services import bon_alerts
+
+    out = bon_alerts.report(db, machine, body)
     db.commit()
     return out
 

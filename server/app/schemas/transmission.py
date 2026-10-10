@@ -278,6 +278,11 @@ class ReplacementCodeBody(BaseModel):
             "SYNQPAY_DX8000", "SYNQPAY_DX6000", "SYNQPAY_EX8000", "SYNQPAY_RX5000",
             "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
             "PAX_A77", "UROVO_I9100",
+            "IMIN_FALCON2", "IMIN_FALCON2_58", "IMIN_FALCON2MAX", "IMIN_D4_PRO",
+            "IMIN_SWAN2", "IMIN_SWIFT2", "IMIN_FALCON1", "IMIN_D4",
+            "IMIN_D1", "IMIN_M2", "IMIN_SWIFT1", "IMIN",
+            "LANDI_C20_PRO", "LANDI_M20", "LANDI_P20", "LANDI_APOS_A8",
+            "FEITIAN_M60", "FEITIAN_F360", "FEITIAN_F310", "FEITIAN_M500",
         ]
     ] = Field(None, alias="deviceModel")
     #: Why the till is replaced — kept in "הוחלפה קופה" when a device redeems the code

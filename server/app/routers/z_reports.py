@@ -535,6 +535,10 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
     elif z.per_machine is not None and shifts:
         out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
         out.by_waiter_source = "documents"
+    # "דו״ח Z — גרסה 2": as frozen, else read from its documents (app/services/z_sections.py).
+    from app.services.z_sections import sections_of_z
+
+    out.report_sections, out.report_sections_source = sections_of_z(db, z)
     out.till_totals = z.till_totals
     out.offline_report = z.offline_report
     return out

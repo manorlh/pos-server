@@ -12,6 +12,10 @@ acknowledgement.
 * `sign_out` — the operator is signed out after the sale in progress.
 * `restart_app` / `install_update` — only at rest (no sale, no card payment); an update only when
   one is downloaded and verified. A till that cannot do it now refuses (`refused`, with the reason).
+* `upload_logs` — "בקש לוגים" (the device-logs contract, specs/device-logs-api.md §2): `params` {"minutes": 15–1440},
+  any time (mid-sale too — it never disturbs the work); the device collects, compresses and uploads
+  in the background (`POST /sync/{m}/device-logs` with `command_id`), and the command's `result` is
+  {"log_id": …} (app/services/device_logs.py).
 
 **Delivery** — every command wakes its device at once (Ably event `device-command`, then the till
 pulls `GET /sync/{m}/device-commands`); without realtime the till's heartbeat pulls it (≤ 2 min).
@@ -104,6 +108,8 @@ def command_out(row: DeviceCommand) -> Dict[str, Any]:
         "deliveredAt": _iso(row.delivered_at),
         "doneAt": _iso(row.done_at),
         "expiresAt": _iso(row.expires_at),
+        "params": getattr(row, "params", None),
+        "result": getattr(row, "result", None),
     }
 
 
@@ -205,8 +211,10 @@ def create(
     by_name: Optional[str] = None,
     source: str = "dashboard",
     now: Optional[datetime] = None,
+    params: Optional[Dict[str, Any]] = None,
 ) -> List[DeviceCommand]:
-    """One command per device, one batch (the caller commits, then `wake`s them)."""
+    """One command per device, one batch (the caller commits, then `wake`s them). [params]: the
+    action's own (`upload_logs` → {"minutes"}), checked by the caller."""
     if action not in DEVICE_ACTIONS:
         raise _bad("invalid_action", "פעולה לא מוכרת")
     if not machines:
@@ -215,7 +223,7 @@ def create(
         # A kiosk is paused from the kiosks' tab, never locked or signed out (a batch skips them).
         from app.models.kiosk import KioskDevice
 
-        kiosks = {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()}
+        kiosks = {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()}
         machines = [m for m in machines if m.id not in kiosks]
         if not machines:
             raise _bad("kiosk_use_pause", "קיוסק לא ננעל ולא מנותק מרחוק — עוצרים אותו בלשונית הקיוסקים")
@@ -254,6 +262,7 @@ def create(
             message=((message or "").strip()[:300] or None) if action == "lock" else None,
             status="pending",
             prev_state=prev,
+            params=dict(params) if params else None,
             source=source,
             created_by_user_id=getattr(user, "id", None),
             created_by_name=(who or None) and who[:200],
@@ -269,7 +278,12 @@ def create(
 
 #: A command the device took but never answered lapses: a restart or a sign-out after 10 minutes
 #: (later it would land on another customer or another cashier), anything else after a day.
-ANSWER_WITHIN = {"restart_app": timedelta(minutes=10), "sign_out": timedelta(minutes=10)}
+ANSWER_WITHIN = {
+    "restart_app": timedelta(minutes=10),
+    "sign_out": timedelta(minutes=10),
+    # "בקש לוגים": a device offline after taking it queues the bundle and sends it later — a day.
+    "upload_logs": EXPIRES_AFTER,
+}
 
 
 #: An answer that arrives this soon after the command expired is still kept (the device did it).
@@ -358,8 +372,10 @@ def pull(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) ->
 
 def ack(
     db: Session, machine: POSMachine, command_id: Any, ack_status: str, detail: Optional[str], *, now: Optional[datetime] = None,
+    result: Optional[Dict[str, Any]] = None,
 ) -> DeviceCommand:
-    """The device's answer. A final command keeps its first answer (a resend is harmless)."""
+    """The device's answer. A final command keeps its first answer (a resend is harmless).
+    [result]: what the answer carried (`upload_logs` → {"log_id"}), kept with the first one."""
     now = now or utc_now()
     if ack_status not in ACK_STATUSES:
         raise _bad("invalid_status", "invalid status")
@@ -374,7 +390,13 @@ def ack(
         # The device did it and its answer came just after the cloud gave up waiting: what happened.
         pass
     elif row.status in FINAL_STATUSES:
+        if result and not row.result:
+            row.result = dict(result)
+            row.updated_at = now
+            db.flush()
         return row
+    if result:
+        row.result = {**(row.result or {}), **result}
     row.status = ack_status
     row.detail = (detail or None) and str(detail)[:300]
     row.done_at = now
@@ -437,7 +459,7 @@ def devices_status(db: Session, machines: Sequence[POSMachine], *, now: Optional
         return []
     expire_old(db, now=now)
     states = {s.machine_id: s for s in db.query(DeviceRemoteState).filter(DeviceRemoteState.machine_id.in_(ids)).all()}
-    kiosks = {k.machine_id for k in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+    kiosks = {k.machine_id for k in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
     recent = (
         db.query(DeviceCommand)
         .filter(DeviceCommand.machine_id.in_(ids), DeviceCommand.created_at > now - timedelta(days=2))
@@ -464,3 +486,30 @@ def devices_status(db: Session, machines: Sequence[POSMachine], *, now: Optional
             "recent": [command_out(c) for c in cmds[:5]],
         })
     return out
+
+
+def answer_with_result(
+    db: Session, machine: POSMachine, command_id: Any, action: str, result: Dict[str, Any], *, now: Optional[datetime] = None,
+) -> Optional[DeviceCommand]:
+    """
+    What the device delivered for one of its commands arrived by itself (e.g. the logs of an
+    `upload_logs`): the command is `done` with that [result] — before or without the device's ack
+    (an ack that follows keeps it). None when the id is not this device's command of [action].
+    """
+    now = now or utc_now()
+    try:
+        ident = uuid.UUID(str(command_id))
+    except (TypeError, ValueError):
+        return None
+    row = db.get(DeviceCommand, ident)
+    if row is None or row.machine_id != machine.id or row.action != action:
+        return None
+    row.result = {**(row.result or {}), **result}
+    if row.status in OPEN_STATUSES or row.status == "expired":
+        row.status = "done"
+        row.done_at = now
+        if row.delivered_at is None:
+            row.delivered_at = now
+    row.updated_at = now
+    db.flush()
+    return row

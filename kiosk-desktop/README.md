@@ -165,7 +165,8 @@ npm run publish:release -- --server https://api.example.com   # העלאה לע�
 
 ## תלויות חדשות (npm)
 
-זמן ריצה (בתוך המתקין): `sharp` (גרסאות התמונות; בינארי מ-npm). נארזים בתוך הקוד: `bcryptjs`,
+זמן ריצה (בתוך המתקין): `sharp` (גרסאות התמונות; בינארי מ-npm), `serialport` `12.0.0` (מסופון C4 /
+SynqPay ב-USB; prebuild של N-API, נפרש מה-asar). נארזים בתוך הקוד: `bcryptjs`,
 `react`, `react-dom`, `lucide-react`, `qrcode.react`, `clsx`, `tailwind-merge`,
 `@fontsource/noto-sans-hebrew`, `@fontsource/roboto`. פיתוח: `electron`, `electron-builder`, `vite`,
 `@vitejs/plugin-react`, `tailwindcss`, `@tailwindcss/vite`, `tw-animate-css`, `esbuild`, `typescript`,

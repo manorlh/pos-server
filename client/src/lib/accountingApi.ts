@@ -76,6 +76,8 @@ export interface AccountingZRow {
   shopSequenceNumber?: number | null;
   businessDate: string;
   closedAt: string;
+  /** The local date the Z was produced (shop's timezone) — what `dateBasis=production` lists by. */
+  productionDate?: string | null;
   netSales?: number | null;
   vatTotal?: number | null;
   exported: ExportedRef[];
@@ -198,6 +200,8 @@ export async function fetchAccountingZs(params: {
   from?: string;
   to?: string;
   onlyUnexported?: boolean;
+  /** Which date `from`/`to` are: the business date (the server's default) or the Z's production date. */
+  dateBasis?: 'business' | 'production';
 }) {
   const { data } = await api.get<{ items: AccountingZRow[]; truncated: boolean }>(
     '/accounting/z-reports',

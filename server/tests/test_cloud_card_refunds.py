@@ -44,10 +44,13 @@ from app.routers import cloud_card_refunds as R
 from app.routers import remote_credits as RCR
 from app.schemas.cloud_card_refund import CloudCardRefundCreateIn, CloudCardRefundResendIn, CloudCardRefundResolveIn
 from app.services import cloud_card_refunds as svc
+from app.services import cloud_refund_z_gate as G
 from app.services import payment_secrets as PS
 from app.services import remote_credits as rc
+from app.services import till_parameters as TP
 from app.services import zcredit_gateway as zg
 from app.services.transmissions import terminal_uid_of
+from test_main_till import set_param
 from test_remote_credits import credit_note, items_of, open_shift, sale
 from test_shop_areas import _ctx, refused, w  # noqa: F401
 
@@ -183,6 +186,9 @@ def world(w, monkeypatch):
 
     w.shop.settings = {"paymentIntegration": "zcredit", "zcreditTerminalNumber": SHOP_TERMINAL}
     PS.apply_secret_patch(w.db, "shop", w.shop.id, {"zcreditPassword": SHOP_PASSWORD}, tenant_id=w.tenant.id)
+    # The till parameter beside the server's switch (cloud_refund_z_gate.KEY_ENABLED, off by default).
+    TP.ensure_builtin_parameters(w.db)
+    set_param(w, G.KEY_ENABLED, "company", w.company.id, True)
     # Every till here runs a build that issues `card_refunded` credits (svc.MIN_CARD_REFUNDED_VERSION_CODE).
     for m in list(w.tills) + [w.other_till]:
         m.app_version = "0.1.248+test-device"

@@ -44,6 +44,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.middleware.auth import (
@@ -155,6 +156,7 @@ def post_pickup_number(
             max_number=pickup["max"],
             prefix=pickup["prefix"],
             machine_id=machine.id,
+            label_format=pickup.get("labelFormat"),
         )
 
     try:
@@ -190,6 +192,23 @@ def put_kiosk_menu(
     db.commit()
     kiosk_menu.wake_kiosks(machine.tenant_id, out["kiosks"])
     return out
+
+
+@till_router.get("/{machine_id}/kiosks/{kiosk_machine_id}/orders")
+def get_till_kiosk_orders(
+    machine_id: str,
+    kiosk_machine_id: str,
+    days: int = Query(1, ge=1, le=7),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "היסטוריית עסקאות" of a kiosk on its controlling till (P:/specs/kiosk-landscape-till-mode.md §5.12): today and
+    the days before it (at most a week), newest first, the phone masked. 403 `not_kiosk_controller` unless
+    this till is one of the kiosk's controllers; 404 `kiosk_not_found`. The reprints go as kiosk commands.
+    """
+    kiosk_machine, _device = svc.controller_target(db, machine, kiosk_machine_id)
+    return svc.till_order_history(db, kiosk_machine, days)
 
 
 @till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
@@ -484,6 +503,11 @@ KIOSK_ACTION_SECTIONS = {
     "schedule": ("kiosks",),
     "bon_print": ("kiosks",),
     "bon_handled": ("kiosks",),
+    # "מצב עבודה: קיוסק / קופה" — the business's own choice of the day, as the pause (kiosk_till_mode.py).
+    "enter_till": ("kiosks", "device_control"),
+    "return_kiosk": ("kiosks", "device_control"),
+    "reprint_bon": ("kiosks",),
+    "reprint_receipt": ("kiosks",),
 }
 
 
@@ -519,6 +543,20 @@ def post_kiosk_command(
     # A manager of points of sale: one of their kiosks only (app/routers/kiosk_live.py).
     from app.routers.kiosk_live import _kiosk_checked
 
+    if body.action == "return_kiosk" and svc.get_device(db, machine_id) is None:
+        # "מצב עבודה" of a till (P:/specs/kiosk-landscape-till-mode.md §5.10): its first kiosk mode asked from the
+        # dashboard makes its kiosk-mode row — a till in this user's scope, its owner's gate open; else as before.
+        from app.services import kiosk_till_mode
+
+        target = db.get(POSMachine, machine_id)
+        if target is not None:
+            svc.check_machine_scope(db, current_user, target, active_tenant_id)
+            if kiosk_till_mode.ensure_home_till_row(db, target) is None:
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={"detail": "till_mode_disabled", "message": "מצב קיוסק אינו מופעל לקופה הזו"},
+                )
+
     machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     result = svc.run_command(
         db,
@@ -537,6 +575,34 @@ def post_kiosk_command(
         schedule=body.schedule,
     )
     return _command_answer(db, result, response)
+
+
+class TillModeGateIn(BaseModel):
+    """`kioskTillModeEnabled` at the kiosk's own level: on, off, or null — back to what it inherits."""
+
+    enabled: Optional[bool] = None
+
+
+@router.put("/{machine_id}/till-mode")
+def put_kiosk_till_mode_gate(
+    machine_id: uuid.UUID,
+    body: TillModeGateIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קיוסק — מצב קופה" for this kiosk (app/services/kiosk_till_mode.py): the owner's gate, a super
+    admin or a distributor only (403 `till_parameter_admin_only`). Recorded in the parameters' log;
+    the kiosk hears it on its next parameters pull (notified at once).
+    """
+    from app.services import kiosk_till_mode
+
+    machine, device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
+    kiosk_till_mode.set_gate(db, machine, body.enabled, current_user)
+    db.commit()
+    svc.notify_device_lock(machine)
+    return svc.summary(db, device)
 
 
 @router.get("/{machine_id}/commands")
@@ -558,10 +624,16 @@ def get_kiosk_commands(
 def get_kiosk_orders(
     machine_id: uuid.UUID,
     day: Optional[date] = Query(None, alias="date"),
+    q: Optional[str] = Query(None, max_length=40, description='A pickup number ("17", "A17", "A-17") or a document number'),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The kiosk's orders of a business date (default today); the phone masked but for a super admin / company manager."""
+    """
+    The kiosk's orders of a business date (default today); the phone masked but for a super
+    admin / company manager. With `q`: the orders of that pickup number or document number over
+    the 30 business days up to `date`, newest first, each with its date and `matchedBy`.
+    """
     machine, _device = svc.kiosk_for_dashboard(db, current_user, machine_id, active_tenant_id)
-    return svc.list_orders(db, current_user, machine, day)
+    # Called directly (the tests), an unset `q` is its `Query(...)` default: not text, not given.
+    return svc.list_orders(db, current_user, machine, day, q=q if isinstance(q, str) else None)

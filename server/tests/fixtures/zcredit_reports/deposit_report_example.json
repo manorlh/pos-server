@@ -1,0 +1,18 @@
+{
+  "_source": "docs.zcredit.co.il/specs/webservice — POST /Terminal/GetDepositReport, response example (2026-10-09)",
+  "HasError": false,
+  "ReturnCode": 0,
+  "ReturnMessage": "",
+  "Data": [
+    {
+      "HasError": false,
+      "ReturnCode": 0,
+      "ReturnMessage": "",
+      "ReferenceNumber": "00000000",
+      "TotalDebit": 1035,
+      "TotalCredit": 0,
+      "TotalNumber": 1,
+      "TotalXML": ""
+    }
+  ]
+}

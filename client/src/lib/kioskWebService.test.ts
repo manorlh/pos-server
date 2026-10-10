@@ -220,7 +220,8 @@ describe('the honest pay methods', () => {
       body: { kiosk: true, configVersion: 'v3', config: { payment: { methods: ['voucher', 'split_card'] } }, state: {} },
     });
     await svc.kioskSync();
-    assert.deepEqual(svc.view().pay.methods, ['card', 'voucher']);
+    // The card beside the voucher (the cloud's repair) — and the voucher not offered: with no till to pay at, its order could not be finished (voucherCanFinish).
+    assert.deepEqual(svc.view().pay.methods, ['card']);
     assert.ok(!svc.view().pay.usable.includes('split_card'));
     assert.equal(svc.view().state.noPayment, true);
   });
@@ -277,6 +278,19 @@ describe('"מזומן בקופה" orders', () => {
     await svc.kioskSync();
     const a = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
     assert.equal(a.ok && a.order.pickupLabel, 'A-41');
+    cloud.handlers['POST sync/m1/kiosk/pickup-number'] = () => 'offline';
+    const b = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
+    assert.equal(b.ok && b.order.pickupLabel, 'AL-1');
+  });
+
+  it('"מספר בלבד": the shop\'s number without its letter; drawn without the cloud, still tagged', async () => {
+    const { cloud, svc } = await paired();
+    // The kiosk's own scope asked for: the number alone takes the shop's counter all the same.
+    cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({ status: 200, body: { kiosk: true, configVersion: 'v4', config: { payment: { methods: ['cash_at_till'] }, pickup: { scope: 'kiosk', prefix: 'A', start: 1, max: 99, labelFormat: 'number' } }, state: {} } });
+    cloud.handlers['POST sync/m1/kiosk/pickup-number'] = () => ({ status: 200, body: { number: 17 } });
+    await svc.kioskSync();
+    const a = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
+    assert.equal(a.ok && a.order.pickupLabel, '17');
     cloud.handlers['POST sync/m1/kiosk/pickup-number'] = () => 'offline';
     const b = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [] });
     assert.equal(b.ok && b.order.pickupLabel, 'AL-1');

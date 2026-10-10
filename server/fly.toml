@@ -1,4 +1,9 @@
 # Fly.io — POS Cloud API (Frankfurt, near Neon + EMQX EU)
+#
+# Sized for continuous evening load, not for idling (P:/specs/performance-review-2026-10.md #2):
+# a dedicated core, two uvicorn workers per machine (Dockerfile), at least two machines always
+# running (no cold start, one survives the other's deploy or crash), and Fly told how many
+# requests a machine takes before it routes to the next one.
 app = 'pos-cloud-api'
 primary_region = 'fra'
 
@@ -7,22 +12,55 @@ primary_region = 'fra'
 
 [deploy]
   release_command = 'alembic upgrade head'
+  # The release's CREATE INDEX CONCURRENTLY on the larger tables (transactions) may take minutes.
+  release_command_timeout = '15m'
+  strategy = 'rolling'
+
+[env]
+  # Two uvicorn worker processes per machine (Dockerfile CMD).
+  WEB_CONCURRENCY = '2'
+  # The schema is alembic's (release_command); never create_all at start in production.
+  DB_CREATE_ALL = 'false'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = 'stop'
+  # Always on: a busy evening must never wait for a machine to boot.
+  auto_stop_machines = 'off'
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 2
 
+  # Requests in flight per machine (2 workers): above soft_limit Fly prefers another machine,
+  # at hard_limit it sends none.
+  [http_service.concurrency]
+    type = 'requests'
+    soft_limit = 40
+    hard_limit = 60
+
+  # Routing: the process answers (no database — a database blip must not pull every machine).
   [[http_service.checks]]
-    grace_period = '15s'
-    interval = '30s'
+    grace_period = '20s'
+    interval = '15s'
     method = 'GET'
     path = '/health'
     timeout = '5s'
 
+# The machine reaches the database too (`SELECT 1`): checked on every machine, and waited for
+# by a deploy before it moves on to the next machine.
+[checks]
+  [checks.ready]
+    type = 'http'
+    port = 8000
+    method = 'GET'
+    path = '/health/ready'
+    grace_period = '30s'
+    interval = '30s'
+    timeout = '5s'
+
+# performance-1x: one dedicated core. 2 GB is Fly's floor for a performance core (the review's
+# 1 GB was for the shared-cpu-2x fallback); two workers use well under it.
 [[vm]]
-  memory = '512mb'
-  cpu_kind = 'shared'
+  size = 'performance-1x'
+  memory = '2gb'
+  cpu_kind = 'performance'
   cpus = 1

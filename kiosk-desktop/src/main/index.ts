@@ -16,6 +16,7 @@
  *  - IPC: shared/bridge.ts (the kiosk, `window.kiosk`) and shared/roles.ts (the shell, `window.r2m`).
  */
 
+import { windowsDisplayReport } from './displayReport';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -416,6 +417,11 @@ void app.whenReady().then(async () => {
   );
   const dataDir = path.join(app.getPath('userData'), 'data');
   service = new KioskService({
+    // "שיתאים את עצמו": the primary display, for the dashboard (displayReport.ts).
+    displayInfo: () => {
+      const d = screen.getPrimaryDisplay();
+      return windowsDisplayReport(d.size.width, d.size.height, d.scaleFactor);
+    },
     dataDir,
     appVersion: appVersion(),
     deviceInfo: deviceInfoOf('Windows kiosk'),

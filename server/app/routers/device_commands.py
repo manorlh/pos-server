@@ -4,7 +4,9 @@
 Dashboard (section `device_control`; the machine admins' scope, app/services/kiosk_control.py):
 
 GET  /device-commands/devices   ?companyId=&shopId=&machineIds= → the panel's rows (online, lock, commands)
-POST /device-commands           {action, message?, machineIds? | shopId? | groupId?} → [Command]
+POST /device-commands           {action, message?, params?, machineIds? | shopId? | groupId?} → [Command]
+                                (`upload_logs` "בקש לוגים": params {minutes 15–1440}; its own
+                                endpoint for whoever reads logs is POST /device-logs/requests)
                                 (fire-and-forget; header Idempotency-Key: a retry never sends twice)
 GET  /device-commands/status    ?ids= → {items: [Command]} — the background status read
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
@@ -14,31 +16,33 @@ Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
 
 GET  /device-commands/features
 GET  /device-commands/{machine_id}/close-preview      → a till's close / Z preview
-POST /device-commands/close                           {machineId, totalsKey}
+POST /device-commands/close                           {machineId, totalsKey, force?}
 GET  /device-commands/shop-close-preview ?shopId=&areaId= → "סגירת יום סניפית" (or "סגירת יום לנקודת מכירה")
-POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?} → the Z run
+POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?, force?} → the Z run
 GET  /device-commands/shop-close/{run_id}             → its progress (builds the Z when every till is ready)
 POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
 POST /device-commands/shop-close/{run_id}/cancel
 POST /device-commands/shop-close/{run_id}/force       {excludeMachineIds, reason} — a super admin only
 GET  /device-commands/area-shift-close-preview ?shopId=&areaId= → "סגירת משמרות לנקודת מכירה": each till
-POST /device-commands/area-shift-close                {shopId, areaId, totalsKeys: {machineId: key}}
+POST /device-commands/area-shift-close                {shopId, areaId, totalsKeys: {machineId: key}, force?}
+                                                      `force` ("כפה סגירה"): this request's tick; absent — each
+                                                      till's `remoteCloseForceByDefault` (remote_close_force.py)
 POST /device-commands/keep-held-sales                 {machineId, runId?, reason?} — "סגור בכל זאת — המכירות המושהות יישמרו"
 POST /device-commands/cancel-held-sales               {machineId, runId?, saleIds, reason} — "בטל מכירות מושהות וסגור"
 
 Till (`get_pos_machine_for_sync_path`):
 
 GET  /sync/{machine_id}/device-commands                → {state, commands} (pending → delivered)
-POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?}
+POST /sync/{machine_id}/device-commands/{id}/ack       {status: done|refused|failed, detail?, log_id?}
 POST /sync/{machine_id}/device-commands/unlocked       {posUserId?, posUserName?} — a manager code released the lock
 """
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -65,16 +69,41 @@ till_router = APIRouter(prefix="/sync", tags=["device-commands"])
 class CommandIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    action: Literal["lock", "unlock", "sync_now", "refresh_catalog", "sign_out", "restart_app", "install_update"]
+    action: Literal[
+        "lock", "unlock", "sync_now", "refresh_catalog", "sign_out", "restart_app", "install_update", "upload_logs",
+    ]
     message: Optional[str] = Field(None, max_length=300)
     machine_ids: Optional[List[uuid.UUID]] = Field(None, alias="machineIds", max_length=500)
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     group_id: Optional[uuid.UUID] = Field(None, alias="groupId")
+    #: The action's parameters: `upload_logs` → {"minutes": 15–1440} (default 120). Others: none.
+    params: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def _action_params(self):
+        from app.services import device_logs
+
+        self.params = device_logs.request_params(self.params) if self.action == "upload_logs" else None
+        return self
 
 
 class AckIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     status: Literal["done", "refused", "failed"]
     detail: Optional[str] = Field(None, max_length=300)
+    #: "בקש לוגים": the upload that answered it (`POST /sync/{m}/device-logs`), as {"log_id": …}.
+    log_id: Optional[uuid.UUID] = Field(None, validation_alias=AliasChoices("log_id", "logId"))
+    result: Optional[Dict[str, Any]] = None
+
+    def result_out(self) -> Optional[Dict[str, Any]]:
+        log_id = self.log_id
+        if log_id is None and isinstance(self.result, dict) and self.result.get("log_id"):
+            try:
+                log_id = uuid.UUID(str(self.result["log_id"]))
+            except (TypeError, ValueError):
+                log_id = None
+        return {"log_id": str(log_id)} if log_id is not None else None
 
 
 class UnlockedIn(BaseModel):
@@ -147,6 +176,8 @@ class RemoteCloseIn(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     #: The preview's `totalsKey` the manager confirmed: a sale since then refuses (409).
     totals_key: str = Field(..., alias="totalsKey", min_length=1, max_length=64)
+    #: "כפה סגירה" for this request (true / false); absent: the till's `remoteCloseForceByDefault`.
+    force: Optional[bool] = None
 
 
 def _remote_z_machine(db: Session, user: User, tenant_id, machine_id) -> POSMachine:
@@ -197,13 +228,14 @@ def post_remote_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The confirmed remote close / Z: the till's existing flow, at rest only, never forced."""
+    """The confirmed remote close / Z: the till's existing flow — "כפה סגירה" by the manager's tick, or
+    the till's `remoteCloseForceByDefault` (app/services/remote_close_force.py)."""
     from app.services import remote_till_z
 
     remote_till_z.require_enabled()
     machine = _remote_z_machine(db, current_user, active_tenant_id, body.machine_id)
     try:
-        out = remote_till_z.request(db, current_user, machine, totals_key=body.totals_key)
+        out = remote_till_z.request(db, current_user, machine, totals_key=body.totals_key, force=body.force)
     except HTTPException:
         db.rollback()
         raise
@@ -222,8 +254,13 @@ class ShopCloseIn(BaseModel):
     confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
     #: A super admin starting past tills in "מצב לא ידוע" ("חסימת Z כשיש משמרות פתוחות").
     force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
+    #: A super admin starting past cloud card refunds whose credit note the Z would go without
+    #: ("זיכוי באשראי מהענן — חובה לפני ה-Z הבא", app/services/cloud_refund_z_gate.py).
+    force_cloud_refund_reason: Optional[str] = Field(None, alias="forceCloudRefundReason", max_length=300)
     #: "סגירת יום לנקודת מכירה": the area Z of that point of sale (z_runs `area_id`).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    #: "כפה סגירה" for every till of this close (true / false); absent: each till's own default.
+    force: Optional[bool] = None
 
 
 class ShopCloseProceedIn(BaseModel):
@@ -327,7 +364,8 @@ def post_shop_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The confirmed day close: the shop's existing Z run, every till closing at rest only."""
+    """The confirmed day close: the shop's existing Z run — each till forced by its own default or the
+    manager's tick for this close ("כפה סגירה", remote_close_force.py), else at rest."""
     from fastapi.responses import JSONResponse
 
     from app.services import remote_till_z
@@ -345,7 +383,9 @@ def post_shop_close(
             confirm_open_tills=body.confirm_open_tills,
             confirm_cloud_data=body.confirm_cloud_data,
             force_reason=body.force_reason,
+            force_cloud_refund_reason=body.force_cloud_refund_reason,
             area_id=body.area_id,
+            force=body.force,
         )
     except HTTPException:
         db.rollback()
@@ -427,6 +467,32 @@ def post_shop_close_force(
     return remote_till_z.run_progress(db, run, user=current_user)
 
 
+class ShopCloseForceCloudRefundsIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/shop-close/{run_id}/force-cloud-refunds")
+def post_shop_close_force_cloud_refunds(
+    run_id: uuid.UUID,
+    body: ShopCloseForceCloudRefundsIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a super admin, a typed reason."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    ZR.force_cloud_refunds(db, run, current_user, body.reason)
+    db.commit()
+    db.refresh(run)
+    return remote_till_z.run_progress(db, run, user=current_user)
+
+
 @router.post("/shop-close/{run_id}/cancel")
 def post_shop_close_cancel(
     run_id: uuid.UUID,
@@ -453,6 +519,8 @@ class AreaShiftCloseIn(BaseModel):
     area_id: uuid.UUID = Field(..., alias="areaId")
     #: Each till the manager confirmed, with the totals key it saw.
     totals_keys: Dict[uuid.UUID, str] = Field(default_factory=dict, alias="totalsKeys")
+    #: "כפה סגירה" for every till of this close (true / false); absent: each till's own default.
+    force: Optional[bool] = None
 
 
 @router.get("/area-close-list")
@@ -509,7 +577,7 @@ def post_area_shift_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Each confirmed till: its own remote shift close (at rest, never forced); per-till results."""
+    """Each confirmed till: its own remote shift close ("כפה סגירה" by its default or the tick); per-till results."""
     from app.services import remote_till_z
 
     remote_till_z.require_enabled()
@@ -518,7 +586,7 @@ def post_area_shift_close(
         # Each till by the machine admins' own scope rules, as its single remote close.
         _remote_z_machine(db, current_user, active_tenant_id, machine_id)
     keys = {str(k): v for k, v in body.totals_keys.items()}
-    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, keys)
+    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, keys, force=body.force)
     db.commit()
     return out
 
@@ -627,7 +695,10 @@ def create_commands(
     out, replayed = idem.once(
         db, tenant_id=active_tenant_id, kind="device_command", key=idempotency_key, user=current_user,
         request=body.model_dump(mode="json", by_alias=True),
-        run=lambda: [svc.command_out(r) for r in svc.create(db, machines, body.action, message=body.message, user=current_user)],
+        run=lambda: [
+            svc.command_out(r)
+            for r in svc.create(db, machines, body.action, message=body.message, user=current_user, params=body.params)
+        ],
         after_commit=lambda _out: svc.wake(machines),
         refresh=lambda first: _reread(db, first),
     )
@@ -779,7 +850,7 @@ def till_ack(
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    row = svc.ack(db, machine, command_id, body.status, body.detail)
+    row = svc.ack(db, machine, command_id, body.status, body.detail, result=body.result_out())
     db.commit()
     return svc.command_out(row)
 

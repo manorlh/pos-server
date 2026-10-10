@@ -344,7 +344,7 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     const body = kdsSaleRelease({
       transactionId: doc.id,
       transactionNumber: '40000057',
-      order: { serviceType: 'take_away', customerName: 'דנה', customerPhone: '0501234567', pickupNumber: 17 },
+      order: { serviceType: 'take_away', customerName: 'דנה', customerPhone: '0501234567', pickupNumber: 17, pickupLabel: 'A-17' },
       lines: doc.lines,
       categoryOf: (id) => (id === line1.productId ? '0b1c2d3e-0000-4000-8000-0000000000e1' : null),
       actorName: 'קיוסק Windows',

@@ -216,7 +216,9 @@ class TestZ:
         assert any(r["label"].startswith("מקס") for r in acq["rows"])
 
     def test_a_z_built_before_the_split_reads_its_documents(self, w, z):
-        z.per_machine = [{k: v for k, v in s.items() if k != "cardBrands"} for s in z.per_machine]
+        # Built before the split — and so before the owner's sections ("דו״ח Z — גרסה 2") too.
+        z.per_machine = [{k: v for k, v in s.items() if k not in ("cardBrands", "reportSections")} for s in z.per_machine]
+        z.header = {k: v for k, v in (z.header or {}).items() if k != "reportSections"}
         w.db.commit()
         out = z_router.get_z_report(z.id, **ctx(w))
         assert out.card_brands_source == "documents"

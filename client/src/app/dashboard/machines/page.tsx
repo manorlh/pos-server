@@ -61,6 +61,7 @@ import {
 } from '@/components/dashboard/machines/device-role';
 import { WebKioskLink } from '@/components/dashboard/machines/web-kiosk-link';
 import { WebScreenLink } from '@/components/dashboard/machines/web-screen-link';
+import { CustomerDisplayPairingFields, CustomerDisplayWebLink } from '@/components/dashboard/customer-display/customer-display-devices';
 import { WorkConfigStep } from '@/components/dashboard/machines/work-config';
 import { useEventTillSelection } from '@/components/dashboard/events/assign-to-event';
 import {
@@ -127,6 +128,8 @@ export default function MachinesPage() {
   const [pairPlatform, setPairPlatform] = useState<DevicePlatform>('android');
   /** A KDS's screen (kind, stations) / the board's name: made as it pairs. */
   const [pairKds, setPairKds] = useState<KdsScreenDraft>(EMPTY_KDS_SCREEN);
+  /** "מסך לקוח": the till it mirrors ('' = chosen later on the customer-display page). */
+  const [pairMirrorTill, setPairMirrorTill] = useState('');
   /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
   const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole);
   /**
@@ -258,6 +261,7 @@ export default function MachinesPage() {
     setPairKiosk(EMPTY_KIOSK_DRAFT);
     setPairPlatform('android');
     setPairKds(EMPTY_KDS_SCREEN);
+    setPairMirrorTill('');
     setPairWorkConfig(EMPTY_WORK_CONFIG);
     setPairWorkConfigOutcome(null);
   };
@@ -301,6 +305,7 @@ export default function MachinesPage() {
     shopId: pairShopId,
     platform: pairPlatform,
     kds: pairKds,
+    mirrorTillId: pairMirrorTill,
   };
   const pairMissing = addDeviceMissing(pairDraft);
   const pairWorkConfigPlan = pairShopId && pairDeviceRole ? workConfigPlanOf(pairWorkConfig, 'pairing') : null;
@@ -937,6 +942,8 @@ export default function MachinesPage() {
                   {(pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board') && pairPlatform === 'web' ? (
                     <WebScreenLink code={pairingCode} role={pairDeviceRole} />
                   ) : null}
+                  {/* "מסך לקוח" in a browser: /display with the code (P:/specs/customer-display.md §4). */}
+                  {pairDeviceRole === 'customer_display' && pairPlatform === 'web' ? <CustomerDisplayWebLink code={pairingCode} /> : null}
                 </>
               )}
               {pairPreAssignLabel ? (
@@ -1026,7 +1033,7 @@ export default function MachinesPage() {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">{pairPlatform === 'web'
-                    ? pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board'
+                    ? pairDeviceRole === 'kds' || pairDeviceRole === 'order_status_board' || pairDeviceRole === 'customer_display'
                       ? t('deviceRole.webScreenNoModel')
                       : t('deviceRole.webNoModel')
                     : t('deviceRole.windowsNoModel')}</p>
@@ -1128,8 +1135,18 @@ export default function MachinesPage() {
                   onChange={setPairKds}
                 />
               ) : null}
+              {/* "מסך לקוח": its name and the till it mirrors. */}
+              {pairDeviceRole === 'customer_display' ? (
+                <CustomerDisplayPairingFields
+                  shopId={pairShopId || null}
+                  name={pairKds.name}
+                  onNameChange={(name) => setPairKds({ ...pairKds, name })}
+                  tillId={pairMirrorTill}
+                  onTillChange={setPairMirrorTill}
+                />
+              ) : null}
               {/* "תצורת עבודה": after the shop and the role — "לפי הסניף" unless chosen. */}
-              {pairShopId && pairDeviceRole ? (
+              {pairShopId && pairDeviceRole && pairDeviceRole !== 'customer_display' ? (
                 <WorkConfigStep
                   shopId={pairShopId}
                   role={pairDeviceRole}

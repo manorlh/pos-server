@@ -76,6 +76,8 @@ export const CODES: readonly string[] = [
   'CASH_DRAWER.VIEW_CASH_MOVEMENTS',
   'CATALOG_WRITE', 'ITEM_BLOCK', 'ATTENDANCE_MANAGE', 'USER_SESSION_RELEASE', 'CARD_UNRESOLVED', 'KIOSK_CONTROL', 'KIOSK_UNLOCK',
   DESKTOP_EXIT,
+  // "מעבר למצב קופה בקיוסק" (P:/specs/kiosk-landscape-till-mode.md §5.3): a manager's, checked on the device.
+  'KIOSK_TILL_MODE',
 ];
 const KNOWN = new Set(CODES);
 
@@ -86,7 +88,7 @@ const LEGACY_APPROVAL = new Set([
   'SELL_RESTRICTED_ITEMS', 'HELD_SALE_CANCEL', 'ITEM_BLOCK',
 ]);
 /** A shop manager's alone before roles (the cloud's `LEGACY_CASHIER_DENIED`). */
-const LEGACY_CASHIER_DENIED = new Set(['CASH_DRAWER.APPROVE_OPEN', DESKTOP_EXIT]);
+const LEGACY_CASHIER_DENIED = new Set(['CASH_DRAWER.APPROVE_OPEN', DESKTOP_EXIT, 'KIOSK_TILL_MODE']);
 
 /** What the legacy role allowed (Android `PermissionProfile.legacy`); an unknown code is never granted. */
 export function legacyState(role: string | null | undefined, code: string): PermState {

@@ -122,6 +122,10 @@ class ZRunItem(Base):
     #: confirmed ("בטל מכירות מושהות וסגור": ids, reason, who, when) — app/services/held_sales_close.py.
     held_sales = Column(JSONB, nullable=True)
     cancel_held_sales = Column(JSONB, nullable=True)
+    #: "כפה סגירה" from remote control (app/services/remote_close_force.py): forced from the moment the
+    #: manager sent it — the till's `remoteCloseForceByDefault`, or the manager's tick for this request.
+    #: Handed to the till as `remoteForce` beside `waitForRest` (a build without it waits for rest).
+    remote_force = Column(Boolean, nullable=False, default=False, server_default="false")
     status = Column(String(16), nullable=False)
     error_code = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)

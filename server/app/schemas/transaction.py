@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional, Union
 import uuid
@@ -729,6 +729,20 @@ class BasketDocumentOut(BaseModel):
 TransactionOut.model_rebuild()
 
 
+class KioskPickupRef(BaseModel):
+    """
+    The kiosk order a document paid: its pickup label as the slip printed it ("A-17", or "17"
+    with "מספר בלבד"), the number, and its business date — the same number comes back every day.
+    """
+
+    label: str
+    number: int
+    business_date: Optional[date] = Field(None, alias="businessDate")
+
+    class Config:
+        populate_by_name = True
+
+
 class TransactionListItem(BaseModel):
     """Lighter row for list views (no items)."""
 
@@ -761,6 +775,12 @@ class TransactionListItem(BaseModel):
     offline_outcome: Optional[Literal["approved", "declined"]] = Field(None, alias="offlineOutcome")
     #: The brands (מותג) of its card legs, in leg order; filled on dashboard reads only.
     card_brands: List[str] = Field(default_factory=list, alias="cardBrands")
+    #: The kiosk order this document paid (its own kiosk's sale, or a till's for a pay-at-till
+    #: order); null for any other document. Filled on dashboard reads only.
+    kiosk_pickup: Optional[KioskPickupRef] = Field(None, alias="kioskPickup")
+    #: Why the free search (`q`) found it: "document" (its number or amount) and / or "pickup"
+    #: (its kiosk order's pickup number). Null without a search.
+    matched_by: Optional[List[Literal["document", "pickup"]]] = Field(None, alias="matchedBy")
 
     class Config:
         from_attributes = True

@@ -54,6 +54,9 @@ export const EXCEPTION_TYPES = [
   // A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
   // closed (details: runId, zReportId, tills, reason, forcedBy, summary).
   'z_forced_open_shifts',
+  // A super admin let a Z go ahead before a cloud card refund's credit note was issued ("זיכוי באשראי
+  // מהענן — חובה לפני ה-Z הבא"; details: refundId, machineId, amount, reason, forcedBy, summary).
+  'z_forced_pending_cloud_refund',
   // A local shop Z stored as printed whose cloud recomputation differs — an internal check
   // for support only; the Z itself is never corrected (details: zReportId, zNumber,
   // discrepancies [{key, till, cloud}], summary).
@@ -65,6 +68,9 @@ export const EXCEPTION_TYPES = [
   // A self-order kiosk offline longer than the rule's minutes in its opening hours; closed
   // when it comes back (details: kiosk, offlineSince, backAt; value = minutes offline).
   'kiosk_offline',
+  // "התאמת אשראי מול Z-Credit": a charge at Z-Credit with no document of ours, or a document with no
+  // Z-Credit transaction (details: runId, itemId, category, businessDate, terminal, reference, summary).
+  'zcredit_recon',
   // "מגירת מזומן" (pos-server app/services/cash_drawer_exceptions.py, docs/SPEC_ROLES_PERMISSIONS.md):
   // detected from the tills' drawer events and cash movements; thresholds on the roles page.
   'drawer_after_close',
