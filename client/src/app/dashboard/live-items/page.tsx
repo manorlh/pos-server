@@ -19,7 +19,7 @@ import { he } from 'date-fns/locale';
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, LayoutDashboard, RefreshCw, Search, X } from 'lucide-react';
 import { fetchLiveItems } from '@/lib/api';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { todayIso } from '@/lib/reportWindow';
+import { businessTodayIso } from '@/lib/reportWindow';
 import { normalizeNavText } from '@/lib/navigation';
 import type { LiveItemRow } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -76,8 +76,8 @@ export default function LiveItemsPage() {
   const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
   const scopeName = useOrgScopeLabel(scope);
   const [period, setPeriod] = useState<Period>('today');
-  const [from, setFrom] = useState(todayIso);
-  const [to, setTo] = useState(todayIso);
+  const [from, setFrom] = useState(businessTodayIso);
+  const [to, setTo] = useState(businessTodayIso);
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('net');
   const [desc, setDesc] = useState(true);
@@ -98,7 +98,7 @@ export default function LiveItemsPage() {
   }, [from, period, scope, to]);
 
   // A custom range that ends before today will not change; no point polling it.
-  const live = period !== 'custom' || !to || to >= todayIso();
+  const live = period !== 'custom' || !to || to >= businessTodayIso();
   const report = useQuery({
     queryKey: ['live-items', params],
     queryFn: () => fetchLiveItems(params),

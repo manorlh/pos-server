@@ -18,7 +18,9 @@ import { fetchSalesByArea } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { businessDaysBackIso, businessTodayIso } from '@/lib/reportWindow';
+import { dayBasisQuery, type DayBasis } from '@/lib/businessDay';
+import { DayBasisSelect } from '@/components/dashboard/business-day/day-basis';
 import { downloadCsv, toCsv } from '@/lib/csv';
 import type { SalesByAreaReport, SalesByAreaRow } from '@/lib/types';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -53,13 +55,14 @@ export default function SalesByAreaPage() {
   const shopId = effective.shopId;
   const shopName = scope.shop?.name ?? '';
 
-  const [from, setFrom] = useState(daysBackIso(6));
-  const [to, setTo] = useState(todayIso());
-  const [applied, setApplied] = useState<{ from: string; to: string } | null>(null);
+  const [from, setFrom] = useState(businessDaysBackIso(6));
+  const [to, setTo] = useState(businessTodayIso());
+  const [basis, setBasis] = useState<DayBasis>('business');
+  const [applied, setApplied] = useState<{ from: string; to: string; basis: DayBasis } | null>(null);
   const rangeInvalid = !from || !to || from > to;
 
   const params = useMemo(
-    () => (applied && shopId ? { shopId, dateFrom: applied.from, dateTo: applied.to } : null),
+    () => (applied && shopId ? { shopId, dateFrom: applied.from, dateTo: applied.to, ...dayBasisQuery(applied.basis) } : null),
     [applied, shopId],
   );
 
@@ -132,7 +135,8 @@ export default function SalesByAreaPage() {
                 range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
-            <Button disabled={rangeInvalid || isFetching} onClick={() => setApplied({ from, to })}>
+            <DayBasisSelect value={basis} onChange={setBasis} />
+            <Button disabled={rangeInvalid || isFetching} onClick={() => setApplied({ from, to, basis })}>
               {isFetching ? t('running') : t('run')}
             </Button>
             {data && !isError ? (

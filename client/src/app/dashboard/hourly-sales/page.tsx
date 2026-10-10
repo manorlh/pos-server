@@ -13,7 +13,9 @@ import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatHour, formatQuantity } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { businessDaysBackIso, businessTodayIso } from '@/lib/reportWindow';
+import { dayBasisQuery, type DayBasis } from '@/lib/businessDay';
+import { DayBasisSelect } from '@/components/dashboard/business-day/day-basis';
 import { fetchHourlyReport, type HourlyReport } from '@/lib/salesReportsApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { RangeFilter, type DayRange } from '@/components/dashboard/range-filter';
@@ -40,8 +42,10 @@ export default function HourlySalesPage() {
   const tc = useTranslations('common');
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
 
-  const [range, setRange] = useState<DayRange>({ from: daysBackIso(27), to: todayIso() });
+  const [range, setRange] = useState<DayRange>({ from: businessDaysBackIso(27), to: businessTodayIso() });
   const [applied, setApplied] = useState<DayRange | null>(null);
+  // "לפי יום עסקי": a Saturday 01:00 sale is in Friday night's column.
+  const [basis, setBasis] = useState<DayBasis>('business');
 
   const params = useMemo(() => {
     if (!applied) return null;
@@ -49,8 +53,9 @@ export default function HourlySalesPage() {
       ...applied,
       ...(effective.shopId ? { shopId: effective.shopId } : {}),
       ...(effective.machineId ? { machineId: effective.machineId } : {}),
+      ...dayBasisQuery(basis),
     };
-  }, [applied, effective.shopId, effective.machineId]);
+  }, [applied, basis, effective.shopId, effective.machineId]);
 
   const { data, isLoading, isFetching, isError, error } = useQuery<HourlyReport>({
     queryKey: ['report-hourly', params],
@@ -77,6 +82,9 @@ export default function HourlySalesPage() {
 
       <ScopeGate resolution={resolution}>
         <RangeFilter value={range} onChange={setRange} onRun={() => setApplied(range)} isFetching={isFetching} />
+        <div className="print:hidden">
+          <DayBasisSelect value={basis} onChange={setBasis} />
+        </div>
 
         {!applied ? (
           <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>

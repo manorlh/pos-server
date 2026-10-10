@@ -13,7 +13,8 @@ import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { WHOLE_DAY, businessDaysBackIso, businessTodayIso, hourQueryParams } from '@/lib/reportWindow';
+import { dayBasisQuery } from '@/lib/businessDay';
 import { fetchDepartmentReport, type DepartmentReport } from '@/lib/salesReportsApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
@@ -39,8 +40,8 @@ export default function DepartmentSalesPage() {
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
 
   const [filters, setFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
+    from: businessDaysBackIso(6),
+    to: businessTodayIso(),
     hours: WHOLE_DAY,
   });
   const [applied, setApplied] = useState<ReportFiltersState | null>(null);
@@ -53,6 +54,7 @@ export default function DepartmentSalesPage() {
       ...(effective.shopId ? { shopId: effective.shopId } : {}),
       ...(effective.machineId ? { machineId: effective.machineId } : {}),
       ...hourQueryParams(applied.hours),
+      ...dayBasisQuery(applied.dayBasis),
     };
   }, [applied, effective.shopId, effective.machineId]);
 

@@ -42,6 +42,8 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { AREA_NONE } from '@/lib/api';
 import { AreaFilterSelect } from '@/components/dashboard/areas/area-filter';
+import { DayBasisSelect } from '@/components/dashboard/business-day/day-basis';
+import type { DayBasis } from '@/lib/businessDay';
 import {
   Select,
   SelectContent,
@@ -59,6 +61,11 @@ export interface ReportFiltersState {
    * area, else an area of the shop in scope. Filters on the shift's stamped area.
    */
   areaId?: string;
+  /**
+   * "לפי יום עסקי" (absent — the management default) or "לפי תאריך מסמך": which day a sale
+   * is on ("שעת סיום יום עסקי", lib/businessDay.ts). Sent as `dayBasis` (`dayBasisQuery`).
+   */
+  dayBasis?: DayBasis;
 }
 
 interface ReportFiltersProps {
@@ -74,6 +81,8 @@ interface ReportFiltersProps {
    */
   showArea?: boolean;
   areaShopId?: string | null;
+  /** Offer "לפי יום עסקי / לפי תאריך מסמך" (every sales report does). */
+  showDayBasis?: boolean;
 }
 
 /**
@@ -126,6 +135,7 @@ export function ReportFilters({
   children,
   showArea = false,
   areaShopId = null,
+  showDayBasis = true,
 }: ReportFiltersProps) {
   const t = useTranslations('reports.filters');
 
@@ -272,6 +282,9 @@ export function ReportFilters({
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
+          {showDayBasis ? (
+            <DayBasisSelect value={value.dayBasis ?? 'business'} onChange={(dayBasis) => set({ dayBasis })} />
+          ) : null}
           {showArea ? (
             <AreaFilterSelect
               shopId={areaShopId}

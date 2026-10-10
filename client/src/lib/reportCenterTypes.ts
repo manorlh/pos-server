@@ -190,7 +190,16 @@ export interface MoneyRow {
 }
 
 export interface AllInOneReport {
-  window: { from: string; to: string; timezone: string; fromHour?: number | null; toHour?: number | null };
+  window: {
+    from: string;
+    to: string;
+    timezone: string;
+    fromHour?: number | null;
+    toHour?: number | null;
+    /** "שעת סיום יום עסקי": the days' basis (the VAT section is always "document"). */
+    dayBasis?: import('./businessDay').DayBasis;
+    businessDayEndHour?: number | null;
+  };
   generatedAt: string;
   empty: boolean;
   summary?: MoneyRow & {

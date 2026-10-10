@@ -77,13 +77,13 @@ import {
   alertTills,
   boardDays,
   compareItems,
-  isoDay,
   mergeHourly,
   parseBoardParams,
   scopeFigures,
 } from '@/lib/controlBoard';
 import type { AppReleaseRolloutRow, PosMachine } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { businessDayToday } from '@/lib/businessDay';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ExceptionsTodayChip } from '@/components/dashboard/exceptions-today-chip';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
@@ -254,7 +254,8 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const board = useMemo(() => parseBoardParams((key) => searchParams.get(key)), [searchParams]);
   const now = useNow(15_000);
-  const today = isoDay(new Date(now));
+  // The business day ("שעת סיום יום עסקי"): at 01:00 the board still shows last night.
+  const today = businessDayToday(now);
   const { dayA, dayB } = boardDays(board, today);
   const isToday = dayA === today;
   const names = useDayNames(today);

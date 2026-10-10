@@ -27,7 +27,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { WHOLE_DAY, businessDaysBackIso, businessTodayIso, hourQueryParams } from '@/lib/reportWindow';
+import { dayBasisQuery } from '@/lib/businessDay';
 import type { TipMethod, TipsRangeReport, TipsReport } from '@/lib/types';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
@@ -65,8 +66,8 @@ export default function TipsReportPage() {
   const scopeMachineId = effective.machineId;
 
   // ── Distribution report (per shop, per date range) ──
-  const [from, setFrom] = useState(todayIso());
-  const [to, setTo] = useState(todayIso());
+  const [from, setFrom] = useState(businessTodayIso());
+  const [to, setTo] = useState(businessTodayIso());
   const [runKey, setRunKey] = useState(0);
   /*
    * `?shiftId=` — one shift's tips, which is how a shift's X links here. The report
@@ -78,8 +79,8 @@ export default function TipsReportPage() {
 
   // ── Range report (day range × hour band) ──
   const [rangeFilters, setRangeFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
+    from: businessDaysBackIso(6),
+    to: businessTodayIso(),
     hours: WHOLE_DAY,
   });
   const [appliedRange, setAppliedRange] = useState<ReportFiltersState | null>(null);
@@ -107,6 +108,7 @@ export default function TipsReportPage() {
       ...(shopId ? { shopId } : {}),
       ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
       ...hourQueryParams(appliedRange.hours),
+      ...dayBasisQuery(appliedRange.dayBasis),
       ...(appliedRange.areaId ? { areaId: appliedRange.areaId } : {}),
     };
   }, [appliedRange, scopeMachineId, shopId]);

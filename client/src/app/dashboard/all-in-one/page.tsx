@@ -15,7 +15,9 @@ import { useQuery } from '@tanstack/react-query';
 import { usePageScope } from '@/lib/scope';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDate, formatDateTime, formatQuantity } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { businessDaysBackIso, businessTodayIso } from '@/lib/reportWindow';
+import { dayBasisQuery, type DayBasis } from '@/lib/businessDay';
+import { DayBasisSelect, DocumentDateNote, WindowBasisLine } from '@/components/dashboard/business-day/day-basis';
 import { useCardBrandLabels } from '@/lib/cardBrands';
 import { fetchAllInOne, type AllInOneReport } from '@/lib/reportCenterApi';
 import { allInOneSheets } from '@/lib/reportSheets';
@@ -40,14 +42,16 @@ export default function AllInOnePage() {
   const brands = useCardBrandLabels();
   const { scope, resolution, effective } = usePageScope({ maxLevel: 'machine' });
 
-  const [filters, setFilters] = useState<CenterFiltersState>({ from: daysBackIso(6), to: todayIso(), shopIds: [], machineIds: [] });
+  const [filters, setFilters] = useState<CenterFiltersState>({ from: businessDaysBackIso(6), to: businessTodayIso(), shopIds: [], machineIds: [] });
   const [applied, setApplied] = useState<CenterFiltersState | null>(null);
+  // "לפי יום עסקי" (the default) / "לפי תאריך מסמך"; the VAT section is always by document date.
+  const [basis, setBasis] = useState<DayBasis>('business');
 
   const params = useMemo(() => {
     if (!applied) return null;
     const ids = scopedIds(applied, effective, scope);
-    return { from: applied.from, to: applied.to, shopIds: ids.shopIds, machineIds: ids.machineIds };
-  }, [applied, effective, scope]);
+    return { from: applied.from, to: applied.to, shopIds: ids.shopIds, machineIds: ids.machineIds, ...dayBasisQuery(basis) };
+  }, [applied, basis, effective, scope]);
 
   const { data, isLoading, isFetching, isError, error } = useQuery<AllInOneReport>({
     queryKey: ['report-all-in-one', params],
@@ -83,6 +87,9 @@ export default function AllInOnePage() {
           effective={effective}
           scope={scope}
         />
+        <div className="print:hidden">
+          <DayBasisSelect value={basis} onChange={setBasis} />
+        </div>
 
         {!applied ? (
           <p className="text-muted-foreground py-12 text-center text-sm">{tr('selectFilters')}</p>
@@ -101,6 +108,7 @@ export default function AllInOnePage() {
             <p className="text-muted-foreground text-xs">
               {tr('generated', { at: formatDateTime(data.generatedAt), range: `${formatDate(data.window.from)} – ${formatDate(data.window.to)}` })}
             </p>
+            <WindowBasisLine window={data.window} />
 
             <KpiGrid
               items={[
@@ -261,6 +269,7 @@ export default function AllInOnePage() {
                 />
               </Section>
               <Section title={tc('sheetVat')}>
+                <DocumentDateNote kind="vat" />
                 <SimpleTable
                   empty={tr('noRows')}
                   rows={data.vat?.rows ?? []}

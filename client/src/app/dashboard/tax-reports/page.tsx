@@ -23,6 +23,7 @@ import { dealerTypeOf } from '@/lib/dealerType';
 import { useCanProduceZ } from '@/lib/zAccess';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
 import { OpenFormatSoftwareCard } from '@/components/dashboard/open-format-software-card';
+import { DocumentDateNote } from '@/components/dashboard/business-day/day-basis';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -123,6 +124,8 @@ export default function TaxReportsPage() {
         </h1>
         <p className="text-muted-foreground text-sm mt-1">{t('subtitle')}</p>
       </div>
+      {/* Always by document date — never the business day ("שעת סיום יום עסקי" is management only). */}
+      <DocumentDateNote kind="uniformFile" />
 
       <ScopeGate resolution={resolution}>
         {/*

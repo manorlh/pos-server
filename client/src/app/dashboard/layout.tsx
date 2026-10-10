@@ -21,6 +21,7 @@ import { ProducerShell } from '@/components/dashboard/event-live/producer-shell'
 import { isProducer } from '@/lib/producer';
 import { DeviceCommandsTray } from '@/components/dashboard/device-commands/commands-tray';
 import { DeviceCommandPopup } from '@/components/dashboard/device-commands/command-popup';
+import { BusinessDayBridge } from '@/components/dashboard/business-day/day-basis';
 
 function ShellSkeleton() {
   return (
@@ -43,6 +44,8 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const ownFilters = isHomePath(pathname) || pathname === LANDING_PATH;
   return (
     <ScopeProvider>
+      {/* "שעת סיום יום עסקי": "today" is the scope's business day. */}
+      <BusinessDayBridge />
       <div className="space-y-4">
         {ownFilters ? null : (
           <header className="space-y-3 print:hidden">

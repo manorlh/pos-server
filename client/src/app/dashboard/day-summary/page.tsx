@@ -46,7 +46,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatDate, formatQuantity } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { businessDaysBackIso, businessTodayIso } from '@/lib/reportWindow';
+import { DocumentDateNote } from '@/components/dashboard/business-day/day-basis';
 import type { DaySummaryReport, DaySummaryRow, DaySummaryTotals } from '@/lib/types';
 import { EntityMultiSelect, type MultiSelectOption } from '@/components/dashboard/entity-multi-select';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
@@ -314,8 +315,8 @@ export default function DaySummaryPage() {
   const scopeShopId = effective.shopId;
   const scopeMachineId = effective.machineId;
 
-  const [from, setFrom] = useState(daysBackIso(6));
-  const [to, setTo] = useState(todayIso());
+  const [from, setFrom] = useState(businessDaysBackIso(6));
+  const [to, setTo] = useState(businessTodayIso());
   const [shopIds, setShopIds] = useState<string[]>([]);
   const [machineIds, setMachineIds] = useState<string[]>([]);
   const [applied, setApplied] = useState<{
@@ -393,6 +394,7 @@ export default function DaySummaryPage() {
       </div>
 
       <ScopeGate resolution={resolution}>
+        <DocumentDateNote kind="daySummary" />
         <Card className="print:hidden">
           <CardContent className="grid gap-4 pt-6 md:grid-cols-2 xl:grid-cols-5">
             <div className="space-y-1.5">

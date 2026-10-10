@@ -16,7 +16,8 @@ import { useQuery } from '@tanstack/react-query';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { WHOLE_DAY, businessDaysBackIso, businessTodayIso, hourQueryParams } from '@/lib/reportWindow';
+import { dayBasisQuery } from '@/lib/businessDay';
 import { useCardBrandLabels } from '@/lib/cardBrands';
 import { fetchCardBrandsReport, type CardBrandTotal, type CardBrandsReport } from '@/lib/salesReportsApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
@@ -106,8 +107,8 @@ export default function CardBrandsReportPage() {
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
 
   const [filters, setFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
+    from: businessDaysBackIso(6),
+    to: businessTodayIso(),
     hours: WHOLE_DAY,
   });
   const [applied, setApplied] = useState<ReportFiltersState | null>(null);
@@ -120,6 +121,7 @@ export default function CardBrandsReportPage() {
       ...(effective.shopId ? { shopId: effective.shopId } : {}),
       ...(effective.machineId ? { machineId: effective.machineId } : {}),
       ...hourQueryParams(applied.hours),
+      ...dayBasisQuery(applied.dayBasis),
     };
   }, [applied, effective.shopId, effective.machineId]);
 

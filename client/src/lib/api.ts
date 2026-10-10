@@ -503,6 +503,8 @@ export type ReportWindowParams = {
   machineId?: string;
   /** An area id, or `none` for sales of shifts with no area (and of no shift). */
   areaId?: string;
+  /** "לפי יום עסקי" (absent: the server's default) or "לפי תאריך מסמך" (lib/businessDay.ts). */
+  dayBasis?: import('./businessDay').DayBasis;
 };
 
 export async function fetchProductSalesReport(
@@ -1046,6 +1048,8 @@ export async function fetchSalesByArea(params: {
   shopId: string;
   dateFrom: string;
   dateTo: string;
+  /** "לפי תאריך מסמך"; absent — "לפי יום עסקי" (lib/businessDay.ts). */
+  dayBasis?: import('./businessDay').DayBasis;
 }): Promise<SalesByAreaReport> {
   const { data } = await api.get<SalesByAreaReport>('/reports/sales-by-area', { params });
   return data;

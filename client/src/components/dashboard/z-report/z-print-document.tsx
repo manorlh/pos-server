@@ -33,6 +33,7 @@ import {
 import { offlineOf, offlineOfZ, useOfflineLine } from '@/components/dashboard/z-report/offline-summary';
 import { CardBrandPrintRows } from '@/components/dashboard/z-report/card-brand-summary';
 import { useZProducedBy, useZTitle, zNumberSourceOf } from './z-number';
+import { ZCrossMonthLine } from './z-cross-month-line';
 
 /** A count, or a dash when the server did not send it — never a zero it did not say. */
 const count = (n: number | null | undefined) => (n == null ? '—' : n);
@@ -396,6 +397,8 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
         </Section>
       ) : null}
 
+      {/* "מתוך ה-Z: …" — only a Z with documents of two calendar months. */}
+      <ZCrossMonthLine months={z.documentMonths} variant="print" />
       {(z.lateDocuments ?? 0) > 0 ? (
         <p className="mt-3 font-bold">{t('lateNotice', { count: z.lateDocuments ?? 0 })}</p>
       ) : null}

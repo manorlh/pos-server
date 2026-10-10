@@ -2240,6 +2240,12 @@ export interface ZReportDetail extends ZReport {
   perMachine: ZReportMachineSection[];
   shifts: Shift[];
   business?: ZReportBusiness | null;
+  /**
+   * "מתוך ה-Z": its documents per calendar month of their document date (lib/businessDay.ts
+   * `crossMonthLine`) — two or more = the Z spans months and says so. stored / documents as below.
+   */
+  documentMonths?: import('./businessDay').DocumentMonth[];
+  documentMonthsSource?: 'stored' | 'documents' | null;
   /** Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the tills. */
   cardBrands?: CardBrandBreakdownRow[];
   /** stored — frozen at build time; documents — read now (a Z built before the split). */
@@ -2490,6 +2496,10 @@ export interface ReportWindowOut {
   timezone: string;
   windowStart: string;
   windowEnd: string;
+  /** "business" — each sale on its till's business day ("שעת סיום יום עסקי"); "document" — its date. */
+  dayBasis?: import('./businessDay').DayBasis;
+  /** The scope's business day end hour (0–12) on the business basis; null otherwise. */
+  businessDayEndHour?: number | null;
 }
 
 export interface ProductSalesRow {

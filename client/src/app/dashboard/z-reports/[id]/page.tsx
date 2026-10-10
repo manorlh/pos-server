@@ -21,6 +21,7 @@ import { useTranslations } from 'next-intl';
 import { zShowsExempt } from '@/lib/dealerType';
 import { hasDrawerTips } from '@/lib/drawerTips';
 import { NumberPill } from '@/components/dashboard/number-pill';
+import { ZCrossMonthLine } from '@/components/dashboard/z-report/z-cross-month-line';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, FileBarChart, FileDown, Printer } from 'lucide-react';
 import { toast } from 'sonner';
@@ -513,6 +514,9 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
             <Fact label={t('shiftsCount')}>{z.shiftCount ?? z.shifts.length}</Fact>
           </CardContent>
         </Card>
+
+        {/* "מתוך ה-Z: ₪X מסמכי ספטמבר · ₪Y מסמכי אוקטובר" — a Z of two calendar months only. */}
+        <ZCrossMonthLine months={z.documentMonths} />
 
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>

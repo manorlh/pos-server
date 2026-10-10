@@ -17,7 +17,8 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { WHOLE_DAY, businessDaysBackIso, businessTodayIso, hourQueryParams } from '@/lib/reportWindow';
+import { dayBasisQuery } from '@/lib/businessDay';
 import type { ProductSalesReport } from '@/lib/types';
 import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
@@ -63,8 +64,8 @@ export default function ProductSalesReportPage() {
   const scopeMachineId = effective.machineId;
 
   const [filters, setFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
+    from: businessDaysBackIso(6),
+    to: businessTodayIso(),
     hours: WHOLE_DAY,
   });
   const [limit, setLimit] = useState(200);
@@ -83,6 +84,7 @@ export default function ProductSalesReportPage() {
       ...(scopeShopId ? { shopId: scopeShopId } : {}),
       ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
       ...hourQueryParams(f.hours),
+      ...dayBasisQuery(f.dayBasis),
       ...(f.areaId ? { areaId: f.areaId } : {}),
       limit: applied.limit,
       meals: applied.meals,

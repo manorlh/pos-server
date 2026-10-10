@@ -12,6 +12,7 @@
  * report pages cannot drift apart on how they explain it.
  */
 import { addDaysIso, businessToday } from './format';
+import { businessDayToday, businessDaysBack } from './businessDay';
 
 /** Sentinel pair meaning "whole day"; the server drops the filter for 0/24. */
 export const WHOLE_DAY_FROM_HOUR = 0;
@@ -108,4 +109,17 @@ export function todayIso(): string {
 /** `daysBack(6)` → the ISO date six days before today. */
 export function daysBackIso(days: number): string {
   return addDaysIso(businessToday(), -days);
+}
+
+/**
+ * Today's BUSINESS day — "שעת סיום יום עסקי" (lib/businessDay.ts): at 01:00 it is still
+ * yesterday's. The management reports open on it; fiscal pages (the uniform file) keep `todayIso`.
+ */
+export function businessTodayIso(): string {
+  return businessDayToday();
+}
+
+/** `days` business days before today's business day. */
+export function businessDaysBackIso(days: number): string {
+  return businessDaysBack(days);
 }
