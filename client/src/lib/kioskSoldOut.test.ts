@@ -26,12 +26,22 @@ type Row = Record<string, unknown>;
 
 describe('sold out / blocked: the shared golden (SoldOutRules.decide)', () => {
   const golden = JSON.parse(fixture('sold_out_golden.json')) as {
-    cases: Array<{ name: string; now: string; till: Row; blocks: Row[]; setting: unknown; trackStock: boolean; stock: number | null; expect: { state: string; reason: string | null; block: string | null; overridable: boolean } }>;
+    version: number;
+    cases: Array<{
+      name: string; now: string; till: Row; blocks: Row[]; setting: unknown; trackStock: boolean; stock: number | null;
+      item?: { productId?: string | null; categoryIds?: string[] };
+      expect: { state: string; reason: string | null; block: string | null; overridable: boolean; kioskDisplay?: string | null };
+    }>;
   };
+  // v5 (the owner, 10.10): channels, targets, product / category, the kiosk's own look. The TS port is pinned to it.
+  it('is the golden this port was written against (v5)', () => assert.equal(golden.version, 5));
   for (const c of golden.cases) {
     it(c.name, () => {
-      const d = decideSoldOut(itemBlocksOf(c.blocks), blockTimeMs(c.now)!, { till: c.till, setting: c.setting, trackStock: c.trackStock, stock: c.stock });
-      assert.deepEqual({ state: d.state, reason: d.reason, block: d.block?.id ?? null, overridable: d.state === 'sold_out' }, c.expect);
+      const d = decideSoldOut(itemBlocksOf(c.blocks), blockTimeMs(c.now)!, { till: c.till, setting: c.setting, trackStock: c.trackStock, stock: c.stock, item: c.item ?? null });
+      assert.deepEqual(
+        { state: d.state, reason: d.reason, block: d.block?.id ?? null, overridable: d.state === 'sold_out', kioskDisplay: d.display },
+        { ...c.expect, kioskDisplay: c.expect.kioskDisplay ?? null },
+      );
     });
   }
 });

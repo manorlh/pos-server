@@ -15,8 +15,12 @@
  *  - `general.soldOutMode` "hide" leaves such a product out, else it shows greyed
  *    (lib/kioskConfig.ts `kioskCatalogView`).
  *
- * The block's shape may grow (targets, channels, a kiosk look — pos-server feat/item-block-targets):
- * this module reads only what the rule needs ([itemBlockOf]) and ignores the rest.
+ * The block's shape (pos-server feat/item-block-targets, the golden's v5): a LEVEL (`scope` / `scopeId`)
+ * and CHANNELS (`pos` / `kiosk` / `online` / `menu`) — where at that level it stops the item; a block
+ * written before channels has a `target` (all / kiosks / tills) read as channels, and the two older
+ * scopes `kiosks` / `kiosk` are kiosk-only; it names a product (`productId`) or a category
+ * (`categoryId`); `kioskDisplay` ("hide" / "grey") is the kiosk's own look for it. This module reads
+ * exactly what the rule needs ([itemBlockOf]) and ignores the rest.
  *
  * Pure; no imports (the node tests compile it alone).
  */
@@ -34,6 +38,25 @@ export interface ItemBlock {
   createdAt: string | null;
   by: string | null;
   note: string | null;
+  /** Whom at the level, before channels: all | kiosks | tills (null = all, every block before targets). */
+  target: string | null;
+  /** The channels it stops the item on; null = none written (its target's, SoldOutRules.channelsOf). */
+  channels: string[] | null;
+  /** The product it names, or null. */
+  productId: string | null;
+  /** The category it names (every product in it or below it), or null. */
+  categoryId: string | null;
+  /** A kiosk's own look for this block: "hide" / "grey"; null = `general.soldOutMode`. */
+  kioskDisplay: string | null;
+}
+
+/** The four channels, in their order: "קופה" / "קיוסק" / "הזמנות אונליין" / "תפריט דיגיטלי". */
+export const BLOCK_CHANNELS = ['pos', 'kiosk', 'online', 'menu'] as const;
+
+/** The product a block is checked against: its id, and its category with every one above it (SoldOutRules.Item). */
+export interface BlockItem {
+  productId?: string | null;
+  categoryIds?: readonly string[];
 }
 
 /** Who a device is, for [blockCovers] (SoldOutRules.Till). */
@@ -45,6 +68,8 @@ export interface BlockTill {
   isKiosk?: boolean;
   eventIds?: readonly string[];
   groupIds?: readonly string[];
+  /** The channel it asks for: null = its device's ("kiosk" for a kiosk, else "pos"); "online" / "menu". */
+  channel?: string | null;
 }
 
 export interface SoldOutDecision {
@@ -53,12 +78,14 @@ export interface SoldOutDecision {
   reason: string | null;
   block: ItemBlock | null;
   untilMs: number | null;
+  /** On a kiosk: "hide" / "grey" asked by a block in force; null = `general.soldOutMode`. */
+  display: string | null;
 }
 
 /** Nearest first (SoldOutRules.SCOPE_ORDER). */
 export const BLOCK_SCOPE_ORDER = ['machine', 'kiosk', 'area', 'group', 'event', 'kiosks', 'shop', 'company'] as const;
 
-const AVAILABLE: SoldOutDecision = { state: 'available', reason: null, block: null, untilMs: null };
+const AVAILABLE: SoldOutDecision = { state: 'available', reason: null, block: null, untilMs: null, display: null };
 
 /** One block as the row carries it (SoldOutRules.blockOf); null without an id. Unknown keys are ignored. */
 export function itemBlockOf(o: unknown): ItemBlock | null {
@@ -78,7 +105,21 @@ export function itemBlockOf(o: unknown): ItemBlock | null {
     createdAt: text('createdAt'),
     by: text('by'),
     note: text('note'),
+    target: text('target'),
+    channels: channelsIn(r.channels),
+    productId: text('productId'),
+    categoryId: text('categoryId'),
+    kioskDisplay: text('kioskDisplay'),
   };
+}
+
+/** A channels value (a list, or "pos,kiosk") in the channels' order, unknown names dropped; null if absent (SoldOutRules.channelsIn). */
+export function channelsIn(value: unknown): string[] | null {
+  let items: string[];
+  if (typeof value === 'string') items = value.split(',').map((v) => v.trim());
+  else if (Array.isArray(value)) items = value.map((v) => String(v));
+  else return null;
+  return BLOCK_CHANNELS.filter((c) => items.includes(c));
 }
 
 export function itemBlocksOf(list: unknown): ItemBlock[] {
@@ -129,28 +170,69 @@ export function blockInForce(until: string | null | undefined, nowMs: number): b
   return end === null ? true : nowMs < end;
 }
 
-export function blockCovers(b: ItemBlock, till: BlockTill): boolean {
+/** What each target meant, as channels (SoldOutRules.TARGET_CHANNELS). */
+const TARGET_CHANNELS: Record<string, readonly string[]> = { all: ['pos', 'kiosk'], kiosks: ['kiosk'], tills: ['pos'] };
+
+/** The two older scopes: their level, and the target they always meant (SoldOutRules.LEGACY_SCOPES). */
+const LEGACY_SCOPES: Record<string, readonly [string, string]> = { kiosks: ['shop', 'kiosks'], kiosk: ['machine', 'kiosks'] };
+
+/** The level alone (an older kiosks / kiosk scope: shop / machine). */
+export function levelName(b: ItemBlock): string {
+  return LEGACY_SCOPES[b.scope]?.[0] ?? b.scope;
+}
+
+/**
+ * The channels a block stops the item on: its own `channels`; a block with none, what its target meant
+ * (no target = all = pos + kiosk). An older kiosks / kiosk scope is for kiosks only (with target tills it
+ * contradicts itself: none) — SoldOutRules.channelsOf.
+ */
+export function channelsOf(b: ItemBlock): readonly string[] {
+  if (b.channels === null) {
+    const target = b.target ?? 'all';
+    const legacy = LEGACY_SCOPES[b.scope];
+    if (legacy !== undefined) return target === 'all' || target === 'kiosks' ? TARGET_CHANNELS[legacy[1]] : [];
+    return TARGET_CHANNELS[target] ?? [];
+  }
+  return b.scope in LEGACY_SCOPES ? b.channels.filter((c) => c === 'kiosk') : b.channels;
+}
+
+/** The channel a device asks for (SoldOutRules.Till.deviceChannel). */
+export function deviceChannel(till: BlockTill): string {
+  return till.channel || (till.isKiosk ? 'kiosk' : 'pos');
+}
+
+function levelCovers(level: string, sid: string, till: BlockTill): boolean {
   const has = (v: string | null | undefined): v is string => typeof v === 'string' && v.length > 0;
-  switch (b.scope) {
+  switch (level) {
     case 'company':
-      return has(till.companyId) && b.scopeId === till.companyId;
+      return has(till.companyId) && sid === till.companyId;
     case 'shop':
-      return has(till.shopId) && b.scopeId === till.shopId;
-    case 'kiosks':
-      return !!till.isKiosk && has(till.shopId) && b.scopeId === till.shopId;
+      return has(till.shopId) && sid === till.shopId;
     case 'area':
-      return has(till.areaId) && b.scopeId === till.areaId;
+      return has(till.areaId) && sid === till.areaId;
     case 'machine':
-      return has(till.machineId) && b.scopeId === till.machineId;
-    case 'kiosk':
-      return !!till.isKiosk && has(till.machineId) && b.scopeId === till.machineId;
+      return has(till.machineId) && sid === till.machineId;
     case 'event':
-      return (till.eventIds ?? []).includes(b.scopeId);
+      return (till.eventIds ?? []).includes(sid);
     case 'group':
-      return (till.groupIds ?? []).includes(b.scopeId);
+      return (till.groupIds ?? []).includes(sid);
     default:
       return false;
   }
+}
+
+/** Whether the block reaches this device (or channel): its level covers it, and its channels name it (SoldOutRules.covers). */
+export function blockCovers(b: ItemBlock, till: BlockTill): boolean {
+  return channelsOf(b).includes(deviceChannel(till)) && levelCovers(levelName(b), b.scopeId, till);
+}
+
+/** Whether the block is about this product: itself, or its category (or one above it); no item: yes (SoldOutRules.applies). */
+export function blockApplies(b: ItemBlock, item: BlockItem | null | undefined): boolean {
+  if (!item) return true;
+  if (b.productId !== null) return typeof item.productId === 'string' && item.productId.length > 0 && b.productId === item.productId;
+  if (b.categoryId !== null) return (item.categoryIds ?? []).includes(b.categoryId);
+  // Neither named (an older stored form): it came on this product's own row.
+  return true;
 }
 
 const rank = (b: ItemBlock) => {
@@ -158,7 +240,10 @@ const rank = (b: ItemBlock) => {
   return i < 0 ? BLOCK_SCOPE_ORDER.length : i;
 };
 
-/** The block shown: the nearest scope, then the newest (SoldOutRules.nearest). */
+/** A product's own block before its category's (SoldOutRules.categoryRank). */
+const categoryRank = (b: ItemBlock) => (b.productId === null && b.categoryId !== null ? 1 : 0);
+
+/** The block shown: the nearest level, then the product's own, then the newest (SoldOutRules.nearest). */
 export function nearestBlock(blocks: readonly ItemBlock[]): ItemBlock | null {
   let best: ItemBlock | null = null;
   for (const b of blocks) {
@@ -166,11 +251,18 @@ export function nearestBlock(blocks: readonly ItemBlock[]): ItemBlock | null {
       best = b;
       continue;
     }
-    const dr = rank(b) - rank(best);
+    const dr = rank(b) - rank(best) || categoryRank(b) - categoryRank(best);
     const created = (x: ItemBlock) => blockTimeMs(x.createdAt) ?? Number.MIN_SAFE_INTEGER;
     if (dr < 0 || (dr === 0 && created(b) > created(best))) best = b;
   }
   return best;
+}
+
+/** A kiosk's own look among blocks in force: "hide" wins, then "grey", else null (the setting) — SoldOutRules.displayOf. */
+export function displayOf(live: readonly ItemBlock[]): string | null {
+  if (live.some((b) => b.kioskDisplay === 'hide')) return 'hide';
+  if (live.some((b) => b.kioskDisplay === 'grey')) return 'grey';
+  return null;
 }
 
 /**
@@ -180,20 +272,21 @@ export function nearestBlock(blocks: readonly ItemBlock[]): ItemBlock | null {
 export function decideSoldOut(
   blocks: readonly ItemBlock[],
   nowMs: number,
-  opts: { till?: BlockTill | null; setting?: unknown; trackStock?: boolean; stock?: number | null } = {},
+  opts: { till?: BlockTill | null; setting?: unknown; trackStock?: boolean; stock?: number | null; item?: BlockItem | null } = {},
 ): SoldOutDecision {
-  const live = blocks.filter((b) => blockInForce(b.until, nowMs) && (!opts.till || blockCovers(b, opts.till)));
+  const live = blocks.filter((b) => blockInForce(b.until, nowMs) && (!opts.till || blockCovers(b, opts.till)) && blockApplies(b, opts.item));
+  const display = displayOf(live);
   const hard = live.filter((b) => b.kind === 'blocked');
   if (hard.length > 0) {
     const shown = nearestBlock(hard)!;
-    return { state: 'blocked', reason: null, block: shown, untilMs: blockTimeMs(shown.until) };
+    return { state: 'blocked', reason: null, block: shown, untilMs: blockTimeMs(shown.until), display };
   }
   const soft = live.filter((b) => b.kind !== 'blocked');
   if (soft.length > 0) {
     const shown = nearestBlock(soft)!;
-    return { state: 'sold_out', reason: shown.source === 'auto' ? 'auto' : 'manual', block: shown, untilMs: blockTimeMs(shown.until) };
+    return { state: 'sold_out', reason: shown.source === 'auto' ? 'auto' : 'manual', block: shown, untilMs: blockTimeMs(shown.until), display };
   }
-  if (autoSoldOutOn(opts.setting) && opts.trackStock === true && (opts.stock ?? 0) <= 0) return { state: 'sold_out', reason: 'stock', block: null, untilMs: null };
+  if (autoSoldOutOn(opts.setting) && opts.trackStock === true && (opts.stock ?? 0) <= 0) return { state: 'sold_out', reason: 'stock', block: null, untilMs: null, display: null };
   return AVAILABLE;
 }
 
