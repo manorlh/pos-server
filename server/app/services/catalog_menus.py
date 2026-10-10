@@ -694,6 +694,7 @@ def menu_out(
         "validFrom": m.valid_from.isoformat() if m.valid_from else None,
         "validTo": m.valid_to.isoformat() if m.valid_to else None,
         "color": m.color,
+        "webChannels": list(getattr(m, "web_channels", None) or []),
         "sortOrder": m.sort_order or 0,
         "categories": [
             {"categoryId": str(row.category_id), "name": name, "allProducts": bool(row.all_products)}
@@ -792,6 +793,8 @@ def _apply(db: Session, tenant_id, m: CatalogMenu, body: MenuIn) -> None:
     m.valid_from = body.valid_from
     m.valid_to = body.valid_to
     m.color = body.color
+    if body.web_channels is not None:
+        m.web_channels = [c for c in ("online", "menu") if c in set(body.web_channels)] or None
     m.updated_at = _now()
     db.flush()
     db.query(CatalogMenuCategory).filter(CatalogMenuCategory.menu_id == m.id).delete(synchronize_session=False)

@@ -34,6 +34,8 @@ interface Draft {
   /** '' — the whole organization. */
   companyId: string;
   channel: MenuChannel;
+  /** "גם באונליין / בתפריט הדיגיטלי" — the web channels it is offered on too. */
+  webChannels: ('online' | 'menu')[];
   isActive: boolean;
   color: string | null;
   schedule: ScheduleDraft;
@@ -45,6 +47,7 @@ function draftOf(m: CatalogMenu | null, company: string): Draft {
     name: m?.name ?? '',
     companyId: m ? (m.companyId ?? '') : company,
     channel: m?.channel ?? 'both',
+    webChannels: [...(m?.webChannels ?? [])],
     isActive: m?.isActive ?? true,
     color: m?.color ?? null,
     schedule: {
@@ -125,6 +128,7 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
     name: d.name.trim().slice(0, NAME_MAX),
     companyId: d.companyId || null,
     channel: d.channel,
+    webChannels: d.webChannels,
     isActive: d.isActive,
     always: schedule.always,
     days: schedule.days,
@@ -197,6 +201,17 @@ function MenuEditor({ menu, readOnly, onDone }: { menu: CatalogMenu | null; read
             ]}
           />
         </IosRow>
+        {(['online', 'menu'] as const).map((w) => (
+          <IosRow key={w}>
+            <span className="flex-1 text-[15px]">{t(w === 'online' ? 'webOnline' : 'webMenu')}</span>
+            <IosSwitch
+              checked={d.webChannels.includes(w)}
+              onChange={(v) => set('webChannels', v ? [...d.webChannels.filter((x) => x !== w), w] : d.webChannels.filter((x) => x !== w))}
+              label={t(w === 'online' ? 'webOnline' : 'webMenu')}
+              disabled={readOnly}
+            />
+          </IosRow>
+        ))}
         <IosRow>
           <span className="flex-1 text-[15px]">{t('active')}</span>
           <IosSwitch checked={d.isActive} onChange={(v) => set('isActive', v)} label={t('active')} disabled={readOnly} />

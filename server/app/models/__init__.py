@@ -184,6 +184,10 @@ from app.models.device_log_upload import DeviceLogUpload
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
 from app.models.sales_target import SalesTarget, SalesTargetHit
+# "סדר תצוגה" — orderings and which channel uses which at a level (app/services/display_ordering.py).
+from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
+# "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
+from app.models.presentation_profile import PresentationAudit, PresentationProfile, PresentationRevision
 # "מסך לקוח": the cloud relay of a till's customer screen (app/services/customer_display.py).
 from app.models.customer_display import CustomerDisplayState
 
@@ -278,6 +282,8 @@ __all__ = [
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
+    "DisplayOrdering", "DisplayOrderingBinding",
+    "PresentationAudit", "PresentationProfile", "PresentationRevision",
     "CustomerDisplayState",
 ]
 # "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).

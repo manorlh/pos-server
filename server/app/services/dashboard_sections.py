@@ -76,8 +76,22 @@ SECTIONS: Tuple[Section, ...] = (
         "מוצרים, קטגוריות, תוספות, אפסייל, תפריטים, מבחר לסניף, ייבוא ושידור תפריט לקופות.",
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
-            "/dashboard/menus", "/dashboard/assortment",
+            "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
         ),
+    ),
+    # "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the digital menu's and the
+    # online ordering site's profiles — each its own section, view / edit (publishing is an edit).
+    Section(
+        "digital_menu", "תפריט דיגיטלי",
+        "פרופילי התפריט הדיגיטלי (לצפייה בלבד) לחברה, לסניף או לנקודת מכירה: בחירת מוצרים, סדר, עיצוב, "
+        "שעות, טיוטה ופרסום. עריכה: יצירה, שמירה, פרסום, השהיה וארכיון.",
+        ("/dashboard/digital-menu",),
+    ),
+    Section(
+        "online_ordering", "הזמנות אונליין",
+        "פרופילי אתר ההזמנות לחברה, לסניף או לנקודת מכירה: סוגי שירות, בחירת מוצרים, סדר, עיצוב, שעות, "
+        "טיוטה ופרסום. עריכה: יצירה, שמירה, פרסום, השהיה וארכיון.",
+        ("/dashboard/online-ordering",),
     ),
     # ── The manager's own (the cockpit, "הניהול שלי") — the owner, 09.10.2026: "תבנה קבוצת הרשאות
     # לזה". The cockpit is the home page (open to everyone signed in); these sections gate what it
@@ -385,6 +399,18 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/products/shop-scope/preview", S("products", level=VIEW)),
     (_ALL, "/products/{}/kitchen-printers*", S("products", "printers")),
     (_ALL, "/products*", S("products")),
+    # "מופיע ב": a product's four channels, their exceptions and the bulk screen.
+    (_ALL, "/product-channels*", S("products")),
+    # "סדר תצוגה": the one ordering of the tills, the kiosks and the web (the router checks the target).
+    (_ALL, "/display-orderings*", S("products", "kiosks", "till_design", "digital_menu", "online_ordering")),
+    # "תפריט דיגיטלי" / "הזמנות אונליין": their profiles (app/routers/presentation_profiles.py). A preview
+    # or a validation only reads.
+    ("POST", "/digital-menu/profiles/{}/preview", S("digital_menu", level=VIEW)),
+    ("POST", "/digital-menu/profiles/{}/validate", S("digital_menu", level=VIEW)),
+    (_ALL, "/digital-menu/*", S("digital_menu")),
+    ("POST", "/online-ordering/profiles/{}/preview", S("online_ordering", level=VIEW)),
+    ("POST", "/online-ordering/profiles/{}/validate", S("online_ordering", level=VIEW)),
+    (_ALL, "/online-ordering/*", S("online_ordering")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
     # "הפצה בוואטסאפ": recipients' phone numbers — managing the batch (edit), reading included.
