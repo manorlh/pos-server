@@ -810,3 +810,222 @@
     transition: none !important;
   }
 }
+
+/* ---- the real till (10.10): cash pad, done screen, menu, history, the work-mode banner ---- */
+
+.t-dialog-body {
+  white-space: pre-line;
+}
+
+.t-tile {
+  position: relative;
+}
+
+.t-tile-off {
+  background: var(--t-off-soft);
+  color: var(--t-muted);
+}
+
+.t-tile-badge {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--t-danger-soft);
+  color: var(--t-danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.t-chip-off {
+  color: var(--t-muted);
+  background: var(--t-off-soft);
+}
+
+.t-warn {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--t-radius);
+  background: var(--t-warn-soft);
+  color: var(--t-warn);
+}
+
+.t-warn p {
+  margin: 0 0 6px;
+}
+
+.t-cashpad {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.t-cash-input {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 14px;
+  border: 2px solid var(--t-accent);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+}
+
+.t-change-line {
+  min-height: 24px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--t-ok);
+}
+
+.t-change-short {
+  color: var(--t-danger);
+}
+
+.t-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.t-cash-actions,
+.t-done-actions,
+.t-ask-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.t-ask-actions {
+  flex-direction: row;
+}
+
+.t-ask {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: var(--t-radius);
+  background: var(--t-accent-soft);
+}
+
+.t-change-big {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-radius: var(--t-radius);
+  background: var(--t-ok-soft);
+  color: var(--t-ok);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.t-menu-group {
+  margin-bottom: 14px;
+}
+
+.t-menu-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--t-muted);
+}
+
+.t-menu {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--t-line);
+  border-radius: var(--t-radius);
+  background: var(--t-surface);
+  overflow: hidden;
+}
+
+.t-menu li + li {
+  border-top: 1px solid var(--t-line);
+}
+
+.t-menu-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: var(--t-touch);
+  padding: 10px 16px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+
+.t-menu-off {
+  color: var(--t-muted);
+}
+
+.t-menu-danger {
+  color: var(--t-danger);
+}
+
+.t-soon {
+  padding: 1px 10px;
+  border-radius: 999px;
+  background: var(--t-off-soft);
+  color: var(--t-muted);
+  font-size: 13px;
+}
+
+.t-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.t-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--t-line);
+}
+
+.t-history-ref {
+  font-weight: 700;
+}
+
+.t-worknote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 6px 16px;
+  background: #1f2937;
+  color: #ffffff;
+}
+
+.t-worknote-text {
+  flex: 1 1 auto;
+  font-weight: 700;
+}
+
+.t-worknote-count {
+  color: #fde68a;
+}
+
+.t-pill {
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: #4b5563;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.t-pill-light {
+  background: #ffffff;
+  color: #111827;
+}
+
+/* A number pad reads left to right whatever the page's direction (1 2 3 on the top row). */
+.t-pin-keys {
+  direction: ltr;
+}

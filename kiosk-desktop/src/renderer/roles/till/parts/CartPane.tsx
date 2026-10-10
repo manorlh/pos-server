@@ -10,7 +10,7 @@ import { money, T } from '../text';
 
 export interface CartActions {
   setQty(lineId: string, qty: number): void;
-  discount(lineId: string, pct: number): void;
+  discount?(lineId: string, pct: number): void;
   remove(lineId: string): void;
   clear(): void;
   pay(): void;
@@ -47,12 +47,20 @@ export function CartPane({ sell, actions, compact }: { sell: SellState; actions:
             </div>
             {open === l.lineId ? (
               <div className="t-line-actions">
-                <button type="button" className="t-chip" onClick={() => actions.discount(l.lineId, 10)}>
-                  {T.discount} 10%
-                </button>
-                <button type="button" className="t-chip" onClick={() => actions.discount(l.lineId, 50)}>
-                  {T.discount} 50%
-                </button>
+                {actions.discount ? (
+                  <>
+                    <button type="button" className="t-chip" onClick={() => actions.discount?.(l.lineId, 10)}>
+                      {T.discount} 10%
+                    </button>
+                    <button type="button" className="t-chip" onClick={() => actions.discount?.(l.lineId, 50)}>
+                      {T.discount} 50%
+                    </button>
+                  </>
+                ) : (
+                  <span className="t-chip t-chip-off">
+                    {T.discount} · {T.soon}
+                  </span>
+                )}
                 <button type="button" className="t-chip t-chip-danger" onClick={() => actions.remove(l.lineId)}>
                   {T.remove}
                 </button>
@@ -69,12 +77,17 @@ export function CartPane({ sell, actions, compact }: { sell: SellState; actions:
         <div className="t-muted t-small">
           {T.vatIncluded} {money(sell.vatAgorot)}
         </div>
+        {sell.promotionsAgorot ? (
+          <div className="t-muted t-small">
+            הנחת מבצע −{money(sell.promotionsAgorot)}
+          </div>
+        ) : null}
         <div className="t-cart-buttons">
           <button type="button" className="t-btn t-btn-ghost" disabled={empty} onClick={actions.clear}>
-            {T.clear}
+            {T.cartClear}
           </button>
           <button type="button" className="t-btn t-btn-primary t-btn-wide" disabled={empty} onClick={actions.pay}>
-            {T.pay} {empty ? '' : money(sell.totalAgorot)}
+            {empty ? T.barEmpty : `${T.charge} ${money(sell.totalAgorot)}`}
           </button>
         </div>
       </footer>

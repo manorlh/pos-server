@@ -77,6 +77,12 @@ export const TILL_OPS = [
   'mode.switch',
   'host.idle',
   'hw.result',
+  // The real engine's additions (main/till/engine.ts): a touch (the idle return, the update), the receipt question.
+  'session.activity',
+  'checkout.print',
+  // A card whose answer is not known (never a second charge): ask the terminal again; or a manager marks it not approved.
+  'checkout.recheckCard',
+  'checkout.markNotApproved',
 ] as const;
 
 export type TillOp = (typeof TILL_OPS)[number];
@@ -102,11 +108,15 @@ export const MUTATING_OPS: ReadonlySet<TillOp> = new Set<TillOp>([
   'shift.close',
   'z.produce',
   'mode.switch',
+  'checkout.print',
+  'checkout.recheckCard',
+  'checkout.markNotApproved',
 ]);
 
 export interface OpArgs {
   'session.hello': { since?: number; protocol?: number };
-  'session.login': { pin: string };
+  /** `pin` (the screens' word) or `code` (the golden protocol's): the engine reads either. */
+  'session.login': { pin?: string; code?: string };
   'session.logout': Record<string, never>;
   'catalog.snapshot': Record<string, never>;
   'sell.add': { productId: string; qty?: number };
@@ -128,10 +138,16 @@ export interface OpArgs {
   'shift.open': { openingCashAgorot: number };
   'shift.close': { countedCashAgorot: number };
   'report.x': Record<string, never>;
-  'z.produce': Record<string, never>;
-  'mode.switch': { to: DeviceRoleName };
+  /** `countedCashAgorot`: the drawer's count when the shift is still open (it is closed first). */
+  'z.produce': { countedCashAgorot?: number };
+  'mode.switch': { to: DeviceRoleName; managerCode?: string };
   'host.idle': { idle: boolean; busy: boolean };
   'hw.result': HwResult;
+  'session.activity': Record<string, never>;
+  /** The answer to "להדפיס חשבונית?" (`checkout.askPrint`). */
+  'checkout.print': { print: boolean };
+  'checkout.recheckCard': Record<string, never>;
+  'checkout.markNotApproved': Record<string, never>;
 }
 
 /* ------------------------------------------------------------------- errors */
@@ -160,12 +176,25 @@ export const TILL_ERRORS = {
   wrong_pin: 'קוד שגוי',
   not_implemented: 'עוד לא בשלד הזה',
   z_not_in_demo: 'Z לא מופק במצב הדגמה',
+  // The real engine's (Android's own words come with each refusal as `message`).
+  coming_soon: 'בקרוב',
+  login_locked: 'יותר מדי ניסיונות. נסו שוב בעוד דקה.',
+  not_logged_in: 'יש להתחבר לקופה',
+  sell_refused: 'הפריט לא נוסף לסל',
+  shift_not_open: 'אין משמרת פתוחה. לא ניתן למכור עד שתיפתח משמרת.',
+  card_failed: 'התשלום בכרטיס לא הושלם',
+  not_a_till: 'המכשיר הזה אינו קופה',
 } as const;
 
 export type TillErrorCode = keyof typeof TILL_ERRORS;
 
 export function engineError(code: TillErrorCode, details?: Record<string, unknown>): EngineError {
   return details ? { code, message: TILL_ERRORS[code], details } : { code, message: TILL_ERRORS[code] };
+}
+
+/** A refusal with the Android till's own Hebrew sentence (it names the product, the permission…). */
+export function engineErrorText(code: TillErrorCode, message: string, details?: Record<string, unknown>): EngineError {
+  return details ? { code, message, details } : { code, message };
 }
 
 /* -------------------------------------------------------------------- state */
@@ -199,6 +228,13 @@ export interface Product {
   priceAgorot: number;
   /** Short label for a tile without a picture. */
   short?: string;
+  /** What a scanner types (`sell.search` + Enter finds it): the barcode, then the SKU (core/kioskScan.ts). */
+  barcode?: string;
+  sku?: string;
+  /** "אזל" / "חסום" now (the shared sale rules): the tile says so; the engine decides what a tap does. */
+  sale?: 'sold_out' | 'blocked' | 'unavailable';
+  /** "מחייב אישור מנהל במכירה": a manager's code on the sale unless the user holds the right. */
+  restricted?: boolean;
 }
 
 export interface Catalog {
@@ -226,6 +262,8 @@ export interface SellState {
   totalAgorot: number;
   /** The VAT inside the total. */
   vatAgorot: number;
+  /** "מבצעים": what the promotions took off the lines (the total is after it). */
+  promotionsAgorot?: number;
 }
 
 export type CheckoutPhase = 'idle' | 'tender' | 'card_waiting' | 'done';
@@ -245,9 +283,28 @@ export interface CheckoutState {
   legs: CheckoutLeg[];
   /** The engine's reference of the issued document (a demo one says so). */
   documentRef: string | null;
+  /** The issued document's id (a copy of it is `doc.reprint`), once the sale is done. */
+  documentId?: string | null;
+  /** Cash handed over so far (all cash legs' notes), for the change line. */
+  tenderedAgorot?: number;
+  /** "להדפיס חשבונית?" — the receipt waits for the cashier's answer (`checkout.print`). */
+  askPrint?: boolean;
+  /** The receipt's problem in words ("קבלה: …"), or "לא הוגדרה מדפסת לקבלות"; the sale stands. */
+  printWarning?: string | null;
+  /** The card terminal's line while it waits ("הצמד, הכנס או העבר את הכרטיס"). */
+  cardStatus?: string | null;
+  /** A card that did not go through: its words; the sale is still open for another tender. */
+  cardError?: string | null;
+  /** The card's answer is not known (never charged twice): tenders wait for "בדוק שוב" / a manager's "סמן כלא אושר". */
+  cardUnknown?: boolean;
 }
 
 export interface ShiftState {
+  /**
+   * "קופה עצמאית" (independent till, Z on the till): NO shifts in the UI — the shift opens silently on the first sale (float 0)
+   * and closes inside "הפק Z". The screens show no "פתיחת / סגירת משמרת" and no X; only "הפק Z".
+   */
+  hidden?: boolean;
   open: boolean;
   number: number | null;
   openedAt: string | null;
@@ -263,10 +320,13 @@ export interface ZState {
   canProduce: boolean;
   /** Why not (Hebrew), when it cannot. */
   reason: string | null;
+  /** `till`: this till makes its own Z ("הפק Z"); `shop`: the shop's Z (closing the shift is all this till does). */
+  zMode?: 'till' | 'shop';
 }
 
 export interface HealthState {
   cloud: 'online' | 'offline' | 'demo';
+  /** The receipt printer as the print queue last saw it. */
   printer: 'ok' | 'none' | 'error';
   terminal: 'ok' | 'none' | 'busy';
   outbox: number;
@@ -292,6 +352,10 @@ export interface ModeState {
   current: DeviceRoleName;
   /** Empty: no switch button, no menu (owner's rule, §6.2). */
   rolesAllowed: DeviceRoleName[];
+  /** The menu row's words ("מעבר לקיוסק" on a till by role, "חזרה למצב קיוסק" on a kiosk working as a till). */
+  switchLabel?: string;
+  /** "חוזר לקיוסק בעוד N שניות": the idle return's notice, while within it. */
+  countdownSec?: number | null;
 }
 
 export interface TillState {
@@ -314,6 +378,15 @@ export interface XReport {
   cardAgorot: number;
   expectedCashAgorot: number;
   demo: boolean;
+  /** The real engine's X (core/sale.ts buildXTill): the rest of the paper's figures. */
+  openingCashAgorot?: number;
+  discountsAgorot?: number;
+  refundsAgorot?: number;
+  vatAgorot?: number;
+  tipsAgorot?: number;
+  itemsCount?: number;
+  /** The paper went to the printer. */
+  printed?: boolean;
 }
 
 /** The engine's answer to `session.hello`: the protocol it speaks, and the state (full, or since). */

@@ -76,12 +76,12 @@ describe('the sell screen', () => {
 
 describe('the payment screen', () => {
   const tender = { phase: 'tender' as const, totalAgorot: 1290, paidAgorot: 0, dueAgorot: 1290, changeAgorot: 0, legs: [], documentRef: null };
-  const actions = { cash: noop, card: noop, cancel: noop, finish: noop };
+  const actions = { cash: noop, card: noop, cancel: noop, finish: noop, print: noop, copy: noop, recheck: noop, markNotApproved: noop };
 
   it('greys the card with the reason when the host has no terminal', () => {
     const cardTile = capabilityTiles(NO_CAPS, 'browser').find((t) => t.id === 'card')!;
     const html = renderToStaticMarkup(createElement(CheckoutScreen, { checkout: tender, layout, cardTile, demo: false, actions }));
-    expect(html).toContain('מזומן מדויק');
+    expect(html).toContain('מזומן מהיר');
     expect(html).toContain('₪12.90');
     expect(html).toContain('t-tender-off');
     expect(html).toContain(cardTile.reason);
@@ -98,7 +98,7 @@ describe('the payment screen', () => {
 });
 
 describe('the shift screen', () => {
-  const actions = { open: noop, close: noop, x: async () => undefined, switchTo: noop, back: noop };
+  const actions = { open: noop, close: noop, x: async () => undefined, z: noop, switchTo: noop, back: noop };
 
   it('no role switch when nothing is allowed; the Z greyed with the engine\'s reason', () => {
     const html = renderToStaticMarkup(createElement(ShiftScreen, { state: state(), layout, actions }));

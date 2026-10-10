@@ -16,9 +16,8 @@
  *    JVM engine over stdio (engineCommand below). Hardware (`hw.*`) never passes through the page;
  *  - tells the updater when the till is at rest (never mid-sale) and runs the watchdog.
  *
- * Until the real engine lands the role is a PREVIEW, opened only with `tillPreview: true` in
- * kiosk.json or `--till-preview` (ROLE_INFO.till.ready stays false: a paired till keeps the
- * placeholder). Electron-free: tillElectron.ts holds the window and protocol glue.
+ * The engine behind the screens is the kiosk core's own (main/till/engine.ts — the 10.10.2026 "basic till"); the mock
+ * (shared/till/mockEngine.ts) is the web demo's. Electron-free: tillElectron.ts holds the window and protocol glue.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -218,8 +217,28 @@ export class TillRole {
   }
 }
 
-/** The preview's honest capabilities: the mock engine reaches no hardware; a USB scanner types. */
+/** The demo's honest capabilities: the mock engine reaches no hardware; a USB scanner types. */
 export const PREVIEW_CAPS: HostCaps = { ...NO_CAPS, scan: { hid: true, camera: false } };
+
+/**
+ * The installed Windows till's capabilities (the kiosk core's own): the engine runs here (works without the internet), the
+ * receipt goes to the Windows queue / the network printer / the USB printer, the drawer opens through it, and the card
+ * terminal is the one the cloud configured for this machine (Nayax LAN / USB, SynqPay).
+ */
+export function windowsTillCaps(svc: { pay: { describe(): { kind: string | null } } }): HostCaps {
+  const kind = svc.pay.describe().kind;
+  return {
+    localEngine: true,
+    print: { tcp: true, spooler: true, usb: true, btSpp: false, ble: false, airprint: false, relay: false, lanHost: false, system: false },
+    drawer: { viaPrinter: true, devicePort: false },
+    channels: { tcpTls: true, https: true, serial: true, usbCdc: true },
+    terminals: { nayaxLan: kind === 'nayax_lan', nayaxUsb: kind === 'nayax_usb', synqpayLan: kind === 'synqpay', synqpaySerial: kind === 'synqpay', zcredit: kind === 'zcredit', agamento: false },
+    scan: { hid: true, camera: false },
+    customerDisplay: false,
+    secureStore: true,
+    backgroundSync: true,
+  };
+}
 
 /**
  * The lite profile's hint from the PC itself (§13.4): Windows 7 / 8 / 8.1 (NT 6.x), or 4 GB of

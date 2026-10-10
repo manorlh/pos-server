@@ -27,7 +27,9 @@ import { KioskService } from './service';
 import type { PageRenderer } from './printer/printQueue';
 import { UpdateManager } from './update/updater';
 import { RoleManager } from './roles/manager';
-import { liteHintOf, PREVIEW_CAPS, TillRole } from './roles/till';
+import { createWorkMode, type WorkModeRuntime } from './workMode';
+import { liteHintOf, windowsTillCaps, TillRole } from './roles/till';
+import { KioskCoreTillEngine } from './till/engine';
 import { APP_SCHEME, attachTillRole, type TillElectron } from './roles/tillElectron';
 import { APP_ID, DATA_DIR_NAME, SHELL_NAME } from './shell/identity';
 import { BRIDGE_MARKER, shellModeOf } from './shell/mode';
@@ -122,9 +124,12 @@ function fileResponse(file: string, request: Request, cache: string): Response {
 let service: KioskService | null = null;
 let updater: UpdateManager | null = null;
 let roles: RoleManager | null = null;
+/** "מצב עבודה: קיוסק / קופה" (workMode.ts): the switch between the kiosk and the till, built after the role manager. */
+let workMode: WorkModeRuntime | null = null;
 /** The till role (roles/till.ts): a preview over the mock engine until the bundled engine (P2). */
 let tillRole: TillRole | null = null;
 let tillView: TillElectron | null = null;
+let tillEngine: KioskCoreTillEngine | null = null;
 let main: BrowserWindow | null = null;
 let printer: BrowserWindow | null = null;
 let printerReady: Promise<void> | null = null;
@@ -156,8 +161,6 @@ function installConfig(): {
    * cloud's setting "חזרה אוטומטית לקיוסק" (`desktopIdleReturnMinutes`) has not reached the device.
    */
   desktopIdleReturnMinutes?: number;
-  /** The till role's preview (S0-6): a device the cloud makes a till shows the new screens over the mock engine. */
-  tillPreview?: boolean;
 } {
   try {
     return JSON.parse(readFileSync(path.join(app.getPath('userData'), 'kiosk.json'), 'utf8'));
@@ -408,7 +411,6 @@ void app.whenReady().then(async () => {
     return;
   }
   windowed = windowedArg || install.windowed === true;
-  const tillPreview = install.tillPreview === true || process.argv.includes('--till-preview');
   // "חזרה אוטומטית לקיוסק": the cloud's setting, read on every look; kiosk.json only when the cloud sent none.
   const idleMinutes = () => service?.desktopIdleReturnMinutes(install.desktopIdleReturnMinutes) ?? IDLE_RETURN_MINUTES;
   desktop = new DesktopMode(
@@ -465,8 +467,8 @@ void app.whenReady().then(async () => {
     currentVersion: appVersion(),
     dir: path.join(app.getPath('userData'), 'updates'),
     // Out on the desktop: an automatic install waits for the way back (core/updatePolicy.ts).
-    // The till's preview: busy / at rest as its screens say (never an install mid-sale).
-    activity: () => ({ ...(roles?.activity() ?? svc.activity()), ...(tillRole && roles?.role() === 'till' && tillPreview ? tillRole.activity() : {}), desktop: desktop?.active === true }),
+    // The till: busy / at rest as its screens say (never an install mid-sale).
+    activity: () => ({ ...(roles?.activity() ?? svc.activity()), ...(tillRole && roles?.role() === 'till' ? tillRole.activity() : {}), desktop: desktop?.active === true }),
     localWindow: parseWindow(install.updateWindow),
     checkEveryMs: Math.max(5, Number(install.updateCheckMinutes) || 15) * 60_000,
     runInstaller: (file, args) => {
@@ -484,10 +486,16 @@ void app.whenReady().then(async () => {
   roles.on('view', (v) => sendShell('shell:view', v));
   roles.on('board', (v) => sendShell('shell:board', v));
   roles.on('kds', (v) => sendShell('shell:kds', v));
+  // work mode: its changes reach the screens through the service's view (the role follows), the shell's view carries what the till shows of it.
+  workMode = createWorkMode(svc, (m) => console.log(`[shell] ${m}`));
+  workMode.onChange(() => roles?.emitView());
 
-  // The till role (S0-6): the same app and installer — the cloud's role decides. A preview until
-  // the bundled engine (P2): only with kiosk.json `tillPreview: true` or `--till-preview`.
+  // The till role: the same app and installer — the cloud's role decides (a till by role, or a kiosk working as a
+  // till). The screens are the one app bundle; the engine behind them is the kiosk core (main/till/engine.ts):
+  // the same ledger, numbering, terminals, printer and Z the kiosk already runs.
+  tillEngine = new KioskCoreTillEngine({ svc, workMode: () => workMode, log: (m) => console.log(`[till] ${m}`) });
   tillRole = new TillRole({
+    engine: tillEngine,
     userData: app.getPath('userData'),
     builtInBundleDir: app.isPackaged ? path.join(process.resourcesPath, 'app-bundle') : path.join(__dirname, '..', 'app-bundle'),
     appVersion: appVersion(),
@@ -502,10 +510,10 @@ void app.whenReady().then(async () => {
         lite: liteHintOf({ release: os.release(), totalMemBytes: os.totalmem() }),
       };
     },
-    caps: () => PREVIEW_CAPS,
+    caps: () => windowsTillCaps(svc),
     log: (m) => console.log(`[shell] ${m}`),
   });
-  tillView = attachTillRole({ role: tillRole, main: () => main, preload: path.join(__dirname, '..', 'preload', 'app.js'), isDev, enabled: () => tillPreview, log: (m) => console.log(`[shell] ${m}`) });
+  tillView = attachTillRole({ role: tillRole, main: () => main, preload: path.join(__dirname, '..', 'preload', 'app.js'), isDev, enabled: () => true, log: (m) => console.log(`[shell] ${m}`) });
   roles.on('view', (v) => tillView?.onRole(v.role));
 
   registerKioskProtocol();
@@ -518,6 +526,7 @@ void app.whenReady().then(async () => {
   // Restarted while out on the desktop (a crash, an update, a reboot): back in full screen, and said so.
   if (service.desktopExitState()) service.desktopReturned('restart');
   roles.start();
+  workMode?.start();
   // Development builds check only on "בדוק עכשיו"; an installed app on its own timer too.
   if (app.isPackaged && !isDev) updater.start();
   else void updater.confirmInstalled();
@@ -546,6 +555,8 @@ app.on('window-all-closed', () => {
   hideReturnTray();
   updater?.stop();
   tillView?.stop();
+  tillEngine?.stop();
+  workMode?.stop();
   roles?.stop();
   service?.stop();
   app.quit();

@@ -13,7 +13,14 @@ import { money, T } from '../text';
 
 export function filterProducts(catalog: Catalog, departmentId: string | null, search: string) {
   const q = search.trim();
-  return catalog.products.filter((p) => (departmentId === null || p.departmentId === departmentId) && (q === '' || p.name.includes(q)));
+  return catalog.products.filter((p) => (departmentId === null || p.departmentId === departmentId) && (q === '' || p.name.includes(q) || p.barcode === q || p.sku === q));
+}
+
+/** What a scanner typed + Enter: the product whose barcode, then SKU, is exactly that (core/kioskScan.ts's order). */
+export function scanned(catalog: Catalog, text: string) {
+  const q = text.trim();
+  if (!q) return null;
+  return catalog.products.find((p) => p.barcode === q) ?? catalog.products.find((p) => p.sku === q) ?? null;
 }
 
 export function SellScreen({
@@ -24,6 +31,8 @@ export function SellScreen({
   onDepartment,
   onSearch,
   cart,
+  shiftOpen = true,
+  goShift,
 }: {
   state: TillState;
   catalog: Catalog | null;
@@ -32,6 +41,9 @@ export function SellScreen({
   onDepartment(id: string | null): void;
   onSearch(text: string): void;
   cart: CartActions;
+  /** No shift: the till says why it cannot charge and offers the way to open one (Android sell_no_shift). */
+  shiftOpen?: boolean;
+  goShift?(): void;
 }) {
   const [cartOpen, setCartOpen] = useState(false);
   const sell = state.sell;
@@ -49,8 +61,36 @@ export function SellScreen({
             </button>
           ))}
         </div>
-        <input className="t-search" type="search" inputMode="search" placeholder={T.searchPlaceholder} value={sell.search} onChange={(e) => onSearch(e.target.value)} />
+        <input
+          className="t-search"
+          type="search"
+          inputMode="search"
+          placeholder={T.searchOrScan}
+          value={sell.search}
+          onChange={(e) => onSearch(e.target.value)}
+          onKeyDown={(e) => {
+            // A USB scanner types the code and presses Enter: the product goes in and the box is cleared.
+            if (e.key !== 'Enter' || !catalog) return;
+            const p = scanned(catalog, sell.search);
+            if (p) {
+              onAdd(p.id);
+              onSearch('');
+            }
+          }}
+        />
       </div>
+      {!shiftOpen ? (
+        <div className="t-warn" role="note">
+          <p>
+            {T.noShift}. {T.noShiftBlocksSale}
+          </p>
+          {goShift ? (
+            <button type="button" className="t-btn t-btn-small" onClick={goShift}>
+              {T.openShift}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <ProductGrid products={products} departments={catalog?.departments ?? []} columns={layout.columns} tileHeight={layout.tileHeightDp} onAdd={onAdd} />
     </section>
   );

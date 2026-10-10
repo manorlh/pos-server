@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Department, Product } from '../../../../shared/till/protocol';
-import { money } from '../text';
+import { money, T } from '../text';
 
 const GAP = 6;
 const OVERSCAN_ROWS = 3;
@@ -77,15 +77,22 @@ export function ProductGrid({
       {visible.map((row, i) => (
         <div key={w.first + i} className="t-grid-row" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, height: tileHeight }}>
           {row.map((p) => (
-            <button key={p.id} type="button" className="t-tile" style={{ borderInlineStartColor: colorOf.get(p.departmentId) ?? '#9aa1ab' }} onClick={() => onAdd(p.id)}>
+            <button
+              key={p.id}
+              type="button"
+              className={`t-tile${p.sale ? ' t-tile-off' : ''}`}
+              style={{ borderInlineStartColor: colorOf.get(p.departmentId) ?? '#9aa1ab' }}
+              onClick={() => onAdd(p.id)}
+            >
               <span className="t-tile-name">{p.name}</span>
               <span className="t-tile-price">{money(p.priceAgorot)}</span>
+              {p.sale ? <span className="t-tile-badge">{p.sale === 'blocked' ? T.blockedBadge : p.sale === 'unavailable' ? T.unavailableBadge : T.soldOutBadge}</span> : null}
             </button>
           ))}
         </div>
       ))}
       <div style={{ height: w.padBottom }} />
-      {products.length === 0 ? <p className="t-empty">לא נמצאו מוצרים</p> : null}
+      {products.length === 0 ? <p className="t-empty">{T.noMatch}</p> : null}
     </div>
   );
 }

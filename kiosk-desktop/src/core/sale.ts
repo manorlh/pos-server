@@ -71,6 +71,13 @@ export interface SaleLine {
   promotionAgorot?: number;
   promotionId?: string | null;
   promotionName?: string | null;
+  /**
+   * "תפריטים" (till channel only): the menu active when the line was priced, its name, and where `basePriceAgorot` came from.
+   * Absent with no menu active (always, on the kiosk): the line and its wire are then exactly what they were before menus.
+   */
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog';
 }
 
 /** What one choice adds to one unit of the dish. */

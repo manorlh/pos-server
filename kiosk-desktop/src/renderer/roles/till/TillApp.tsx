@@ -22,16 +22,18 @@ import { useDisplayProfile } from './layout/useDisplayProfile';
 import { CapabilityTiles } from './parts/CapabilityTiles';
 import { EngineDialog } from './parts/EngineDialog';
 import { CheckoutScreen } from './screens/CheckoutScreen';
+import { HistoryScreen, type HistoryRow } from './screens/HistoryScreen';
 import { LockScreen } from './screens/LockScreen';
+import { MenuScreen } from './screens/MenuScreen';
 import { SellScreen } from './screens/SellScreen';
-import { ShiftScreen } from './screens/ShiftScreen';
+import { ShiftScreen, type CloseResult } from './screens/ShiftScreen';
 import { T } from './text';
 import { useTillEngine } from './useTillEngine';
 
 /** At rest: nothing in the cart / payment / dialog, and no touch for this long (§8.2). */
 export const AT_REST_AFTER_MS = 60_000;
 
-type View = 'sell' | 'shift' | 'caps';
+type View = 'sell' | 'shift' | 'menu' | 'history' | 'caps';
 
 export function TillApp({ host, initialProfile }: { host: TillHost; initialProfile?: DisplayProfile }) {
   const engine = useTillEngine(host.engine);
@@ -51,7 +53,13 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
 
   const demoTerminal = host.demo && state?.health.terminal !== 'none' && state !== null;
   const tiles = useMemo(() => capabilityTiles(caps, host.kind, { demo: host.demo, demoTerminal }), [caps, host.kind, host.demo, demoTerminal]);
-  const cardTile = tiles.find((t) => t.id === 'card') ?? tiles[0];
+  // A real engine knows whether it has a terminal that answers: its health, not the host's guess.
+  const cardTile = useMemo(() => {
+    const t = tiles.find((x) => x.id === 'card') ?? tiles[0];
+    if (host.demo || !state) return t;
+    const ok = state.health.terminal !== 'none';
+    return { ...t, available: ok, reason: ok ? 'מסופון זמין' : 'אין אמצעי תשלום זמינים – פנו למנהל' };
+  }, [tiles, host.demo, state]);
 
   // Ready once the till is drawn; the screen stays awake while the till is open.
   const readySent = useRef(false);
@@ -78,10 +86,18 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
     const t = window.setInterval(report, 5_000);
     return () => window.clearInterval(t);
   }, [report]);
+  const lastPing = useRef(0);
   const touch = () => {
     lastTouch.current = Date.now();
     if (lastReport.current.startsWith('true')) report();
+    // A touch is the engine's too (the idle return to the kiosk counts from it): at most every 2 s.
+    if (!host.demo && lastTouch.current - lastPing.current > 2_000) {
+      lastPing.current = lastTouch.current;
+      void host.engine.call('session.activity', {}).catch(() => undefined);
+    }
   };
+
+  const loadHistory = useCallback(async () => (await run('doc.history', {})) as HistoryRow[] | undefined, [run]);
 
   const root = (children: ReactNode) => (
     <div className="t-root" dir="rtl" lang="he" data-lite={host.device.lite ? '1' : '0'} data-layout={layout.cls} style={profile.scale !== 1 ? { zoom: profile.scale } : undefined} onPointerDown={touch}>
@@ -107,6 +123,11 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             card: () => void run('checkout.card', {}),
             cancel: () => void run('checkout.cancel', {}),
             finish: () => void run('checkout.finish', {}),
+            print: (print) => void run('checkout.print', { print }),
+            // "הדפס העתק" on the sale just done: the engine prints it without a manager (the Android checkout's own).
+            copy: () => void (s.checkout.documentId ? run('doc.reprint', { documentId: s.checkout.documentId }) : undefined),
+            recheck: () => void run('checkout.recheckCard', {}),
+            markNotApproved: () => void run('checkout.markNotApproved', {}),
           }}
         />
       );
@@ -118,20 +139,35 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
           layout={layout}
           actions={{
             open: (openingCashAgorot) => void run('shift.open', { openingCashAgorot }),
-            close: (countedCashAgorot) => void run('shift.close', { countedCashAgorot }),
+            close: async (countedCashAgorot) => (await run('shift.close', { countedCashAgorot })) as CloseResult | undefined,
             x: async () => (await run('report.x', {})) as XReport | undefined,
+            z: async (countedCashAgorot) => (await run('z.produce', countedCashAgorot === undefined ? {} : { countedCashAgorot })) as { message?: string } | undefined,
             switchTo: (to: DeviceRoleName) => void run('mode.switch', { to }),
-            back: () => setView('sell'),
+            back: () => setView(host.demo ? 'sell' : 'menu'),
           }}
         />
       );
+    }
+    if (view === 'menu') {
+      return (
+        <MenuScreen
+          state={s}
+          go={(to) => setView(to === 'shift' ? 'shift' : to === 'history' ? 'history' : 'caps')}
+          signOut={() => void run('session.logout', {})}
+          switchTo={() => void run('mode.switch', { to: 'kiosk' })}
+          back={() => setView('sell')}
+        />
+      );
+    }
+    if (view === 'history') {
+      return <HistoryScreen load={loadHistory} reprint={(id) => void run('doc.reprint', { documentId: id })} back={() => setView('menu')} />;
     }
     if (view === 'caps') {
       return (
         <div className="t-report" style={layout.reportMaxWidthDp ? { maxWidth: layout.reportMaxWidthDp } : undefined}>
           <div className="t-report-head">
             <h1 className="t-report-title">{T.caps}</h1>
-            <button type="button" className="t-btn t-btn-ghost" onClick={() => setView('sell')}>
+            <button type="button" className="t-btn t-btn-ghost" onClick={() => setView(host.demo ? 'sell' : 'menu')}>
               {T.back}
             </button>
           </div>
@@ -147,9 +183,12 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
         onAdd={(productId) => void run('sell.add', { productId })}
         onDepartment={(departmentId) => void run('sell.department', { departmentId })}
         onSearch={(text) => void run('sell.search', { text })}
+        shiftOpen={host.demo || s.shift.open || s.shift.hidden === true}
+        goShift={() => setView('shift')}
         cart={{
           setQty: (lineId, qty) => void run('sell.setQty', { lineId, qty }),
-          discount: (lineId, pct) => void run('sell.discount', { lineId, pct }),
+          // The manual discount is the Android till's, soon here: only the demo engine has it.
+          ...(host.demo ? { discount: (lineId: string, pct: number) => void run('sell.discount', { lineId, pct }) } : {}),
           remove: (lineId) => void run('sell.remove', { lineId }),
           clear: () => void run('sell.clear', {}),
           pay: () => void run('checkout.start', {}),
@@ -169,11 +208,17 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
             {T.sell}
           </button>
           <button type="button" className={`t-nav-btn${view === 'shift' ? ' t-nav-on' : ''}`} onClick={() => setView('shift')}>
-            {T.shift}
+            {s.shift.hidden ? T.produceZ : T.shift}
           </button>
-          <button type="button" className={`t-nav-btn${view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('caps')}>
-            {T.caps}
-          </button>
+          {host.demo ? (
+            <button type="button" className={`t-nav-btn${view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('caps')}>
+              {T.caps}
+            </button>
+          ) : (
+            <button type="button" className={`t-nav-btn${view === 'menu' || view === 'history' || view === 'caps' ? ' t-nav-on' : ''}`} onClick={() => setView('menu')}>
+              {T.menu}
+            </button>
+          )}
         </nav>
         <div className="t-health" aria-label="מצב">
           <span className={`t-dot ${s.health.cloud === 'online' ? 't-dot-ok' : s.health.cloud === 'demo' ? 't-dot-demo' : 't-dot-off'}`} title={s.health.cloud === 'offline' ? T.offline : T.online} />
@@ -190,6 +235,25 @@ export function TillApp({ host, initialProfile }: { host: TillHost; initialProfi
       {host.demo ? (
         <div className="t-demo" role="note">
           {T.demoBadge}
+        </div>
+      ) : null}
+      {!host.demo && s.mode.role === 'kiosk' ? (
+        // A kiosk working as a till today (Android KioskTillModeBanner): the way back, and the idle return's notice.
+        <div className="t-worknote" role="note">
+          <span className="t-worknote-text">{T.workModeBanner}</span>
+          {s.mode.countdownSec ? (
+            <>
+              <span className="t-worknote-count">{T.workModeCountdown(s.mode.countdownSec)}</span>
+              <button type="button" className="t-pill" onClick={touch}>
+                {T.workModeStay}
+              </button>
+            </>
+          ) : null}
+          {s.mode.rolesAllowed.includes('kiosk') ? (
+            <button type="button" className="t-pill t-pill-light" onClick={() => void run('mode.switch', { to: 'kiosk' })}>
+              {s.mode.switchLabel ?? 'חזרה לקיוסק'}
+            </button>
+          ) : null}
         </div>
       ) : null}
       {status === 'offline' ? (
