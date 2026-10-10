@@ -710,6 +710,8 @@ class TransactionOut(BaseModel):
     reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
     reissue_of_transaction_number: Optional[str] = Field(None, alias="reissueOfTransactionNumber")
     reissue_documents: List["BasketDocumentOut"] = Field(default_factory=list, alias="reissueDocuments")
+    #: "הדפס העתק עם פרטי לקוח": the details added to a copy after issue, oldest first (detail read only).
+    customer_details_added: List["CustomerDetailsAddedOut"] = Field(default_factory=list, alias="customerDetailsAdded")
     #: The approver linked when they are a person of this business (informational since
     #: 2026-10-07 — never a reason to refuse a document; docs/SHIFTS_API.md §1.2b).
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
@@ -737,6 +739,29 @@ class TransactionOut(BaseModel):
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class CustomerDetailsAddedOut(BaseModel):
+    """
+    "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): the customer's details a till added to
+    a COPY of this document after it was issued — who, when. Never part of the recorded document: the
+    dashboard shows them labelled as added after issue.
+    """
+
+    id: uuid.UUID
+    customer_name: str = Field(..., alias="customerName")
+    customer_vat_number: str = Field(..., alias="customerVatNumber")
+    customer_address: Optional[str] = Field(None, alias="customerAddress")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    added_by_id: Optional[str] = Field(None, alias="addedById")
+    added_by_name: Optional[str] = Field(None, alias="addedByName")
+    added_at: datetime = Field(..., alias="addedAt")
+    received_at: datetime = Field(..., alias="receivedAt")
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
 
 
 class BasketDocumentOut(BaseModel):

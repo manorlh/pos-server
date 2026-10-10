@@ -42,6 +42,8 @@ from app.services.areas import as_utc
 #: re-issued in a customer's name from the till's history. Both empty (off) by default.
 INVOICE_CUSTOMER_REQUIRED_ABOVE_KEY = "invoiceCustomerRequiredAbove"
 INVOICE_REISSUE_MAX_DAYS_KEY = "invoiceReissueMaxDays"
+#: "הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)" (§3.5): the history's "הדפס העתק עם פרטי לקוח". Off by default.
+INVOICE_COPY_WITH_DETAILS_KEY = "invoiceCopyWithCustomerDetails"
 
 #: The Ably `settings` notify reason for any change to parameters or their values.
 NOTIFY_REASON = "till_parameters_updated"
@@ -1525,6 +1527,19 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "מההיסטוריה בקופה: \"הפק חשבונית על שם לקוח\" מזכה את המסמך המקורי ומפיקה חשבונית חדשה עם פרטי הלקוח "
             "(בלי תנועת כסף). מסמך ישן יותר ממספר הימים הזה יידחה. ריק — בלי מגבלה (לא נמצאה מגבלת זמן בדין "
             "להוצאת חשבונית זיכוי; ההתאמה נרשמת בתקופת הדיווח שבה הוצא הזיכוי)."
+        ),
+    ),
+    BuiltinParameter(
+        key=INVOICE_COPY_WITH_DETAILS_KEY,
+        label="הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסמך מכירה שהושלם, בהיסטוריה בקופה, מופיע \"הדפס העתק עם פרטי לקוח\". הפרטים (שם, ח.פ. / ע.מ., "
+            "ופרטים רשות) נשמרים בנפרד מהמסמך, עם מי הוסיף אותם ומתי, ומודפסים על העתק בלבד, מסומן \"העתק\", עם השורה "
+            "\"פרטי לקוח נוספו בתאריך … ע\"י …\". המסמך המקורי, סכומיו והקובץ במבנה האחיד אינם משתנים, וההדפסה של המקור "
+            "אינה מציגה אותם. הבעלים אישר ב-10.10.2026; מומלץ לקבל אישור בכתב מרואה החשבון. ניתן להגדיר לארגון, לחברה, "
+            "לסניף, לנקודת מכירה או לקופה בודדת."
         ),
     ),
 )

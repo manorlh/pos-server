@@ -21,6 +21,7 @@ from app.services.scoping import scope_transactions_by_user
 from app.schemas.print_document import PrintDocumentListOut, PrintDocumentOut
 from app.schemas.transaction import (
     BasketDocumentOut,
+    CustomerDetailsAddedOut,
     KioskPickupRef,
     TransactionListItem,
     TransactionListResponse,
@@ -468,6 +469,12 @@ def get_transaction(
         current_user,
         db,
     )
+    # "הדפס העתק עם פרטי לקוח": what a till added to a copy of it after issue, apart from the document.
+    from app.services import document_customer_details as _added
+
+    out.customer_details_added = [
+        CustomerDetailsAddedOut.model_validate(r) for r in _added.for_document(db, active_tenant_id, tx.id)
+    ]
     if pair is not None:
         out.reissue_documents = [
             BasketDocumentOut.model_validate(s)

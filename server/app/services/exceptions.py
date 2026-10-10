@@ -217,7 +217,11 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
                     "held_sale_parked",
                     # "מצב עבודה: קיוסק / קופה" (app/services/kiosk_till_mode.py): a kiosk device switched to the
                     # till or back — who, why (manual / idle / remote / cloud), the held sales left. Feeds no rule.
-                    "kiosk_till_mode")
+                    "kiosk_till_mode",
+                    # "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): who added a customer's
+                    # details to a copy of which document, when. The audit beside the annotation's own
+                    # row. Recorded, feeds no rule.
+                    "document_customer_details")
 
 
 class RuleValueError(ValueError):

@@ -395,6 +395,24 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         details.append(_row("כתובת", tx.customer_address))
     if getattr(tx, "customer_email", None):
         details.append(_row("דוא\"ל", tx.customer_email))
+    # "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): what a till added to a COPY of this
+    # document after it was issued, apart and labelled as such — never as the document's own details.
+    if not credit:
+        from app.services import document_customer_details as _added
+
+        added = _added.latest_for_document(db, tx.tenant_id, tx.id)
+        # Only while the document's till has the option on: off means a copy prints none of it.
+        if added is not None and _added.parameter_on(db, tx):
+            who = f" ע״י {added.added_by_name}" if added.added_by_name else ""
+            details.append(_row(f"פרטי לקוח נוספו בתאריך {_stamp(added.added_at, zone)}{who}", "", emphasis=True))
+            details.append(_row("  שם הלקוח", added.customer_name))
+            details.append(_row("  ח.פ. / ע.מ. לקוח", added.customer_vat_number))
+            if added.customer_phone:
+                details.append(_row("  טלפון", added.customer_phone))
+            if added.customer_address:
+                details.append(_row("  כתובת", added.customer_address))
+            if added.customer_email:
+                details.append(_row("  דוא\"ל", added.customer_email))
 
     lines: List[PrintRow] = []
     for item in tx.items:
