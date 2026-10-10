@@ -5,6 +5,7 @@ import { getMessages } from 'next-intl/server';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 import { Providers } from '@/lib/providers';
+import { THEME_INIT_SCRIPT } from '@/lib/themeScript';
 import { ServiceWorkerRegistration } from '@/components/service-worker-registration';
 
 const heebo = Heebo({ subsets: ['hebrew', 'latin'], variable: '--font-heebo' });
@@ -34,7 +35,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const messages = await getMessages();
 
   return (
-    <html lang="he" dir="rtl" className={`${heebo.variable} h-full antialiased`}>
+    <html lang="he" dir="rtl" className={`${heebo.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        {/* Light by default; a saved dark choice before the first paint (lib/themeScript). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="min-h-full bg-background text-foreground font-[family-name:var(--font-heebo)]">
         <ClerkProvider
           signInUrl="/sign-in"

@@ -2,35 +2,16 @@
 
 /**
  * The control board's building blocks: its card, the round tinted icon badge, the
- * ▲/▼ change, the wordmark, the filter box and the light/dark switch.
+ * ▲/▼ change, the wordmark and the filter box. Light or dark is the app's choice (lib/theme).
  *
  * The colours are the `--cb-*` tokens of globals.css (Tailwind `bg-cb-card`,
  * `text-cb-blue-ink`, …), never literal hex, so the board's dark mode is one place.
  */
 
-import { useCallback, useSyncExternalStore } from 'react';
 import { useTranslations } from 'next-intl';
 import { ChevronDown, ChevronUp, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { deltaTone, pctChange } from '@/lib/controlBoard';
-
-/**
- * The system's dark mode. The app has no theme switch of its own, so the board follows
- * the phone or computer it is on: the page puts `.dark` on itself (and its sheets),
- * which re-themes everything under it through the same tokens as the rest of the app.
- */
-export function useSystemDark(): boolean {
-  const subscribe = useCallback((onChange: () => void) => {
-    const mql = window.matchMedia('(prefers-color-scheme: dark)');
-    mql.addEventListener('change', onChange);
-    return () => mql.removeEventListener('change', onChange);
-  }, []);
-  return useSyncExternalStore(
-    subscribe,
-    () => window.matchMedia('(prefers-color-scheme: dark)').matches,
-    () => false,
-  );
-}
 
 /** The classes a portalled sheet needs to look like the board it opens from. */
 export function boardSurface(dark: boolean): string {

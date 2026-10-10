@@ -143,8 +143,8 @@
  * The control board (the dashboard's home, app/dashboard/page.tsx): a light blue-grey
  * page, white cards, blue for the figures, teal for cash, amber for warnings, green for
  * a till that is up. `*-ink` is the same hue dark enough for text (≥ 4.5:1 on the card);
- * the plain one is for fills, bars and lines. The board puts `.dark` on itself when the
- * system is dark, so these follow it even while the rest of the app has no dark theme.
+ * the plain one is for fills, bars and lines. `.dark` (the sidebar's light / dark switch,
+ * lib/theme) re-themes them with the rest of the app.
  */
 :root {
   --cb-page: #f3f6fb;

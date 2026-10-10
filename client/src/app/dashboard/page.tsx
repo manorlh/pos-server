@@ -93,7 +93,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { OverviewTree } from '@/components/dashboard/overview/overview-tree';
 import { TillDetails, TillDetailsTitle } from '@/components/dashboard/overview/till-details';
-import { Wordmark, boardSurface, useSystemDark } from '@/components/dashboard/control-board/board-ui';
+import { Wordmark, boardSurface } from '@/components/dashboard/control-board/board-ui';
+import { useTheme } from '@/lib/theme';
 import { useDayNames } from '@/components/dashboard/control-board/board-filters';
 import { BoardKpis } from '@/components/dashboard/control-board/board-kpis';
 import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
@@ -258,7 +259,7 @@ export default function DashboardPage() {
   const { dayA, dayB } = boardDays(board, today);
   const isToday = dayA === today;
   const names = useDayNames(today);
-  const dark = useSystemDark();
+  const dark = useTheme() === 'dark';
   const isWide = useIsWide();
   const scopeQuery = useScopeQuery((s) => s.query);
   // The machine-admin roles: the ones the till-messages endpoints admit.
@@ -641,7 +642,7 @@ export default function DashboardPage() {
     'inline-flex min-h-11 items-center gap-1.5 rounded-full border border-cb-line bg-cb-card px-3 text-sm text-cb-ink hover:bg-cb-soft';
 
   return (
-    // The board's own surface, edge to edge over the shell's padding; `.dark` follows the system.
+    // The board's own surface, edge to edge over the shell's padding; `.dark` follows the app's theme.
     <div
       className={cn(
         boardSurface(dark),
