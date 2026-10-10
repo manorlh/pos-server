@@ -591,9 +591,10 @@ def test_the_migration_is_the_single_head():
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "alembic"))
     script = ScriptDirectory.from_config(config)
+    # One head, with this migration on its line: later ones chain on top (the pairing-code name,
+    # 7c3a9d2e5b14, is the first, then the digital foundations, 701a25694d3c…).
     heads = script.get_heads()
     assert len(heads) == 1
-    # No longer the head itself since the digital foundations (701a25694d3c…) were chained on.
     assert "4b6d1b7b3549" in {r.revision for r in script.walk_revisions("base", heads[0])}
     # Re-chained at the integration (10.10.2026): written on b8e2d4f6a1c3, now the last of the release's chain.
     assert script.get_revision("4b6d1b7b3549").down_revision == "9b4e2f7a1c58"

@@ -457,7 +457,11 @@ def lan_section_of_shifts(db: Session, machine: POSMachine, shifts: List[Shift])
     if not shifts:
         return None
     totals = compute_totals(db, [s.id for s in shifts])
-    report = machine_section(machine, shifts, totals)
+    # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": this till's part, as the till itself would have
+    # printed it (the parameter as it stands for the till now), frozen on the shop Z with the part.
+    from app.services.z_expected_cash import applies as movements_applies
+
+    report = machine_section(machine, shifts, totals, movements_applies(db, machine))
     dates = sorted(s.business_date.isoformat() for s in shifts if s.business_date)
 
     def f(value) -> Optional[float]:

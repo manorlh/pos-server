@@ -397,10 +397,26 @@ export function deviceModelWarning(m: {
   return null;
 }
 
+/** A device's name is at most this many characters (the server's `MACHINE_NAME_MAX`). */
+export const DEVICE_NAME_MAX = 100;
+
+/**
+ * A name as the server stores it (app/services/machine_names.py `clean_machine_name`): edges trimmed and runs
+ * of whitespace collapsed to one space. '' when there is none — the server's default then ("קופה N").
+ */
+export function cleanDeviceName(name: string | null | undefined): string {
+  return (name ?? '').split(/\s+/).filter(Boolean).join(' ');
+}
+
 export interface AddDeviceDraft {
   role: DeviceRole | '';
   model: DeviceModelId | '';
-  machineCode: string;
+  /**
+   * "שם המכשיר" — optional, a till's only (a kiosk, a KDS, the board and a customer display have their own
+   * in their options). '' = the server's default name. There is no "קוד מכשיר" any more: the server makes
+   * the machine's code itself, and the form's one was required but never sent.
+   */
+  name?: string;
   companyId: string;
   shopId: string;
   /** Android unless said: a device of the other platform cannot redeem the code. */
@@ -425,14 +441,30 @@ export function modelNeeded(d: Pick<AddDeviceDraft, 'platform'>): boolean {
 }
 
 /** The first thing the add dialog still needs before a code can be generated, or null. */
-export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'machineCode' | 'shop' | 'stations' | null {
+export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'shop' | 'stations' | null {
   if (!d.role) return 'role';
   if (!d.model && modelNeeded(d)) return 'model';
-  if (!d.machineCode.trim()) return 'machineCode';
   if (roleNeedsShop(d.role) && (!d.companyId || !d.shopId)) return 'shop';
   // A station screen shows its stations' tasks: at least one (the KDS page's rule).
   if (d.role === 'kds' && d.kds?.screenRole === 'station' && d.kds.stationIds.length === 0) return 'stations';
   return null;
+}
+
+/**
+ * "הקופה תקבל מספר N": the register number the add form shows once the shop is chosen — the server's own
+ * peek (`GET /shops/{id}/next-register-number`, `peek_next_register_number`: the rule that allocates the
+ * number, read without taking it), for a device that is a register. Null for a screen (a KDS, the board and
+ * a customer display have no number), with no shop chosen, or while the answer is for another shop (the
+ * shop changed since it was asked) or is not a number.
+ */
+export function expectedRegisterNumber(
+  d: { role: DeviceRole | ''; shopId: string },
+  peek: { shopId: string; nextRegisterNumber: unknown } | null | undefined,
+): number | null {
+  if (!d.shopId || !peek || !isFiscalRole(d.role)) return null;
+  if (String(peek.shopId).toLowerCase() !== d.shopId.toLowerCase()) return null;
+  const n = Number(peek.nextRegisterNumber);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export interface KioskDraft {
@@ -485,6 +517,9 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
     ...(d.companyId ? { companyId: d.companyId } : {}),
     ...(d.shopId ? { shopId: d.shopId } : {}),
   };
+  // "שם המכשיר — לא חובה": a till's own name; blank sends none and the server names it.
+  const name = cleanDeviceName(d.name);
+  if (d.role === 'till' && name) body.name = name.slice(0, DEVICE_NAME_MAX);
   if (d.role === 'kiosk') body.kiosk = kioskBody(kiosk);
   if (d.role === 'kds' || d.role === 'order_status_board') body.kds = kdsBody(d.role, d.kds);
   // A customer display's options ride on the screen's object: its name and the till it mirrors.

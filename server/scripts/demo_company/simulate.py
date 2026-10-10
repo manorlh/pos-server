@@ -3,7 +3,8 @@ The month: every night of every bar, in the order it happened.
 
 Each bar-night is a set of timed actions — clock-ins, shift opens, sales, credit notes,
 failed card attempts, voids, pushes, heartbeats, closes, the terminal's batch, clock-outs,
-and the bar's Z. All bars' actions run on one queue in time order, and the clock is set to
+and the Z (each bar's own, or — in shop mode — the branch's one). All bars' actions run on one
+queue in time order, and the clock is set to
 each action's moment before it runs, so every "now" the product reads is that moment.
 
 Every random choice of a till comes from that till's own generator for that night, so the
@@ -83,12 +84,31 @@ def _weighted(rng: random.Random, pairs):
     return pairs[-1][0]
 
 
+Z_MODES = ("area", "shop")
+
+
 class Month:
-    def __init__(self, api, world, clock, log):
+    """
+    `z_mode` — who the Zs are for:
+
+    * `area` (default): each bar's own Z at the end of its night (`POST /z-runs` with its `areaId`
+      and its two tills) — one Z per bar per night.
+    * `shop` ("Z סניפי"): every till closes its shift, and then ONE Z for the whole branch is
+      produced, as the dashboard's Z wizard does it (the candidates, then `POST /z-runs` with every
+      till that has something to report and no `areaId`) — one Z per shop per business night.
+
+    Nothing else differs: the documents, shifts, closes, tips and cancellations of a night are
+    drawn from the same per-till generators in both modes.
+    """
+
+    def __init__(self, api, world, clock, log, z_mode: str = "area"):
+        if z_mode not in Z_MODES:
+            raise ValueError(f"z_mode must be one of {Z_MODES}, not {z_mode!r}")
         self.api = api
         self.world = world
         self.clock = clock
         self.log = log
+        self.z_mode = z_mode
         self.ledger = Ledger()
         self.q = Queue()
         self.last_beat: Dict[str, datetime] = {}
@@ -182,10 +202,23 @@ class Month:
             self.q.add(closing, self._close(tn, bar, day))
             self.q.add(closing + timedelta(minutes=2), self._heartbeat(till))
             self.q.add(closing + timedelta(minutes=trng.randint(3, 6)), self._transmit(tn))
+        if self.z_mode == "area":
+            z_at = close_at + timedelta(minutes=rng.randint(24, 40))
+            for till in (t1, t2):
+                self.q.add(z_at - timedelta(seconds=45), self._heartbeat(till))
+            self.q.add(z_at, self._z(bar, day))
+        # shop mode: the night's one Z is planned once for all bars (`plan_shop_z`).
+
+    def plan_shop_z(self, bars: List[P.Bar], day: date) -> None:
+        """The branch's one Z of the night, after the last till has closed and transmitted."""
+        _open, (ch, cm) = P.opening_hours(day)
+        close_at = at(day, ch, cm, plus_days=1)
+        rng = random.Random(_seed("shop-z", day.isoformat()))
         z_at = close_at + timedelta(minutes=rng.randint(24, 40))
-        for till in (t1, t2):
+        tills = [t for bar in bars for t in self.world.bar_tills(bar.index)]
+        for till in tills:
             self.q.add(z_at - timedelta(seconds=45), self._heartbeat(till))
-        self.q.add(z_at, self._z(bar, day))
+        self.q.add(z_at, self._shop_z(bars, tills, day))
 
     # ── the actions ───────────────────────────────────────────────────────────
 
@@ -394,6 +427,36 @@ class Month:
                                    "zReportId": out["zReportId"], "at": when.isoformat()})
         return run
 
+    def _shop_z(self, bars: List[P.Bar], tills: List[VirtualTill], day: date):
+        """The Z wizard for the whole branch: ask for the candidates, send every till that has a
+        shift to report (no area), and expect the Z built at once, numbered by the shop's counter."""
+        def run(when):
+            shop_id = self.world.shop_id
+            cands = self.api.admin("GET", f"/shops/{shop_id}/z-candidates")
+            by_id = {str(m["machineId"]): m for m in cands["machines"]}
+            reporting = [m for m in cands["machines"] if m.get("openShift") or m.get("closedShifts")]
+            open_now = [m["machineName"] for m in reporting if m.get("openShift")]
+            if open_now:
+                raise RuntimeError(f"{day}: shop Z asked while a shift is still open on {open_now}")
+            want = {t.id for t in tills}
+            have = {str(m["machineId"]) for m in reporting}
+            if have != want:
+                raise RuntimeError(f"{day}: tills with shifts awaiting the shop Z {sorted(have)} "
+                                   f"differ from the tills of the bars that traded {sorted(want)}")
+            if cands.get("zScope") != "shop" or any(by_id[t.id].get("zMode") != "cloud" for t in tills):
+                raise RuntimeError(f"{day}: the shop is not in shop-Z mode: {cands.get('zScope')}")
+            out = self.api.admin("POST", "/z-runs", {
+                "shopId": shop_id, "businessDate": day.isoformat(),
+                "machines": [{"machineId": t.id} for t in tills]})
+            if out.get("status") != "completed" or not out.get("zReportId"):
+                raise RuntimeError(f"{day}: shop Z run {out.get('id')} is {out.get('status')}: {out}")
+            if out.get("areaId") is not None:
+                raise RuntimeError(f"{day}: the shop Z run carries an area: {out.get('areaId')}")
+            self.ledger.zs.append({"shop": True, "bars": [b.index for b in bars], "tills": len(tills),
+                                   "day": day.isoformat(), "runId": out["id"], "zReportId": out["zReportId"],
+                                   "zNumber": out.get("zNumber"), "at": when.isoformat()})
+        return run
+
     # ── the month ─────────────────────────────────────────────────────────────
 
     def run(self, days: Optional[List[date]] = None) -> Ledger:
@@ -403,6 +466,8 @@ class Month:
                 open_bars = [bar for bar in P.BARS if d in P.nights(bar)]
                 for bar in open_bars:
                     self.plan_bar_night(bar, d)
+                if self.z_mode == "shop" and open_bars:
+                    self.plan_shop_z(open_bars, d)
                 n = self.q.run(self.clock)
                 docs = sum(t.stats["pushed"] for t in self.world.tills)
                 self.log(f"{d.isoformat()} ({d.strftime('%a')}): bars {[b.index for b in open_bars]} "

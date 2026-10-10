@@ -16,7 +16,7 @@ import); skipped in offline mode. Add-only and idempotent: tables looked at firs
 bound is left as it is.
 
 Revision ID: 701a25694d3c
-Revises: 4b6d1b7b3549
+Revises: 7c3a9d2e5b14
 Create Date: 2026-10-10
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "701a25694d3c"
-down_revision: Union[str, Sequence[str], None] = "4b6d1b7b3549"
+down_revision: Union[str, Sequence[str], None] = "7c3a9d2e5b14"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

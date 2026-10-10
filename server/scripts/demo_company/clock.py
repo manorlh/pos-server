@@ -10,6 +10,13 @@ Two kinds of "now" exist in the server, and both are moved here:
    The subclass's metaclass keeps `isinstance(x, datetime)` true for real datetimes, so a
    value read from the database still is a `datetime` to the code.
 
+   Some product code reads `datetime` with a function-local import instead (`from datetime
+   import datetime as _dt` inside the heartbeat handler, for `reported_open_shift_claimed_at`) —
+   a name the module patch cannot reach. `install()` therefore also hooks `builtins.__import__`:
+   an `import datetime` / `from datetime import …` statement executed by a module of `app` gets
+   a copy of the `datetime` module whose `datetime` / `date` are the simulation's. Nothing outside
+   `app` is touched, and `uninstall()` removes the hook.
+
 2. **The database.** About 300 columns are filled by Postgres itself (`server_default=now()`)
    or stamped by SQLAlchemy as SQL (`onupdate=func.now()`): `transactions.server_received_at`,
    `z_reports.created_at`, `pos_machines.created_at`… Left alone they would read the real
@@ -25,9 +32,11 @@ Nothing else is changed: no row is written here, no figure is computed here.
 """
 from __future__ import annotations
 
+import builtins
 import datetime as _dt
 import re
 import sys
+import types
 from typing import Dict, List, Optional
 
 _REAL_DATETIME = _dt.datetime
@@ -105,6 +114,46 @@ class SimDate(_REAL_DATE, metaclass=_DateMeta):
 
 
 _patched: List[tuple] = []
+
+# ── Function-local `import datetime` in the product ───────────────────────────
+
+_real_import = builtins.__import__
+_proxy_module: Optional[types.ModuleType] = None
+_import_hooked = False
+
+
+def _simulated_datetime_module() -> types.ModuleType:
+    """The stdlib `datetime` module, but with the simulation's `datetime` and `date`."""
+    global _proxy_module
+    if _proxy_module is None:
+        proxy = types.ModuleType("datetime")
+        proxy.__dict__.update({k: v for k, v in _dt.__dict__.items() if k not in ("__name__", "__spec__", "__loader__")})
+        proxy.datetime = SimDatetime
+        proxy.date = SimDate
+        _proxy_module = proxy
+    return _proxy_module
+
+
+def _hooked_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == "datetime" and level == 0 and CLOCK is not None and globals is not None:
+        importer = globals.get("__name__") or ""
+        if importer == "app" or importer.startswith("app."):
+            return _simulated_datetime_module()
+    return _real_import(name, globals, locals, fromlist, level)
+
+
+def _install_import_hook() -> None:
+    global _import_hooked
+    if not _import_hooked:
+        builtins.__import__ = _hooked_import
+        _import_hooked = True
+
+
+def _remove_import_hook() -> None:
+    global _import_hooked
+    if _import_hooked:
+        builtins.__import__ = _real_import
+        _import_hooked = False
 
 
 def _patch_modules() -> int:
@@ -206,6 +255,7 @@ def install(start: _dt.datetime) -> SimClock:
 
     CLOCK = SimClock(start)
     _patch_modules()
+    _install_import_hook()
     if not getattr(engine, "_demo_clock_hooks", False):
         _install_db_hooks(engine)
         engine._demo_clock_hooks = True
@@ -224,4 +274,5 @@ def uninstall() -> None:
     while _patched:
         module, attr, real = _patched.pop()
         setattr(module, attr, real)
+    _remove_import_hook()
     CLOCK = None

@@ -24,6 +24,7 @@ import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/fo
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
 import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
 import { hasDrawerTips } from '@/lib/drawerTips';
+import { cashMovementRows } from '@/lib/zCashMovements';
 import { zSectionLines, type ZReportSections, type ZSectionsLabels } from '@/lib/zReportSections';
 import {
   hasBetweenShiftAdjustments,
@@ -213,6 +214,10 @@ function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?:
           {hasBetweenShiftAdjustments(s.betweenShiftAdjustments) ? (
             <Row label={t('betweenShiftAdjustments')} value={signedMoney(s.betweenShiftAdjustments)} />
           ) : null}
+          {/* "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": only on a Z the parameter applied to. */}
+          {cashMovementRows(s.cashMovements).map((r) => (
+            <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+          ))}
           <Row label={t('expectedCash')} value={formatCurrency(s.expectedCash)} />
           <Row
             label={t('countedCash')}
@@ -359,6 +364,9 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
             {hasBetweenShiftAdjustments(z.betweenShiftAdjustments) ? (
               <Row label={t('betweenShiftAdjustments')} value={signedMoney(z.betweenShiftAdjustments)} />
             ) : null}
+            {cashMovementRows(z.cashMovements).map((r) => (
+              <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+            ))}
             <Row label={t('expectedCash')} value={formatCurrency(z.expectedCash)} />
             <Row
               label={t('countedCash')}

@@ -344,6 +344,15 @@ describe('the protocol (pure)', () => {
     });
     expect(rich?.lines[0].options).toEqual([{ groupId: 'g', optionId: 'o', qty: 3, pre: 'extra' }, { groupId: 'g', optionId: 'x', qty: 1, pre: null }]);
     expect(rich?.lines[1].meal).toEqual({ components: [{ slotId: 's1', productId: 'b1' }] });
+    // "תפריטים": the price the line was added at and the menu it was added under pass through; nothing else does.
+    const menus = startPaymentInput({
+      lines: [
+        { key: 'k', productId: 'p', qty: 1, unitAgorot: 4000, listAgorot: 4000.4, catalogAgorot: 5400, menuId: 'lunch', priceSource: 'menu' },
+        { key: 'j', productId: 'q', qty: 1, listAgorot: 'x', catalogAgorot: null, menuId: '', priceSource: 'other' },
+      ],
+    });
+    expect(menus?.lines[0]).toMatchObject({ unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', priceSource: 'menu' });
+    expect(menus?.lines[1]).toEqual({ key: 'j', productId: 'q', qty: 1, options: [], notes: [] });
     expect(printablePage('bon', { kind: 'bon', lines: [] })).not.toBe(null);
     expect(printablePage('receipt', { kind: 'receipt' })).toBe(null);
     expect(printablePage('bon', { kind: 'slip' })).toBe(null);

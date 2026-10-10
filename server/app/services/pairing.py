@@ -14,6 +14,7 @@ from app.models.tenant_membership import TenantMembership
 from app.models.shift import Shift, ShiftStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.register_number import assign_register_number, set_machine_shop
+from app.services.machine_names import settle_default_name
 from app.services import machine_catalog, transmissions
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
@@ -101,6 +102,7 @@ def create_pairing_code(
     platform: Optional[str] = None,
     kds_options: Optional[dict] = None,
     work_config: Optional[dict] = None,
+    machine_name: Optional[str] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
@@ -115,6 +117,8 @@ def create_pairing_code(
     (app/services/display_devices.py). `platform` ("android" | "windows") refuses a device
     of the other platform; None checks nothing. `work_config` ("תצורת עבודה", checked by
     `work_config.check_pairing_request`) is applied to the new machine right after it pairs.
+    `machine_name` (already cleaned, `machine_names.clean_machine_name`) is the name the new machine
+    gets, over a name the device sends itself; None leaves the default (docs/SPEC_PAIRING_QR.md §4).
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -143,6 +147,7 @@ def create_pairing_code(
         platform=platform,
         kds_options=kds_options,
         work_config=work_config,
+        machine_name=machine_name,
         expires_at=expires_at,
         is_used=False,
     )
@@ -179,6 +184,9 @@ def validate_pairing_code(
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
     )
+    # "שם המכשיר": the name typed in the add-device form wins over one the device sends (an older
+    # till names itself after its model); neither: the default, settled below.
+    machine_name = getattr(pairing_code, "machine_name", None) or machine_name
 
     if pairing_code.target_machine_id is not None:
         # "הוחלפה קופה" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2): the old device, before the new
@@ -234,6 +242,13 @@ def validate_pairing_code(
         )
         if assigned:
             pos_machine = assigned
+            # A till that arrived with no name is "קופה N" now it has its number (a replacement keeps
+            # its row's own name; a kiosk or a screen is not a register).
+            if pairing_code.target_machine_id is None and settle_default_name(
+                pos_machine, role=getattr(pairing_code, "device_role", None)
+            ):
+                db.commit()
+                db.refresh(pos_machine)
 
     # "סוג מכשיר (תפקיד)": a kiosk code makes the machine a kiosk now, in its shop, so the
     # till's very first sync opens it as one (docs/SPEC_DEVICE_ROLE_MODEL.md). Never fails

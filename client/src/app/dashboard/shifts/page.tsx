@@ -503,7 +503,13 @@ export default function ShiftsPage() {
                         <TableCell className="tabular-nums">
                           {number !== null ? number : <span className="text-muted-foreground">—</span>}
                         </TableCell>
-                        <TableCell>{machineName}</TableCell>
+                        <TableCell>
+                          {machineName}
+                          {/* An independent till shows its cashier no shifts: the shift is an internal record. */}
+                          {machine?.independentTill ? (
+                            <div className="text-xs text-muted-foreground">{t('internalShift')}</div>
+                          ) : null}
+                        </TableCell>
                         <TableCell className="text-sm">
                           {shopName ?? <span className="text-muted-foreground">—</span>}
                         </TableCell>

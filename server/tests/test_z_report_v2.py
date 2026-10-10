@@ -39,7 +39,7 @@ from shift_world import NOW, accept_str_uuids, make_world
 GOLDEN = Path(__file__).parent / "fixtures" / "z_report_v2_golden.json"
 #: The file's SHA-256 (line endings read as LF) — the same constant in pos-android's
 #: ZReportSectionsTest. Change the fixture in both repositories, and both constants, together.
-GOLDEN_SHA256 = "fdefc4f9063727533b7fc40d3f86d3d3adbdb7e01d092045179ffe927b50ea1d"
+GOLDEN_SHA256 = "799c6258a374311cfff0058cd968d13f46b2da552297edc9fc60f0f832d2f72c"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / GOLDEN.name
 
@@ -151,6 +151,32 @@ def test_every_section_reconciles(name):
         assert _ag(s["vat"]["base"]) + _ag(s["vat"]["vat"]) == _ag(s["vat"]["total"]) == total
     if s["drawer"] is not None:
         assert _ag(s["drawer"]["cashReceipts"]) == pay.get("cash", 0) + cash_tips
+        # Every line of the drawer adds up to its expected cash ("Z — מזומן צפוי כולל הפקדות ותנועות
+        # מזומן": with the parameter on a Z prints the movements too; off, it has none).
+        d = s["drawer"]
+        assert (
+            _ag(d["opening"]) + _ag(d["cashReceipts"]) - _ag(d["tipsPaidFromDrawer"]) + _ag(d["betweenShifts"])
+            + _ag(d["cashIn"]) - _ag(d["expenses"]) - _ag(d["safeDrop"])
+        ) == _ag(d["expected"])
+
+
+def test_the_z_drawer_on_and_off_cases_differ_only_in_the_movements():
+    by_name = _all_computed()
+    on = by_name["z drawer, parameter on: the movements are in the expected cash"]["drawer"]
+    off = by_name["z drawer, parameter off: the same day, the deposit reads as a shortage"]["drawer"]
+    # The same day, the same documents: the sales and the cash receipts do not move …
+    assert on["cashReceipts"] == off["cashReceipts"] == "40.00"
+    assert (on["opening"], off["opening"]) == ("100.00", "100.00")
+    # … only the expected cash does, by the movements: +20 − 10 − 90.
+    assert (on["expected"], off["expected"]) == ("60.00", "140.00")
+    assert (on["cashIn"], on["expenses"], on["safeDrop"]) == ("20.00", "10.00", "90.00")
+    assert (off["cashIn"], off["expenses"], off["safeDrop"]) == (None, None, None)
+    # The count (60) is what the till held: right against the one, an 80 shortage against the other.
+    assert (on["gap"], off["gap"]) == ("0.00", "-80.00")
+    # Nothing but the drawer differs: the sales, the VAT, the payments and the receipts are one story.
+    a = by_name["z drawer, parameter on: the movements are in the expected cash"]
+    b = by_name["z drawer, parameter off: the same day, the deposit reads as a shortage"]
+    assert {k: v for k, v in a.items() if k != "drawer"} == {k: v for k, v in b.items() if k != "drawer"}
 
 
 @pytest.mark.parametrize("case", _cases(), ids=lambda c: c["name"])

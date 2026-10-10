@@ -1209,6 +1209,22 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "וההפניה נרשמת. כבוי — כמו קודם: הבון ממתין בתור ומנסה שוב, עם ההתראה האדומה."
         ),
     ),
+    # Read by the till's kitchen print queue (pos-android hardware/kitchen KitchenPrintService
+    # `PARAM_STATUS_CHECK`, KitchenDelivery): on unless this says false.
+    BuiltinParameter(
+        key="kitchenPrinterStatusCheck",
+        label="בדיקת מצב מדפסת בונים (DLE EOT)",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל): סביב כל בון שנשלח למדפסת רשת או Bluetooth הקופה קוראת את מצב המדפסת "
+            "(פקודת הסטטוס DLE EOT) — לפני ההדפסה, כדי לא לשלוח למדפסת בלי נייר או עם מכסה פתוח, ואחריה, "
+            "כדי לדעת שהבון אכן יצא. כך תקלה מוצגת מיד (נגמר הנייר, המכסה פתוח) והבון ממתין בתור במקום "
+            "ללכת לאיבוד. כבוי — הבון נשלח בלי לקרוא את מצב המדפסת, ללא אישור שיצא: רק למדפסת שמתנהגת "
+            "לא טוב כשהיא נשאלת על מצבה (מתנתקת, קופאת או מדפיסה תווים מוזרים). ניתן לקבוע לפי חברה, "
+            "סניף, נקודת מכירה או קופה."
+        ),
+    ),
     # The menu layer ("תוספות ושינויים", docs/SPEC_MENU_MODIFIERS.md) — read by the till.
     BuiltinParameter(
         key="upsellEnabled",
@@ -1606,6 +1622,12 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spe
 from app.services.remote_close_force import PARAMETER_SPECS as _REMOTE_FORCE_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_FORCE_SPECS)
+
+# "קופה עצמאית — Z בלבד, בלי משמרות" and "לשאול קופה פותחת" (app/services/independent_z_only.py): read by the till only;
+# an independent till works with no shifts in its UI, its internal shift opened silently, every close a Z.
+from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ONLY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
 
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
