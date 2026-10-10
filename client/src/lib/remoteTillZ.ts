@@ -1,7 +1,9 @@
 /**
  * "סגירת משמרת / הפקת Z מרחוק" (pos-server app/services/remote_till_z.py, behind the server's
  * REMOTE_TILL_Z_ENABLED): the manager confirms the till's current totals, and the till closes (or
- * makes its Z) once no sale or card payment is open — never forced, never automatic. The pure parts.
+ * makes its Z) — forced by default ("כפה סגירה", lib/remoteCloseForce.ts: never over a card in flight
+ * or documents not yet written), or, unticked, once no sale or card payment is open. Never automatic.
+ * The pure parts.
  */
 
 export interface RemoteClosePreview {
@@ -34,6 +36,8 @@ export interface RemoteClosePreview {
         'keepHeldSales'
       > & { keepHeldSales?: boolean; keepOffer?: import('./heldSales').HeldSalesOffer | null })
     | null;
+  /** "כפה סגירה": this till's default mode, and whether its build can (lib/remoteCloseForce.ts). */
+  force?: import('./remoteCloseForce').ForceMode;
   totalsKey: string;
   canRequest: boolean;
   whyNot: string | null;
@@ -74,6 +78,7 @@ const WAITS: Record<string, string> = {
   held_sales: 'ממתין — מכירות מושהות',
   payment_in_progress: 'ממתין לסיום התשלום בקופה',
   card_in_flight: 'ממתין לעסקת אשראי שבדרך',
+  documents_pending: 'ממתין למסמכים שטרם נכתבו בקופה',
   printing: 'ממתין למדפסת',
   kiosk_ordering: 'לקוח מזמין בקיוסק',
   kiosk_paying: 'לקוח משלם בקיוסק',

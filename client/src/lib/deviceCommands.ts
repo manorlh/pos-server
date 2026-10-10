@@ -129,7 +129,13 @@ export function reasonLabel(detail: string | null | undefined): string | null {
   return REASONS[detail] ?? detail;
 }
 
-/** "פקודה נשלחה: סנכרון · ממתין" / "… · התקבל במכשיר" / "… · בוצע" / "… · נכשל: באמצע מכירה". */
+/** A close done in the forced mode ("כפה סגירה", pos-server remote_close_force.py): its words say it all. */
+const FORCED_DONE = 'נסגר בכפייה מרחוק';
+
+/**
+ * "פקודה נשלחה: סנכרון · ממתין" / "… · התקבל במכשיר" / "… · בוצע" / "… · נכשל: באמצע מכירה" /
+ * "… · נסגר בכפייה מרחוק ע״י דנה".
+ */
 export function chipText(c: Pick<TrackedCommand, 'label' | 'phase' | 'detail' | 'sendError'>): string {
   if (c.sendError) return `פקודה לא נשלחה: ${c.label} · ${c.sendError}`;
   const state =
@@ -137,7 +143,9 @@ export function chipText(c: Pick<TrackedCommand, 'label' | 'phase' | 'detail' | 
       ? 'ממתין'
       : c.phase === 'failed' && c.detail
         ? `${PHASE_LABELS.failed}: ${c.detail}`
-        : PHASE_LABELS[c.phase];
+        : c.phase === 'done' && c.detail?.startsWith(FORCED_DONE)
+          ? c.detail
+          : PHASE_LABELS[c.phase];
   return `פקודה נשלחה: ${c.label} · ${state}`;
 }
 
@@ -207,8 +215,11 @@ export function phaseOfCard(c: {
   }
 }
 
-/** A shift close / transmit / till-Z request: waiting → in progress → completed / failed / expired / cancelled. */
-export function phaseOfRequest(status: string, errorMessage?: string | null): PhaseUpdate {
+/**
+ * A shift close / transmit / till-Z request: waiting → in progress → completed / failed / expired / cancelled.
+ * [forcedWords]: the server's "נסגר בכפייה מרחוק ע״י …" for a remote close done in the forced mode.
+ */
+export function phaseOfRequest(status: string, errorMessage?: string | null, forcedWords?: string | null): PhaseUpdate {
   switch (status) {
     case 'waiting':
     case 'waiting_close':
@@ -218,7 +229,7 @@ export function phaseOfRequest(status: string, errorMessage?: string | null): Ph
     case 'in_progress':
       return { phase: 'received', detail: null };
     case 'completed':
-      return { phase: 'done', detail: null };
+      return { phase: 'done', detail: forcedWords ?? null };
     case 'failed':
       return { phase: 'failed', detail: errorMessage ?? null };
     case 'expired':

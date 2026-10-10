@@ -130,9 +130,13 @@ export async function fetchClosePreview(machineId: string): Promise<import('@/li
   return (await api.get(`/device-commands/${machineId}/close-preview`)).data;
 }
 
-/** The confirmed close / Z: refused (409 totals_changed) when the till's totals moved since. */
-export async function requestRemoteClose(machineId: string, totalsKey: string) {
-  return (await api.post('/device-commands/close', { machineId, totalsKey })).data as { kind: string; created: boolean };
+/**
+ * The confirmed close / Z: refused (409 totals_changed) when the till's totals moved since. [force]: "כפה
+ * סגירה" for this request (lib/remoteCloseForce.ts); absent — the till's `remoteCloseForceByDefault`.
+ */
+export async function requestRemoteClose(machineId: string, totalsKey: string, force?: boolean) {
+  const body = force === undefined ? { machineId, totalsKey } : { machineId, totalsKey, force };
+  return (await api.post('/device-commands/close', body)).data as { kind: string; created: boolean; remoteForce?: boolean };
 }
 
 /** "סגירת יום סניפית": the shop by its configuration, the run under way (lib/remoteShopClose.ts). */
@@ -151,7 +155,7 @@ export async function fetchAreaShiftPreview(shopId: string, areaId: string): Pro
 }
 
 /** Each confirmed till its own remote shift close; per-till results (one failing never stops the others). */
-export async function requestAreaShiftClose(body: { shopId: string; areaId: string; totalsKeys: Record<string, string> }) {
+export async function requestAreaShiftClose(body: { shopId: string; areaId: string; totalsKeys: Record<string, string>; force?: boolean }) {
   return (await api.post('/device-commands/area-shift-close', body)).data as {
     results: { machineId: string; ok: boolean; code?: string; message?: string }[];
   };
@@ -169,6 +173,8 @@ export async function requestShopClose(body: {
   forceCloudRefundReason?: string;
   /** "סגירת יום לנקודת מכירה": that point of sale's area Z. */
   areaId?: string;
+  /** "כפה סגירה" for every till of this close; absent — each till's own default. */
+  force?: boolean;
 }) {
   return (await api.post('/device-commands/shop-close', body)).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }

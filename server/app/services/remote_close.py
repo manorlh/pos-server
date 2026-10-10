@@ -110,6 +110,9 @@ def take_pending_close_shift(
         out["keepHeldSales"] = True
     if z_runs._cancel_command(req):
         out["cancelHeldSales"] = z_runs._cancel_command(req)
+    if getattr(req, "remote_force", False):
+        # "כפה סגירה" (app/services/remote_close_force.py), beside `waitForRest`.
+        out["remoteForce"] = True
     return out
 
 

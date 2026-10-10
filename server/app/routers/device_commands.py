@@ -16,15 +16,17 @@ Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
 
 GET  /device-commands/features
 GET  /device-commands/{machine_id}/close-preview      → a till's close / Z preview
-POST /device-commands/close                           {machineId, totalsKey}
+POST /device-commands/close                           {machineId, totalsKey, force?}
 GET  /device-commands/shop-close-preview ?shopId=&areaId= → "סגירת יום סניפית" (or "סגירת יום לנקודת מכירה")
-POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?} → the Z run
+POST /device-commands/shop-close                      {shopId, totalsKey, confirmOpenTills?, confirmCloudData?, force?} → the Z run
 GET  /device-commands/shop-close/{run_id}             → its progress (builds the Z when every till is ready)
 POST /device-commands/shop-close/{run_id}/proceed     {excludeMachineIds} — the existing "build without"
 POST /device-commands/shop-close/{run_id}/cancel
 POST /device-commands/shop-close/{run_id}/force       {excludeMachineIds, reason} — a super admin only
 GET  /device-commands/area-shift-close-preview ?shopId=&areaId= → "סגירת משמרות לנקודת מכירה": each till
-POST /device-commands/area-shift-close                {shopId, areaId, totalsKeys: {machineId: key}}
+POST /device-commands/area-shift-close                {shopId, areaId, totalsKeys: {machineId: key}, force?}
+                                                      `force` ("כפה סגירה"): this request's tick; absent — each
+                                                      till's `remoteCloseForceByDefault` (remote_close_force.py)
 POST /device-commands/keep-held-sales                 {machineId, runId?, reason?} — "סגור בכל זאת — המכירות המושהות יישמרו"
 POST /device-commands/cancel-held-sales               {machineId, runId?, saleIds, reason} — "בטל מכירות מושהות וסגור"
 
@@ -174,6 +176,8 @@ class RemoteCloseIn(BaseModel):
     machine_id: uuid.UUID = Field(..., alias="machineId")
     #: The preview's `totalsKey` the manager confirmed: a sale since then refuses (409).
     totals_key: str = Field(..., alias="totalsKey", min_length=1, max_length=64)
+    #: "כפה סגירה" for this request (true / false); absent: the till's `remoteCloseForceByDefault`.
+    force: Optional[bool] = None
 
 
 def _remote_z_machine(db: Session, user: User, tenant_id, machine_id) -> POSMachine:
@@ -224,13 +228,14 @@ def post_remote_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The confirmed remote close / Z: the till's existing flow, at rest only, never forced."""
+    """The confirmed remote close / Z: the till's existing flow — "כפה סגירה" by the manager's tick, or
+    the till's `remoteCloseForceByDefault` (app/services/remote_close_force.py)."""
     from app.services import remote_till_z
 
     remote_till_z.require_enabled()
     machine = _remote_z_machine(db, current_user, active_tenant_id, body.machine_id)
     try:
-        out = remote_till_z.request(db, current_user, machine, totals_key=body.totals_key)
+        out = remote_till_z.request(db, current_user, machine, totals_key=body.totals_key, force=body.force)
     except HTTPException:
         db.rollback()
         raise
@@ -254,6 +259,8 @@ class ShopCloseIn(BaseModel):
     force_cloud_refund_reason: Optional[str] = Field(None, alias="forceCloudRefundReason", max_length=300)
     #: "סגירת יום לנקודת מכירה": the area Z of that point of sale (z_runs `area_id`).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
+    #: "כפה סגירה" for every till of this close (true / false); absent: each till's own default.
+    force: Optional[bool] = None
 
 
 class ShopCloseProceedIn(BaseModel):
@@ -357,7 +364,8 @@ def post_shop_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The confirmed day close: the shop's existing Z run, every till closing at rest only."""
+    """The confirmed day close: the shop's existing Z run — each till forced by its own default or the
+    manager's tick for this close ("כפה סגירה", remote_close_force.py), else at rest."""
     from fastapi.responses import JSONResponse
 
     from app.services import remote_till_z
@@ -377,6 +385,7 @@ def post_shop_close(
             force_reason=body.force_reason,
             force_cloud_refund_reason=body.force_cloud_refund_reason,
             area_id=body.area_id,
+            force=body.force,
         )
     except HTTPException:
         db.rollback()
@@ -510,6 +519,8 @@ class AreaShiftCloseIn(BaseModel):
     area_id: uuid.UUID = Field(..., alias="areaId")
     #: Each till the manager confirmed, with the totals key it saw.
     totals_keys: Dict[uuid.UUID, str] = Field(default_factory=dict, alias="totalsKeys")
+    #: "כפה סגירה" for every till of this close (true / false); absent: each till's own default.
+    force: Optional[bool] = None
 
 
 @router.get("/area-close-list")
@@ -566,7 +577,7 @@ def post_area_shift_close(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Each confirmed till: its own remote shift close (at rest, never forced); per-till results."""
+    """Each confirmed till: its own remote shift close ("כפה סגירה" by its default or the tick); per-till results."""
     from app.services import remote_till_z
 
     remote_till_z.require_enabled()
@@ -575,7 +586,7 @@ def post_area_shift_close(
         # Each till by the machine admins' own scope rules, as its single remote close.
         _remote_z_machine(db, current_user, active_tenant_id, machine_id)
     keys = {str(k): v for k, v in body.totals_keys.items()}
-    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, keys)
+    out = remote_till_z.area_shift_request(db, current_user, shop, body.area_id, keys, force=body.force)
     db.commit()
     return out
 

@@ -64,6 +64,10 @@ class TillZRequest(Base):
     #: confirmed ("בטל מכירות מושהות וסגור": ids, reason, who, when) — app/services/held_sales_close.py.
     held_sales = Column(JSONB, nullable=True)
     cancel_held_sales = Column(JSONB, nullable=True)
+    #: "כפה סגירה" from remote control (app/services/remote_close_force.py): forced from the moment the
+    #: manager sent it — the till's `remoteCloseForceByDefault`, or the manager's tick for this request.
+    #: Handed to the till as `remoteForce` beside `waitForRest` (a build without it waits for rest).
+    remote_force = Column(Boolean, nullable=False, default=False, server_default="false")
     #: The Z that answered it; NULL until then, and on one completed with nothing to report.
     z_report_id = Column(UUID(as_uuid=True), ForeignKey("z_reports.id"), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)

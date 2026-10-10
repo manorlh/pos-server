@@ -35,6 +35,8 @@ import {
 } from '@/lib/liveControlApi';
 import type { CloudRefundPending } from '@/lib/types';
 import { money, tenderLabel } from '@/lib/remoteTillZ';
+import { defaultsOf, forceExplain, groupCheckbox, rowModeWords } from '@/lib/remoteCloseForce';
+import { ForceCloseToggle } from './force-close-toggle';
 import {
   closePanels,
   confirmationAsked,
@@ -72,7 +74,9 @@ function Online({ online }: { online: boolean | null }) {
   );
 }
 
-function DeviceLine({ row, showAction }: { row: ShopCloseRow; showAction: boolean }) {
+function DeviceLine({ row, showAction, forceTick }: { row: ShopCloseRow; showAction: boolean; forceTick?: boolean | null }) {
+  // In the confirmation: this till's mode for this close ("ייסגר בכפייה" / "ימתין שהקופה תתפנה").
+  const mode = forceTick === undefined ? null : rowModeWords(row.force, forceTick);
   return (
     <li className="flex flex-wrap items-center gap-1.5 rounded-lg border p-2 text-sm">
       <span className="font-medium">{row.name}</span>
@@ -83,7 +87,8 @@ function DeviceLine({ row, showAction }: { row: ShopCloseRow; showAction: boolea
       <span className="w-full text-xs text-muted-foreground">
         {row.openShift ? 'משמרת פתוחה' : row.shiftsAwaitingZ > 0 ? `${row.shiftsAwaitingZ} משמרות ממתינות ל-Z` : 'אין משמרות ל-Z'}
         {row.closesWithShopZ ? ' · ייסגר ויפיק Z משלו יחד עם ה-Z הסניפי' : ''}
-        {row.openBasket ? ` · ${row.openBasket}` : ''}
+        {row.openBasket && !(mode && row.force && !row.force.note && (forceTick ?? row.force.forceByDefault)) ? ` · ${row.openBasket}` : ''}
+        {mode ? ` · ${mode}` : ''}
         {showAction && !row.action.available && row.action.whyNot ? ` · ${row.action.label}: ${row.action.whyNot}` : ''}
         {showAction && row.action.available ? ` · ${row.action.label} — מ"סגירה / Z" בשורת הקופה` : ''}
       </span>
@@ -125,6 +130,10 @@ function ShopCloseDialog({
 }) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState<string | null>(null);
+  // "כפה סגירה" for every till of this close: null — each till's own default (lib/remoteCloseForce.ts).
+  const [tick, setTick] = useState<boolean | null>(null);
+  const modes = p.inShopZ.map((r) => r.force);
+  const box = groupCheckbox(modes, tick);
   const [asked, setAsked] = useState<{ flag: 'confirmCloudData' | 'confirmOpenTills'; text: string; message?: string } | null>(null);
   const [flags, setFlags] = useState<{ confirmCloudData?: boolean; confirmOpenTills?: boolean }>({});
   const [askedChecked, setAskedChecked] = useState(false);
@@ -137,9 +146,14 @@ function ShopCloseDialog({
         ...(forceReason ? { forceReason } : {}),
         ...(forceCloudRefundReason ? { forceCloudRefundReason } : {}),
         ...(p.areaId ? { areaId: p.areaId } : {}),
+        ...(box.send !== undefined ? { force: box.send } : {}),
       }),
     onSuccess: () => {
-      toast.success('נשלח לקופות — כל קופה תיסגר כשאין בה מכירה או תשלום פתוחים');
+      toast.success(
+        box.send === false || (box.send === undefined && defaultsOf(modes) === 'off')
+          ? 'נשלח לקופות — כל קופה תיסגר כשאין בה מכירה או תשלום פתוחים'
+          : 'נשלח לקופות — כל קופה תיסגר לפי "כפה סגירה" (עסקת אשראי בדרך תמתין)',
+      );
       qc.invalidateQueries({ queryKey: key(p.shopId, p.areaId) });
       onClose();
     },
@@ -176,10 +190,23 @@ function ShopCloseDialog({
         </DialogHeader>
         <div className="space-y-3 text-sm">
           <p className="text-muted-foreground">
-            כל קופה ב-Z הסניפי תסגור את המשמרת רק כשאין בה מכירה או תשלום פתוחים. כשכולן ייסגרו יופק ה-Z הסניפי ({p.source.label}).
+            כל קופה ב-Z הסניפי תסגור את המשמרת. כשכולן ייסגרו יופק ה-Z הסניפי ({p.source.label}).
           </p>
+          <ForceCloseToggle
+            checked={box.checked}
+            indeterminate={box.indeterminate}
+            defaultWords={
+              defaultsOf(modes) === 'mixed'
+                ? 'ברירת המחדל שונה בין הקופות'
+                : defaultsOf(modes) === 'off'
+                  ? 'ברירת המחדל: המתנה למנוחה'
+                  : 'ברירת המחדל: כפייה'
+            }
+            explain={box.indeterminate ? 'כל קופה לפי ברירת המחדל שלה (ברשימה)' : forceExplain(box.checked, 'close_shift')}
+            onChange={setTick}
+          />
           <ul className="space-y-1.5">
-            {p.inShopZ.map((row) => <DeviceLine key={row.machineId} row={row} showAction={false} />)}
+            {p.inShopZ.map((row) => <DeviceLine key={row.machineId} row={row} showAction={false} forceTick={tick} />)}
           </ul>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-xl border p-3">
             <dt className="text-muted-foreground">מסמכים</dt>

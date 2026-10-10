@@ -152,7 +152,8 @@ def _live_z_item(db: Session, machine_id: uuid.UUID) -> Optional[ZRunItem]:
 
 
 def request_close(
-    db: Session, user: User, machine: POSMachine, *, wait_for_rest: bool = False, now: Optional[datetime] = None
+    db: Session, user: User, machine: POSMachine, *, wait_for_rest: bool = False, remote_force: bool = False,
+    now: Optional[datetime] = None,
 ) -> Tuple[ShiftCloseRequest, bool]:
     """
     Ask `machine` to close its open shift. Returns `(request, created)`.
@@ -175,9 +176,16 @@ def request_close(
 
     for existing in _pending_query(db, machine.id).order_by(ShiftCloseRequest.created_at.asc()).all():
         if not reconcile(db, existing, now=now):
+            changed = False
             if wait_for_rest and not existing.wait_for_rest:
                 # Remote control asked too: the pending one waits for rest from now on.
                 existing.wait_for_rest = True
+                changed = True
+            if wait_for_rest and bool(existing.remote_force) != bool(remote_force):
+                # Remote control asked again: its latest word on "כפה סגירה" stands (remote_close_force.py).
+                existing.remote_force = bool(remote_force)
+                changed = True
+            if changed:
                 db.flush()
                 _send(machine, existing, user, now)
             return existing, False
@@ -200,6 +208,7 @@ def request_close(
         status=S.WAITING_CLOSE,
         expires_at=now + timedelta(hours=CLOSE_REQUEST_TTL_HOURS),
         wait_for_rest=bool(wait_for_rest),
+        remote_force=bool(remote_force) and bool(wait_for_rest),
     )
     _name_shift(db, req, shift_id)
     db.add(req)
@@ -229,6 +238,7 @@ def _send(machine: POSMachine, req: ShiftCloseRequest, user: User, now: datetime
         wait_for_rest=bool(getattr(req, "wait_for_rest", False)),
         keep_held_sales=bool(getattr(req, "keep_held_sales", False)),
         cancel_held_sales=z_runs._cancel_command(req),
+        remote_force=bool(getattr(req, "remote_force", False)),
     )
     # Only once the request is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(req), lambda: publish_close_shift_notify(*args, **kw))
@@ -401,6 +411,9 @@ def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetim
         "sentAt": req.sent_at,
         "receivedAt": req.received_at,
         "completedAt": req.completed_at,
+        # "כפה סגירה" (app/services/remote_close_force.py): asked forced, and done so.
+        "remoteForce": bool(getattr(req, "remote_force", False)),
+        "forcedWords": _forced_words(req),
         **till_backlog(machine, now=now),
         # Only while the till still has to act: afterwards the shift's own X says it.
         "documentsOnCloud": (
@@ -408,3 +421,10 @@ def request_to_out(db: Session, req: ShiftCloseRequest, *, now: Optional[datetim
         ),
         "shift": summary,
     }
+
+
+def _forced_words(req: ShiftCloseRequest) -> Optional[str]:
+    """A request completed in the forced mode: "נסגר בכפייה מרחוק ע״י <מנהל>"."""
+    from app.services import remote_close_force
+
+    return remote_close_force.done_words(req) if req.status == S.COMPLETED else None

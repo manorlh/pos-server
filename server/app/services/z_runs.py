@@ -426,6 +426,7 @@ def _send_close(machine: POSMachine, item: ZRunItem, user: User, now: datetime) 
         wait_for_rest=bool(getattr(item.run, "wait_for_rest", False)),
         keep_held_sales=bool(getattr(item, "keep_held_sales", False)),
         cancel_held_sales=_cancel_command(item),
+        remote_force=bool(getattr(item, "remote_force", False)),
     )
     # Only once the item is committed: a till hearing it first would find no such request.
     after_commit.run(object_session(item), lambda: publish_close_shift_notify(*args, **kw))
@@ -784,6 +785,7 @@ def create_z_run(
     wait_for_rest: bool = False,
     force_reason: Optional[str] = None,
     force_cloud_refund_reason: Optional[str] = None,
+    remote_force: Optional[bool] = None,
     now: Optional[datetime] = None,
 ) -> ZRun:
     """
@@ -796,6 +798,8 @@ def create_z_run(
 
     `wait_for_rest` ("סגירת יום סניפית" from remote control): each till closes only once no sale,
     payment or card is open on it (`waitForRest` on its close-shift). Never with `force`.
+    `remote_force` with it ("כפה סגירה", app/services/remote_close_force.py): the manager's tick for
+    this close (True / False), or None — each till by its own `remoteCloseForceByDefault`.
 
     `strict_cloud_check` (a shop Z from the master till): the Z is built only once the
     cloud has verified every till (`verify_item`), whenever that happens.
@@ -982,6 +986,10 @@ def create_z_run(
         include_open = include_open and has_open
 
         item = ZRunItem(id=uuid.uuid4(), run_id=run.id, machine_id=machine_id, include_open_shift=include_open)
+        if run.wait_for_rest and include_open:
+            from app.services import remote_close_force
+
+            item.remote_force = remote_close_force.effective(db, machine, remote_force)
         if include_open:
             if sel.through_shift_id is not None:
                 raise HTTPException(
@@ -1902,6 +1910,9 @@ def take_pending_close_shift(db: Session, machine: POSMachine, *, now: Optional[
     if _cancel_command(item):
         # "בטל מכירות מושהות וסגור": exactly the confirmed ids.
         out["cancelHeldSales"] = _cancel_command(item)
+    if getattr(item, "remote_force", False):
+        # "כפה סגירה" (app/services/remote_close_force.py), beside `waitForRest`.
+        out["remoteForce"] = True
     return out
 
 

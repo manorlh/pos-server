@@ -132,6 +132,7 @@ default). Tested at company only, shop over company, area over shop and till ove
 | `allowCloseWithHeldSales` "סגירה עם מכירות מושהות" | off | Till: "סגור והשאר מושהות"; dashboard: "סגור בכל זאת — המכירות המושהות יישמרו" for a manager | Till: close only once every held sale is paid or cancelled; dashboard: support only, with a reason |
 | `remoteCancelHeldSales` "ביטול מכירות מושהות מהענן בסגירה מרחוק" | on | "בטל מכירות מושהות וסגור" offered (Z edit + reason; exactly the listed sales) | Not offered (hidden); refused "בסניף כבוי ..."; the till ignores such a command |
 | `remoteCloseParkOpenBasket` "סגירה מרחוק גם עם עגלה פתוחה (העגלה נשמרת כמכירה מושהית)" | off | A basket being composed is parked as a held sale (recorded `held_sale_parked`; the cashier sees "העגלה נשמרה כמכירה מושהית — בוצעה סגירה מרחוק") and the till closes; that basket never holds that close. Never a payment, a card in flight or a held tender; never at a kiosk. Shown "עגלה פתוחה — תישמר כמכירה מושהית" | The till waits for rest: "עגלה פתוחה — ממתין לסיום המכירה" |
+| `remoteCloseForceByDefault` "כפיית סגירה מרחוק כברירת מחדל" | **on** | "כפה סגירה" (below): forced from the moment the manager sends it; the dialog shows the mode and the manager may untick it for that request | The till waits for rest, as before; the manager may tick "כפה סגירה" for one request |
 
 Mixed areas, as tested: the rule on for the bar's area and off for the kitchen's — an open bar till holds
 the shop Z (and can't be left out); an open kitchen till is left out and goes to the next Z. The main
@@ -182,6 +183,36 @@ classification, support's force, the capability gate):
 | Offline with an open shift | Allowed to start; waits for it; "build without" refused | "מנותקת · משמרת פתוחה"; support may force with a reason |
 | Offline, state unknown (never reported, open / pending last report, or "closed" older than its last shift) | Not allowed to start | "מצב לא ידוע — ייתכן שיש משמרת פתוחה"; support may start anyway with a reason |
 | Old app without `remote_close_v2` | Not allowed | "הקופה צריכה עדכון גרסה לפני סגירה מרחוק" (kiosks exempt) |
+
+### "כפה סגירה" — remote close / Z forced by default (`remoteCloseForceByDefault`, the owner 09.10)
+
+`app/services/remote_close_force.py`, Android `data/sync/RemoteForcedClose.kt`; tests
+`tests/test_remote_close_force.py`, Android `RemoteForcedCloseTest`, dashboard `lib/remoteCloseForce.test.ts`.
+Migration `d9b3f7a1c5e8` (`remote_force` on `z_run_items`, `shift_close_requests`, `till_z_requests`).
+
+The request stays `waitForRest: true` and gains `remoteForce: true` (never §9's `force`); a till without the
+heartbeat capability `remote_close_force_v1` ignores it and waits for rest (the dialog says so). Applies to
+a till's remote shift close and its own Z, the shop's / a point of sale's day close (each till by its own
+value, or the manager's tick for the whole close) and the area's shift close.
+
+| Case at the till | Forced (default) | Unticked / parameter off |
+| --- | --- | --- |
+| A basket being composed | Parked at once by the safe park (`held_sale_parked`); closes | Waits (`sale_open`), or parked under `remoteCloseParkOpenBasket` |
+| Held sales | Never hold it — stay held into the next shift (counted on the log); a confirmed "בטל מכירות מושהות וסגור" (`remoteCancelHeldSales` on) cancels exactly the listed ones | Waits (`held_sales`), as before |
+| Payment screen open, nothing sent to the terminal | Backed out exactly as the cashier's "ביטול", then the basket parked | Waits (`payment_in_progress`) |
+| Payment that took something (a card step, a voucher, a part paid) | Never backed out: waited out (the card's own timeout), then deferred `payment_in_progress` | Waits |
+| A card in flight / result unknown | **Never forced**: waited out up to the card's timeout (155 s), deferred `card_in_flight`, asked again each beat | Waits |
+| Documents not yet written | **Never forced**: waited up to 30 s, then reported — deferred `documents_pending` ("ממתין למסמכים שטרם נכתבו בקופה"), asked again | Deferred `card_in_flight` as before |
+| A table's order | Kept on its table (the open-tables rule as always) | As before |
+| A basket behind the lock screen | Waits for the cashier (`sale_open`) | Waits |
+| A kiosk | Its own rules: a customer ordering or paying always holds it; never parked | As before |
+| The cloud's word | Still required before the close; holds read again at the close | As before |
+
+Logged: the till's `forced_z_close` event with `remote: true` (parked, payment backed out, held sales carried,
+waits) → the exception "סגירת Z כפויה" with the manager (`forcedBy`, from the request — a shift close request
+too) and the summary "נסגר בכפייה מרחוק ע״י <מנהל> · …"; the server logs each send with its mode. Said:
+the till's notice and chip "נסגר בכפייה מרחוק ע״י <מנהל>", the request's `forcedWords` (the dashboard's
+chip), the run's item words and command detail.
 
 ## Saturday — decided at the Friday integration (09.10)
 

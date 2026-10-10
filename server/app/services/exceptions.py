@@ -839,8 +839,17 @@ class Detector:
 
 
 def forced_close_summary(details: Dict[str, Any]) -> str:
-    """"כפה: דנה · הושהתה: <שם> (3 שורות)" — the line the exceptions list shows."""
-    parts = [f"כפה: {details.get('forcedBy') or 'לא ידוע'}"]
+    """
+    "כפה: דנה · הושהתה: <שם> (3 שורות)" — the line the exceptions list shows. Remote control's forced
+    close (app/services/remote_close_force.py): "נסגר בכפייה מרחוק ע״י דנה · …", with the held sales it
+    carried and a payment screen it left.
+    """
+    if details.get("remote"):
+        from app.services import remote_close_force
+
+        parts = [remote_close_force.forced_words(details.get("forcedBy") or "לא ידוע")]
+    else:
+        parts = [f"כפה: {details.get('forcedBy') or 'לא ידוע'}"]
     parked = details.get("parked") if isinstance(details.get("parked"), dict) else None
     if parked and parked.get("heldSaleId"):
         parts.append(f"הושהתה: {parked.get('name') or ''} ({parked.get('lines') or 0} שורות)".strip())
@@ -848,14 +857,19 @@ def forced_close_summary(details: Dict[str, Any]) -> str:
         parts.append(f"לא הושהתה ({parked.get('notParkedReason')})")
     else:
         parts.append("לא הייתה הזמנה פתוחה")
+    if details.get("remote") and details.get("paymentAbandoned"):
+        parts.append("מסך התשלום בוטל (לא נשלח דבר למסוף)")
+    carried = details.get("heldSalesCarried")
+    if details.get("remote") and isinstance(carried, int) and carried > 0:
+        parts.append(f"{carried} מכירות מושהות נשארו למשמרת הבאה")
     return " · ".join(parts)
 
 
 def forced_close_initiator(db: Session, machine: POSMachine, request_id: Any) -> Dict[str, Any]:
     """
     `{forcedBy, forcedByUserId, requestKind}` for a forced remote Z close, from the request
-    the till names: a dashboard till-Z request, or a Z run's item. Empty when neither is
-    this till's.
+    the till names: a dashboard till-Z request, a Z run's item, or remote control's shift close
+    (a forced one, app/services/remote_close_force.py). Empty when none is this till's.
     """
     from app.models.till_z_request import TillZRequest
     from app.models.user import User
@@ -878,6 +892,16 @@ def forced_close_initiator(db: Session, machine: POSMachine, request_id: Any) ->
         return {
             "requestKind": "z_run",
             "zRunId": str(item.run_id),
+            "forcedBy": (user.username or user.email) if user is not None else None,
+            "forcedByUserId": str(user.id) if user is not None else None,
+        }
+    from app.models.shift_close_request import ShiftCloseRequest
+
+    close = db.query(ShiftCloseRequest).filter(ShiftCloseRequest.id == key, ShiftCloseRequest.machine_id == machine.id).first()
+    if close is not None:
+        user = db.get(User, close.created_by_user_id) if close.created_by_user_id else None
+        return {
+            "requestKind": "close_shift",
             "forcedBy": (user.username or user.email) if user is not None else None,
             "forcedByUserId": str(user.id) if user is not None else None,
         }

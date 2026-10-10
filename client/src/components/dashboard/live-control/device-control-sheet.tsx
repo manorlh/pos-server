@@ -26,6 +26,8 @@ import { fetchClosePreview, fetchDeviceFeatures, fetchDevices, liveKeys, request
 import { sendDeviceCommand, trackRemoteClose } from '@/lib/deviceCommandsStore';
 import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { confirmLabel, money, requestStateLabel, tenderLabel, type RemoteClosePreview } from '@/lib/remoteTillZ';
+import { effectiveForce, forceExplain, sentToast } from '@/lib/remoteCloseForce';
+import { ForceCloseToggle } from './force-close-toggle';
 import { HeldSalesDialog } from './held-sales-dialog';
 import { ShopCloseSection } from './shop-close-panel';
 import type { LiveControlScope, LiveControlSheetProps } from './types';
@@ -50,18 +52,23 @@ export function useDevices(scope: LiveControlScope, enabled = true) {
 
 /**
  * "סגירת משמרת / הפקת Z מרחוק" for one till: its current totals, confirmed by the manager; the till
- * closes (or makes its Z, numbered in sequence) once no sale or card payment is open — never forced.
+ * closes (or makes its Z, numbered in sequence) — forced by default ("כפה סגירה", the till's
+ * `remoteCloseForceByDefault`; never over a card in flight or documents not yet written), or, unticked
+ * for this request, once no sale or card payment is open.
  */
 function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const preview = useQuery({ queryKey: ['device-commands', 'close-preview', machineId], queryFn: () => fetchClosePreview(machineId) });
   const [checked, setChecked] = useState<string | null>(null);
   const [held, setHeld] = useState(false);
+  // "כפה סגירה" for this request: null — the till's own default.
+  const [tick, setTick] = useState<boolean | null>(null);
   const p: RemoteClosePreview | undefined = preview.data;
+  const forced = effectiveForce(p?.force?.forceByDefault ?? true, tick);
   const send = useMutation({
-    mutationFn: () => requestRemoteClose(machineId, p!.totalsKey),
+    mutationFn: () => requestRemoteClose(machineId, p!.totalsKey, tick ?? undefined),
     onSuccess: (out) => {
-      toast.success('נשלח לקופה — ייסגר כשאין בה מכירה או תשלום פתוחים');
+      toast.success(sentToast(out.remoteForce ?? forced));
       // "פקודות שנשלחו": followed in the background (the tray, the device's chip); the dialog closes.
       trackRemoteClose(out, machineId, p?.name ?? null);
       qc.invalidateQueries({ queryKey: ['device-commands'] });
@@ -93,9 +100,18 @@ function RemoteCloseDialog({ machineId, onClose }: { machineId: string; onClose:
           <div className="space-y-3 text-sm">
             <p className="text-muted-foreground">
               {p.kind === 'till_z'
-                ? 'הקופה תסגור את המשמרת, תשדר את עסקאות האשראי ותפיק Z לפי הרצף שלה — רק כשאין בה מכירה או תשלום פתוחים.'
-                : 'הקופה תסגור את המשמרת — רק כשאין בה מכירה או תשלום פתוחים. המשמרת תיכנס ל-Z של הסניף.'}
+                ? 'הקופה תסגור את המשמרת, תשדר את עסקאות האשראי ותפיק Z לפי הרצף שלה.'
+                : 'הקופה תסגור את המשמרת. המשמרת תיכנס ל-Z של הסניף.'}
             </p>
+            {p.canRequest ? (
+              <ForceCloseToggle
+                checked={forced}
+                defaultWords={p.force?.forceByDefault === false ? 'ברירת המחדל בקופה: המתנה למנוחה' : 'ברירת המחדל בקופה: כפייה'}
+                explain={forceExplain(forced, p.kind)}
+                note={p.force?.note}
+                onChange={setTick}
+              />
+            ) : null}
             {!p.online ? <p className="rounded-lg bg-amber-50 p-2 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">הקופה לא מחוברת כרגע — הבקשה תגיע אליה כשתתחבר.</p> : null}
             {p.openShift ? (
               <p>

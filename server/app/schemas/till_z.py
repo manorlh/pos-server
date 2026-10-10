@@ -136,6 +136,10 @@ class TillZRequestOut(BaseModel):
     machine_sequence_number: Optional[int] = Field(None, alias="machineSequenceNumber")
     #: Asked "even mid-sale" (§9 of docs/SPEC_OFFLINE_TILL_Z.md).
     force: bool = False
+    #: "כפה סגירה" (app/services/remote_close_force.py): asked forced from remote control.
+    remote_force: bool = Field(False, alias="remoteForce")
+    #: Completed in that mode: "נסגר בכפייה מרחוק ע״י <מנהל>" (the chip and the notices); else null.
+    forced_words: Optional[str] = Field(None, alias="forcedWords")
     # The till's last report, as the status light reads it (a reading, not live).
     online: Optional[bool] = None
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")

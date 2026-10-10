@@ -518,8 +518,8 @@ const READERS: Record<CommandKind, Reader> = {
 async function requestReader(open: TrackedCommand[], path: (id: string) => string): Promise<Map<string, PhaseUpdate>> {
   const out = new Map<string, PhaseUpdate>();
   await each(open, async (c) => {
-    const { data } = await api.get<{ status: string; errorMessage?: string | null }>(path(c.id as string));
-    if (data?.status) out.set(c.id as string, DC.phaseOfRequest(data.status, data.errorMessage));
+    const { data } = await api.get<{ status: string; errorMessage?: string | null; forcedWords?: string | null }>(path(c.id as string));
+    if (data?.status) out.set(c.id as string, DC.phaseOfRequest(data.status, data.errorMessage, data.forcedWords));
   });
   return out;
 }
