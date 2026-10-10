@@ -262,19 +262,21 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   return (
     <>
       <aside className={cn('flex flex-col w-60 border-s bg-card h-full print:hidden', className)}>
-        <div className="px-4 py-5 flex items-center justify-between gap-2">
-          <span className="text-lg font-bold tracking-tight">POS Cloud</span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            title={theme === 'dark' ? t('themeLight') : t('themeDark')}
-            aria-label={theme === 'dark' ? t('themeLight') : t('themeDark')}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
+        <div className="px-4 py-5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-lg font-bold tracking-tight whitespace-nowrap">POS Cloud</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              title={theme === 'dark' ? t('themeLight') : t('themeDark')}
+              aria-label={theme === 'dark' ? t('themeLight') : t('themeDark')}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </Button>
+          </div>
           <div className="mt-3 space-y-2">
             <Select
               value={activeTenantId ?? ''}
