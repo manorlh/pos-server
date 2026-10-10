@@ -43,6 +43,7 @@ import {
   shareFile,
   supportsFileShare,
   waMeLink,
+  waWebLink,
   type DistributionKind,
   type RecipientState,
   type SentVia,
@@ -210,13 +211,13 @@ export function SendQueue({ batch, overview }: { batch: PrepaidVoucherBatch; ove
 
   const [busy, setBusy] = useState<string | null>(null);
 
-  const sendWhatsApp = (r: DistributionRecipient) => {
+  const sendWhatsApp = (r: DistributionRecipient, web = false) => {
     if (!r.message) {
       toast.error(t('noLink'));
       return;
     }
     // Opened inside the click (a popup blocker lets it through); WhatsApp asks to send.
-    window.open(waMeLink(r.phone, r.message), '_blank', 'noopener,noreferrer');
+    window.open((web ? waWebLink : waMeLink)(r.phone, r.message), '_blank', 'noopener,noreferrer');
     dispatch({ type: 'select', id: r.id });
     sent.mutate({ r, via: 'wa_link' });
   };
@@ -336,6 +337,10 @@ export function SendQueue({ batch, overview }: { batch: PrepaidVoucherBatch; ove
                 <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={!isSendable(current) || !!current.deletedAt}
                   onClick={() => sendWhatsApp(current)}>
                   <Send aria-hidden /> {current.phone ? t('send') : t('sendPickChat')}
+                </Button>
+                <Button variant="outline" disabled={!isSendable(current) || !!current.deletedAt}
+                  onClick={() => sendWhatsApp(current, true)}>
+                  <Send aria-hidden /> {t('sendWeb')}
                 </Button>
                 {canShare ? (
                   <Button variant="outline" disabled={!isSendable(current) || !!current.deletedAt || busy === current.id}

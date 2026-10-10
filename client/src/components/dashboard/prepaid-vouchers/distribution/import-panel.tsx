@@ -10,10 +10,11 @@ import { useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FileSpreadsheet, Loader2, Upload } from 'lucide-react';
+import { Download, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import {
   cellText,
   detectColumns,
+  importTemplateCsv,
   parseDelimited,
   rowsFromTable,
   type ColumnRole,
@@ -237,6 +238,16 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         </fieldset>
 
         <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="ghost" onClick={() => {
+            const url = URL.createObjectURL(new Blob([importTemplateCsv(mode)], { type: 'text/csv;charset=utf-8' }));
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'voucher-recipients-template.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+          }}>
+            <Download aria-hidden /> {t('template')}
+          </Button>
           <Button type="button" variant="outline" disabled={!rows.length || !hasPhone || preview.isPending}
             onClick={() => preview.mutate()}>
             {preview.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
