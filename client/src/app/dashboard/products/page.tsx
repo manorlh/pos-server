@@ -61,7 +61,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX, Globe } from 'lucide-react';
 // "חסום / אזל" on a product (components/dashboard/live-control).
 import { BlockItemSheet, ProductBlocksSection } from '@/components/dashboard/live-control';
 import { useScope } from '@/lib/scope';
@@ -155,6 +155,9 @@ function buildSavePayload(
   // back is not a scope change. Only a scope the form actually set is sent.
   delete payload.shopScope;
   if (shopScope) payload.shopScope = shopScope;
+  // "מופיע ב": the four switches go as `channels`; the older code says less ("none" is not one of
+  // the codes a form sends), so it is not echoed when they are.
+  if (payload.channels) delete payload.salesChannel;
   if (shopPrices && shopPrices.length > 0) payload.shopPrices = shopPrices;
   return payload;
 }
@@ -382,6 +385,10 @@ export default function ProductsPage() {
               <FileSpreadsheet className="h-4 w-4 ms-1" /> {t('importExport')}
             </Link>
           ) : null}
+          {/* "מופיע ב — עריכה בכמות": the four channels of many products, "all matching" on the server. */}
+          <Link href="/dashboard/products/channels" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Globe className="h-4 w-4 ms-1" /> {t('channelsBulk')}
+          </Link>
           {/* "אשף הקמת מוצר": a dish with its add-ons, its "בלי", a meal and its notes, in one pass. */}
           <Link href="/dashboard/products/wizard" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             <Sparkles className="h-4 w-4 ms-1" /> {t('wizard')}
@@ -468,7 +475,7 @@ export default function ProductsPage() {
                         {p.catalogLevel !== 'global' ? (
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
-                        {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                        {ticketBadge(p)}<ProductChannelBadge product={p} />
                         <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                       </div>
                     </TableCell>
@@ -554,7 +561,7 @@ export default function ProductsPage() {
                           {t('systemItemBadge')}
                         </Badge>
                       ) : null}
-                      {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                      {ticketBadge(p)}<ProductChannelBadge product={p} />
                       <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -854,7 +861,7 @@ export default function ProductsPage() {
               }
               onChange={(c) => setEditing((p) => ({ ...p, requiresManagerApproval: c }))}
             />
-            {/* "היכן הפריט נמכר": קופות וקיוסק / קיוסק בלבד / קופות בלבד (docs/SPEC_PRODUCT_CHANNELS.md). */}
+            {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי, and the exceptions per shop (lib/productChannels.ts). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

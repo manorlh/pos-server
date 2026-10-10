@@ -100,9 +100,17 @@ class Product(Base):
     requires_manager_approval = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md, app/services/sales_channel.py):
-    # all (קופות וקיוסק) / kiosk_only / pos_only. The till hides kiosk_only from its sell
-    # screen and the kiosk hides pos_only; the cloud only carries the code.
+    # all (קופות וקיוסק) / kiosk_only / pos_only — and, since "מופיע ב" has four channels
+    # (app/services/product_channels.py), `none` (neither the tills nor the kiosks). It is the
+    # pair (pos, kiosk) of "מופיע ב". The till hides kiosk_only from its sell screen and the
+    # kiosk hides pos_only; a device is always sent one of the three older codes
+    # (`product_channels.device_code`).
     sales_channel = Column(String(16), default="all", nullable=False, server_default="all")
+    # "מופיע ב" — the two web channels (specs/digital-menu-ordering-cards-plan.md §4): the online ordering
+    # site and the view-only digital menu. Off for every product until someone turns them on, and
+    # even then a product is shown only through a published profile (app/services/digital_effective.py).
+    channel_online = Column(Boolean, default=False, nullable=False, server_default="false")
+    channel_menu = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
     # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default
@@ -155,6 +163,13 @@ class Product(Base):
     category = relationship("Category", back_populates="products")
     global_product = relationship("Product", remote_side="Product.id")
     voucher = relationship("Voucher", back_populates="products")
+
+    @property
+    def appears_in(self):
+        """"מופיע ב" — the organisation's default for the four channels (product_channels.of)."""
+        from app.services.product_channels import of
+
+        return of(self)
 
     @property
     def shop_scope(self):

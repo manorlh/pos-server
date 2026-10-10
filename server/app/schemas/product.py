@@ -14,6 +14,23 @@ from app.schemas.kitchen_printers import KitchenPrintersPatch
 DESCRIPTION_MAX = 1000
 
 
+def _channels_in(v):
+    """"מופיע ב" as sent: None is "not sent"; only the four channels, each a boolean."""
+    if v is None:
+        return None
+    from app.services.product_channels import CHANNELS
+
+    if not isinstance(v, dict):
+        raise ValueError("channels must be an object")
+    unknown = sorted(set(v) - set(CHANNELS))
+    if unknown:
+        raise ValueError(f"unknown channel(s): {unknown}")
+    for key, value in v.items():
+        if not isinstance(value, bool):
+            raise ValueError(f"channel {key} must be true or false")
+    return dict(v)
+
+
 def _dietary_in(v):
     """"סימוני תזונה" as sent: None is "not sent"; anything else cleaned or refused."""
     return None if v is None else dietary.clean(v)
@@ -203,6 +220,9 @@ class ProductBase(BaseModel):
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר" (app/services/sales_channel.py); omitted: קופות וקיוסק.
     sales_channel: channels.SalesChannel = Field(channels.ALL, alias="salesChannel")
+    # "מופיע ב" (app/services/product_channels.py): {"pos", "kiosk", "online", "menu"} → bool; any
+    # channel left out keeps its default (pos / kiosk from `salesChannel`, online / menu off).
+    appears_in: Optional[Dict[str, bool]] = Field(None, alias="channels")
 
     @field_validator("name", "sku")
     @classmethod
@@ -215,6 +235,11 @@ class ProductBase(BaseModel):
     @classmethod
     def _dietary(cls, v):
         return _dietary_in(v)
+
+    @field_validator("appears_in", mode="before")
+    @classmethod
+    def _channels(cls, v):
+        return _channels_in(v)
 
     class Config:
         populate_by_name = True
@@ -285,6 +310,9 @@ class ProductUpdate(BaseModel):
     dietary_tags: Optional[List[str]] = Field(None, alias="dietaryTags")
     # "היכן הפריט נמכר": omitted (or null) — left as it is.
     sales_channel: Optional[channels.SalesChannel] = Field(None, alias="salesChannel")
+    # "מופיע ב": only the channels sent change (app/services/product_channels.py). Applied by the
+    # router, never as a column (excluded from `model_dump`).
+    appears_in: Optional[Dict[str, bool]] = Field(None, alias="channels", exclude=True)
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -329,6 +357,11 @@ class ProductUpdate(BaseModel):
     @classmethod
     def _dietary(cls, v):
         return _dietary_in(v)
+
+    @field_validator("appears_in", mode="before")
+    @classmethod
+    def _channels(cls, v):
+        return _channels_in(v)
 
     @model_validator(mode="after")
     def _channel_null_is_unchanged(self):
@@ -380,8 +413,10 @@ class ProductResponse(BaseModel):
     requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     # "סימוני תזונה", in the fixed order; [] when none.
     dietary_tags: List[str] = Field(default_factory=list, alias="dietaryTags")
-    # "היכן הפריט נמכר": all / kiosk_only / pos_only.
+    # "היכן הפריט נמכר": all / kiosk_only / pos_only / none (the pair of tills and kiosks).
     sales_channel: str = Field(channels.ALL, alias="salesChannel")
+    # "מופיע ב": the four channels' organisation default.
+    appears_in: Dict[str, bool] = Field(default_factory=dict, alias="channels")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")

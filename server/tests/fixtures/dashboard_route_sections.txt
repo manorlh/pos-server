@@ -434,6 +434,9 @@ GET /producer/events -> producer
 GET /producer/events/{event_id} -> producer
 GET /producer/events/{event_id}/settlement -> producer
 GET /producer/events/{event_id}/vouchers -> producer
+POST /product-channels/bulk -> products:edit
+GET /product-channels/products/{product_id} -> products:view
+PUT /product-channels/products/{product_id} -> products:edit
 GET /products -> products|quick_actions|promotions:view
 POST /products -> products:edit
 POST /products/availability-summary -> products|item_blocks:view

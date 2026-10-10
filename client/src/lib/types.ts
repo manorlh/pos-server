@@ -1064,7 +1064,12 @@ export interface Product {
    * "היכן הפריט נמכר" (lib/productChannel.ts): all (קופות וקיוסק, the default) /
    * kiosk_only (the tills hide it) / pos_only (the kiosk hides it).
    */
-  salesChannel?: import('./productChannel').SalesChannel;
+  salesChannel?: import('./productChannel').SalesChannel | 'none';
+  /**
+   * "מופיע ב" (lib/productChannels.ts): the four channels' organisation default — pos / kiosk (the
+   * pair `salesChannel` holds), online / menu (off until turned on, public only through a profile).
+   */
+  channels?: import('./productChannels').Channels;
   /**
    * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
    * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.

@@ -379,6 +379,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/products/shop-scope/preview", S("products", level=VIEW)),
     (_ALL, "/products/{}/kitchen-printers*", S("products", "printers")),
     (_ALL, "/products*", S("products")),
+    # "מופיע ב": a product's four channels, their exceptions and the bulk screen.
+    (_ALL, "/product-channels*", S("products")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
     # "הפצה בוואטסאפ": recipients' phone numbers — managing the batch (edit), reading included.

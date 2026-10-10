@@ -179,6 +179,8 @@ from app.models.command_request_key import CommandRequestKey
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
 from app.models.sales_target import SalesTarget, SalesTargetHit
+# "מופיע ב" — a shop's / point of sale's exception to a product's channels (app/services/product_channels.py).
+from app.models.product_channel_override import ProductChannelOverride
 
 __all__ = [
     "User", "UserRole",
@@ -270,4 +272,5 @@ __all__ = [
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
+    "ProductChannelOverride",
 ]

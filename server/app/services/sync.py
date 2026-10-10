@@ -47,7 +47,7 @@ from app.models.shop_category_override import ShopCategoryOverride
 from app.models.machine_catalog_item import MachineCatalogItem
 from app.models.voucher import Voucher
 from app.services import dietary
-from app.services import sales_channel
+from app.services import product_channels
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
@@ -137,8 +137,9 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "allergens": list(getattr(p, "allergens", None) or []),
         # "סימוני תזונה" (docs/SPEC_PRODUCT_DIETARY.md): codes in the fixed order, [] for none.
         "dietaryTags": dietary.tags_out(getattr(p, "dietary_tags", None)),
-        # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md): all / kiosk_only / pos_only.
-        "salesChannel": sales_channel.out(getattr(p, "sales_channel", None)),
+        # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md): the stored code — a device's pull
+        # replaces it with that device's own (`product_channels.project_rows`).
+        "salesChannel": product_channels.stored_code(p),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
@@ -184,6 +185,7 @@ def _serialize_merged_product(
     area_override: Optional[AreaProductOverride] = None,
     area_changed_at: Optional[datetime] = None,
     blocks: Any = None,
+    channel_changed_at: Optional[datetime] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Build one sync row for a global product; return None if delta filter excludes it.
@@ -207,6 +209,10 @@ def _serialize_merged_product(
     blocked_at = _aware_utc(getattr(blocks, "changed_at", None))
     if blocked_at is not None and blocked_at > eff_ts:
         eff_ts = blocked_at
+    # "מופיע ב": a shop's or a point of sale's exception set or let go moves the row too.
+    channels_at = _aware_utc(channel_changed_at)
+    if channels_at is not None and channels_at > eff_ts:
+        eff_ts = channels_at
     if since is not None and _aware_utc(eff_ts) <= _aware_utc(since):
         return None
     active_blocks = list(getattr(blocks, "active", None) or [])
@@ -295,8 +301,9 @@ def _serialize_merged_product(
         # "סימוני תזונה", from the global row like the allergens.
         "dietaryTags": dietary.tags_out(getattr(global_p, "dietary_tags", None)),
         # "היכן הפריט נמכר", from the global row like the rest of what the product is: the
-        # till hides kiosk_only from its sell screen, the kiosk hides pos_only.
-        "salesChannel": sales_channel.out(getattr(global_p, "sales_channel", None)),
+        # till hides kiosk_only from its sell screen, the kiosk hides pos_only. The stored code
+        # here; a device's pull sends its own ("מופיע ב", `product_channels.project_rows`).
+        "salesChannel": product_channels.stored_code(global_p),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),
@@ -597,6 +604,10 @@ def _products_merged_for_shop_machine(
     catalog_rows = machine_catalog.catalog_items(db, mqid) if assigned_ids else {}
     area_changed_at = getattr(machine, "area_changed_at", None)
     product_blocks = sold_out.blocks_for_machine(db, machine, assigned_ids, since=since) if assigned_ids else {}
+    # "מופיע ב": the shop's and the point of sale's exceptions to the products' channels.
+    channel_rows = product_channels.overrides_for(
+        db, assigned_ids, shop_id=shop_id, area_id=getattr(machine, "area_id", None),
+    ) if assigned_ids else {}
 
     out: List[Dict[str, Any]] = []
     for ovr, g in assigned_rows:
@@ -613,6 +624,7 @@ def _products_merged_for_shop_machine(
             area_override=area_levels.get(str(g.id)),
             area_changed_at=area_changed_at if isinstance(area_changed_at, datetime) else None,
             blocks=product_blocks.get(str(g.id)),
+            channel_changed_at=product_channels.changed_at(channel_rows.get(str(g.id))),
         )
         if row is not None:
             out.append(row)
@@ -623,7 +635,8 @@ def _products_merged_for_shop_machine(
                 continue
         out.append(_serialize_product(loc))
 
-    return out
+    # Each row's `salesChannel` as this device reads it (one of the three older codes).
+    return product_channels.project_rows(db, machine, out, overrides=channel_rows)
 
 
 def get_products_for_sync(
@@ -663,7 +676,8 @@ def get_products_for_sync(
     if since:
         query = query.filter(Product.updated_at > since)
 
-    return [_serialize_product(p) for p in query.all()]
+    rows = [_serialize_product(p) for p in query.all()]
+    return product_channels.project_rows(db, machine, rows, overrides={}) if machine is not None else rows
 
 
 def overrides_changed_since(
@@ -1053,6 +1067,14 @@ def get_catalog_change_watermark_for_machine(db: Session, machine: POSMachine) -
             .scalar()
         ) if sold_out.tables_ready(db) else None
         points.append(blocks_max)
+        # "מופיע ב": an exception of this shop or of the point of sale the till stands in.
+        if product_channels.tables_ready(db):
+            from app.models.product_channel_override import ProductChannelOverride as PCO
+
+            places = [and_(PCO.level == "shop", PCO.target_id == machine.shop_id)]
+            if area_id is not None:
+                places.append(and_(PCO.level == "area", PCO.target_id == area_id))
+            points.append(db.query(func.max(PCO.updated_at)).filter(or_(*places)).scalar())
         points.extend([
             product_max, override_max, category_max, voucher_max,
             local_product_max, customer_max,

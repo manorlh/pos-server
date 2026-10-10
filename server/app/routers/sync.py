@@ -273,6 +273,10 @@ def get_catalog_sync(
     published = review_pull.published
     if published is not None:
         products, categories = published.products, published.categories
+        # "מופיע ב": the publication holds each product's stored code; this device reads its own.
+        from app.services import product_channels
+
+        products = product_channels.project_rows(db, machine, list(products or []))
     else:
         products = get_products_for_sync(db, tid, mqid, since=review_pull.live_since)
         categories = get_categories_for_sync(db, tid, mqid, since=review_pull.live_since)
