@@ -233,6 +233,15 @@ class TestLinking:
         assert settings["other"] == 1
         assert {str(ow.h1.id), str(ow.h2.id)} <= set(ow.signals), "the tills and the kiosk are woken after the commit"
 
+    def test_a_kiosk_layer_wakes_kiosks_not_a_tills_kiosk_mode_row(self, ow):
+        # Integration (10.10.2026): every kiosk query keeps `home_role IS NULL`; a till in kiosk mode ("מצב עבודה")
+        # has a KioskDevice row with home_role "till" and stays a till.
+        ow.db.add(KioskDevice(machine_id=ow.h1.id, tenant_id=ow.tid, shop_id=ow.h_shop.id, name="Till in kiosk mode",
+                              enabled=True, home_role="till"))
+        ow.db.commit()
+        woken = DO.devices_of(ow.db, DO.Wake(pos=[], kiosks=[("shop", str(ow.h_shop.id)), ("machine", str(ow.h1.id))]))
+        assert {m for _t, m in woken} == {str(ow.h2.id)}
+
     def test_unlink_keeps_the_positions(self, ow):
         shop = self._shop(ow)
         DO.link(ow.db, shop, "kiosk", shop, "pos")
