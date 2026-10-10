@@ -587,4 +587,4 @@ def test_the_migration_is_the_single_head():
 
     heads = script.get_heads()
     assert heads == ["a1eece573e4e"]
-    assert script.get_revision("a1eece573e4e").down_revision == "5a7c9e1b3d2f"
+    assert script.get_revision("a1eece573e4e").down_revision == "31958d027cef"

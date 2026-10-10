@@ -70,6 +70,10 @@ export interface ReceiptInput {
   tipAgorot: number;
   /** The promotions the sale was priced with: "הנחת מבצע: <שם>" (the total is after them). */
   promotions?: Array<{ name: string; discountAgorot: number }>;
+  /** The discount vouchers ("שוברי הנחה"): "שובר #12 — פסטיבל הקיץ  −30.00" under the items — part of the discount, not a payment. */
+  voucherDiscounts?: Array<{ label: string; amountAgorot: number }>;
+  /** The goods vouchers that paid part of it: each a "שובר הפקה" leg in the payment (the card's leg is the rest). */
+  voucherLegs?: Array<{ amountAgorot: number }>;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
   footer: [string | null, string | null];
   logoUrl: string | null;
@@ -180,6 +184,10 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   for (const p of r.promotions ?? []) {
     if (p.discountAgorot > 0) ops.push({ t: 'row', label: `הנחת מבצע: ${p.name}`, value: formatAgorot(-p.discountAgorot), style: 'body' });
   }
+  // Each discount voucher ("שובר #12 — <סדרה>"): part of the discount, never a payment (the till's receipt).
+  for (const v of r.voucherDiscounts ?? []) {
+    if (v.amountAgorot > 0) ops.push({ t: 'row', label: v.label, value: formatAgorot(-v.amountAgorot), style: 'body' });
+  }
   ops.push({ t: 'row', label: 'סה"כ פריטים לתשלום', value: formatAgorot(r.totalAgorot), style: 'body' });
   const showVat = r.documentType !== 400 && r.documentType !== -400;
   if (showVat) {
@@ -191,8 +199,11 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   const grand = r.totalAgorot + r.tipAgorot;
   ops.push({ t: 'row', label: 'סה"כ לתשלום', value: formatShekelSign(grand), style: 'grand' });
   ops.push({ t: 'divider', gap: 8 });
+  // The goods vouchers' legs ("שובר הפקה"), then the card's: what they did not pay, and the tip.
+  const legs = (r.voucherLegs ?? []).filter((l) => l.amountAgorot > 0);
+  for (const l of legs) ops.push({ t: 'row', label: 'שובר הפקה', value: formatAgorot(l.amountAgorot), style: 'body' });
   if (r.card) {
-    ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand), style: 'body' });
+    ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand - legs.reduce((s, l) => s + l.amountAgorot, 0)), style: 'body' });
     const brand = BRAND_LABEL_HE[r.card.brand];
     const masked = r.card.last4 ? `**** ${r.card.last4}` : '';
     const cardText = [brand, masked].filter(Boolean).join(' ');

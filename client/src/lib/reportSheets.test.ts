@@ -111,14 +111,14 @@ const exportRow = (over: Partial<TransactionExportRow>): TransactionExportRow =>
   id: 'a', createdAt: '2026-10-06T10:00:00Z', documentNumber: '20000057', documentType: 320, status: 'completed',
   shopName: 'הרצליה', machineId: 'm', machineName: 'קופה 1', posNumber: '1', cashierId: 'c', cashierName: 'דנה',
   paymentMethod: 'cash', totalAmount: '117.00', documentDiscount: '0.00', collected: '117.00', signedAmount: '117.00',
-  vatAmount: '17.85', netOfVat: '99.15', vatRate: '18.00', tipAmount: '0.00', tipPaymentMethod: null, cash: '117.00',
-  card: '0.00', other: '0.00', exchange: '0.00', productionVoucher: '5.00', legs: 1, cardBrands: [], cardLast4: [],
+  vatAmount: '17.85', netOfVat: '99.15', vatRate: '18.00', tipAmount: '0.00', tipPaymentMethod: null, cash: '112.00',
+  card: '0.00', other: '0.00', exchange: '0.00', productionVoucher: '5.00', legs: 2, cardBrands: [], cardLast4: [],
   approvalNumbers: [], refundOf: null, shiftNumber: 1, zNumber: null, customerName: 'אקמי בע״מ',
   customerVatNumber: '515151512', mealKind: null, ...over,
 });
 
-test('the transactions sheet: a cell under every header, the number of the buyer in its own column', () => {
-  const sheet = transactionsSheet([exportRow({}), exportRow({ customerVatNumber: null, customerName: null })], t, 'x', {
+test('the transactions sheet: a cell under every header, the voucher money and the number of the buyer in their own columns', () => {
+  const sheet = transactionsSheet([exportRow({}), exportRow({ productionVoucher: undefined, customerVatNumber: null, customerName: null })], t, 'x', {
     documentType: (n) => `type:${n}`, status: (s) => s, method: (m) => m,
   });
   const headers = sheet.columns.map((c) => c.header);
@@ -132,4 +132,5 @@ test('the transactions sheet: a cell under every header, the number of the buyer
   // The production-voucher column holds its own money, not the next column's.
   assert.equal(sheet.rows[0][at('productionVoucher')], '5.00');
   assert.equal(sheet.rows[0][at('other')], '0.00');
+  assert.equal(sheet.rows[1][at('productionVoucher')], null);
 });

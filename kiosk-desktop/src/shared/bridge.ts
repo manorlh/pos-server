@@ -3,11 +3,13 @@
  * The screens never reach the network: everything they show comes from here, from local data.
  */
 
+import type { KioskMenuState } from '@dash-lib/kioskMenus';
 import type { KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import type { MealSlot } from '@dash-lib/kioskMoney';
 import type { PaymentMethod } from '@dash-lib/kioskConfig';
 import type { VoucherLeg } from '@dash-lib/kioskWebOrders';
-import type { VoucherResult } from '../main/kiosk/payAtTill';
+import type { StartVouchers, VoucherResult } from '@dash-lib/kioskVoucherClient';
+import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
@@ -36,6 +38,13 @@ export interface KioskView {
   catalog: {
     categories: KCategory[];
     products: KProduct[];
+    /**
+     * "תפריטים": the menu active now by this kiosk's own clock — the screens order by it and name it in the title
+     * (client lib/kioskMenus.ts `withMenuOrder`, `titleWithMenu`). Absent (the Android bundle's bridge): no menu.
+     */
+    menu?: KioskMenuState;
+    /** What the active menu holds back (still sold by the catalog): known to a basket line already in, and to a meal's components. */
+    held?: KProduct[];
     groups: Record<string, KGroup[]>;
     quickNotes: Record<string, string[]>;
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
@@ -77,8 +86,10 @@ export interface KioskView {
 }
 
 /** "מזומן בקופה": the order to the tills, with the vouchers already redeemed towards it. */
-export interface PlaceOrderIn extends StartPaymentIn {
+export interface PlaceOrderIn extends Omit<StartPaymentIn, 'vouchers'> {
   vouchers: VoucherLeg[];
+  /** Discount vouchers held for the order: it is paid here, never handed to a till (refused while one is on it). */
+  discounts?: AppliedDiscountVoucher[];
 }
 
 export type PlaceOrderOut =
@@ -98,6 +109,15 @@ export interface OrderLineIn {
   /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
   unitAgorot?: number;
   /**
+   * "תפריטים" (client lib/kioskMenus.ts `menuMemoryOf`): the dish's own price as the line was added at — the active menu's
+   * while one priced it — the catalog's price then, the menu and where the price came from. An open basket keeps its
+   * prices when the menu changes under it: the check keeps `listAgorot` while the catalog's price has not moved.
+   */
+  listAgorot?: number;
+  catalogAgorot?: number;
+  menuId?: string;
+  priceSource?: 'menu' | 'catalog';
+  /**
    * A meal: the product chosen in each slot with its choices (its defaults, or a required choice answered in
    * the meal window; absent: its defaults) — priced here from the catalog.
    */
@@ -114,8 +134,13 @@ export interface StartPaymentIn {
   tipPct: number | null;
   /** "סכום אחר": the customer's own tip in agorot (whole shekels, up to the order's total); wins over tipPct. */
   tipAgorot: number | null;
-  /** The goods' total the customer saw (agorot), after the promotions: never charged if it moved (core/basketCheck.ts). */
+  /** The goods' total the customer saw (agorot), after the promotions and the discount vouchers: never charged if it moved (core/basketCheck.ts). */
   expectedTotalAgorot?: number;
+  /**
+   * The vouchers of the order ("שוברי הנחה" held for it, goods vouchers as legs): the sale is priced with the first and
+   * the second pay part of it — the card is charged what is left, and nothing at all when they pay it whole.
+   */
+  vouchers?: StartVouchers;
 }
 
 /** "voucherApply" (Android, pos-android KioskWebProtocol.parseVoucher): the code scanned or typed, and the basket as "לתשלום" sends it. */
@@ -277,10 +302,23 @@ export interface KioskBridge {
   startPayment(input: StartPaymentIn): Promise<StartPaymentOut>;
   /** "מזומן בקופה": the order to the shop's tills (no document here); absent where the kiosk cannot. */
   placeOpenOrder?(input: PlaceOrderIn): Promise<PlaceOrderOut>;
-  /** A prepaid voucher redeemed online for the basket's goods (`clientRequestId`: a retry never redeems twice). */
-  redeemVoucher?(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult>;
+  /**
+   * A voucher scanned or typed: a goods voucher redeemed online for the basket's goods (`clientRequestId`: a retry never
+   * redeems twice), or a discount voucher held for the order (`discounts`: those already on it; `saleRef`: this order).
+   */
+  redeemVoucher?(input: {
+    code: string;
+    basket: StartPaymentIn;
+    earlier: VoucherLeg[];
+    discounts?: AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    saleRef?: string;
+  }): Promise<VoucherResult>;
   /** A redeemed voucher back on itself (kept and retried until the cloud answers). */
   reverseVoucher?(redemptionId: string): Promise<void>;
+  /** Discount vouchers given back (removed, the order left): the cloud lets the hold go. */
+  releaseDiscounts?(vouchers: Array<{ reservationId: string }>): Promise<void>;
   /**
    * Android: the APK holds this order's vouchers itself (its own redemption path, the payment books
    * them) — a code applied to the basket (staged as the order at the checkout, with no charge yet),

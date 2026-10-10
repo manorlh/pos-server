@@ -523,9 +523,11 @@ class TestZPrint:
 def test_the_till_parameter_is_registered():
     from app.services.till_parameters import BUILTIN_PARAMETERS
 
-    p = next(p for p in BUILTIN_PARAMETERS if p.key == "printFailedPayments")
-    assert p.value_type == "boolean" and p.default_value is True
-    assert p.label == "הדפסת עסקאות שלא הושלמו בדוחות"
+    # Off by default since 09.10.2026 (test_failed_payments_print_parameter.py); the old switch is retired.
+    p = next(p for p in BUILTIN_PARAMETERS if p.key == "printFailedPaymentsWithReports")
+    assert p.value_type == "boolean" and p.default_value is False
+    assert p.label == "הדפסת עסקאות שלא הושלמו בדוח משמרת / Z"
+    assert "printFailedPayments" not in {p.key for p in BUILTIN_PARAMETERS}
 
 
 def test_the_routes_are_mounted():

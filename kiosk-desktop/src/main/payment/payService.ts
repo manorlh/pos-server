@@ -11,8 +11,10 @@
  *  2. the pending document is written (by the caller, with its number) — then the attempt goes to
  *     disk (reference, amount, document) — only then the frame leaves;
  *  3. approved → complete; certainly not charged → void (a new attempt is a new document and
- *     reference); unknown → asked about THE SAME reference (never a second charge) — approved,
- *     not charged, or held for a person (the document stays pending, every card blocked);
+ *     reference) — and so is a frame that never left (NOT_SENT: no link, nothing written; the
+ *     attempt is dropped, nothing to look up); unknown → asked about THE SAME reference (never a
+ *     second charge) — approved, not charged, or held for a person (the document stays pending,
+ *     every card blocked);
  *  4. the customer's "ביטול": before the frame, nothing; after it and before an answer, an abort
  *     and the sale's own answer awaited; never an abort after an answer;
  *  5. at start, and before the day's transmission, every orphan attempt is settled first.
@@ -188,6 +190,13 @@ export class PayService {
           if (this.inFlight?.reference === reference) this.inFlight.answered = true;
         },
       });
+      if (result.answer === 'NOT_SENT') {
+        // Nothing reached the terminal (no link, nothing written): certainly not charged — the
+        // document is voided with the reason, and there is nothing to look up or to settle.
+        this.forgetAttempt(reference);
+        this.log(`card: not sent (${reference}): ${result.message}`);
+        return { kind: 'declined', message: result.message, voidMeta: null };
+      }
       this.inFlight.answered = true;
       this.lastCardAnswerAtMs = Date.now();
       if (result.answer === 'APPROVED') return { kind: 'approved', card: result.card, recovered: false };

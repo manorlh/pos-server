@@ -24,12 +24,13 @@ import { kioskOfflineBlocks, resolveKioskConfig, tsKioskPayMethods, voucherCanFi
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
 import { catalogNextChangeMs, stockLevelsOf } from './kioskSoldOut';
+import { basketSold } from './kioskBasketSold';
+import { basePriceOf, keptListPrice, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from './kioskMenus';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
   CLOUD_CHECK_TIMEOUT_MS,
   PRICE_CHANGED,
   PROMOTIONS_PULL_TIMEOUT_MS,
-  checkedBasePrice,
   cloudCheckRequest,
   overridesLive,
   overridesOf,
@@ -49,16 +50,13 @@ import {
   orderDue,
   orderNeedsUpload,
   pickupLabelOf,
-  voucherAmount,
-  voucherForfeits,
-  voucherTake,
   type OpenOrder,
   type OpenOrdersAnswer,
-  type VoucherItem,
   type VoucherLeg,
-  type VoucherTaken,
   type WebOrderLine,
 } from './kioskWebOrders';
+import { DISCOUNT_PAY_HERE, redeemVoucherCode, releaseDiscount, type VoucherPost, type VoucherResult } from './kioskVoucherClient';
+import type { AppliedDiscountVoucher } from './kioskVouchers';
 import { KV, type KvStore } from './kioskWebStore';
 import { bridgeCardReady, bridgeCardReason, bridgeFiscalFor, type BridgeAgent, type BridgeMachine, type BridgeState } from './kioskBridge';
 
@@ -165,12 +163,7 @@ export type BasketChange =
   | { kind: 'removed'; productId: string; name: string; key: string }
   | { kind: 'repriced'; productId: string; name: string; key: string; from: number; to: number };
 
-export type VoucherResult =
-  | { kind: 'ok'; leg: VoucherLeg }
-  | { kind: 'forfeit' }
-  | { kind: 'no_match' }
-  | { kind: 'offline' }
-  | { kind: 'refused'; reason: string };
+export type { VoucherResult };
 
 export type PlaceResult =
   | { ok: true; order: OpenOrder; dueAgorot: number; pending: boolean }
@@ -198,6 +191,8 @@ export interface PlaceInput {
   customerPhone: string | null;
   tipAgorot: number;
   vouchers: VoucherLeg[];
+  /** Discount vouchers held for the order ("שוברי הנחה"): an order with one is paid here, never handed to a till. */
+  discounts?: readonly AppliedDiscountVoucher[];
 }
 
 interface SnapshotState {
@@ -208,7 +203,7 @@ interface SnapshotState {
 
 type CatalogStore = CatalogIn & { serverTime: string | null };
 
-const EMPTY_CATALOG: CatalogStore = { products: [], categories: [], menu: null, machineCatalog: null, serverTime: null };
+const EMPTY_CATALOG: CatalogStore = { products: [], categories: [], menu: null, machineCatalog: null, catalogMenus: null, serverTime: null };
 
 interface HelpRequest {
   requestId: string;
@@ -219,10 +214,11 @@ interface HelpRequest {
 
 /**
  * What the browser can take of the configured methods: the card only through a paired Windows
- * bridge that takes cards now (it sells offline too, as the Windows kiosk); a voucher only online.
+ * bridge that takes cards now (it sells offline too, as the Windows kiosk); a voucher only online, and only
+ * where the order it leaves can be finished (voucherCanFinish: at the till, or by card through the bridge).
  */
 export function usableMethods(methods: readonly PaymentMethod[], online: boolean, cardReady = false): PaymentMethod[] {
-  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods)) || (m === 'card' && cardReady));
+  return methods.filter((m) => m === 'cash_at_till' || (m === 'voucher' && online && voucherCanFinish(methods, cardReady)) || (m === 'card' && cardReady));
 }
 
 /** The browser kiosk sells when its customers can pay at the till, or by card through the bridge (a voucher never pays it all for sure). */
@@ -273,6 +269,9 @@ export class WebKioskService {
   private stock: Record<string, number> = {};
   /** The timer that builds the view again at a block's end ("אזל" / "חסום" until a time, lifted offline too). */
   private saleTimer: unknown = null;
+  /** "תפריטים": the timer that looks at the kiosk's own clock at each minute boundary, and the menu the view was built for. */
+  private menuTimer: unknown = null;
+  private menuKey = '';
   private settings: { settings: Record<string, unknown>; businessInfo: Record<string, unknown> | null; settingsUpdatedAt: string | null } = {
     settings: {},
     businessInfo: null,
@@ -372,12 +371,16 @@ export class WebKioskService {
   start() {
     this.stopped = false;
     this.schedule(0);
+    // The view was built while stopped (pairing, a reload): the kiosk's clock is looked at from now on.
+    if (this.loaded && this.snapshot?.kiosk === true) this.scheduleMenuClock(this.now());
   }
 
   stop() {
     this.stopped = true;
     if (this.saleTimer !== null) this.clearTimer(this.saleTimer);
     this.saleTimer = null;
+    if (this.menuTimer !== null) this.clearTimer(this.menuTimer);
+    this.menuTimer = null;
     if (this.timer !== null) this.clearTimer(this.timer);
     this.timer = null;
   }
@@ -409,6 +412,22 @@ export class WebKioskService {
       this.saleTimer = null;
       this.dirty();
     }, Math.max(1_000, at - nowMs + 250));
+  }
+
+  /**
+   * "תפריטים": the menu active now by the kiosk's OWN clock (offline too), looked at once per minute boundary — a handful
+   * of comparisons. The view is built again only when the answer changes (a menu starts, ends or yields to another).
+   */
+  private scheduleMenuClock(nowMs: number) {
+    if (this.menuTimer !== null) this.clearTimer(this.menuTimer);
+    this.menuTimer = this.stopped
+      ? null
+      : this.setTimer(() => {
+          this.menuTimer = null;
+          const at = this.now();
+          if (menuKeyAt(this.catalog.catalogMenus, at) !== this.menuKey) this.dirty();
+          else this.scheduleMenuClock(at);
+        }, msToNextMinute(nowMs));
   }
 
   private dirty() {
@@ -456,8 +475,10 @@ export class WebKioskService {
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const nowMs = this.now();
-    const cat = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const cat: WebCatalog = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
     if (phase === 'kiosk') this.scheduleSaleChange(catalogNextChangeMs(this.catalog.products, nowMs), nowMs);
+    this.menuKey = menuKeyAt(this.catalog.catalogMenus, nowMs);
+    if (phase === 'kiosk') this.scheduleMenuClock(nowMs);
     const categoryImages: Record<string, string> = {};
     if (cfg) {
       for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
@@ -823,7 +844,7 @@ export class WebKioskService {
     const r = await this.seen(await this.api.get<Record<string, unknown>>(this.machinePath(`catalog${since}`), { timeoutMs: 60_000 }));
     if (r.kind !== 'ok' || !r.body || typeof r.body !== 'object') return;
     const b = r.body;
-    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu;
+    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu || !!b.catalogMenus;
     this.catalog = applyCatalogPull(this.catalog, b);
     await this.deps.store.set(KV.catalog, this.catalog);
     if (changed) this.dirty();
@@ -879,10 +900,16 @@ export class WebKioskService {
    * catalog; a changed set of promotions is pulled now (true). Offline, or no answer in time:
    * nothing — the kiosk's own catalog and promotions decide.
    */
-  private async cloudBasketCheck(lines: ReadonlyArray<{ productId: string; qty?: number }>): Promise<boolean> {
+  private async cloudBasketCheck(lines: ReadonlyArray<{ productId: string; qty?: number; listAgorot?: number | null; catalogAgorot?: number | null }>): Promise<boolean> {
     if (!this.creds || this.offline || lines.length === 0) return false;
-    const byId = new Map(this.view().catalog.products.map((p) => [p.id, p]));
-    const body = cloudCheckRequest(lines, (id) => byId.get(id)?.priceAgorot, this.promotions.etag);
+    const v = this.view();
+    // The base price each line remembers, without any menu: the cloud's word is about the catalog's price the customer saw
+    // (KioskPriceCheck.request: `line.product.basePrice`); the catalog held now only stands in for a line of an older screen.
+    const byId = new Map([...v.catalog.products, ...v.catalog.held].map((p) => [p.id, p]));
+    const body = cloudCheckRequest(lines, (id) => {
+      const p = byId.get(id);
+      return p ? basePriceOf(p) : undefined;
+    }, this.promotions.etag);
     const raw = await this.api.post<CloudVerdict>(this.machinePath('kiosk/basket-check'), body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
     // A slow answer is not an outage: only an answer goes through `seen`.
     if (raw.kind === 'offline') return false;
@@ -921,6 +948,10 @@ export class WebKioskService {
       productId: string;
       unitAgorot: number;
       qty?: number;
+      /** "תפריטים": the dish's own price as the line was added at, the catalog's then, and the menu it was added under. */
+      listAgorot?: number;
+      catalogAgorot?: number;
+      menuId?: string | null;
       options: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }>;
       meal?: { components: ReadonlyArray<{ slotId: string; productId: string; options?: ReadonlyArray<{ groupId: string; optionId: string; qty?: number; pre?: 'lite' | 'extra' | 'side' | null }> }> } | null;
     }>,
@@ -931,19 +962,26 @@ export class WebKioskService {
     const cloud = overridesLive(this.cloudBasket, this.now());
     const v = this.view();
     const byId = new Map(v.catalog.products.map((p) => [p.id, p]));
-    const sold = (id: string) => {
-      const p = byId.get(id);
-      return p && !p.soldOut && !cloud?.gone.has(id) ? p : null;
-    };
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in kioskWebService.test.ts.
+    const menuPrices = menuPriceSets(this.catalog.catalogMenus);
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (lib/kioskBasketSold.ts, the Android kiosk's KioskBasketLookup).
+    // A meal's component: found even when no screen shows it (hidden, not placed), but never blocked, sold out or gone.
+    const lookup = basketSold({ products: v.catalog.products, categories: v.catalog.categories, held: v.catalog.held, cfg: this.config(), gone: cloud?.gone });
+    const sold = (id: string, addedUnderMenu = false) => lookup.dish(id, addedUnderMenu);
+    const component = (id: string) => lookup.component(id);
     const changes: BasketChange[] = [];
     const priced: Array<{ key: string; productId: string; categoryId: string | null; unitAgorot: number; qty: number; noDiscount: boolean }> = [];
     for (const l of lines) {
-      const p = sold(l.productId);
+      const p = sold(l.productId, !!l.menuId);
       const slots = v.catalog.meals[l.productId] ?? [];
       const parts = l.meal?.components ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !sold(c.productId);
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !component(c.productId);
       });
       const groups = (p ? (v.catalog.groups[p.id] ?? []) : []).map(webMoneyGroup);
       const missing = l.options.some((o) => !groups.find((g) => g.id === o.groupId)?.options.some((x) => x.id === o.optionId));
@@ -957,7 +995,10 @@ export class WebKioskService {
         const pre = g.allowPre && (o.pre === 'lite' || o.pre === 'extra' || o.pre === 'side') ? o.pre : null;
         (picks[g.id] ??= []).push({ optionId: o.optionId, qty: Math.max(1, Math.trunc(o.qty ?? 1)), pre });
       }
-      let unit = checkedBasePrice(p.id, p.priceAgorot, cloud) + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
+      // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the
+      // basket is no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
+      const base = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), menuPrices.get(p.id));
+      let unit = base + chosenOptions(groups, picks).reduce((s, o) => s + o.chargedAgorot, 0);
       for (const c of parts) {
         const slot = slots.find((s) => s.id === c.slotId)!;
         const cg = (v.catalog.groups[c.productId] ?? []).map(webMoneyGroup);
@@ -985,69 +1026,48 @@ export class WebKioskService {
     return { id, name };
   }
 
-  /**
-   * A voucher scanned or typed: looked up, then redeemed online against what the basket holds that
-   * earlier vouchers did not take (`clientRequestId`: a retry never redeems twice).
-   */
-  async redeemVoucher(input: { code: string; lines: readonly WebOrderLine[]; earlier: readonly VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
+  /** The cloud's voucher calls for the shared voucher flow (lib/kioskVoucherClient.ts): this kiosk's machine path, its replies read as online / offline. */
+  private readonly voucherPost: VoucherPost = async (path, body, timeoutMs) => {
     if (!this.creds) return { kind: 'offline' };
-    const looked = await this.seen(await this.api.post<Record<string, unknown>>(this.machinePath('prepaid-vouchers/lookup'), { code: input.code }, { timeoutMs: 12_000 }));
-    if (looked.kind === 'offline') return { kind: 'offline' };
-    if (looked.kind === 'refused') return { kind: 'refused', reason: looked.detail ?? (looked.status === 404 ? 'prepaid_voucher_not_found' : `http_${looked.status}`) };
-    const dto = looked.body ?? {};
-    if (dto.redeemable === false) return { kind: 'refused', reason: typeof dto.reason === 'string' ? dto.reason : typeof dto.status === 'string' ? `prepaid_voucher_${dto.status}` : 'not_redeemable' };
-    const items: VoucherItem[] = (Array.isArray(dto.items) ? (dto.items as Array<Record<string, unknown>>) : [])
-      .filter((it) => typeof it.productId === 'string')
-      .map((it) => ({
-        productId: String(it.productId),
-        tillProductId: typeof it.tillProductId === 'string' ? it.tillProductId : null,
-        name: String(it.name ?? ''),
-        quantity: Number(it.quantity) || 0,
-        remaining: Number(it.remaining) || 0,
-      }));
-    const take = voucherTake(items, input.lines, input.earlier);
-    if (take.size === 0) return { kind: 'no_match' };
-    if (!input.forfeitRest && voucherForfeits(dto.splitAllowed === true, items, take)) return { kind: 'forfeit' };
-    const op = this.operator();
-    const r = await this.seen(
-      await this.api.post<Record<string, unknown>>(
-        this.machinePath('prepaid-vouchers/redeem'),
-        {
-          code: input.code,
-          items: [...take.entries()].map(([productId, quantity]) => ({ productId, quantity })),
-          clientRequestId: input.clientRequestId,
-          forfeitRest: input.forfeitRest === true,
-          posUserId: op.id,
-          posUserName: op.name,
-        },
-        { timeoutMs: 15_000 },
-      ),
-    );
-    if (r.kind === 'offline') return { kind: 'offline' };
-    if (r.kind === 'refused') return { kind: 'refused', reason: r.detail ?? `http_${r.status}` };
-    const res = r.body ?? {};
-    const redemptionId = typeof res.redemptionId === 'string' ? res.redemptionId : null;
-    if (!redemptionId) return { kind: 'refused', reason: 'bad_answer' };
-    const redeemed: VoucherTaken[] = (Array.isArray(res.redeemed) ? (res.redeemed as Array<Record<string, unknown>>) : [])
-      .filter((x) => typeof x.productId === 'string')
-      .map((x) => ({ productId: String(x.productId), tillProductId: typeof x.tillProductId === 'string' ? x.tillProductId : null, name: typeof x.name === 'string' ? x.name : null, quantity: Number(x.quantity) || 0 }));
-    const amount = voucherAmount([...input.lines], [...input.earlier], redeemed);
-    if (amount <= 0) {
-      // Nothing of the basket it could pay: never kept for nothing.
-      await this.reverseVoucher(redemptionId);
-      return { kind: 'no_match' };
-    }
-    const voucher = (res.voucher ?? dto) as { serial?: unknown; eventName?: unknown };
-    return {
-      kind: 'ok',
-      leg: {
-        redemptionId,
-        serial: typeof voucher.serial === 'number' ? voucher.serial : 0,
-        amountAgorot: amount,
-        eventName: typeof voucher.eventName === 'string' ? voucher.eventName : null,
-        redeemed,
-      },
-    };
+    const r = await this.seen(await this.api.post<Record<string, unknown>>(this.machinePath(path), body, { timeoutMs }));
+    if (r.kind === 'ok') return { kind: 'ok', body: r.body as never };
+    if (r.kind === 'refused') return { kind: 'refused', status: r.status, body: r.body, detail: r.detail };
+    return { kind: 'offline' };
+  };
+
+  /**
+   * A voucher scanned or typed: looked up (this kiosk applies goods and both discount kinds), then — by what it is —
+   * redeemed online against what the basket holds that earlier vouchers did not take (`clientRequestId`: a retry
+   * never redeems twice), or held in the cloud as a discount on this order (`reserve`).
+   */
+  async redeemVoucher(input: {
+    code: string;
+    lines: readonly WebOrderLine[];
+    earlier: readonly VoucherLeg[];
+    discounts?: readonly AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    /** This order's id, the same for every voucher of the checkout. */
+    saleRef?: string;
+  }): Promise<VoucherResult> {
+    if (!this.creds) return { kind: 'offline' };
+    return redeemVoucherCode(this.voucherPost, {
+      code: input.code,
+      lines: input.lines,
+      earlier: input.earlier,
+      discounts: input.discounts ?? [],
+      forfeitRest: input.forfeitRest,
+      clientRequestId: input.clientRequestId,
+      saleRef: input.saleRef ?? input.clientRequestId,
+      operator: this.operator(),
+      newId,
+      reverse: (id) => this.reverseVoucher(id),
+    });
+  }
+
+  /** Discount vouchers given back (removed, the order left): the cloud lets the hold go; best effort, retried. */
+  releaseDiscounts(vouchers: readonly Pick<AppliedDiscountVoucher, 'reservationId'>[]): void {
+    for (const v of vouchers) void releaseDiscount(this.voucherPost, v);
   }
 
   /** The voucher goes back on itself (removed, the order left, the kiosk reset); kept until the cloud answers. */
@@ -1108,6 +1128,8 @@ export class WebKioskService {
   async placeOpenOrder(input: PlaceInput): Promise<PlaceResult> {
     if (!this.creds) return { ok: false, reason: 'error', message: 'הקיוסק אינו מצומד' };
     if (input.lines.length === 0) return { ok: false, reason: 'empty', message: '' };
+    // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
+    if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'rejected', message: DISCOUNT_PAY_HERE };
     const cfg = this.config();
     const now = this.now();
     const localId = newId();

@@ -14,7 +14,7 @@ COPY of an issued document, a separate append-only record linked to it by id (wh
 The document's own row is not touched by it, now or ever.
 
 Add-only and idempotent (the columns and the table are looked at first). Revision ID: a1eece573e4e,
-revises 5a7c9e1b3d2f.
+revises 31958d027cef (re-chained at the merge into the 10.10.2026 release; written on 5a7c9e1b3d2f).
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "a1eece573e4e"
-down_revision: Union[str, Sequence[str], None] = "5a7c9e1b3d2f"
+down_revision: Union[str, Sequence[str], None] = "31958d027cef"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

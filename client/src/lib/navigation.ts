@@ -32,12 +32,14 @@ import {
   CalendarRange,
   Clock,
   Coins,
+  Contact,
   CreditCard,
   Download,
   FileBarChart,
   FilePlus2,
   FileText,
   GitCompareArrows,
+  Globe,
   ListChecks,
   RadioTower,
   Grid3x3,
@@ -158,6 +160,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
       // "תפריטים": sales menus by schedule (בוקר, צהריים, הפי האוור…) and where they apply.
       { href: '/dashboard/menus', labelKey: 'catalogMenus', icon: BookOpenText },
+      // "סדר תצוגה": one order for the tills, the kiosks, online ordering and the digital menu —
+      // linked, independent or copied once (lib/displayOrdering.ts).
+      { href: '/dashboard/display-order', labelKey: 'displayOrder', icon: ListOrdered },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.
@@ -281,6 +286,26 @@ export const NAV_SECTIONS: NavSection[] = [
       // "נוכחות עובדים": who is on shift, the attendance report, corrections and job titles.
       // Every role but the cashier reads (the server scopes it); managers correct.
       { href: '/dashboard/attendance', labelKey: 'attendance', icon: CalendarClock },
+    ],
+  },
+  {
+    // "ערוצים דיגיטליים" (P:/specs/digital-menu-ordering-cards-plan.md §21): the public digital
+    // surfaces — digital menu, online ordering, business cards and their legal pages — one group.
+    id: 'digital',
+    labelKey: 'sections.digital',
+    items: [
+      // "תפריט דיגיטלי" / "הזמנות אונליין": their profiles, each its own dashboard section.
+      { href: '/dashboard/digital-menu', labelKey: 'digitalMenu', icon: QrCode },
+      { href: '/dashboard/online-ordering', labelKey: 'onlineOrdering', icon: Globe },
+      // "כרטיסי ביקור דיגיטליים": cards for the company, branches, sales points and staff — editor
+      // with live preview, publication, QR and the enquiries inbox; the kiosk pages' roles.
+      {
+        href: '/dashboard/business-cards',
+        labelKey: 'businessCards',
+        icon: Contact,
+        gate: 'settingsWrite',
+        matchPrefixes: ['/dashboard/business-cards/'],
+      },
     ],
   },
   {

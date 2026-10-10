@@ -30,6 +30,7 @@ import {
   type BridgeHealth,
   type BridgeRole,
 } from '../../core/bridgeProtocol';
+import { startVouchersOf } from '@dash-lib/kioskVoucherClient';
 import { checkCode, codeRefusalText, expired, newCode, secondsLeft, type PairingCode } from '../../core/bridgePairing';
 import { DEFAULT_LAUNCHER, LAUNCHER_TEXT, launchable, parseDashboardLink, urlForRole, type LauncherPhase, type LauncherSettings } from '../../core/bridgeLauncher';
 import { DRAWER_KICK } from '../../core/escpos';
@@ -168,13 +169,32 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
       : [];
     const notes = Array.isArray(l.notes) ? (l.notes as unknown[]).flatMap((n) => (typeof n === 'string' && n.trim() ? [n.slice(0, 200)] : [])).slice(0, 5) : [];
     const unit = Number(l.unitAgorot);
-    lines.push({ key, productId, qty: Math.trunc(qty), options, notes, ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}), ...(parts.length > 0 ? { meal: { components: parts } } : {}) });
+    // "תפריטים": the price the line was added at and the menu it was added under (the service validates them against its block).
+    const list = Number(l.listAgorot);
+    const catalog = Number(l.catalogAgorot);
+    const menuId = str(l.menuId, 64);
+    lines.push({
+      key,
+      productId,
+      qty: Math.trunc(qty),
+      options,
+      notes,
+      ...(Number.isFinite(unit) ? { unitAgorot: Math.round(unit) } : {}),
+      ...(l.listAgorot !== undefined && l.listAgorot !== null && Number.isFinite(list) ? { listAgorot: Math.round(list) } : {}),
+      ...(l.catalogAgorot !== undefined && l.catalogAgorot !== null && Number.isFinite(catalog) ? { catalogAgorot: Math.round(catalog) } : {}),
+      ...(menuId ? { menuId } : {}),
+      ...(l.priceSource === 'menu' || l.priceSource === 'catalog' ? { priceSource: l.priceSource } : {}),
+      ...(parts.length > 0 ? { meal: { components: parts } } : {}),
+    });
   }
   // "ללא סוג שירות": an explicit null stays none; anything else unknown is take-away, as always.
   const service = b.service === null ? null : b.service === 'eat_in' ? 'eat_in' : 'take_away';
   const tipPct = typeof b.tipPct === 'number' && Number.isFinite(b.tipPct) && b.tipPct >= 0 && b.tipPct <= 100 ? b.tipPct : null;
   const tipAgorot = typeof b.tipAgorot === 'number' && Number.isFinite(b.tipAgorot) && b.tipAgorot >= 0 ? Math.round(b.tipAgorot) : null;
   const expected = typeof b.expectedTotalAgorot === 'number' && Number.isFinite(b.expectedTotalAgorot) ? Math.round(b.expectedTotalAgorot) : undefined;
+  // The order's vouchers, read field by field (goods ones as legs, discount ones held for the order): anything unreadable is no payment.
+  const vouchers = b.vouchers === undefined ? undefined : startVouchersOf(b.vouchers);
+  if (b.vouchers !== undefined && !vouchers) return null;
   return {
     lines,
     service,
@@ -184,6 +204,7 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
     tipPct,
     tipAgorot,
     ...(expected !== undefined ? { expectedTotalAgorot: expected } : {}),
+    ...(vouchers ? { vouchers } : {}),
   };
 }
 

@@ -51,21 +51,29 @@ logger = logging.getLogger(__name__)
 
 # ── The till parameter ────────────────────────────────────────────────────────
 
-#: Read by the till: "לא" / false hides the sections on PAPER (the screen always shows them).
-PRINT_PARAMETER_KEY = "printFailedPayments"
+#: Read by the till: on puts the sections on the shift / Z PAPER; off (the default, unset
+#: included) leaves them off it. The screen always shows them, with its own print button
+#: ("הדפס עסקאות שלא הושלמו") — the owner, 09.10.2026: "בקופה בהדפסת משמרת אל תדפיס את
+#: עסקאות שלא הושלמו, אפשר להדפיס בנפרד".
+PRINT_PARAMETER_KEY = "printFailedPaymentsWithReports"
+
+#: The switch it replaces ("הדפסת עסקאות שלא הושלמו בדוחות", on by default). Not a built-in
+#: any more — alembic 9b4e2f7a1c58 deactivates an existing definition, keeping its values.
+RETIRED_PRINT_PARAMETER_KEY = "printFailedPayments"
 
 FAILED_PAYMENTS_PARAMETER_SPECS = (
     dict(
         key=PRINT_PARAMETER_KEY,
-        label="הדפסת עסקאות שלא הושלמו בדוחות",
+        label="הדפסת עסקאות שלא הושלמו בדוח משמרת / Z",
         value_type="boolean",
-        default_value=True,
+        default_value=False,
         description=(
-            "מופעל (ברירת מחדל): דוח המשמרת, דוח X, דוח הסגירה ודוח Z המודפסים בקופה כוללים את "
-            "\"עסקאות שלא הושלמו\" — תשלומים שנכשלו במסוף (נדחו, בוטלו, ללא תשובה, תקלת מסוף, "
-            "אשראי נעול) — ואת \"מכירות שבוטלו\". מידע בלבד: לא נכלל בסה״כ המכירות. כבוי — "
-            "החלקים לא מודפסים על הנייר; במסך הקופה ובדשבורד הם מוצגים תמיד. "
-            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+            "כבוי (ברירת מחדל): דוח המשמרת (X), דוח סגירת המשמרת ודוח ה-Z המודפסים בקופה — בלי "
+            "\"עסקאות שלא הושלמו\" (תשלומים שנכשלו במסוף: נדחו, בוטלו, ללא תשובה, תקלת מסוף, "
+            "אשראי נעול) ובלי \"מכירות שבוטלו\". במסך המשמרת, בהיסטוריית המשמרות ובמסך ה-Z הם "
+            "מוצגים תמיד, ושם הכפתור \"הדפס עסקאות שלא הושלמו\" מדפיס אותם בנפרד, כפתק משלהם. "
+            "מופעל — הם מודפסים גם בסוף הדוח עצמו. מידע בלבד: לא נכלל בסה״כ המכירות, ושום נתון "
+            "של הדוח או של ה-Z לא משתנה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
 )
@@ -101,7 +109,7 @@ SECTION_TITLE = "עסקאות שלא הושלמו"
 CANCELLED_TITLE = "מכירות שבוטלו"
 INFO_ONLY = "מידע בלבד — לא נכלל בסה״כ המכירות"
 #: The `key` of each section on the print document: the till drops them on paper when
-#: `printFailedPayments` is off (the renderer ignores keys it does not know).
+#: `printFailedPaymentsWithReports` is off (the renderer ignores keys it does not know).
 SECTION_KEY = "failed_payments"
 CANCELLED_KEY = "cancelled_sales"
 

@@ -295,6 +295,7 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:placeOpenOrder', (_e, input) => svc.placeOpenOrder(input));
   ipcMain.handle('kiosk:redeemVoucher', (_e, input) => svc.redeemVoucher(input));
   ipcMain.handle('kiosk:reverseVoucher', (_e, id: string) => svc.reverseVoucher(id));
+  ipcMain.handle('kiosk:releaseDiscounts', (_e, vouchers: Array<{ reservationId: string }>) => svc.releaseDiscounts(vouchers));
   ipcMain.handle('kiosk:cancelPayment', () => svc.cancelPayment());
   ipcMain.handle('kiosk:receiptChoice', (_e, orderId: string, print: boolean) => svc.receiptChoice(orderId, print));
   ipcMain.handle('kiosk:helpRequest', () => svc.helpRequest());

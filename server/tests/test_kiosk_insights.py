@@ -707,6 +707,30 @@ class TestBasketCheck:
         out = check(w, [{"productId": str(w.p["קפה"].id), "unitPriceAgorot": 1200}])
         assert out["lines"][0]["reason"] == "category_off" and out["ok"] is False
 
+    def test_the_products_no_kiosk_sells_are_not_on_the_kiosk(self, w):
+        """The general item, an open-price and a weighed product: a customer keys no price and weighs nothing
+        (the devices' rule — pos-android KioskCatalogView.build, client lib/kioskSellable.ts)."""
+        w.p["קולה"].is_open_price = True
+        w.p["קפה"].is_weighed = True
+        w.p["צ'יפס"].is_general = True
+        w.db.commit()
+        sent = [(w.p["קולה"], 900), (w.p["קפה"], 1200), (w.p["צ'יפס"], 1800), (w.p["בורגר"], 5200)]
+        out = check(w, [{"productId": str(p.id), "unitPriceAgorot": price} for p, price in sent])
+        lines = {l["productId"]: l for l in out["lines"]}
+        for name in ("קולה", "קפה", "צ'יפס"):
+            line = lines[str(w.p[name].id)]
+            assert line["available"] is False and line["reason"] == "not_on_kiosk" and line["priceChanged"] is False, name
+        assert lines[str(w.p["בורגר"].id)]["available"] is True
+        assert out["ok"] is False
+
+    def test_never_on_kiosk_is_strict(self):
+        from app.services.kiosk_basket_check import never_on_kiosk
+
+        assert never_on_kiosk({"isGeneral": True}) and never_on_kiosk({"isOpenPrice": True}) and never_on_kiosk({"isWeighed": True})
+        # An older row without the flags, null, a falsy or a non-boolean value: sold, as on the devices.
+        assert not never_on_kiosk({}) and not never_on_kiosk(None)
+        assert not never_on_kiosk({"isGeneral": False, "isOpenPrice": None, "isWeighed": 1, "price": 5})
+
     def test_promotions_changed(self, w):
         out = check(w, [{"productId": str(w.p["קפה"].id), "unitPriceAgorot": 1200}], etag="stale-etag")
         assert out["promotions"]["changed"] is True and out["ok"] is False

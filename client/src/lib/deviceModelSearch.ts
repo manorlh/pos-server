@@ -30,6 +30,7 @@ export const MAKER_HEBREW_NAMES: Record<string, readonly string[]> = {
   Verifone: ['וריפון', 'ווריפון'],
   PAX: ['פאקס', 'פקס'],
   Urovo: ['יורובו', 'אורובו'],
+  iMin: ['איימין', 'אימין'],
   HIT: ['היט'],
   Android: ['אנדרואיד'],
 };
@@ -44,6 +45,9 @@ export interface DeviceModelNames {
 }
 
 const sunmi = (name: string, ...aliases: string[]): DeviceModelNames => ({ name: `SUNMI ${name}`, maker: 'SUNMI', aliases });
+const imin = (name: string, ...aliases: string[]): DeviceModelNames => ({ name: `iMin ${name}`, maker: 'iMin', aliases });
+const landi = (name: string, ...aliases: string[]): DeviceModelNames => ({ name: `LANDI ${name}`, maker: 'LANDI', aliases });
+const feitian = (name: string, ...aliases: string[]): DeviceModelNames => ({ name: `Feitian ${name}`, maker: 'Feitian', aliases });
 const synqpay = (name: string, ...aliases: string[]): DeviceModelNames => ({
   name: `SynqPay ${name}`,
   maker: 'SynqPay',
@@ -91,6 +95,26 @@ export const DEVICE_MODEL_NAMES: Record<DeviceModelId, DeviceModelNames> = {
   SYNQPAY: { name: 'SynqPay', maker: 'SynqPay', aliases: [] },
   PAX_A77: { name: 'PAX A77', maker: 'PAX', aliases: ['A77'] },
   UROVO_I9100: { name: 'Urovo i9100', maker: 'Urovo', aliases: ['i9100'] },
+  IMIN_FALCON2: imin('Falcon 2', 'Falcon 2', 'Falcon2', 'TF2'),
+  IMIN_FALCON2_58: imin('Falcon 2 58mm', 'Falcon 2 58', 'Falcon 2 dock 58'),
+  IMIN_FALCON2MAX: imin('Falcon 2 Max', 'Falcon 2 Max', 'Falcon2 Max'),
+  IMIN_D4_PRO: imin('D4 Pro', 'D4 Pro', 'D4-503 Pro', 'D4-504 Pro', 'D4-505 Pro'),
+  IMIN_SWAN2: imin('Swan 2', 'Swan 2', 'Swan 2 Printer', 'I23M02'),
+  IMIN_SWIFT2: imin('Swift 2', 'Swift 2', 'Swift 2 Pro'),
+  IMIN_FALCON1: imin('Falcon 1', 'Falcon 1', 'Falcon1', 'I22T01'),
+  IMIN_D4: imin('D4', 'D4', 'D4-503', 'D4-504', 'D4-505'),
+  IMIN_D1: imin('D1', 'D1', 'D1 Pro', 'D1w'),
+  IMIN_M2: imin('M2', 'M2', 'M2 Pro', 'M2 Max', 'M2-202', 'M2-203'),
+  IMIN_SWIFT1: imin('Swift 1', 'Swift 1', 'I22M01'),
+  IMIN: { name: 'iMin', maker: 'iMin', aliases: [] },
+  LANDI_C20_PRO: landi('C20 Pro', 'C20 Pro', 'C20'),
+  LANDI_M20: landi('M20', 'M20', 'M20 SE'),
+  LANDI_P20: landi('P20 / P30', 'P20', 'P30'),
+  LANDI_APOS_A8: landi('APOS A8', 'APOS A8', 'A8', 'Ingenico APOS A8'),
+  FEITIAN_M60: feitian('M60', 'M60', 'M60-7', 'Smart Multi Dock'),
+  FEITIAN_F360: feitian('F360', 'F360', 'F360-3', 'F360-4'),
+  FEITIAN_F310: feitian('F310', 'F310', 'F310-11', 'Smart ECR'),
+  FEITIAN_M500: feitian('M500', 'M500'),
 };
 
 const MAKER_WORDS = Object.entries(MAKER_HEBREW_NAMES).map(([maker, hebrew]) => ({

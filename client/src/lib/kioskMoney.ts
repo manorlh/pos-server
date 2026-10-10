@@ -12,13 +12,16 @@
  *  - promotions (domain/Promotions.kt `PromotionEngine`, domain/PromotionMapper.kt): the seven
  *    kinds, item promotions first by priority (the best order within one), spend thresholds after,
  *    each application spread over its units by price (largest remainder, to the agora);
- *  - the basket's total after promotions (domain/Cart.kt `totals`), the VAT once (domain/Vat.kt).
+ *  - the basket's total after promotions and discount vouchers (domain/Cart.kt `totals`, the vouchers
+ *    by lib/kioskVouchers.ts — "שוברי הנחה"), the VAT once (domain/Vat.kt).
  *
  * Pinned by the shared golden fixture server/tests/fixtures/kiosk_money_golden.json (whose header
  * names the Kotlin each case pins); the client's and the Windows kiosk's tests both run it.
  *
- * Money is integer agorot throughout. Pure; no imports (the node tests compile it alone).
+ * Money is integer agorot throughout. Pure; its one import is the voucher rules (the node tests compile both).
  */
+
+import { applyVoucherDiscounts, type AppliedDiscountVoucher, type VoucherOutcome } from './kioskVouchers';
 
 /* ------------------------------------------------------------------- money */
 
@@ -1270,10 +1273,15 @@ export interface PricedLine {
   qty: number;
   /** unit × qty, before promotions. */
   grossAgorot: number;
+  /** What promotions took off the line (less what gave way to a voucher: "ההטבה הטובה מבין השתיים"). */
   promotionAgorot: number;
   promotionId: string | null;
   promotionName: string | null;
-  /** What the line costs: gross less its promotions' share. */
+  /** What discount vouchers took off the line ("שוברי הנחה", lib/kioskVouchers.ts). */
+  voucherAgorot: number;
+  /** The promotion's share that gave way to a voucher on this line. */
+  promotionYieldedAgorot: number;
+  /** What the line costs: gross less its promotions' and vouchers' share. */
   totalAgorot: number;
 }
 
@@ -1281,6 +1289,10 @@ export interface PricedBasket {
   lines: PricedLine[];
   grossAgorot: number;
   promotionAgorot: number;
+  /** What discount vouchers took off the sale. */
+  voucherAgorot: number;
+  /** What each voucher of the order took and why it left a line out, in the order applied. */
+  voucherOutcomes: VoucherOutcome[];
   /** What the goods cost — what the customer pays before any tip. */
   totalAgorot: number;
   applied: AppliedPromotion[];
@@ -1293,32 +1305,69 @@ export interface PricedBasket {
   rewardsAvailable: PromotionHint[];
 }
 
-/** The basket priced as it will be paid and documented (KioskViewModel.price → Cart.totals): promotions applied. */
-export function priceKioskBasket(lines: readonly PromoLine[], promotions: readonly Promotion[], now: LocalDateTime): PricedBasket {
+/**
+ * The basket priced as it will be paid and documented (KioskViewModel.price → Cart.totals): promotions applied, then
+ * the discount vouchers in the order they were applied (`cart.withPromotions(outcome).withVoucherDiscounts()`).
+ */
+export function priceKioskBasket(
+  lines: readonly PromoLine[],
+  promotions: readonly Promotion[],
+  now: LocalDateTime,
+  vouchers: readonly AppliedDiscountVoucher[] = [],
+): PricedBasket {
   const outcome = lines.length === 0 || promotions.length === 0 ? NO_PROMOTIONS : evaluatePromotions(lines, promotions, now);
-  const priced = lines.map((l) => {
+  const promoted = lines.map((l) => {
     const share = outcome.lineShares[l.id];
-    const gross = timesQty(l.unitAgorot, l.qty);
-    const promo = share?.discountAgorot ?? 0;
+    return { l, gross: timesQty(l.unitAgorot, l.qty), promo: share?.discountAgorot ?? 0, share };
+  });
+  const withVouchers = vouchers.length === 0 ? null : applyVoucherDiscounts(
+    promoted.map(({ l, gross, promo, share }) => ({
+      id: l.id,
+      productIds: l.productIds,
+      categoryId: l.categoryId,
+      qty: l.qty,
+      grossAgorot: gross,
+      promotionAgorot: promo,
+      promotionId: share?.promotionId ?? null,
+      noDiscount: l.noDiscount === true,
+    })),
+    vouchers,
+  );
+  const priced = promoted.map(({ l, gross, promo, share }) => {
+    const v = withVouchers?.lines[l.id];
+    const promotionAgorot = v ? v.promotionAgorot : promo;
+    const voucherAgorot = v?.voucherAgorot ?? 0;
     return {
       id: l.id,
       unitAgorot: l.unitAgorot,
       qty: l.qty,
       grossAgorot: gross,
-      promotionAgorot: promo,
+      promotionAgorot,
       promotionId: share?.promotionId ?? null,
       promotionName: share?.promotionName ?? null,
-      totalAgorot: gross - promo,
+      voucherAgorot,
+      promotionYieldedAgorot: v?.promotionYieldedAgorot ?? 0,
+      totalAgorot: gross - promotionAgorot - voucherAgorot,
     };
   });
   const gross = priced.reduce((s, l) => s + l.grossAgorot, 0);
   const promo = priced.reduce((s, l) => s + l.promotionAgorot, 0);
+  const voucher = priced.reduce((s, l) => s + l.voucherAgorot, 0);
+  // A promotion that gave way to a voucher on some lines is worth less now (and gone when nothing is left).
+  const yielded = withVouchers?.yielded ?? {};
+  const applied = outcome.applied.flatMap((a) => {
+    const gave = yielded[a.promotionId];
+    if (gave === undefined) return [a];
+    return a.discountAgorot - gave > 0 ? [{ ...a, discountAgorot: a.discountAgorot - gave }] : [];
+  });
   return {
     lines: priced,
     grossAgorot: gross,
     promotionAgorot: promo,
-    totalAgorot: gross - promo,
-    applied: outcome.applied,
+    voucherAgorot: voucher,
+    voucherOutcomes: withVouchers?.outcomes ?? [],
+    totalAgorot: gross - promo - voucher,
+    applied,
     itemCount: Math.ceil(lines.reduce((s, l) => s + l.qty, 0)),
     giftOffers: outcome.giftOffers,
     near: outcome.near,
@@ -1349,8 +1398,10 @@ export function priceKioskOrder(input: {
   tip: TipRules;
   tipPercent?: number | null;
   tipOtherAgorot?: number | null;
+  /** The discount vouchers held for this order, in the order applied ("שוברי הנחה"). */
+  vouchers?: readonly AppliedDiscountVoucher[];
 }): PricedOrder {
-  const basket = priceKioskBasket(input.lines, input.promotions, input.now);
+  const basket = priceKioskBasket(input.lines, input.promotions, input.now, input.vouchers ?? []);
   const { netAgorot, vatAgorot } = vatSplit(basket.totalAgorot, input.vatRate);
   const tipAgorot = kioskTipAgorot(input.tip, basket.totalAgorot, input.tipPercent, input.tipOtherAgorot);
   return { ...basket, netAgorot, vatAgorot, tipAgorot, dueAgorot: basket.totalAgorot + tipAgorot };

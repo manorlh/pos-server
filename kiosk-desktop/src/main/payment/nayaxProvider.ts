@@ -7,7 +7,7 @@
  * day's batch) is NayaxTweezerProvider, shared with the C4 on the kiosk's USB (nayaxUsb.ts).
  */
 
-import { resolveAttempt, type CallFn } from '../../core/cardRecovery';
+import { resolveAttempt, type CallFn, type CallResult } from '../../core/cardRecovery';
 import { acknowledgeApproval } from '../../core/terminalAck';
 import {
   abortFrame,
@@ -27,7 +27,7 @@ import {
   type ParsedReply,
   type PinpadAddress,
 } from '../../core/nayax';
-import { postFrame, tlsRefused, type PinStore } from './pinpadHttp';
+import { postFrame, requestNotWritten, tlsRefused, type PinStore } from './pinpadHttp';
 import type { ApprovedCard, PaymentProvider, ProviderContext, ProviderFactory, ProviderKind, Resolution, SaleResult, TransmitResult } from './provider';
 
 const HTTP_MEMORY_MS = 24 * 3_600_000;
@@ -106,6 +106,8 @@ export abstract class NayaxTweezerProvider implements PaymentProvider {
   async sale(req: { amountAgorot: number; reference: string; payments: number; onProgress?: (m: string) => void; onAnswered?: () => void }): Promise<SaleResult> {
     req.onProgress?.('הצמד, הכנס או העבר את הכרטיס');
     const r = await this.call(saleFrame(req.amountAgorot, req.reference, req.payments), TIMEOUTS.sale);
+    // The frame never left (no link, nothing written): certainly not charged, its reason said.
+    if (!r.ok && r.notSent) return { answer: 'NOT_SENT', message: r.error };
     if (!r.ok) return { answer: 'UNKNOWN', message: `אין תשובה מהמסוף: ${r.error}`, raw: null };
     req.onAnswered?.();
     const reply = parseReply(r.body);
@@ -198,29 +200,48 @@ export class NayaxLanProvider extends NayaxTweezerProvider {
     return 'detect';
   }
 
-  /** One frame to the pinpad. A sale frame is never sent twice: detection uses getStatus only. */
+  /**
+   * One frame to the pinpad. A sale frame is never sent twice: detection uses getStatus only.
+   * A frame that never left — plain HTTP not allowed, no connection (refused, no such host, no
+   * route), or the getStatus before it failed — is `notSent` (CallResult), never "unknown"; one
+   * written whose reply was lost is a plain failure (unknown, settled by its vuid).
+   */
   protected call: CallFn = async (frame, timeoutMs) => {
     const plan = this.plan();
-    if (plan === 'refused') return { ok: false, error: 'http_not_allowed' };
+    if (plan === 'refused') return this.notSent('http_not_allowed');
     const https: PinpadAddress = { ...this.address, tls: true };
     const http: PinpadAddress = { ...this.address, tls: false };
+    let posted = false;
+    const post = (to: PinpadAddress, pins: PinStore | null) => {
+      posted = true;
+      return postFrame(to, frame, timeoutMs, pins);
+    };
     try {
-      if (plan === 'http') return this.ok(await postFrame(http, frame, timeoutMs, null));
-      if (plan === 'https') return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
-      // detect: getStatus over HTTPS; only a TLS-level refusal tries HTTP (getStatus), and only then the frame.
+      if (plan === 'http') return this.ok(await post(http, null));
+      if (plan === 'https') return this.ok(await post(https, this.pins));
+      // detect: getStatus over HTTPS; only a TLS-level refusal of it tries HTTP (getStatus), and only
+      // then the frame — never once the frame itself went out over HTTPS.
       try {
         await postFrame(https, statusFrame(), TIMEOUTS.status, this.pins);
-        return this.ok(await postFrame(https, frame, timeoutMs, this.pins));
+        return this.ok(await post(https, this.pins));
       } catch (e) {
-        if (!tlsRefused(e)) throw e;
+        if (posted || !tlsRefused(e)) throw e;
         await postFrame(http, statusFrame(), TIMEOUTS.status, null);
         this.ctx.setValue(`pinpad.scheme:${this.address.host}:${this.address.port}`, `http@${Date.now()}`);
-        return this.ok(await postFrame(http, frame, timeoutMs, null));
+        return this.ok(await post(http, null));
       }
     } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      const error = e instanceof Error ? e.message : String(e);
+      // The frame itself was never written: the pinpad cannot have seen it.
+      if (!posted || requestNotWritten(e)) return this.notSent(error);
+      return { ok: false, error };
     }
   };
+
+  /** Nothing reached the pinpad, said as the USB link and SynqPay say it ("אין חיבור למסוף"). */
+  private notSent(reason: string): CallResult {
+    return { ok: false, error: `אין חיבור למסוף (${this.address.host}:${this.address.port}): ${reason}`, notSent: true };
+  }
 
   private ok(r: { status: number; body: string }) {
     if (r.status < 200 || r.status >= 300) return { ok: false as const, error: `HTTP ${r.status}` };

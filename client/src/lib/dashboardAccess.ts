@@ -15,6 +15,8 @@ export type SectionId =
   | 'reports'
   | 'z'
   | 'products'
+  | 'digital_menu'
+  | 'online_ordering'
   | 'cockpit'
   | 'quick_actions'
   | 'item_blocks'
@@ -30,6 +32,7 @@ export type SectionId =
   | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
+  | 'business_cards'
   | 'notifications'
   | 'till_messages'
   | 'exception_alerts'
@@ -77,9 +80,12 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     id: 'products',
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
-      '/dashboard/menus', '/dashboard/assortment',
+      '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
     ],
   },
+  // "תפריט דיגיטלי" / "הזמנות אונליין" (ערוצים דיגיטליים): their profiles, each its own section.
+  { id: 'digital_menu', pages: ['/dashboard/digital-menu'] },
+  { id: 'online_ordering', pages: ['/dashboard/online-ordering'] },
   // The manager's own ("הניהול שלי"): they gate what the cockpit (the home page) offers.
   { id: 'cockpit', pages: [] },
   // "פעולות מהירות": no page of its own — the quick message / promotion / happy hour sheets.
@@ -104,6 +110,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
   { id: 'customers', pages: ['/dashboard/club'] },
+  { id: 'business_cards', pages: ['/dashboard/business-cards'] },
   { id: 'notifications', pages: ['/dashboard/notifications'] },
   { id: 'till_messages', pages: ['/dashboard/till-messages'] },
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },

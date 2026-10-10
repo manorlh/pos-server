@@ -6,6 +6,7 @@
  */
 
 import type { KioskTextKey } from '@/lib/kioskConfig';
+import { VOUCHER_REASON_TEXT } from '@/lib/kioskVouchers';
 
 /** The live kiosk's own words (as kiosk-desktop/src/renderer/i18n.ts LIVE), and the browser's. */
 export const LIVE: Record<string, string> = {
@@ -37,7 +38,6 @@ export const LIVE: Record<string, string> = {
   loading: 'טוען את הקיוסק…',
   cardOffBrowser: 'לא זמין בקיוסק בדפדפן',
   // "גשר לדפדפן" (§28): the card and the printer through R2M POS for Windows on this PC.
-  cardWithVoucher: 'אשראי לא משולב עם שובר — היתרה בקופה',
   bridgeNoAnswer: 'מסופון האשראי לא זמין כרגע. אנא פנו לצוות.',
   bridgeFoundTitle: 'נמצא גשר R2M ל-Windows במחשב',
   bridgeFoundBody: 'כדי לשלם באשראי ולהדפיס מהקיוסק, הקלידו את הקוד שמוצג בחלון הגשר (סמל R2M ליד השעון).',
@@ -50,6 +50,7 @@ export const LIVE: Record<string, string> = {
   voucherCameraHint: 'כוונו את המצלמה לברקוד שעל השובר',
   voucherCameraDenied: 'אין גישה למצלמה. אפשר להקליד את קוד השובר.',
   voucherAppliedNote: 'השובר נקלט · {amount}',
+  voucherDiscountApplied: 'שובר #{serial}: הנחה של {amount}',
   voucherChecking: 'בודקים את השובר…',
   voucherForfeitYes: 'לממש בכל זאת',
   voucherForfeitNo: 'לא, תודה',
@@ -65,6 +66,9 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
   'voucher.other': 'השובר לא נקלט. אפשר לנסות שוב או לשלם בקופה.',
+  // "שוברי הנחה" (lib/kioskVouchers.ts): the Android kiosk's words for what the rules and the cloud refuse — one table for both TypeScript kiosks.
+  ...Object.fromEntries(Object.entries(VOUCHER_REASON_TEXT).map(([code, words]) => [`voucher.${code}`, words])),
+  'voucher.prepaid_kiosk_show_at_till': 'יש להציג את השובר בקופה',
 };
 
 export interface KioskWords {

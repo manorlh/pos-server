@@ -90,7 +90,17 @@ describe('searching a model the way it is typed', () => {
     const sunmi = DEVICE_MODEL_IDS.filter((id) => id.startsWith('SUNMI'));
     assert.deepEqual(find('sunmi').sort(), [...sunmi].sort());
     assert.deepEqual(find('סאנמי').sort(), [...sunmi].sort());
-    assert.deepEqual(find('פייטיאן').sort(), ['FEITIAN_TABLET', 'N55F']);
+    const feitian = DEVICE_MODEL_IDS.filter((id) => id.startsWith('FEITIAN') || id === 'N55F');
+    assert.deepEqual(find('פייטיאן').sort(), [...feitian].sort());
+    // iMin (app/models/builtin_printers.py) by its maker in either spelling, and its models by name.
+    const imin = DEVICE_MODEL_IDS.filter((id) => id.startsWith('IMIN'));
+    assert.deepEqual(find('imin').sort(), [...imin].sort());
+    assert.deepEqual(find('איימין').sort(), [...imin].sort());
+    assert.equal(find('falcon 2')[0], 'IMIN_FALCON2');
+    assert.equal(find('falcon 2 max')[0], 'IMIN_FALCON2MAX');
+    assert.equal(find('falcon1')[0], 'IMIN_FALCON1');
+    assert.equal(find('c20 pro')[0], 'LANDI_C20_PRO');
+    assert.ok(find('לנדי').includes('LANDI_C20_PRO'));
     assert.equal(find('פאקס')[0], 'PAX_A77');
     assert.equal(find('synqpay').length, DEVICE_MODEL_IDS.filter((id) => id.startsWith('SYNQPAY')).length);
     assert.ok(find('ingenico').includes('SYNQPAY_DX8000'));

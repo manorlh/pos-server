@@ -12,7 +12,11 @@ kiosks document for those sales is what the cloud takes as it stands:
     with the corpus's items, promotion shares, discount, VAT and tip — validates, its card leg
     reconciles with the goods after promotions, its net and VAT add up;
   - the cloud's own twin of the choice rules (app/services/menu.py `price_picks`, which checks what a
-    till sends) charges every dish's choices as the Android kiosk did.
+    till sends) charges every dish's choices as the Android kiosk did;
+  - the vouchers sections ("vouchers": discount vouchers; "goodsVouchers": goods vouchers as legs of the
+    payment): the documents the three kiosks write for those sales - the vouchers' shares inside the
+    discount, `voucherDiscounts[]`, the `production_voucher` legs and the card for the rest - validate,
+    and their tender legs reconcile with the goods.
 """
 import copy
 import hashlib
@@ -31,7 +35,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CORPUS = FIXTURES / "kiosk_pricing_parity.json"
 #: The corpus's SHA-256 (LF) — the same constant as pos-android KioskPricingCorpusTest.GOLDEN_SHA256 and
 #: client lib/kioskPricingCorpus.ts KIOSK_PRICING_PARITY_SHA256. Regenerate, never edit by hand.
-CORPUS_SHA256 = "2448b069922eb90575a9db7590595bdc20d2115634a1f78ae7627d84703a82e6"
+CORPUS_SHA256 = "871bece763440a0066ead952942a2242b1057ba09093060d33785aa915444ba4"
 
 
 def _text() -> str:
@@ -151,3 +155,170 @@ def test_the_clouds_choice_rules_charge_what_the_kiosk_charged(case):
         assert MENU.price_picks(rules, cloud) == [p["chargedAgorot"] for p in picks]
         if added:
             assert MENU.validate_picks(rules, cloud) == []
+
+
+# -- Vouchers: the documents the kiosks write ----------------------------------
+
+
+def _voucher_cases():
+    return [c for c in _corpus().get("vouchers", []) if c["expected"]["lines"]]
+
+
+def _goods_cases():
+    return _corpus().get("goodsVouchers", [])
+
+
+def _item_ids(lines: list) -> dict:
+    return {l["id"]: f"0b1c2d3e-0000-4000-8000-{i:012d}" for i, l in enumerate(lines)}
+
+
+def _base() -> dict:
+    env = json.loads((FIXTURES / "kiosk_desktop" / "transaction_card_sale_320.json").read_text(encoding="utf-8"))
+    env["transactions"][0].pop("stockMovements", None)
+    return env
+
+
+def _validated(env: dict):
+    valid, rejected, unidentified = validate_documents(TransactionsBatchEnvelope.model_validate(env).transactions)
+    assert rejected == [] and unidentified == []
+    (_, tx, warnings), = valid
+    assert warnings == []
+    return tx
+
+
+def _voucher_document(c: dict) -> dict:
+    """A kiosk sale with discount vouchers: what the Windows kiosk's ledger (documentWire) and the Android till's buildTransaction write."""
+    env = _base()
+    tx = env["transactions"][0]
+    x = c["expected"]
+    ids = _item_ids(x["lines"])
+    shares = {i["id"]: i for i in x["document"]["items"]}
+    items = []
+    for l in x["lines"]:
+        item = {
+            "id": ids[l["id"]],
+            "productName": l["id"],
+            "quantity": 1,
+            "unitPrice": l["grossAgorot"] / 100,
+            "totalPrice": l["grossAgorot"] / 100,
+            "transactionType": 2,
+        }
+        d = shares[l["id"]]
+        if d["promotionDiscount"] is not None:
+            item["promotionDiscount"] = d["promotionDiscount"]
+            item["promotionId"] = d["promotionId"]
+        if d["voucherDiscount"] is not None:
+            item["voucherDiscount"] = d["voucherDiscount"]
+        items.append(item)
+    vouchers = copy.deepcopy(x["document"]["voucherDiscounts"] or [])
+    for v in vouchers:
+        v["lines"] = [{"itemId": ids[ln["itemId"]], "amount": ln["amount"]} for ln in v["lines"]]
+    tx.update(
+        items=items,
+        totalAmount=x["grossAgorot"] / 100,
+        documentDiscount=x["document"]["documentDiscount"],
+        netAmount=x["document"]["netAmount"],
+        vatAmount=x["document"]["vatAmount"],
+        vatRate=c["vatRate"],
+        tipAmount=x["document"]["tipAmount"],
+        promotions=x["document"]["promotions"] or [],
+        voucherDiscounts=vouchers,
+    )
+    # A discount is never a tender: the card pays the goods after it (the tip is beside it).
+    tx["payments"] = [dict(copy.deepcopy(tx["payments"][0]), amount=x["totalAgorot"] / 100)]
+    return env
+
+
+@pytest.mark.parametrize("c", _voucher_cases(), ids=lambda c: c["name"][:60])
+def test_a_sale_with_discount_vouchers_is_a_document_the_cloud_takes_as_it_stands(c):
+    tx = _validated(_voucher_document(c))
+    x = c["expected"]
+    # The discount is the promotions' shares and the vouchers' shares: line by line, and as a document.
+    promotion = sum(Decimal(str(i.promotion_discount or 0)) for i in tx.items)
+    voucher = sum(Decimal(str(i.voucher_discount or 0)) for i in tx.items)
+    assert promotion == Decimal(x["promotionAgorot"]) / 100
+    assert voucher == Decimal(x["voucherAgorot"]) / 100
+    assert promotion + voucher == Decimal(str(tx.document_discount or 0))
+    # What each voucher took is the sum of its lines, and the vouchers together the items' shares; each confirms its reservation.
+    assert sum(Decimal(str(v.amount)) for v in tx.voucher_discounts) == voucher
+    for v in tx.voucher_discounts:
+        assert sum(Decimal(str(ln["amount"])) for ln in v.lines) == Decimal(str(v.amount))
+        assert v.reservation_id and v.kind in ("order_discount", "item_discount")
+    # The card leg is the goods after every discount; the tip beside it; VAT once per document.
+    expected = expected_tender_total(
+        total_amount=tx.total_amount,
+        document_discount=tx.document_discount,
+        document_type=tx.document_type,
+        refund_of_transaction_id=tx.refund_of_transaction_id,
+    )
+    assert expected == Decimal(x["totalAgorot"]) / 100
+    assert reconciliation_error(expected, [p.amount for p in tx.payments]) is None
+    assert Decimal(str(tx.net_amount)) + Decimal(str(tx.vat_amount)) == Decimal(x["totalAgorot"]) / 100
+
+
+def _goods_document(c: dict) -> dict:
+    """A kiosk sale paid by goods vouchers (`production_voucher` legs) and the card for the rest (service.startPayment / the Android payment)."""
+    env = _base()
+    tx = env["transactions"][0]
+    x = c["expected"]
+    # The goods are the basket's total (no discount here: the legs pay the goods, they do not discount them), on one line.
+    gross = x["totalAgorot"]
+    net = round(gross / 100 / 1.18, 2)
+    tx.update(
+        items=[
+            {
+                "id": "0b1c2d3e-0000-4000-8000-000000000000",
+                "productName": "goods",
+                "quantity": 1,
+                "unitPrice": gross / 100,
+                "totalPrice": gross / 100,
+                "transactionType": 2,
+                "notes": next((n for n in x["notes"].values() if n), None),
+            }
+        ],
+        totalAmount=gross / 100,
+        documentDiscount=None,
+        netAmount=net,
+        vatAmount=round(gross / 100 - net, 2),
+        vatRate=0.18,
+        tipAmount=x["tipAgorot"] / 100,
+        promotions=[],
+        voucherDiscounts=[],
+    )
+    card = copy.deepcopy(tx["payments"][0])
+    legs = [
+        {
+            "id": f"1c2d3e4f-0000-4000-8000-{i:012d}",
+            "sequence": i + 1,
+            "method": "production_voucher",
+            "amount": l["amountAgorot"] / 100,
+            "createdAt": card.get("createdAt"),
+        }
+        for i, l in enumerate(l for l in x["legs"] if l["amountAgorot"] > 0)
+    ]
+    principal = x["goodsDueAgorot"]
+    payments = list(legs)
+    # The card's leg is there while the card is charged at all (the tip alone, too): at what it paid of the goods.
+    if principal > 0 or x["tipAgorot"] > 0:
+        payments.append(dict(card, sequence=len(legs) + 1, amount=principal / 100))
+    tx["payments"] = payments
+    tx["paymentMethod"] = "card" if (principal > 0 or x["tipAgorot"] > 0) else "production_voucher"
+    return env
+
+
+@pytest.mark.parametrize("c", _goods_cases(), ids=lambda c: c["name"][:60])
+def test_a_sale_paid_by_goods_vouchers_and_the_card_reconciles(c):
+    tx = _validated(_goods_document(c))
+    x = c["expected"]
+    legs = [p for p in tx.payments if p.method == "production_voucher"]
+    assert [round(p.amount * 100) for p in legs] == [l["amountAgorot"] for l in x["legs"] if l["amountAgorot"] > 0]
+    # The legs and the card add up to the goods; the tip is never a tender leg.
+    expected = expected_tender_total(
+        total_amount=tx.total_amount,
+        document_discount=tx.document_discount,
+        document_type=tx.document_type,
+        refund_of_transaction_id=tx.refund_of_transaction_id,
+    )
+    assert expected == Decimal(x["totalAgorot"]) / 100
+    assert reconciliation_error(expected, [p.amount for p in tx.payments]) is None
+    assert Decimal(str(tx.tip_amount)) == Decimal(x["tipAgorot"]) / 100

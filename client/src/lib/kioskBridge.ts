@@ -19,6 +19,8 @@
  * Pure of React and of `@/` imports (the node tests compile it on its own).
  */
 
+import type { StartVouchers } from './kioskVoucherClient';
+
 export const BRIDGE_API = 1;
 export const BRIDGE_PORT = 47615;
 export const BRIDGE_BASE = `http://127.0.0.1:${BRIDGE_PORT}`;
@@ -91,12 +93,19 @@ export interface BridgeBasketLine {
   productId: string;
   qty: number;
   unitAgorot: number;
+  /** "תפריטים" (lib/kioskMenus.ts menuMemoryOf): the dish's own price as the line was added at, the catalog's then, the menu. */
+  listAgorot?: number;
+  catalogAgorot?: number;
+  menuId?: string;
+  priceSource?: 'menu' | 'catalog';
   options: Array<{ groupId: string; optionId: string }>;
   notes: string[];
 }
 
 export interface BridgeStartPayment {
   lines: BridgeBasketLine[];
+  /** The order's vouchers (lib/kioskVoucherClient.ts StartVouchers): the sale is priced with the discount ones, the goods ones are legs beside the card. */
+  vouchers?: StartVouchers;
   /** Null: "ללא סוג שירות" — the order has none. */
   service: 'take_away' | 'eat_in' | null;
   customerName: string | null;

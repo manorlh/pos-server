@@ -1180,6 +1180,11 @@ def transmission_facts(db, machine, shifts: Sequence[Any], block: Optional[Dict[
 
 def _drawer_of(cash: Dict[str, Any]) -> Dict[str, Any]:
     """The Z's own drawer figures (`z_builder.till_cash_summary` / `z_cash_summary`)."""
+    # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (app/services/z_expected_cash.py): with the
+    # parameter on, the Z's expected cash moves with Cash In / Out and the safe deposits, as the
+    # X's does — and prints them, so every line of its drawer adds up to its expected. Off (the
+    # default), a Z prints none of them and its expected does not move with them: as ever.
+    cash_in, cash_out, deposits = cash.get("cash_movements") or (None, None, None)
     return {
         "opening": _money_text(cash.get("opening")),
         "expected": _money_text(cash.get("expected")),
@@ -1187,11 +1192,9 @@ def _drawer_of(cash: Dict[str, Any]) -> Dict[str, Any]:
         "overShort": _money_text(cash.get("over_short")),
         "tipsPaidFromDrawer": _money_text(cash.get("card_tips_from_drawer")),
         "betweenShifts": _money_text(cash.get("between_shifts")),
-        # The Z's expected cash does not move with Cash In / Out or deposits (the X's does):
-        # a Z prints none of them, so every line of its drawer adds up to its expected.
-        "cashIn": None,
-        "expenses": None,
-        "safeDrop": None,
+        "cashIn": _money_text(cash_in),
+        "expenses": _money_text(cash_out),
+        "safeDrop": _money_text(deposits),
     }
 
 
@@ -1201,12 +1204,16 @@ def sections_for_z(
     shop_id: Any,
     per_machine: Sequence[Tuple[Any, Sequence[Any]]],
     sections: Sequence[Dict[str, Any]],
+    with_movements: Optional[Sequence[bool]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], List[Optional[Dict[str, Any]]]]:
     """
     A Z's sections — the whole Z's and each till's — from its documents, its drawer and its
     tills' transmission blocks (frozen with each section). Built once, at build time, and
     frozen with the Z like its other breakdowns. Never raises: a failure here leaves the Z
     without them (it prints as before), never without a Z.
+
+    `with_movements`: per till, as the Z froze it ("Z — מזומן צפוי כולל הפקדות ותנועות מזומן") —
+    the drawer is the same `z_builder` summary the Z's sections were built with; none: off.
     """
     try:
         from app.services.z_builder import till_cash_summary, z_cash_summary
@@ -1217,9 +1224,10 @@ def sections_for_z(
         for f in facts:
             by_shift_machine.setdefault(f.pop("_machine"), []).append(f)
         options = {m.id: machine_options(db, m) for m, _s in per_machine}
+        flags = [bool(f) for f in with_movements] if with_movements is not None else [False] * len(per_machine)
         per: List[Optional[Dict[str, Any]]] = []
         terminals: List[Dict[str, Any]] = []
-        for (machine, shifts), section in zip(per_machine, sections):
+        for (machine, shifts), section, flag in zip(per_machine, sections, flags):
             mine = by_shift_machine.get(machine.id, []) if shifts else []
             term = transmission_facts(db, machine, shifts, (section or {}).get("transmission"))
             if term is not None:
@@ -1227,14 +1235,14 @@ def sections_for_z(
             opts = options.get(machine.id) or {}
             per.append(compute(
                 mine,
-                drawer=_drawer_of(till_cash_summary(shifts)),
+                drawer=_drawer_of(till_cash_summary(shifts, flag)),
                 transmission={"terminals": [term]} if term is not None else None,
                 show_employees=bool(opts.get("showEmployees")),
                 count_required=bool(opts.get("countRequired")),
             ))
         whole = compute(
             facts,
-            drawer=_drawer_of(z_cash_summary([shifts for _m, shifts in per_machine])),
+            drawer=_drawer_of(z_cash_summary([shifts for _m, shifts in per_machine], flags)),
             transmission={"terminals": terminals} if terminals else None,
             show_employees=any(o.get("showEmployees") for o in options.values()),
             count_required=any(o.get("countRequired") for o in options.values()),
@@ -1274,7 +1282,14 @@ def sections_of_z(db, z) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         per_machine = [(machines[mid], ss) for mid, ss in grouped.items() if mid in machines]
         frozen = {str(s.get("machineId")): s for s in (z.per_machine or []) if isinstance(s, dict)}
         sections = [frozen.get(str(m.id), {}) for m, _ss in per_machine]
-        whole, _per = sections_for_z(db, shop_id=z.shop_id, per_machine=per_machine, sections=sections)
+        # The drawer as the Z froze it ("Z — מזומן צפוי כולל הפקדות ותנועות מזומן"): a till's section that
+        # carries the movements block had the parameter on — never the parameter as it stands now.
+        from app.services import z_expected_cash as ZEC
+
+        flags = [isinstance(s.get(ZEC.BLOCK), dict) for s in sections]
+        whole, _per = sections_for_z(
+            db, shop_id=z.shop_id, per_machine=per_machine, sections=sections, with_movements=flags,
+        )
         return whole, ("documents" if whole is not None else None)
     except Exception:  # noqa: BLE001
         logger.exception("z sections: not read for z %s", getattr(z, "id", None))
