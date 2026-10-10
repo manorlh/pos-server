@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 #: Codes of the quiet notes a document may get at ingest (`transactions.ingest_notes`).
 TENDERS_DO_NOT_RECONCILE = "tenders_do_not_reconcile"
 REFUND_OF_OTHER_TENANT = "refund_of_other_tenant"
+REISSUE_OF_OTHER_TENANT = "reissue_of_other_tenant"
 ISSUED_BEFORE_PAIRING = "issued_before_pairing"
 #: Clock slack before "issued before this till was paired" is noted.
 PAIRING_SKEW = timedelta(minutes=10)
@@ -711,6 +712,7 @@ def _serialize_tx_for_upsert(
     ingest_notes: Optional[List[dict]] = None,
     refund_of_transaction_id: Any = ...,
     filing_fields: Optional[Dict[str, Any]] = None,
+    reissue_of_transaction_id: Any = ...,
 ) -> Dict:
     """
     Flatten one incoming document into the row the upsert writes.
@@ -792,6 +794,15 @@ def _serialize_tx_for_upsert(
         "customer_name": getattr(tx, "customer_name", None),
         "customer_phone": getattr(tx, "customer_phone", None),
         "customer_address": getattr(tx, "customer_address", None),
+        # "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): as printed, never resolved.
+        "customer_vat_number": getattr(tx, "customer_vat_number", None),
+        "customer_email": getattr(tx, "customer_email", None),
+        # "הפק חשבונית על שם לקוח": the original a credit + invoice pair re-issues; dropped
+        # (passed as None) when it names another tenant's document.
+        "reissue_of_transaction_id": (
+            getattr(tx, "reissue_of_transaction_id", None)
+            if reissue_of_transaction_id is ... else reissue_of_transaction_id
+        ),
         "approved_by_user_id": approved_by_user_id,
         "approved_by_pos_user_id": approved_by_pos_user_id,
         # The approver exactly as sent, and the quiet notes of ingest (docs/SHIFTS_API.md §1.2b).
@@ -1039,6 +1050,22 @@ def upsert_transactions(
                     + ("as sent (it is what makes the document a credit)" if keep else "without the link")
                 )
 
+            # The re-issue link ("הפק חשבונית על שם לקוח") to another tenant's document: never
+            # resolved across tenants, so dropped with a note. It decides nothing about the money
+            # (the type and the refund link do), so the document is stored as it is.
+            reissue_of = ...
+            if _refund_of_other_tenant(db, getattr(tx, "reissue_of_transaction_id", None), issuer.tenant_id):
+                reissue_of = None
+                logger.warning(
+                    "Storing transaction %s: reissueOfTransactionId %s is another tenant's (dropped)",
+                    tx.id, tx.reissue_of_transaction_id,
+                )
+                ingest_notes.append({
+                    "code": REISSUE_OF_OTHER_TENANT,
+                    "text": "המסמך מפיק מחדש מסמך של עסק אחר — הקישור לא נשמר והמסמך נקלט",
+                })
+                link_warnings.append("reissueOfTransactionId: names a document of another tenant, stored without the link")
+
             # The approver: kept as sent, linked when they are of the issuing till's
             # business, never a reason to refuse or hold the document.
             claim = resolve_document_approver_claim(db, issuer, tx)
@@ -1215,6 +1242,7 @@ def upsert_transactions(
                 claimed_approver_pos_user_id=claim.claimed_pos_user_id,
                 ingest_notes=ingest_notes,
                 refund_of_transaction_id=refund_of,
+                reissue_of_transaction_id=reissue_of,
                 filing_fields={
                     "claimed_shift_id": tx.shift_id,
                     "pushed_by_machine_id": machine.id if issuer is not machine else None,

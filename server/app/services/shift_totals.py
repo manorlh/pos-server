@@ -46,6 +46,7 @@ from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
     expected_tender_total,
     is_refund_document,
+    no_money_original_of,
 )
 
 ZERO = Decimal("0")
@@ -445,10 +446,14 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
     # happened moved no money. Against an original of the same shift it cancels that sale's
     # own leg (which moved none either), so it counts in its tender as usual; otherwise it is
     # a bucket of its own — never cash, card or the drawer. The till's X does the same.
+    #
+    # "הפק חשבונית על שם לקוח" (docs/SPEC_CUSTOMER_INVOICE.md): the new invoice of a re-issue
+    # mirrors its original's legs, no money moving, like the credit beside it. It follows the
+    # same rule against the original it re-issues, so the pair nets to nothing in every tender.
     no_money_originals = {
-        d.refund_of_transaction_id
+        no_money_original_of(d)
         for d in counted
-        if d.refund_of_transaction_id is not None
+        if no_money_original_of(d) is not None
         and any(getattr(l, "no_money_movement", False) for l in legs_by_doc.get(d.id, ()))
     }
     original_shift_of: Dict[uuid.UUID, Optional[uuid.UUID]] = {}
@@ -561,12 +566,14 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
         if legs:
             for leg in legs:
                 method = (leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD
+                original = no_money_original_of(doc)
                 if (
-                    refund
-                    and getattr(leg, "no_money_movement", False)
+                    getattr(leg, "no_money_movement", False)
+                    # A credit always; a sale only when it re-issues an original.
+                    and (refund or original is not None)
                     and (
-                        doc.refund_of_transaction_id not in original_shift_of
-                        or original_shift_of[doc.refund_of_transaction_id] != doc.shift_id
+                        original not in original_shift_of
+                        or original_shift_of[original] != doc.shift_id
                     )
                 ):
                     method = NO_MONEY_BUCKET

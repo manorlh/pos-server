@@ -139,7 +139,10 @@ def list_transactions(
     to_date: Optional[date] = Query(None, alias="to"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
-    q: Optional[str] = Query(None, max_length=60, description="Document number or amount, as a substring"),
+    q: Optional[str] = Query(
+        None, max_length=60,
+        description="Document number or amount as a substring, or the customer's name or ח.פ. / ע.מ.",
+    ),
     card_last4: Optional[str] = Query(None, alias="cardLast4", pattern=r"^\d{4}$"),
     item: Optional[str] = Query(None, max_length=80, description="A product name on any line"),
     method: Optional[Literal["cash", "card", "voucher", "split", "refunds"]] = Query(None),
@@ -247,6 +250,39 @@ def _like(text: str) -> str:
     return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
+def _customer_clause(text: str):
+    """
+    "פרטי לקוח לחשבונית" in the search box: the buyer's name (any text with a letter in it)
+    or ח.פ. / ע.מ. (five digits or more, spaces and dashes ignored) — as printed on the
+    document, or on the cloud customer it is linked to. None for anything else (a short
+    number, an amount), which stays the document number / amount search alone.
+    """
+    from app.models.customer import Customer
+
+    digits = text.replace(" ", "").replace("-", "")
+    if digits.isdigit():
+        if len(digits) < 5:
+            return None
+        pattern = _like(digits)
+        return or_(
+            Transaction.customer_vat_number.like(pattern, escape="\\"),
+            exists().where(
+                Customer.id == Transaction.customer_ref_id,
+                Customer.vat_number.like(pattern, escape="\\"),
+            ),
+        )
+    if not any(ch.isalpha() for ch in text):
+        return None
+    pattern = _like(text)
+    return or_(
+        Transaction.customer_name.ilike(pattern, escape="\\"),
+        exists().where(
+            Customer.id == Transaction.customer_ref_id,
+            Customer.name.ilike(pattern, escape="\\"),
+        ),
+    )
+
+
 def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, pickup_ids=None):
     """
     The transaction search: the document number or amount (`q`), the last four digits of
@@ -318,15 +354,19 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, p
         # `20000057`: document 57 of the till that issued it under prefix 2
         # (docs/SPEC_DOCUMENT_PREFIX.md). Anything else — `57` too, which may be any
         # till's — stays the substring search on the number or the amount.
+        # The customer's name or ח.פ. / ע.מ. too ("פרטי לקוח לחשבונית"): a nine-digit number
+        # reads as a prefixed document number AND as a business number — either matches.
+        customer = _customer_clause(q.strip())
         prefixed = prefixed_number_clause(q)
         if prefixed is not None:
-            return query.filter(or_(prefixed, *by_pickup))
+            return query.filter(or_(prefixed, *by_pickup, *([customer] if customer is not None else [])))
         pattern = _like(q.strip())
         query = query.filter(
             or_(
                 Transaction.transaction_number.ilike(pattern, escape="\\"),
                 cast(Transaction.total_amount, String).like(pattern, escape="\\"),
                 *by_pickup,
+                *([customer] if customer is not None else []),
             )
         )
     return query
@@ -403,6 +443,36 @@ def get_transaction(
         row = original.first() if original is not None else None
         # As printed on the original: "זיכוי למסמך 20000057".
         out.refund_of_transaction_number = document_number_from(*row) if row else None
+    # "הפק חשבונית על שם לקוח": the original a pair re-issues, and the pair itself — on the
+    # original both of its documents, on either of the pair the other one.
+    if tx.reissue_of_transaction_id is not None:
+        replaced = scope_transactions_by_user(
+            db.query(
+                Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
+            ).filter(
+                Transaction.id == tx.reissue_of_transaction_id,
+                Transaction.tenant_id == active_tenant_id,
+            ),
+            current_user,
+            db,
+        )
+        row = replaced.first() if replaced is not None else None
+        out.reissue_of_transaction_number = document_number_from(*row) if row else None
+    pair_of = [tx.id] + ([tx.reissue_of_transaction_id] if tx.reissue_of_transaction_id is not None else [])
+    pair = scope_transactions_by_user(
+        db.query(Transaction).filter(
+            Transaction.reissue_of_transaction_id.in_(pair_of),
+            Transaction.tenant_id == active_tenant_id,
+            Transaction.id != tx.id,
+        ),
+        current_user,
+        db,
+    )
+    if pair is not None:
+        out.reissue_documents = [
+            BasketDocumentOut.model_validate(s)
+            for s in pair.order_by(Transaction.created_at.asc(), Transaction.id.asc()).all()
+        ]
     if tx.basket_id is not None:
         siblings = scope_transactions_by_user(
             db.query(Transaction).filter(

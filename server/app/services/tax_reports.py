@@ -628,6 +628,28 @@ def _customer_for_open_format(tx: Transaction) -> Dict[str, Any]:
     (`customer_name` / `_phone` / `_address`) are used when it has any.
     """
     customer = tx.customer
+    vat_on_document = getattr(tx, "customer_vat_number", None)
+    if vat_on_document:
+        # "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): the invoice was made out to
+        # this buyer at the till, and the filing states what the document printed — its
+        # name, number, phone and address win over the linked customer's, which only fill
+        # what the document left out.
+        if tx.customer_address or customer is None:
+            address: Dict[str, Any] = {"street": tx.customer_address or ""}
+        else:
+            address = {
+                "street": customer.address or "",
+                "houseNumber": customer.address_number or "",
+                "city": customer.city or "",
+                "zipCode": customer.postal_code or "",
+                "country": customer.country or "",
+            }
+        return {
+            "name": tx.customer_name or (customer.name if customer is not None else None) or "לקוח כללי",
+            "vatNumber": vat_on_document,
+            "phone": tx.customer_phone or (customer.phone if customer is not None else None) or None,
+            "address": address,
+        }
     if customer is None:
         # The buyer's details as the till printed them (a return records who returned
         # it). A snapshot, used only when there is no resolved customer.

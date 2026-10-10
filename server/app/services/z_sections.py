@@ -1023,7 +1023,7 @@ def document_facts(db, documents: Sequence[Any], shop_id: Any) -> List[Dict[str,
     from app.models.transaction_payment import TransactionPayment
     from app.services.dashboard_stats import SALE_STATUSES
     from app.services.shift_totals import production_deductions_of
-    from app.services.tenders import is_refund_document
+    from app.services.tenders import is_refund_document, no_money_original_of
     from app.services.z_table import kiosk_machine_ids
     from app.services.z_waiters import _names, _orders_by_tx, _uuid_text
 
@@ -1051,10 +1051,12 @@ def document_facts(db, documents: Sequence[Any], shop_id: Any) -> List[Dict[str,
         }
     deductions = production_deductions_of(db, sale_ids)
 
-    # A no-money credit against a sale of another shift moved no money: its own bucket.
+    # A no-money credit against a sale of another shift moved no money: its own bucket. So does the
+    # new invoice of a re-issue ("הפק חשבונית על שם לקוח") against the sale it replaces, or the pair
+    # would not net to nothing (shift_totals weighs them the same way).
     no_money_originals = {
-        d.refund_of_transaction_id for d in counted
-        if d.refund_of_transaction_id is not None
+        no_money_original_of(d) for d in counted
+        if no_money_original_of(d) is not None
         and any(getattr(leg, "no_money_movement", False) for leg in legs.get(d.id, ()))
     }
     original_shift: Dict[Any, Any] = {}
@@ -1091,15 +1093,14 @@ def document_facts(db, documents: Sequence[Any], shop_id: Any) -> List[Dict[str,
             employee_id = raw
             employee_name = (names.get(_uuid_text(raw) or "") or raw) if raw else None
         payments = []
+        original = no_money_original_of(d)
         for leg in legs.get(d.id, ()):
             method = leg.method
             if (
-                refund
-                and getattr(leg, "no_money_movement", False)
-                and (
-                    d.refund_of_transaction_id not in original_shift
-                    or original_shift[d.refund_of_transaction_id] != d.shift_id
-                )
+                getattr(leg, "no_money_movement", False)
+                # A credit always; a sale only when it re-issues an original.
+                and (refund or original is not None)
+                and (original not in original_shift or original_shift[original] != d.shift_id)
             ):
                 method = NO_MONEY
             payments.append({"method": method, "amount": _money_text(leg.amount), "brand": getattr(leg, "card_brand", None)})

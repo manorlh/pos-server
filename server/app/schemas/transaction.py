@@ -38,6 +38,18 @@ def cut_text(value, limit: int):
     return text[:limit] or None
 
 
+def customer_vat_text(value):
+    """
+    The buyer's ח.פ. / ע.מ. as sent ("פרטי לקוח לחשבונית"): trimmed, with the spaces and dashes
+    a person types between digit groups taken out, and cut to the column. Never a validation
+    error — the till already checked the number and printed it; a foreign or odd one is kept.
+    """
+    text = cut_text(value, 40)
+    if text is None:
+        return None
+    return text.replace(" ", "").replace("-", "")[:20] or None
+
+
 def _reject_constant(name):
     """`json.loads` hook: NaN / Infinity are not JSON, and Postgres JSONB refuses them."""
     raise ValueError(f"non-JSON constant {name}")
@@ -390,6 +402,13 @@ class TransactionIn(BaseModel):
     customer_name: Optional[str] = Field(None, alias="customerName")
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     customer_address: Optional[str] = Field(None, alias="customerAddress")
+    #: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): the buyer's ח.פ. / ע.מ. and email as
+    #: printed on the invoice. Optional; trimmed and cut, never a reason to refuse.
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    #: "הפק חשבונית על שם לקוח": the original sale this document re-issues in a customer's
+    #: name — on the credit note that cancels it and on the new invoice. Optional.
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
 
     #: The cloud `users` row the till says authorised this document — the person who
     #: typed a PIN for the refund or the discount. Optional, and absent is the ordinary
@@ -483,6 +502,16 @@ class TransactionIn(BaseModel):
     @classmethod
     def _cut_address(cls, value):
         return cut_text(value, 500)
+
+    @field_validator("customer_vat_number", mode="before")
+    @classmethod
+    def _cut_vat_number(cls, value):
+        return customer_vat_text(value)
+
+    @field_validator("customer_email", mode="before")
+    @classmethod
+    def _cut_email(cls, value):
+        return cut_text(value, 255)
 
 
 class TransactionsBatchRequest(BaseModel):
@@ -674,6 +703,13 @@ class TransactionOut(BaseModel):
     customer_name: Optional[str] = Field(None, alias="customerName")
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     customer_address: Optional[str] = Field(None, alias="customerAddress")
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    #: "הפק חשבונית על שם לקוח": the original this document re-issues, its number as printed
+    #: (detail read only), and — on the original — the documents that re-issued it.
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
+    reissue_of_transaction_number: Optional[str] = Field(None, alias="reissueOfTransactionNumber")
+    reissue_documents: List["BasketDocumentOut"] = Field(default_factory=list, alias="reissueDocuments")
     #: The approver linked when they are a person of this business (informational since
     #: 2026-10-07 — never a reason to refuse a document; docs/SHIFTS_API.md §1.2b).
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
@@ -719,6 +755,7 @@ class BasketDocumentOut(BaseModel):
     total_amount: Decimal = Field(..., alias="totalAmount")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
     created_at: datetime = Field(..., alias="createdAt")
 
     class Config:
@@ -768,6 +805,10 @@ class TransactionListItem(BaseModel):
     #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): see `TransactionOut`.
     remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
     no_money_movement: Optional[bool] = Field(False, alias="noMoneyMovement")
+    #: "פרטי לקוח לחשבונית": who the invoice is made out to, when it names someone.
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
     #: `declined` / `approved` when an offline authorization run of its till answered one
