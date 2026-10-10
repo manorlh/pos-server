@@ -482,16 +482,22 @@ def machine_business_day(db: Optional[Session], machine: Any, moment: Optional[d
     hour. For a shift (or a waiting bucket) the till sent no business date for: the fallback used
     to be the UTC date, which put an evening's sale on tomorrow.
     """
-    if moment is None:
+    if not isinstance(moment, datetime):
         return None
+    fallback = business_day(moment, "Asia/Jerusalem", DEFAULT_END_HOUR)
     if db is None:
-        return business_day(moment, "Asia/Jerusalem", DEFAULT_END_HOUR)
+        return fallback
     from app.services.reports import resolve_report_timezone
 
     tz_name = resolve_report_timezone(db, getattr(machine, "tenant_id", None), None)
     machine_id = getattr(machine, "id", None)
     hour = end_hour_for(db, machine_id=machine_id) if machine_id is not None else DEFAULT_END_HOUR
-    return business_day(moment, tz_name, hour)
+    if not isinstance(tz_name, str):
+        return fallback
+    try:
+        return business_day(moment, tz_name, hour)
+    except (KeyError, ValueError, TypeError):  # an unknown zone name: Israel's day, never a refused document
+        return fallback
 
 
 def shop_business_day(db: Session, tenant_id: Any, shop_id: Any, moment: datetime) -> date:
