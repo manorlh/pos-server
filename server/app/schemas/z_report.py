@@ -80,6 +80,12 @@ class ZReportOut(BaseModel):
     #: "מזומן במגירה": cash sales (net of cash refunds) + cash tips − `cardTipsFromDrawer`.
     #: Null with it.
     drawer_cash: Optional[Decimal] = Field(None, alias="drawerCash")
+    #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (till parameter `cashDrawer.zExpectedCashMovements`):
+    #: the Cash In / Cash Out / safe deposits that are part of `expectedCash` —
+    #: `{cashIn, cashOut, deposits}` as the Z froze them when it was produced (summed over the tills
+    #: the parameter applied to). Null when it was off: `expectedCash` then does not move with them,
+    #: as ever. A management figure: no sales, VAT or document total ever moves with it.
+    cash_movements: Optional[Dict[str, Any]] = Field(None, alias="cashMovements")
     #: Σ of the per-till `offline` blocks: offline-approved card sales that went through an
     #: authorization run, and those of them the acquirer declined. Null on a Z built before
     #: the block was stored, and on a legacy Z.

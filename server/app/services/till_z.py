@@ -55,6 +55,7 @@ from app.schemas.till_z import TillZIn
 from app.services.close_progress import till_backlog
 from app.services.machine_status import is_online
 from app.services.shifts import refuse_foreign_shift
+from app.services import z_expected_cash as ZEC
 from app.services.z_builder import (
     EMPTY_Z,
     EMPTY_Z_MESSAGE,
@@ -460,7 +461,22 @@ OFFLINE_COMPARED_DRAWER = (
     "openingCash", "expectedCash", "countedCash", "overShort", "cardTipsFromDrawer", "drawerCash",
 )
 
+#: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": the figures of the `cashMovements` block a till
+#: prints in its section, compared too (the block's presence is the till's declared value).
+OFFLINE_COMPARED_MOVEMENTS = (ZEC.CASH_IN, ZEC.CASH_OUT, ZEC.DEPOSITS)
+
 _CENT = Decimal("0.01")
+
+
+def _declared_movements(report: Optional[dict]) -> Optional[bool]:
+    """
+    Whether the till that printed an offline Z reckoned its drawer with the movements: its
+    section carries the `cashMovements` block when it did (absent: it did not). None when it
+    sent no paper to read — the cloud then resolves the parameter as it stands.
+    """
+    if not isinstance(report, dict) or not report:
+        return None
+    return isinstance(report.get(ZEC.BLOCK), dict)
 
 
 def _as_decimal(value: Any) -> Optional[Decimal]:
@@ -550,6 +566,13 @@ def offline_discrepancies(
             continue
         if _differs(till_report.get(key), section.get(key)):
             out.append({"key": key, "till": till_report.get(key), "cloud": section.get(key)})
+    # The cash movements a till said went into its expected cash (when it said so).
+    printed = (till_report or {}).get(ZEC.BLOCK)
+    if isinstance(printed, dict):
+        ours = section.get(ZEC.BLOCK) if isinstance(section.get(ZEC.BLOCK), dict) else {}
+        for key in OFFLINE_COMPARED_MOVEMENTS:
+            if key in printed and _differs(printed.get(key), ours.get(key)):
+                out.append({"key": f"{ZEC.BLOCK}.{key}", "till": printed.get(key), "cloud": ours.get(key)})
     return out
 
 
@@ -628,6 +651,11 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
             z_id=off.id,
             machine_sequence_number=number,
             allow_empty=True,
+            # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": the Z is the paper the till printed, so it
+            # is built with the value the till used (its section's `cashMovements` block), not the
+            # parameter as it stands now — a till with an older build, or the parameter turned on
+            # after the Z was made, printed without. No paper to read: the parameter as it stands.
+            expected_cash_movements=_declared_movements(off.report),
             # The cloud's carried late documents and the documents waiting for a shift are
             # in it too, each in its own section (§4.6.3): a till that always closes with no
             # connection would otherwise never have them in any Z. Its paper did not have
@@ -666,7 +694,10 @@ def _produce_offline(db: Session, machine: POSMachine, body: TillZIn, now: datet
                 "adjustments": (section.get("adjustments") or {}).get("count", 0),
             },
         }
-        section = machine_section(machine, own, _totals(db, [s.id for s in own]))
+        section = machine_section(
+            machine, own, _totals(db, [s.id for s in own]),
+            isinstance(section.get(ZEC.BLOCK), dict),
+        )
     found = offline_discrepancies(
         number=number,
         counter_before=counter_before,
