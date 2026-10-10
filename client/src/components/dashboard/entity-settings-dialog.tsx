@@ -212,6 +212,15 @@ export function EntityPosSettingsDialog({
             {twf('openWorkflow')} ←
           </Link>
         ) : null}
+        {/* "מסך לקוח" (P:/specs/customer-display.md) has its own page, at this level. */}
+        {level !== 'tenant' && entityId ? (
+          <Link
+            href={`/dashboard/customer-display?scopeType=${level}&scopeId=${encodeURIComponent(entityId)}`}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            מסך לקוח ←
+          </Link>
+        ) : null}
         {!payment.valid && !loading ? (
           <p role="alert" className="text-sm text-destructive">
             {PI_TEXT.formInvalid}

@@ -92,6 +92,14 @@ export interface MachinesTableProps {
   onAddMachineToShop: (shop: Shop, companyLabel: string) => void;
   /** Opens the terminal number dialog for every till of this shop. */
   onTerminalNumberForShop?: (shop: Shop) => void;
+  /**
+   * "שייך לאירוע" (feat/event-quick-assign): while set, each till (never a screen) gets a
+   * checkbox, and each shop a "all its tills" one.
+   */
+  selection?: {
+    selected: ReadonlySet<string>;
+    onToggle: (ids: string[], on: boolean) => void;
+  };
 }
 
 /**
@@ -137,8 +145,10 @@ export function MachinesTable({
   isDeviceOnline,
   onAddMachineToShop,
   onTerminalNumberForShop,
+  selection,
 }: MachinesTableProps) {
   const t = useTranslations('machines');
+  const tEvent = useTranslations('eventTills.assign');
   // Seeded from storage once, then owned outright — a toggle writes to both, so this
   // map is the only thing render reads.
   const [collapsed, setCollapsed] = useState<Map<string, boolean>>(readCollapsedAll);
@@ -279,19 +289,46 @@ export function MachinesTable({
                 : undefined
             }
           />
+          {selection && !isCollapsed(group.key) && group.shop && group.machines.length > 0 ? (
+            <label className="flex cursor-pointer items-center gap-2 border-b bg-[#007AFF]/5 px-3 py-1.5 text-xs">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[#007AFF]"
+                checked={group.machines.every((m) => selection.selected.has(m.id))}
+                onChange={(e) => selection.onToggle(group.machines.map((m) => m.id), e.target.checked)}
+              />
+              {tEvent('selectShop')} ({group.machines.length})
+            </label>
+          ) : null}
           {isCollapsed(group.key)
             ? null
-            : group.machines.map((m) => (
-                <MachineRow
-                  key={m.id}
-                  m={m}
-                  permissions={permissions}
-                  actions={actions}
-                  isDeviceOnline={isDeviceOnline}
-                  expanded={expandedRows.has(m.id)}
-                  onToggleExpanded={toggleRow}
-                />
-              ))}
+            : group.machines.map((m) => {
+                const row = (
+                  <MachineRow
+                    key={m.id}
+                    m={m}
+                    permissions={permissions}
+                    actions={actions}
+                    isDeviceOnline={isDeviceOnline}
+                    expanded={expandedRows.has(m.id)}
+                    onToggleExpanded={toggleRow}
+                  />
+                );
+                if (!selection || !m.shopId) return row;
+                return (
+                  <div key={m.id} className="flex items-stretch border-b last:border-b-0">
+                    <label className="flex shrink-0 cursor-pointer items-center ps-3 pe-1" aria-label={m.name}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#007AFF]"
+                        checked={selection.selected.has(m.id)}
+                        onChange={(e) => selection.onToggle([m.id], e.target.checked)}
+                      />
+                    </label>
+                    <div className="min-w-0 flex-1">{row}</div>
+                  </div>
+                );
+              })}
           {!isCollapsed(group.key) && group.screens.length > 0 ? (
             <div className="border-t border-dashed">
               <div

@@ -48,6 +48,7 @@ from app.models.z_report import ZOrigin, ZReport
 from app.services.shift_totals import CENT, DocumentTotals, compute_totals, till_totals_mismatch
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
+from app.services import z_expected_cash as ZEC
 from app.services.offline_authorizations import offline_block
 from app.services.transmissions import period_block
 from app.services.z_header import snapshot_header
@@ -307,23 +308,30 @@ def card_tips_from_drawer(shift: Shift) -> Optional[Decimal]:
     return amount.quantize(CENT)
 
 
-def _shift_expected(shift: Shift) -> Decimal:
+def _shift_expected(shift: Shift, with_movements: bool = False) -> Decimal:
     """
     The server's own expected drawer at a shift's close: its float + cash takings + cash
     tips, less the card tips paid out of the drawer when its till froze them on the close.
+
+    `with_movements` ("Z — מזומן צפוי כולל הפקדות ותנועות מזומן", app/services/z_expected_cash.py):
+    plus the shift's Cash In, less its Cash Out and its safe deposits, as its till froze them on
+    the close — the drawer the till's X reckons. Off, exactly as before.
     """
-    return (
+    expected = (
         _dec(shift.opening_cash) + _dec(shift.total_cash) + _dec(shift.total_cash_tips)
         - (card_tips_from_drawer(shift) or ZERO)
     )
+    if with_movements:
+        expected += ZEC.net(ZEC.movements_of(shift))
+    return expected
 
 
-def _shift_closing(shift: Shift) -> Decimal:
+def _shift_closing(shift: Shift, with_movements: bool = False) -> Decimal:
     """What a shift left in the drawer: its count, or its server expected if uncounted."""
-    return _shift_expected(shift) if shift.counted_cash is None else _dec(shift.counted_cash)
+    return _shift_expected(shift, with_movements) if shift.counted_cash is None else _dec(shift.counted_cash)
 
 
-def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
+def till_cash_summary(shifts: Sequence[Shift], with_movements: bool = False) -> Dict[str, Optional[Decimal]]:
     """
     One till's drawer over the consecutive shifts a Z takes of it (oldest first).
 
@@ -352,6 +360,14 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
     * drawer cash ("מזומן במגירה") — cash sales + cash tips − card tips from the drawer,
       NULL with it. Tips are no revenue: the sales and the tips totals are untouched.
 
+    With `with_movements` ("Z — מזומן צפוי כולל הפקדות ותנועות מזומן", the till parameter
+    `cashDrawer.zExpectedCashMovements` as it stood when the Z was produced) every shift's
+    expected also takes its movements — in_i the Cash In, ex_i the Cash Out and dep_i the safe
+    deposits its till froze on the close, m_i = in_i − ex_i − dep_i — so expected_i = float_i +
+    cash_i + tips_i − out_i + m_i, and the period's expected carries Σ m_i. The telescoping
+    below is unchanged (out_i − m_i in place of out_i), and `cash_movements` holds (Σ in, Σ ex,
+    Σ dep) for the paper; it is None with the parameter off, when none of this is computed.
+
     Why this reconciles. With d_i = closing_i − expected_i (the over/short of a counted
     shift, 0 for an uncounted one), float_{i+1} = closing_i + adj_i
     = float_i + cash_i + tips_i − out_i + d_i + adj_i, so telescoping from float_1:
@@ -370,25 +386,37 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
             "opening": ZERO, "expected": ZERO, "counted": None, "over_short": None,
             "uncounted": 0, "cash_sales": ZERO, "cash_tips": ZERO, "between_shifts": ZERO,
             "card_tips_from_drawer": None, "drawer_cash": None,
+            "cash_movements": ZEC.NONE if with_movements else None,
         }
     first, last = shifts[0], shifts[-1]
     uncounted = sum(1 for s in shifts if s.counted_cash is None)
     over_short = (
         None if uncounted
-        else sum((_dec(s.counted_cash) - _shift_expected(s) for s in shifts), ZERO)
+        else sum((_dec(s.counted_cash) - _shift_expected(s, with_movements) for s in shifts), ZERO)
     )
     cash_sales = sum((_dec(s.total_cash) for s in shifts), ZERO)
     cash_tips = sum((_dec(s.total_cash_tips) for s in shifts), ZERO)
     paid_out = [amount for amount in (card_tips_from_drawer(s) for s in shifts) if amount is not None]
     tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
     between_shifts = sum(
-        (_dec(after.opening_cash) - _shift_closing(before) for before, after in zip(shifts, shifts[1:])),
+        (
+            _dec(after.opening_cash) - _shift_closing(before, with_movements)
+            for before, after in zip(shifts, shifts[1:])
+        ),
         ZERO,
     )
+    movements = None
+    if with_movements:
+        movements = ZEC.NONE
+        for s in shifts:
+            movements = ZEC.add(movements, ZEC.movements_of(s))
     opening = _dec(first.opening_cash)
     return {
         "opening": opening,
-        "expected": opening + cash_sales + cash_tips - (tips_from_drawer or ZERO) + between_shifts,
+        "expected": (
+            opening + cash_sales + cash_tips - (tips_from_drawer or ZERO) + between_shifts
+            + (ZEC.net(movements) if movements is not None else ZERO)
+        ),
         "counted": None if last.counted_cash is None else _dec(last.counted_cash),
         "over_short": over_short,
         "uncounted": uncounted,
@@ -397,6 +425,7 @@ def till_cash_summary(shifts: Sequence[Shift]) -> Dict[str, Optional[Decimal]]:
         "between_shifts": between_shifts,
         "card_tips_from_drawer": tips_from_drawer,
         "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
+        "cash_movements": movements,
     }
 
 
@@ -404,17 +433,31 @@ def _sum_or_none(values: Sequence[Optional[Decimal]]) -> Optional[Decimal]:
     return None if any(v is None for v in values) else sum(values, ZERO)
 
 
-def z_cash_summary(per_till: Sequence[Sequence[Shift]]) -> Dict[str, Optional[Decimal]]:
+def z_cash_summary(
+    per_till: Sequence[Sequence[Shift]], with_movements: Optional[Sequence[bool]] = None,
+) -> Dict[str, Optional[Decimal]]:
     """
     The Z's drawer figures: each till's (`till_cash_summary`) summed over the tills.
+
+    `with_movements`: per till (in order), whether the parameter "Z — מזומן צפוי כולל הפקדות
+    ותנועות מזומן" applies to it — it is a till parameter, so a shop Z may hold tills on both
+    sides; none given: off for all, exactly as before. `cash_movements` is Σ over the tills it
+    applied to, None if it applied to none.
 
     Tills have a drawer each, so here summing is right. Counted and over/short are NULL
     if they are NULL for any till. Card tips paid from the drawers are the sum over the
     tills that froze any, NULL if none did; the drawer cash is then every till's cash
     sales + cash tips less them (a till without the figure paid nothing out).
     """
-    tills = [till_cash_summary(shifts) for shifts in per_till]
+    flags = list(with_movements) if with_movements is not None else [False] * len(per_till)
+    tills = [till_cash_summary(shifts, bool(flag)) for shifts, flag in zip(per_till, flags)]
     paid_out = [t["card_tips_from_drawer"] for t in tills if t["card_tips_from_drawer"] is not None]
+    moved = [t["cash_movements"] for t in tills if t["cash_movements"] is not None]
+    movements = None
+    if moved:
+        movements = ZEC.NONE
+        for m in moved:
+            movements = ZEC.add(movements, m)
     tips_from_drawer = sum(paid_out, ZERO) if paid_out else None
     cash_sales = sum((t["cash_sales"] for t in tills), ZERO)
     cash_tips = sum((t["cash_tips"] for t in tills), ZERO)
@@ -429,12 +472,22 @@ def z_cash_summary(per_till: Sequence[Sequence[Shift]]) -> Dict[str, Optional[De
         "between_shifts": sum((t["between_shifts"] for t in tills), ZERO),
         "card_tips_from_drawer": tips_from_drawer,
         "drawer_cash": None if tips_from_drawer is None else cash_sales + cash_tips - tips_from_drawer,
+        "cash_movements": movements,
     }
 
 
-def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: DocumentTotals) -> dict:
-    """One till's section of a Z (docs/SHIFTS_API.md §3.6). Money as decimal strings."""
-    cash = till_cash_summary(shifts)
+def machine_section(
+    machine: POSMachine, shifts: Sequence[Shift], totals: DocumentTotals, with_movements: bool = False,
+) -> dict:
+    """
+    One till's section of a Z (docs/SHIFTS_API.md §3.6). Money as decimal strings.
+
+    `with_movements`: the parameter "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" applied to this till
+    when its Z was produced — its expected cash includes the shift's Cash In / Out and deposits
+    (`till_cash_summary`), and the section says so with a `cashMovements` block, the figures that
+    went in. Off, the section is exactly as before: no such key.
+    """
+    cash = till_cash_summary(shifts, with_movements)
     seqs = [s.sequence_number for s in shifts if s.sequence_number is not None]
     return {
         "machineId": str(machine.id),
@@ -465,6 +518,17 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         "promotionDiscountsTotal": _money(totals.promotion_discounts_total),
         # Discount vouchers: only when there were any (a Z without them reads as before).
         **({"voucherDiscountsTotal": _money(totals.voucher_discounts_total)} if totals.voucher_discounts_total else {}),
+        # Production vouchers booked as a deduction ("קיזוז שוברי הפקה"): inside the discounts,
+        # shown apart from them — only when there were any.
+        **(
+            {"productionVoucherDeductionsTotal": _money(totals.production_voucher_deductions_total)}
+            if totals.production_voucher_deductions_total else {}
+        ),
+        # Staff test vouchers that reached real sales: inside the discounts, shown apart — only when any.
+        **(
+            {"testVoucherDeductionsTotal": _money(totals.test_voucher_deductions_total)}
+            if totals.test_voucher_deductions_total else {}
+        ),
         "vatTotal": _money(totals.vat_total),
         "vatMissingCount": totals.vat_missing_count,
         "totalCash": _money(totals.total_cash),
@@ -487,6 +551,14 @@ def machine_section(machine: POSMachine, shifts: Sequence[Shift], totals: Docume
         # Cash put into or taken out of the drawer between its shifts (the next float
         # less what the last shift left); part of expectedCash. Usually 0.
         "betweenShiftAdjustments": _money(cash["between_shifts"]),
+        # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": the Cash In / Cash Out / deposits that are in
+        # `expectedCash` (Σ of what the shifts' closes froze) — only when the parameter applied to
+        # this till when the Z was produced; its presence is the value used. Absent: off, as before.
+        **(
+            {ZEC.BLOCK: ZEC.block(cash["cash_movements"])}
+            if cash["cash_movements"] is not None
+            else {}
+        ),
         # "טיפ באשראי משולם מהמזומן": the card tips this till paid staff out of the drawer
         # (Σ of what its closes froze; already out of expectedCash) and the cash the
         # drawer holds from the period ("מזומן במגירה" = cashSalesNet + cash tips − them).
@@ -528,9 +600,17 @@ def build_z(
     allow_empty: bool = False,
     shop_sequence_number: Optional[int] = None,
     leave_late_carry: bool = False,
+    expected_cash_movements: Optional[bool] = None,
 ) -> ZReport:
     """
     Build and write one Z over `selections` — (till, through shift id) pairs of one shop.
+
+    "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (app/services/z_expected_cash.py): whether each
+    till's expected cash includes the shifts' Cash In / Cash Out and safe deposits is read here,
+    once, per till, from the till parameter as it stands now (`expected_cash_movements` None) and
+    frozen on the Z — on each till's section and, summed, on the header. A Z that a till made
+    itself and printed (closed with no connection) says which it used (`expected_cash_movements`
+    True / False): the cloud stores the Z as the till printed it, so it builds with that value.
 
     `area_id` records which area of the shop the Z was started for, and its header
     freezes the area's name. It selects nothing here: the tills were chosen by the run.
@@ -568,7 +648,8 @@ def build_z(
     the header as `openTillsLeftOut`, so the Z itself says what it does not cover.
 
     Every Z, cloud or till, freezes its per-waiter breakdown on the header (`byWaiter`,
-    app/services/z_waiters.py).
+    app/services/z_waiters.py), and its presentation sections — on the header for the whole
+    Z and on each till's section for that till (`reportSections`, app/services/z_sections.py).
     """
     if shop_id is None:
         raise ZBuildRefused("no_shop", "A Z is per shop; this run has none.")
@@ -635,15 +716,22 @@ def build_z(
     overall = compute_totals(db, [s.id for s in all_shifts])
     for entries in corrections.values():
         overall.add(z_adjustments.delta_of(entries))
-    # No Z on nothing ("אל תאפשר לסגור Z על 0"): refused here, before a number is drawn.
+    # No Z on nothing ("אל תאפשר לסגור Z על 0"): refused here, before a number is drawn. The
+    # parameter below never changes whether a Z may be produced: this is read as it always was.
     between = z_cash_summary([shifts for _m, shifts in per_machine])["between_shifts"]
     if not allow_empty and not figures_show_activity(overall, between):
         raise ZBuildRefused(EMPTY_Z, EMPTY_Z_MESSAGE)
+    # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": per till, the value at this moment (or the one the
+    # till declared on a Z it made itself) — read once and frozen with the Z, never again.
+    movement_flags = [
+        ZEC.applies(db, machine) if expected_cash_movements is None else bool(expected_cash_movements)
+        for machine, _s in per_machine
+    ]
     sections = []
-    for machine, shifts in per_machine:
+    for (machine, shifts), flag in zip(per_machine, movement_flags):
         entries = corrections.get(machine.id) or []
         section_totals = compute_totals(db, [s.id for s in shifts]).add(z_adjustments.delta_of(entries))
-        section = machine_section(machine, shifts, section_totals)
+        section = machine_section(machine, shifts, section_totals, flag)
         if entries:
             section["adjustments"] = z_adjustments.section_block(entries)
         sections.append(section)
@@ -655,7 +743,19 @@ def build_z(
         # Offline-approved card sales the acquirer later declined (or approved), as the
         # till's authorization runs reported them by build time. Informational too.
         section["offline"] = offline_block(db, machine, shifts)
-    cash = z_cash_summary([shifts for _m, shifts in per_machine])
+    cash = z_cash_summary([shifts for _m, shifts in per_machine], movement_flags)
+    # "דו״ח Z — גרסה 2" (app/services/z_sections.py): the presentation sections — the whole Z's
+    # and each till's — from the same documents, the drawer above and the transmission blocks.
+    # Presentation only, frozen like the other breakdowns; never a condition on the Z: a failure
+    # leaves them out and the Z prints as before.
+    from app.services.z_sections import sections_for_z
+
+    report_sections, till_report_sections = sections_for_z(
+        db, shop_id=shop_id, per_machine=per_machine, sections=sections, with_movements=movement_flags,
+    )
+    for section, part in zip(sections, till_report_sections):
+        if part is not None:
+            section["reportSections"] = part
 
     # 4. Number, write, claim.
     if business_date is None:
@@ -731,12 +831,29 @@ def build_z(
         # tender — on the header only when there were any.
         if overall.voucher_discounts_total:
             z.header = {**z.header, "voucherDiscountsTotal": _money(overall.voucher_discounts_total)}
+        # Production vouchers' deductions: inside `discounts_total`, never "a discount" on paper.
+        if overall.production_voucher_deductions_total:
+            z.header = {
+                **z.header,
+                "productionVoucherDeductionsTotal": _money(overall.production_voucher_deductions_total),
+            }
+        # Staff test vouchers ("שוברי בדיקה") on real sales: no production's — inside the discounts.
+        if overall.test_voucher_deductions_total:
+            z.header = {**z.header, "testVoucherDeductionsTotal": _money(overall.test_voucher_deductions_total)}
         # Per waiter ("פירוט לפי מלצר"): the same documents, by whose table or sale they were.
         z.header = {**z.header, "byWaiter": waiter_breakdown(db, [s.id for s in all_shifts], shop_id)}
+        # The Z's presentation sections ("דו״ח Z — גרסה 2"), when they could be built.
+        if report_sections is not None:
+            z.header = {**z.header, "reportSections": report_sections}
         # What this Z includes, in words (docs/SPEC_INDEPENDENT_TILL.md §7).
         z.header = {**z.header, "scope": z_scope(db, shop_id, [m for m, _s in per_machine], till_z, area_id)}
         # "טיפ באשראי משולם מהמזומן": the card tips the tills paid out of their drawers (already
         # out of `expected_cash`) and the drawer cash — only when a close froze the figure.
+        # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": what went into `expected_cash` — only when the
+        # parameter applied to a till of this Z when it was produced. Presence is the value used;
+        # absent is off, and a Z without it is byte for byte what it was before the parameter.
+        if cash["cash_movements"] is not None:
+            z.header = {**z.header, ZEC.BLOCK: ZEC.block(cash["cash_movements"])}
         if cash["card_tips_from_drawer"] is not None:
             z.header = {
                 **z.header,

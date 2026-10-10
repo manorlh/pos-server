@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
 from zoneinfo import ZoneInfo
 
 from app.services.open_format.defaults import DEFAULT_SOFTWARE_INFO, DEFAULT_TAX_REPORT_CONFIG, SoftwareInfo, TaxReportConfig
-from app.services.open_format.israeli_tax_id import normalize_israeli_9_digit
+from app.services.open_format.israeli_tax_id import customer_vat_field, normalize_israeli_9_digit
 
 
 class BusinessInfoDict(TypedDict, total=False):
@@ -719,12 +719,8 @@ def build_c100_record(
     f1212 = pad_right(country if len(country) > 2 else "ישראל", 30)
     f1213 = pad_right("IL", 2)
     f1214 = pad_right(re.sub(r"\D", "", str(customer.get("phone") or ""))[:15], 15)
-    cust_vat = customer.get("vatNumber")
-    f1215 = pad_left(
-        normalize_israeli_9_digit(re.sub(r"\D", "", str(cust_vat))) if cust_vat else "000000000",
-        9,
-        "0",
-    )
+    # As the document carries it — never a recomputed check digit (customer_vat_field).
+    f1215 = customer_vat_field(customer.get("vatNumber"))
     f1216 = doc_date_str
     f1217 = format_amount(0)
     f1218 = pad_right("ILS", 3)

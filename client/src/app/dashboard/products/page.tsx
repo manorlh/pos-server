@@ -47,6 +47,8 @@ import {
   type PageSize,
 } from '@/components/dashboard/products/product-list-params';
 import { ProductImageUpload } from '@/components/product-image-upload';
+import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/products/restricted-item';
+import { restrictedCategoryIds, restrictionOf } from '@/lib/restrictedItems';
 import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import Link from 'next/link';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -59,7 +61,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, ChevronLeft, ChevronRight, Lock, FileSpreadsheet, Sparkles, PackageX, Globe } from 'lucide-react';
+// "חסום / אזל" on a product (components/dashboard/live-control).
+import { BlockItemSheet, ProductBlocksSection } from '@/components/dashboard/live-control';
+import { useScope } from '@/lib/scope';
 import { useAuth } from '@/lib/auth';
 import { ProductPrintersSection } from '@/components/dashboard/kitchen-printers/product-printers-section';
 import { ProductMenuSection } from '@/components/dashboard/menu/menu-sections';
@@ -167,6 +172,9 @@ export default function ProductsPage() {
    * price, listing and availability live on the assortment page.
    */
   const { resolution } = usePageScope({ maxLevel: 'tenant' });
+  // "חסום / אזל": the product blocked for a shop, its points of sale or devices, for a while.
+  const scopeSel = useScope();
+  const [blockFor, setBlockFor] = useState<string | null>(null);
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Partial<Product>>(EMPTY);
@@ -253,6 +261,8 @@ export default function ProductsPage() {
     queryKey: ['categories'],
     queryFn: () => api.get('/categories').then((r) => r.data),
   });
+  // "מחייב אישור מנהל במכירה": the categories that restrict what is under them (lib/restrictedItems.ts).
+  const restrictedCategories = restrictedCategoryIds(categories);
 
   const { data: vouchersData } = useQuery<PaginatedResponse<Voucher>>({
     queryKey: ['vouchers'],
@@ -372,6 +382,10 @@ export default function ProductsPage() {
               <FileSpreadsheet className="h-4 w-4 ms-1" /> {t('importExport')}
             </Link>
           ) : null}
+          {/* "מופיע ב — עריכה בכמות": the four channels of many products, "all matching" on the server. */}
+          <Link href="/dashboard/products/channels" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+            <Globe className="h-4 w-4 ms-1" /> {t('channelsBulk')}
+          </Link>
           {/* "אשף הקמת מוצר": a dish with its add-ons, its "בלי", a meal and its notes, in one pass. */}
           <Link href="/dashboard/products/wizard" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
             <Sparkles className="h-4 w-4 ms-1" /> {t('wizard')}
@@ -458,7 +472,8 @@ export default function ProductsPage() {
                         {p.catalogLevel !== 'global' ? (
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
-                        {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                        {ticketBadge(p)}<ProductChannelBadge product={p} />
+                        <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground font-mono text-sm">{p.globalSku ?? '—'}</TableCell>
@@ -483,6 +498,9 @@ export default function ProductsPage() {
                       <div className="flex gap-1">
                         <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label={tc('edit')}>
                           <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" onClick={() => setBlockFor(p.id)} aria-label="חסום / אזל" title="חסום / אזל">
+                          <PackageX className="h-3.5 w-3.5" />
                         </Button>
                         {/* The general item cannot be deleted: the till's calculator sells through it. */}
                         {p.isGeneral ? null : (
@@ -540,7 +558,8 @@ export default function ProductsPage() {
                           {t('systemItemBadge')}
                         </Badge>
                       ) : null}
-                      {ticketBadge(p)}<ProductChannelBadge channel={p.salesChannel} />
+                      {ticketBadge(p)}<ProductChannelBadge product={p} />
+                      <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
                       <span>₪{Number(p.price).toFixed(2)}</span>
@@ -558,10 +577,20 @@ export default function ProductsPage() {
                   <Button variant="ghost" size="icon" onClick={() => openEdit(p)} aria-label={tc('edit')}>
                     <Pencil className="h-3.5 w-3.5" />
                   </Button>
+                  <Button variant="ghost" size="icon" onClick={() => setBlockFor(p.id)} aria-label="חסום / אזל" title="חסום / אזל">
+                    <PackageX className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
               </div>
             ))}
       </div>
+      {blockFor ? (
+        <BlockItemSheet
+          scope={{ companyId: scopeSel.companyId ?? null, shopId: scopeSel.shopId ?? null }}
+          context={{ productId: blockFor }}
+          onDone={() => setBlockFor(null)}
+        />
+      ) : null}
 
       {total > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -817,7 +846,19 @@ export default function ProductsPage() {
                 onCheckedChange={(c) => setEditing((p) => ({ ...p, noDiscount: c }))}
               />
             </div>
-            {/* "היכן הפריט נמכר": קופות וקיוסק / קיוסק בלבד / קופות בלבד (docs/SPEC_PRODUCT_CHANNELS.md). */}
+            {/* "מחייב אישור מנהל במכירה": a manager's code at the till, never at a kiosk. */}
+            <RestrictedSwitch
+              checked={editing.requiresManagerApproval ?? false}
+              disabled={isGeneral}
+              hint={t('requiresManagerApprovalHint')}
+              inheritedNote={
+                editing.categoryId && restrictedCategories.has(editing.categoryId)
+                  ? t('requiresManagerApprovalInherited', { category: categoryName(editing.categoryId) ?? '' })
+                  : null
+              }
+              onChange={(c) => setEditing((p) => ({ ...p, requiresManagerApproval: c }))}
+            />
+            {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי — sent as appearsIn with the whole product (specs/item-blocks-targets.md §11). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -864,6 +905,13 @@ export default function ProductsPage() {
             ) : null}
             {isGlobal && !isNew && editing.id ? (
               <ProductAvailabilitySection productId={editing.id} />
+            ) : null}
+            {/* "חסימות": the product's blocks in force and "חסום / אזל" (the page's scope, like the row's). */}
+            {!isNew && editing.id ? (
+              <ProductBlocksSection
+                productId={editing.id}
+                scope={{ companyId: scopeSel.companyId ?? null, shopId: scopeSel.shopId ?? null }}
+              />
             ) : null}
             {/* "הודעות לעובד" and "פריטים נלווים": fields of the product, saved with the form. */}
             <ProductAlertsSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />

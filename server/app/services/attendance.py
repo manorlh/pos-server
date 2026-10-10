@@ -67,6 +67,8 @@ PARAM_ENABLED = "attendanceEnabled"
 PARAM_REQUIRE_CLOCK_IN = "requireClockInBeforeLogin"
 PARAM_PREVENT_OPEN_TABLES = "preventClockOutWithOpenTables"
 PARAM_REQUIRE_MANAGER = "requireManagerForClockOut"
+#: "קוד עובד בכל פעולה" — on by default (the owner's "חייב קוד", 09.10). See `_log_action`.
+PARAM_REQUIRE_CODE = "attendanceRequireCodePerAction"
 
 #: A device clock this far from the cloud's (either way) is flagged on the shift.
 CLOCK_SKEW_FLAG_SECONDS = 5 * 60
@@ -84,6 +86,19 @@ FLAG_OVERLAP = "overlap"
 FLAG_OPEN_TABLES = "open_tables"
 FLAG_APPROVAL_UNVERIFIED = "approval_unverified"
 FLAG_LATE_EVENT = "late_event"
+#: An action done in a till's session without the employee's code while the shop requires
+#: one per action (`attendanceRequireCodePerAction`) — a till whose parameters were stale.
+FLAG_NO_CODE = "no_code"
+#: A manager acted for the employee (their code at the till instead of the employee's).
+FLAG_ON_BEHALF = "on_behalf"
+
+#: How a till says an action was confirmed: the employee's own code at that moment, a
+#: manager's code acting for them, or nothing beyond the till's signed-in session.
+VERIFIED_BY = ("code", "manager", "session")
+#: Where the action was taken: "שעון נוכחות" on the sign-in screen, or inside a session.
+ACTION_ORIGINS = ("clock", "session")
+#: The most actions kept in a shift's `details.actionLog` (a shift has a handful).
+ACTION_LOG_MAX = 200
 
 
 class AttendanceError(ValueError):
@@ -132,12 +147,16 @@ def bool_of(value: Any, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Policy:
-    """The four parameters; the defaults change nothing for a shop that never set them."""
+    """
+    The parameters; the defaults change nothing for a shop that never set them — the code
+    per action is on by default, but it only applies where attendance itself is on.
+    """
 
     enabled: bool = False
     require_clock_in: bool = False
     prevent_open_tables: bool = True
     require_manager: bool = False
+    require_code_per_action: bool = True
 
 
 def policy_of(parameters: Dict[str, Any]) -> Policy:
@@ -146,6 +165,7 @@ def policy_of(parameters: Dict[str, Any]) -> Policy:
         require_clock_in=bool_of(parameters.get(PARAM_REQUIRE_CLOCK_IN), False),
         prevent_open_tables=bool_of(parameters.get(PARAM_PREVENT_OPEN_TABLES), True),
         require_manager=bool_of(parameters.get(PARAM_REQUIRE_MANAGER), False),
+        require_code_per_action=bool_of(parameters.get(PARAM_REQUIRE_CODE), True),
     )
 
 
@@ -598,9 +618,94 @@ def apply_till_action(db: Session, machine: POSMachine, body, *, now: Optional[d
         db.flush()
 
     _note_skew(shift, getattr(body, "sent_at", None), now)
+    _log_action(db, machine, shift, pos_user, body, now)
     refresh_status(db, shift)
     db.flush()
     return {"status": "accepted" if changed else "duplicate", "shift": shift_out(db, shift, now=now, pos_user=pos_user)}
+
+
+#: The till's action types in words, for the exception's summary.
+ACTION_WORDS = {
+    "clock_in": "כניסה",
+    "break_start": "יציאה להפסקה",
+    "break_end": "חזרה מהפסקה",
+    "clock_out": "יציאה",
+    "correction_request": "בקשת תיקון נוכחות",
+}
+
+
+def _log_action(
+    db: Session,
+    machine: POSMachine,
+    shift: Optional[AttendanceShift],
+    pos_user: PosUser,
+    body,
+    now: datetime,
+) -> None:
+    """
+    "קוד עובד בכל פעולה": how a till action was confirmed — the employee's own code at that
+    moment, a manager's code acting for them, or only the till's session — kept on the shift
+    as `details.actionLog`, once per action id (a replay adds nothing). A till's word, like
+    everything it sends: never a refusal. What a manager should look at is flagged —
+    `on_behalf` (and `approval_unverified` when the one who acted is no manager here), and
+    `no_code` for a session action where the shop requires the code per action (a till that
+    acted on stale parameters). A manager acting for an employee is also an exception
+    ("שינוי נוכחות ידני"). The code itself never reaches the cloud: the till checks it.
+
+    An older till sends none of the three fields and asked for no code: nothing is logged.
+    """
+    verified_by = getattr(body, "verified_by", None)
+    origin = getattr(body, "origin", None)
+    on_behalf = getattr(body, "on_behalf", None)
+    if verified_by is None and origin is None and on_behalf is None:
+        return
+    action_id = str(body.id)
+    log: List[Dict[str, Any]] = []
+    if shift is not None:
+        log = list((shift.details or {}).get("actionLog") or [])
+        if any(isinstance(e, dict) and e.get("id") == action_id for e in log):
+            return
+    entry: Dict[str, Any] = {
+        "id": action_id,
+        "type": body.type,
+        "at": _iso(body.at),
+        "receivedAt": _iso(now),
+        "machineId": str(machine.id),
+        "verifiedBy": verified_by,
+        "origin": origin,
+    }
+    verified = False
+    if on_behalf is not None:
+        name, verified = _verify_approver(db, machine, on_behalf)
+        entry["onBehalf"] = {"posUserId": on_behalf.pos_user_id, "name": name, "verified": verified}
+    if shift is not None:
+        log.append(entry)
+        _set_detail(shift, "actionLog", log[-ACTION_LOG_MAX:])
+        if on_behalf is not None:
+            _add_flag(shift, FLAG_ON_BEHALF)
+            if not verified:
+                _add_flag(shift, FLAG_APPROVAL_UNVERIFIED)
+        elif verified_by == "session" and policy_for_machine(db, machine).require_code_per_action:
+            _add_flag(shift, FLAG_NO_CODE)
+    if on_behalf is not None:
+        summary = " · ".join(p for p in (
+            pos_user_name(pos_user),
+            f"{ACTION_WORDS.get(body.type, body.type)} באישור מנהל",
+            f"אישר: {entry['onBehalf']['name']}" if entry["onBehalf"]["name"] else None,
+        ) if p)
+        _record_exception(
+            db, machine, f"{EXCEPTION_TYPE}:on_behalf:{action_id}", now, pos_user.id,
+            {
+                "source": "attendance",
+                "summary": summary,
+                "kind": "on_behalf",
+                "action": body.type,
+                "shiftId": str(shift.id) if shift is not None else None,
+                "approvedBy": entry["onBehalf"]["name"],
+                "approverVerified": verified,
+                "at": entry["at"],
+            },
+        )
 
 
 def _apply_correction_request(db: Session, machine: POSMachine, pos_user: PosUser, body, now: datetime) -> Dict[str, Any]:
@@ -651,6 +756,7 @@ def _apply_correction_request(db: Session, machine: POSMachine, pos_user: PosUse
     )
     db.add(adj)
     db.flush()
+    _log_action(db, machine, shift, pos_user, body, now)
     if shift is not None:
         refresh_status(db, shift)
         db.flush()

@@ -59,6 +59,7 @@ import {
   Unplug,
   Wifi,
   WifiOff,
+  MonitorCog,
   type LucideIcon,
 } from 'lucide-react';
 import { formatCurrency, formatHashNumber } from '@/lib/format';
@@ -99,6 +100,7 @@ import { MachineHealthPanel } from '@/components/dashboard/machine-health';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
 import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
 import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 
 /**
  * The six columns — status, till, shift, alerts, last seen, actions — shared with the
@@ -141,6 +143,8 @@ export interface MachineRowActions {
   onRequestTillZ?: (m: PosMachine) => void;
   /** Switch who produces the till's Z (the cloud or the till). */
   onEditZMode?: (m: PosMachine) => void;
+  /** "שליטה מרחוק": lock, sync, sign out, restart, update (components/dashboard/live-control). */
+  onRemoteControl?: (m: PosMachine) => void;
 }
 
 export interface MachineRowProps {
@@ -369,6 +373,13 @@ function MachineRowMenu({
         {canProduceZ && actions.onTransmit && canTransmitRemotely(m) && !display ? (
           <DropdownMenuItem onClick={() => actions.onTransmit?.(m)}>
             <RadioTower aria-hidden /> {t('transmitNow')}
+          </DropdownMenuItem>
+        ) : null}
+        {/* "שליטה מרחוק" (components/dashboard/live-control): this till preselected. */}
+        {/* Not for a working kiosk: it is paused from the kiosks' page instead. */}
+        {!display && actions.onRemoteControl && m.pairingStatus === 'assigned' && !(m.deviceRole === 'kiosk' && m.kioskEnabled !== false) ? (
+          <DropdownMenuItem onClick={() => actions.onRemoteControl?.(m)}>
+            <MonitorCog aria-hidden /> שליטה מרחוק
           </DropdownMenuItem>
         ) : null}
         {/* A till that produces its own Z is asked for it; the cloud never builds one
@@ -940,9 +951,11 @@ export function MachineRow({
           </div>
         </div>
 
-        <div className="min-w-0 max-md:order-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1 max-md:order-5">
           {/* A screen has no shifts: nothing to show here. */}
           {isDisplayDevice(m) ? null : <MachineShiftChip m={m} />}
+          {/* "פקודה נשלחה: … · ממתין" — the last command sent to this device (nothing when none). */}
+          <DeviceCommandChip machineId={m.id} />
         </div>
 
         <div className="min-w-0 max-md:order-6">

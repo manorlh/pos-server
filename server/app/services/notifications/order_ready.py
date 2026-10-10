@@ -157,7 +157,8 @@ def handle_ready(db: Session, event: OutboxEvent, now: datetime) -> str:
             return "skipped:no_provider_config"
         if not (config.enabled_events or {}).get(EVENT):
             return "skipped:event_disabled"
-        pickup = str(payload.get("pickupNumber") or payload.get("displayRef") or "").strip()
+        # A kiosk order's label as its slip printed it ("A-17", or "17" with "מספר בלבד").
+        pickup = str(payload.get("pickupLabel") or payload.get("pickupNumber") or payload.get("displayRef") or "").strip()
         if not pickup:
             return "skipped:no_pickup_number"
         group = event.aggregate_id

@@ -25,7 +25,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatDate, isoDate } from '@/lib/format';
 import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
-import { cardContents, isDiscountKind } from '@/lib/prepaidVoucherBenefit';
+import { cardContents, isDiscountKind, moneyText } from '@/lib/prepaidVoucherBenefit';
 import { quantityText } from '@/lib/prepaidVoucherProducts';
 import { code128Bars } from '@/lib/barcode128';
 import { VOUCHER_TEXT, layoutCard, type CardContent, type Measure, type VoucherOp } from '@/lib/voucherLayout';
@@ -195,18 +195,30 @@ export function cardContentOf(batch: PrepaidVoucherBatch, voucher: CardVoucher, 
   const { benefit, items } = cardContents(batch);
   return {
     title: batch.eventName || batch.name,
-    terms: termsLine(batch),
+    // "הצג תוקף על השובר" off: neither the validity nor the terms line under it (the server's too).
+    terms: batch.showValidity === false ? null : termsLine(batch),
     serial: serialLine(voucher),
     barcode: batch.barcodeType ?? 'qr',
     logo,
     benefit,
     items: items.map((i) => [quantityText(i.quantity, i.weighed, i.unitLabel), i.name, !!i.weighed]),
     freeText: batch.freeText,
-    validity: validityLine(batch),
+    validity: batch.showValidity === false ? null : validityLine(batch),
     code: batch.showCode ? voucher.displayCode : null,
     credit: batch.showCredit === false ? null : VOUCHER_TEXT.credit,
     moreItems: VOUCHER_TEXT.moreItems,
+    // The type's name above the title, and the till value when the type prints it (the server's
+    // `card_content` / `value_line`); the production price is never printed.
+    kicker: batch.typeName ?? null,
+    valueLine: valueLine(batch),
   };
+}
+
+/** "שווי השובר: ₪80" (fixed) / "השובר מכסה עד ₪80" (cover) — only when the batch prints it. */
+export function valueLine(batch: Pick<PrepaidVoucherBatch, 'printTillValue' | 'tillValue' | 'pricing'>): string | null {
+  if (!batch.printTillValue || !batch.tillValue) return null;
+  const text = batch.pricing === 'fixed' ? VOUCHER_TEXT.valueFixed : VOUCHER_TEXT.valueCover;
+  return text.replace('{v}', moneyText(Math.round(batch.tillValue * 100)));
 }
 
 // ── Drawing the operations ────────────────────────────────────────────────────

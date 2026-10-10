@@ -32,6 +32,8 @@ export interface TransactionExportRow {
   card: string;
   other: string;
   exchange: string;
+  /** "שוברי הפקה" (absent from an older server). */
+  productionVoucher?: string;
   legs: number;
   cardBrands: string[];
   cardLast4: string[];
@@ -40,6 +42,8 @@ export interface TransactionExportRow {
   shiftNumber: number | null;
   zNumber: number | null;
   customerName: string | null;
+  /** "פרטי לקוח לחשבונית": the buyer's ח.פ. / ע.מ. (absent from an older server). */
+  customerVatNumber?: string | null;
   mealKind: string | null;
 }
 
@@ -173,6 +177,8 @@ export interface MoneyRow {
   refundsCount: number;
   gross: number;
   discounts: number;
+  /** "שוברי הפקה": production vouchers' deductions (not in `discounts`; absent from an older server). */
+  productionVoucherDeductions?: number;
   refunds: number;
   net: number;
   averageBasket: number;
@@ -180,6 +186,8 @@ export interface MoneyRow {
   card: number;
   other: number;
   exchange: number;
+  /** "שוברי הפקה" (absent from an older server). */
+  productionVoucher?: number;
   tips: number;
 }
 

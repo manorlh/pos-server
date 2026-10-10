@@ -1,0 +1,8518 @@
+[
+ {
+  "name": "company_he",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-company",
+     "slug": "royal",
+     "type": "company",
+     "name": "Royal"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he",
+      "en"
+     ],
+     "template": "cover",
+     "fields": {
+      "title": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה רויאל",
+        "en": "Royal Cafe"
+       }
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+        "en": "Coffee, pastries\nand breakfast"
+       }
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+        "alt": {
+         "he": "חזית בית הקפה"
+        }
+       }
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "03-123-4567"
+      },
+      "whatsapp": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "+972 050 123 4567"
+      },
+      "email": {
+       "mode": "local",
+       "visibility": "public",
+       "value": " hello@royal.example "
+      },
+      "website": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/he?ref=card#top"
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "rows": [
+         {
+          "days": [
+           4,
+           0,
+           1,
+           2,
+           3,
+           3,
+           true,
+           9
+          ],
+          "open": "08:00",
+          "close": "22:00"
+         },
+         {
+          "days": [
+           5
+          ],
+          "open": "08:00",
+          "close": "14:30"
+         },
+         {
+          "days": [
+           6
+          ],
+          "open": "25:00",
+          "close": "26:00"
+         }
+        ],
+        "note": {
+         "he": "סגור בחגים"
+        }
+       }
+      },
+      "services": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "קייטרינג",
+          "en": "Catering"
+         },
+         "description": {
+          "he": "לאירועים עד 200 איש"
+         }
+        },
+        {
+         "title": {
+          "he": "  "
+         }
+        },
+        {
+         "title": {
+          "he": "סדנאות קפה"
+         }
+        }
+       ]
+      },
+      "social": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "platform": "instagram",
+         "url": "https://www.instagram.com/royal"
+        },
+        {
+         "platform": "facebook",
+         "url": "https://evil.example/royal"
+        },
+        {
+         "platform": "tiktok",
+         "url": "javascript:alert(1)"
+        },
+        {
+         "platform": "other",
+         "url": "https://linktr.ee/royal"
+        }
+       ]
+      },
+      "files": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "תפריט מודפס"
+         },
+         "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+         "bytes": 120400
+        },
+        {
+         "title": {
+          "he": "קובץ חשוד"
+         },
+         "url": "ftp://x.example/a.pdf"
+        }
+       ]
+      },
+      "announcement": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "title": {
+         "he": "שעות חג"
+        },
+        "body": {
+         "he": "נפתח ב-10:00 בחול המועד"
+        },
+        "until": "2026-10-20"
+       }
+      },
+      "ctaText": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "דברו איתנו",
+        "en": "Talk to us"
+       }
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/accessibility"
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": true
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary",
+       "message": {
+        "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+       }
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "waze"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "insta",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "https://instagram.com/royal",
+       "platform": "instagram"
+      },
+      {
+       "id": "menu_pdf",
+       "type": "file",
+       "enabled": true,
+       "style": "secondary",
+       "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+      },
+      {
+       "id": "bad_link",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "http://insecure.example",
+       "platform": "other"
+      }
+     ],
+     "design": {
+      "brandMode": "local",
+      "palette": {
+       "primary": "#1d4ed8",
+       "accent": "#0ea5e9",
+       "background": "#f1f5f9",
+       "surface": "#ffffff",
+       "text": "#0f172a",
+       "muted": "#475569"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "lg",
+      "background": "solid",
+      "cover": {
+       "height": "lg",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "circle",
+       "position": "overlap",
+       "size": "lg"
+      },
+      "buttons": {
+       "style": "soft",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "internal",
+      "fields": {
+       "name": "required",
+       "phone": "optional",
+       "email": "optional",
+       "topic": "required",
+       "message": "optional"
+      },
+      "topics": [
+       {
+        "he": "אירוע",
+        "en": "Event"
+       },
+       {
+        "he": "משלוח"
+       }
+      ],
+      "intro": {
+       "he": "נחזור אליכם תוך יום"
+      },
+      "campaign": "autumn-2026"
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "קפה רויאל בע״מ",
+     "address": "הרצל 1, תל אביב",
+     "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+     "privacyUrl": "https://royal.example/privacy",
+     "sources": {
+      "title": "org:company",
+      "address": "org:company",
+      "logoUrl": "org:brand",
+      "privacyUrl": "org:club"
+     }
+    }
+   },
+   "parents": [],
+   "destinations": {},
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-company",
+    "slug": "royal",
+    "type": "company",
+    "template": "cover",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he",
+     "en"
+    ],
+    "design": {
+     "brandMode": "local",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "lg",
+     "background": "solid",
+     "cover": {
+      "height": "lg",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "circle",
+      "position": "overlap",
+      "size": "lg"
+     },
+     "buttons": {
+      "style": "soft",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "קפה רויאל",
+      "lang": "he"
+     },
+     "role": null,
+     "orgLine": null,
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97231234567",
+      "display": "03-123-4567"
+     },
+     "whatsapp": {
+      "e164": "+972501234567",
+      "display": "050-123-4567"
+     },
+     "email": "hello@royal.example",
+     "website": "https://royal.example/he?ref=card#top",
+     "address": {
+      "text": "הרצל 1, תל אביב",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": {
+       "text": "דברו איתנו",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "announcement",
+      "title": {
+       "text": "שעות חג",
+       "lang": "he"
+      },
+      "body": {
+       "text": "נפתח ב-10:00 בחול המועד",
+       "lang": "he"
+      },
+      "until": "2026-10-20"
+     },
+     {
+      "kind": "about",
+      "text": {
+       "text": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "קייטרינג",
+         "lang": "he"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "הרצל 1, תל אביב",
+       "lang": "he"
+      },
+      "navHref": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes"
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "אינסטגרם",
+         "lang": "he"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "קישור",
+         "lang": "he"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     },
+     {
+      "kind": "enquiry",
+      "intro": {
+       "text": "נחזור אליכם תוך יום",
+       "lang": "he"
+      }
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "חיוג",
+       "lang": "he"
+      },
+      "href": "tel:+97231234567",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972501234567?text=%D7%A9%D7%9C%D7%95%D7%9D%2C%20%D7%94%D7%92%D7%A2%D7%AA%D7%99%20%D7%9E%D7%94%D7%9B%D7%A8%D7%98%D7%99%D7%A1%20%26%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%A4%D7%A8%D7%98%D7%99%D7%9D",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "ניווט",
+       "lang": "he"
+      },
+      "href": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "לאתר",
+       "lang": "he"
+      },
+      "href": "https://royal.example/he?ref=card#top",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "אימייל",
+       "lang": "he"
+      },
+      "href": "mailto:hello@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "enquiry",
+      "type": "enquiry",
+      "label": {
+       "text": "השאירו פרטים",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "insta",
+      "type": "link",
+      "label": {
+       "text": "אינסטגרם",
+       "lang": "he"
+      },
+      "href": "https://instagram.com/royal",
+      "style": "secondary",
+      "external": true,
+      "platform": "instagram"
+     },
+     {
+      "id": "menu_pdf",
+      "type": "file",
+      "label": {
+       "text": "תפריט מודפס",
+       "lang": "he"
+      },
+      "href": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     }
+    ],
+    "enquiry": {
+     "fields": {
+      "name": "required",
+      "phone": "optional",
+      "email": "optional",
+      "topic": "required",
+      "message": "optional"
+     },
+     "topics": [
+      {
+       "text": "אירוע",
+       "lang": "he"
+      },
+      {
+       "text": "משלוח",
+       "lang": "he"
+      }
+     ],
+     "intro": {
+      "text": "נחזור אליכם תוך יום",
+      "lang": "he"
+     },
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "קפה רויאל",
+      "en": "Royal Cafe"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "description": {
+     "value": {
+      "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+      "en": "Coffee, pastries\nand breakfast"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+97231234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972501234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "hello@royal.example",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/he?ref=card#top",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "הרצל 1, תל אביב"
+     },
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": {
+      "title": {
+       "he": "שעות חג"
+      },
+      "body": {
+       "he": "נפתח ב-10:00 בחול המועד"
+      },
+      "until": "2026-10-20"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "ctaText": {
+     "value": {
+      "he": "דברו איתנו",
+      "en": "Talk to us"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "local",
+   "unavailableActions": [
+    {
+     "id": "bad_link",
+     "type": "link",
+     "reason": "invalid_url"
+    }
+   ],
+   "issues": [
+    {
+     "level": "warning",
+     "code": "action_invalid_url",
+     "actionId": "bad_link"
+    }
+   ]
+  }
+ },
+ {
+  "name": "company_en_fallback",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-company",
+     "slug": "royal",
+     "type": "company",
+     "name": "Royal"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he",
+      "en"
+     ],
+     "template": "cover",
+     "fields": {
+      "title": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה רויאל",
+        "en": "Royal Cafe"
+       }
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+        "en": "Coffee, pastries\nand breakfast"
+       }
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+        "alt": {
+         "he": "חזית בית הקפה"
+        }
+       }
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "03-123-4567"
+      },
+      "whatsapp": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "+972 050 123 4567"
+      },
+      "email": {
+       "mode": "local",
+       "visibility": "public",
+       "value": " hello@royal.example "
+      },
+      "website": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/he?ref=card#top"
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "rows": [
+         {
+          "days": [
+           4,
+           0,
+           1,
+           2,
+           3,
+           3,
+           true,
+           9
+          ],
+          "open": "08:00",
+          "close": "22:00"
+         },
+         {
+          "days": [
+           5
+          ],
+          "open": "08:00",
+          "close": "14:30"
+         },
+         {
+          "days": [
+           6
+          ],
+          "open": "25:00",
+          "close": "26:00"
+         }
+        ],
+        "note": {
+         "he": "סגור בחגים"
+        }
+       }
+      },
+      "services": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "קייטרינג",
+          "en": "Catering"
+         },
+         "description": {
+          "he": "לאירועים עד 200 איש"
+         }
+        },
+        {
+         "title": {
+          "he": "  "
+         }
+        },
+        {
+         "title": {
+          "he": "סדנאות קפה"
+         }
+        }
+       ]
+      },
+      "social": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "platform": "instagram",
+         "url": "https://www.instagram.com/royal"
+        },
+        {
+         "platform": "facebook",
+         "url": "https://evil.example/royal"
+        },
+        {
+         "platform": "tiktok",
+         "url": "javascript:alert(1)"
+        },
+        {
+         "platform": "other",
+         "url": "https://linktr.ee/royal"
+        }
+       ]
+      },
+      "files": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "תפריט מודפס"
+         },
+         "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+         "bytes": 120400
+        },
+        {
+         "title": {
+          "he": "קובץ חשוד"
+         },
+         "url": "ftp://x.example/a.pdf"
+        }
+       ]
+      },
+      "announcement": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "title": {
+         "he": "שעות חג"
+        },
+        "body": {
+         "he": "נפתח ב-10:00 בחול המועד"
+        },
+        "until": "2026-10-20"
+       }
+      },
+      "ctaText": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "דברו איתנו",
+        "en": "Talk to us"
+       }
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/accessibility"
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": true
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary",
+       "message": {
+        "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+       }
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "waze"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "insta",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "https://instagram.com/royal",
+       "platform": "instagram"
+      },
+      {
+       "id": "menu_pdf",
+       "type": "file",
+       "enabled": true,
+       "style": "secondary",
+       "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+      },
+      {
+       "id": "bad_link",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "http://insecure.example",
+       "platform": "other"
+      }
+     ],
+     "design": {
+      "brandMode": "local",
+      "palette": {
+       "primary": "#1d4ed8",
+       "accent": "#0ea5e9",
+       "background": "#f1f5f9",
+       "surface": "#ffffff",
+       "text": "#0f172a",
+       "muted": "#475569"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "lg",
+      "background": "solid",
+      "cover": {
+       "height": "lg",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "circle",
+       "position": "overlap",
+       "size": "lg"
+      },
+      "buttons": {
+       "style": "soft",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "internal",
+      "fields": {
+       "name": "required",
+       "phone": "optional",
+       "email": "optional",
+       "topic": "required",
+       "message": "optional"
+      },
+      "topics": [
+       {
+        "he": "אירוע",
+        "en": "Event"
+       },
+       {
+        "he": "משלוח"
+       }
+      ],
+      "intro": {
+       "he": "נחזור אליכם תוך יום"
+      },
+      "campaign": "autumn-2026"
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "קפה רויאל בע״מ",
+     "address": "הרצל 1, תל אביב",
+     "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+     "privacyUrl": "https://royal.example/privacy",
+     "sources": {
+      "title": "org:company",
+      "address": "org:company",
+      "logoUrl": "org:brand",
+      "privacyUrl": "org:club"
+     }
+    }
+   },
+   "parents": [],
+   "destinations": {},
+   "lang": "en",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-company",
+    "slug": "royal",
+    "type": "company",
+    "template": "cover",
+    "lang": "en",
+    "dir": "ltr",
+    "languages": [
+     "he",
+     "en"
+    ],
+    "design": {
+     "brandMode": "local",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "lg",
+     "background": "solid",
+     "cover": {
+      "height": "lg",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "circle",
+      "position": "overlap",
+      "size": "lg"
+     },
+     "buttons": {
+      "style": "soft",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "Royal Cafe",
+      "lang": "en"
+     },
+     "role": null,
+     "orgLine": null,
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97231234567",
+      "display": "03-123-4567"
+     },
+     "whatsapp": {
+      "e164": "+972501234567",
+      "display": "050-123-4567"
+     },
+     "email": "hello@royal.example",
+     "website": "https://royal.example/he?ref=card#top",
+     "address": {
+      "text": "הרצל 1, תל אביב",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": {
+       "text": "Talk to us",
+       "lang": "en"
+      }
+     },
+     {
+      "kind": "announcement",
+      "title": {
+       "text": "שעות חג",
+       "lang": "he"
+      },
+      "body": {
+       "text": "נפתח ב-10:00 בחול המועד",
+       "lang": "he"
+      },
+      "until": "2026-10-20"
+     },
+     {
+      "kind": "about",
+      "text": {
+       "text": "Coffee, pastries\nand breakfast",
+       "lang": "en"
+      }
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "Catering",
+         "lang": "en"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "הרצל 1, תל אביב",
+       "lang": "he"
+      },
+      "navHref": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes"
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "Instagram",
+         "lang": "en"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "Link",
+         "lang": "en"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     },
+     {
+      "kind": "enquiry",
+      "intro": {
+       "text": "נחזור אליכם תוך יום",
+       "lang": "he"
+      }
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "Call",
+       "lang": "en"
+      },
+      "href": "tel:+97231234567",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "WhatsApp",
+       "lang": "en"
+      },
+      "href": "https://wa.me/972501234567?text=%D7%A9%D7%9C%D7%95%D7%9D%2C%20%D7%94%D7%92%D7%A2%D7%AA%D7%99%20%D7%9E%D7%94%D7%9B%D7%A8%D7%98%D7%99%D7%A1%20%26%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%A4%D7%A8%D7%98%D7%99%D7%9D",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "Directions",
+       "lang": "en"
+      },
+      "href": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "Website",
+       "lang": "en"
+      },
+      "href": "https://royal.example/he?ref=card#top",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "Email",
+       "lang": "en"
+      },
+      "href": "mailto:hello@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "Save contact",
+       "lang": "en"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "Share",
+       "lang": "en"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "enquiry",
+      "type": "enquiry",
+      "label": {
+       "text": "Get in touch",
+       "lang": "en"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "insta",
+      "type": "link",
+      "label": {
+       "text": "Instagram",
+       "lang": "en"
+      },
+      "href": "https://instagram.com/royal",
+      "style": "secondary",
+      "external": true,
+      "platform": "instagram"
+     },
+     {
+      "id": "menu_pdf",
+      "type": "file",
+      "label": {
+       "text": "תפריט מודפס",
+       "lang": "he"
+      },
+      "href": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     }
+    ],
+    "enquiry": {
+     "fields": {
+      "name": "required",
+      "phone": "optional",
+      "email": "optional",
+      "topic": "required",
+      "message": "optional"
+     },
+     "topics": [
+      {
+       "text": "Event",
+       "lang": "en"
+      },
+      {
+       "text": "משלוח",
+       "lang": "he"
+      }
+     ],
+     "intro": {
+      "text": "נחזור אליכם תוך יום",
+      "lang": "he"
+     },
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "קפה רויאל",
+      "en": "Royal Cafe"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "description": {
+     "value": {
+      "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+      "en": "Coffee, pastries\nand breakfast"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+97231234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972501234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "hello@royal.example",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/he?ref=card#top",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "הרצל 1, תל אביב"
+     },
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": {
+      "title": {
+       "he": "שעות חג"
+      },
+      "body": {
+       "he": "נפתח ב-10:00 בחול המועד"
+      },
+      "until": "2026-10-20"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "ctaText": {
+     "value": {
+      "he": "דברו איתנו",
+      "en": "Talk to us"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "local",
+   "unavailableActions": [
+    {
+     "id": "bad_link",
+     "type": "link",
+     "reason": "invalid_url"
+    }
+   ],
+   "issues": [
+    {
+     "level": "warning",
+     "code": "action_invalid_url",
+     "actionId": "bad_link"
+    }
+   ]
+  }
+ },
+ {
+  "name": "company_unknown_lang",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-company",
+     "slug": "royal",
+     "type": "company",
+     "name": "Royal"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he",
+      "en"
+     ],
+     "template": "cover",
+     "fields": {
+      "title": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה רויאל",
+        "en": "Royal Cafe"
+       }
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+        "en": "Coffee, pastries\nand breakfast"
+       }
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+        "alt": {
+         "he": "חזית בית הקפה"
+        }
+       }
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "03-123-4567"
+      },
+      "whatsapp": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "+972 050 123 4567"
+      },
+      "email": {
+       "mode": "local",
+       "visibility": "public",
+       "value": " hello@royal.example "
+      },
+      "website": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/he?ref=card#top"
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "rows": [
+         {
+          "days": [
+           4,
+           0,
+           1,
+           2,
+           3,
+           3,
+           true,
+           9
+          ],
+          "open": "08:00",
+          "close": "22:00"
+         },
+         {
+          "days": [
+           5
+          ],
+          "open": "08:00",
+          "close": "14:30"
+         },
+         {
+          "days": [
+           6
+          ],
+          "open": "25:00",
+          "close": "26:00"
+         }
+        ],
+        "note": {
+         "he": "סגור בחגים"
+        }
+       }
+      },
+      "services": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "קייטרינג",
+          "en": "Catering"
+         },
+         "description": {
+          "he": "לאירועים עד 200 איש"
+         }
+        },
+        {
+         "title": {
+          "he": "  "
+         }
+        },
+        {
+         "title": {
+          "he": "סדנאות קפה"
+         }
+        }
+       ]
+      },
+      "social": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "platform": "instagram",
+         "url": "https://www.instagram.com/royal"
+        },
+        {
+         "platform": "facebook",
+         "url": "https://evil.example/royal"
+        },
+        {
+         "platform": "tiktok",
+         "url": "javascript:alert(1)"
+        },
+        {
+         "platform": "other",
+         "url": "https://linktr.ee/royal"
+        }
+       ]
+      },
+      "files": {
+       "mode": "local",
+       "visibility": "public",
+       "value": [
+        {
+         "title": {
+          "he": "תפריט מודפס"
+         },
+         "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+         "bytes": 120400
+        },
+        {
+         "title": {
+          "he": "קובץ חשוד"
+         },
+         "url": "ftp://x.example/a.pdf"
+        }
+       ]
+      },
+      "announcement": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "title": {
+         "he": "שעות חג"
+        },
+        "body": {
+         "he": "נפתח ב-10:00 בחול המועד"
+        },
+        "until": "2026-10-20"
+       }
+      },
+      "ctaText": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "דברו איתנו",
+        "en": "Talk to us"
+       }
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "https://royal.example/accessibility"
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": true
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary",
+       "message": {
+        "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+       }
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "waze"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "insta",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "https://instagram.com/royal",
+       "platform": "instagram"
+      },
+      {
+       "id": "menu_pdf",
+       "type": "file",
+       "enabled": true,
+       "style": "secondary",
+       "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+      },
+      {
+       "id": "bad_link",
+       "type": "link",
+       "enabled": true,
+       "style": "secondary",
+       "url": "http://insecure.example",
+       "platform": "other"
+      }
+     ],
+     "design": {
+      "brandMode": "local",
+      "palette": {
+       "primary": "#1d4ed8",
+       "accent": "#0ea5e9",
+       "background": "#f1f5f9",
+       "surface": "#ffffff",
+       "text": "#0f172a",
+       "muted": "#475569"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "lg",
+      "background": "solid",
+      "cover": {
+       "height": "lg",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "circle",
+       "position": "overlap",
+       "size": "lg"
+      },
+      "buttons": {
+       "style": "soft",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "internal",
+      "fields": {
+       "name": "required",
+       "phone": "optional",
+       "email": "optional",
+       "topic": "required",
+       "message": "optional"
+      },
+      "topics": [
+       {
+        "he": "אירוע",
+        "en": "Event"
+       },
+       {
+        "he": "משלוח"
+       }
+      ],
+      "intro": {
+       "he": "נחזור אליכם תוך יום"
+      },
+      "campaign": "autumn-2026"
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "קפה רויאל בע״מ",
+     "address": "הרצל 1, תל אביב",
+     "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+     "privacyUrl": "https://royal.example/privacy",
+     "sources": {
+      "title": "org:company",
+      "address": "org:company",
+      "logoUrl": "org:brand",
+      "privacyUrl": "org:club"
+     }
+    }
+   },
+   "parents": [],
+   "destinations": {},
+   "lang": "fr",
+   "today": "2026-10-21"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-company",
+    "slug": "royal",
+    "type": "company",
+    "template": "cover",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he",
+     "en"
+    ],
+    "design": {
+     "brandMode": "local",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "lg",
+     "background": "solid",
+     "cover": {
+      "height": "lg",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "circle",
+      "position": "overlap",
+      "size": "lg"
+     },
+     "buttons": {
+      "style": "soft",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "קפה רויאל",
+      "lang": "he"
+     },
+     "role": null,
+     "orgLine": null,
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97231234567",
+      "display": "03-123-4567"
+     },
+     "whatsapp": {
+      "e164": "+972501234567",
+      "display": "050-123-4567"
+     },
+     "email": "hello@royal.example",
+     "website": "https://royal.example/he?ref=card#top",
+     "address": {
+      "text": "הרצל 1, תל אביב",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": {
+       "text": "דברו איתנו",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "about",
+      "text": {
+       "text": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "קייטרינג",
+         "lang": "he"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "הרצל 1, תל אביב",
+       "lang": "he"
+      },
+      "navHref": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes"
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "אינסטגרם",
+         "lang": "he"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "קישור",
+         "lang": "he"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     },
+     {
+      "kind": "enquiry",
+      "intro": {
+       "text": "נחזור אליכם תוך יום",
+       "lang": "he"
+      }
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "חיוג",
+       "lang": "he"
+      },
+      "href": "tel:+97231234567",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972501234567?text=%D7%A9%D7%9C%D7%95%D7%9D%2C%20%D7%94%D7%92%D7%A2%D7%AA%D7%99%20%D7%9E%D7%94%D7%9B%D7%A8%D7%98%D7%99%D7%A1%20%26%20%D7%A8%D7%95%D7%A6%D7%94%20%D7%A4%D7%A8%D7%98%D7%99%D7%9D",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "ניווט",
+       "lang": "he"
+      },
+      "href": "https://waze.com/ul?q=%D7%94%D7%A8%D7%A6%D7%9C%201%2C%20%D7%AA%D7%9C%20%D7%90%D7%91%D7%99%D7%91&navigate=yes",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "לאתר",
+       "lang": "he"
+      },
+      "href": "https://royal.example/he?ref=card#top",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "אימייל",
+       "lang": "he"
+      },
+      "href": "mailto:hello@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "enquiry",
+      "type": "enquiry",
+      "label": {
+       "text": "השאירו פרטים",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "insta",
+      "type": "link",
+      "label": {
+       "text": "אינסטגרם",
+       "lang": "he"
+      },
+      "href": "https://instagram.com/royal",
+      "style": "secondary",
+      "external": true,
+      "platform": "instagram"
+     },
+     {
+      "id": "menu_pdf",
+      "type": "file",
+      "label": {
+       "text": "תפריט מודפס",
+       "lang": "he"
+      },
+      "href": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     }
+    ],
+    "enquiry": {
+     "fields": {
+      "name": "required",
+      "phone": "optional",
+      "email": "optional",
+      "topic": "required",
+      "message": "optional"
+     },
+     "topics": [
+      {
+       "text": "אירוע",
+       "lang": "he"
+      },
+      {
+       "text": "משלוח",
+       "lang": "he"
+      }
+     ],
+     "intro": {
+      "text": "נחזור אליכם תוך יום",
+      "lang": "he"
+     },
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "קפה רויאל",
+      "en": "Royal Cafe"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "description": {
+     "value": {
+      "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+      "en": "Coffee, pastries\nand breakfast"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+97231234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972501234567",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "hello@royal.example",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/he?ref=card#top",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "הרצל 1, תל אביב"
+     },
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": {
+      "title": {
+       "he": "שעות חג"
+      },
+      "body": {
+       "he": "נפתח ב-10:00 בחול המועד"
+      },
+      "until": "2026-10-20"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "ctaText": {
+     "value": {
+      "he": "דברו איתנו",
+      "en": "Talk to us"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "local",
+   "unavailableActions": [
+    {
+     "id": "bad_link",
+     "type": "link",
+     "reason": "invalid_url"
+    }
+   ],
+   "issues": [
+    {
+     "level": "warning",
+     "code": "action_invalid_url",
+     "actionId": "bad_link"
+    }
+   ]
+  }
+ },
+ {
+  "name": "branch_inherits",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-branch",
+     "slug": "royal-herzliya",
+     "type": "branch",
+     "name": "Herzliya"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he"
+     ],
+     "template": "location",
+     "fields": {
+      "title": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "09-765-4321"
+      },
+      "whatsapp": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "email": {
+       "mode": "inherit",
+       "visibility": "private",
+       "value": null
+      },
+      "website": {
+       "mode": "hidden",
+       "visibility": "public",
+       "value": null
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "32.1663, 34.8436"
+      },
+      "hours": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "services": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "social": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "files": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "announcement": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "ctaText": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": false
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "google"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": false,
+       "style": "secondary"
+      }
+     ],
+     "design": {
+      "brandMode": "inherit",
+      "palette": {
+       "primary": "#047857",
+       "accent": "#b45309",
+       "background": "#f0fdf4",
+       "surface": "#ffffff",
+       "text": "#052e16",
+       "muted": "#374151"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "md",
+      "background": "solid",
+      "cover": {
+       "height": "md",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "rounded",
+       "position": "start",
+       "size": "md"
+      },
+      "buttons": {
+       "style": "filled",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "disabled",
+      "fields": {
+       "name": "required",
+       "phone": "required",
+       "email": "optional",
+       "topic": "off",
+       "message": "optional"
+      },
+      "topics": []
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "סניף הרצליה",
+     "orgLine": "קפה רויאל",
+     "address": "סוקולוב 5, הרצליה",
+     "sources": {
+      "title": "org:shop",
+      "orgLine": "org:company",
+      "address": "org:shop"
+     }
+    }
+   },
+   "parents": [
+    {
+     "meta": {
+      "id": "c-company",
+      "slug": "royal",
+      "type": "company",
+      "name": "Royal"
+     },
+     "doc": {
+      "schema": 1,
+      "languages": [
+       "he",
+       "en"
+      ],
+      "template": "cover",
+      "fields": {
+       "title": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה רויאל",
+         "en": "Royal Cafe"
+        }
+       },
+       "role": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "orgLine": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "description": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+         "en": "Coffee, pastries\nand breakfast"
+        }
+       },
+       "avatar": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "cover": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+         "alt": {
+          "he": "חזית בית הקפה"
+         }
+        }
+       },
+       "phone": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "03-123-4567"
+       },
+       "whatsapp": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "+972 050 123 4567"
+       },
+       "email": {
+        "mode": "local",
+        "visibility": "public",
+        "value": " hello@royal.example "
+       },
+       "website": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/he?ref=card#top"
+       },
+       "address": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "navigation": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "hours": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "rows": [
+          {
+           "days": [
+            4,
+            0,
+            1,
+            2,
+            3,
+            3,
+            true,
+            9
+           ],
+           "open": "08:00",
+           "close": "22:00"
+          },
+          {
+           "days": [
+            5
+           ],
+           "open": "08:00",
+           "close": "14:30"
+          },
+          {
+           "days": [
+            6
+           ],
+           "open": "25:00",
+           "close": "26:00"
+          }
+         ],
+         "note": {
+          "he": "סגור בחגים"
+         }
+        }
+       },
+       "services": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "קייטרינג",
+           "en": "Catering"
+          },
+          "description": {
+           "he": "לאירועים עד 200 איש"
+          }
+         },
+         {
+          "title": {
+           "he": "  "
+          }
+         },
+         {
+          "title": {
+           "he": "סדנאות קפה"
+          }
+         }
+        ]
+       },
+       "social": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "platform": "instagram",
+          "url": "https://www.instagram.com/royal"
+         },
+         {
+          "platform": "facebook",
+          "url": "https://evil.example/royal"
+         },
+         {
+          "platform": "tiktok",
+          "url": "javascript:alert(1)"
+         },
+         {
+          "platform": "other",
+          "url": "https://linktr.ee/royal"
+         }
+        ]
+       },
+       "files": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "תפריט מודפס"
+          },
+          "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+          "bytes": 120400
+         },
+         {
+          "title": {
+           "he": "קובץ חשוד"
+          },
+          "url": "ftp://x.example/a.pdf"
+         }
+        ]
+       },
+       "announcement": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "title": {
+          "he": "שעות חג"
+         },
+         "body": {
+          "he": "נפתח ב-10:00 בחול המועד"
+         },
+         "until": "2026-10-20"
+        }
+       },
+       "ctaText": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "דברו איתנו",
+         "en": "Talk to us"
+        }
+       },
+       "event": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "offer": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "support": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "accessibilityUrl": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/accessibility"
+       },
+       "privacyUrl": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       }
+      },
+      "sections": [
+       {
+        "kind": "actions",
+        "enabled": true
+       },
+       {
+        "kind": "announcement",
+        "enabled": true
+       },
+       {
+        "kind": "about",
+        "enabled": true
+       },
+       {
+        "kind": "event",
+        "enabled": false
+       },
+       {
+        "kind": "offer",
+        "enabled": false
+       },
+       {
+        "kind": "services",
+        "enabled": true
+       },
+       {
+        "kind": "hours",
+        "enabled": true
+       },
+       {
+        "kind": "location",
+        "enabled": true
+       },
+       {
+        "kind": "social",
+        "enabled": true
+       },
+       {
+        "kind": "files",
+        "enabled": true
+       },
+       {
+        "kind": "support",
+        "enabled": false
+       },
+       {
+        "kind": "enquiry",
+        "enabled": true
+       }
+      ],
+      "actions": [
+       {
+        "id": "call",
+        "type": "call",
+        "enabled": true,
+        "style": "primary"
+       },
+       {
+        "id": "whatsapp",
+        "type": "whatsapp",
+        "enabled": true,
+        "style": "secondary",
+        "message": {
+         "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+        }
+       },
+       {
+        "id": "navigate",
+        "type": "navigate",
+        "enabled": true,
+        "style": "secondary",
+        "navProvider": "waze"
+       },
+       {
+        "id": "digital_menu",
+        "type": "digital_menu",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "order_online",
+        "type": "order_online",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "website",
+        "type": "website",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "email",
+        "type": "email",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "save_contact",
+        "type": "save_contact",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "share",
+        "type": "share",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "enquiry",
+        "type": "enquiry",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "insta",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "https://instagram.com/royal",
+        "platform": "instagram"
+       },
+       {
+        "id": "menu_pdf",
+        "type": "file",
+        "enabled": true,
+        "style": "secondary",
+        "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+       },
+       {
+        "id": "bad_link",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "http://insecure.example",
+        "platform": "other"
+       }
+      ],
+      "design": {
+       "brandMode": "local",
+       "palette": {
+        "primary": "#1d4ed8",
+        "accent": "#0ea5e9",
+        "background": "#f1f5f9",
+        "surface": "#ffffff",
+        "text": "#0f172a",
+        "muted": "#475569"
+       },
+       "font": "heebo",
+       "textScale": "md",
+       "spacing": "normal",
+       "radius": "lg",
+       "background": "solid",
+       "cover": {
+        "height": "lg",
+        "fit": "cover",
+        "focusX": 50,
+        "focusY": 50,
+        "overlay": 0
+       },
+       "avatar": {
+        "shape": "circle",
+        "position": "overlap",
+        "size": "lg"
+       },
+       "buttons": {
+        "style": "soft",
+        "columns": 2,
+        "content": "icon_text"
+       },
+       "motion": {
+        "mode": "subtle",
+        "durationMs": 450
+       }
+      },
+      "enquiry": {
+       "mode": "internal",
+       "fields": {
+        "name": "required",
+        "phone": "optional",
+        "email": "optional",
+        "topic": "required",
+        "message": "optional"
+       },
+       "topics": [
+        {
+         "he": "אירוע",
+         "en": "Event"
+        },
+        {
+         "he": "משלוח"
+        }
+       ],
+       "intro": {
+        "he": "נחזור אליכם תוך יום"
+       },
+       "campaign": "autumn-2026"
+      },
+      "seo": {
+       "indexable": true
+      }
+     },
+     "org": {
+      "title": "קפה רויאל בע״מ",
+      "address": "הרצל 1, תל אביב",
+      "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "privacyUrl": "https://royal.example/privacy",
+      "sources": {
+       "title": "org:company",
+       "address": "org:company",
+       "logoUrl": "org:brand",
+       "privacyUrl": "org:club"
+      }
+     }
+    }
+   ],
+   "destinations": {
+    "digital_menu": {
+     "url": "https://menu.example/royal-herzliya",
+     "label": {
+      "he": "תפריט הסניף"
+     }
+    },
+    "order_online": {
+     "url": "javascript:alert(1)"
+    }
+   },
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-branch",
+    "slug": "royal-herzliya",
+    "type": "branch",
+    "template": "location",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he"
+    ],
+    "design": {
+     "brandMode": "inherit",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "md",
+     "background": "solid",
+     "cover": {
+      "height": "md",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "rounded",
+      "position": "start",
+      "size": "md"
+     },
+     "buttons": {
+      "style": "filled",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "סניף הרצליה",
+      "lang": "he"
+     },
+     "role": null,
+     "orgLine": {
+      "text": "קפה רויאל",
+      "lang": "he"
+     },
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97297654321",
+      "display": "09-765-4321"
+     },
+     "whatsapp": {
+      "e164": "+972501234567",
+      "display": "050-123-4567"
+     },
+     "email": null,
+     "website": null,
+     "address": {
+      "text": "סוקולוב 5, הרצליה",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": null
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "סוקולוב 5, הרצליה",
+       "lang": "he"
+      },
+      "navHref": "https://www.google.com/maps/search/?api=1&query=32.1663%2C34.8436"
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "announcement",
+      "title": {
+       "text": "שעות חג",
+       "lang": "he"
+      },
+      "body": {
+       "text": "נפתח ב-10:00 בחול המועד",
+       "lang": "he"
+      },
+      "until": "2026-10-20"
+     },
+     {
+      "kind": "about",
+      "text": {
+       "text": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "קייטרינג",
+         "lang": "he"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "אינסטגרם",
+         "lang": "he"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "קישור",
+         "lang": "he"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "חיוג",
+       "lang": "he"
+      },
+      "href": "tel:+97297654321",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972501234567",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "ניווט",
+       "lang": "he"
+      },
+      "href": "https://www.google.com/maps/search/?api=1&query=32.1663%2C34.8436",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "digital_menu",
+      "type": "digital_menu",
+      "label": {
+       "text": "תפריט הסניף",
+       "lang": "he"
+      },
+      "href": "https://menu.example/royal-herzliya",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     }
+    ],
+    "enquiry": null,
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "סניף הרצליה"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": {
+      "he": "קפה רויאל"
+     },
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "description": {
+     "value": {
+      "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+      "en": "Coffee, pastries\nand breakfast"
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+97297654321",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972501234567",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "hello@royal.example",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "private",
+     "isPublic": false
+    },
+    "website": {
+     "value": null,
+     "source": "hidden",
+     "mode": "hidden",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "address": {
+     "value": {
+      "he": "סוקולוב 5, הרצליה"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": "32.1663, 34.8436",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": {
+      "title": {
+       "he": "שעות חג"
+      },
+      "body": {
+       "he": "נפתח ב-10:00 בחול המועד"
+      },
+      "until": "2026-10-20"
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "ctaText": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "card:c-company",
+   "unavailableActions": [
+    {
+     "id": "order_online",
+     "type": "order_online",
+     "reason": "menu_unavailable"
+    },
+    {
+     "id": "website",
+     "type": "website",
+     "reason": "missing_website"
+    },
+    {
+     "id": "email",
+     "type": "email",
+     "reason": "missing_email"
+    }
+   ],
+   "issues": [
+    {
+     "level": "warning",
+     "code": "action_menu_unavailable",
+     "actionId": "order_online"
+    },
+    {
+     "level": "warning",
+     "code": "action_missing_website",
+     "actionId": "website"
+    },
+    {
+     "level": "warning",
+     "code": "action_missing_email",
+     "actionId": "email"
+    }
+   ]
+  }
+ },
+ {
+  "name": "point_through_unpublished_branch",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-point",
+     "slug": "royal-bar",
+     "type": "point",
+     "name": "Bar"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he"
+     ],
+     "template": "minimal",
+     "fields": {
+      "title": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "hidden",
+       "visibility": "public",
+       "value": null
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "phone": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "whatsapp": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "email": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "website": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "services": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "social": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "files": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "announcement": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "ctaText": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": false
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "google"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": false,
+       "style": "secondary"
+      }
+     ],
+     "design": {
+      "brandMode": "inherit",
+      "palette": {
+       "primary": "#1f2937",
+       "accent": "#2563eb",
+       "background": "#ffffff",
+       "surface": "#f8fafc",
+       "text": "#0f172a",
+       "muted": "#475569"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "compact",
+      "radius": "md",
+      "background": "solid",
+      "cover": {
+       "height": "none",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "rounded",
+       "position": "start",
+       "size": "md"
+      },
+      "buttons": {
+       "style": "outline",
+       "columns": 1,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "disabled",
+      "fields": {
+       "name": "required",
+       "phone": "required",
+       "email": "optional",
+       "topic": "off",
+       "message": "optional"
+      },
+      "topics": []
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "הבר",
+     "orgLine": "סניף הרצליה · קפה רויאל",
+     "address": "סוקולוב 5, הרצליה",
+     "sources": {
+      "title": "org:area",
+      "orgLine": "org:shop",
+      "address": "org:shop"
+     }
+    }
+   },
+   "parents": [
+    {
+     "meta": {
+      "id": "c-company",
+      "slug": "royal",
+      "type": "company",
+      "name": "Royal"
+     },
+     "doc": {
+      "schema": 1,
+      "languages": [
+       "he",
+       "en"
+      ],
+      "template": "cover",
+      "fields": {
+       "title": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה רויאל",
+         "en": "Royal Cafe"
+        }
+       },
+       "role": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "orgLine": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "description": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+         "en": "Coffee, pastries\nand breakfast"
+        }
+       },
+       "avatar": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "cover": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+         "alt": {
+          "he": "חזית בית הקפה"
+         }
+        }
+       },
+       "phone": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "03-123-4567"
+       },
+       "whatsapp": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "+972 050 123 4567"
+       },
+       "email": {
+        "mode": "local",
+        "visibility": "public",
+        "value": " hello@royal.example "
+       },
+       "website": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/he?ref=card#top"
+       },
+       "address": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "navigation": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "hours": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "rows": [
+          {
+           "days": [
+            4,
+            0,
+            1,
+            2,
+            3,
+            3,
+            true,
+            9
+           ],
+           "open": "08:00",
+           "close": "22:00"
+          },
+          {
+           "days": [
+            5
+           ],
+           "open": "08:00",
+           "close": "14:30"
+          },
+          {
+           "days": [
+            6
+           ],
+           "open": "25:00",
+           "close": "26:00"
+          }
+         ],
+         "note": {
+          "he": "סגור בחגים"
+         }
+        }
+       },
+       "services": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "קייטרינג",
+           "en": "Catering"
+          },
+          "description": {
+           "he": "לאירועים עד 200 איש"
+          }
+         },
+         {
+          "title": {
+           "he": "  "
+          }
+         },
+         {
+          "title": {
+           "he": "סדנאות קפה"
+          }
+         }
+        ]
+       },
+       "social": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "platform": "instagram",
+          "url": "https://www.instagram.com/royal"
+         },
+         {
+          "platform": "facebook",
+          "url": "https://evil.example/royal"
+         },
+         {
+          "platform": "tiktok",
+          "url": "javascript:alert(1)"
+         },
+         {
+          "platform": "other",
+          "url": "https://linktr.ee/royal"
+         }
+        ]
+       },
+       "files": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "תפריט מודפס"
+          },
+          "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+          "bytes": 120400
+         },
+         {
+          "title": {
+           "he": "קובץ חשוד"
+          },
+          "url": "ftp://x.example/a.pdf"
+         }
+        ]
+       },
+       "announcement": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "title": {
+          "he": "שעות חג"
+         },
+         "body": {
+          "he": "נפתח ב-10:00 בחול המועד"
+         },
+         "until": "2026-10-20"
+        }
+       },
+       "ctaText": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "דברו איתנו",
+         "en": "Talk to us"
+        }
+       },
+       "event": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "offer": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "support": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "accessibilityUrl": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/accessibility"
+       },
+       "privacyUrl": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       }
+      },
+      "sections": [
+       {
+        "kind": "actions",
+        "enabled": true
+       },
+       {
+        "kind": "announcement",
+        "enabled": true
+       },
+       {
+        "kind": "about",
+        "enabled": true
+       },
+       {
+        "kind": "event",
+        "enabled": false
+       },
+       {
+        "kind": "offer",
+        "enabled": false
+       },
+       {
+        "kind": "services",
+        "enabled": true
+       },
+       {
+        "kind": "hours",
+        "enabled": true
+       },
+       {
+        "kind": "location",
+        "enabled": true
+       },
+       {
+        "kind": "social",
+        "enabled": true
+       },
+       {
+        "kind": "files",
+        "enabled": true
+       },
+       {
+        "kind": "support",
+        "enabled": false
+       },
+       {
+        "kind": "enquiry",
+        "enabled": true
+       }
+      ],
+      "actions": [
+       {
+        "id": "call",
+        "type": "call",
+        "enabled": true,
+        "style": "primary"
+       },
+       {
+        "id": "whatsapp",
+        "type": "whatsapp",
+        "enabled": true,
+        "style": "secondary",
+        "message": {
+         "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+        }
+       },
+       {
+        "id": "navigate",
+        "type": "navigate",
+        "enabled": true,
+        "style": "secondary",
+        "navProvider": "waze"
+       },
+       {
+        "id": "digital_menu",
+        "type": "digital_menu",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "order_online",
+        "type": "order_online",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "website",
+        "type": "website",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "email",
+        "type": "email",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "save_contact",
+        "type": "save_contact",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "share",
+        "type": "share",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "enquiry",
+        "type": "enquiry",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "insta",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "https://instagram.com/royal",
+        "platform": "instagram"
+       },
+       {
+        "id": "menu_pdf",
+        "type": "file",
+        "enabled": true,
+        "style": "secondary",
+        "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+       },
+       {
+        "id": "bad_link",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "http://insecure.example",
+        "platform": "other"
+       }
+      ],
+      "design": {
+       "brandMode": "local",
+       "palette": {
+        "primary": "#1d4ed8",
+        "accent": "#0ea5e9",
+        "background": "#f1f5f9",
+        "surface": "#ffffff",
+        "text": "#0f172a",
+        "muted": "#475569"
+       },
+       "font": "heebo",
+       "textScale": "md",
+       "spacing": "normal",
+       "radius": "lg",
+       "background": "solid",
+       "cover": {
+        "height": "lg",
+        "fit": "cover",
+        "focusX": 50,
+        "focusY": 50,
+        "overlay": 0
+       },
+       "avatar": {
+        "shape": "circle",
+        "position": "overlap",
+        "size": "lg"
+       },
+       "buttons": {
+        "style": "soft",
+        "columns": 2,
+        "content": "icon_text"
+       },
+       "motion": {
+        "mode": "subtle",
+        "durationMs": 450
+       }
+      },
+      "enquiry": {
+       "mode": "internal",
+       "fields": {
+        "name": "required",
+        "phone": "optional",
+        "email": "optional",
+        "topic": "required",
+        "message": "optional"
+       },
+       "topics": [
+        {
+         "he": "אירוע",
+         "en": "Event"
+        },
+        {
+         "he": "משלוח"
+        }
+       ],
+       "intro": {
+        "he": "נחזור אליכם תוך יום"
+       },
+       "campaign": "autumn-2026"
+      },
+      "seo": {
+       "indexable": true
+      }
+     },
+     "org": {
+      "title": "קפה רויאל בע״מ",
+      "address": "הרצל 1, תל אביב",
+      "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "privacyUrl": "https://royal.example/privacy",
+      "sources": {
+       "title": "org:company",
+       "address": "org:company",
+       "logoUrl": "org:brand",
+       "privacyUrl": "org:club"
+      }
+     }
+    },
+    {
+     "meta": {
+      "id": "c-branch",
+      "slug": "royal-herzliya",
+      "type": "branch",
+      "name": "Herzliya"
+     },
+     "doc": {},
+     "org": {
+      "title": "סניף הרצליה",
+      "orgLine": "קפה רויאל",
+      "address": "סוקולוב 5, הרצליה",
+      "sources": {
+       "title": "org:shop",
+       "orgLine": "org:company",
+       "address": "org:shop"
+      }
+     }
+    }
+   ],
+   "destinations": {},
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-point",
+    "slug": "royal-bar",
+    "type": "point",
+    "template": "minimal",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he"
+    ],
+    "design": {
+     "brandMode": "inherit",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "compact",
+     "radius": "md",
+     "background": "solid",
+     "cover": {
+      "height": "none",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "rounded",
+      "position": "start",
+      "size": "md"
+     },
+     "buttons": {
+      "style": "outline",
+      "columns": 1,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "הבר",
+      "lang": "he"
+     },
+     "role": null,
+     "orgLine": {
+      "text": "סניף הרצליה · קפה רויאל",
+      "lang": "he"
+     },
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97231234567",
+      "display": "03-123-4567"
+     },
+     "whatsapp": {
+      "e164": "+972501234567",
+      "display": "050-123-4567"
+     },
+     "email": "hello@royal.example",
+     "website": "https://royal.example/he?ref=card#top",
+     "address": {
+      "text": "סוקולוב 5, הרצליה",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": null
+     },
+     {
+      "kind": "announcement",
+      "title": {
+       "text": "שעות חג",
+       "lang": "he"
+      },
+      "body": {
+       "text": "נפתח ב-10:00 בחול המועד",
+       "lang": "he"
+      },
+      "until": "2026-10-20"
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "קייטרינג",
+         "lang": "he"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "סוקולוב 5, הרצליה",
+       "lang": "he"
+      },
+      "navHref": "https://www.google.com/maps/search/?api=1&query=%D7%A1%D7%95%D7%A7%D7%95%D7%9C%D7%95%D7%91%205%2C%20%D7%94%D7%A8%D7%A6%D7%9C%D7%99%D7%94"
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "אינסטגרם",
+         "lang": "he"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "קישור",
+         "lang": "he"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "חיוג",
+       "lang": "he"
+      },
+      "href": "tel:+97231234567",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972501234567",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "ניווט",
+       "lang": "he"
+      },
+      "href": "https://www.google.com/maps/search/?api=1&query=%D7%A1%D7%95%D7%A7%D7%95%D7%9C%D7%95%D7%91%205%2C%20%D7%94%D7%A8%D7%A6%D7%9C%D7%99%D7%94",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "לאתר",
+       "lang": "he"
+      },
+      "href": "https://royal.example/he?ref=card#top",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "אימייל",
+       "lang": "he"
+      },
+      "href": "mailto:hello@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     }
+    ],
+    "enquiry": null,
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "הבר"
+     },
+     "source": "org:area",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": {
+      "he": "סניף הרצליה · קפה רויאל"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "description": {
+     "value": null,
+     "source": "hidden",
+     "mode": "hidden",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+97231234567",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972501234567",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "hello@royal.example",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/he?ref=card#top",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "סוקולוב 5, הרצליה"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": {
+      "title": {
+       "he": "שעות חג"
+      },
+      "body": {
+       "he": "נפתח ב-10:00 בחול המועד"
+      },
+      "until": "2026-10-20"
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "ctaText": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "card:c-branch",
+   "unavailableActions": [],
+   "issues": []
+  }
+ },
+ {
+  "name": "personal_private_fields",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-dana",
+     "slug": "dana",
+     "type": "personal",
+     "name": "Dana"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he"
+     ],
+     "template": "portrait",
+     "fields": {
+      "title": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "דנה כהן"
+       }
+      },
+      "role": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "מנהלת אירועים",
+        "en": "Events manager"
+       }
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "private",
+       "value": "050-111-2222"
+      },
+      "whatsapp": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "0507654321"
+      },
+      "email": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "dana@royal.example"
+      },
+      "website": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "private",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "private",
+       "value": null
+      },
+      "hours": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "services": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "social": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "files": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "announcement": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "ctaText": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": false
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": false,
+       "style": "secondary",
+       "navProvider": "google"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": false,
+       "style": "secondary"
+      }
+     ],
+     "design": {
+      "brandMode": "inherit",
+      "palette": {
+       "primary": "#6d28d9",
+       "accent": "#db2777",
+       "background": "#faf5ff",
+       "surface": "#ffffff",
+       "text": "#1e1b4b",
+       "muted": "#4b5563"
+      },
+      "font": "assistant",
+      "textScale": "md",
+      "spacing": "airy",
+      "radius": "xl",
+      "background": "gradient",
+      "cover": {
+       "height": "none",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "circle",
+       "position": "center",
+       "size": "lg"
+      },
+      "buttons": {
+       "style": "pill",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "disabled",
+      "fields": {
+       "name": "required",
+       "phone": "required",
+       "email": "optional",
+       "topic": "off",
+       "message": "optional"
+      },
+      "topics": []
+     },
+     "seo": {
+      "indexable": false
+     }
+    },
+    "org": {
+     "orgLine": "קפה רויאל · סניף הרצליה",
+     "address": "סוקולוב 5, הרצליה",
+     "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+     "phone": "09-555-0000",
+     "email": "branch@royal.example",
+     "sources": {
+      "orgLine": "org:shop",
+      "address": "org:shop",
+      "logoUrl": "org:brand",
+      "phone": "org:shop"
+     }
+    }
+   },
+   "parents": [
+    {
+     "meta": {
+      "id": "c-company",
+      "slug": "royal",
+      "type": "company",
+      "name": "Royal"
+     },
+     "doc": {
+      "schema": 1,
+      "languages": [
+       "he",
+       "en"
+      ],
+      "template": "cover",
+      "fields": {
+       "title": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה רויאל",
+         "en": "Royal Cafe"
+        }
+       },
+       "role": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "orgLine": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "description": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+         "en": "Coffee, pastries\nand breakfast"
+        }
+       },
+       "avatar": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "cover": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+         "alt": {
+          "he": "חזית בית הקפה"
+         }
+        }
+       },
+       "phone": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "03-123-4567"
+       },
+       "whatsapp": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "+972 050 123 4567"
+       },
+       "email": {
+        "mode": "local",
+        "visibility": "public",
+        "value": " hello@royal.example "
+       },
+       "website": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/he?ref=card#top"
+       },
+       "address": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "navigation": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "hours": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "rows": [
+          {
+           "days": [
+            4,
+            0,
+            1,
+            2,
+            3,
+            3,
+            true,
+            9
+           ],
+           "open": "08:00",
+           "close": "22:00"
+          },
+          {
+           "days": [
+            5
+           ],
+           "open": "08:00",
+           "close": "14:30"
+          },
+          {
+           "days": [
+            6
+           ],
+           "open": "25:00",
+           "close": "26:00"
+          }
+         ],
+         "note": {
+          "he": "סגור בחגים"
+         }
+        }
+       },
+       "services": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "קייטרינג",
+           "en": "Catering"
+          },
+          "description": {
+           "he": "לאירועים עד 200 איש"
+          }
+         },
+         {
+          "title": {
+           "he": "  "
+          }
+         },
+         {
+          "title": {
+           "he": "סדנאות קפה"
+          }
+         }
+        ]
+       },
+       "social": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "platform": "instagram",
+          "url": "https://www.instagram.com/royal"
+         },
+         {
+          "platform": "facebook",
+          "url": "https://evil.example/royal"
+         },
+         {
+          "platform": "tiktok",
+          "url": "javascript:alert(1)"
+         },
+         {
+          "platform": "other",
+          "url": "https://linktr.ee/royal"
+         }
+        ]
+       },
+       "files": {
+        "mode": "local",
+        "visibility": "public",
+        "value": [
+         {
+          "title": {
+           "he": "תפריט מודפס"
+          },
+          "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+          "bytes": 120400
+         },
+         {
+          "title": {
+           "he": "קובץ חשוד"
+          },
+          "url": "ftp://x.example/a.pdf"
+         }
+        ]
+       },
+       "announcement": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "title": {
+          "he": "שעות חג"
+         },
+         "body": {
+          "he": "נפתח ב-10:00 בחול המועד"
+         },
+         "until": "2026-10-20"
+        }
+       },
+       "ctaText": {
+        "mode": "local",
+        "visibility": "public",
+        "value": {
+         "he": "דברו איתנו",
+         "en": "Talk to us"
+        }
+       },
+       "event": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "offer": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "support": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       },
+       "accessibilityUrl": {
+        "mode": "local",
+        "visibility": "public",
+        "value": "https://royal.example/accessibility"
+       },
+       "privacyUrl": {
+        "mode": "inherit",
+        "visibility": "public",
+        "value": null
+       }
+      },
+      "sections": [
+       {
+        "kind": "actions",
+        "enabled": true
+       },
+       {
+        "kind": "announcement",
+        "enabled": true
+       },
+       {
+        "kind": "about",
+        "enabled": true
+       },
+       {
+        "kind": "event",
+        "enabled": false
+       },
+       {
+        "kind": "offer",
+        "enabled": false
+       },
+       {
+        "kind": "services",
+        "enabled": true
+       },
+       {
+        "kind": "hours",
+        "enabled": true
+       },
+       {
+        "kind": "location",
+        "enabled": true
+       },
+       {
+        "kind": "social",
+        "enabled": true
+       },
+       {
+        "kind": "files",
+        "enabled": true
+       },
+       {
+        "kind": "support",
+        "enabled": false
+       },
+       {
+        "kind": "enquiry",
+        "enabled": true
+       }
+      ],
+      "actions": [
+       {
+        "id": "call",
+        "type": "call",
+        "enabled": true,
+        "style": "primary"
+       },
+       {
+        "id": "whatsapp",
+        "type": "whatsapp",
+        "enabled": true,
+        "style": "secondary",
+        "message": {
+         "he": "שלום, הגעתי מהכרטיס & רוצה פרטים"
+        }
+       },
+       {
+        "id": "navigate",
+        "type": "navigate",
+        "enabled": true,
+        "style": "secondary",
+        "navProvider": "waze"
+       },
+       {
+        "id": "digital_menu",
+        "type": "digital_menu",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "order_online",
+        "type": "order_online",
+        "enabled": false,
+        "style": "secondary"
+       },
+       {
+        "id": "website",
+        "type": "website",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "email",
+        "type": "email",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "save_contact",
+        "type": "save_contact",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "share",
+        "type": "share",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "enquiry",
+        "type": "enquiry",
+        "enabled": true,
+        "style": "secondary"
+       },
+       {
+        "id": "insta",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "https://instagram.com/royal",
+        "platform": "instagram"
+       },
+       {
+        "id": "menu_pdf",
+        "type": "file",
+        "enabled": true,
+        "style": "secondary",
+        "fileUrl": "http://localhost:8001/media/pos/t/cards/menu.pdf"
+       },
+       {
+        "id": "bad_link",
+        "type": "link",
+        "enabled": true,
+        "style": "secondary",
+        "url": "http://insecure.example",
+        "platform": "other"
+       }
+      ],
+      "design": {
+       "brandMode": "local",
+       "palette": {
+        "primary": "#1d4ed8",
+        "accent": "#0ea5e9",
+        "background": "#f1f5f9",
+        "surface": "#ffffff",
+        "text": "#0f172a",
+        "muted": "#475569"
+       },
+       "font": "heebo",
+       "textScale": "md",
+       "spacing": "normal",
+       "radius": "lg",
+       "background": "solid",
+       "cover": {
+        "height": "lg",
+        "fit": "cover",
+        "focusX": 50,
+        "focusY": 50,
+        "overlay": 0
+       },
+       "avatar": {
+        "shape": "circle",
+        "position": "overlap",
+        "size": "lg"
+       },
+       "buttons": {
+        "style": "soft",
+        "columns": 2,
+        "content": "icon_text"
+       },
+       "motion": {
+        "mode": "subtle",
+        "durationMs": 450
+       }
+      },
+      "enquiry": {
+       "mode": "internal",
+       "fields": {
+        "name": "required",
+        "phone": "optional",
+        "email": "optional",
+        "topic": "required",
+        "message": "optional"
+       },
+       "topics": [
+        {
+         "he": "אירוע",
+         "en": "Event"
+        },
+        {
+         "he": "משלוח"
+        }
+       ],
+       "intro": {
+        "he": "נחזור אליכם תוך יום"
+       },
+       "campaign": "autumn-2026"
+      },
+      "seo": {
+       "indexable": true
+      }
+     },
+     "org": {
+      "title": "קפה רויאל בע״מ",
+      "address": "הרצל 1, תל אביב",
+      "logoUrl": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "privacyUrl": "https://royal.example/privacy",
+      "sources": {
+       "title": "org:company",
+       "address": "org:company",
+       "logoUrl": "org:brand",
+       "privacyUrl": "org:club"
+      }
+     }
+    }
+   ],
+   "destinations": {},
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-dana",
+    "slug": "dana",
+    "type": "personal",
+    "template": "portrait",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he"
+    ],
+    "design": {
+     "brandMode": "inherit",
+     "palette": {
+      "primary": "#1d4ed8",
+      "accent": "#0ea5e9",
+      "background": "#f1f5f9",
+      "surface": "#ffffff",
+      "text": "#0f172a",
+      "muted": "#475569"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "airy",
+     "radius": "xl",
+     "background": "gradient",
+     "cover": {
+      "height": "none",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "circle",
+      "position": "center",
+      "size": "lg"
+     },
+     "buttons": {
+      "style": "pill",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": {
+      "text": "דנה כהן",
+      "lang": "he"
+     },
+     "role": {
+      "text": "מנהלת אירועים",
+      "lang": "he"
+     },
+     "orgLine": {
+      "text": "קפה רויאל · סניף הרצליה",
+      "lang": "he"
+     },
+     "avatar": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png",
+      "alt": null
+     },
+     "cover": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "text": "חזית בית הקפה",
+       "lang": "he"
+      }
+     }
+    },
+    "contact": {
+     "phone": null,
+     "whatsapp": {
+      "e164": "+972507654321",
+      "display": "050-765-4321"
+     },
+     "email": "dana@royal.example",
+     "website": "https://royal.example/he?ref=card#top",
+     "address": null
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": null
+     },
+     {
+      "kind": "about",
+      "text": {
+       "text": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "services",
+      "items": [
+       {
+        "title": {
+         "text": "קייטרינג",
+         "lang": "he"
+        },
+        "description": {
+         "text": "לאירועים עד 200 איש",
+         "lang": "he"
+        }
+       },
+       {
+        "title": {
+         "text": "סדנאות קפה",
+         "lang": "he"
+        },
+        "description": null
+       }
+      ]
+     },
+     {
+      "kind": "hours",
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "text": "סגור בחגים",
+       "lang": "he"
+      }
+     },
+     {
+      "kind": "social",
+      "links": [
+       {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/royal",
+        "label": {
+         "text": "אינסטגרם",
+         "lang": "he"
+        }
+       },
+       {
+        "platform": "other",
+        "url": "https://linktr.ee/royal",
+        "label": {
+         "text": "קישור",
+         "lang": "he"
+        }
+       }
+      ]
+     },
+     {
+      "kind": "files",
+      "files": [
+       {
+        "title": {
+         "text": "תפריט מודפס",
+         "lang": "he"
+        },
+        "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+        "bytes": 120400
+       }
+      ]
+     }
+    ],
+    "actions": [
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972507654321",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "אימייל",
+       "lang": "he"
+      },
+      "href": "mailto:dana@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "לאתר",
+       "lang": "he"
+      },
+      "href": "https://royal.example/he?ref=card#top",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     }
+    ],
+    "enquiry": null,
+    "legal": {
+     "accessibilityUrl": "https://royal.example/accessibility",
+     "privacyUrl": "https://royal.example/privacy"
+    },
+    "indexable": false
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "דנה כהן"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": {
+      "he": "מנהלת אירועים",
+      "en": "Events manager"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "orgLine": {
+     "value": {
+      "he": "קפה רויאל · סניף הרצליה"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "description": {
+     "value": {
+      "he": "קפה, מאפים וארוחות בוקר; גם במשלוח, גם בישיבה.",
+      "en": "Coffee, pastries\nand breakfast"
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "avatar": {
+     "value": {
+      "url": "https://res.cloudinary.com/demo/image/upload/pos/t/branding/logo.png"
+     },
+     "source": "org:brand",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "cover": {
+     "value": {
+      "url": "http://localhost:8001/media/pos/t/cards/cover.jpg",
+      "alt": {
+       "he": "חזית בית הקפה"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "phone": {
+     "value": "+972501112222",
+     "source": "local",
+     "mode": "local",
+     "visibility": "private",
+     "isPublic": false
+    },
+    "whatsapp": {
+     "value": "+972507654321",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "dana@royal.example",
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/he?ref=card#top",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "סוקולוב 5, הרצליה"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "private",
+     "isPublic": false
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "private",
+     "isPublic": false
+    },
+    "hours": {
+     "value": {
+      "rows": [
+       {
+        "days": [
+         0,
+         1,
+         2,
+         3,
+         4
+        ],
+        "open": "08:00",
+        "close": "22:00"
+       },
+       {
+        "days": [
+         5
+        ],
+        "open": "08:00",
+        "close": "14:30"
+       }
+      ],
+      "note": {
+       "he": "סגור בחגים"
+      }
+     },
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "services": {
+     "value": [
+      {
+       "title": {
+        "he": "קייטרינג",
+        "en": "Catering"
+       },
+       "description": {
+        "he": "לאירועים עד 200 איש"
+       }
+      },
+      {
+       "title": {
+        "he": "סדנאות קפה"
+       }
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "social": {
+     "value": [
+      {
+       "platform": "instagram",
+       "url": "https://www.instagram.com/royal"
+      },
+      {
+       "platform": "other",
+       "url": "https://linktr.ee/royal"
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "files": {
+     "value": [
+      {
+       "title": {
+        "he": "תפריט מודפס"
+       },
+       "url": "http://localhost:8001/media/pos/t/cards/menu.pdf",
+       "bytes": 120400
+      }
+     ],
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "announcement": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "ctaText": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/accessibility",
+     "source": "card:c-company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": "https://royal.example/privacy",
+     "source": "org:club",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    }
+   },
+   "brandSource": "card:c-company",
+   "unavailableActions": [
+    {
+     "id": "call",
+     "type": "call",
+     "reason": "missing_phone"
+    }
+   ],
+   "issues": [
+    {
+     "level": "warning",
+     "code": "action_missing_phone",
+     "actionId": "call"
+    }
+   ]
+  }
+ },
+ {
+  "name": "branch_org_public_profile",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-lone",
+     "slug": "lone",
+     "type": "branch",
+     "name": "Lone"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he"
+     ],
+     "template": "location",
+     "fields": {
+      "title": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "avatar": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "cover": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "phone": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "whatsapp": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "email": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "website": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "services": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "social": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "files": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "announcement": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "ctaText": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "event": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "offer": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": false
+      },
+      {
+       "kind": "offer",
+       "enabled": false
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": false
+      },
+      {
+       "kind": "enquiry",
+       "enabled": false
+      }
+     ],
+     "actions": [
+      {
+       "id": "call",
+       "type": "call",
+       "enabled": true,
+       "style": "primary"
+      },
+      {
+       "id": "whatsapp",
+       "type": "whatsapp",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "navigate",
+       "type": "navigate",
+       "enabled": true,
+       "style": "secondary",
+       "navProvider": "google"
+      },
+      {
+       "id": "digital_menu",
+       "type": "digital_menu",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "order_online",
+       "type": "order_online",
+       "enabled": false,
+       "style": "secondary"
+      },
+      {
+       "id": "website",
+       "type": "website",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "email",
+       "type": "email",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "save_contact",
+       "type": "save_contact",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "share",
+       "type": "share",
+       "enabled": true,
+       "style": "secondary"
+      },
+      {
+       "id": "enquiry",
+       "type": "enquiry",
+       "enabled": false,
+       "style": "secondary"
+      }
+     ],
+     "design": {
+      "brandMode": "local",
+      "palette": {
+       "primary": "#047857",
+       "accent": "#b45309",
+       "background": "#f0fdf4",
+       "surface": "#ffffff",
+       "text": "#052e16",
+       "muted": "#374151"
+      },
+      "font": "heebo",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "md",
+      "background": "solid",
+      "cover": {
+       "height": "md",
+       "fit": "cover",
+       "focusX": 50,
+       "focusY": 50,
+       "overlay": 0
+      },
+      "avatar": {
+       "shape": "rounded",
+       "position": "start",
+       "size": "md"
+      },
+      "buttons": {
+       "style": "filled",
+       "columns": 2,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "subtle",
+       "durationMs": 450
+      }
+     },
+     "enquiry": {
+      "mode": "disabled",
+      "fields": {
+       "name": "required",
+       "phone": "required",
+       "email": "optional",
+       "topic": "off",
+       "message": "optional"
+      },
+      "topics": []
+     },
+     "seo": {
+      "indexable": true
+     }
+    },
+    "org": {
+     "title": "סניף עצמאי",
+     "address": "החרש 3, חולון",
+     "phone": "03-5551234",
+     "whatsapp": "+972 52-555-1234",
+     "email": " branch@royal.example ",
+     "website": "https://royal.example/holon",
+     "accessibilityUrl": "https://royal.example/a11y",
+     "privacyUrl": "http://insecure.example/privacy",
+     "sources": {
+      "title": "org:shop",
+      "address": "org:shop",
+      "phone": "org:shop",
+      "whatsapp": "org:shop",
+      "email": "org:shop",
+      "website": "org:company",
+      "accessibilityUrl": "org:company"
+     }
+    }
+   },
+   "parents": [],
+   "destinations": {},
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-lone",
+    "slug": "lone",
+    "type": "branch",
+    "template": "location",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he"
+    ],
+    "design": {
+     "brandMode": "local",
+     "palette": {
+      "primary": "#047857",
+      "accent": "#b45309",
+      "background": "#f0fdf4",
+      "surface": "#ffffff",
+      "text": "#052e16",
+      "muted": "#374151"
+     },
+     "font": "heebo",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "md",
+     "background": "solid",
+     "cover": {
+      "height": "md",
+      "fit": "cover",
+      "focusX": 50,
+      "focusY": 50,
+      "overlay": 0
+     },
+     "avatar": {
+      "shape": "rounded",
+      "position": "start",
+      "size": "md"
+     },
+     "buttons": {
+      "style": "filled",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 450
+     },
+     "onPrimary": "#ffffff",
+     "onAccent": "#ffffff"
+    },
+    "header": {
+     "title": {
+      "text": "סניף עצמאי",
+      "lang": "he"
+     },
+     "role": null,
+     "orgLine": null,
+     "avatar": null,
+     "cover": null
+    },
+    "contact": {
+     "phone": {
+      "e164": "+97235551234",
+      "display": "03-555-1234"
+     },
+     "whatsapp": {
+      "e164": "+972525551234",
+      "display": "052-555-1234"
+     },
+     "email": "branch@royal.example",
+     "website": "https://royal.example/holon",
+     "address": {
+      "text": "החרש 3, חולון",
+      "lang": "he"
+     }
+    },
+    "sections": [
+     {
+      "kind": "actions",
+      "intro": null
+     },
+     {
+      "kind": "location",
+      "address": {
+       "text": "החרש 3, חולון",
+       "lang": "he"
+      },
+      "navHref": "https://www.google.com/maps/search/?api=1&query=%D7%94%D7%97%D7%A8%D7%A9%203%2C%20%D7%97%D7%95%D7%9C%D7%95%D7%9F"
+     }
+    ],
+    "actions": [
+     {
+      "id": "call",
+      "type": "call",
+      "label": {
+       "text": "חיוג",
+       "lang": "he"
+      },
+      "href": "tel:+97235551234",
+      "style": "primary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "whatsapp",
+      "type": "whatsapp",
+      "label": {
+       "text": "וואטסאפ",
+       "lang": "he"
+      },
+      "href": "https://wa.me/972525551234",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "navigate",
+      "type": "navigate",
+      "label": {
+       "text": "ניווט",
+       "lang": "he"
+      },
+      "href": "https://www.google.com/maps/search/?api=1&query=%D7%94%D7%97%D7%A8%D7%A9%203%2C%20%D7%97%D7%95%D7%9C%D7%95%D7%9F",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "website",
+      "type": "website",
+      "label": {
+       "text": "לאתר",
+       "lang": "he"
+      },
+      "href": "https://royal.example/holon",
+      "style": "secondary",
+      "external": true,
+      "platform": null
+     },
+     {
+      "id": "email",
+      "type": "email",
+      "label": {
+       "text": "אימייל",
+       "lang": "he"
+      },
+      "href": "mailto:branch@royal.example",
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "save_contact",
+      "type": "save_contact",
+      "label": {
+       "text": "שמירת איש קשר",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     },
+     {
+      "id": "share",
+      "type": "share",
+      "label": {
+       "text": "שיתוף",
+       "lang": "he"
+      },
+      "href": null,
+      "style": "secondary",
+      "external": false,
+      "platform": null
+     }
+    ],
+    "enquiry": null,
+    "legal": {
+     "accessibilityUrl": "https://royal.example/a11y",
+     "privacyUrl": null
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": {
+      "he": "סניף עצמאי"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "description": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "avatar": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "cover": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "phone": {
+     "value": "+97235551234",
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "whatsapp": {
+     "value": "+972525551234",
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "email": {
+     "value": "branch@royal.example",
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "website": {
+     "value": "https://royal.example/holon",
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "address": {
+     "value": {
+      "he": "החרש 3, חולון"
+     },
+     "source": "org:shop",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "services": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "social": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "files": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "announcement": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "ctaText": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "event": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "offer": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": "https://royal.example/a11y",
+     "source": "org:company",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "privacyUrl": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    }
+   },
+   "brandSource": "local",
+   "unavailableActions": [],
+   "issues": [
+    {
+     "level": "error",
+     "code": "privacy_required",
+     "field": "privacyUrl"
+    }
+   ]
+  }
+ },
+ {
+  "name": "invalid_values",
+  "input": {
+   "card": {
+    "meta": {
+     "id": "c-bad",
+     "slug": "bad",
+     "type": "company",
+     "name": "Bad"
+    },
+    "doc": {
+     "schema": 1,
+     "languages": [
+      "he"
+     ],
+     "template": "dark",
+     "fields": {
+      "title": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "he": "   "
+       }
+      },
+      "role": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "orgLine": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "description": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "avatar": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "url": "data:image/png;base64,AAAA"
+       }
+      },
+      "cover": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "phone": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "12345"
+      },
+      "whatsapp": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "email": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "not-an-email"
+      },
+      "website": {
+       "mode": "local",
+       "visibility": "public",
+       "value": "http://plain.example"
+      },
+      "address": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "navigation": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "hours": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "services": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "social": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "files": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "announcement": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "ctaText": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "event": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "title": {
+         "he": "השקה"
+        },
+        "startsAt": "2026-09-01T19:30",
+        "expiresAt": "2026-09-02"
+       }
+      },
+      "offer": {
+       "mode": "local",
+       "visibility": "public",
+       "value": {
+        "title": {
+         "he": "1+1"
+        },
+        "validUntil": "2026-12-31"
+       }
+      },
+      "support": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "accessibilityUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      },
+      "privacyUrl": {
+       "mode": "inherit",
+       "visibility": "public",
+       "value": null
+      }
+     },
+     "sections": [
+      {
+       "kind": "actions",
+       "enabled": true
+      },
+      {
+       "kind": "announcement",
+       "enabled": true
+      },
+      {
+       "kind": "about",
+       "enabled": true
+      },
+      {
+       "kind": "event",
+       "enabled": true
+      },
+      {
+       "kind": "offer",
+       "enabled": true
+      },
+      {
+       "kind": "services",
+       "enabled": true
+      },
+      {
+       "kind": "hours",
+       "enabled": true
+      },
+      {
+       "kind": "location",
+       "enabled": true
+      },
+      {
+       "kind": "social",
+       "enabled": true
+      },
+      {
+       "kind": "files",
+       "enabled": true
+      },
+      {
+       "kind": "support",
+       "enabled": true
+      },
+      {
+       "kind": "enquiry",
+       "enabled": true
+      }
+     ],
+     "actions": [
+      {
+       "id": "x",
+       "type": "call",
+       "enabled": true
+      },
+      {
+       "id": "x",
+       "type": "email",
+       "enabled": true
+      },
+      {
+       "id": "bad id!",
+       "type": "share",
+       "enabled": true
+      },
+      {
+       "id": "y",
+       "type": "teleport",
+       "enabled": true
+      },
+      {
+       "id": "ev",
+       "type": "enquiry",
+       "enabled": true
+      }
+     ],
+     "design": {
+      "brandMode": "local",
+      "palette": {
+       "primary": "#FAFAFA",
+       "accent": "nope",
+       "background": "#ffffff",
+       "surface": "#fefefe",
+       "text": "#999999",
+       "muted": "#cccccc"
+      },
+      "font": "rubik",
+      "textScale": "md",
+      "spacing": "normal",
+      "radius": "lg",
+      "background": "gradient",
+      "cover": {
+       "height": "md",
+       "fit": "cover",
+       "focusX": 12.5,
+       "focusY": 50,
+       "overlay": 40
+      },
+      "avatar": {
+       "shape": "circle",
+       "position": "overlap",
+       "size": "md"
+      },
+      "buttons": {
+       "style": "filled",
+       "columns": 7,
+       "content": "icon_text"
+      },
+      "motion": {
+       "mode": "wild",
+       "durationMs": 99999
+      }
+     },
+     "enquiry": {
+      "mode": "internal",
+      "fields": {
+       "name": "required",
+       "phone": "off",
+       "email": "off",
+       "topic": "off",
+       "message": "required"
+      }
+     },
+     "seo": {
+      "indexable": true
+     },
+     "expiresAt": "2026-10-01"
+    },
+    "org": {}
+   },
+   "parents": [],
+   "destinations": {},
+   "lang": "he",
+   "today": "2026-10-11"
+  },
+  "expected": {
+   "model": {
+    "v": 1,
+    "cardId": "c-bad",
+    "slug": "bad",
+    "type": "company",
+    "template": "dark",
+    "lang": "he",
+    "dir": "rtl",
+    "languages": [
+     "he"
+    ],
+    "design": {
+     "brandMode": "local",
+     "palette": {
+      "primary": "#fafafa",
+      "accent": "#22d3ee",
+      "background": "#ffffff",
+      "surface": "#fefefe",
+      "text": "#999999",
+      "muted": "#cccccc"
+     },
+     "font": "rubik",
+     "textScale": "md",
+     "spacing": "normal",
+     "radius": "lg",
+     "background": "gradient",
+     "cover": {
+      "height": "md",
+      "fit": "cover",
+      "focusX": 13,
+      "focusY": 50,
+      "overlay": 40
+     },
+     "avatar": {
+      "shape": "circle",
+      "position": "overlap",
+      "size": "md"
+     },
+     "buttons": {
+      "style": "filled",
+      "columns": 2,
+      "content": "icon_text"
+     },
+     "motion": {
+      "mode": "subtle",
+      "durationMs": 1500
+     },
+     "onPrimary": "#111111",
+     "onAccent": "#111111"
+    },
+    "header": {
+     "title": null,
+     "role": null,
+     "orgLine": null,
+     "avatar": null,
+     "cover": null
+    },
+    "contact": {
+     "phone": null,
+     "whatsapp": null,
+     "email": null,
+     "website": null,
+     "address": null
+    },
+    "sections": [
+     {
+      "kind": "offer",
+      "title": {
+       "text": "1+1",
+       "lang": "he"
+      },
+      "body": null,
+      "validUntil": "2026-12-31"
+     }
+    ],
+    "actions": [],
+    "enquiry": null,
+    "legal": {
+     "accessibilityUrl": null,
+     "privacyUrl": null
+    },
+    "indexable": true
+   },
+   "fields": {
+    "title": {
+     "value": null,
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "role": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "orgLine": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "description": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "avatar": {
+     "value": null,
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "cover": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "phone": {
+     "value": null,
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "whatsapp": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "email": {
+     "value": null,
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "website": {
+     "value": null,
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "address": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "navigation": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "hours": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "services": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "social": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "files": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "announcement": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "ctaText": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "event": {
+     "value": {
+      "title": {
+       "he": "השקה"
+      },
+      "venue": null,
+      "startsAt": "2026-09-01T19:30",
+      "endsAt": null,
+      "expiresAt": "2026-09-02"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "offer": {
+     "value": {
+      "title": {
+       "he": "1+1"
+      },
+      "body": null,
+      "validUntil": "2026-12-31"
+     },
+     "source": "local",
+     "mode": "local",
+     "visibility": "public",
+     "isPublic": true
+    },
+    "support": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "accessibilityUrl": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    },
+    "privacyUrl": {
+     "value": null,
+     "source": "none",
+     "mode": "inherit",
+     "visibility": "public",
+     "isPublic": false
+    }
+   },
+   "brandSource": "local",
+   "unavailableActions": [
+    {
+     "id": "x",
+     "type": "call",
+     "reason": "missing_phone"
+    },
+    {
+     "id": "ev",
+     "type": "enquiry",
+     "reason": "enquiry_off"
+    }
+   ],
+   "issues": [
+    {
+     "level": "error",
+     "code": "title_required",
+     "field": "title"
+    },
+    {
+     "level": "error",
+     "code": "invalid_image",
+     "field": "avatar"
+    },
+    {
+     "level": "error",
+     "code": "invalid_phone",
+     "field": "phone"
+    },
+    {
+     "level": "error",
+     "code": "invalid_email",
+     "field": "email"
+    },
+    {
+     "level": "error",
+     "code": "invalid_url",
+     "field": "website"
+    },
+    {
+     "level": "error",
+     "code": "accessibility_required",
+     "field": "accessibilityUrl"
+    },
+    {
+     "level": "error",
+     "code": "privacy_required",
+     "field": "privacyUrl"
+    },
+    {
+     "level": "error",
+     "code": "enquiry_contact_field"
+    },
+    {
+     "level": "error",
+     "code": "contrast_text"
+    },
+    {
+     "level": "error",
+     "code": "contrast_muted"
+    },
+    {
+     "level": "warning",
+     "code": "contrast_primary"
+    },
+    {
+     "level": "warning",
+     "code": "no_actions"
+    },
+    {
+     "level": "warning",
+     "code": "action_missing_phone",
+     "actionId": "x"
+    },
+    {
+     "level": "warning",
+     "code": "action_enquiry_off",
+     "actionId": "ev"
+    },
+    {
+     "level": "warning",
+     "code": "event_expired",
+     "field": "event"
+    },
+    {
+     "level": "warning",
+     "code": "card_expired"
+    }
+   ]
+  }
+ }
+]

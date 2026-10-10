@@ -56,6 +56,8 @@ def make(w, *, count, group_size=None, split=False, show_code=False, barcode="qr
     body = PrepaidVoucherBatchCreate(
         name="הפקה — מזון",
         companyId=w.company.id,
+        # What today's tills book (the `voucher` tender at list prices): no `features` needed.
+        redemptionAccounting="payment",
         eventName="פסטיבל הקיץ",
         splitAllowed=split,
         items=[{"productId": w.hotdog.id, "quantity": 1}, {"productId": w.drink.id, "quantity": 2}],

@@ -20,7 +20,9 @@ export type UserRole =
   | 'company_manager'
   | 'shop_manager'
   | 'shift_supervisor'
-  | 'cashier';
+  | 'cashier'
+  // "עמדת מפיק" (feat/event-live): an event's producer — the producer portal only.
+  | 'producer_view';
 
 export interface User {
   id: string;
@@ -630,7 +632,7 @@ export interface PosMachine {
    * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
    * it. `kioskEnabled` false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | null;
   kioskEnabled?: boolean | null;
   /**
    * False for a display device (a KDS / the board): not a till, not an accounting system —
@@ -1002,10 +1004,16 @@ export interface Category {
   description?: string;
   color?: string;
   imageUrl?: string;
-  parentId?: string;
+  /** "קטגוריית אב": null / absent is a top category; `null` sent on a save clears it. */
+  parentId?: string | null;
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;
+  /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): every product here and beneath it needs a
+   * manager's code at the till and is not shown at a kiosk. The category's own flag.
+   */
+  requiresManagerApproval?: boolean;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -1049,10 +1057,21 @@ export interface Product {
   /** "לא מקבל הנחות": no line, basket or promotion discount at the till. */
   noDiscount?: boolean;
   /**
+   * "מחייב אישור מנהל במכירה" (lib/restrictedItems.ts): the product's own flag — its category
+   * (or one above it) may restrict it too.
+   */
+  requiresManagerApproval?: boolean;
+  /**
    * "היכן הפריט נמכר" (lib/productChannel.ts): all (קופות וקיוסק, the default) /
    * kiosk_only (the tills hide it) / pos_only (the kiosk hides it).
    */
   salesChannel?: import('./productChannel').SalesChannel;
+  /**
+   * "מופיע ב" (lib/productChannel.ts): any of pos / kiosk / online / menu. The server always sends
+   * it resolved (never set: from `salesChannel`, online and the menu off); saving it sets
+   * `salesChannel` from its pos / kiosk part.
+   */
+  appearsIn?: ('pos' | 'kiosk' | 'online' | 'menu')[];
   /**
    * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
    * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
@@ -1442,6 +1461,23 @@ export interface TransactionPayment {
   nayaxMeta?: Record<string, unknown> | null;
 }
 
+/**
+ * "הדפס העתק עם פרטי לקוח": the customer's details a till added to a COPY of the document after it was
+ * issued — who and when. Never part of the recorded document: shown apart, labelled as added after issue.
+ */
+export interface CustomerDetailsAdded {
+  id: string;
+  customerName: string;
+  customerVatNumber: string;
+  customerAddress?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  addedById?: string | null;
+  addedByName?: string | null;
+  addedAt: string;
+  receivedAt: string;
+}
+
 /** Another document of the same mixed basket (same `basketId`). */
 export interface BasketDocument {
   id: string;
@@ -1456,6 +1492,8 @@ export interface BasketDocument {
   totalAmount: number;
   paymentMethod?: string | null;
   refundOfTransactionId?: string | null;
+  /** "הפק חשבונית על שם לקוח": the original this document re-issues. */
+  reissueOfTransactionId?: string | null;
   createdAt: string;
 }
 
@@ -1495,6 +1533,19 @@ export interface Transaction {
   customerName?: string | null;
   customerPhone?: string | null;
   customerAddress?: string | null;
+  /** "פרטי לקוח לחשבונית": the buyer's ח.פ. / ע.מ. and email as printed on the invoice. */
+  customerVatNumber?: string | null;
+  customerEmail?: string | null;
+  /**
+   * "הפק חשבונית על שם לקוח": the original sale this document re-issues (on the credit note
+   * and on the new invoice), its number as printed, and the pair's other documents (detail
+   * read only — on the original, both of them).
+   */
+  reissueOfTransactionId?: string | null;
+  reissueOfTransactionNumber?: string | null;
+  reissueDocuments?: BasketDocument[];
+  /** "הדפס העתק עם פרטי לקוח": added to a copy after issue, oldest first (detail read only). */
+  customerDetailsAdded?: CustomerDetailsAdded[];
   createdAt: string;
   updatedAt: string;
   serverReceivedAt: string;
@@ -1510,6 +1561,13 @@ export interface Transaction {
   offlineOutcome?: OfflineOutcome | null;
   /** List rows: the brands (מותג) of its card legs. */
   cardBrands?: string[];
+  /**
+   * List rows: the kiosk order this document paid — its pickup number as the slip printed it
+   * ("A-17", or "17" with "מספר בלבד") and its business date (the number comes back every day).
+   */
+  kioskPickup?: { label: string; number: number; businessDate: string | null } | null;
+  /** List rows, with a free search: why it was found — its number or amount, or its kiosk order's pickup number. */
+  matchedBy?: Array<'document' | 'pickup'> | null;
   /**
    * "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answered,
    * and whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
@@ -1788,7 +1846,31 @@ export interface ZRun {
   openTillsLeftOut?: ZOpenTillsLeftOut | null;
   /** "כפה סגירה (גם באמצע מכירה)" (docs/SPEC_OFFLINE_TILL_Z.md §9). */
   force?: boolean;
+  /**
+   * "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (pos-server app/services/cloud_refund_z_gate.py): the
+   * credit notes the run's tills still owe; `cloudRefundsHold` while one holds the Z.
+   */
+  pendingCloudRefunds?: CloudRefundPending[];
+  cloudRefundsHold?: boolean;
+  cloudRefundsMessage?: string | null;
   items: ZRunItem[];
+}
+
+/** A cloud card refund whose credit note a till of a Z still owes ("זיכוי אשראי מהענן ממתין להפקה (₪X)"). */
+export interface CloudRefundPending {
+  refundId: string;
+  transactionId?: string;
+  amount: string;
+  originalDocumentNumber?: string | null;
+  machineId: string;
+  machineName?: string | null;
+  posNumber?: string | null;
+  /** The Z closes that till's open shift: the till issues the note into it first (shown, not holding). */
+  landsInThisZ: boolean;
+  words: string;
+  message: string;
+  /** Only on a refund that does not hold its Z (`cloudCardRefundBlocksNextZ` off). */
+  warning?: string;
 }
 
 export type ShiftCloseRequestStatus =
@@ -1958,6 +2040,13 @@ export interface ZReport {
   cardTipsFromDrawer?: Money | null;
   /** "מזומן במגירה": cash sales net + cash tips − cardTipsFromDrawer. Null/absent with it. */
   drawerCash?: Money | null;
+  /**
+   * "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (till parameter `cashDrawer.zExpectedCashMovements`):
+   * the Cash In / Cash Out / safe deposits that are part of `expectedCash`, as the Z froze them when
+   * it was produced (summed over the tills the parameter applied to). Null/absent when it was off —
+   * `expectedCash` then does not move with them, as ever. A management figure only.
+   */
+  cashMovements?: import('./zCashMovements').ZCashMovements | null;
   /**
    * Σ of the tills' `offline` blocks. Null on a Z built before the block was stored (and
    * on a legacy Z): shown as nothing, never as zero.
@@ -2167,6 +2256,8 @@ export interface ZReportMachineSection {
   cardTipsFromDrawer?: Money | null;
   /** "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer; absent with it. */
   drawerCash?: Money | null;
+  /** This till's Cash In / Cash Out / deposits inside expectedCash; absent when the parameter was off for it. */
+  cashMovements?: import('./zCashMovements').ZCashMovements | null;
   uncountedShiftCount?: number | null;
   reconstructedShiftCount?: number | null;
   unattendedShiftCount?: number | null;
@@ -2235,6 +2326,13 @@ export interface ZReportDetail extends ZReport {
   /** Per waiter ("פירוט לפי מלצר"): a table's sales by its waiter, any other by its cashier. */
   byWaiter?: ZWaiterRow[];
   byWaiterSource?: 'stored' | 'documents' | null;
+  /**
+   * "דו״ח Z — גרסה 2" (pos-server app/services/z_sections.py): the owner's sections, as the
+   * till and the cloud print them (lib/zReportSections.ts). stored — frozen at build (or as a
+   * local shop Z was printed); documents — read now, for a Z built before them.
+   */
+  reportSections?: import('./zReportSections').ZReportSections | null;
+  reportSectionsSource?: 'stored' | 'documents' | null;
 }
 
 /** One waiter's row of a Z (money as decimal strings). `waiter` null: no one on the documents. */
@@ -2248,6 +2346,8 @@ export interface ZWaiterRow {
   net: string;
   cash: string;
   card: string;
+  /** "שוברי הפקה" — the production voucher tender (a Z frozen before it: absent, read as 0). */
+  productionVoucher?: string;
   other: string;
   tips: string;
   tables: number;
@@ -2528,15 +2628,20 @@ export interface CashierSalesRow {
   salesCount: number;
   refundsCount: number;
   gross: number;
+  /** Without production vouchers' deductions (`productionVoucherDeductions`). */
   discounts: number;
+  /** "שוברי הפקה": what production vouchers booked as a document deduction took off — not a discount. */
+  productionVoucherDeductions?: number;
   refunds: number;
-  /** gross - discounts - refunds */
+  /** gross - discounts - productionVoucherDeductions - refunds */
   net: number;
   averageBasket: number;
-  /** cashNet + cardNet + otherNet === net. */
+  /** cashNet + cardNet + productionVoucherNet + otherNet === net. */
   cashNet: number;
   cardNet: number;
   otherNet: number;
+  /** "שוברי הפקה": what production vouchers paid (absent from an older server: 0). */
+  productionVoucherNet?: number;
   tips: number;
 }
 
@@ -2811,11 +2916,15 @@ export interface SalesByAreaRow {
   transactionsCount: number;
   gross: Money;
   discounts: Money;
+  /** "שוברי הפקה": production vouchers' deductions (not in `discounts`). */
+  productionVoucherDeductions?: Money;
   net: Money;
   refunds: Money;
   cash: Money;
   card: Money;
   other: Money;
+  /** "שוברי הפקה". */
+  productionVoucher?: Money;
   tips: Money;
 }
 

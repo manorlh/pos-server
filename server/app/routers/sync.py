@@ -126,7 +126,7 @@ from app.services.shifts import (
     z_number_of,
 )
 from app.services.remote_close import apply_close_shift_ack, on_shift_close_accepted
-from app.services.stock import effective_stock_updated_at, get_levels_for_shop
+from app.services.stock import effective_stock_updated_at, get_levels_for_shop, levels_for_machine
 from app.schemas.transmission import TransmissionReportIn, TransmitAckIn
 from app.services import transmissions, transmit_requests
 from app.schemas.offline_authorization import OfflineAuthorizationIn
@@ -529,6 +529,8 @@ def machine_create_cloud_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's (restricted_items.py).
+        requires_manager_approval=False,
         dietary_tags=data.dietary_tags or None,
         # "היכן הפריט נמכר" from the till's product dialog (app/services/sales_channel.py).
         sales_channel=data.sales_channel,
@@ -595,6 +597,8 @@ def machine_update_cloud_product(
     # rather than counted as a change to the chain's master record.
     general_item.check_general_item_update(product, updates)
     updates.pop("is_general", None)
+    # "מחייב אישור מנהל במכירה": the dashboard's alone — a till that echoes it changes nothing.
+    updates.pop("requires_manager_approval", None)
     if "is_listed" in updates and not updates["is_listed"]:
         general_item.refuse_general_item_unlist(product)
     # The item-ticket ("שובר") mode set from the till's catalog screen: written on the
@@ -623,6 +627,12 @@ def machine_update_cloud_product(
         validate_open_price_update(product, master_fields)
         for field, value in master_fields.items():
             setattr(product, field, value)
+        # The till's dialog writes "היכן הפריט נמכר": a product with its own "מופיע ב" keeps its
+        # online / menu channels (app/services/product_channels.py).
+        if "sales_channel" in master_fields:
+            from app.services import product_channels
+
+            product_channels.apply(product, sales_channel_changed=True)
 
     if override_fields:
         override = _override_for(db, shop.id, product.id)
@@ -799,6 +809,8 @@ def machine_create_cloud_category(
         color=data.color,
         image_url=data.image_url,
         parent_id=data.parent_id,
+        # "מחייב אישור מנהל במכירה" is the dashboard's to set, never a till's.
+        requires_manager_approval=False,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
@@ -1074,13 +1086,22 @@ def machine_set_product_order(
     area = db.get(ShopArea, machine.area_id) if machine.area_id else None
     if body.scope == "machine":
         write(machine)
+        touched = [("machine", machine.id)]
     elif body.scope == "area":
         write(area)
         clear(machine)
+        touched = [("area", area.id if area is not None else None), ("machine", machine.id)]
     else:
         write(shop)
         clear(area)
         clear(machine)
+        touched = [("shop", shop.id), ("area", area.id if area is not None else None), ("machine", machine.id)]
+    # "סדר תצוגה" (app/services/display_ordering.py): a bound level's ordering follows what the till
+    # wrote, and the levels linked to it get it too; a level the till cleared inherits now.
+    from app.services import display_ordering
+
+    db.flush()
+    display_ordering.wake_after_commit(db, display_ordering.after_pos_write(db, machine.tenant_id, touched))
     _audit(
         db,
         machine=machine,
@@ -1279,12 +1300,59 @@ def machine_set_pinpad_host(
     return out
 
 
+class MachineNameIn(BaseModel):
+    """The till's own new name (app/services/machine_names.py, docs/SPEC_PAIRING_QR.md §4)."""
+
+    model_config = {"populate_by_name": True}
+
+    #: Cut generously here only to bound the body; the rule (1–100 characters) is `clean_machine_name`'s.
+    name: str = Field(..., max_length=500)
+    #: The till user who typed it, and the manager who approved it — the till's word, recorded as such.
+    operator_id: Optional[str] = Field(None, alias="operatorId", max_length=100)
+    approved_by_id: Optional[str] = Field(None, alias="approvedById", max_length=100)
+    #: When the till's own clock says it was changed (it may be delivered much later, from its outbox).
+    changed_at: Optional[datetime] = Field(None, alias="changedAt")
+
+
+@router.patch("/{machine_id}/name")
+def machine_set_name(
+    machine_id: str,
+    body: MachineNameIn,
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
+):
+    """
+    "שם המכשיר" — the till renames itself, from its settings (a manager's change, checked at the till).
+
+    The machine token alone: the manager check happens at the till when the name is typed, offline too, and
+    a grant would have expired by the time a queued change is delivered. Any device may name itself, a
+    screen too. Last write wins; every change is a till event `machine_renamed` (from, to, who typed it,
+    who approved it, when the till says) and a log line. The same name again is `unchanged: true`, so the
+    till's outbox may resend. `422 name_required | name_too_long | name_invalid` (Hebrew `message`).
+    Answers `{"name", "previousName", "unchanged"}`; the dashboard shows it at once, and a dashboard rename
+    reaches the till on its next `GET /machines/me`.
+    """
+    from app.services import machine_names
+
+    try:
+        out = machine_names.rename_from_till(
+            db, machine, body.name,
+            operator_id=body.operator_id, approved_by_id=body.approved_by_id, changed_at=body.changed_at,
+        )
+    except machine_names.MachineNameRefused as refused:
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    db.commit()
+    return out
+
+
 @router.post("/{machine_id}/products/{product_id}/image")
 async def machine_upload_product_image(
     machine_id: str,
     product_id: str,
     file: UploadFile = File(...),
     keep_background: bool = Query(False, alias="keepBackground"),
+    enhance: bool = Query(True, alias="enhance"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
     db: Session = Depends(get_db),
@@ -1293,6 +1361,9 @@ async def machine_upload_product_image(
     A product's picture taken or picked on the till: stored as the dashboard's upload
     stores it — the background cut out unless `keepBackground`, the upload kept beside
     it (`originalUrl`, to go back to with a product update) — and set on the product.
+    "שפר תמונה" (`enhance`, on unless the till says false): the same enhancement the till
+    applied to the picture it shows (app/services/product_image_processing.py `enhance_image`),
+    so the cloud's refined picture (`processed`: not the bytes sent) replaces it looking alike.
     The picture is the product's own, so only for a product this shop alone lists
     (403 `shared_product_master_readonly`), as for every master field from a till.
     """
@@ -1308,7 +1379,9 @@ async def machine_upload_product_image(
     contents = await file.read()
     if len(contents) > images._MAX_SIZE_BYTES:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="image_too_large")
-    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background)
+    # Called directly (a test), the Query default is not a bool: the till's default, on.
+    enhance = enhance if isinstance(enhance, bool) else True
+    stored = await images.store_upload(contents, machine.tenant_id, "products", keep_background, enhance=enhance)
     product.image_url = stored.url
     _audit(
         db,
@@ -1317,7 +1390,8 @@ async def machine_upload_product_image(
         entity=SyncEntityType.PRODUCTS,
         action=SyncAction.UPDATE,
         entity_id=product.id,
-        note="image" + (" background removed" if stored.background_removed else ""),
+        note="image" + (" background removed" if stored.background_removed else "")
+        + (" enhanced" if stored.enhanced else ""),
     )
     db.commit()
     notify_all_machines_for_tenant(db, str(machine.tenant_id), reason="product_updated")
@@ -1325,6 +1399,7 @@ async def machine_upload_product_image(
         "url": stored.url,
         "originalUrl": stored.original_url,
         "backgroundRemoved": stored.background_removed,
+        "processed": stored.processed,
     }
 
 
@@ -1708,6 +1783,12 @@ def post_shift_close_ack(
         error_code=body.error_code,
         error_message=body.error_message,
     )
+    if body.error_code == "held_sales":
+        # The list the manager sees before confirming "בטל מכירות מושהות וסגור".
+        from app.services import held_sales_close
+
+        held_sales_close.note_reported(db, machine, body.request_id, body.held_sales)
+        db.commit()
     return ShiftCloseAckResponse(ok=True, item_status=item_status)
 
 
@@ -1977,6 +2058,10 @@ def post_till_z_ack(
         error_code=body.error_code,
         error_message=body.error_message,
     )
+    if body.error_code == "held_sales":
+        from app.services import held_sales_close
+
+        held_sales_close.note_reported(db, machine, body.request_id, body.held_sales)
     db.commit()
     return {"ok": True, "status": req.status}
 
@@ -2366,7 +2451,14 @@ def get_stock_sync(
             levels=[],
         )
 
-    watermark = effective_stock_updated_at(db, machine.shop_id)
+    from app.models.shop import Shop as _Shop
+
+    shop_row = db.get(_Shop, machine.shop_id)
+    watermark = effective_stock_updated_at(db, machine.shop_id, shop_row.company_id if shop_row else None)
+    moved = getattr(machine, "area_changed_at", None)
+    if moved is not None:
+        moved = moved if moved.tzinfo else moved.replace(tzinfo=timezone.utc)
+        watermark = max(watermark, moved)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -2382,7 +2474,8 @@ def get_stock_sync(
             levels=[],
         )
 
-    levels = get_levels_for_shop(db, machine.shop_id, since=since_dt)
+    # One level per product: the stock location this till sells it from (app/services/stock.py).
+    levels = levels_for_machine(db, machine, since=since_dt)
     out = [
         StockLevelOut(
             product_id=l.product_id,
@@ -2393,6 +2486,9 @@ def get_stock_sync(
             reorder_max=l.reorder_max,
             reorder_opt=l.reorder_opt,
             updated_at=l.updated_at,
+            level=l.location.level,
+            target_id=l.location.target_id,
+            reset_at=l.reset_at,
         )
         for l in levels
     ]

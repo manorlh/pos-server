@@ -5,6 +5,9 @@
  * Unrelated to `/vouchers` (gift-voucher templates) and to item tickets.
  */
 import { api } from './api';
+import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
+import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
+import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
   PrepaidDiscountType,
   PrepaidPromotionPolicy,
@@ -43,6 +46,8 @@ export interface PrepaidBatchTerms {
   maxUnits?: number | null;
   targets?: PrepaidTargets | null;
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
@@ -104,6 +109,340 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   orderRef?: string | null;
   /** Goods: "כולל תוספות" — paid options and a meal's upcharges are covered too (§7.14). */
   includeExtras?: boolean;
+  // ── Its type (the spec's §2) and the two prices (§5), as issued ──
+  type?: PrepaidTypeRef | null;
+  /** The type's name as printed above the title (a manual type's; null for a batch's own). */
+  typeName?: string | null;
+  /** ₪ — the whole voucher's value at the till; null: the goods, whatever they cost. */
+  tillValue?: number | null;
+  /** ₪ — only with the `prepaid_voucher_prices` section (else null, `pricesVisible` false). */
+  productionPrice?: number | null;
+  pricesVisible?: boolean;
+  pricing?: PrepaidPricing;
+  allowTopUp?: boolean;
+  /** How the till books a redemption (editable after issue; each redemption records it). */
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  /** "הצג תוקף על השובר" (absent: shown). */
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  /** "מימוש ללא אינטרנט". */
+  offlineAllowed?: boolean;
+  printTillValue?: boolean;
+  /** Issued so far (the next serial less one): "ערוך סדרה" never goes below it. */
+  issuedCount?: number;
+  /** The production it was made for (§13); its name is `customerName`. */
+  production?: { id: string; name: string; billingBasis: PrepaidBillingBasis } | null;
+  /** The event (the existing report events); `eventName` is the printed text. */
+  reportEvent?: PrepaidEventRef | null;
+  /** "ערוך סדרה": the production price by serial once it was changed (prices section only). */
+  productionPriceHistory?: { fromSerial: number; price: number | null; at?: string | null; by?: string | null }[] | null;
+  /** "items" (a fixed list) or "groups" (a package / one of several, the production vouchers contract §1). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidBatchGroup[] | null;
+  totalQty?: number | null;
+  catalogMode?: 'frozen' | 'live';
+  /** The list's figures (GET /prepaid-vouchers/batches): issued, redeemed, open, the rate. */
+  figures?: PrepaidBatchFigures;
+  /** Every status the list filters by, at once. */
+  state?: PrepaidBatchState;
+  /**
+   * Only on the answer of POST /prepaid-vouchers/batches: an identical batch the same user made a
+   * moment ago ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
+   */
+  possibleDuplicate?: PrepaidDuplicateRef | null;
+}
+
+// ── Productions ("הפקות") and the events a batch may name (§13) ──────────────
+
+/** By what was redeemed (the default) or by what was handed over. */
+export type PrepaidBillingBasis = 'redemption' | 'delivery';
+
+export interface PrepaidProduction {
+  id: string;
+  companyId: string;
+  name: string;
+  contactName: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  billingBasis: PrepaidBillingBasis;
+  notes: string | null;
+  active: boolean;
+  batchCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface PrepaidProductionBody {
+  companyId?: string;
+  name?: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  billingBasis?: PrepaidBillingBasis;
+  notes?: string | null;
+  active?: boolean;
+}
+
+export interface PrepaidEventRef {
+  id: string;
+  name: string;
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+export interface PrepaidEventOption extends PrepaidEventRef {
+  shopId: string;
+  shopName: string | null;
+  status: string;
+}
+
+export async function fetchPrepaidProductions(params: { companyId?: string; includeInactive?: boolean } = {}): Promise<PrepaidProduction[]> {
+  const { data } = await api.get<{ items: PrepaidProduction[] }>('/prepaid-vouchers/productions', {
+    params: { companyId: params.companyId || undefined, includeInactive: params.includeInactive || undefined },
+  });
+  return data.items;
+}
+
+export async function createPrepaidProduction(body: PrepaidProductionBody): Promise<PrepaidProduction> {
+  const { data } = await api.post<PrepaidProduction>('/prepaid-vouchers/productions', body);
+  return data;
+}
+
+export async function updatePrepaidProduction(id: string, body: PrepaidProductionBody): Promise<PrepaidProduction> {
+  const { data } = await api.patch<PrepaidProduction>(`/prepaid-vouchers/productions/${id}`, body);
+  return data;
+}
+
+/** The events a batch may name: the report events of the shops the user sees, newest first. */
+export async function fetchPrepaidEventOptions(companyId?: string): Promise<PrepaidEventOption[]> {
+  const { data } = await api.get<{ items: PrepaidEventOption[] }>('/prepaid-vouchers/events', {
+    params: { companyId: companyId || undefined },
+  });
+  return data.items;
+}
+
+// ── "מימוש ללא אינטרנט" — the batch assigned to a device (§7) ────────────────────
+
+export interface PrepaidOfflineAssignment {
+  id: string;
+  batchId: string;
+  target: 'machine' | 'lan_host';
+  machineId: string;
+  machineName: string | null;
+  shopId: string | null;
+  /** `releasing`: the release asked; it completes once the device acknowledges (two steps). */
+  status: 'active' | 'releasing' | 'released';
+  version: number;
+  assignedAt: string | null;
+  lastDownloadAt: string | null;
+  lastSyncAt: string | null;
+  /** What the device said it still had to send at its last sync. */
+  lastSyncPending: number | null;
+  releasedAt: string | null;
+  forced: boolean;
+  releaseReason: string | null;
+}
+
+export interface PrepaidOfflineTargets {
+  offlineAllowed: boolean;
+  shops: {
+    shopId: string;
+    shopName: string;
+    /** The shop's main till, which serves its LAN; null when it has none. */
+    lanHost: { machineId: string; name: string } | null;
+    machines: { machineId: string; name: string; posNumber: string | null }[];
+  }[];
+}
+
+export async function fetchPrepaidOffline(batchId: string): Promise<{ assignment: PrepaidOfflineAssignment | null; history: PrepaidOfflineAssignment[] }> {
+  const { data } = await api.get(`/prepaid-vouchers/batches/${batchId}/offline`);
+  return data;
+}
+
+export async function fetchPrepaidOfflineTargets(batchId: string): Promise<PrepaidOfflineTargets> {
+  const { data } = await api.get<PrepaidOfflineTargets>(`/prepaid-vouchers/batches/${batchId}/offline/targets`);
+  return data;
+}
+
+export async function assignPrepaidOffline(
+  batchId: string, body: { target: 'machine' | 'lan_host'; machineId?: string; shopId?: string },
+): Promise<PrepaidOfflineAssignment> {
+  const { data } = await api.post<PrepaidOfflineAssignment>(`/prepaid-vouchers/batches/${batchId}/offline/assign`, body);
+  return data;
+}
+
+/** Released once the device synced everything; `force` (with a reason) before that — audited. */
+export async function releasePrepaidOffline(batchId: string, body: { force?: boolean; reason?: string }): Promise<{ assignment: PrepaidOfflineAssignment | null }> {
+  const { data } = await api.post(`/prepaid-vouchers/batches/${batchId}/offline/release`, body);
+  return data;
+}
+
+/** One group of a batch of groups (₪ for its value). */
+export interface PrepaidBatchGroup {
+  key: string;
+  name: string;
+  minQty: number;
+  maxQty: number;
+  value?: number | null;
+  allowRepeat?: boolean;
+  allItems?: boolean;
+  productIds?: string[];
+  categoryIds?: string[];
+  includeSubcategories?: boolean;
+  excludeProductIds?: string[];
+  excludeCategoryIds?: string[];
+  sortOrder?: number;
+}
+
+export interface PrepaidBatchFigures {
+  issued: number;
+  /** Redeemed in full or in part. */
+  redeemed: number;
+  fullyRedeemed: number;
+  open: number;
+  cancelled: number;
+  /** Redeemed of the vouchers not cancelled (0–1); null: none. */
+  rate: number | null;
+}
+
+export interface PrepaidBatchState {
+  active: boolean;
+  not_started: boolean;
+  expired: boolean;
+  cancelled: boolean;
+  fully_redeemed: boolean;
+  has_open: boolean;
+}
+
+export type PrepaidPricing = 'fixed' | 'cover';
+/**
+ * discount — "קיזוז מהחשבונית (כמו הנחה)" (a document deduction, the default);
+ * payment — "אמצעי תשלום (חייב במע״מ)" (the production_voucher tender);
+ * zero — "₪0 עם הצגת שווי" (legacy batches).
+ */
+export type PrepaidRedemptionAccounting = 'discount' | 'payment' | 'zero';
+export const PREPAID_REDEMPTION_ACCOUNTING: PrepaidRedemptionAccounting[] = ['discount', 'payment', 'zero'];
+export type PrepaidOverrideMode = 'honour' | 'auto' | 'manager';
+
+/** Products that take no discounts (§7): honour / force automatically / with a manager. ₪ and %. */
+export interface PrepaidOverridePolicy {
+  mode: PrepaidOverrideMode;
+  maxAmount?: number | null;
+  maxPercent?: number | null;
+  maxTotal?: number | null;
+  scope?: { productIds: string[]; categoryIds: string[] } | null;
+}
+export type PrepaidTypeOrigin = 'manual' | 'batch' | 'legacy';
+
+export interface PrepaidTypeRef {
+  id: string;
+  code: string | null;
+  name: string | null;
+  /** The version the batch was issued with, and the type's current one. */
+  version: number;
+  currentVersion: number | null;
+  origin: PrepaidTypeOrigin | null;
+}
+
+/** "סוג שובר" — the template batches are issued from. Money in ₪. */
+export interface PrepaidVoucherType extends PrepaidBatchTerms {
+  id: string;
+  companyId: string;
+  companyName: string | null;
+  code: string | null;
+  name: string;
+  description: string | null;
+  origin: PrepaidTypeOrigin;
+  active: boolean;
+  version: number;
+  items: PrepaidBatchItem[];
+  tillValue: number | null;
+  productionPrice: number | null;
+  pricesVisible: boolean;
+  pricing: PrepaidPricing;
+  allowTopUp: boolean;
+  redemptionAccounting: PrepaidRedemptionAccounting;
+  showValidity: boolean;
+  discountBlockPolicy: PrepaidOverridePolicy;
+  offlineAllowed: boolean;
+  splitAllowed: boolean;
+  includeExtras: boolean;
+  printTillValue: boolean;
+  batchCount: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export interface PrepaidTypeBody {
+  companyId?: string;
+  name?: string;
+  code?: string | null;
+  description?: string | null;
+  active?: boolean;
+  kind?: PrepaidVoucherKind;
+  items?: { productId: string; quantity: number }[];
+  tillValue?: number | null;
+  productionPrice?: number | null;
+  pricing?: PrepaidPricing;
+  allowTopUp?: boolean;
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  offlineAllowed?: boolean;
+  splitAllowed?: boolean;
+  includeExtras?: boolean;
+  printTillValue?: boolean;
+  discountType?: PrepaidDiscountType | null;
+  discountValue?: number | null;
+  minPurchase?: number | null;
+  maxDiscount?: number | null;
+  maxUnits?: number | null;
+  targets?: { productIds: string[]; categoryIds: string[] } | null;
+  stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
+  promotionPolicy?: PrepaidPromotionPolicy;
+  usesPerVoucher?: number;
+  maxUsesPerSale?: number;
+  maxUsesPerDay?: number | null;
+}
+
+export interface PrepaidTypeEvent {
+  id: string;
+  action: 'create' | 'update' | 'activate' | 'deactivate';
+  userName: string | null;
+  createdAt: string | null;
+  details: { fields?: string[]; version?: number } | null;
+}
+
+/** The types, and whether this user sees (and sets) production prices at all. */
+export async function fetchPrepaidTypes(
+  opts: { companyId?: string; includeInactive?: boolean; includeOneOff?: boolean } = {},
+): Promise<{ items: PrepaidVoucherType[]; pricesVisible: boolean; pricesEditable: boolean; overrideEditable: boolean }> {
+  const { data } = await api.get<{ items: PrepaidVoucherType[]; pricesVisible: boolean; pricesEditable: boolean; overrideEditable: boolean }>(
+    '/prepaid-vouchers/types', { params: opts },
+  );
+  return data;
+}
+
+export async function fetchPrepaidType(id: string): Promise<PrepaidVoucherType> {
+  const { data } = await api.get<PrepaidVoucherType>(`/prepaid-vouchers/types/${id}`);
+  return data;
+}
+
+export async function createPrepaidType(body: PrepaidTypeBody): Promise<PrepaidVoucherType> {
+  const { data } = await api.post<PrepaidVoucherType>('/prepaid-vouchers/types', body);
+  return data;
+}
+
+export async function updatePrepaidType(id: string, body: PrepaidTypeBody): Promise<PrepaidVoucherType> {
+  const { data } = await api.patch<PrepaidVoucherType>(`/prepaid-vouchers/types/${id}`, body);
+  return data;
+}
+
+export async function fetchPrepaidTypeEvents(id: string): Promise<PrepaidTypeEvent[]> {
+  const { data } = await api.get<{ items: PrepaidTypeEvent[] }>(`/prepaid-vouchers/types/${id}/events`);
+  return data.items;
 }
 
 /** QR (any camera / 2D imager) or a Code 128 line barcode (1D laser scanners). */
@@ -164,6 +503,17 @@ export interface PrepaidVoucher {
 export interface PrepaidBatchCreate {
   name: string;
   companyId: string;
+  /** The type it is issued from: what it gives, its terms and prices are the type's. */
+  typeId?: string | null;
+  /** Without a type: its prices (₪) and how it is priced / recorded. */
+  tillValue?: number | null;
+  productionPrice?: number | null;
+  pricing?: PrepaidPricing;
+  redemptionAccounting?: PrepaidRedemptionAccounting;
+  showValidity?: boolean;
+  discountBlockPolicy?: PrepaidOverridePolicy;
+  offlineAllowed?: boolean;
+  printTillValue?: boolean;
   shopIds: string[] | null;
   eventName: string | null;
   logoUrl: string | null;
@@ -185,6 +535,10 @@ export interface PrepaidBatchCreate {
   barcodeType?: PrepaidBarcodeType;
   customerName?: string | null;
   orderRef?: string | null;
+  /** The production (§13): its name becomes the batch's `customerName`. */
+  productionId?: string | null;
+  /** The event (a report event): the printed `eventName` defaults to its name. */
+  reportEventId?: string | null;
   kind?: PrepaidVoucherKind;
   discountType?: PrepaidDiscountType | null;
   discountValue?: number | null;
@@ -193,6 +547,8 @@ export interface PrepaidBatchCreate {
   maxUnits?: number | null;
   targets?: { productIds: string[]; categoryIds: string[] } | null;
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
@@ -202,6 +558,8 @@ export interface PrepaidBatchCreate {
 /** The rules of use that may change after printing (what it gives and its uses never do). */
 export interface PrepaidBatchRulesUpdate {
   stacking?: PrepaidStacking;
+  /** "מספר שוברים מקסימלי בעסקה" (with many); null: no maximum. */
+  maxVouchersPerSale?: number | null;
   promotionPolicy?: PrepaidPromotionPolicy;
   maxUsesPerSale?: number;
   /** Null clears the daily limit. */
@@ -221,28 +579,65 @@ export async function fetchPrepaidBatch(id: string): Promise<PrepaidVoucherBatch
   return data;
 }
 
-export async function createPrepaidBatch(body: PrepaidBatchCreate): Promise<PrepaidVoucherBatch> {
-  const { data } = await api.post<PrepaidVoucherBatch>('/prepaid-vouchers/batches', body);
+/**
+ * A new batch. `idempotencyKey` (one per form submission, lib/prepaidBatchSubmit.ts): a retry with
+ * the same key gets the same batch back (200), never a second one. `timeoutMs`: past it the answer
+ * counts as lost — the caller asks again with the same key.
+ */
+export async function createPrepaidBatch(
+  body: PrepaidBatchCreate,
+  opts: { idempotencyKey?: string; timeoutMs?: number } = {},
+): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>('/prepaid-vouchers/batches', body, {
+    headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    timeout: opts.timeoutMs,
+  });
   return data;
 }
 
-export async function updatePrepaidBatch(
-  id: string,
-  body: Partial<Pick<
-    PrepaidBatchCreate,
-    | 'name' | 'eventName' | 'logoUrl' | 'freeText' | 'validFrom' | 'validUntil' | 'showCode' | 'showItems' | 'showCredit' | 'barcodeType'
-    | 'customerName' | 'orderRef'
-  >> & PrepaidBatchRulesUpdate,
-): Promise<PrepaidVoucherBatch> {
+/**
+ * "ערוך סדרה": any setting but the codes, serials, kind and company. Absent fields stay; a null
+ * clears what may be empty. `count`: the vouchers in all (more is issued, never fewer).
+ * `applyToPartial`: new contents reach the partly redeemed vouchers too.
+ */
+export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets'>> &
+  PrepaidBatchRulesUpdate & {
+    targets?: { productIds: string[]; categoryIds: string[] } | null;
+    selection?: 'items' | 'groups';
+    groups?: PrepaidBatchGroup[] | null;
+    totalQty?: number | null;
+    catalogMode?: 'frozen' | 'live';
+    applyToPartial?: boolean;
+  };
+
+export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);
   return data;
 }
 
+/** What an edit would change and touch (each change before → after, the effects); nothing is saved. */
+export async function previewPrepaidBatchEdit(id: string, body: PrepaidBatchEditBody): Promise<PrepaidBatchEditPlan> {
+  const { data } = await api.post<PrepaidBatchEditPlan>(`/prepaid-vouchers/batches/${id}/edit-preview`, body);
+  return data;
+}
+
 /** More vouchers; a grouped batch issues them in new groups (of [groupSize], else its own size). */
-export async function addPrepaidVouchers(id: string, count: number, groupSize?: number | null): Promise<PrepaidVoucherBatch> {
+/**
+ * More vouchers for a batch. `idempotencyKey` (one per submission, lib/prepaidBatchSubmit.ts): a
+ * retry with the same key adds them once (200 with the batch); `timeoutMs` as in createPrepaidBatch.
+ */
+export async function addPrepaidVouchers(
+  id: string,
+  count: number,
+  groupSize?: number | null,
+  opts: { idempotencyKey?: string; timeoutMs?: number } = {},
+): Promise<PrepaidVoucherBatch> {
   const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, {
     count,
     ...(groupSize ? { groupSize } : {}),
+  }, {
+    headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    timeout: opts.timeoutMs,
   });
   return data;
 }
@@ -290,7 +685,8 @@ export async function cancelPrepaidGroup(
 }
 
 export type PrepaidEventAction =
-  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged';
+  | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
+  | 'offline_assign' | 'offline_release' | 'offline_force_release';
 
 export interface PrepaidBatchEvent {
   id: string;
@@ -411,6 +807,8 @@ export interface PrepaidBatchUsage {
 
 export interface PrepaidBatchReport {
   batchId: string;
+  /** A staff test batch ("שוברי בדיקה"): out of the settlements and the commercial reports. */
+  isTest?: boolean;
   timezone: string;
   generatedAt: string;
   kind?: PrepaidVoucherKind;
@@ -511,3 +909,164 @@ export async function downloadPrepaidVouchersFile(
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+// ── The filter model: lists, search and the till report (server: prepaid_voucher_analytics.py) ──
+
+/** A batch as a voucher / redemption row names it. */
+export interface PrepaidBatchRef {
+  id: string;
+  name: string;
+  eventName: string | null;
+  customerName: string | null;
+  typeName: string | null;
+  kind: PrepaidVoucherKind;
+  validFrom: string | null;
+  validUntil: string | null;
+  status: 'active' | 'cancelled';
+  redemptionAccounting: PrepaidRedemptionAccounting | null;
+}
+
+/** A voucher in "כל השוברים" (or a batch's table): its state and its batch. */
+export interface PrepaidVoucherRow extends PrepaidVoucher {
+  state: VoucherState;
+  batch: PrepaidBatchRef;
+}
+
+export interface PrepaidFacets {
+  customers: { value: string; batches: number }[];
+  events: { value: string; batches: number }[];
+  types: { id: string; name: string }[];
+  batches: { id: string; name: string; customerName: string | null; eventName: string | null }[];
+  shops: { id: string; name: string; companyId: string }[];
+  tills: { id: string; name: string | null; shopName: string | null }[];
+  employees: { id: string; name: string }[];
+  creators: { id: string; name: string }[];
+  pricesVisible: boolean;
+}
+
+export interface PrepaidSearchResult {
+  batches: PrepaidBatchRef[];
+  vouchers: { id: string; serial: number; displayCode: string; state: VoucherState; batch: PrepaidBatchRef }[];
+  tills: { id: string; name: string | null; shopName: string | null; redemptions: number }[];
+  employees: { id: string; name: string; redemptions: number }[];
+}
+
+/** Agorot per accounting mode: a deduction, a payment, memo value — never "a discount". */
+export interface PrepaidValueByMode {
+  discount: number;
+  payment: number;
+  zero: number;
+  total: number;
+}
+
+export interface PrepaidSeriesPoint {
+  /** The hour (0–23) or the day (yyyy-mm-dd). */
+  key: number | string;
+  redemptions: number;
+  vouchers: number;
+  items: number;
+  /** Agorot. */
+  value: number;
+}
+
+export interface PrepaidTillRow {
+  machineId: string | null;
+  name: string | null;
+  shopId: string | null;
+  shopName: string | null;
+  redemptions: number;
+  vouchers: number;
+  items: number;
+  value: PrepaidValueByMode;
+  flagged: number;
+  /** Not recorded yet (reserve → confirm, the override audit, offline sync): null, never 0. */
+  topUp: number | null;
+  refusals: number | null;
+  overrides: number | null;
+  offlinePending: number | null;
+}
+
+export interface PrepaidTillReport {
+  items: PrepaidTillRow[];
+  totals: { redemptions: number; vouchers: number; items: number; value: PrepaidValueByMode };
+  series: PrepaidSeriesPoint[];
+  bucket: 'hour' | 'day';
+  /** How many of the scope's batches were left out as staff test batches. */
+  testBatchesExcluded?: number;
+}
+
+export interface PrepaidRedemptionRow {
+  id: string;
+  redeemedAt: string | null;
+  voucherId: string;
+  serial: number | null;
+  displayCode: string | null;
+  batch: PrepaidBatchRef;
+  items: { productId: string; name: string | null; quantity: number }[];
+  units: number;
+  uses: number | null;
+  /** Agorot, and how it was valued: the voucher's fixed value, list prices, a discount's amount. */
+  value: number;
+  valueBasis: 'fixed' | 'list' | 'discount';
+  accounting: PrepaidRedemptionAccounting;
+  machineId: string | null;
+  machineName: string | null;
+  employeeId: string | null;
+  employeeName: string | null;
+  transactionId: string | null;
+  flags: string[];
+}
+
+function withQuery(path: string, query: URLSearchParams, extra: Record<string, string | number | undefined> = {}): string {
+  const p = new URLSearchParams(query);
+  for (const [k, v] of Object.entries(extra)) if (v !== undefined && v !== '') p.set(k, String(v));
+  const s = p.toString();
+  return s ? `${path}?${s}` : path;
+}
+
+/** The batch list under the filters (the server filters; the figures come with each batch). */
+export async function fetchFilteredPrepaidBatches(query: URLSearchParams, sort: BatchSort = 'newest'): Promise<{ items: PrepaidVoucherBatch[]; total: number }> {
+  const { data } = await api.get<{ items: PrepaidVoucherBatch[]; total: number }>(
+    withQuery('/prepaid-vouchers/batches', query, { sort: sort === 'newest' ? undefined : sort }),
+  );
+  return { items: data.items ?? [], total: data.total ?? (data.items ?? []).length };
+}
+
+/** "כל השוברים" (or one batch's, with `batchId` in [query]), a page at a time. */
+export async function fetchPrepaidVoucherRows(
+  query: URLSearchParams,
+  limit: number,
+  offset: number,
+): Promise<{ total: number; items: PrepaidVoucherRow[] }> {
+  const { data } = await api.get<{ total: number; items: PrepaidVoucherRow[] }>(
+    withQuery('/prepaid-vouchers/vouchers', query, { limit, offset }),
+  );
+  return data;
+}
+
+export async function fetchPrepaidFacets(): Promise<PrepaidFacets> {
+  const { data } = await api.get<PrepaidFacets>('/prepaid-vouchers/facets');
+  return data;
+}
+
+export async function searchPrepaid(q: string): Promise<PrepaidSearchResult> {
+  const { data } = await api.get<PrepaidSearchResult>(withQuery('/prepaid-vouchers/search', new URLSearchParams({ q })));
+  return data;
+}
+
+export async function fetchPrepaidTillReport(query: URLSearchParams, bucket: 'hour' | 'day'): Promise<PrepaidTillReport> {
+  const { data } = await api.get<PrepaidTillReport>(withQuery('/prepaid-vouchers/analytics/tills', query, { bucket }));
+  return data;
+}
+
+export async function fetchPrepaidRedemptions(
+  query: URLSearchParams,
+  limit: number,
+  offset: number,
+): Promise<{ total: number; items: PrepaidRedemptionRow[] }> {
+  const { data } = await api.get<{ total: number; items: PrepaidRedemptionRow[] }>(
+    withQuery('/prepaid-vouchers/analytics/redemptions', query, { limit, offset }),
+  );
+  return data;
+}
+

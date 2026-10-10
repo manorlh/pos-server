@@ -57,13 +57,13 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard", "/dashboard/live-items", "/dashboard/compare", "/dashboard/insights",
             "/dashboard/insights/kiosks", "/dashboard/transactions", "/dashboard/day-summary",
-            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/transmissions",
-            "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
+            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/zcredit-reconciliation",
+            "/dashboard/transmissions", "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
             "/dashboard/cashier-sales", "/dashboard/area-sales", "/dashboard/tips",
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
-            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports",
+            "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
         ),
     ),
     Section(
@@ -76,14 +76,95 @@ SECTIONS: Tuple[Section, ...] = (
         "מוצרים, קטגוריות, תוספות, אפסייל, תפריטים, מבחר לסניף, ייבוא ושידור תפריט לקופות.",
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
-            "/dashboard/menus", "/dashboard/assortment",
+            "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
         ),
+    ),
+    # "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the digital menu's and the
+    # online ordering site's profiles — each its own section, view / edit (publishing is an edit).
+    Section(
+        "digital_menu", "תפריט דיגיטלי",
+        "פרופילי התפריט הדיגיטלי (לצפייה בלבד) לחברה, לסניף או לנקודת מכירה: בחירת מוצרים, סדר, עיצוב, "
+        "שעות, טיוטה ופרסום. עריכה: יצירה, שמירה, פרסום, השהיה וארכיון.",
+        ("/dashboard/digital-menu",),
+    ),
+    Section(
+        "online_ordering", "הזמנות אונליין",
+        "פרופילי אתר ההזמנות לחברה, לסניף או לנקודת מכירה: סוגי שירות, בחירת מוצרים, סדר, עיצוב, שעות, "
+        "טיוטה ופרסום. עריכה: יצירה, שמירה, פרסום, השהיה וארכיון.",
+        ("/dashboard/online-ordering",),
+    ),
+    # ── The manager's own (the cockpit, "הניהול שלי") — the owner, 09.10.2026: "תבנה קבוצת הרשאות
+    # לזה". The cockpit is the home page (open to everyone signed in); these sections gate what it
+    # offers: its quick actions, blocks, remote control, the live event and the alerts.
+    Section(
+        "cockpit", "הניהול שלי",
+        "מסך הניהול של הסניף או האירוע: הנתונים, מה דורש תשומת לב, הקופות והפעולות המהירות.",
+        (),
+    ),
+    Section(
+        "quick_actions", "פעולות מהירות",
+        "הודעה מהירה לקופות, מבצע מהיר והאפי האוור — מהמסך הראשי או מהתובנות, בלי עריכת מבצעים מלאה.",
+        (),
+    ),
+    # "חסימות ואזל" and "שליטה מרחוק" — their texts are feat/live-control's (one definition each).
+    Section(
+        "item_blocks", "חסימות ואזל",
+        "סימון פריט \"אזל\" או \"חסום\" לסניף, נקודת מכירה, קופה, קיוסקים או אירוע, עד שעה או עד ביטול.",
+        (),
+    ),
+    Section(
+        "device_control", "שליטה מרחוק בקופות וקיוסקים",
+        "נעילת קופה, סנכרון, ניתוק משתמש, הפעלה מחדש והתקנת עדכון; עצירת קיוסק, הודעה על המסך והסתרה מהירה.",
+        (),
+    ),
+    # "מצב אירוע חי" and "התראות" — their pages and texts are feat/event-live's (one definition each).
+    Section(
+        "live_event", "מצב אירוע חי",
+        "מסך גדול לאירוע: מכירות בזמן אמת מול היעד, קצב, פריטים, קופות, מטבח ושוברים. עריכה: יעד המכירות של האירוע.",
+        ("/dashboard/live-event",),
+    ),
+    Section(
+        "alerts", "התראות",
+        "היסטוריית ההתראות לטלפון (Push) של המשתמש וטיפול בהן. ההרשמה וההעדפות האישיות פתוחות לכל משתמש.",
+        ("/dashboard/alerts",),
     ),
     Section("stock", "מלאי", "רמות מלאי, קבלת סחורה, ספירה ותיקונים.", ("/dashboard/stock",)),
     Section("vouchers", "שוברים", "שוברי הנחה בקטלוג.", ("/dashboard/vouchers",)),
     Section("prepaid_vouchers", "שוברי הפקה", "שוברים לצוותי הפקה, מומשים בקופות ב-QR.", ("/dashboard/prepaid-vouchers",)),
+    Section(
+        "prepaid_voucher_prices", "מחירי הפקה בשוברים",
+        "מחיר המכירה להפקה בסוגי שוברי הפקה ובאצוות (לא מודפס ולא מגיע לקופה). צפייה: רואה את המחירים; "
+        "עריכה: קובע אותם.",
+        (),
+    ),
+    Section(
+        "voucher_discount_override", "כפיית הנחה בשוברי הפקה",
+        "קביעת מדיניות שעוקפת \"לא מקבל הנחות\" בסוגי שוברי הפקה ובאצוות (אוטומטית בתקרות, או באישור מנהל). "
+        "האישור בקופה הוא הרשאת הקופה VOUCHER_DISCOUNT_OVERRIDE.",
+        (),
+    ),
+    # Production vouchers after redemption (app/services/prepaid_voucher_settlement.py, …_controls.py).
+    Section(
+        "prepaid_voucher_settlement", "התחשבנות שוברי הפקה",
+        "לשונית \"התחשבנות\" ודוחות מסחריים בשוברי הפקה: הסכמים עם ההפקה, כמויות לחיוב ואסמכתאות של "
+        "חשבוניות חיצוניות. צפייה: רואה (הסכומים — עם \"מחירי הפקה בשוברים\"); עריכה: הסכמים, קישור "
+        "חשבוניות והסבר לפער.",
+        (),
+    ),
+    Section(
+        "prepaid_voucher_controls", "בקרת מימוש שוברי הפקה",
+        "השהיית מימושים, מכסות מימוש, אצוות בדיקה לצוות ושובר חלופי. צפייה: רואה; עריכה: משהה, "
+        "קובע מכסות, מנפיק שוברי בדיקה ושוברים חלופיים.",
+        (),
+    ),
     Section("promotions", "מבצעים", "הגדרת מבצעים לקופות.", ("/dashboard/promotions",)),
     Section("customers", "לקוחות ומועדון", "מועדון לקוחות, חברים ולקוחות.", ("/dashboard/club",)),
+    Section(
+        "business_cards", "כרטיסי ביקור",
+        "כרטיסי ביקור דיגיטליים לחברה, סניף, נקודת מכירה ואנשי צוות: עורך, פרסום, QR ופניות. "
+        "צפייה: רואה כרטיסים, נתונים ופניות; עריכה: עורך, מפרסם, משהה ומטפל בפניות.",
+        ("/dashboard/business-cards",),
+    ),
     Section("notifications", "הודעות SMS", "יומן הודעות, תבניות וחשבון 019.", ("/dashboard/notifications",)),
     Section("till_messages", "הודעות לקופות", "הודעה שכל קופה צריכה לאשר.", ("/dashboard/till-messages",)),
     Section(
@@ -111,7 +192,7 @@ SECTIONS: Tuple[Section, ...] = (
         "till_settings", "הגדרות קופות",
         "הגדרות הקופות לפי רמה (ארגון, חברה, סניף, עמדה, קופה): אמצעי תשלום, חריגים, מצב הדרכה "
         "ופרמטרי מגירת המזומן.",
-        ("/dashboard/payment-methods", "/dashboard/exception-settings"),
+        ("/dashboard/payment-methods", "/dashboard/exception-settings", "/dashboard/customer-display"),
     ),
     Section(
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
@@ -130,7 +211,8 @@ SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
 
 #: "מנהל ארגון" — what a new dashboard user gets until the super admin opens more (the owner,
-#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים").
+#: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"). Quick actions come with the
+#: "מנהל סניף / אירוע" template (`BRANCH_MANAGER_SECTIONS`), not with this default.
 ORG_MANAGER_TEMPLATE = "org_manager"
 ORG_MANAGER_LABEL = "מנהל ארגון"
 ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": VIEW}
@@ -139,9 +221,46 @@ ORG_MANAGER_SECTIONS: Dict[str, str] = {"reports": VIEW, "products": EDIT, "z": 
 FULL_TEMPLATE = "full"
 FULL_LABEL = "גישה מלאה לפי תפקיד"
 
+#: "מנהל סניף / אירוע" — runs a shop or an event from the cockpit: sees its reports, Zs, the live
+#: event, the alerts, the vouchers and the promotions; acts through the quick actions, blocks and
+#: sold-outs, remote control, till messages, kiosks and stock. Never users, accounting, branding,
+#: till settings, organization or till users.
+BRANCH_MANAGER_TEMPLATE = "branch_manager"
+BRANCH_MANAGER_LABEL = "מנהל סניף / אירוע"
+BRANCH_MANAGER_SECTIONS: Dict[str, str] = {
+    "cockpit": VIEW,
+    "reports": VIEW,
+    "z": VIEW,
+    "live_event": VIEW,
+    # Edit: they are the ones who handle an alert — marking it "טופל" (POST /push/alerts/{id}/ack).
+    "alerts": EDIT,
+    "prepaid_vouchers": VIEW,
+    "promotions": VIEW,
+    "quick_actions": EDIT,
+    "item_blocks": EDIT,
+    "device_control": EDIT,
+    "till_messages": EDIT,
+    # View only: kiosk edit opens its Z, closing its shift and converting a till to a kiosk.
+    # Pausing a kiosk and its messages come through `device_control`.
+    "kiosks": VIEW,
+    "stock": EDIT,
+}
+#: "מנהל אזור" — the same, meant for a user scoped to a point of sale. Dashboard users cannot be
+#: scoped to one yet (Saturday): until then the label says so and the template is `hidden` — not
+#: offered where admins assign templates.
+AREA_MANAGER_TEMPLATE = "area_manager"
+AREA_MANAGER_LABEL = "מנהל אזור (בקרוב: הגבלה לנקודת מכירה)"
+AREA_MANAGER_SECTIONS: Dict[str, str] = dict(BRANCH_MANAGER_SECTIONS)
+#: The templates of a manager who runs a place from the cockpit: "תצוגת מנהל פשוטה" by default.
+MANAGER_TEMPLATES = (BRANCH_MANAGER_TEMPLATE, AREA_MANAGER_TEMPLATE)
+
 BUILTIN_TEMPLATES = {
     ORG_MANAGER_TEMPLATE: {"label": ORG_MANAGER_LABEL, "sections": ORG_MANAGER_SECTIONS, "fullAccess": False},
     FULL_TEMPLATE: {"label": FULL_LABEL, "sections": {}, "fullAccess": True},
+    BRANCH_MANAGER_TEMPLATE: {"label": BRANCH_MANAGER_LABEL, "sections": BRANCH_MANAGER_SECTIONS, "fullAccess": False},
+    AREA_MANAGER_TEMPLATE: {
+        "label": AREA_MANAGER_LABEL, "sections": AREA_MANAGER_SECTIONS, "fullAccess": False, "hidden": True,
+    },
 }
 
 
@@ -192,6 +311,9 @@ def S(*sections: str, level: Optional[str] = None) -> RouteRule:
 
 
 SELF = RouteRule("self")
+#: "עמדת מפיק": the producer's own routes — the only ones a PRODUCER_VIEW user may use
+#: (app/services/dashboard_access.py `enforce_route`), and every one checks the event grant.
+PRODUCER = RouteRule("producer")
 REFERENCE = RouteRule("reference")
 TILL = RouteRule("till")
 SUPER_ADMIN = RouteRule("super_admin")
@@ -204,6 +326,8 @@ _GET = "GET"
 #: (methods, path pattern, rule). Patterns are the route's path after the API prefix: `{}` is
 #: one path parameter, `*` is anything (including nothing). First match wins.
 ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
+    # ── "עמדת מפיק" (feat/event-live): the producer's read-only portal ──
+    (_ALL, "/producer/*", PRODUCER),
     # ── The caller themselves ──
     (_ALL, "/users/me", SELF),
     (_ALL, "/users/me/*", SELF),
@@ -242,7 +366,7 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/accounting/preview", S("accounting", level=VIEW)),
     (_ALL, "/accounting/*", S("accounting")),
     # ── Till app versions (the rest is the super admin's, by its dependency) ──
-    (_GET, "/app-releases/rollout", S("devices", "reports", level=VIEW)),
+    (_GET, "/app-releases/rollout", S("devices", "reports", "cockpit", level=VIEW)),
     (_GET, "/app-releases/windows/*", S("kiosks", "devices", level=VIEW)),
     # ── Points of sale (areas) ──
     (_ALL, "/areas/{}/settings", S("till_settings")),
@@ -252,20 +376,47 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/attendance/shifts/{}", S("attendance", "z", level=VIEW)),
     (_ALL, "/attendance/*", S("attendance")),
     # ── Catalog ──
-    (_GET, "/availability/reopens", S("products")),
+    # The product and category pickers of the promotions page and of the quick actions'
+    # sheets ("מבצע מזדמן", "Happy hour") read the catalog: a reader of those may list it.
+    # (Patterns are anchored: `/products/{}` is not `/products/{}/availability`, below.)
+    (_GET, "/products", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/products/{}", S("products", "quick_actions", "promotions", level=VIEW)),
+    (_GET, "/categories", S("products", "quick_actions", "promotions", level=VIEW)),
+    # "חסימות ואזל": a product's sold-out / blocked state, also for a manager without the catalog.
+    (_GET, "/availability/reopens", S("products", "item_blocks")),
     (_ALL, "/catalog-import/*", S("products")),
     (_ALL, "/catalog-menus*", S("products")),
+    # "קבוצות מכשירים": edited beside the tills, assigned menus beside the catalog.
+    (_ALL, "/machine-groups*", S("devices", "products")),
     (_ALL, "/catalog/*", S("products")),
     (_ALL, "/categories*", S("products")),
     (_ALL, "/demo-menu/*", S("products")),
     (_GET, "/menu-broadcast/*", S("products")),
     (_ALL, "/menu/*", S("products")),
-    ("POST", "/products/availability-summary", S("products", level=VIEW)),
+    ("POST", "/products/availability-summary", S("products", "item_blocks", level=VIEW)),
+    (_GET, "/products/{}/availability", S("products", "item_blocks", level=VIEW)),
+    (_ALL, "/products/{}/availability/*", S("products", "item_blocks")),
     ("POST", "/products/shop-scope/preview", S("products", level=VIEW)),
     (_ALL, "/products/{}/kitchen-printers*", S("products", "printers")),
     (_ALL, "/products*", S("products")),
+    # "מופיע ב": a product's four channels, their exceptions and the bulk screen.
+    (_ALL, "/product-channels*", S("products")),
+    # "סדר תצוגה": the one ordering of the tills, the kiosks and the web (the router checks the target).
+    (_ALL, "/display-orderings*", S("products", "kiosks", "till_design", "digital_menu", "online_ordering")),
+    # "תפריט דיגיטלי" / "הזמנות אונליין": their profiles (app/routers/presentation_profiles.py). A preview
+    # or a validation only reads.
+    ("POST", "/digital-menu/profiles/{}/preview", S("digital_menu", level=VIEW)),
+    ("POST", "/digital-menu/profiles/{}/validate", S("digital_menu", level=VIEW)),
+    (_ALL, "/digital-menu/*", S("digital_menu")),
+    ("POST", "/online-ordering/profiles/{}/preview", S("online_ordering", level=VIEW)),
+    ("POST", "/online-ordering/profiles/{}/validate", S("online_ordering", level=VIEW)),
+    (_ALL, "/online-ordering/*", S("online_ordering")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
+    # "הפצה בוואטסאפ": recipients' phone numbers — managing the batch (edit), reading included.
+    (_ALL, "/prepaid-vouchers/*distribution*", S("prepaid_vouchers", level=EDIT)),
+    # The simulator only previews a redemption (helper, §18.1): a read.
+    ("POST", "/prepaid-vouchers/simulate", S("prepaid_vouchers", level=VIEW)),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──
@@ -281,15 +432,25 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/remote-credits*", S("reports", "z")),
     # "זיכוי באשראי מהענן (Z-Credit)": the same people as a remote credit.
     (_ALL, "/cloud-card-refunds*", S("reports", "z")),
-    (_GET, "/failed-payments", S("reports", "z", level=VIEW)),
+    (_GET, "/failed-payments", S("reports", "z", "cockpit", level=VIEW)),
     # "תשלום לא מוכרע": reading the commands is the list's; checking on the terminal and the cloud's
     # decision are edits of "דוחות" (the transactions page and its "עסקאות שלא הושלמו").
+    # A payment's decision commands are the transactions page's, not the cockpit's (it reads the list).
     (_GET, "/failed-payments/*", S("reports", "z", level=VIEW)),
     (_ALL, "/failed-payments/*", S("reports")),
+    # "התאמת אשראי מול Z-Credit": read with the reports — its open count also on the cockpit; "הרץ
+    # התאמה עכשיו" and "טופל" are edits of the same people as a remote credit.
+    (_GET, "/zcredit-reconciliation/attention", S("reports", "z", "cockpit", level=VIEW)),
+    (_ALL, "/zcredit-reconciliation*", S("reports", "z")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
+    # "כרטיסי ביקור": the preview's VCF is a simulation of the draft — a viewer may look at it.
+    ("POST", "/business-cards/{}/preview-vcard", S("business_cards", level=VIEW)),
+    (_ALL, "/business-cards*", S("business_cards")),
     (_ALL, "/customers*", S("customers")),
     (_ALL, "/notifications*", S("notifications")),
+    # "הודעות לקופות" only — a message here may be full screen. A manager with only "פעולות מהירות"
+    # sends banners through POST /insights/quick-actions/messages (the cockpit's same button).
     (_ALL, "/till-messages*", S("till_messages")),
     # ── Companies (the look-ups are above) ──
     (_GET, "/companies/parent-options", S("organization")),
@@ -312,12 +473,44 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/exceptions*", S("reports")),
     # "יומן חריגות": a report (marking "טופל" is a report action, like reviewing exceptions);
     # its SMS alert rules hold staff phone numbers and send messages — their own section.
+    (_GET, "/exception-log*", S("reports", "exception_alerts", "alerts", level=VIEW)),
     (_ALL, "/exception-log*", S("reports", "exception_alerts")),
     (_ALL, "/exception-alerts/*", S("exception_alerts")),
+    # "התראות" (feat/event-live): the alerts feed and my history are the section; my own devices
+    # and preferences are mine (the router refuses a producer).
+    (_ALL, "/push/alerts*", S("alerts")),
+    (_GET, "/push/history", S("alerts")),
+    (_ALL, "/push/*", SELF),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
+    # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion
+    # and happy hour): their own section at edit — a manager may act without the full
+    # promotions or till-messages pages. Reading them is a report.
+    (_GET, "/insights/quick-actions", S("reports", "quick_actions", level=VIEW)),
+    (_GET, "/insights/quick-actions/promotions/suggestion", S("quick_actions", "reports", level=VIEW)),
+    (_ALL, "/insights/quick-actions/messages*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/promotions*", S("quick_actions", level=EDIT)),
+    (_ALL, "/insights/quick-actions/happy-hours*", S("quick_actions", level=EDIT)),
+    ("PUT", "/insights/anomaly-settings", S("reports")),
     (_GET, "/insights*", S("reports")),
+    # "מצב אירוע חי" (feat/event-live): the screen reads are view; setting its target is edit.
+    # First: the live screen is its own section, not a report.
+    (_ALL, "/report-events/live/*", S("live_event")),
+    (_ALL, "/report-events/{}/live*", S("live_event")),
+    # An event's producer grants (names and emails) stay the reports' — not the live screen's.
+    (_GET, "/report-events/{}/producers", S("reports", level=VIEW)),
+    # The cockpit's "מצב אירוע חי" reads the events too (making and confirming one stays a report action).
+    (_GET, "/report-events*", S("reports", "live_event", level=VIEW)),
     (_ALL, "/report-events*", S("reports")),
+    # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.
+    (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", "cockpit", level=VIEW)),
+    # What the cockpit ("הניהול שלי") reads: the board, its comparisons, events and vouchers.
+    (_GET, "/reports/overview", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/hourly", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/live-items", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/compare", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/side-by-side", S("reports", "cockpit", level=VIEW)),
+    (_GET, "/reports/event-options", S("reports", "cockpit", "live_event", level=VIEW)),
     (_GET, "/reports/discounts", S("reports", "promotions")),
     (_GET, "/reports/promotions", S("reports", "promotions")),
     (_GET, "/reports/upsells", S("reports", "products")),
@@ -336,8 +529,25 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/workflow/*", S("kds")),
     (_ALL, "/kitchen-station*", S("printers", "kds")),
     (_ALL, "/printers/*", S("printers")),
+    # "שליטה מרחוק": the kiosks' live actions (pause / resume, the banner, quick hides) — the kiosks
+    # section as before, or remote control (app/routers/kiosk_live.py, app/routers/kiosks.py).
+    (_ALL, "/kiosks/live*", S("kiosks", "device_control")),
+    (_ALL, "/kiosks/{}/commands", S("kiosks", "device_control")),
+    (_ALL, "/kiosks/{}/banner", S("kiosks", "device_control")),
     (_ALL, "/kiosks*", S("kiosks")),
+    # Remote control of tills and kiosks (app/routers/device_commands.py).
+    (_ALL, "/device-commands*", S("device_control")),
+    # "שליחת לוגים לענן" (app/routers/device_logs.py): the device page's "לוגים" and the super
+    # admin's "לוגים ממכשירים". Any of the two at view lets the route's own rule run: the content
+    # for a super admin / a distributor of the organization only, a request also for a
+    # `device_control` editor (checked there at edit) — never the content for them.
+    (_ALL, "/device-logs*", S("devices", "device_control", level=VIEW)),
+    # "חסימות ואזל" (app/routers/item_blocks.py).
+    ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
+    (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
+    # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
+    (_ALL, "/customer-display/*", S("till_settings", "devices")),
     # ── Devices ──
     ("POST", "/device-management/*", S("devices")),
     (_ALL, "/pairing/*", S("devices")),
@@ -361,6 +571,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/untransmitted", S("z", "reports", level=VIEW)),
     # "תצורת עבודה למכשיר", and the add-device dialog's step for a device still to pair.
     (_ALL, "/machines/{}/work-config", S("devices")),
+    # "שליטה מרחוק": restart a till, make it sync now — from the cockpit, without the device admin.
+    (_ALL, "/machines/{}/reboot", S("devices", "device_control")),
+    ("POST", "/machines/{}/sync", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
@@ -386,6 +599,11 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/shops/{}/training-mode*", S("till_settings")),
     (_ALL, "/shops/{}/shop-z-*", S("z")),
     (_ALL, "/shops/{}/stock*", S("stock")),
+    # Stock over the hierarchy (app/routers/stock_live.py): the switch preview only reads.
+    ("POST", "/stock/settings/preview", S("stock", level=VIEW)),
+    (_ALL, "/stock/*", S("stock")),
+    # "יעדים ותחרות" (app/routers/targets.py): seen on the board, set by whoever edits reports.
+    (_ALL, "/targets*", S("reports")),
     ("POST", "/shops/{}/till-z", S("z")),
     (_GET, "/shops/{}/tips/report", S("reports")),
     (_GET, "/shops/{}/work-types", S("products", "till_settings", level=VIEW)),

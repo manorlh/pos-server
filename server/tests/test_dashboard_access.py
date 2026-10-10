@@ -476,6 +476,65 @@ def test_a_new_super_admin_is_never_restricted(w):
     assert w.db.get(DashboardAccessProfile, uuid.UUID(response.json()["id"])) is None
 
 
+# ── "הודעה לקופות": full screen is "הודעות לקופות"'s, "פעולות מהירות" sends banners ──
+#
+# The coordinator, 09.10.2026 (option b): POST /till-messages — where a message may be full screen,
+# every cashier acknowledging it — is the till messages' section only. A manager with only the
+# quick actions sends banners through POST /insights/quick-actions/messages and cancels them
+# there; the cockpit's one "הודעה לקופות" button opens that sheet for them.
+
+
+def test_a_quick_actions_only_manager_sends_and_cancels_banners_only_through_the_quick_actions(w, monkeypatch):
+    from app.models.till_message import TillMessage
+    from app.services import ably_notify
+
+    monkeypatch.setattr(ably_notify, "publish_settings_notify", lambda *a, **k: None)  # no realtime from tests
+    manager = _user(w.db, "quick", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
+    _profile(w.db, manager, sections={"quick_actions": "edit"}, org_wide=True)
+    w.db.commit()
+    headers = _headers(manager, w.tenant)
+    target = {"targetLevel": "shop", "targetId": str(w.a_shop1.id)}
+
+    # The till messages' own route: refused, full screen or banner alike.
+    for display in ("fullscreen", "banner"):
+        refused = w.client.post("/api/v1/till-messages", headers=headers, json={"body": "שימו לב", "display": display, **target})
+        assert refused.status_code == 403 and _is_section_refusal(refused), (display, refused.status_code, refused.text)
+
+    # The quick actions: a banner goes out…
+    quick = {"text": "הציעו ללקוחות קפה", "duration": {"kind": "hours", "hours": 2}, **target}
+    sent = w.client.post("/api/v1/insights/quick-actions/messages", headers=headers, json=quick)
+    assert sent.status_code == 201, sent.text
+    action = sent.json()
+    assert action["status"] == "active" and action["tillMessageIds"]
+    messages = [w.db.get(TillMessage, uuid.UUID(i)) for i in action["tillMessageIds"]]
+    assert messages and all(m.display == "banner" for m in messages)
+    # …a full-screen one does not (the till messages' section, here too)…
+    full = w.client.post("/api/v1/insights/quick-actions/messages", headers=headers, json={**quick, "display": "fullscreen"})
+    assert full.status_code == 403 and _is_section_refusal(full), full.text
+    # …the till messages' own cancel stays theirs…
+    other_cancel = w.client.post(f"/api/v1/till-messages/{messages[0].id}/cancel", headers=headers)
+    assert _is_section_refusal(other_cancel), other_cancel.text
+    # …and the quick actions' cancel stops it.
+    cancelled = w.client.post(f"/api/v1/insights/quick-actions/messages/{action['id']}/cancel", headers=headers)
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "cancelled"
+
+
+def test_a_till_messages_manager_still_sends_full_screen_on_the_till_messages_route(w, monkeypatch):
+    from app.services import ably_notify
+
+    monkeypatch.setattr(ably_notify, "publish_settings_notify", lambda *a, **k: None)
+    manager = _user(w.db, "messenger", UserRole.COMPANY_MANAGER, w.tenant, company=w.a)
+    _profile(w.db, manager, sections={"till_messages": "edit"}, org_wide=True)
+    w.db.commit()
+    response = w.client.post(
+        "/api/v1/till-messages", headers=_headers(manager, w.tenant),
+        json={"body": "ספירת קופה ב-18:00", "targetLevel": "shop", "targetId": str(w.a_shop1.id)},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json().get("display", "fullscreen") == "fullscreen"
+
+
 # ── Nobody loses anything ────────────────────────────────────────────────────
 
 
@@ -598,6 +657,22 @@ def test_the_super_admin_sets_sections_scope_and_organizations_with_history(w):
     # Full access again.
     response = w.client.put(url, headers=_headers(w.admin, w.tenant), json={"template": "full"})
     assert response.json()["profile"]["fullAccess"] is True
+
+
+def test_a_save_without_devices_keeps_the_ones_the_profile_has(w):
+    """An older dashboard sends no areaIds / machineIds: the narrowing stays; an empty list clears it."""
+    user = _user(w.db, "pos", UserRole.SHOP_MANAGER, w.tenant, company=w.a, shop=w.a_shop1)
+    w.db.commit()
+    url = f"/api/v1/dashboard-access/users/{user.id}"
+    till = str(w.machines["A1"].id)
+    headers = _headers(w.admin, w.tenant)
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "edit"}, "machineIds": [till]})
+    assert response.status_code == 200, response.text
+    assert response.json()["profile"]["machineIds"] == [till]
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "view"}})
+    assert response.json()["profile"]["machineIds"] == [till]
+    response = w.client.put(url, headers=headers, json={"sections": {"stock": "view"}, "machineIds": []})
+    assert response.json()["profile"]["machineIds"] == []
 
 
 @pytest.mark.parametrize(

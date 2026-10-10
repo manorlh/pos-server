@@ -63,7 +63,9 @@ TENDER_LABELS = {
     "cash": "מזומן",
     "card": "כרטיס אשראי",
     "exchange": "קיזוז החלפה",
-    "voucher": "שובר",
+    "voucher": "שובר הפקה",
+    "vouchers": "שובר הפקה",
+    "production_voucher": "שובר הפקה",
     "mixed": "משולב",
     "other": "אחר",
 }
@@ -140,6 +142,21 @@ def document_title(document_type: Optional[int]) -> str:
     if document_type in DOCUMENT_TITLES:
         return DOCUMENT_TITLES[document_type]
     return f"מסמך {document_type}" if document_type is not None else "מסמך"
+
+
+def _production_deductions(db: Session, tx) -> list:
+    """A sale's production-voucher deductions ("קיזוז שוברי הפקה"), as the till printed them."""
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount
+
+    return (
+        db.query(TransactionVoucherDiscount)
+        .filter(
+            TransactionVoucherDiscount.transaction_id == tx.id,
+            TransactionVoucherDiscount.kind == PRODUCTION_VOUCHER_DEDUCTION,
+        )
+        .order_by(TransactionVoucherDiscount.serial)
+        .all()
+    )
 
 
 def tender_label(method: Optional[str]) -> str:
@@ -351,17 +368,51 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         )
         if original is not None:
             details.append(_row("זיכוי עבור מסמך", document_number_from(*original)))
+    # "הפק חשבונית על שם לקוח": the new invoice names the till sale it replaces (§9(ב)).
+    reissue_of = getattr(tx, "reissue_of_transaction_id", None)
+    if reissue_of is not None and not credit:
+        replaced = (
+            db.query(Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number)
+            .filter(Transaction.id == reissue_of, Transaction.tenant_id == tx.tenant_id)
+            .first()
+        )
+        if replaced is not None:
+            details.append(_row("הופקה במקום מסמך", document_number_from(*replaced)))
     if tx.status in _STATUS_LABELS:
         details.append(_row("סטטוס", _STATUS_LABELS[tx.status], emphasis=True))
     customer_name = tx.customer_name or (tx.customer.name if tx.customer is not None else None)
     if customer_name:
         details.append(_row("שם הלקוח", customer_name))
-    if tx.customer is not None and tx.customer.vat_number:
-        details.append(_row("ח.פ. / ע.מ. לקוח", tx.customer.vat_number))
+    # The number the document itself printed first ("פרטי לקוח לחשבונית"), else the linked customer's.
+    customer_vat = getattr(tx, "customer_vat_number", None) or (
+        tx.customer.vat_number if tx.customer is not None else None
+    )
+    if customer_vat:
+        details.append(_row("ח.פ. / ע.מ. לקוח", customer_vat))
     if tx.customer_phone:
         details.append(_row("טלפון", tx.customer_phone))
     if tx.customer_address:
         details.append(_row("כתובת", tx.customer_address))
+    if getattr(tx, "customer_email", None):
+        details.append(_row("דוא\"ל", tx.customer_email))
+    # "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): what a till added to a COPY of this
+    # document after it was issued, apart and labelled as such — never as the document's own details.
+    if not credit:
+        from app.services import document_customer_details as _added
+
+        added = _added.latest_for_document(db, tx.tenant_id, tx.id)
+        # Only while the document's till has the option on: off means a copy prints none of it.
+        if added is not None and _added.parameter_on(db, tx):
+            who = f" ע״י {added.added_by_name}" if added.added_by_name else ""
+            details.append(_row(f"פרטי לקוח נוספו בתאריך {_stamp(added.added_at, zone)}{who}", "", emphasis=True))
+            details.append(_row("  שם הלקוח", added.customer_name))
+            details.append(_row("  ח.פ. / ע.מ. לקוח", added.customer_vat_number))
+            if added.customer_phone:
+                details.append(_row("  טלפון", added.customer_phone))
+            if added.customer_address:
+                details.append(_row("  כתובת", added.customer_address))
+            if added.customer_email:
+                details.append(_row("  דוא\"ל", added.customer_email))
 
     lines: List[PrintRow] = []
     for item in tx.items:
@@ -385,14 +436,17 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
                 lines.append(
                     _row(f"הנחת מבצע: {promo.promotion_name or ''}".strip(), money(-_dec(promo.discount_amount)))
                 )
-        # Each discount voucher, as the till printed it: "שובר #12 — פסטיבל הקיץ".
-        from app.models.prepaid_voucher import TransactionVoucherDiscount
+        # Each discount voucher, as the till printed it: "שובר #12 — פסטיבל הקיץ". A production
+        # voucher's deduction is no discount: it is printed with the totals ("קיזוז שוברי הפקה").
+        from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount
 
         for v in (
             db.query(TransactionVoucherDiscount)
             .filter(TransactionVoucherDiscount.transaction_id == tx.id)
             .all()
         ):
+            if v.kind == PRODUCTION_VOUCHER_DEDUCTION:
+                continue
             if _dec(v.discount_amount) > 0:
                 label = f"שובר #{v.serial}" if v.serial else "שובר"
                 if v.batch_name:
@@ -409,9 +463,24 @@ def build_invoice_copy(db: Session, tx: Transaction) -> PrintDocumentOut:
         due = _dec(tx.total_amount)
     else:
         due = _dec(tx.total_amount) - discount
+        deductions = [] if credit else _production_deductions(db, tx)
+        deducted = sum((_dec(d.discount_amount) for d in deductions), Decimal(0))
         if discount > 0:
             totals.append(_row('סה"כ פריטים', money(tx.total_amount)))
-            totals.append(_row("הנחה", money(-discount)))
+            if discount - deducted > 0:
+                totals.append(_row("הנחה", money(-(discount - deducted))))
+        # The production vouchers contract §4.1: "קיזוז שוברי הפקה −₪40", then each voucher —
+        # its number, its type, the units it covered.
+        if deducted > 0:
+            totals.append(_row("קיזוז שוברי הפקה", money(-deducted)))
+            for d in deductions:
+                head = f"  שובר מס׳ {int(d.serial):04d}" if d.serial else "  שובר הפקה"
+                if d.type_name or d.batch_name:
+                    head += f" · {d.type_name or d.batch_name}"
+                totals.append(_row(head, ""))
+                for u in d.units or []:
+                    if isinstance(u, dict) and u.get("productName"):
+                        totals.append(_row(f"    {_qty(u.get('quantity') or 1)}× {u['productName']}", ""))
     # An exempt dealer's receipt (400 / -400) states no VAT (docs/SPEC_BUSINESS_TYPE.md).
     receipt = tx.document_type in RECEIPT_DOCUMENT_TYPES
     if tx.net_amount is not None and not receipt:

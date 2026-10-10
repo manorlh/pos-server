@@ -14,6 +14,7 @@ import { AlertTriangle, ImageOff, PauseCircle, Printer, Settings2, SlidersHorizo
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatShortDateTime, formatTime } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
@@ -104,6 +105,7 @@ export function StateBadges({ k }: { k: KioskSummary }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       {!k.enabled ? <Badge variant="outline">{t('disabled')}</Badge> : null}
+      {k.homeRole === 'till' ? <Badge variant="outline">{t('homeTill')}</Badge> : null}
       {k.paused ? (
         <Badge className="bg-amber-500 text-white">
           <PauseCircle /> {t('paused')}
@@ -227,6 +229,8 @@ export function KioskList({
           .filter(Boolean)
           .join(' · ')}
       </div>
+      {/* The last command sent to this kiosk and where it stands ("פקודות שנשלחו"); nothing when none. */}
+      <DeviceCommandChip machineId={k.machineId} className="mt-1" />
     </div>
   );
   const actions = (k: KioskSummary) => (

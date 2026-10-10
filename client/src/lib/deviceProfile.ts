@@ -12,11 +12,11 @@
  * tests (here and tests/test_device_profile.py) pin the same table.
  */
 
-export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board'] as const;
+export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display'] as const;
 export type DeviceRole = (typeof DEVICE_ROLES)[number];
 
 /** The display devices: "מסך — לא קופה, בלי מכירות ובלי חשבונאות". */
-export const NON_FISCAL_ROLES = ['kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+export const NON_FISCAL_ROLES = ['kds', 'order_status_board', 'customer_display'] as const satisfies readonly DeviceRole[];
 
 /** A till or a kiosk (or no role yet: a till); not a KDS / the board. */
 export function isFiscalRole(role: unknown): boolean {
@@ -49,7 +49,7 @@ export const DEVICE_PLATFORMS = ['android', 'windows', 'web'] as const;
 export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
 
 /** The roles a browser runs (the server says so too: web_platform_not_a_till). */
-export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board'] as const satisfies readonly DeviceRole[];
+export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board', 'customer_display'] as const satisfies readonly DeviceRole[];
 
 /** The platforms a role may be added on: the browser runs a kiosk, a KDS or a board — not a till. */
 export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
@@ -57,10 +57,12 @@ export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
 }
 
 /** The page on the dashboard's site a browser of this role opens: `/k`, `/kds`, `/board`. */
-export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | null {
+export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kds' | '/board' | '/display' | null {
   if (role === 'kiosk') return '/k';
   if (role === 'kds') return '/kds';
   if (role === 'order_status_board') return '/board';
+  // "מסך לקוח" in a browser (P:/specs/customer-display.md §4): it reads its till through the cloud relay.
+  if (role === 'customer_display') return '/display';
   return null;
 }
 
@@ -68,7 +70,7 @@ export function webPathOf(role: DeviceRole | '' | null | undefined): '/k' | '/kd
  * A browser screen's address (KDS / board) on this dashboard's site, with the pairing code in the
  * fragment (never sent to a server; the page pairs with it at once and wipes it from the address bar).
  */
-export function webScreenLink(origin: string, role: 'kds' | 'order_status_board', code?: string | null): string {
+export function webScreenLink(origin: string, role: 'kds' | 'order_status_board' | 'customer_display', code?: string | null): string {
   const base = `${origin.replace(/\/+$/, '')}${webPathOf(role)}`;
   const c = (code ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   return c ? `${base}#pair=${c}` : base;
@@ -152,6 +154,36 @@ export const SYNQPAY_DEVICE_MODEL_IDS = [
  */
 export const VENDOR_DEVICE_MODEL_IDS = ['PAX_A77', 'UROVO_I9100'] as const;
 
+/**
+ * "מדפסת מובנית" with no vendor SDK (pos-server app/models/builtin_printers.py, the matrix in
+ * specs/android-builtin-printers.md): iMin, LANDI and Feitian tablets in their printer docks. The
+ * till finds the head by itself (an inner USB printer, iMin's print service, the virtual Bluetooth
+ * printer) and prints at its width; a model only its vendor's SDK reaches (LANDI's handhelds) is
+ * "בקרוב". None has a card terminal of its own.
+ */
+export const BUILTIN_PRINTER_MODEL_IDS = [
+  'IMIN_FALCON2',
+  'IMIN_FALCON2_58',
+  'IMIN_FALCON2MAX',
+  'IMIN_D4_PRO',
+  'IMIN_SWAN2',
+  'IMIN_SWIFT2',
+  'IMIN_FALCON1',
+  'IMIN_D4',
+  'IMIN_D1',
+  'IMIN_M2',
+  'IMIN_SWIFT1',
+  'IMIN',
+  'LANDI_C20_PRO',
+  'LANDI_M20',
+  'LANDI_P20',
+  'LANDI_APOS_A8',
+  'FEITIAN_M60',
+  'FEITIAN_F360',
+  'FEITIAN_F310',
+  'FEITIAN_M500',
+] as const;
+
 export const DEVICE_MODEL_IDS = [
   'N55F',
   'MODO',
@@ -162,6 +194,7 @@ export const DEVICE_MODEL_IDS = [
   ...SUNMI_MODEL_IDS,
   ...SYNQPAY_DEVICE_MODEL_IDS,
   ...VENDOR_DEVICE_MODEL_IDS,
+  ...BUILTIN_PRINTER_MODEL_IDS,
 ] as const;
 export type DeviceModelId = (typeof DEVICE_MODEL_IDS)[number];
 
@@ -186,6 +219,20 @@ const caps = (builtinPrinter: boolean, builtinTerminal: boolean, driverPending =
   cashDrawerPort: false,
   driverPending,
   paperWidthMm: builtinPrinter ? 58 : null,
+  builtinScanner: false,
+});
+
+/**
+ * A built-in-printer model (app/models/builtin_printers.py): its head's paper when the till prints
+ * on it by itself (null: only the vendor's SDK reaches it — "בקרוב"), and whether the till opens
+ * the drawer through it. Never a terminal of its own, never a scan head.
+ */
+const builtin = (paperWidthMm: 58 | 80 | null, cashDrawerPort: boolean): DeviceCapabilities => ({
+  builtinPrinter: paperWidthMm !== null,
+  builtinTerminal: false,
+  cashDrawerPort,
+  driverPending: paperWidthMm === null,
+  paperWidthMm,
   builtinScanner: false,
 });
 
@@ -242,6 +289,29 @@ export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities
   // Agamento / TC on the device (like the F20); a 58 mm head; the Urovo has a scan head.
   PAX_A77: caps(true, true),
   UROVO_I9100: { ...caps(true, true), builtinScanner: true },
+  // iMin: Android 13+ through its print service (the drawer too); Android 11 prints, the drawer is the SDK's.
+  IMIN_FALCON2: builtin(80, true),
+  IMIN_FALCON2_58: builtin(58, true),
+  IMIN_FALCON2MAX: builtin(80, true),
+  IMIN_D4_PRO: builtin(80, true),
+  IMIN_SWAN2: builtin(80, true),
+  IMIN_SWIFT2: builtin(58, false),
+  IMIN_FALCON1: builtin(80, false),
+  IMIN_D4: builtin(80, false),
+  IMIN_D1: builtin(58, false),
+  IMIN_M2: builtin(58, false),
+  IMIN_SWIFT1: builtin(58, false),
+  IMIN: builtin(58, false),
+  // LANDI: the C20 Pro desktop on its USB head; the handhelds need LANDI's USDK.
+  LANDI_C20_PRO: builtin(80, true),
+  LANDI_M20: builtin(null, false),
+  LANDI_P20: builtin(null, false),
+  LANDI_APOS_A8: builtin(null, false),
+  // Feitian tablets in their printer docks (the dock's drawer port through its head).
+  FEITIAN_M60: builtin(80, true),
+  FEITIAN_F360: builtin(58, true),
+  FEITIAN_F310: builtin(58, true),
+  FEITIAN_M500: builtin(80, true),
 };
 
 /** A model this build knows, else null. */
@@ -327,21 +397,39 @@ export function deviceModelWarning(m: {
   return null;
 }
 
+/** A device's name is at most this many characters (the server's `MACHINE_NAME_MAX`). */
+export const DEVICE_NAME_MAX = 100;
+
+/**
+ * A name as the server stores it (app/services/machine_names.py `clean_machine_name`): edges trimmed and runs
+ * of whitespace collapsed to one space. '' when there is none — the server's default then ("קופה N").
+ */
+export function cleanDeviceName(name: string | null | undefined): string {
+  return (name ?? '').split(/\s+/).filter(Boolean).join(' ');
+}
+
 export interface AddDeviceDraft {
   role: DeviceRole | '';
   model: DeviceModelId | '';
-  machineCode: string;
+  /**
+   * "שם המכשיר" — optional, a till's only (a kiosk, a KDS, the board and a customer display have their own
+   * in their options). '' = the server's default name. There is no "קוד מכשיר" any more: the server makes
+   * the machine's code itself, and the form's one was required but never sent.
+   */
+  name?: string;
   companyId: string;
   shopId: string;
   /** Android unless said: a device of the other platform cannot redeem the code. */
   platform?: DevicePlatform;
   /** A KDS's screen (kds only; the board takes only its name). */
   kds?: KdsScreenDraft;
+  /** "מסך לקוח": the till it mirrors ('' = chosen later, on the customer-display page). */
+  mirrorTillId?: string;
 }
 
 /** Every role but a plain till opens in one shop: its code is pre-assigned (the server says so too). */
 export function roleNeedsShop(role: DeviceRole | ''): boolean {
-  return role === 'kiosk' || role === 'kds' || role === 'order_status_board';
+  return role === 'kiosk' || role === 'kds' || role === 'order_status_board' || role === 'customer_display';
 }
 
 /**
@@ -353,14 +441,30 @@ export function modelNeeded(d: Pick<AddDeviceDraft, 'platform'>): boolean {
 }
 
 /** The first thing the add dialog still needs before a code can be generated, or null. */
-export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'machineCode' | 'shop' | 'stations' | null {
+export function addDeviceMissing(d: AddDeviceDraft): 'role' | 'model' | 'shop' | 'stations' | null {
   if (!d.role) return 'role';
   if (!d.model && modelNeeded(d)) return 'model';
-  if (!d.machineCode.trim()) return 'machineCode';
   if (roleNeedsShop(d.role) && (!d.companyId || !d.shopId)) return 'shop';
   // A station screen shows its stations' tasks: at least one (the KDS page's rule).
   if (d.role === 'kds' && d.kds?.screenRole === 'station' && d.kds.stationIds.length === 0) return 'stations';
   return null;
+}
+
+/**
+ * "הקופה תקבל מספר N": the register number the add form shows once the shop is chosen — the server's own
+ * peek (`GET /shops/{id}/next-register-number`, `peek_next_register_number`: the rule that allocates the
+ * number, read without taking it), for a device that is a register. Null for a screen (a KDS, the board and
+ * a customer display have no number), with no shop chosen, or while the answer is for another shop (the
+ * shop changed since it was asked) or is not a number.
+ */
+export function expectedRegisterNumber(
+  d: { role: DeviceRole | ''; shopId: string },
+  peek: { shopId: string; nextRegisterNumber: unknown } | null | undefined,
+): number | null {
+  if (!d.shopId || !peek || !isFiscalRole(d.role)) return null;
+  if (String(peek.shopId).toLowerCase() !== d.shopId.toLowerCase()) return null;
+  const n = Number(peek.nextRegisterNumber);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export interface KioskDraft {
@@ -413,8 +517,16 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
     ...(d.companyId ? { companyId: d.companyId } : {}),
     ...(d.shopId ? { shopId: d.shopId } : {}),
   };
+  // "שם המכשיר — לא חובה": a till's own name; blank sends none and the server names it.
+  const name = cleanDeviceName(d.name);
+  if (d.role === 'till' && name) body.name = name.slice(0, DEVICE_NAME_MAX);
   if (d.role === 'kiosk') body.kiosk = kioskBody(kiosk);
   if (d.role === 'kds' || d.role === 'order_status_board') body.kds = kdsBody(d.role, d.kds);
+  // A customer display's options ride on the screen's object: its name and the till it mirrors.
+  if (d.role === 'customer_display') {
+    const name = (d.kds?.name ?? '').trim();
+    body.kds = { ...(name ? { name } : {}), ...(d.mirrorTillId ? { tillMachineId: d.mirrorTillId } : {}) };
+  }
   return body;
 }
 

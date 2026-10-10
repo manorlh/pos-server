@@ -46,6 +46,8 @@ export interface CatalogMenu {
   validFrom: string | null;
   validTo: string | null;
   color: string | null;
+  /** The web channels it is offered on too ("הזמנות אונליין" / "תפריט דיגיטלי"); [] — none. */
+  webChannels?: ('online' | 'menu')[];
   sortOrder: number;
   categories: CatalogMenuCategory[];
   products: CatalogMenuProduct[];
@@ -72,6 +74,8 @@ export interface CatalogMenuInput {
   validFrom: string | null;
   validTo: string | null;
   color: string | null;
+  /** The web channels it is offered on too; left out — as it is. */
+  webChannels?: ('online' | 'menu')[];
   /** In the order shown. */
   categories: { categoryId: string; allProducts: boolean }[];
   /** In the order shown: by category, then within it. */
@@ -126,12 +130,17 @@ export interface MenuTarget {
   level: MenuLevel;
   id: string;
   name: string;
-  /** A till: its point of sale, else its shop; a point of sale: its shop; a shop: its company; a company: the one above. */
+  /**
+   * A till: its point of sale, else its shop; a point of sale: its shop; a shop or a device
+   * group: its company; a company: the one above.
+   */
   parentId: string | null;
   canEdit: boolean;
   posNumber?: string | null;
   shopId?: string;
   isKiosk?: boolean;
+  /** A device group ("קבוצת מכשירים"): its tills. */
+  machineIds?: string[];
 }
 
 export interface MenuTargetAssignment {

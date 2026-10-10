@@ -25,6 +25,7 @@ from app.schemas.z_report import (
 )
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services import card_brands, offline_authorizations, z_print
+from app.services import z_expected_cash as ZEC
 from app.services.failed_payments import with_print_sections as _with_failed_payments
 from app.services.shift_totals import compute_totals
 from app.services.z_waiters import waiter_breakdown
@@ -109,6 +110,11 @@ def z_to_out(z: ZReport, cls=ZReportOut, tzinfo=None):
     if drawer_tips is not None:
         item.card_tips_from_drawer = drawer_tips["cardTipsFromDrawer"]
         item.drawer_cash = drawer_tips["drawerCash"]
+    # Cash In / Out and safe deposits inside the expected cash — only on a Z the parameter applied
+    # to when it was produced, and as it froze them (never the parameter as it stands now).
+    movements = z_print.cash_movements_of(z)
+    if movements is not None:
+        item.cash_movements = ZEC.block(movements)
     item.produced_by_support = (z.header or {}).get("producedBySupport")
     item.late_from_earlier = (z.header or {}).get("lateFromEarlier")
     item.late_carried_out = (z.header or {}).get("lateCarriedOut")
@@ -535,6 +541,10 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
     elif z.per_machine is not None and shifts:
         out.by_waiter = waiter_breakdown(db, [s.id for s in shifts], z.shop_id)
         out.by_waiter_source = "documents"
+    # "דו״ח Z — גרסה 2": as frozen, else read from its documents (app/services/z_sections.py).
+    from app.services.z_sections import sections_of_z
+
+    out.report_sections, out.report_sections_source = sections_of_z(db, z)
     out.till_totals = z.till_totals
     out.offline_report = z.offline_report
     return out

@@ -175,13 +175,73 @@ export function cardAlerts(shift: Pick<AttendanceShift, 'flags' | 'openTables'>)
   const out: string[] = [];
   if ((shift.openTables ?? 0) > 0) out.push('openTablesNow');
   for (const f of shift.flags ?? []) {
-    if (['clock_skew', 'overlap', 'open_tables', 'approval_unverified', 'late_event'].includes(f)) out.push(f);
+    if (KNOWN_FLAGS.includes(f)) out.push(f);
   }
   return Array.from(new Set(out));
 }
 
+/**
+ * Every flag the cloud sets on a shift, each with a label under `attendance.flags` and
+ * `attendance.notes`. `on_behalf` / `no_code`: "קוד עובד בכל פעולה" (a manager acted for the
+ * employee; an action in a session without the code where the shop requires it).
+ */
+export const KNOWN_FLAGS = ['clock_skew', 'overlap', 'open_tables', 'approval_unverified', 'late_event', 'on_behalf', 'no_code'];
+
 /** The report's notes, as message keys under `attendance.notes`, in a fixed order. */
-const NOTE_ORDER = ['open', 'closed_by_manager', 'corrected', 'open_tables', 'clock_skew', 'overlap', 'approval_unverified', 'late_event'];
+const NOTE_ORDER = [
+  'open', 'closed_by_manager', 'corrected', 'open_tables', 'clock_skew', 'overlap', 'approval_unverified', 'late_event',
+  'on_behalf', 'no_code',
+];
+
+/** One till action as the cloud logged it on the shift (`details.actionLog`). */
+export interface ActionLogEntry {
+  id: string;
+  type: string;
+  at: string | null;
+  machineId: string | null;
+  /** code | manager | session — or a newer till's word, shown as unknown. */
+  verifiedBy: string | null;
+  /** clock ("שעון נוכחות") | session */
+  origin: string | null;
+  onBehalf: { name: string | null; verified: boolean } | null;
+}
+
+const ACTION_TYPES = ['clock_in', 'break_start', 'break_end', 'clock_out', 'correction_request'];
+
+/**
+ * The shift's action log, oldest first, from the detail's free-form `details` — anything
+ * malformed is skipped rather than trusted. Message keys: `attendance.actions.<type>`,
+ * `attendance.verifiedBy.<verifiedBy | unknown>`, `attendance.origin.<origin>`.
+ */
+export function actionLog(details: Record<string, unknown> | null | undefined): ActionLogEntry[] {
+  const raw = details?.actionLog;
+  if (!Array.isArray(raw)) return [];
+  const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+  const out: ActionLogEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const e = item as Record<string, unknown>;
+    const id = str(e.id);
+    const type = str(e.type);
+    if (!id || !type || !ACTION_TYPES.includes(type)) continue;
+    const behalf = e.onBehalf && typeof e.onBehalf === 'object' ? (e.onBehalf as Record<string, unknown>) : null;
+    out.push({
+      id,
+      type,
+      at: str(e.at),
+      machineId: str(e.machineId),
+      verifiedBy: str(e.verifiedBy),
+      origin: str(e.origin),
+      onBehalf: behalf ? { name: str(behalf.name), verified: behalf.verified === true } : null,
+    });
+  }
+  return out.sort((a, b) => (a.at ?? '').localeCompare(b.at ?? ''));
+}
+
+/** The message key for how an action was confirmed. */
+export function verifiedByKey(entry: Pick<ActionLogEntry, 'verifiedBy'>): string {
+  return ['code', 'manager', 'session'].includes(entry.verifiedBy ?? '') ? entry.verifiedBy! : 'unknown';
+}
 
 export function noteKeys(row: Pick<AttendanceShift, 'notes'>): string[] {
   const notes = new Set(row.notes ?? []);

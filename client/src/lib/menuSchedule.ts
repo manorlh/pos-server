@@ -14,8 +14,9 @@
  *     `days` null: every day; empty: never. `always`: any hour of any day — the date
  *     range still applies.
  *   - Among the assigned menus active now and offered on the surface, the most specific
- *     level wins (till › point of sale › shop › the till's company › the company above…);
- *     within a level the higher priority, then the name, then the id.
+ *     level wins (till › device group › point of sale › shop › the till's company › the
+ *     company above…); within a level the higher priority; between a till's device groups at
+ *     one priority the most recently updated assignment (`updatedAt`); then the name, the id.
  * * The editor's helpers: a short Hebrew summary ("א׳–ה׳ · 11:30–17:00"), validation,
  *   crossing midnight, and the simulator's "the next date on that weekday".
  * * `menuErrorCode` — the server's error code in a failed request's `detail`.
@@ -23,14 +24,14 @@
 
 export type MenuChannel = 'pos' | 'kiosk' | 'both';
 export type MenuSurface = 'pos' | 'kiosk';
-export type MenuLevel = 'machine' | 'area' | 'shop' | 'company';
+export type MenuLevel = 'machine' | 'group' | 'area' | 'shop' | 'company';
 export type ResolutionMode = 'menu' | 'catalog' | 'none';
 export type FallbackMode = 'catalog' | 'none';
 
 export const MENU_CHANNELS: MenuChannel[] = ['pos', 'kiosk', 'both'];
 export const MENU_SURFACES: MenuSurface[] = ['pos', 'kiosk'];
 /** Most specific first. */
-export const MENU_LEVELS: MenuLevel[] = ['machine', 'area', 'shop', 'company'];
+export const MENU_LEVELS: MenuLevel[] = ['machine', 'group', 'area', 'shop', 'company'];
 export const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
 /** א׳ … ש׳ (0 = Sunday). */
 export const WEEKDAY_LETTERS = ['א׳', 'ב׳', 'ג׳', 'ד׳', 'ה׳', 'ו׳', 'ש׳'];
@@ -40,7 +41,7 @@ export const NAME_MAX = 80;
 export const MENU_PRICE_MAX = 1_000_000;
 
 /** The level's weight in the rank (catalog_menu_rules.LEVEL_RANK). */
-export const LEVEL_RANK: Record<MenuLevel, number> = { machine: 3, area: 2, shop: 1, company: 0 };
+export const LEVEL_RANK: Record<MenuLevel, number> = { machine: 4, group: 3, area: 2, shop: 1, company: 0 };
 
 export interface TimeRange {
   start: string;
@@ -290,6 +291,17 @@ export function rankOf(assignment: BlockAssignment): number {
   return level * 100 - depth;
 }
 
+/**
+ * The assignment's `updatedAt` in whole milliseconds (catalog_menu_rules.updated_ms): a device group's,
+ * the tie-break between a till's groups at one priority. Absent, unreadable or without a zone: 0.
+ */
+export function updatedMsOf(assignment: BlockAssignment): number {
+  const value = assignment.updatedAt;
+  if (typeof value !== 'string' || !value || !/(Z|[+-]\d{2}:\d{2})$/.test(value)) return 0;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? Math.floor(ms) : 0;
+}
+
 function priorityOf(assignment: BlockAssignment): number {
   const raw = truthy(assignment.priority) ? assignment.priority : 0;
   return pyInt(raw) ?? 0;
@@ -320,20 +332,24 @@ export function resolve(
   for (const m of Array.isArray(b.menus) ? b.menus : []) {
     if (m && typeof m === 'object' && !Array.isArray(m) && truthy((m as BlockMenu).id)) menus.set((m as BlockMenu).id, m as BlockMenu);
   }
-  const candidates: { key: [number, number, string, string]; a: BlockAssignment; m: BlockMenu }[] = [];
+  const candidates: { key: [number, number, number, string, string]; a: BlockAssignment; m: BlockMenu }[] = [];
   for (const a of Array.isArray(b.assignments) ? b.assignments : []) {
     if (!a || typeof a !== 'object' || Array.isArray(a)) continue;
     const assignment = a as BlockAssignment;
     const m = menus.get(assignment.menuId);
     if (m === undefined || !channelAccepts(m.channel, surface)) continue;
     if (!scheduleActive(m.schedule && typeof m.schedule === 'object' ? m.schedule : null, moment)) continue;
-    candidates.push({ key: [-rankOf(assignment), -priorityOf(assignment), textOf(m.name), textOf(m.id)], a: assignment, m });
+    candidates.push({
+      key: [-rankOf(assignment), -priorityOf(assignment), -updatedMsOf(assignment), textOf(m.name), textOf(m.id)],
+      a: assignment,
+      m,
+    });
   }
   if (candidates.length === 0) {
     return { mode: fallbackOf(b), menuId: null, menuName: null, level: null, depth: null, priority: null };
   }
   candidates.sort((x, y) => {
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 5; i++) {
       const p = x.key[i];
       const q = y.key[i];
       const c = typeof p === 'number' && typeof q === 'number' ? p - q : compareText(String(p), String(q));

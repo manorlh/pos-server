@@ -11,7 +11,9 @@
   "usesMany": "{n} שימושים",
   "includeExtras": "כולל תוספות",
   "moreItems": "ועוד {n} פריטים",
-  "credit": "נוצר על ידי Runner Systems"
+  "credit": "נוצר על ידי Runner Systems",
+  "valueFixed": "שווי השובר: {v}",
+  "valueCover": "השובר מכסה עד {v}"
  },
  "cases": [
   {
@@ -228,7 +230,7 @@
    ]
   },
   {
-   "name": "card 54x86, logo",
+   "name": "card 54x86, logo, type and value",
    "w": 54,
    "h": 86,
    "content": {
@@ -256,7 +258,9 @@
     "validity": "בתוקף עד 14/08/2026",
     "code": "ABCD-EFGH-2345-6789",
     "credit": "נוצר על ידי Runner Systems",
-    "logo": true
+    "logo": true,
+    "kicker": "שובר ארוחה",
+    "valueLine": "שווי השובר: ₪80"
    },
    "ops": [
     {
@@ -301,16 +305,27 @@
     {
      "op": "logo",
      "x": 3.024,
-     "y": 3.183,
+     "y": 3.024,
      "w": 47.952,
      "h": 10.8,
      "align": "center"
     },
     {
      "op": "text",
+     "text": "שובר ארוחה",
+     "x": 27.0,
+     "y": 17.194,
+     "size": 2.592,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "text",
      "text": "פסטיבל הקיץ 2026",
      "x": 27.0,
-     "y": 19.08,
+     "y": 22.162,
      "size": 4.752,
      "bold": true,
      "mono": false,
@@ -320,7 +335,7 @@
     {
      "op": "box",
      "x": 3.024,
-     "y": 22.363,
+     "y": 25.445,
      "w": 47.952,
      "h": 8.421,
      "stroke": 0.378,
@@ -330,7 +345,7 @@
      "op": "text",
      "text": "1×",
      "x": 49.464,
-     "y": 25.536,
+     "y": 28.617,
      "size": 2.076,
      "bold": true,
      "mono": false,
@@ -341,7 +356,7 @@
      "op": "text",
      "text": "נקניקייה בלחמניה",
      "x": 45.885,
-     "y": 25.536,
+     "y": 28.617,
      "size": 2.076,
      "bold": false,
      "mono": false,
@@ -352,7 +367,7 @@
      "op": "text",
      "text": "ועוד 2 פריטים",
      "x": 49.464,
-     "y": 28.235,
+     "y": 31.316,
      "size": 2.076,
      "bold": false,
      "mono": false,
@@ -361,22 +376,11 @@
     },
     {
      "op": "text",
-     "text": "יש להציג את השובר בקופה.",
+     "text": "שווי השובר: ₪80",
      "x": 27.0,
-     "y": 34.564,
-     "size": 2.7,
-     "bold": false,
-     "mono": false,
-     "align": "center",
-     "rtl": true
-    },
-    {
-     "op": "text",
-     "text": "לא ניתן להמיר בכסף ולא ניתן לפצל…",
-     "x": 27.0,
-     "y": 37.939,
-     "size": 2.7,
-     "bold": false,
+     "y": 38.078,
+     "size": 3.24,
+     "bold": true,
      "mono": false,
      "align": "center",
      "rtl": true
@@ -385,7 +389,7 @@
      "op": "text",
      "text": "בתוקף עד 14/08/2026",
      "x": 27.0,
-     "y": 43.021,
+     "y": 43.402,
      "size": 2.808,
      "bold": true,
      "mono": false,
@@ -396,7 +400,7 @@
      "op": "text",
      "text": "מימוש חד-פעמי",
      "x": 27.0,
-     "y": 46.099,
+     "y": 46.48,
      "size": 2.268,
      "bold": false,
      "mono": false,
@@ -1532,6 +1536,197 @@
      "x": 15.0,
      "y": 14.152,
      "size": 1.26,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    }
+   ]
+  },
+  {
+   "name": "ticket 80x120, validity hidden",
+   "w": 80,
+   "h": 120,
+   "content": {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": null,
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": [
+     [
+      "1×",
+      "נקניקייה בלחמניה",
+      false
+     ],
+     [
+      "2×",
+      "שתייה קלה",
+      false
+     ],
+     [
+      "0.5 ק\"ג",
+      "זיתים",
+      true
+     ]
+    ],
+    "freeText": "יש להציג את השובר בקופה.\nלא ניתן להמיר בכסף ולא ניתן לפצל בין כמה קופות שונות במתחם.",
+    "validity": null,
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems"
+   },
+   "ops": [
+    {
+     "op": "text",
+     "text": "נוצר על ידי Runner Systems",
+     "x": 40.0,
+     "y": 114.296,
+     "size": 2.72,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "qr",
+     "x": 20.22,
+     "y": 58.6,
+     "side": 39.56
+    },
+    {
+     "op": "text",
+     "text": "ABCD-EFGH-2345-6789",
+     "x": 40.0,
+     "y": 102.64,
+     "size": 4.0,
+     "bold": true,
+     "mono": true,
+     "align": "center",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "מס׳ 0008 · קבוצה 3",
+     "x": 40.0,
+     "y": 108.536,
+     "size": 5.12,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "פסטיבל הקיץ 2026",
+     "x": 40.0,
+     "y": 10.112,
+     "size": 7.04,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "box",
+     "x": 4.48,
+     "y": 14.976,
+     "w": 71.04,
+     "h": 23.824,
+     "stroke": 0.56,
+     "radius": 1.92
+    },
+    {
+     "op": "text",
+     "text": "1×",
+     "x": 73.28,
+     "y": 21.184,
+     "size": 4.96,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "נקניקייה בלחמניה",
+     "x": 52.264,
+     "y": 21.184,
+     "size": 4.96,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "2×",
+     "x": 73.28,
+     "y": 27.632,
+     "size": 4.96,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "שתייה קלה",
+     "x": 52.264,
+     "y": 27.632,
+     "size": 4.96,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "0.5 ק\"ג",
+     "x": 73.28,
+     "y": 34.08,
+     "size": 4.96,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "זיתים",
+     "x": 52.264,
+     "y": 34.08,
+     "size": 4.96,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "יש להציג את השובר בקופה.",
+     "x": 40.0,
+     "y": 44.4,
+     "size": 4.0,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "לא ניתן להמיר בכסף ולא ניתן לפצל",
+     "x": 40.0,
+     "y": 49.4,
+     "size": 4.0,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בין כמה קופות שונות במתחם.",
+     "x": 40.0,
+     "y": 54.4,
+     "size": 4.0,
      "bold": false,
      "mono": false,
      "align": "center",

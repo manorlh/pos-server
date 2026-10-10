@@ -93,8 +93,14 @@ describe('the cloud’s recorded answers, through the real service', () => {
       expect(v.phase).toBe('kiosk');
       expect(v.machine).toMatchObject({ machineId: me.machineId, posNumber: me.posNumber, shopName: me.shopName });
       const catalog = recorded('GET_sync_id_catalog').body as { products: Array<Record<string, unknown>> };
-      const sellable = catalog.products.filter((p) => p.inStock !== false && p.salesChannel !== 'pos_only');
+      // What a kiosk sells (client lib/kioskSellable.ts): the Android kiosk's rule — never the general item, an open-price or a
+      // weighed product (the recorded catalog's built-in "פריט כללי", at ₪0, is one: a customer keys no price).
+      const sellable = catalog.products.filter(
+        (p) => p.inStock !== false && p.salesChannel !== 'pos_only' && p.requiresManagerApproval !== true && p.isGeneral !== true && p.isOpenPrice !== true && p.isWeighed !== true,
+      );
+      expect(sellable.length).toBe(catalog.products.length - 1);
       expect(v.catalog.products.length).toBe(sellable.length);
+      expect(v.catalog.products.some((p) => p.name === 'פריט כללי')).toBe(false);
       expect(v.catalog.products.every((p) => p.imageUrl === null || p.imageUrl.startsWith('kiosk://'))).toBe(true); // never a network URL
       const kiosk = recorded('POST_sync_id_kiosk_sync').body;
       expect(v.configVersion).toBe(kiosk.configVersion);
@@ -344,7 +350,7 @@ describe('what the kiosk sends (golden, validated by the server’s schemas)', (
     const body = kdsSaleRelease({
       transactionId: doc.id,
       transactionNumber: '40000057',
-      order: { serviceType: 'take_away', customerName: 'דנה', customerPhone: '0501234567', pickupNumber: 17 },
+      order: { serviceType: 'take_away', customerName: 'דנה', customerPhone: '0501234567', pickupNumber: 17, pickupLabel: 'A-17' },
       lines: doc.lines,
       categoryOf: (id) => (id === line1.productId ? '0b1c2d3e-0000-4000-8000-0000000000e1' : null),
       actorName: 'קיוסק Windows',

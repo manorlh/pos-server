@@ -16,6 +16,7 @@
  *  - IPC: shared/bridge.ts (the kiosk, `window.kiosk`) and shared/roles.ts (the shell, `window.r2m`).
  */
 
+import { windowsDisplayReport } from './displayReport';
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, net as enet, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, shell, Tray } from 'electron';
 import { spawn } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -294,6 +295,7 @@ function bridge(svc: KioskService) {
   ipcMain.handle('kiosk:placeOpenOrder', (_e, input) => svc.placeOpenOrder(input));
   ipcMain.handle('kiosk:redeemVoucher', (_e, input) => svc.redeemVoucher(input));
   ipcMain.handle('kiosk:reverseVoucher', (_e, id: string) => svc.reverseVoucher(id));
+  ipcMain.handle('kiosk:releaseDiscounts', (_e, vouchers: Array<{ reservationId: string }>) => svc.releaseDiscounts(vouchers));
   ipcMain.handle('kiosk:cancelPayment', () => svc.cancelPayment());
   ipcMain.handle('kiosk:receiptChoice', (_e, orderId: string, print: boolean) => svc.receiptChoice(orderId, print));
   ipcMain.handle('kiosk:helpRequest', () => svc.helpRequest());
@@ -416,6 +418,11 @@ void app.whenReady().then(async () => {
   );
   const dataDir = path.join(app.getPath('userData'), 'data');
   service = new KioskService({
+    // "שיתאים את עצמו": the primary display, for the dashboard (displayReport.ts).
+    displayInfo: () => {
+      const d = screen.getPrimaryDisplay();
+      return windowsDisplayReport(d.size.width, d.size.height, d.scaleFactor);
+    },
     dataDir,
     appVersion: appVersion(),
     deviceInfo: deviceInfoOf('Windows kiosk'),

@@ -10,10 +10,12 @@ for the same voucher (with a fixed, fake measure), so they cannot drift apart.
 
 The design (the owner, 08.10.2026: "שיהיה מקצועי"):
 
-* the logo (optional) on top, then the title (the event's name) large;
+* the logo (optional) on top, the voucher type's name small above the title ("שובר ארוחה",
+  the spec's §9), then the title (the event's name) large;
 * what the voucher gives in a framed box — the goods with their quantities, or the discount
   in words — unless the batch hides it ("הצגת הפריטים על השובר" off); a long list shrinks,
   then ends with "ועוד N פריטים" rather than overflow;
+* the till value when the type prints it ("שווי השובר: ₪80"; never the production price);
 * the free text, then the validity in a strong line, then the terms in small print;
 * the QR (or the Code 128 line) large, with a quiet zone, the code in monospace under it,
   and the short service number prominent ("מס׳ 0008");
@@ -46,6 +48,9 @@ TITLE_PORTRAIT = 4.4
 TITLE_LANDSCAPE = 4.0
 TITLE_LH = 1.15
 TITLE_LINES = 2
+#: The voucher type's name above the title.
+KICKER = 2.4
+VALUE = 3.0
 LOGO_PORTRAIT = 10.0
 LOGO_LANDSCAPE = 8.0
 LOGO_GAP = 1.2
@@ -90,7 +95,8 @@ class CardContent:
     """What one voucher says — texts already in their final words."""
 
     title: str
-    terms: str
+    #: The terms in small print ("מימוש חד-פעמי"); None: no line (with the validity hidden).
+    terms: Optional[str]
     serial: str
     #: "code128" draws a line barcode across the bottom; anything else a QR.
     barcode: str = "qr"
@@ -106,6 +112,10 @@ class CardContent:
     credit: Optional[str] = None
     #: "ועוד {n} פריטים" — the last row of a list too long for the card.
     more_items: str = "ועוד {n} פריטים"
+    #: The voucher type's name, small above the title ("שובר ארוחה"); None: no line.
+    kicker: Optional[str] = None
+    #: "שווי השובר: ₪80" — when the type prints its till value; None: no line.
+    value_line: Optional[str] = None
 
 
 def _r(v: float) -> float:
@@ -166,16 +176,24 @@ def _text_block(
 
     logo_h = ((LOGO_LANDSCAPE if landscape else LOGO_PORTRAIT) * t) if c.logo else 0.0
     logo_part = logo_h + LOGO_GAP * t if c.logo else 0.0
+    kicker_size = KICKER * t
+    kicker = fit(measure, c.kicker, kicker_size, True, col) if c.kicker else None
+    kicker_h = kicker_size * SMALL_LH if kicker else 0.0
     title_size = (TITLE_LANDSCAPE if landscape else TITLE_PORTRAIT) * t
     title = wrap(measure, c.title, title_size, True, col, TITLE_LINES)
     title_h = len(title) * title_size * TITLE_LH
+    value_size = VALUE * t
+    value = fit(measure, c.value_line, value_size, True, col) if c.value_line else None
+    value_h = (gap + value_size * SMALL_LH) if value else 0.0
     valid_size, terms_size = VALID * t, TERMS * t
-    footer_h = (valid_size * SMALL_LH if c.validity else 0.0) + terms_size * SMALL_LH
+    footer_h = (valid_size * SMALL_LH if c.validity else 0.0) + (terms_size * SMALL_LH if c.terms else 0.0)
     free_size = FREE * t
     free_lh = free_size * FREE_LH
     free_all = wrap(measure, c.free_text, free_size, False, col, FREE_MAX_LINES) if c.free_text else []
     # What the logo, the title and the footer leave for the box and the free text.
-    avail = area - logo_part - title_h - gap - footer_h
+    # The gap above the footer only when there is a footer: no empty band (`show_validity` off).
+    footer_gap = gap if footer_h else 0.0
+    avail = area - logo_part - kicker_h - title_h - value_h - footer_gap - footer_h
     pad = BOX_PAD * t
     inner = col - 2 * pad
 
@@ -214,6 +232,9 @@ def _text_block(
             "op": "logo", "x": left, "y": y, "w": col, "h": logo_h, "align": "right" if landscape else "center",
         })
         y += logo_part
+    if kicker:
+        ops.append(_text(kicker, ax, y + kicker_size * BASE, kicker_size, bold=True, align=align))
+        y += kicker_h
     for line in title:
         ops.append(_text(line, ax, y + title_size * BASE, title_size, bold=True, align=align))
         y += title_size * TITLE_LH
@@ -239,17 +260,22 @@ def _text_block(
                 ops.append(_text(name, name_right, base, row["size"]))
             ry += row["lh"]
         y += box_h
+    if value:
+        y += gap
+        ops.append(_text(value, ax, y + value_size * BASE, value_size, bold=True, align=align))
+        y += value_size * SMALL_LH
     if free:
         y += gap
         for line in free:
             ops.append(_text(line, ax, y + free_size * BASE, free_size, align=align))
             y += free_lh
-    y += gap
+    y += footer_gap
     if c.validity:
         ops.append(_text(c.validity, ax, y + valid_size * BASE, valid_size, bold=True, align=align))
         y += valid_size * SMALL_LH
-    ops.append(_text(c.terms, ax, y + terms_size * BASE, terms_size, align=align))
-    y += terms_size * SMALL_LH
+    if c.terms:
+        ops.append(_text(c.terms, ax, y + terms_size * BASE, terms_size, align=align))
+        y += terms_size * SMALL_LH
     return ops, y
 
 

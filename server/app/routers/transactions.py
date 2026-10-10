@@ -14,13 +14,15 @@ from app.models.transaction import Transaction
 from app.models.transaction_item import TransactionItem
 from app.models.transaction_payment import TransactionPayment
 from app.models.user import User
-from app.services import print_documents
+from app.services import kiosk_pickup, print_documents
 from app.services.document_prefix import document_number_from, prefixed_number_clause
 from app.services.offline_authorizations import outcomes_by_transaction
 from app.services.scoping import scope_transactions_by_user
 from app.schemas.print_document import PrintDocumentListOut, PrintDocumentOut
 from app.schemas.transaction import (
     BasketDocumentOut,
+    CustomerDetailsAddedOut,
+    KioskPickupRef,
     TransactionListItem,
     TransactionListResponse,
     TransactionOut,
@@ -82,7 +84,22 @@ def _filtered_query(
         query = query.filter(Transaction.shop_id == shop_id)
     if _given(basket_id):
         query = query.filter(Transaction.basket_id == basket_id)
-    query = _search_filters(query, q=q, card_last4=card_last4, item=item, method=method)
+
+    from_date, to_date = _given(from_date), _given(to_date)
+    # A basket is shown whole, whenever it was committed: no default window for it.
+    if from_date is None and to_date is None and not _given(basket_id):
+        from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
+
+    # "17", "A17", "A-17": the kiosk orders of that pickup number, in the reader's tenant and dates.
+    pickup = kiosk_pickup.parse_pickup_query(q) if isinstance(_given(q), str) else None
+    pickup_ids = (
+        kiosk_pickup.transaction_ids_for(
+            db, pickup, tenant_id=active_tenant_id, shop_id=_given(shop_id), from_date=from_date, to_date=to_date,
+        )
+        if pickup is not None
+        else None
+    )
+    query = _search_filters(query, q=q, card_last4=card_last4, item=item, method=method, pickup_ids=pickup_ids)
 
     types = [t for t in (_given(document_types) or []) if isinstance(t, int)]
     if types:
@@ -106,11 +123,6 @@ def _filtered_query(
             else Transaction.transaction_number.ilike(_like(number.strip()), escape="\\")
         )
 
-    from_date, to_date = _given(from_date), _given(to_date)
-    # A basket is shown whole, whenever it was committed: no default window for it.
-    if from_date is None and to_date is None and not _given(basket_id):
-        from_date = (datetime.now(timezone.utc) - timedelta(days=30)).date()
-
     if from_date is not None:
         query = query.filter(Transaction.created_at >= datetime.combine(from_date, time.min, tzinfo=timezone.utc))
     if to_date is not None:
@@ -128,7 +140,10 @@ def list_transactions(
     to_date: Optional[date] = Query(None, alias="to"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
-    q: Optional[str] = Query(None, max_length=60, description="Document number or amount, as a substring"),
+    q: Optional[str] = Query(
+        None, max_length=60,
+        description="Document number or amount as a substring, or the customer's name or ח.פ. / ע.מ.",
+    ),
     card_last4: Optional[str] = Query(None, alias="cardLast4", pattern=r"^\d{4}$"),
     item: Optional[str] = Query(None, max_length=80, description="A product name on any line"),
     method: Optional[Literal["cash", "card", "voucher", "split", "refunds"]] = Query(None),
@@ -168,6 +183,12 @@ def list_transactions(
     brands = _card_brands_by_transaction(db, [r.id for r in rows])
     for item in items:
         item.card_brands = brands.get(item.id, [])
+    # The kiosk order a document paid ("הזמנה A-17 · 09.10"), and why a search found it.
+    pickups = kiosk_pickup.pickups_by_transaction(db, [r.id for r in rows])
+    for item in items:
+        found = pickups.get(str(item.id))
+        item.kiosk_pickup = KioskPickupRef.model_validate(found) if found else None
+        item.matched_by = kiosk_pickup.search_matches(_given(q), item.transaction_number, item.total_amount, found)
     return TransactionListResponse(
         page=page,
         page_size=page_size,
@@ -230,13 +251,51 @@ def _like(text: str) -> str:
     return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
-def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
+def _customer_clause(text: str):
+    """
+    "פרטי לקוח לחשבונית" in the search box: the buyer's name (any text with a letter in it)
+    or ח.פ. / ע.מ. (five digits or more, spaces and dashes ignored) — as printed on the
+    document, or on the cloud customer it is linked to. None for anything else (a short
+    number, an amount), which stays the document number / amount search alone.
+    """
+    from app.models.customer import Customer
+
+    digits = text.replace(" ", "").replace("-", "")
+    if digits.isdigit():
+        if len(digits) < 5:
+            return None
+        pattern = _like(digits)
+        return or_(
+            Transaction.customer_vat_number.like(pattern, escape="\\"),
+            exists().where(
+                Customer.id == Transaction.customer_ref_id,
+                Customer.vat_number.like(pattern, escape="\\"),
+            ),
+        )
+    if not any(ch.isalpha() for ch in text):
+        return None
+    pattern = _like(text)
+    return or_(
+        Transaction.customer_name.ilike(pattern, escape="\\"),
+        exists().where(
+            Customer.id == Transaction.customer_ref_id,
+            Customer.name.ilike(pattern, escape="\\"),
+        ),
+    )
+
+
+def _search_filters(query, *, q=None, card_last4=None, item=None, method=None, pickup_ids=None):
     """
     The transaction search: the document number or amount (`q`), the last four digits of
     a card (`card_last4` — the till's `cardLast4`, else the terminal's masked number, on
     the document or on any leg), a product name on any line (`item`), and the tender
     (`method`: a tender of the document or of any leg; `split` — more than one leg;
     `refunds` — credit notes). Each is optional; together they narrow.
+
+    `q` also finds a kiosk order's document by its pickup number — "17", "A17", "A-17",
+    "a-17" (app/services/kiosk_pickup.py `parse_pickup_query`): `pickup_ids` are those
+    documents, looked up by the caller in the reader's tenant and dates; None (a direct call)
+    looks them up here, unscoped — the query's own filters still apply.
     """
     # Called directly (not through FastAPI), an unset filter is its `Query(...)` default:
     # anything that is not text is "not given".
@@ -252,12 +311,16 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
         )
         query = query.filter(or_(func.lower(Transaction.payment_method) == "mixed", legs > 1))
     elif method:
+        # "שובר" finds every production voucher leg, whichever code the till wrote.
+        from app.services.tenders import PRODUCTION_VOUCHER_METHODS
+
+        methods = sorted(PRODUCTION_VOUCHER_METHODS) if method == "voucher" else [method]
         query = query.filter(
             or_(
-                func.lower(Transaction.payment_method) == method,
+                func.lower(Transaction.payment_method).in_(methods),
                 exists().where(
                     TransactionPayment.transaction_id == Transaction.id,
-                    func.lower(TransactionPayment.method) == method,
+                    func.lower(TransactionPayment.method).in_(methods),
                 ),
             )
         )
@@ -285,17 +348,26 @@ def _search_filters(query, *, q=None, card_last4=None, item=None, method=None):
             )
         )
     if q and q.strip():
+        if pickup_ids is None:
+            pickup = kiosk_pickup.parse_pickup_query(q)
+            pickup_ids = kiosk_pickup.transaction_ids_for(query.session, pickup) if pickup is not None else []
+        by_pickup = [Transaction.id.in_(pickup_ids)] if pickup_ids else []
         # `20000057`: document 57 of the till that issued it under prefix 2
         # (docs/SPEC_DOCUMENT_PREFIX.md). Anything else — `57` too, which may be any
         # till's — stays the substring search on the number or the amount.
+        # The customer's name or ח.פ. / ע.מ. too ("פרטי לקוח לחשבונית"): a nine-digit number
+        # reads as a prefixed document number AND as a business number — either matches.
+        customer = _customer_clause(q.strip())
         prefixed = prefixed_number_clause(q)
         if prefixed is not None:
-            return query.filter(prefixed)
+            return query.filter(or_(prefixed, *by_pickup, *([customer] if customer is not None else [])))
         pattern = _like(q.strip())
         query = query.filter(
             or_(
                 Transaction.transaction_number.ilike(pattern, escape="\\"),
                 cast(Transaction.total_amount, String).like(pattern, escape="\\"),
+                *by_pickup,
+                *([customer] if customer is not None else []),
             )
         )
     return query
@@ -372,6 +444,42 @@ def get_transaction(
         row = original.first() if original is not None else None
         # As printed on the original: "זיכוי למסמך 20000057".
         out.refund_of_transaction_number = document_number_from(*row) if row else None
+    # "הפק חשבונית על שם לקוח": the original a pair re-issues, and the pair itself — on the
+    # original both of its documents, on either of the pair the other one.
+    if tx.reissue_of_transaction_id is not None:
+        replaced = scope_transactions_by_user(
+            db.query(
+                Transaction.transaction_number, Transaction.document_prefix, Transaction.pos_number
+            ).filter(
+                Transaction.id == tx.reissue_of_transaction_id,
+                Transaction.tenant_id == active_tenant_id,
+            ),
+            current_user,
+            db,
+        )
+        row = replaced.first() if replaced is not None else None
+        out.reissue_of_transaction_number = document_number_from(*row) if row else None
+    pair_of = [tx.id] + ([tx.reissue_of_transaction_id] if tx.reissue_of_transaction_id is not None else [])
+    pair = scope_transactions_by_user(
+        db.query(Transaction).filter(
+            Transaction.reissue_of_transaction_id.in_(pair_of),
+            Transaction.tenant_id == active_tenant_id,
+            Transaction.id != tx.id,
+        ),
+        current_user,
+        db,
+    )
+    # "הדפס העתק עם פרטי לקוח": what a till added to a copy of it after issue, apart from the document.
+    from app.services import document_customer_details as _added
+
+    out.customer_details_added = [
+        CustomerDetailsAddedOut.model_validate(r) for r in _added.for_document(db, active_tenant_id, tx.id)
+    ]
+    if pair is not None:
+        out.reissue_documents = [
+            BasketDocumentOut.model_validate(s)
+            for s in pair.order_by(Transaction.created_at.asc(), Transaction.id.asc()).all()
+        ]
     if tx.basket_id is not None:
         siblings = scope_transactions_by_user(
             db.query(Transaction).filter(

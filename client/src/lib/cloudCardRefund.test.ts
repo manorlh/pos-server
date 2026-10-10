@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildRefundBody,
+  canReleaseFromZ,
   canResend,
+  cardDefaultTarget,
   cardLabel,
   cloudRefundIdOf,
   initialFull,
@@ -195,5 +197,30 @@ describe('the refund, live', () => {
     assert.equal(refundStatusVariant('unknown'), 'destructive');
     assert.equal(cardLabel('4580'), '****4580');
     assert.equal(cardLabel(null), '—');
+  });
+});
+
+
+describe('the next shift and the next Z (SPEC_REMOTE_CREDIT.md §11.8–§11.10)', () => {
+  const targets = [
+    { machineId: 'own', name: 'קופה 1', shopId: 's1', online: true, isOriginalTill: true, landing: 'next_shift' as const },
+    { machineId: 'bar', name: 'קופה 2', shopId: 's1', online: true, isOriginalTill: false, landing: 'open_shift' as const },
+  ];
+
+  it("starts on the server's proposal, none when it proposes none, the old rule from an older server", () => {
+    assert.equal(cardDefaultTarget(prepare({ document: doc({ targets, defaultTargetId: 'bar' }) })), 'bar');
+    assert.equal(cardDefaultTarget(prepare({ document: doc({ targets, defaultTargetId: null }) })), null);
+    assert.equal(cardDefaultTarget(prepare({ document: doc({ targets, defaultTargetId: 'gone' }) })), null);
+    assert.equal(cardDefaultTarget(prepare({ document: doc({ targets }) })), 'own');
+  });
+
+  it("support releases a refund from the next Z only while its note is owed and holds it", () => {
+    const owed = refund({ document: { requestStatus: 'received', landed: false }, blocksNextZ: true });
+    assert.equal(canReleaseFromZ(owed, 'super_admin'), true);
+    assert.equal(canReleaseFromZ(owed, 'company_manager'), false);
+    assert.equal(canReleaseFromZ({ ...owed, zGateReleased: true }, 'super_admin'), false);
+    assert.equal(canReleaseFromZ({ ...owed, blocksNextZ: false }, 'super_admin'), false);
+    assert.equal(canReleaseFromZ(refund({ document: { creditTransactionId: 'c1', landed: true } }), 'super_admin'), false);
+    assert.equal(canReleaseFromZ(refund({ status: 'unknown' }), 'super_admin'), false);
   });
 });

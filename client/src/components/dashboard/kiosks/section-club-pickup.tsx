@@ -2,9 +2,9 @@
 
 import { useTranslations } from 'next-intl';
 import { QRCodeSVG } from 'qrcode.react';
-import { KIOSK_LIMITS, pickupLabel, type PickupScope } from '@/lib/kioskConfig';
+import { KIOSK_LIMITS, PICKUP_LABEL_FORMATS, pickupLabel, type PickupLabelFormat, type PickupScope } from '@/lib/kioskConfig';
 import { useKioskEditor, useKioskField } from './editor-context';
-import { NumberField, SectionCard, SegmentField, SwitchField, TextField } from './fields';
+import { FieldShell, NumberField, SectionCard, Segmented, SegmentField, SwitchField, TextField } from './fields';
 
 export function ClubSection() {
   const t = useTranslations('kiosks.club');
@@ -45,17 +45,47 @@ export function PickupSection() {
   const tf = useTranslations('kiosks.fields');
   const { draft } = useKioskEditor();
   const scope = useKioskField<PickupScope>('pickup.scope');
+  const format = useKioskField<PickupLabelFormat>('pickup.labelFormat');
   const p = draft.pickup;
   const start = Number.isFinite(p.start) ? p.start : 1;
+  // "מספר בלבד": the number alone is unique only from the shop's shared counter — so it is set
+  // with it (the server and every kiosk force it too: kiosk_config `repair`).
+  const numberOnly = format.value === 'number';
+  const setFormat = (v: PickupLabelFormat) => {
+    format.set(v);
+    if (v === 'number' && scope.value !== 'shop') scope.set('shop');
+  };
   return (
     <SectionCard title={t('title')} paths={['pickup']}>
-      <SegmentField<PickupScope>
-        path="pickup.scope"
-        label={tf('pickup.scope')}
-        hint={t(`scopeHint.${scope.value ?? 'kiosk'}`)}
-        options={(['kiosk', 'shop'] as const).map((v) => ({ value: v, label: t(`scope.${v}`) }))}
+      {/* "מספר הזמנה: עם אות (A-17) / מספר בלבד (17)" */}
+      <FieldShell path="pickup.labelFormat" label={tf('pickup.labelFormat')} hint={t(`labelFormatHint.${format.value ?? 'prefixed'}`)}>
+        <Segmented<PickupLabelFormat>
+          value={format.value ?? 'prefixed'}
+          options={PICKUP_LABEL_FORMATS.map((v) => ({ value: v, label: t(`labelFormat.${v}`) }))}
+          onChange={setFormat}
+          disabled={format.disabled}
+          ariaLabel={tf('pickup.labelFormat')}
+        />
+      </FieldShell>
+      {numberOnly ? (
+        <FieldShell path="pickup.scope" label={tf('pickup.scope')} hint={t('scopeLocked')}>
+          <span className="inline-flex rounded-full bg-muted px-3 py-1 text-sm font-medium">{t('scope.shop')}</span>
+        </FieldShell>
+      ) : (
+        <SegmentField<PickupScope>
+          path="pickup.scope"
+          label={tf('pickup.scope')}
+          hint={t(`scopeHint.${scope.value ?? 'kiosk'}`)}
+          options={(['kiosk', 'shop'] as const).map((v) => ({ value: v, label: t(`scope.${v}`) }))}
+        />
+      )}
+      <TextField
+        path="pickup.prefix"
+        label={tf('pickup.prefix')}
+        hint={numberOnly ? t('prefixHintNumberOnly') : t('prefixHint')}
+        max={KIOSK_LIMITS.pickupPrefixMax}
+        dir="ltr"
       />
-      <TextField path="pickup.prefix" label={tf('pickup.prefix')} hint={t('prefixHint')} max={KIOSK_LIMITS.pickupPrefixMax} dir="ltr" />
       <div className="grid gap-4 sm:grid-cols-2">
         <NumberField path="pickup.start" label={tf('pickup.start')} min={1} max={KIOSK_LIMITS.pickupMax - 1} />
         <NumberField path="pickup.max" label={tf('pickup.max')} min={2} max={KIOSK_LIMITS.pickupMax} />
@@ -64,7 +94,7 @@ export function PickupSection() {
         <span className="text-sm font-medium">{t('sampleTitle')}</span>
         <div className="flex flex-wrap items-center gap-3">
           <span className="rounded-2xl bg-primary px-5 py-2.5 text-2xl font-bold text-primary-foreground tabular-nums shadow-sm" dir="ltr">
-            {pickupLabel(p.prefix, start)}
+            {pickupLabel(p.prefix, start, p.labelFormat)}
           </span>
           <span className="text-sm text-muted-foreground">{t('wrapHint', { max: p.max, start })}</span>
         </div>

@@ -68,7 +68,7 @@ from test_shop_areas import _ctx, refused, w  # noqa: F401
 GOLDEN = Path(__file__).parent / "fixtures" / "catalog_menus_golden.json"
 #: The file's SHA-256 (line endings read as LF) — the same constant in pos-android's
 #: CatalogMenusTest. Change the fixtures in both repositories, and both constants, together.
-GOLDEN_SHA256 = "7170719785b59a7785790b0c5a4242871f9cba2906aa8efdb31c7c6ff2809bea"
+GOLDEN_SHA256 = "700bf232905063013a6adb1ad9f74383b9d3621bf8fad3fbe1342e10f8ed2395"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / GOLDEN.name
 
@@ -239,6 +239,22 @@ def test_the_golden_cases_say_what_their_names_say():
     assert find("fallback none - no menu")["resolution"]["mode"] == "none"
     assert find("by name")["resolution"]["menuId"] == "m-alef"
     assert find("the kiosk at 12:00")["resolution"]["menuId"] == "m-kiosk"
+    # The kiosks' own cases (the Windows and the browser kiosk are pinned to them in TypeScript, the Android
+    # kiosk in CatalogMenusTest): the channel decides, and a menu starts and ends on the minute.
+    assert find("for the tills only does not touch the kiosk")["resolution"]["mode"] == "catalog"
+    assert find("the same tills-only menu on the till")["resolution"]["menuId"] == "m-tills"
+    assert find("fallback 'don't sell': the kiosk")["resolution"]["mode"] == "none"
+    assert find("fallback 'don't sell': the kiosk")["applied"] == {"categories": [], "products": []}
+    assert find("kiosk lunch 10:59")["resolution"]["mode"] == "catalog"
+    start = find("kiosk lunch 11:00")
+    assert start["resolution"]["menuId"] == "m-kiosk-lunch"
+    assert [(p["id"], p["price"], p["priceSource"]) for p in start["applied"]["products"][:2]] == [
+        ("p-pasta", "39.90", "menu"),
+        ("p-burger", "52.00", "catalog"),
+    ]
+    assert find("kiosk lunch 13:59")["resolution"]["menuId"] == "m-kiosk-lunch"
+    assert find("kiosk lunch 14:00")["resolution"]["mode"] == "catalog"
+    assert find("a kiosk-only menu is not on the till")["resolution"]["mode"] == "catalog"
 
 
 # ── Schedule edges, by hand ───────────────────────────────────────────────────

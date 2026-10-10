@@ -171,6 +171,18 @@ class TestCatalogue:
         assert "DESKTOP_EXIT" not in TP.LEGACY_SENIOR_CODES
         assert TP.legacy_role_for(TP.DEFAULTS[TP.MANAGER]) == "shop_manager"
 
+    def test_switching_a_kiosk_to_the_till_is_a_managers(self):
+        """KIOSK_TILL_MODE ("מצב עבודה: קיוסק / קופה", P:/specs/kiosk-landscape-till-mode.md §5.3): managers only, no scope."""
+        spec = TP.PERMISSIONS_BY_CODE["KIOSK_TILL_MODE"]
+        assert spec.label == "מעבר למצב קופה בקיוסק" and spec.group == "admin" and spec.scope is None
+        assert spec.devices == (TP.DEVICE_TILL, TP.DEVICE_TABLET, TP.DEVICE_WINDOWS)
+        states = {key: TP.DEFAULTS[key]["KIOSK_TILL_MODE"] for key in TP.BUILTIN_BY_KEY}
+        assert states == {
+            TP.WAITER: D, TP.CASHIER: D, TP.SUPERVISOR: D, TP.MANAGER: A,
+            TP.LEGACY_CASHIER: D, TP.LEGACY_MANAGER: A,
+        }
+        assert "KIOSK_TILL_MODE" not in TP.LEGACY_SENIOR_CODES
+
     def test_the_catalogue_names_the_windows_device(self):
         out = TP.catalogue_out()
         assert {"key": "windows", "label": "Windows"} in out["devices"]
@@ -207,14 +219,22 @@ class TestLegacy:
         "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK", "REPRINT",
         "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK", "KIOSK_CONTROL",
         "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+        # New with production vouchers (no older behaviour to keep): a senior approves an override.
+        "VOUCHER_DISCOUNT_OVERRIDE",
+        # Staff test vouchers (helper, §18.5): a senior redeems one, or approves it.
+        "VOUCHER_TEST_REDEEM",
     }
 
     def test_a_legacy_cashier_needs_approval_for_exactly_what_a_cashier_did(self):
         eff = TP.legacy_effective("cashier")
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR
+        # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
+        # "מחייב אישור מנהל במכירה", HELD_SALE_CANCEL: "ביטול מכירה מושהית" — neither existed before roles).
+        # ITEM_BLOCK: "חסימת פריט / אזל" (specs/item-blocks-targets.md) — a cashier on a manager's code.
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
-        # except approving others and leaving the Windows kiosk, which were a manager's alone.
-        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"}
+        # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
+        # manager's alone (the kiosk's admin opened for a manager's code only).
+        assert {c for c, s in eff.states.items() if s == D} == {"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}
         assert eff.allows("SHIFT_CLOSE") and eff.allows("SELL") and eff.allows("CASH_DRAWER.OPEN_MANUALLY")
 
     def test_a_legacy_shop_manager_may_do_everything(self):
@@ -447,6 +467,38 @@ class TestAssignment:
         names = {u["username"]: u for u in out["users"]}
         assert set(names) == {"dana", "boss"}  # their own shop only
         assert names["dana"]["tillRoleName"] == "קופאי (הרשאות קודמות)"
+
+
+class TestVoucherDiscountOverride:
+    """
+    "אישור כפיית הנחה בשובר" (production vouchers §6): a manager, a shift supervisor and a legacy
+    shop manager approve an override with their own code; a cashier, a waiter and a legacy cashier
+    get the manager-code prompt.
+    """
+
+    @pytest.mark.parametrize("role, state", [
+        (TP.MANAGER, A), (TP.SUPERVISOR, A), (TP.LEGACY_MANAGER, A),
+        (TP.CASHIER, P), (TP.WAITER, P), (TP.LEGACY_CASHIER, P),
+    ])
+    def test_each_built_in_role(self, role, state):
+        assert TP.DEFAULTS[role]["VOUCHER_DISCOUNT_OVERRIDE"] == state
+
+    def test_it_is_in_the_editor_with_its_hebrew_label(self):
+        spec = next(p for p in TP.PERMISSIONS if p.code == "VOUCHER_DISCOUNT_OVERRIDE")
+        assert spec.label == "אישור כפיית הנחה בשובר"
+        out = TP.catalogue_out()
+        assert any(p.get("code") == "VOUCHER_DISCOUNT_OVERRIDE" for p in out["permissions"])
+
+    def test_the_spec_defaults_put_it_back(self, w):
+        roles(w)
+        cashier = role_by(w, TP.CASHIER)
+        R.update_till_role(str(w.company.id), str(cashier.id),
+                           R.RoleUpdateIn(permissions={"VOUCHER_DISCOUNT_OVERRIDE": A}), **ctx(w))
+        R.apply_spec_defaults(str(w.company.id), R.ApplyDefaultsIn(), **ctx(w, w.company_manager))
+        w.db.refresh(cashier)
+        # The override is gone: the cashier is back on the spec's prompt.
+        assert cashier.permissions == {}
+        assert TP.DEFAULTS[TP.CASHIER]["VOUCHER_DISCOUNT_OVERRIDE"] == P
 
 
 class TestApplyDefaults:
@@ -700,3 +752,126 @@ def test_the_shared_matrix_fixture_is_the_catalogue():
     for key in TP.BUILTIN_BY_KEY:
         assert data["roles"][key]["states"] == TP.DEFAULTS[key], key
         assert data["roles"][key]["limits"] == TP.DEFAULT_LIMITS.get(key, {}), key
+
+
+# ── "מחייב אישור מנהל במכירה" (SELL_RESTRICTED_ITEMS) on every built-in role ──────────
+
+
+class TestRestrictedItemsPermission:
+    """
+    Managers and supervisors sell a restricted product alone and their code approves it for
+    others; cashiers and waiters are asked for such a code; the legacy roles as their names say.
+    """
+
+    EXPECTED = {
+        TP.MANAGER: A, TP.SUPERVISOR: A, TP.CASHIER: P, TP.WAITER: P,
+        TP.LEGACY_MANAGER: A, TP.LEGACY_CASHIER: P,
+    }
+
+    def test_each_built_in_role_as_the_till_pulls_it(self, w):
+        roles(w)
+        for key in (TP.WAITER, TP.CASHIER, TP.SUPERVISOR, TP.MANAGER, TP.LEGACY_CASHIER, TP.LEGACY_MANAGER):
+            R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, key).id), **ctx(w))
+            row = roster(w)["dana"]
+            assert row.till_role_key == key
+            assert row.permissions["SELL_RESTRICTED_ITEMS"] == self.EXPECTED[key], key
+            # Its code approves for others exactly when it may sell alone.
+            assert S.pos_user_allows(w.dana, "SELL_RESTRICTED_ITEMS") is (self.EXPECTED[key] == A), key
+            assert ("sale:restricted" in S.pos_user_scope_values(w.dana)) is (self.EXPECTED[key] == A), key
+
+    def test_users_not_moved_to_a_role_yet_keep_their_legacy_reading(self, w):
+        rows = roster(w)
+        assert rows["dana"].permissions["SELL_RESTRICTED_ITEMS"] == P  # a cashier: asks
+        assert rows["boss"].permissions["SELL_RESTRICTED_ITEMS"] == A  # a shop manager: alone
+        assert S.pos_user_allows(w.boss, "SELL_RESTRICTED_ITEMS")
+        assert not S.pos_user_allows(w.dana, "SELL_RESTRICTED_ITEMS")
+
+    def test_the_roles_editor_shows_it_in_the_sale_group_with_hebrew_words(self, w):
+        catalogue = R.get_catalogue(current_user=w.admin)
+        spec = {p["code"]: p for p in catalogue["permissions"]}["SELL_RESTRICTED_ITEMS"]
+        assert spec["group"] == "sale" and spec["label"] == "מכירת פריט המחייב אישור מנהל"
+        assert "מחייב אישור מנהל במכירה" in spec["description"]
+        assert any(g["key"] == "sale" for g in catalogue["groups"])
+        builtins = {r["key"]: r for r in catalogue["builtinRoles"]}
+        assert {k: r["permissions"]["SELL_RESTRICTED_ITEMS"] for k, r in builtins.items()} == self.EXPECTED
+
+    def test_a_custom_role_and_a_personal_override_toggle_it(self, w):
+        roles(w)
+        bar = R.create_till_role(
+            str(w.company.id),
+            R.RoleCreateIn(name="ברמן", baseKey=TP.CASHIER, permissions={"SELL_RESTRICTED_ITEMS": A}),
+            **ctx(w, w.company_manager),
+        )
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=bar["id"]), **ctx(w))
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        R.assign_till_role(
+            str(w.shop.id), str(w.dana.id),
+            R.AssignIn(tillRoleId=bar["id"], overrides={"states": {"SELL_RESTRICTED_ITEMS": D}}), **ctx(w),
+        )
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == D
+        # A manager asked for a code on one person only.
+        R.assign_till_role(
+            str(w.shop.id), str(w.boss.id),
+            R.AssignIn(tillRoleId=role_by(w, TP.MANAGER).id, overrides={"states": {"SELL_RESTRICTED_ITEMS": P}}),
+            **ctx(w),
+        )
+        assert roster(w)["boss"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        assert not S.pos_user_allows(w.boss, "SELL_RESTRICTED_ITEMS")
+
+    def test_apply_the_specs_defaults_puts_it_back(self, w):
+        roles(w)
+        manager, cashier = role_by(w, TP.MANAGER), role_by(w, TP.CASHIER)
+        R.update_till_role(str(w.company.id), str(manager.id), R.RoleUpdateIn(permissions={"SELL_RESTRICTED_ITEMS": P}), **ctx(w))
+        R.update_till_role(str(w.company.id), str(cashier.id), R.RoleUpdateIn(permissions={"SELL_RESTRICTED_ITEMS": A}), **ctx(w))
+        R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=cashier.id), **ctx(w))
+        R.assign_till_role(str(w.shop.id), str(w.boss.id), R.AssignIn(tillRoleId=manager.id), **ctx(w))
+        assert roster(w)["dana"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        assert roster(w)["boss"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        out = R.apply_spec_defaults(str(w.company.id), R.ApplyDefaultsIn(), **ctx(w, w.company_manager))
+        assert set(out["applied"]["resetRoles"]) == {TP.MANAGER, TP.CASHIER}
+        rows = roster(w)
+        assert rows["dana"].permissions["SELL_RESTRICTED_ITEMS"] == P
+        assert rows["boss"].permissions["SELL_RESTRICTED_ITEMS"] == A
+        # Legacy users moved to the spec's roles keep the same answer.
+        out = R.apply_spec_defaults(
+            str(w.company.id), R.ApplyDefaultsIn(resetBuiltins=False, moveLegacyUsers=True), **ctx(w),
+        )
+        w.db.refresh(w.nir)
+        assert w.nir.till_role.builtin_key == TP.CASHIER  # the other shop's legacy cashier
+        assert S.effective_for_pos_user(w.nir).state("SELL_RESTRICTED_ITEMS") == P
+
+
+# ── "ביטול מכירה מושהית" (HELD_SALE_CANCEL) on every built-in role ────────────────────────────
+
+
+class TestHeldSaleCancelPermission:
+    """
+    Cancelling a held sale at the till (a shift close or Z, app/services/held_sales_close.py): a manager
+    or a supervisor alone; a cashier or a waiter on a manager's code; the legacy roles the same way.
+    """
+
+    EXPECTED = {
+        TP.MANAGER: A, TP.SUPERVISOR: A, TP.CASHIER: P, TP.WAITER: P,
+        TP.LEGACY_MANAGER: A, TP.LEGACY_CASHIER: P,
+    }
+
+    def test_each_built_in_role_as_the_till_pulls_it(self, w):
+        roles(w)
+        for key in (TP.WAITER, TP.CASHIER, TP.SUPERVISOR, TP.MANAGER, TP.LEGACY_CASHIER, TP.LEGACY_MANAGER):
+            R.assign_till_role(str(w.shop.id), str(w.dana.id), R.AssignIn(tillRoleId=role_by(w, key).id), **ctx(w))
+            assert roster(w)["dana"].permissions["HELD_SALE_CANCEL"] == self.EXPECTED[key], key
+
+    def test_users_not_moved_to_a_role_yet_keep_their_legacy_reading(self, w):
+        rows = roster(w)
+        assert rows["dana"].permissions["HELD_SALE_CANCEL"] == P  # a cashier: a manager's code
+        assert rows["boss"].permissions["HELD_SALE_CANCEL"] == A  # a shop manager: alone
+
+    def test_the_roles_editor_shows_it_in_the_sale_group_with_hebrew_words(self, w):
+        catalogue = R.get_catalogue(current_user=w.admin)
+        spec = {p["code"]: p for p in catalogue["permissions"]}["HELD_SALE_CANCEL"]
+        assert spec["group"] == "sale" and spec["label"] == "ביטול מכירה מושהית"
+        builtins = {r["key"]: r for r in catalogue["builtinRoles"]}
+        assert {k: r["permissions"]["HELD_SALE_CANCEL"] for k, r in builtins.items()} == self.EXPECTED
+        # Right after "ביטול שורה" in the catalogue (and in the shared matrix the till reads).
+        codes = list(TP.CODES)
+        assert codes.index("HELD_SALE_CANCEL") == codes.index("LINE_VOID") + 1

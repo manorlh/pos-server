@@ -18,7 +18,7 @@ naming the batches and their level until `confirmReexport`.
 Who: a super admin, a distributor, or a company manager over the company. Account numbers
 and journal files are the books; a shop manager and a cashier have no business here.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 import uuid
 
@@ -154,11 +154,26 @@ def list_accounting_z_reports(
     from_date: Optional[date] = Query(None, alias="from"),
     to_date: Optional[date] = Query(None, alias="to"),
     only_unexported: bool = Query(False, alias="onlyUnexported"),
+    date_basis: str = Query(
+        "business", alias="dateBasis", pattern="^(business|production)$",
+        description="What `from`/`to` and the order are on: the Z's business date (default), or "
+        "`production` — the local date the Z was produced (`closedAt`) in the shop's timezone. "
+        "Only which Zs are listed: the export of a Z (and the uniform file) are unchanged.",
+    ),
+    tz: Optional[str] = Query(None, description="IANA zone for production dates; the tenant's, else Israel."),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The company's Zs by business date, oldest first, with the batches that carried each."""
+    """
+    The company's Zs by business date (or, with `dateBasis=production`, by the local date they
+    were produced), oldest first, with the batches that carried each. Every row has both dates.
+    """
+    from app.routers.z_reports import _local_midnight_utc
+    from app.services.reports import _load_zoneinfo, resolve_report_timezone
+
+    production = date_basis == "production"  # (a direct call leaves the Query default: business)
+    tzinfo = _load_zoneinfo(resolve_report_timezone(db, active_tenant_id, tz if isinstance(tz, str) else None))
     company = _company(db, company_id, current_user, active_tenant_id)
     shop = _shop_of(db, company, shop_id)
     query = _scope_z_by_user(
@@ -173,16 +188,28 @@ def list_accounting_z_reports(
     )
     if shop is not None:
         query = query.filter(ZReport.shop_id == shop.id)
-    if from_date is not None:
-        query = query.filter(ZReport.business_date >= from_date)
-    if to_date is not None:
-        query = query.filter(ZReport.business_date <= to_date)
+    if production:
+        # Local days as absolute bounds, as `GET /z-reports?dateBasis=production`.
+        if from_date is not None:
+            query = query.filter(ZReport.closed_at >= _local_midnight_utc(from_date, tzinfo))
+        if to_date is not None:
+            query = query.filter(ZReport.closed_at < _local_midnight_utc(to_date + timedelta(days=1), tzinfo))
+    else:
+        if from_date is not None:
+            query = query.filter(ZReport.business_date >= from_date)
+        if to_date is not None:
+            query = query.filter(ZReport.business_date <= to_date)
     if only_unexported:
         query = query.filter(
             ~ZReport.id.in_(db.query(AccountingExportItem.z_report_id))
         )
+    order = (
+        (ZReport.closed_at, ZReport.shop_id, ZReport.shop_sequence_number)
+        if production
+        else (ZReport.business_date, ZReport.shop_id, ZReport.shop_sequence_number)
+    )
     rows = (
-        query.order_by(ZReport.business_date, ZReport.shop_id, ZReport.shop_sequence_number)
+        query.order_by(*order)
         .limit(Z_LIST_MAX + 1)
         .all()
     )
@@ -203,6 +230,11 @@ def list_accounting_z_reports(
                 shop_sequence_number=z.z_number,
                 business_date=z.business_date,
                 closed_at=z.closed_at,
+                production_date=(
+                    (z.closed_at if z.closed_at.tzinfo else z.closed_at.replace(tzinfo=timezone.utc))
+                    .astimezone(tzinfo).date()
+                    if z.closed_at is not None else None
+                ),
                 net_sales=net,
                 vat_total=float(z.vat_total) if z.vat_total is not None else None,
                 exported=[

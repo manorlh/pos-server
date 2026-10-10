@@ -307,6 +307,9 @@ class Labels:
     more_items: str = "ועוד {n} פריטים"
     #: The credit line at the bottom (`show_credit`).
     credit: str = "נוצר על ידי Runner Systems"
+    #: The till value, when the type prints it (`print_till_value`): fixed / up to.
+    value_fixed: str = "שווי השובר: {v}"
+    value_cover: str = "השובר מכסה עד {v}"
     split_allowed: str = "ניתן לממש בחלקים"
     one_time: str = "מימוש חד-פעמי"
     valid_until: str = "בתוקף עד {until}"
@@ -344,6 +347,8 @@ class PrintOptions:
     show_items: bool = True
     #: "נוצר על ידי Runner Systems" at the bottom of the voucher.
     show_credit: bool = True
+    #: "הצג תוקף על השובר" — off: no validity and no terms line (still enforced at redemption).
+    show_validity: bool = True
 
 
 def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()) -> PrintOptions:
@@ -353,6 +358,7 @@ def options_for(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels()
         validity=validity_text(batch, zone, labels),
         show_items=getattr(batch, "show_items", None) is not False,
         show_credit=getattr(batch, "show_credit", None) is not False,
+        show_validity=getattr(batch, "show_validity", None) is not False,
     )
 
 
@@ -487,18 +493,31 @@ def card_content(
     under = under_barcode_lines(voucher, opts, labels)
     return L.CardContent(
         title=batch.event_name or batch.name,
-        terms=terms_line(batch, labels),
+        terms=terms_line(batch, labels) if opts.show_validity else None,
         serial=under[-1],
         barcode=opts.barcode_type or "qr",
         logo=logo,
         benefit=benefit,
         items=[(_qty_label(i), i.product_name, bool(getattr(i, "weighed", False))) for i in items],
         free_text=batch.free_text,
-        validity=opts.validity,
+        validity=opts.validity if opts.show_validity else None,
         code=under[0] if opts.show_code else None,
         credit=labels.credit if opts.show_credit else None,
         more_items=labels.more_items,
+        # The type's name (a manual type's — `type_name` is empty for a batch's own) and the
+        # till value when the type prints it; the production price never is.
+        kicker=getattr(batch, "type_name", None),
+        value_line=value_line(batch, labels),
     )
+
+
+def value_line(batch: PrepaidVoucherBatch, labels: Labels = Labels()) -> Optional[str]:
+    """"שווי השובר: ₪80" (fixed) / "השובר מכסה עד ₪80" (cover) — only when the batch prints it."""
+    value = getattr(batch, "till_value", None)
+    if not getattr(batch, "print_till_value", False) or not value:
+        return None
+    text = labels.value_fixed if (getattr(batch, "pricing", None) or "cover") == "fixed" else labels.value_cover
+    return text.format(v=RULES.money_text(int(value)))
 
 
 _ANCHOR = {"right": "rs", "center": "ms", "left": "ls"}

@@ -71,6 +71,8 @@ export function FailedPaymentsTable({
     queryKey: ['failed-payments', params],
     queryFn: () => api.get('/failed-payments', { params }).then((r) => r.data),
     placeholderData: (prev) => prev,
+    // A card command waiting for its till ("בדוק במסוף" / a decision): its answer comes in the background.
+    refetchInterval: (q) => (q.state.data?.items?.some((a) => a.cardCommand?.status === 'pending') ? 15_000 : false),
   });
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;

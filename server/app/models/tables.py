@@ -55,6 +55,8 @@ SKETCH_KINDS = (
     "line", "polyline", "freehand", "rect",
     # The business's logo (its own picture, or src).
     "logo",
+    # Sketch schema 2 — the decor symbols (specs/table-map-decor.md): the DJ booth.
+    "dj_booth",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
 #: What a table is for (app/services/table_policies.py): an ordinary table, the staff's
@@ -191,6 +193,8 @@ class TableOrder(Base):
         ),
         Index("ix_table_orders_shop_opened", "shop_id", "opened_at"),
         Index("ix_table_orders_shop_status", "shop_id", "status"),
+        # "נסגרו היום": the shop's orders closed in the last day.
+        Index("ix_table_orders_shop_closed", "shop_id", "closed_at"),
         CheckConstraint(
             "status IN ('open', 'paid', 'cancelled', 'void', 'merged')", name="ck_table_orders_status"
         ),

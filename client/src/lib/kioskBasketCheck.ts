@@ -11,6 +11,8 @@
  * Pure: no `@/` imports (the node tests compile it on its own).
  */
 
+import { lineCatalogAgorot } from './kioskMenus';
+
 /** The cloud's verdict on one line (kiosk_basket_check.check). */
 export interface CloudLineVerdict {
   productId: string;
@@ -42,16 +44,21 @@ export const PROMOTIONS_PULL_TIMEOUT_MS = 4_000;
 
 /**
  * The request (KioskPriceCheck.request): each line's product and the base price the kiosk holds for
- * it (agorot, without any option), and the ETag of the promotions it runs.
+ * it (agorot, without any option and any menu), and the ETag of the promotions it runs.
+ *
+ * The price asked about is the one the LINE remembers — the catalog's price when it was added
+ * (`lineCatalogAgorot`: the Android kiosk's `line.product.basePrice`), so that the cloud says whether what the
+ * customer saw has moved; [basePrice] — the catalog the kiosk holds now — only stands in for a line that remembers
+ * none (an older screen).
  */
 export function cloudCheckRequest(
-  lines: ReadonlyArray<{ productId: string; qty?: number }>,
+  lines: ReadonlyArray<{ productId: string; qty?: number; listAgorot?: number | null; catalogAgorot?: number | null }>,
   basePrice: (productId: string) => number | undefined,
   promotionsEtag: string | null = null,
 ): { lines: Array<{ productId: string; quantity: number; unitPriceAgorot?: number }>; promotionsEtag?: string } {
   return {
     lines: lines.map((l) => {
-      const base = basePrice(l.productId);
+      const base = lineCatalogAgorot(l) ?? basePrice(l.productId);
       return { productId: l.productId, quantity: Math.max(1, Math.trunc(l.qty ?? 1)), ...(typeof base === 'number' && Number.isFinite(base) ? { unitPriceAgorot: Math.round(base) } : {}) };
     }),
     ...(promotionsEtag ? { promotionsEtag } : {}),

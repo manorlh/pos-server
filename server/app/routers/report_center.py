@@ -112,6 +112,11 @@ def get_all_in_one(
     shop_ids: Optional[List[uuid.UUID]] = Query(None, alias="shopIds"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    z_date_basis: Literal["business", "production"] = Query(
+        "business", alias="zDateBasis",
+        description="Which Zs its Z section lists over the same days: by business date (default), or "
+        "`production` — the local date each Z was produced. The documents' sections are unchanged.",
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -128,6 +133,7 @@ def get_all_in_one(
     return build_all_in_one(
         db, current_user, active_tenant_id, window,
         shop_ids=_ids(shop_id, shop_ids), machine_ids=_ids(machine_id, machine_ids),
+        z_date_basis=z_date_basis if isinstance(z_date_basis, str) else "business",
     )
 
 

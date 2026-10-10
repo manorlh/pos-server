@@ -61,7 +61,8 @@ class TestPaymentMethods:
         # cash: 90 − 20 (credit note) + 13.33 + 50; card 40; voucher 20.
         assert by == {"cash": 133.33, "card": 40.0, "voucher": 20.0}
         assert out.total == round(cashier_net(w), 2) == 193.33
-        assert {t.bucket for t in out.totals if t.method == "voucher"} == {"other"}
+        # "שוברי הפקה": a production voucher is a tender bucket of its own, never "other".
+        assert {t.bucket for t in out.totals if t.method == "voucher"} == {"production_voucher"}
         assert all(r.day == TODAY for r in out.rows)
         assert sum(t.share for t in out.totals) == pytest.approx(100, abs=0.05)
 

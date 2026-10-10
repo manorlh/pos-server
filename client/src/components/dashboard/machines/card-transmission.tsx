@@ -31,6 +31,8 @@ import {
   fetchUntransmittedCardSales,
   requestTransmit,
 } from '@/lib/api';
+import { phaseOfRequest } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import type { ExcelSheet } from '@/lib/excelExport';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatCurrency, formatDateTime } from '@/lib/format';
@@ -171,7 +173,25 @@ function reportVariant(s: ReportStatus): 'default' | 'destructive' | 'secondary'
   return 'secondary';
 }
 
-/** "שדר עסקאות עכשיו": asks the till, then follows the request until it ends. */
+/** Follow a transmit request in "פקודות שנשלחו" (the tray reads `GET /transmit-requests/{id}`). */
+function trackTransmit(r: TransmitRequest, machineName: string | null): void {
+  const p = phaseOfRequest(r.status, r.errorMessage);
+  trackCommand({
+    kind: 'transmit',
+    id: r.id,
+    action: 'transmit',
+    machineId: r.machineId,
+    machineName,
+    phase: p.phase,
+    detail: p.detail,
+  });
+}
+
+/**
+ * "שדר עסקאות עכשיו": asks the till and closes — the request is followed in the background
+ * ("פקודות שנשלחו"). Opened for a till whose transmit already waits, it shows that request's
+ * progress and its cancel.
+ */
 export function TransmitNowDialog({
   machine,
   open,
@@ -227,11 +247,20 @@ export function TransmitNowDialog({
     setRequestId(next.id);
   };
 
+  // A transmit already waits for this till: reopening (and asking again) shows its progress.
+  const reopenedPending = !!machine?.transmitPending;
   const create = useMutation({
     mutationFn: () => requestTransmit(machine!.id),
     onSuccess: (next) => {
-      settle(next);
       refreshLists(next.machineId);
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): followed in the background (its popup,
+      // the tray, the till's chip) — the dialog closes, nothing waits for the till.
+      trackTransmit(next, machine?.name ?? null);
+      if (reopenedPending) {
+        settle(next);
+        return;
+      }
+      handleOpenChange(false);
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
@@ -240,6 +269,7 @@ export function TransmitNowDialog({
     onSuccess: (next) => {
       settle(next);
       refreshLists(next.machineId);
+      trackTransmit(next, machine?.name ?? null);
     },
     onError: (e) => {
       toast.error(errors.forError(e));

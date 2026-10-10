@@ -7,6 +7,7 @@
 
 import strings from 'virtual:kiosk-strings';
 import type { KioskTextKey } from '@dash-lib/kioskConfig';
+import { VOUCHER_REASON_TEXT } from '@dash-lib/kioskVouchers';
 
 const builtin = strings.builtin as Record<string, string>;
 const preview = strings.preview as Record<string, unknown>;
@@ -54,10 +55,11 @@ export const LIVE: Record<string, string> = {
   // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).
   placing: 'שולחים את ההזמנה לקופה…',
   placeFailed: 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.',
-  cardWithVoucher: 'אשראי לא משולב עם שובר — היתרה בקופה',
   voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
   voucherAppliedNote: 'השובר נקלט · {amount}',
+  voucherDiscountApplied: 'שובר #{serial}: הנחה של {amount}',
   voucherChecking: 'בודקים את השובר…',
+  voucherNoAnswer: 'לא הצלחנו לבדוק את השובר כרגע. נסו שוב או פנו לצוות.',
   voucherForfeitYes: 'לממש בכל זאת',
   voucherForfeitNo: 'לא, תודה',
   'voucher.prepaid_voucher_not_found': 'השובר לא נמצא',
@@ -69,11 +71,28 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_partial_not_allowed': 'שובר חד-פעמי: יש לממש את כולו בבת אחת',
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
+  'voucher.prepaid_voucher_update_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_reserve_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_kind_unsupported': 'זהו שובר הנחה — יש להציג אותו בקופה',
+  'voucher.prepaid_voucher_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',
+  'voucher.prepaid_voucher_other_not_stackable': 'ניתן לממש שובר אחד בלבד בעסקה',
+  'voucher.prepaid_voucher_max_per_sale': 'הגעת למספר השוברים המקסימלי בעסקה',
+  'voucher.prepaid_voucher_same_batch': 'לא ניתן לממש שני שוברים מאותה סדרה בעסקה',
+  'voucher.prepaid_voucher_in_use': 'השובר בשימוש בעסקה אחרת',
+  'voucher.prepaid_voucher_item_unusable': 'הפריט שבשובר אינו זמין כעת — יש להציג את השובר בקופה',
   'voucher.other': 'השובר לא נקלט. אפשר לנסות שוב או לשלם בקופה.',
+  // "שוברי הנחה" (lib/kioskVouchers.ts): the Android kiosk's words for what the rules and the cloud refuse — one table for both TypeScript kiosks.
+  ...Object.fromEntries(Object.entries(VOUCHER_REASON_TEXT).map(([code, words]) => [`voucher.${code}`, words])),
+  'voucher.prepaid_kiosk_show_at_till': 'יש להציג את השובר בקופה',
 };
 
-/** The voucher's refusal in words (`prepaid_voucher_used` → "השובר כבר מומש"). */
-export function voucherReason(reason: string): string {
+/**
+ * The voucher's refusal in words (`prepaid_voucher_used` → "השובר כבר מומש"). The cloud's own words
+ * ([message]: which till used it and when, the day it expired) say more than ours, so they win;
+ * an unknown reason without them reads as the general "not taken".
+ */
+export function voucherReason(reason: string, message?: string): string {
+  if (message) return message;
   const key = `voucher.${reason}`;
   return LIVE[key] ? LIVE[key] : LIVE['voucher.other'];
 }

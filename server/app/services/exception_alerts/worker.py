@@ -27,9 +27,39 @@ def run_once(session_factory: Callable[[], Session]) -> int:
     db = session_factory()
     db.info[SKIP] = True
     try:
-        return E.flush_digests(db)
+        written = E.flush_digests(db)
     finally:
         db.close()
+    run_watches(session_factory)
+    return written
+
+
+def run_watches(session_factory: Callable[[], Session]) -> None:
+    """
+    "התראות לטלפון" (feat/event-live), each pass on its own and never failing the others:
+    tills that went offline (an exception row — this session records it through the hooks,
+    so it is NOT marked to skip them) and push messages a dead process left queued. "יעד הושג"
+    is not checked here: "יעדים ותחרות" records it (app/services/sales_targets.py `evaluate_due`,
+    its own minute, app/services/sales_targets_worker.py) — the one source of `target_reached`.
+    """
+    from app.services.exception_alerts import push, till_watch
+    from app.services.exception_alerts.hooks import SKIP
+
+    for name, job, skip in (
+        ("till offline watch", lambda db: till_watch.scan(db), False),
+        ("push retry", lambda db: push.retry_stale(db), True),
+    ):
+        db = session_factory()
+        if skip:
+            db.info[SKIP] = True
+        try:
+            job(db)
+            db.commit()
+        except Exception:  # noqa: BLE001 - keep the loop alive
+            db.rollback()
+            logger.exception("exception alerts: %s failed", name)
+        finally:
+            db.close()
 
 
 def start_background_worker(session_factory: Callable[[], Session], *, interval: float = INTERVAL_SECONDS) -> None:

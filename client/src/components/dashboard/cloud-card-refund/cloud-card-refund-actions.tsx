@@ -129,7 +129,12 @@ export function CloudCardRefundSection({ tx, onOpenDocument }: { tx: Doc; onOpen
           <span>
             {cardLabel(r.cardLast4)} · {formatDateTime(r.createdAt)}
             {r.document.creditDocumentNumber ? ` · ${r.document.creditDocumentNumber}` : ''}
-            {r.attention ? <span className="ms-1 text-destructive">· {t(`attention.${r.attention}`)}</span> : null}
+            {r.attention ? (
+              <span className="ms-1 text-destructive">
+                · {r.documentLanding === 'next_shift' && r.attentionLabel ? r.attentionLabel : t(`attention.${r.attention}`)}
+              </span>
+            ) : null}
+            {r.zGateWarning ? <span className="ms-1 text-amber-700 dark:text-amber-400">· {t('zGate.notBlockingShort')}</span> : null}
           </span>
           <span className="flex items-center gap-2">
             <span className="tabular-nums">{formatCurrency(r.amount)}</span>

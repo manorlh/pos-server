@@ -22,6 +22,13 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.models.builtin_printers import (
+    BUILTIN_PRINTER_MODEL_IDS,
+    BUILTIN_PRINTER_MODELS,
+    builtin_printer_model,
+    choice_refines,
+    detect_builtin_printer_model,
+)
 from app.models.sunmi import SUNMI_MODEL_IDS, SUNMI_MODELS, detect_sunmi, sunmi_model
 from app.models.synqpay_devices import SYNQPAY_DEVICE_MODEL_IDS, detect_synqpay
 from app.models.vendor_devices import (
@@ -78,6 +85,9 @@ DEVICE_MODELS = (
     # PAX A77 / Urovo i9100 (Android 8.1, app/models/vendor_devices.py): Agamento / TC as their
     # terminal, like the F20; their printer through the vendor's API.
     *VENDOR_DEVICE_MODEL_IDS,
+    # iMin, LANDI, Feitian tablets in their printer docks (app/models/builtin_printers.py): their
+    # own head with no vendor SDK where a standard route reaches it; no terminal of their own.
+    *BUILTIN_PRINTER_MODEL_IDS,
 )
 
 _NO_PRINTER_MODELS = frozenset({
@@ -89,18 +99,30 @@ _NO_PRINTER_MODELS = frozenset({
     *(m.id for m in SUNMI_MODELS if not m.printer),
     # SynqPay's printer API (PAL) is in its SDK only, not in the app: no till receipts there yet.
     *SYNQPAY_DEVICE_MODEL_IDS,
+    # A model only its vendor's SDK reaches (LANDI's handhelds: USDK) — until the owner approves it.
+    *(m.id for m in BUILTIN_PRINTER_MODELS if not m.prints),
 })
 
 #: Models whose built-in printer / cash drawer the till cannot drive *yet*: the hardware
 #: has them, the vendor SDK has not been obtained. The dashboard says "בקרוב"; nothing
 #: claims they print.
-_DRIVER_PENDING_MODELS = frozenset({DEVICE_MODEL_LANDI, DEVICE_MODEL_FEITIAN_TABLET, *SYNQPAY_DEVICE_MODEL_IDS})
+_DRIVER_PENDING_MODELS = frozenset({
+    DEVICE_MODEL_LANDI,
+    DEVICE_MODEL_FEITIAN_TABLET,
+    *SYNQPAY_DEVICE_MODEL_IDS,
+    *(m.id for m in BUILTIN_PRINTER_MODELS if m.driver_pending),
+})
 
 #: Models with a cash drawer port the till drives itself: the SUNMI desktops (T1/T2/T2s/T3,
 #: D2/D2s/D3 — the print service's drawer API, docs/SPEC_SUNMI.md). The F20 / Nova 55F has
 #: no drawer port (`FtReceiptPrinter.hasCashDrawer` is false); elsewhere a drawer opens
 #: through an external receipt printer's RJ-11 port (its `cashDrawer` flag).
-_CASH_DRAWER_PORT_MODELS: frozenset = frozenset(m.id for m in SUNMI_MODELS if m.drawer_port)
+_CASH_DRAWER_PORT_MODELS: frozenset = frozenset(
+    [m.id for m in SUNMI_MODELS if m.drawer_port]
+    # iMin Falcon 2 / D4 Pro / Swan 2, LANDI C20 Pro, a Feitian printer dock: `ESC p` (or the
+    # print service's drawer call) through the head (app/models/builtin_printers.py).
+    + [m.id for m in BUILTIN_PRINTER_MODELS if m.till_drawer_port]
+)
 
 #: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
 #: lower-cased, for the hardware it tells apart on its own. The 55F and the Modo are not
@@ -135,6 +157,8 @@ _NO_BUILTIN_TERMINAL_MODELS = frozenset({
     # Every SUNMI: no Agamento on it. The P-series' own EMV reader is SUNMI's PayHardware,
     # which the till does not drive — it charges on a network pinpad / Z-Credit.
     *SUNMI_MODEL_IDS,
+    # iMin, LANDI, Feitian tablets (app/models/builtin_printers.py): no Agamento either.
+    *BUILTIN_PRINTER_MODEL_IDS,
 })
 
 
@@ -161,6 +185,9 @@ def device_paper_width_mm(device_model) -> "int | None":
     sunmi = sunmi_model(device_model)
     if sunmi is not None:
         return sunmi.paper_mm
+    builtin = builtin_printer_model(device_model)
+    if builtin is not None:
+        return builtin.paper_mm if builtin.prints else None
     return 58 if device_has_printer(device_model) else None
 
 
@@ -174,7 +201,10 @@ def device_has_builtin_scanner(device_model) -> bool:
 
 
 def device_driver_pending(device_model) -> bool:
-    """A LANDI or a Feitian tablet: built-in printer / drawer support is "בקרוב"."""
+    """
+    A LANDI or a Feitian tablet the table does not name, or a model only its vendor's SDK
+    reaches (app/models/builtin_printers.py): built-in printer / drawer support is "בקרוב".
+    """
     return device_model in _DRIVER_PENDING_MODELS
 
 
@@ -232,10 +262,38 @@ def detect_device_model(device_info) -> "str | None":
     vendor = detect_vendor_device(device_info)
     if vendor is not None:
         return vendor
+    # iMin, a LANDI model the table names, a Feitian tablet with a printer dock
+    # (app/models/builtin_printers.py) — before the maker alone names a generic LANDI.
+    builtin = detect_builtin_printer_model(device_info)
+    if builtin is not None:
+        return builtin
     by_model = _REPORTED_MODELS.get(_normalized(device_info.get("model")) or "")
     if by_model is not None:
         return by_model
     return _REPORTED_MANUFACTURERS.get(_normalized(device_info.get("manufacturer")) or "")
+
+
+def paired_device_model(device_info, chosen) -> "str | None":
+    """
+    The model a device is stored as when it pairs: its own word ([detect_device_model]) over the
+    dashboard's choice — unless the choice names it more closely than it can itself (a built-in
+    printer row of the same maker: a Falcon 2 on its 58 mm dock, app/models/builtin_printers.py).
+    """
+    detected = detect_device_model(device_info)
+    if detected and chosen and choice_refines(detected, chosen):
+        return chosen
+    return detected or chosen
+
+
+def reported_device_model(device_info, stored) -> "str | None":
+    """
+    The model the device named itself, for the machine page's warning — the stored one when the
+    dashboard's choice only refines it ([paired_device_model]): no disagreement to warn about.
+    """
+    detected = detect_device_model(device_info)
+    if detected and stored and choice_refines(detected, stored):
+        return stored
+    return detected
 
 
 class POSMachine(Base):
@@ -336,6 +394,9 @@ class POSMachine(Base):
     #: The heartbeat's `cellular` block as last sent (SIMs, default data SIM, data path, LAN
     #: address, phone numbers where the till may read them), and when.
     cellular = Column(JSONB, nullable=True)
+    #: What the till's build says it can do, from its last heartbeat (`capabilities`, a list of
+    #: strings): remote control asks a till only with "remote_close_v2" (app/services/remote_till_z.py).
+    capabilities = Column(JSONB, nullable=True)
     cellular_reported_at = Column(DateTime(timezone=True), nullable=True)
     #: Flattened from `cellular` for the search: "פרטנר,סלקום" and "0541234567,0521234567".
     sim_carriers = Column(String(200), nullable=True, index=True)
@@ -415,6 +476,10 @@ class POSMachine(Base):
     # Not an identity and not a foreign key: the shift may not exist here yet.
     reported_open_shift_id = Column(UUID(as_uuid=True), nullable=True)
     reported_open_shift_opened_at = Column(DateTime(timezone=True), nullable=True)
+    #: When the till itself last reported its open shift (or none) — set only by its heartbeat with
+    #: a readable body, never by a cloud-side action. "Closed" is trusted only when reported after
+    #: the last shift the cloud saw for the till (app/services/z_shift_guard.py).
+    reported_open_shift_claimed_at = Column(DateTime(timezone=True), nullable=True)
     #: The shop's master till has "סגירת Z סניפי" on screen until then (refreshed while it
     #: is open). Meanwhile the heartbeat tells every till of the shop to beat fast, so the
     #: close a shop Z sends is picked up in seconds even when realtime is down.
@@ -559,6 +624,9 @@ class POSMachine(Base):
     #: oldest change's moment worked out on arrival — from its last heartbeat that said.
     lan_sync = Column(JSONB, nullable=True)
     lan_sync_reported_at = Column(DateTime(timezone=True), nullable=True)
+    #: What the device's build can do, from its heartbeat's `capabilities` (e.g. "device_logs_v1"):
+    #: {list, appVersion, at}. Null: it never said (an older build).
+    reported_capabilities = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -614,7 +682,9 @@ class POSMachine(Base):
             from app.models.kiosk import KioskDevice
 
             with session.no_autoflush:
-                found = session.get(KioskDevice, self.id) is not None
+                row = session.get(KioskDevice, self.id)
+                # A till's kiosk-mode row (home_role "till") never makes it a kiosk: its terminal stays on.
+                found = row is not None and getattr(row, "home_role", None) is None
         self.__dict__[_KIOSK_CACHE] = found
         return found
 
@@ -629,4 +699,4 @@ class POSMachine(Base):
     @property
     def device_model_reported(self) -> "str | None":
         """The model the device named itself when it paired, if we recognise it."""
-        return detect_device_model(self.device_info)
+        return reported_device_model(self.device_info, self.device_model)

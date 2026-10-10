@@ -206,6 +206,11 @@ def get_pos_machine_for_sync_path(
     _check_machine_access(current_user, machine, db)
     _check_sync_user_tenancy(db, current_user, machine)
     _bind_machine_context(machine)
+    # "נעילת הקופה לנקודת המכירה שלה" binds the till's own token, never a dashboard user
+    # (app/services/area_lock.py).
+    from app.services.area_lock import mark_dashboard_caller
+
+    mark_dashboard_caller(machine)
     return machine
 
 

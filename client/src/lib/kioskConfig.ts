@@ -610,11 +610,21 @@ export interface KioskPrinting {
 
 export type PickupScope = 'kiosk' | 'shop';
 
+/**
+ * "מספר הזמנה": with the kiosk's letter ("A-17", the default — today's) or the number alone ("17",
+ * the owner 09.10.2026). The number alone always comes from the shop's shared daily counter
+ * (`repairKioskConfig` forces `scope: 'shop'`), so two kiosks never both say "17" that day.
+ */
+export type PickupLabelFormat = 'prefixed' | 'number';
+
+export const PICKUP_LABEL_FORMATS: readonly PickupLabelFormat[] = ['prefixed', 'number'];
+
 export interface KioskPickup {
   scope: PickupScope;
   prefix: string;
   start: number;
   max: number;
+  labelFormat: PickupLabelFormat;
 }
 
 export interface KioskTimers {
@@ -991,7 +1001,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     bonAutoRetryMin: 10,
     bonOnKiosk: false,
   },
-  pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999 },
+  pickup: { scope: 'kiosk', prefix: '', start: 1, max: 999, labelFormat: 'prefixed' },
   timers: { inactivitySec: 60, warningSec: 20, successSec: 12, attractSlideSec: 8 },
   club: { enabled: false, joinUrl: '', title: '', body: '' },
   operations: { autoCloseAt: '', pausedTitle: '', pausedBody: '', closeWithShopZ: false },
@@ -1451,6 +1461,8 @@ export function repairKioskConfig(cfg: KioskConfig, opts: { kdsAvailable?: boole
     pickup.start = KIOSK_DEFAULTS.pickup.start;
     pickup.max = KIOSK_DEFAULTS.pickup.max;
   }
+  // "מספר בלבד": the number alone always comes from the shop's shared counter (unique that day).
+  if (pickup.labelFormat === 'number') pickup.scope = 'shop';
   if (printing.bonMode === 'single' && !printing.bonPrinterId) printing.bonMode = 'routing';
   if (club.enabled && !/^https?:\/\/\S+$/i.test(club.joinUrl || '')) club.enabled = false;
   payment.methods = kioskPayMethods(payment.methods);
@@ -1930,6 +1942,7 @@ export function validateKioskConfig(
 
   const pk = cfg.pickup;
   checkEnum(e, 'pickup.scope', pk.scope, ['kiosk', 'shop']);
+  checkEnum(e, 'pickup.labelFormat', pk.labelFormat, PICKUP_LABEL_FORMATS);
   if (typeof pk.prefix !== 'string' || pk.prefix.length > L.pickupPrefixMax || !PREFIX.test(pk.prefix)) {
     e.push({ path: 'pickup.prefix', code: 'pickupPrefix', params: { max: L.pickupPrefixMax } });
   }
@@ -2002,8 +2015,13 @@ export function validateKioskConfig(
 
 /* --------------------------------------------------------------- helpers */
 
-/** The pickup number as printed: "A-17" with prefix "A", "17" without. */
-export function pickupLabel(prefix: string | null | undefined, n: number): string {
+/**
+ * The pickup number as printed: "A-17" with prefix "A", "17" without — and "17" whatever the
+ * prefix with `format: 'number'` ("מספר בלבד"). The server's kiosk_pickup.pickup_label, the
+ * Android KioskPickup.label, kiosk-desktop core/kioskOrders.ts — one rule.
+ */
+export function pickupLabel(prefix: string | null | undefined, n: number, format?: PickupLabelFormat | null): string {
+  if (format === 'number') return String(n);
   const p = (prefix ?? '').trim();
   return p ? `${p}-${n}` : String(n);
 }
@@ -2051,6 +2069,12 @@ export interface CatalogProductIn {
   categoryId: string | null;
   /** False = sold out ("אזל") at this kiosk. */
   available?: boolean;
+  /**
+   * A block's own look on the kiosks (pos-server specs/item-blocks-targets.md): "hide" — left out
+   * whatever `soldOutMode` says; "grey" — kept, greyed "אזל", even where `soldOutMode` hides; absent
+   * or null — `soldOutMode` decides.
+   */
+  kioskDisplay?: 'hide' | 'grey' | null;
 }
 
 export interface CatalogViewProduct<P> {
@@ -2093,7 +2117,8 @@ function orderBy<T extends { id: string }>(items: readonly T[], order: readonly 
  * - categories in `categoryOrder` first, the rest after them in the till's order;
  * - in each category, `productOrder[categoryId]` first, the rest in the till's order;
  * - hidden categories / products left out, and sold-out products left out when
- *   `soldOutMode` is "hide" (else kept, marked sold out);
+ *   `soldOutMode` is "hide" (else kept, marked sold out) — a block's own look first: "hide" leaves
+ *   it out, "grey" keeps it greyed (`kioskDisplay`, pos-server specs/item-blocks-targets.md);
  * - a category with no product left to show is left out;
  * - `featured` = `featuredProductIds` in order, among the products that are shown.
  * `includeHidden` keeps everything (the editor), marked `hidden`.
@@ -2127,7 +2152,8 @@ export function kioskCatalogView<C extends CatalogCategoryIn, P extends CatalogP
     const rows: CatalogViewProduct<P>[] = [];
     for (const p of orderBy(byCategory.get(c.id) ?? [], cat.productOrder?.[c.id])) {
       const soldOut = p.available === false;
-      const hidden = hiddenProducts.has(p.id) || (soldOut && hideSoldOut);
+      const look = p.kioskDisplay ?? null;
+      const hidden = hiddenProducts.has(p.id) || look === 'hide' || (soldOut && hideSoldOut && look !== 'grey');
       if (hidden && !includeHidden) continue;
       const row = { product: p, hidden, soldOut, featured: featuredIds.has(p.id) };
       rows.push(row);
@@ -2358,6 +2384,32 @@ export function payMethodAsk(methods: readonly PaymentMethod[], usable: readonly
   if (card && methods.length === 1) return { asks: false, optional: false, fallback };
   if (mode === 'off') return card ? { asks: false, optional: false, fallback } : { asks: true, optional: false, fallback };
   return { asks: true, optional: mode === 'optional', fallback };
+}
+
+/**
+ * A voucher is offered where the order it leaves can be finished (the Android kiosk's rule, its terminal pays the rest):
+ * by the card — the Windows kiosk writes ONE document with the vouchers as legs and the card for what is left, the
+ * browser kiosk does the same through its bridge —, or at the till ("מזומן בקופה"). With neither, a voucher would leave
+ * the customer with no way to pay what it does not cover. [cardUsable]: the card can be charged now (a terminal
+ * that answers, a bridge that takes cards); true when the caller has not looked.
+ */
+export function voucherCanFinish(methods: readonly PaymentMethod[], cardUsable = true): boolean {
+  return methods.includes('cash_at_till') || (cardUsable && methods.includes('card'));
+}
+
+/**
+ * "חסימת הזמנות כשאין אינטרנט" (`general.blockWhenOffline`, the Android kiosk's KioskPayBlock.OFFLINE): offline with it
+ * on, the kiosk takes no orders at all — not by card, not to the till — and rests on its "offline" screen. Off (the
+ * default), no internet never stops it.
+ */
+export function kioskOfflineBlocks(general: { blockWhenOffline?: boolean } | null | undefined, offline: boolean): boolean {
+  return offline && general?.blockWhenOffline === true;
+}
+
+/** The methods a TypeScript kiosk offers of the configured ones: one card per document, a voucher only where it can finish. */
+export function tsKioskPayMethods(methods: readonly unknown[] | null | undefined): PaymentMethod[] {
+  const one = singleCardPayMethods(methods);
+  return voucherCanFinish(one) ? one : one.filter((m) => m !== 'voucher');
 }
 
 /** Left to pay after the vouchers, in agorot: the order and its tip less them, never below zero. */

@@ -15,6 +15,7 @@ import {
   ORG_MANAGER_SECTIONS,
   UNRESTRICTED,
   canAccess,
+  canSeeSales,
   filterNavByAccess,
   grantedSections,
   navHrefAllowed,
@@ -64,7 +65,7 @@ describe('sectionForPath — which section a page belongs to', () => {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'navigation.ts'), 'utf8');
     const hrefs = [...source.matchAll(/href: '(\/dashboard[^']*)'/g)].map((m) => m[1]);
     assert.ok(hrefs.length > 40, 'read the menu');
-    const outside = new Set(['/dashboard/profile', '/dashboard/access-settings', '/dashboard/till-parameters', '/dashboard/app-updates']);
+    const outside = new Set(['/dashboard/profile', '/dashboard/access-settings', '/dashboard/till-parameters', '/dashboard/app-updates', '/dashboard/device-logs']);
     const orphans = hrefs.filter((href) => sectionForPath(href) === undefined && !outside.has(href));
     assert.deepEqual(orphans, [], 'a new menu entry needs a section in DASHBOARD_SECTIONS (and the server)');
     for (const section of DASHBOARD_SECTIONS) {
@@ -90,10 +91,11 @@ describe('filterNavByAccess — the menu', () => {
     assert.ok(navHrefAllowed(zEditor, '/dashboard/z-reports/new'));
   });
 
-  it('drops a group left empty, keeps the profile always', () => {
+  it('drops a group left empty, keeps the home page and the profile always', () => {
     const shown = filterNavByAccess(NAV, NOTHING);
-    assert.deepEqual(shown.map((s) => s.id), ['settings']);
-    assert.deepEqual(shown[0].items.map((i) => i.href), ['/dashboard/profile']);
+    assert.deepEqual(shown.map((s) => s.id), ['overview', 'settings']);
+    assert.deepEqual(shown[0].items.map((i) => i.href), ['/dashboard']);
+    assert.deepEqual(shown[1].items.map((i) => i.href), ['/dashboard/profile']);
   });
 
   it('changes nothing for an unrestricted user (super admin, full access, old server)', () => {
@@ -120,9 +122,20 @@ describe('pageAccess — a page reached by its address', () => {
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard/z-reports/new'), 'denied');
   });
 
-  it('home without reports shows what the user may open', () => {
-    assert.equal(pageAccess({ restricted: true, sections: { products: 'edit' } }, '/dashboard'), 'summary');
+  it("the home page (the board) is everyone's: without reports it shows the tills, not the figures", () => {
+    const productsOnly = { restricted: true, sections: { products: 'edit' as const } };
+    assert.equal(pageAccess(productsOnly, '/dashboard'), 'ok');
+    assert.equal(pageAccess(productsOnly, '/dashboard/'), 'ok');
+    assert.equal(canSeeSales(productsOnly), false);
+    assert.equal(navHrefAllowed(productsOnly, '/dashboard'), true);
+    // Its comparisons are a reports page all the same.
+    assert.equal(pageAccess(productsOnly, '/dashboard/compare'), 'denied');
+    assert.equal(navHrefAllowed(productsOnly, '/dashboard/compare'), false);
     assert.equal(pageAccess(ORG_MANAGER, '/dashboard'), 'ok');
+    assert.equal(canSeeSales(ORG_MANAGER), true);
+    assert.equal(canSeeSales(UNRESTRICTED), true);
+    // The cockpit reads the board's figures too (the server maps its routes to `cockpit`).
+    assert.equal(canSeeSales({ restricted: true, sections: { cockpit: 'view' } }), true);
     assert.equal(pageAccess(UNRESTRICTED, '/dashboard/users'), 'ok');
   });
 });

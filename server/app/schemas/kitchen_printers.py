@@ -210,10 +210,44 @@ class PrintJobIn(BaseModel):
 
 
 class PrintJobAckIn(BaseModel):
+    """`done` / `failed` end the job; `printing` (with `error`) says why the host still retries it."""
+
     model_config = ConfigDict(populate_by_name=True)
 
-    status: Literal["done", "failed"]
+    status: Literal["done", "failed", "printing"]
     error: Optional[str] = Field(None, max_length=500)
+
+
+class BonAlertIn(BaseModel):
+    """
+    One ticket of a till's print queue that needs a person (app/services/bon_alerts.py). Every
+    field but `id` / `state` optional; long text is clamped by the service, never refused.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str = Field(..., min_length=1, max_length=200)
+    #: failed | retrying | uncertain | unconfirmed | waiting_host | kds_not_taken | handled
+    state: str = Field(..., min_length=1, max_length=40)
+    reason: Optional[str] = Field(None, max_length=80)
+    printer_id: Optional[str] = Field(None, alias="printerId", max_length=100)
+    printer_name: Optional[str] = Field(None, alias="printerName", max_length=300)
+    title: Optional[str] = Field(None, max_length=300)
+    items: Optional[int] = Field(None, ge=0, le=100_000)
+    attempts: Optional[int] = Field(None, ge=0, le=1_000_000)
+    since: Optional[str] = Field(None, max_length=60)
+    error: Optional[str] = Field(None, max_length=2000)
+    handled_by: Optional[str] = Field(None, alias="handledBy", max_length=300)
+    handled_note: Optional[str] = Field(None, alias="handledNote", max_length=2000)
+
+
+class BonAlertsIn(BaseModel):
+    """A till's whole list ([complete]): an open alert of that till it leaves out is resolved."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    bons: List[BonAlertIn] = Field(default_factory=list, max_length=500)
+    complete: bool = True
 
 
 class CategoryRoutesIn(BaseModel):

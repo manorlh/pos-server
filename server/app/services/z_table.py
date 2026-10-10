@@ -62,7 +62,7 @@ def kiosk_machine_ids(db: Session, machine_ids: Optional[Iterable[Any]] = None) 
     """The machines that are kiosks (of [machine_ids], or all)."""
     from app.models.kiosk import KioskDevice
 
-    query = db.query(KioskDevice.machine_id)
+    query = db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
     if machine_ids is not None:
         ids = [m for m in machine_ids if m is not None]
         if not ids:
@@ -322,6 +322,7 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
     line_discounts = header.get("lineDiscountsTotal")
     promo_discounts = header.get("promotionDiscountsTotal")
     voucher_discounts = header.get("voucherDiscountsTotal")
+    deductions = header.get("productionVoucherDeductionsTotal")
     return {
         "id": str(z.id),
         "zNumber": z.z_number,
@@ -356,7 +357,9 @@ def z_row(z: ZReport, z_type: str, out_item) -> Dict[str, Any]:
         "shiftCount": z.shift_count,
         "machineCount": z.machine_count,
         "grossSales": _money(out_item.gross_sales),
+        # Without production vouchers' deductions (as stored, as the till's X); those apart.
         "discountsTotal": _money(z.discounts_total),
+        "productionVoucherDeductionsTotal": _money(deductions),
         "lineDiscountsTotal": _money(line_discounts),
         "promotionDiscountsTotal": _money(promo_discounts),
         "voucherDiscountsTotal": _money(voucher_discounts),

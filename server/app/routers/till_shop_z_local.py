@@ -16,6 +16,8 @@ POST /sync/{machine_id}/shop-z/local           → a shop Z the main till produc
                                                  renumbered; `conflictRecorded: true`),
                                                  `shift_not_closed` / `shift_unknown` (wait:
                                                  a till's close has not reached the cloud)
+GET  /sync/{machine_id}/shop-z/shift-guard     → "חסימת Z כשיש משמרות פתוחות": on? and the
+                                                 tills blocking the shop Z (app/services/z_shift_guard.py)
 
 A participant off the LAN, closed through the cloud (§8.14):
 POST /sync/{machine_id}/shop-z/remote-close     → the main till asks: `{roundId, requests:
@@ -65,6 +67,63 @@ def till_shop_z_history(
     return out
 
 
+@router.get("/sync/{machine_id}/shop-z/shift-guard")
+def till_shop_z_shift_guard(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py), asked by the main till before
+    its local shop Z: `{required, blockers: [{machineId, name, posNumber, status, online, words}]}`
+    — the shop's tills (not this one) with a shift open or closed and not yet accepted here. The
+    till refuses the Z while any; it can never force (only a super admin, in the cloud).
+    """
+    from app.models.shop import Shop
+    from app.services import z_shift_guard as G
+
+    machine = _machine(machine_id, machine)
+    shop = db.get(Shop, machine.shop_id)
+    required = G.required(db, shop)
+    blockers = [b for b in G.shop_blockers(db, shop) if b["machineId"] != str(machine.id)] if required else []
+    return {"required": required, "blockers": blockers}
+
+
+@router.get("/sync/{machine_id}/shop-z/cloud-refund-guard")
+def till_shop_z_cloud_refund_guard(
+    machine_id: str,
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py), asked by the main
+    till before its local shop Z while online: `{required, hold, message, refunds: [{refundId, amount,
+    originalDocumentNumber, machineId, machineName, landsInThisZ, words, message}]}` — the credit
+    notes the shop Z's tills still owe. A till whose open shift the round closes issues its notes
+    into it first (`landsInThisZ`, shown only); any other refund holds the Z (`hold`). The till can
+    never force (only a super admin, in the cloud). Offline the till cannot ask: it goes ahead
+    (SPEC_REMOTE_CREDIT.md §11.11).
+    """
+    from app.models.shop import Shop
+    from app.services import cloud_refund_z_gate as CRG
+    from app.services import z_runs as ZR
+
+    machine = _machine(machine_id, machine)
+    shop = db.get(Shop, machine.shop_id)
+    if not CRG.enabled() or shop is None:
+        return {"required": False, "hold": False, "message": None, "refunds": []}
+    scope = CRG.shop_scope(db, shop)
+    closing = [m.id for m in scope if ZR.is_seated_in(m, shop.id) and CRG.closes_open_shift(db, m)]
+    refunds = CRG.pending(db, [m.id for m in scope], closing=closing)
+    held = [r for r in refunds if not r["landsInThisZ"]]
+    return {
+        "required": True,
+        "hold": bool(held),
+        "message": CRG.message_of(held) if held else None,
+        "refunds": refunds,
+    }
+
+
 class LocalShopZAckIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -110,6 +169,19 @@ def till_shop_z_local_upload(
             db.rollback()
         return JSONResponse(status_code=refused.status_code, content=refused.body)
     out = LZ.upload_out(z, outcome)
+    if outcome != "duplicate":
+        # A release from "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" this Z went ahead on is used up.
+        try:
+            from app.models.shop import Shop
+            from app.services import cloud_refund_z_gate as CRG
+
+            with db.begin_nested():
+                shop = db.get(Shop, machine.shop_id)
+                CRG.consume(db, [m.id for m in CRG.shop_scope(db, shop)], z.id, path="local_shop_z")
+        except Exception:  # noqa: BLE001 - never fails the Z's upload
+            import logging
+
+            logging.getLogger(__name__).exception("local shop Z %s: marking cloud refund releases used failed", z.id)
     db.commit()
     if outcome == "duplicate":
         return JSONResponse(status_code=status.HTTP_200_OK, content=out)

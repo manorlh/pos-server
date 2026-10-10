@@ -4,7 +4,7 @@
  */
 
 /** Why "צור" is not available yet — each a key of `prepaidVouchers.create.problem`. */
-export type BatchFormProblem = 'name' | 'company' | 'items' | 'terms' | 'count' | 'dates' | 'groupSize';
+export type BatchFormProblem = 'name' | 'company' | 'items' | 'terms' | 'maxVouchers' | 'count' | 'dates' | 'groupSize';
 
 export interface BatchFormDraft {
   name: string;
@@ -17,6 +17,8 @@ export interface BatchFormDraft {
   /** yyyy-mm-dd, or empty. */
   validFrom: string;
   validUntil: string;
+  /** "מספר שוברים מקסימלי בעסקה" is empty or a whole number in range (absent: true). */
+  stackingOk?: boolean;
 }
 
 /** Everything the form still needs, in the form's order (empty: it may be created). */
@@ -25,6 +27,7 @@ export function batchFormProblems(d: BatchFormDraft): BatchFormProblem[] {
   if (!d.name.trim()) out.push('name');
   if (!d.companyId) out.push('company');
   if (d.discount ? d.termErrors > 0 : d.itemCount === 0) out.push(d.discount ? 'terms' : 'items');
+  if (d.stackingOk === false) out.push('maxVouchers');
   if (!Number.isFinite(d.count) || d.count < 1 || d.count > 5000) out.push('count');
   if (!d.groupOk) out.push('groupSize');
   if (d.validFrom && d.validUntil && d.validFrom > d.validUntil) out.push('dates');

@@ -124,6 +124,15 @@ RULES: Tuple[RuleSpec, ...] = (
     # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
     # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
     RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    # A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
+    # closed (app/services/z_shift_guard.py). Always recorded — the tenant's rules never switch it off.
+    RuleSpec("z_forced_open_shifts", True, (), "high", "z"),
+    # A super admin let a Z go ahead before a cloud card refund's credit note was issued ("זיכוי באשראי
+    # מהענן — חובה לפני ה-Z הבא", app/services/cloud_refund_z_gate.py). Always recorded.
+    RuleSpec("z_forced_pending_cloud_refund", True, (), "high", "z"),
+    # A remote close let the till close keeping its held sales ("סגור בכל זאת — המכירות המושהות
+    # יישמרו", app/services/held_sales_close.py). Always recorded.
+    RuleSpec("close_keep_held_sales", True, (), "medium", "z"),
     # A shop Z the main till printed in local mode that does not verify against the cloud's
     # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
     # §8.12): every document its tills' manifests name has arrived, and the same computation
@@ -163,6 +172,12 @@ RULES: Tuple[RuleSpec, ...] = (
     # A self-order kiosk out of touch with the cloud for ≥ X minutes during its opening hours
     # ("קיוסק לא מחובר"; app/services/kiosk_offline.py records it, and when it came back).
     RuleSpec("kiosk_offline", True, (ParamSpec("offlineMinutes", 5, 1, 240, integer=True),), "high", "kiosk"),
+    # A till with an open shift that stopped talking to the cloud for ≥ X minutes ("קופה לא
+    # מחוברת"; app/services/exception_alerts/till_watch.py records it, and when it came back).
+    RuleSpec("till_offline", True, (ParamSpec("offlineMinutes", 10, 2, 240, integer=True),), "high", "till_event"),
+    # "התאמת אשראי מול Z-Credit" (app/services/zcredit_reconcile.py): a charge at Z-Credit with no
+    # document of ours, or a document of ours with no Z-Credit transaction — one per transaction.
+    RuleSpec("zcredit_recon", True, (), "high", "zcredit"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",
@@ -190,7 +205,23 @@ EXCEPTION_TYPES = tuple(RULES_BY_TYPE)
 #: Till event types this server accepts, and the rule each one feeds.
 TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_completed", "reprint", "forced_z_close",
                     # The Windows app left to the desktop (and back): recorded, feeds no rule.
-                    "desktop_exit")
+                    "desktop_exit",
+                    # A product that needs a manager's code, sold on one (or by someone who holds
+                    # SELL_RESTRICTED_ITEMS): recorded, feeds no rule.
+                    "restricted_item",
+                    # A held sale ("מכירה מושהית") cancelled at a close: who, why, its items and total.
+                    # Not a document — the audit trail. Recorded, feeds no rule.
+                    "held_sale_cancelled",
+                    # An open basket parked as a held sale by a remote close ("remoteCloseParkOpenBasket"):
+                    # who asked, when, its items and total. Recorded, feeds no rule.
+                    "held_sale_parked",
+                    # "מצב עבודה: קיוסק / קופה" (app/services/kiosk_till_mode.py): a kiosk device switched to the
+                    # till or back — who, why (manual / idle / remote / cloud), the held sales left. Feeds no rule.
+                    "kiosk_till_mode",
+                    # "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): who added a customer's
+                    # details to a copy of which document, when. The audit beside the annotation's own
+                    # row. Recorded, feeds no rule.
+                    "document_customer_details")
 
 
 class RuleValueError(ValueError):
@@ -403,9 +434,12 @@ def _hour_in_window(hour: int, from_hour: int, to_hour: int) -> bool:
 
 
 def detect_transaction(
-    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None
+    tx: Transaction, rules: Dict[str, EffectiveRule], tzinfo=None, deduction: Decimal = Decimal("0")
 ) -> List[Found]:
-    """The exceptions one document raises under `rules`. Pure: no database."""
+    """
+    The exceptions one document raises under `rules`. Pure: no database. [deduction]: the document's
+    production vouchers' deductions (out of the cashier's discount, review 09.10).
+    """
     found: List[Found] = []
     status = _status(tx)
     occurred = _utc(tx.created_at) or datetime.now(timezone.utc)
@@ -464,6 +498,8 @@ def detect_transaction(
     promotion_sum = sum((abs(_money(getattr(it, "promotion_discount", None))) for it in items), Decimal("0"))
     # Nor are discount vouchers ("שוברי הנחה"): the customer's voucher, checked by the cloud.
     promotion_sum += sum((abs(_money(getattr(it, "voucher_discount", None))) for it in items), Decimal("0"))
+    # Nor a production voucher's deduction ("קיזוז שוברי הפקה"): a voucher paid for, never a discount.
+    promotion_sum += abs(_money(deduction))
     # Nor are the OTH lines (reported as "oth"), nor the club button's fixed rate ("הנחת
     # מועדון", till parameter `clubButtonEnabled`) — the shop's own policy, in its report.
     oth_sum = sum((abs(_money(it.discount)) for it in oth_items), Decimal("0"))
@@ -780,7 +816,10 @@ class Detector:
         machine = self.machine(tx.machine_id)
         if machine is None:
             return
-        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id)):
+        from app.services.shift_totals import production_deductions_of
+
+        deduction = production_deductions_of(self.db, [tx.id]).get(tx.id, Decimal("0"))
+        for found in detect_transaction(tx, self.rules(machine), self.tz(tx.tenant_id), deduction):
             if found.type == "oth" and found.details.get("approvedBy"):
                 found.details["approverName"] = self.approver_name(found.details["approvedBy"])
             self._record(machine, found)
@@ -807,8 +846,17 @@ class Detector:
 
 
 def forced_close_summary(details: Dict[str, Any]) -> str:
-    """"כפה: דנה · הושהתה: <שם> (3 שורות)" — the line the exceptions list shows."""
-    parts = [f"כפה: {details.get('forcedBy') or 'לא ידוע'}"]
+    """
+    "כפה: דנה · הושהתה: <שם> (3 שורות)" — the line the exceptions list shows. Remote control's forced
+    close (app/services/remote_close_force.py): "נסגר בכפייה מרחוק ע״י דנה · …", with the held sales it
+    carried and a payment screen it left.
+    """
+    if details.get("remote"):
+        from app.services import remote_close_force
+
+        parts = [remote_close_force.forced_words(details.get("forcedBy") or "לא ידוע")]
+    else:
+        parts = [f"כפה: {details.get('forcedBy') or 'לא ידוע'}"]
     parked = details.get("parked") if isinstance(details.get("parked"), dict) else None
     if parked and parked.get("heldSaleId"):
         parts.append(f"הושהתה: {parked.get('name') or ''} ({parked.get('lines') or 0} שורות)".strip())
@@ -816,14 +864,19 @@ def forced_close_summary(details: Dict[str, Any]) -> str:
         parts.append(f"לא הושהתה ({parked.get('notParkedReason')})")
     else:
         parts.append("לא הייתה הזמנה פתוחה")
+    if details.get("remote") and details.get("paymentAbandoned"):
+        parts.append("מסך התשלום בוטל (לא נשלח דבר למסוף)")
+    carried = details.get("heldSalesCarried")
+    if details.get("remote") and isinstance(carried, int) and carried > 0:
+        parts.append(f"{carried} מכירות מושהות נשארו למשמרת הבאה")
     return " · ".join(parts)
 
 
 def forced_close_initiator(db: Session, machine: POSMachine, request_id: Any) -> Dict[str, Any]:
     """
     `{forcedBy, forcedByUserId, requestKind}` for a forced remote Z close, from the request
-    the till names: a dashboard till-Z request, or a Z run's item. Empty when neither is
-    this till's.
+    the till names: a dashboard till-Z request, a Z run's item, or remote control's shift close
+    (a forced one, app/services/remote_close_force.py). Empty when none is this till's.
     """
     from app.models.till_z_request import TillZRequest
     from app.models.user import User
@@ -846,6 +899,16 @@ def forced_close_initiator(db: Session, machine: POSMachine, request_id: Any) ->
         return {
             "requestKind": "z_run",
             "zRunId": str(item.run_id),
+            "forcedBy": (user.username or user.email) if user is not None else None,
+            "forcedByUserId": str(user.id) if user is not None else None,
+        }
+    from app.models.shift_close_request import ShiftCloseRequest
+
+    close = db.query(ShiftCloseRequest).filter(ShiftCloseRequest.id == key, ShiftCloseRequest.machine_id == machine.id).first()
+    if close is not None:
+        user = db.get(User, close.created_by_user_id) if close.created_by_user_id else None
+        return {
+            "requestKind": "close_shift",
             "forcedBy": (user.username or user.email) if user is not None else None,
             "forcedByUserId": str(user.id) if user is not None else None,
         }

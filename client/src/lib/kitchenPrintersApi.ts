@@ -279,9 +279,17 @@ export async function deleteKitchenPrinter(id: string): Promise<void> {
   await api.delete(`/printers/${id}`);
 }
 
-/** A test ticket for the printer's host, or for every till that uses it. */
-export async function testKitchenPrinter(id: string): Promise<PrintJob[]> {
-  const { data } = await api.post<{ jobs: PrintJob[] }>(`/printers/${id}/test`, {});
+/**
+ * A test ticket for the printer's host, or for every till that uses it. With `idempotencyKey`
+ * the POST carries an `Idempotency-Key` (lib/deviceCommandsStore.ts `idempotencyHeaders`): a
+ * retry with the same key never makes a second test.
+ */
+export async function testKitchenPrinter(id: string, idempotencyKey?: string): Promise<PrintJob[]> {
+  const { data } = await api.post<{ jobs: PrintJob[] }>(
+    `/printers/${id}/test`,
+    {},
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  );
   return data.jobs ?? [];
 }
 

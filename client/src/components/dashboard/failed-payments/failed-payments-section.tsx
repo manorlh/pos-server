@@ -47,6 +47,8 @@ export function FailedPaymentsSection({
     queryKey: ['failed-payments', params],
     queryFn: () => api.get('/failed-payments', { params }).then((r) => r.data),
     enabled,
+    // A card command waiting for its till: its answer comes in the background.
+    refetchInterval: (q) => (q.state.data?.items?.some((a) => a.cardCommand?.status === 'pending') ? 15_000 : false),
   });
   if (!enabled || isEmpty(data) || !data) return null;
   const money = (agorot: number) => formatCurrency(agorotToShekels(agorot));

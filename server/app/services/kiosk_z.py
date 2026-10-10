@@ -566,4 +566,4 @@ def kiosk_machine_ids(db: Session, machine_ids: Iterable[Any]) -> List[uuid.UUID
     ids = [m for m in machine_ids if m is not None]
     if not ids:
         return []
-    return [row[0] for row in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()]
+    return [row[0] for row in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()]

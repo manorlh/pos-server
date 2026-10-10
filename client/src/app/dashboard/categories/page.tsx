@@ -43,6 +43,9 @@ import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, GripVertical, Info } from 'lu
 import { TargetPrintersSection } from '@/components/dashboard/kitchen-printers/target-printers-section';
 import { CategoryMenuSection } from '@/components/dashboard/menu/menu-sections';
 import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
+import { RestrictedBadge, RestrictedSwitch } from '@/components/dashboard/products/restricted-item';
+import { categoryRestrictionOf, restrictedCategoryIds } from '@/lib/restrictedItems';
+import { categoryPath, parentOptions, wouldCycle } from '@/lib/categoryTree';
 
 const EMPTY: Partial<Category> = { name: '', description: '', color: '#6366f1', catalogLevel: 'global' };
 
@@ -84,6 +87,15 @@ export default function CategoriesPage() {
     queryFn: () => api.get('/vouchers', { params: { page: 1, pageSize: 200 } }).then((r) => r.data),
   });
   const vouchers = vouchersData?.items ?? [];
+  // "מחייב אישור מנהל במכירה": flagged, or beneath a flagged category (lib/restrictedItems.ts).
+  const restrictedCategories = useMemo(() => restrictedCategoryIds(categories), [categories]);
+  // "קטגוריית אב": every category but this one and what is beneath it (the way a loop is made), as a tree.
+  const parentChoices = useMemo(() => parentOptions(categories, editing.id), [categories, editing.id]);
+  /** A category above [c] that restricts it — the form says so; the switch then adds nothing. */
+  const restrictingParent = (c: Partial<Category>) =>
+    c.parentId && restrictedCategories.has(c.parentId)
+      ? categories.find((x) => x.id === c.parentId)?.name ?? ''
+      : null;
 
   // ── Reorder draft ──────────────────────────────────────────────────────────
   // The server already returns categories ordered by sort_order then name, so the
@@ -139,8 +151,8 @@ export default function CategoriesPage() {
 
   const save = useMutation({
     mutationFn: (c: Partial<Category>) => {
-      // Send voucherId explicitly (null when cleared) so the API can unset it.
-      const payload = { ...c, voucherId: c.voucherId ?? null, ticketMode: c.ticketMode ?? 'off' };
+      // Send voucherId and parentId explicitly (null when cleared) so the API can unset them.
+      const payload = { ...c, voucherId: c.voucherId ?? null, parentId: c.parentId ?? null, ticketMode: c.ticketMode ?? 'off' };
       return c.id ? api.put(`/categories/${c.id}`, payload) : api.post('/categories', payload);
     },
     onSuccess: () => {
@@ -301,7 +313,15 @@ export default function CategoriesPage() {
                       style={{ background: c.color ?? '#e5e7eb' }}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {c.name}
+                    {/* A sub-category says whose it is. */}
+                    {c.parentId && categories.some((x) => x.id === c.parentId) ? (
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {t('subOf', { name: categoryPath(categories, c.parentId) })}
+                      </span>
+                    ) : null}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={c.catalogLevel === 'global' ? 'default' : 'secondary'}>
                       {c.catalogLevel}
@@ -319,6 +339,7 @@ export default function CategoriesPage() {
                       <Badge variant={c.isActive ? 'outline' : 'destructive'}>
                         {c.isActive ? tc('active') : tc('inactive')}
                       </Badge>
+                      <RestrictedBadge state={categoryRestrictionOf(c, restrictedCategories)} />
                       {/* Switched off from a till for a shop, area or single till. */}
                       {c.isActive && c.inactiveAt && c.inactiveAt.length > 0 ? (
                         <Badge variant="secondary" title={t('inactiveAtHint')}>
@@ -392,6 +413,23 @@ export default function CategoriesPage() {
               </div>
             </div>
             <div className="space-y-1">
+              <Label>{t('parent')}</Label>
+              <Select
+                value={editing.parentId ?? '__none__'}
+                onValueChange={(v) => setEditing((c) => ({ ...c, parentId: !v || v === '__none__' ? null : v }))}
+                items={[{ value: '__none__', label: t('noParent') }, ...parentChoices.map((o) => ({ value: o.id, label: o.label }))]}
+              >
+                <SelectTrigger><SelectValue placeholder={t('noParent')} /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__" label={t('noParent')}>{t('noParent')}</SelectItem>
+                  {parentChoices.map((o) => (
+                    <SelectItem key={o.id} value={o.id} label={o.label}>{o.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t('parentHint')}</p>
+            </div>
+            <div className="space-y-1">
               <Label>{t('voucher')}</Label>
               <Select
                 value={editing.voucherId ?? '__none__'}
@@ -430,6 +468,16 @@ export default function CategoriesPage() {
               </Select>
               <p className="text-xs text-muted-foreground">{tt('hint')}</p>
             </div>
+            {/* "מחייב אישור מנהל במכירה": every product here and beneath — a manager's code at the till, never at a kiosk. */}
+            <RestrictedSwitch
+              checked={editing.requiresManagerApproval ?? false}
+              hint={t('requiresManagerApprovalHint')}
+              inheritedNote={(() => {
+                const parent = restrictingParent(editing);
+                return parent != null ? t('requiresManagerApprovalInherited', { category: parent }) : null;
+              })()}
+              onChange={(c) => setEditing((x) => ({ ...x, requiresManagerApproval: c }))}
+            />
             {/* Kitchen / bar printers of the whole category ("מדפסות בונים"). */}
             {!isNew && editing.id ? <TargetPrintersSection kind="category" id={editing.id} /> : null}
             {/* Modifier groups, note chips and course for the category (docs/SPEC_MENU_MODIFIERS.md §12). */}
@@ -438,7 +486,17 @@ export default function CategoriesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{tc('cancel')}</Button>
-            <Button onClick={() => save.mutate(editing)} disabled={save.isPending}>
+            <Button
+              onClick={() => {
+                // The select never offers a loop; the list may have moved under an open dialog — the cloud checks too.
+                if (editing.id && editing.parentId && wouldCycle(categories, editing.id, editing.parentId)) {
+                  toast.error(t('parentCycle'));
+                  return;
+                }
+                save.mutate(editing);
+              }}
+              disabled={save.isPending}
+            >
               {save.isPending ? tc('saving') : tc('save')}
             </Button>
           </DialogFooter>

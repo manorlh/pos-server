@@ -112,6 +112,15 @@ export interface PProduct {
   price: number;
   /** The real kiosk: the exact price in agorot (`price` is for display). */
   priceAgorot?: number;
+  /**
+   * "תפריטים" (lib/kioskMenus.ts): while a menu is active `priceAgorot` is the menu's, `catalogPriceAgorot` is the
+   * catalog's, `menuId` / `menuName` the menu and `priceSource` where the price came from. A basket line is a copy of
+   * its product, so it remembers them: an open basket keeps its prices when the menu changes under it.
+   */
+  catalogPriceAgorot?: number;
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
   imageUrl: string | null;
   soldOut: boolean;
   description: string | null;
@@ -191,11 +200,13 @@ export interface PMeal {
 
 /** The basket priced by the real kiosk (lib/kioskMoney.ts priceKioskBasket): its promotions and what it costs. */
 export interface CartPricing {
-  /** What the goods cost after the promotions, agorot. */
+  /** What the goods cost after the promotions and the discount vouchers, agorot. */
   totalAgorot: number;
   promotionAgorot: number;
-  /** By line key: its share of the promotions. */
-  lines: Record<string, { promotionAgorot: number; promotionName: string | null }>;
+  /** What discount vouchers ("שוברי הנחה") took off the sale, agorot; absent / 0: none. */
+  voucherAgorot?: number;
+  /** By line key: its share of the promotions (and, when a voucher is on the order, of the vouchers). */
+  lines: Record<string, { promotionAgorot: number; promotionName: string | null; voucherAgorot?: number; promotionYieldedAgorot?: number }>;
   applied: Array<{ name: string; discountAgorot: number }>;
 }
 
@@ -291,6 +302,13 @@ export type Translate = (key: string, values?: Record<string, string | number>) 
 
 export interface PreviewModel {
   cfg: KioskConfig;
+  /**
+   * The kiosk in landscape (lib/displayProfile.ts kioskDisplay; P:/specs/kiosk-landscape-till-mode.md §4): the
+   * screens with a bottom area lay it beside the body (the order and its total next to the lines), and the
+   * centred screens keep a readable width. Absent / false: the screens as today (portrait).
+   */
+  twoColumns?: boolean;
+  contentMaxWidth?: number | null;
   c: ResolvedThemeColors;
   radius: number;
   btnRadius: number;
@@ -856,6 +874,23 @@ export function CountUp({ value, ms, format }: { value: number; ms: number; form
 
 /** The scrolling body of a screen, with an optional sticky bottom area ("כיתוב רץ": `top` over the body, `bottom` above that area). */
 function ScreenBody({ children, footer, m, top, bottom }: { children: ReactNode; footer?: ReactNode; m: PreviewModel; top?: ReactNode; bottom?: ReactNode }) {
+  if (m.twoColumns) {
+    // Landscape (§4.5): the body beside its bottom area — the action within reach at the bottom of the side column.
+    return (
+      <div className="flex h-full flex-col">
+        {top}
+        <div className="mx-auto flex min-h-0 w-full flex-1 gap-4" style={m.contentMaxWidth ? { maxWidth: m.contentMaxWidth } : undefined}>
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto [scrollbar-width:none]">{children}</div>
+          {footer ? (
+            <div className="flex shrink-0 flex-col justify-end p-3" style={{ width: '36%', minWidth: 200 }}>
+              {footer}
+            </div>
+          ) : null}
+        </div>
+        {bottom}
+      </div>
+    );
+  }
   return (
     <div className="flex h-full flex-col">
       {top}
@@ -3233,7 +3268,7 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
 export function SuccessScreen({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const live = m.live?.success;
-  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1);
+  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1, cfg.pickup.labelFormat);
   const messages = messagesFor(cfg, 'success', ['banner', 'notice'], m.nowMs);
   // The real kiosk: the question only while it is still asked; what happened to the receipt after.
   const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;

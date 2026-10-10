@@ -39,6 +39,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.exception_alerts import (
+    CHANNEL_PUSH,
+    CHANNEL_SMS,
     DELIVERED_STATUSES,
     DISPATCH_ALERT,
     DISPATCH_DIGEST,
@@ -53,7 +55,7 @@ from app.models.exception_alerts import (
 )
 from app.services.exception_alerts import messages as M
 from app.services.exception_alerts import sms as SMS
-from app.services.exception_alerts.catalog import kind_spec, label_of, severity_rank
+from app.services.exception_alerts.catalog import OPT_IN_KINDS, kind_spec, label_of, severity_rank
 from app.services.exception_alerts.log import aware, utcnow
 from app.services.exception_alerts.rules import minutes_of
 from app.services.notifications.phone import mask_phone, phone_hash
@@ -111,6 +113,9 @@ def entry_matches(rule: ExceptionAlertRule, entry: ExceptionLogEntry) -> bool:
     kinds = list(rule.kinds or [])
     if kinds and entry.kind not in kinds:
         return False
+    if not kinds and entry.kind in OPT_IN_KINDS:
+        # "Every kind" rules were written before these existed: they never start texting them.
+        return False
     if rule.min_severity and severity_rank(entry.severity) < severity_rank(rule.min_severity):
         return False
     spec = kind_spec(entry.kind)
@@ -136,6 +141,7 @@ def rules_for(db: Session, entry: ExceptionLogEntry) -> List[ExceptionAlertRule]
         .filter(
             ExceptionAlertRule.tenant_id == entry.tenant_id,
             ExceptionAlertRule.company_id.in_(companies),
+            ExceptionAlertRule.channel == CHANNEL_SMS,
             ExceptionAlertRule.enabled.is_(True),
             ExceptionAlertRule.deleted_at.is_(None),
         )
@@ -349,8 +355,6 @@ def process_entry(
         if key not in rules_cache:
             rules_cache[key] = rules_for(db, entry)
         candidates = rules_cache[key]
-    if not candidates:
-        return out
     for candidate in candidates:
         if not entry_matches(candidate, entry):
             continue
@@ -386,6 +390,18 @@ def process_entry(
             db, rule=rule, kind=DISPATCH_ALERT, recipients=recipients, text=text, status=status,
             reason=reason, dedupe_prefix=f"alert:{entry.id}:{rule.id}", now=now, provider=provider, entry=entry,
         ))
+    # "התראות לטלפון": the users' push rules, same holds and dedupe (push.py). Never costs the SMS.
+    from app.services.exception_alerts import push as PUSH
+
+    queued = len(db.info.get(PUSH.PENDING_JOBS, []))
+    try:
+        with db.begin_nested():
+            out.extend(PUSH.process_entry(db, entry, now=now, tzinfo=tzinfo))
+    except Exception:  # noqa: BLE001 - the entry and its SMS stand; the push is logged
+        # Nothing of the rolled-back savepoint is sent.
+        if PUSH.PENDING_JOBS in db.info:
+            del db.info[PUSH.PENDING_JOBS][queued:]
+        logger.exception("push alerts: entry %s failed", entry.id)
     return out
 
 
@@ -439,6 +455,10 @@ def _flush_rule(db: Session, rule_id: Any, now: datetime, provider: SMS.SmsProvi
     )
     if rule is None or not rule.enabled or rule.deleted_at is not None or not rule.digest_enabled:
         return 0
+    if (rule.channel or CHANNEL_SMS) == CHANNEL_PUSH:
+        from app.services.exception_alerts import push as PUSH
+
+        return PUSH.flush_rule(db, rule, now)
     tzinfo = tz_for(db, rule.tenant_id)
     if in_quiet_hours(rule, now.astimezone(tzinfo)) or rate_limited(db, rule, now):
         return 0

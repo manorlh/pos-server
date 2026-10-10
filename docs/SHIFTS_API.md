@@ -498,7 +498,8 @@ Request
     "totalCash": 710.00, "totalCard": 2640.00,
     "totalTips": 20.00, "vatTotal": 510.93,
     "transactionsCount": 41,
-    "cardTipsFromDrawer": 10.00  // optional, see below
+    "cardTipsFromDrawer": 10.00, // optional, see below
+    "cashIn": 30.00, "cashOut": 20.00, "deposits": 150.00  // optional, see below
   },
   "closeRequestId": "…",         // the requestId of a remote close-shift instruction (a Z run's or a standalone one, §2.14), else null/absent
 
@@ -519,6 +520,15 @@ totalCashTips + cash movements − cardTipsFromDrawer`. Stored with `till` and *
 (§3.3). The cloud's drawer maths (§3.6) read this frozen amount, never the live parameter, so
 kiosks and older shifts are unaffected. Tips are no revenue: sales, VAT, the fiscal Z figures,
 cash / card takings and the tips totals do not change — only the drawer does.
+
+**`till.cashIn`, `till.cashOut`, `till.deposits`** (the drawer spec §7): what the shift's Cash In,
+Cash Out and safe deposits ("הפקדה / ריקון חלקי") came to, in shekels, **only the types that moved
+anything** (a shift with none closes as it always did; never sent by kiosks). The till's own
+`expectedCash` already has them (`+ cashIn − cashOut − deposits`). Sent whatever the parameter
+says, so a Z produced later can use them: the cloud's Z takes them into its expected cash only when
+"Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (`cashDrawer.zExpectedCashMovements`, §3.6) is on **when
+that Z is produced** — never the parameter at the close. Stored with `till`; **not** compared (§3.3).
+A close without them (an older till) moved none, as far as a Z can tell.
 
 Optional header `X-Elevation-Token`: a grant with scope `shift:close` (a cashier may close
 alone, so this is never demanded). When presented it is checked strictly (401
@@ -1110,6 +1120,7 @@ it (`409 z_run_in_progress`).
   "betweenShiftAdjustments",  // cash put into / taken out of the drawer between its shifts (Zs built from now on)
   "cardTipsFromDrawer",       // Σ of its closes' till.cardTipsFromDrawer (§1.3) — only when any close carried it
   "drawerCash",               // "מזומן במגירה" = cashSalesNet + cash tips − cardTipsFromDrawer — only with it
+  "cashMovements",            // {cashIn, cashOut, deposits}: Σ of its closes' till.cashIn / cashOut / deposits that are IN expectedCash — only when "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" was on for this till when the Z was produced; absent: off
   "reconstructedShiftCount", "unattendedShiftCount",
   "transmission": {…}  // card transmission, informational (§4.11; Zs built from now on)
 }
@@ -1134,6 +1145,24 @@ expected if it was not counted:
 - `drawerCash` ("מזומן במגירה") — `cashSalesNet + cash tips − cardTipsFromDrawer`, with it. The
   owner's example: 50 cash sales and a 50 card sale with a 10 card tip → card tips from the
   drawer 10, drawer cash 40, expected (no float) 40;
+- `cashMovements` — **only when** the till parameter "Z — מזומן צפוי כולל הפקדות ותנועות מזומן"
+  (`cashDrawer.zExpectedCashMovements`, off by default, company → shop → area → till) was on for the
+  till at the moment the Z was produced; the block's presence *is* the value used, and absent is off —
+  a Z without it is byte for byte what it was before the parameter. `{cashIn, cashOut, deposits}` =
+  Σ of the closes' `till.cashIn` / `cashOut` / `deposits` (§1.3; none carried is zero). With it every
+  shift's expected also takes its movements — expected_i = float_i + cash_i + tips_i − out_i + in_i −
+  ex_i − dep_i — so `expectedCash = openingCash + cashSalesNet + totalCashTips − cardTipsFromDrawer +
+  betweenShiftAdjustments + cashIn − cashOut − deposits`, an uncounted shift closes at *that* expected,
+  and the same telescoping holds (the over/short is still exactly `countedCash − expectedCash`). The
+  paper's drawer block prints the three lines above the expected cash, each only when it moved
+  something. A management figure only: sales, refunds, discounts, VAT, tips, payments and document
+  ranges never change, and the parameter never changes whether a Z may be produced ("no Z on 0").
+  A kiosk never applies it. A Z already produced is never recomputed: a reprint, the detail, the
+  exports and the day reports read what the Z froze, and the value applies to the Zs produced after
+  it is turned on. A Z a till made itself (closed with no connection, or its part of a LAN shop Z) is
+  stored as printed: the cloud builds it with the value its section declares (the `cashMovements`
+  block, or none) and compares the three figures like the others. Shared golden:
+  `server/tests/fixtures/z_expected_cash_golden.json` (also in pos-android);
 - `countedCash` — the **last** shift's count; null if that shift was not counted;
 - `overShort` — the sum of every shift's own over/short (its count − its server expected);
   null if **any** shift was not counted — a partial count presented as the drawer's would
@@ -1151,7 +1180,9 @@ shifts), taken +5 and counted 154: between shifts −42, expected 180 + 15 − 4
 +1 (= +2 − 1 = 154 − 153). A shift left uncounted closes at its expected, and withholds
 over/short. The Z's `openingCash` / `expectedCash` / `actualCash` /
 `discrepancy` / `betweenShiftAdjustments` are the sums of these over its tills (tills have a
-drawer each), null if null for any till. Its `cardTipsFromDrawer` / `drawerCash` are frozen on
+drawer each), null if null for any till. Its `cashMovements` is frozen on its header the same way —
+Σ over the tills it applied to (tills of one Z may be on both sides: it is a till parameter), absent
+when it applied to none — and is in the detail's `cashMovements`. Its `cardTipsFromDrawer` / `drawerCash` are frozen on
 its header at build time (Σ over the tills; a till without the figure adds its cash sales + cash
 tips to `drawerCash`), and read from the sections for a Z stored as a till printed it; null
 when no included close carried the figure. The print document shows them as the last two rows

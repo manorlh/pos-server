@@ -5,10 +5,15 @@
  * ("סגירת משמרת" in the shop Z, "הפקת Z" with its own — kiosk-z-actions.tsx), its name /
  * on-off / controlling tills, today's orders and the recent commands. Bon states are shown
  * as reported: "sent" is never shown as "printed".
+ *
+ * Commands are fire-and-forget ("פקודות שנשלחו", lib/deviceCommandsStore.ts): the POST answers
+ * at once, the answer is followed in the background (the tray, the kiosk's chip), and nothing
+ * here waits for the kiosk — only the clicked button is busy during its own HTTP call, so
+ * more commands can be sent meanwhile.
  */
 
-import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useMutationState, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
 import { Loader2, Settings2, Undo2 } from 'lucide-react';
@@ -20,11 +25,15 @@ import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
+import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
+import { phaseOfKiosk } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { cn } from '@/lib/utils';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime, formatTime } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { agorotToShekels, isoDayInZone, kioskConnection } from '@/lib/kioskConfig';
+import { pickupDateText } from '@/lib/kioskPickupSearch';
 import {
   deleteKiosk,
   fetchKioskCommands,
@@ -32,6 +41,7 @@ import {
   sendKioskCommand,
   updateKiosk,
   type KioskBonStatus,
+  type KioskCommandAction,
   type KioskCommandIn,
   type KioskCommandOut,
   type KioskSummary,
@@ -42,6 +52,7 @@ import { controllerOptions } from './convert-dialog';
 import { KioskLockControls, KioskScheduleControls } from './kiosk-lock-schedule';
 import { KioskOpsNotes, KioskTerminalIdentityNote } from './kiosk-ops-notes';
 import { KioskZActions, KioskZBadge, KioskZModeSwitch } from './kiosk-z-actions';
+import { KioskWorkModeCard } from './kiosk-work-mode';
 
 const BON_TONE: Record<KioskBonStatus, string> = {
   printed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
@@ -51,9 +62,59 @@ const BON_TONE: Record<KioskBonStatus, string> = {
   none: 'border text-muted-foreground',
 };
 
+/** [value] once it has stayed the same for [ms] (the order search asks the server after the typing stops). */
+function useDebouncedText(value: string, ms = 350): string {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
 function timeIn(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return '—';
   return formatTime(iso, { timeZone });
+}
+
+/** A command on its way: what was sent, and to which kiosk (fixed at the click). */
+interface KioskSend {
+  body: KioskCommandIn;
+  target: { machineId: string; name: string };
+}
+
+const KIOSK_COMMAND_KEY = ['kiosk-command'] as const;
+
+/** "פקודות שנשלחו" names for the actions the shared label table does not know. */
+const TRACK_LABEL: Partial<Record<KioskCommandAction, string>> = { schedule: 'פתיחה אוטומטית' };
+
+/**
+ * Follow a command the server took — applied at once ("בוצע"), or requested from the kiosk (a
+ * close / Z it runs; the tray reads its outcome in the background). `machineId` is the kiosk's
+ * machine id, the one in /kiosks/{id}/commands that the tray reads.
+ */
+function followKioskCommand(res: KioskCommandOut, { body, target }: KioskSend) {
+  const action = res.action ?? body.action;
+  const p = phaseOfKiosk(res.status, res.detail);
+  trackCommand({
+    kind: 'kiosk',
+    id: res.id,
+    action,
+    label: TRACK_LABEL[action],
+    machineId: target.machineId,
+    machineName: target.name,
+    phase: p.phase,
+    detail: p.detail,
+  });
+}
+
+/** The actions of this kiosk whose POST is still on its way — the HTTP call only, never the kiosk. */
+function useSendingActions(machineId: string): KioskCommandAction[] {
+  const sends = useMutationState({
+    filters: { mutationKey: KIOSK_COMMAND_KEY, status: 'pending' },
+    select: (m) => m.state.variables as KioskSend | undefined,
+  });
+  return sends.filter((s): s is KioskSend => !!s && s.target.machineId === machineId).map((s) => s.body.action);
 }
 
 function DetailsForm({
@@ -163,9 +224,13 @@ export function KioskDetailDialog({
 
   const machineId = kiosk?.machineId ?? '';
   const today = isoDayInZone(new Date(nowMs), timeZone);
+  // "חיפוש הזמנה": a pickup number ("17", "A17", "A-17") or a document number, over 30 days.
+  const [orderQuery, setOrderQuery] = useState('');
+  const searchOrders = useDebouncedText(orderQuery.trim());
+  const searching = searchOrders.length > 0;
   const orders = useQuery({
-    queryKey: ['kiosk-orders', machineId, today],
-    queryFn: () => fetchKioskOrders(machineId, today),
+    queryKey: ['kiosk-orders', machineId, today, searchOrders],
+    queryFn: () => fetchKioskOrders(machineId, today, searchOrders || undefined),
     enabled: open && !!machineId,
     refetchInterval: 20_000,
   });
@@ -182,19 +247,24 @@ export function KioskDetailDialog({
     [kiosk, shops, machines, kioskIds],
   );
 
+  // Fire-and-forget: each click is its own mutation (several may be on their way at once); the
+  // answer is tracked in "פקודות שנשלחו" (which pops its own small notice), a refusal or a failed
+  // call is an error toast. Nothing waits for the kiosk.
   const command = useMutation({
-    mutationFn: (body: KioskCommandIn) => sendKioskCommand(machineId, body),
-    onSuccess: (res: KioskCommandOut) => {
+    mutationKey: KIOSK_COMMAND_KEY,
+    mutationFn: ({ body, target }: KioskSend) => sendKioskCommand(target.machineId, body),
+    onSuccess: (res: KioskCommandOut, sent) => {
       if (res.status === 'refused') toast.error(res.detail || tcmd('status.refused'));
-      else toast.success(res.status === 'applied' ? t('applied') : t('sent'));
+      else followKioskCommand(res, sent);
       void qc.invalidateQueries({ queryKey: ['kiosks'] });
-      void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
+      void qc.invalidateQueries({ queryKey: ['kiosk-commands', sent.target.machineId] });
     },
-    onError: (err) => {
+    onError: (err, sent) => {
       toast.error(zErrors.forError(err));
-      void qc.invalidateQueries({ queryKey: ['kiosk-commands', machineId] });
+      void qc.invalidateQueries({ queryKey: ['kiosk-commands', sent.target.machineId] });
     },
   });
+  const sending = useSendingActions(machineId);
 
   const revert = useMutation({
     mutationFn: () => deleteKiosk(machineId),
@@ -209,7 +279,9 @@ export function KioskDetailDialog({
 
   if (!kiosk) return null;
   const connection = kioskConnection(kiosk, nowMs);
-  const busy = command.isPending;
+  const send = (body: KioskCommandIn) => command.mutate({ body, target: { machineId: kiosk.machineId, name: kiosk.name } });
+  /** Only the button whose own POST is on its way is busy; every other action stays available. */
+  const busy = (...actions: KioskCommandAction[]) => actions.some((a) => sending.includes(a));
   const list = orders.data ?? [];
 
   return (
@@ -224,9 +296,11 @@ export function KioskDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <ConnectionBadge k={kiosk} nowMs={nowMs} />
           <StateBadges k={kiosk} />
+          {/* The last command sent to this kiosk and where it stands ("פקודות שנשלחו"). */}
+          <DeviceCommandChip machineId={kiosk.machineId} />
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -254,33 +328,46 @@ export function KioskDetailDialog({
           {connection !== 'online' && canWrite ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('offlineNote')}</p> : null}
 
           {/* "נעילה למכירה" and "פתיחה אוטומטית" (docs/SPEC_KIOSK.md §15) */}
-          <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
-          <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+          <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy('pause', 'resume')} send={send} />
+          <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy('schedule')} send={send} />
+
+          {/* "מצב עבודה: קיוסק / קופה" — only where the owner allowed it (kiosk-work-mode.tsx). */}
+          <KioskWorkModeCard kiosk={kiosk} canWrite={canWrite} busy={busy('enter_till', 'return_kiosk')} send={send} />
 
           {/* The shift / Z by the kiosk's Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its
               own, never both — and its own "Z עצמאי" switch (kiosk-z-actions.tsx). */}
           <div className="grid gap-3 sm:grid-cols-2">
-            <KioskZActions kiosk={kiosk} canWrite={canWrite} busy={busy} send={(body) => command.mutate(body)} />
+            <KioskZActions kiosk={kiosk} canWrite={canWrite} busy={busy('close_shift', 'till_z')} send={send} />
             <KioskZModeSwitch kiosk={kiosk} />
           </div>
         </section>
 
         <DetailsForm key={`${kiosk.machineId}:${kiosk.name}:${kiosk.enabled}:${(kiosk.controllerMachineIds ?? []).join(',')}`} kiosk={kiosk} options={options} canWrite={canWrite} />
 
-        {/* Today's orders */}
+        {/* Today's orders — or, searching, the orders of that number over the last 30 days */}
         <section className="space-y-2">
-          <h3 className="font-semibold">{t('orders')}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">{searching ? to('searchTitle') : t('orders')}</h3>
+            <Input
+              value={orderQuery}
+              onChange={(e) => setOrderQuery(e.target.value)}
+              placeholder={to('searchPlaceholder')}
+              aria-label={to('searchPlaceholder')}
+              className="h-8 w-full sm:w-64"
+            />
+          </div>
           {connection !== 'online' ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('ordersStale')}</p> : null}
           {orders.isLoading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : list.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('ordersEmpty')}</p>
+            <p className="text-sm text-muted-foreground">{searching ? to('searchEmpty') : t('ordersEmpty')}</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>{to('columns.pickup')}</TableHead>
+                    {searching ? <TableHead>{to('columns.date')}</TableHead> : null}
                     <TableHead>{to('columns.time')}</TableHead>
                     <TableHead>{to('columns.service')}</TableHead>
                     <TableHead>{to('columns.total')}</TableHead>
@@ -292,9 +379,18 @@ export function KioskDetailDialog({
                 <TableBody>
                   {list.map((o) => (
                     <TableRow key={o.id}>
-                      <TableCell className="font-bold tabular-nums" dir="ltr">
-                        {o.pickupLabel}
+                      <TableCell className="font-bold tabular-nums">
+                        <bdi dir="ltr">{o.pickupLabel}</bdi>
+                        {searching && o.matchedBy?.length ? (
+                          <span className="block text-[11px] font-normal text-muted-foreground">
+                            {o.matchedBy.map((m) => to(`matchedBy.${m}`)).join(' · ')}
+                          </span>
+                        ) : null}
+                        {searching && o.transactionNumber ? (
+                          <span className="block text-[11px] font-normal text-muted-foreground" dir="ltr">{String(o.transactionNumber)}</span>
+                        ) : null}
                       </TableCell>
+                      {searching ? <TableCell className="tabular-nums">{pickupDateText(o.businessDate)}</TableCell> : null}
                       <TableCell className="tabular-nums">{timeIn(o.paidAt, timeZone)}</TableCell>
                       <TableCell className="text-sm">
                         {o.serviceType ? to(`service.${o.serviceType}`) : <span className="text-muted-foreground">—</span>}

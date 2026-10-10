@@ -78,6 +78,17 @@ class EffectiveAccess:
 
 UNRESTRICTED = EffectiveAccess(restricted=False)
 
+#: "עמדת מפיק" (role PRODUCER_VIEW): no section at all — only the producer routes and a few
+#: about themselves (`PRODUCER_SELF_PATHS`), checked first in `enforce_route`.
+PRODUCER_ACCESS = EffectiveAccess(restricted=True, sections={}, has_profile=False, full_access=False, template="producer")
+PRODUCER_ONLY = "producer_only"
+#: What a producer may read about themselves (GET only): who they are and their organization.
+PRODUCER_SELF_PATHS = frozenset({"/users/me", "/auth/me", "/tenants/mine", "/dashboard-access/me"})
+
+
+def is_producer(user: Any) -> bool:
+    return getattr(user, "role", None) == getattr(UserRole, "PRODUCER_VIEW", None)
+
 #: A user with no profile row: "מנהל ארגון"'s sections, the role's own org scope.
 DEFAULT_ACCESS = EffectiveAccess(
     restricted=True,
@@ -187,6 +198,8 @@ def effective_access(db: Session, user: Any) -> EffectiveAccess:
     """What `user` may open, memoised for the session (one request)."""
     if user is None or getattr(user, "role", None) == UserRole.SUPER_ADMIN:
         return UNRESTRICTED
+    if is_producer(user):
+        return PRODUCER_ACCESS
     user_id = getattr(user, "id", None)
     if user_id is None:
         return UNRESTRICTED
@@ -384,6 +397,10 @@ def check_rule(access: EffectiveAccess, rule: DS.RouteRule, method: str) -> Opti
     """None when allowed, else the 403 to raise."""
     if not access.restricted:
         return None
+    if rule.kind == "producer":
+        # The producer's routes are a producer's (enforce_route lets them through for one);
+        # a restricted dashboard user has no business there.
+        return _refusal(None, rule.needed_level(method))
     if rule.kind in ("self", "reference"):
         return None
     if rule.kind == "any_edit":
@@ -399,8 +416,36 @@ def check_rule(access: EffectiveAccess, rule: DS.RouteRule, method: str) -> Opti
     return _refusal(None, rule.needed_level(method))
 
 
+def _producer_refusal() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": PRODUCER_ONLY, "message": "חשבון מפיק רואה רק את האירועים שנפתחו לו."},
+    )
+
+
+def enforce_producer(request, user: Any) -> None:
+    """
+    "עמדת מפיק": a PRODUCER_VIEW user reaches the producer routes and the few GETs about
+    themselves — nothing else in the business, whatever the route's own checks would say.
+    """
+    scope = getattr(request, "scope", None) if request is not None else None
+    route = scope.get("route") if isinstance(scope, dict) else None
+    if route is None:
+        raise _producer_refusal()
+    method = (getattr(request, "method", "GET") or "GET").upper()
+    rule = classify(route, method)
+    if rule.kind == "producer":
+        return
+    if method in ("GET", "HEAD") and _api_path(getattr(route, "path", "") or "") in PRODUCER_SELF_PATHS:
+        return
+    raise _producer_refusal()
+
+
 def enforce_route(request, db: Session, user: Any) -> None:
     """Refuse the request when `user` may not use this route (403 `section_forbidden`)."""
+    if is_producer(user):
+        enforce_producer(request, user)
+        return
     if request is None or user is None or getattr(user, "role", None) == UserRole.SUPER_ADMIN:
         return
     scope = getattr(request, "scope", None)
@@ -436,6 +481,9 @@ def profile_out(profile: Optional[DashboardAccessProfile]) -> dict:
         "orgWide": access.org_wide,
         "companyIds": [str(c) for c in access.company_ids],
         "shopIds": [str(s) for s in access.shop_ids],
+        # "מנהל נקודת מכירה" (app/services/stock_scope.py).
+        "areaIds": [str(a) for a in _uuids(getattr(profile, "area_ids", None))] if profile is not None else [],
+        "machineIds": [str(m) for m in _uuids(getattr(profile, "machine_ids", None))] if profile is not None else [],
         "templateId": str(profile.template_id) if profile is not None and profile.template_id else None,
         "builtinTemplate": profile.builtin_template if profile is not None else DS.ORG_MANAGER_TEMPLATE,
         "updatedAt": profile.updated_at.isoformat() if profile is not None and profile.updated_at else None,
@@ -493,6 +541,8 @@ def save_profile(
     shop_ids: Iterable,
     template_id=None,
     builtin_template: Optional[str] = None,
+    area_ids: Optional[Iterable] = None,
+    machine_ids: Optional[Iterable] = None,
 ) -> DashboardAccessProfile:
     """Create or replace `user`'s profile, recording the change. Validation is the caller's."""
     profile = db.get(DashboardAccessProfile, user.id)
@@ -505,6 +555,10 @@ def save_profile(
     profile.org_wide = bool(org_wide)
     profile.company_ids = [str(c) for c in _uuids(company_ids)] or None
     profile.shop_ids = [str(s) for s in _uuids(shop_ids)] or None
+    if area_ids is not None:
+        profile.area_ids = [str(a) for a in _uuids(area_ids)] or None
+    if machine_ids is not None:
+        profile.machine_ids = [str(m) for m in _uuids(machine_ids)] or None
     profile.template_id = template_id
     profile.builtin_template = builtin_template
     profile.updated_by_user_id = getattr(actor, "id", None)
@@ -540,6 +594,8 @@ def builtin_templates_out() -> List[dict]:
             "fullAccess": spec["fullAccess"],
         }
         for key, spec in DS.BUILTIN_TEMPLATES.items()
+        # Not offered yet ("מנהל אזור" until dashboard users can be scoped to a point of sale).
+        if not spec.get("hidden")
     ]
 
 

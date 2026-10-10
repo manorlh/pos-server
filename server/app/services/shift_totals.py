@@ -26,12 +26,15 @@ The rules (docs/SHIFTS_API.md §3.2):
 from __future__ import annotations
 
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional
 
+from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.models.prepaid_voucher_extras import PrepaidVoucherTestBatch
 from app.models.shift import Shift
 from app.models.transaction import Transaction
 from app.models.transaction_payment import TransactionPayment
@@ -43,10 +46,118 @@ from app.services.tenders import (
     UNKNOWN_PAYMENT_METHOD,
     expected_tender_total,
     is_refund_document,
+    no_money_original_of,
 )
 
 ZERO = Decimal("0")
 CENT = Decimal("0.01")
+
+
+#: Engines known to hold `prepaid_voucher_test_batches` — created through the metadata (a fresh
+#: database), or found once by the controls' check: then the condition below costs no query, so a
+#: report's query count never depends on whether it was the first (the overview's cost tests).
+_TEST_BATCHES_TABLE: "weakref.WeakKeyDictionary[object, bool]" = weakref.WeakKeyDictionary()
+
+
+@event.listens_for(PrepaidVoucherTestBatch.__table__, "after_create")
+def _test_batches_created(_table, connection, **_kw) -> None:  # pragma: no cover - wiring
+    try:
+        _TEST_BATCHES_TABLE[connection.engine] = True
+    except TypeError:
+        pass
+
+
+def _test_batches_ready(db) -> bool:
+    """Whether [db] has the staff test batches' table (an API ahead of its migration has not)."""
+    try:
+        bind = db.get_bind()
+    except Exception:  # noqa: BLE001
+        return False
+    engine = getattr(bind, "engine", bind)
+    try:
+        if _TEST_BATCHES_TABLE.get(engine):
+            return True
+    except TypeError:
+        pass
+    from app.services.prepaid_voucher_controls import tables_ready
+
+    if not tables_ready(db):
+        return False
+    try:
+        _TEST_BATCHES_TABLE[engine] = True
+    except TypeError:
+        pass
+    return True
+
+
+def staff_test_deduction(db):
+    """
+    The condition "this deduction row (`transaction_voucher_discounts`) is a staff test batch's"
+    ("שוברי בדיקה", the helper's §18.5), or None when there is nothing to test against (no session,
+    or the controls' tables not migrated yet — then no batch is a test batch).
+
+    A test voucher's sale reaches the real documents only as an anomaly (flagged `test_real`):
+    no production pays for it and no settlement counts it, so its deduction is no production
+    voucher's — the reports and the Z count it as an ordinary discount instead (the net is the same).
+    """
+    if db is None or not _test_batches_ready(db):
+        return None
+    from sqlalchemy import exists as _exists
+
+    from app.models.prepaid_voucher import TransactionVoucherDiscount as _TVD
+
+    return _exists().where(PrepaidVoucherTestBatch.batch_id == _TVD.batch_id)
+
+
+def production_deduction_conditions(db) -> list:
+    """The rows a "production vouchers' deduction" figure sums: the deduction kind, not a test batch's."""
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount as _TVD
+
+    conds = [_TVD.kind == PRODUCTION_VOUCHER_DEDUCTION]
+    test = staff_test_deduction(db)
+    if test is not None:
+        conds.append(~test)
+    return conds
+
+
+def production_deduction_expr(db=None):
+    """
+    Per document (correlated to `Transaction`): Σ its production vouchers' deductions (₪, ≥ 0) — a
+    test batch's left out when [db] is given (`staff_test_deduction`: then a discount).
+    """
+    from sqlalchemy import func as _f
+    from sqlalchemy import select as _select
+
+    from app.models.prepaid_voucher import TransactionVoucherDiscount as _TVD
+    from app.models.transaction import Transaction as _Tx
+
+    return _f.coalesce(
+        _select(_f.sum(_f.abs(_TVD.discount_amount)))
+        .where(_TVD.transaction_id == _Tx.id, *production_deduction_conditions(db))
+        .correlate(_Tx)
+        .scalar_subquery(),
+        0,
+    )
+
+
+def production_deductions_of(db, transaction_ids) -> dict:
+    """
+    {transaction id: Σ its production vouchers' deductions} — out of every "discount" figure (review
+    09.10). A test batch's is not one (`staff_test_deduction`): it stays a discount.
+    """
+    from sqlalchemy import func as _f
+
+    from app.models.prepaid_voucher import TransactionVoucherDiscount as _TVD
+
+    ids = [t for t in transaction_ids if t is not None]
+    if not ids:
+        return {}
+    return {
+        tid: _dec(amount)
+        for tid, amount in db.query(_TVD.transaction_id, _f.coalesce(_f.sum(_f.abs(_TVD.discount_amount)), 0))
+        .filter(_TVD.transaction_id.in_(ids), *production_deduction_conditions(db))
+        .group_by(_TVD.transaction_id)
+    }
 
 
 def _dec(value) -> Decimal:
@@ -82,6 +193,18 @@ class DocumentTotals:
     #: off the sale lines: a discount like the promotions, inside `discounts_total`,
     #: reported beside it — never a tender.
     voucher_discounts_total: Decimal = ZERO
+    #: Σ what production vouchers booked as a document deduction took off the sales ("קיזוז
+    #: שוברי הפקה", `transaction_voucher_discounts.kind` production_voucher). As on the till's
+    #: X: in neither the gross nor `discounts_total` (the net is the same) — its own section.
+    #: The uniform file still files the documents' whole discount, as issued.
+    production_voucher_deductions_total: Decimal = ZERO
+    #: Σ what staff test vouchers ("שוברי בדיקה") booked as a deduction took off sales that reached
+    #: the real documents anyway (flagged `test_real`): no production pays for them and no settlement
+    #: counts them, so they are out of `production_voucher_deductions_total` and inside
+    #: `discounts_total` (and so the gross) — an ordinary discount. Shown beside the discounts.
+    test_voucher_deductions_total: Decimal = ZERO
+    #: Documents made only of production vouchers' ₪0 memo lines (`zero` mode): out of the counts.
+    voucher_memo_documents: int = 0
     payment_breakdown: Dict[str, Decimal] = field(default_factory=dict)
     total_tips: Decimal = ZERO
     total_cash_tips: Decimal = ZERO
@@ -147,7 +270,10 @@ class DocumentTotals:
 
     @property
     def gross_sales(self) -> Decimal:
-        """Σ totalAmount of the sales, before document discounts (the till's X figure)."""
+        """
+        Σ totalAmount of the sales before their discounts, less production vouchers' deductions
+        (the till's X figure: a voucher-covered line is no sale of this till's).
+        """
         return self.total_sales + self.discounts_total
 
     @property
@@ -163,7 +289,8 @@ class DocumentTotals:
     _COUNTS = ("transactions_count", "sales_count", "credit_notes_count", "non_sale_count", "vat_missing_count")
     _MONEY = (
         "total_sales", "total_refunds", "discounts_total", "line_discounts_total",
-        "promotion_discounts_total", "voucher_discounts_total", "total_tips", "total_cash_tips",
+        "promotion_discounts_total", "voucher_discounts_total", "production_voucher_deductions_total",
+        "test_voucher_deductions_total", "total_tips", "total_cash_tips",
         "total_card_tips", "vat_declared",
     )
 
@@ -319,10 +446,14 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
     # happened moved no money. Against an original of the same shift it cancels that sale's
     # own leg (which moved none either), so it counts in its tender as usual; otherwise it is
     # a bucket of its own — never cash, card or the drawer. The till's X does the same.
+    #
+    # "הפק חשבונית על שם לקוח" (docs/SPEC_CUSTOMER_INVOICE.md): the new invoice of a re-issue
+    # mirrors its original's legs, no money moving, like the credit beside it. It follows the
+    # same rule against the original it re-issues, so the pair nets to nothing in every tender.
     no_money_originals = {
-        d.refund_of_transaction_id
+        no_money_original_of(d)
         for d in counted
-        if d.refund_of_transaction_id is not None
+        if no_money_original_of(d) is not None
         and any(getattr(l, "no_money_movement", False) for l in legs_by_doc.get(d.id, ()))
     }
     original_shift_of: Dict[uuid.UUID, Optional[uuid.UUID]] = {}
@@ -370,7 +501,46 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
             .scalar()
         )
         totals.voucher_discounts_total = _dec(voucher_sum)
+        from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION, TransactionVoucherDiscount
+
+        # A staff test batch's deduction is no production voucher's: left out here, so it stays
+        # in the discounts (`staff_test_deduction`).
+        real = production_deduction_conditions(db)
+        deduction_sum = (
+            db.query(_func.coalesce(_func.sum(_func.abs(TransactionVoucherDiscount.discount_amount)), 0))
+            .filter(TransactionVoucherDiscount.transaction_id.in_(sale_ids), *real)
+            .scalar()
+        )
+        totals.production_voucher_deductions_total = _dec(deduction_sum)
+        test = staff_test_deduction(db)
+        if test is not None:
+            totals.test_voucher_deductions_total = _dec(
+                db.query(_func.coalesce(_func.sum(_func.abs(TransactionVoucherDiscount.discount_amount)), 0))
+                .filter(
+                    TransactionVoucherDiscount.transaction_id.in_(sale_ids),
+                    TransactionVoucherDiscount.kind == PRODUCTION_VOUCHER_DEDUCTION,
+                    test,
+                )
+                .scalar()
+            )
+        deduction_of = {
+            tid: _dec(amount)
+            for tid, amount in db.query(
+                TransactionVoucherDiscount.transaction_id,
+                _func.coalesce(_func.sum(_func.abs(TransactionVoucherDiscount.discount_amount)), 0),
+            )
+            .filter(TransactionVoucherDiscount.transaction_id.in_(sale_ids), *real)
+            .group_by(TransactionVoucherDiscount.transaction_id)
+        }
+    else:
+        deduction_of = {}
     for doc in counted:
+        if getattr(doc, "voucher_memo", False) and not _dec(getattr(doc, "total_amount", 0)) and not _dec(
+            getattr(doc, "tip_amount", 0)
+        ):
+            # ₪0 memo lines only (`zero` mode): the till counts no document, no sale (§4.3).
+            totals.voucher_memo_documents += 1
+            continue
         totals.transactions_count += 1
         refund = is_refund_document(
             document_type=doc.document_type,
@@ -389,18 +559,21 @@ def _totals_of(db: Session, documents: List[Transaction]) -> DocumentTotals:
         else:
             totals.sales_count += 1
             totals.total_sales += collected
-            totals.discounts_total += _dec(doc.document_discount)
+            # Without a production voucher's deduction — as the till's X ("שוברי הפקה", apart).
+            totals.discounts_total += _dec(doc.document_discount) - deduction_of.get(doc.id, ZERO)
 
         legs = legs_by_doc.get(doc.id)
         if legs:
             for leg in legs:
                 method = (leg.method or "").strip().lower() or UNKNOWN_PAYMENT_METHOD
+                original = no_money_original_of(doc)
                 if (
-                    refund
-                    and getattr(leg, "no_money_movement", False)
+                    getattr(leg, "no_money_movement", False)
+                    # A credit always; a sale only when it re-issues an original.
+                    and (refund or original is not None)
                     and (
-                        doc.refund_of_transaction_id not in original_shift_of
-                        or original_shift_of[doc.refund_of_transaction_id] != doc.shift_id
+                        original not in original_shift_of
+                        or original_shift_of[original] != doc.shift_id
                     )
                 ):
                     method = NO_MONEY_BUCKET
@@ -488,10 +661,12 @@ def main_range(ranges: List[dict]) -> Optional[dict]:
 #: declares); comparing the till's gross with it would flag every discounted shift.
 #: `totalDiscounts` / `discountsTotal`, when the till sends one, is compared with the
 #: discounts. Everything else is the same quantity on both sides (docs/SHIFTS_API.md §3.2).
+#: A staff test voucher's deduction is a discount here and a production voucher's on the till
+#: (which books every voucher alike): taken back out of the gross and the discounts first.
 COMPARED_TILL_KEYS = {
-    "totalSales": lambda t: t.gross_sales,
-    "totalDiscounts": lambda t: t.discounts_total,
-    "discountsTotal": lambda t: t.discounts_total,
+    "totalSales": lambda t: t.gross_sales - _dec(t.test_voucher_deductions_total),
+    "totalDiscounts": lambda t: t.discounts_total - _dec(t.test_voucher_deductions_total),
+    "discountsTotal": lambda t: t.discounts_total - _dec(t.test_voucher_deductions_total),
     "totalRefunds": lambda t: t.total_refunds,
     "totalCash": lambda t: t.total_cash,
     "totalCard": lambda t: t.total_card,

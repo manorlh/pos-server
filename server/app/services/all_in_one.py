@@ -85,8 +85,10 @@ def _money_row(bucket: Dict[str, float]) -> Dict[str, Any]:
         "documents": sales + refunds,
         "salesCount": sales,
         "refundsCount": refunds,
-        "gross": _r(bucket["gross"]),
-        "discounts": _r(bucket["discounts"]),
+        # Gross and discounts without production vouchers' deductions (as the till's X), those apart.
+        "gross": _r(bucket["gross"] - bucket["voucher_deductions"]),
+        "discounts": _r(bucket["discounts"] - bucket["voucher_deductions"]),
+        "productionVoucherDeductions": _r(bucket["voucher_deductions"]),
         "refunds": _r(bucket["refunds"]),
         "net": _r(net),
         "averageBasket": _r((bucket["gross"] - bucket["discounts"]) / sales) if sales else 0.0,
@@ -94,6 +96,7 @@ def _money_row(bucket: Dict[str, float]) -> Dict[str, Any]:
         "card": _r(bucket["card_net"]),
         "other": _r(bucket["other_net"]),
         "exchange": _r(bucket["exchange_net"]),
+        "productionVoucher": _r(bucket["production_voucher_net"]),
         "tips": _r(bucket["tips"]),
     }
 
@@ -107,8 +110,8 @@ def _sum_rows(rows: Iterable[Dict[str, Any]], fields: Sequence[str]) -> Dict[str
 
 
 MONEY_FIELDS = (
-    "documents", "salesCount", "refundsCount", "gross", "discounts", "refunds", "net",
-    "cash", "card", "other", "exchange", "tips",
+    "documents", "salesCount", "refundsCount", "gross", "discounts", "productionVoucherDeductions", "refunds", "net",
+    "cash", "card", "other", "exchange", "productionVoucher", "tips",
 )
 
 
@@ -373,7 +376,9 @@ def discounts_section(tx_q, till_rows: Sequence[Dict[str, Any]], employee_rows: 
     )
     document_total = sum(r["discounts"] for r in till_rows)
     return {
+        # Without production vouchers' deductions — those are "שוברי הפקה", not discounts.
         "documentDiscounts": round(document_total, 2),
+        "productionVoucherDeductions": round(sum(r.get("productionVoucherDeductions", 0.0) for r in till_rows), 2),
         "lineDiscounts": _r(line),
         "promotionDiscounts": _r(promo),
         "byKind": sorted(
@@ -592,7 +597,12 @@ def build_all_in_one(
     *,
     shop_ids: Sequence[uuid.UUID] = (),
     machine_ids: Sequence[uuid.UUID] = (),
+    z_date_basis: str = "business",
 ) -> Dict[str, Any]:
+    """
+    The report. `z_date_basis` picks which Zs its Z section lists over the window's days: by
+    business date, or by the local date each was produced (`production`). Nothing else moves.
+    """
     from app.services import z_table
 
     now = datetime.now(timezone.utc)
@@ -637,16 +647,23 @@ def build_all_in_one(
 
     catalog = items_and_categories(db, user, tenant_id, window, shop_ids, machine_ids)
 
+    from app.services.reports import _load_zoneinfo
+
+    production = z_date_basis == "production"
+    z_tz = _load_zoneinfo(window.tz_name)
     zq = z_table.filtered_z_query(
         db, user, tenant_id, from_date=window.from_date, to_date=window.to_date,
+        date_basis="production" if production else "business", tzinfo=z_tz,
         shop_ids=shop_ids, machine_ids=machine_ids,
     )
     zs = {"total": 0, "zs": [], "tills": [], "paymentMethods": []}
     if zq is not None:
-        rows = zq.order_by(ZReport.business_date.desc(), ZReport.closed_at.desc()).limit(z_table.Z_TABLE_MAX).all()
-        from app.services.reports import _load_zoneinfo
-
-        zs = z_table.build_z_table(db, rows, _load_zoneinfo(window.tz_name))
+        order = (
+            (ZReport.closed_at.desc(),) if production else (ZReport.business_date.desc(), ZReport.closed_at.desc())
+        )
+        rows = zq.order_by(*order).limit(z_table.Z_TABLE_MAX).all()
+        zs = z_table.build_z_table(db, rows, z_tz)
+    head["zDateBasis"] = "production" if production else "business"
 
     machines = machines_in_scope(db, user, tenant_id, shop_ids, machine_ids)
     transmissions = transmissions_section(db, machines, window)

@@ -17,8 +17,13 @@ The rules, in one place:
   prints on every printer it routes to.
 * **The relay.** A `cloud` printer's jobs from other tills wait here for its host till.
   Handed out by `GET pending` (pending → printing), re-handed if not acknowledged within
-  `JOB_LEASE`, finished by the host's ack (done / failed), and expired when nobody
-  printed them within `JOB_TTL`.
+  `JOB_LEASE`, finished by the host's ack (done / failed). A job no till took within
+  `JOB_TTL` expires (its host is off: the sender's cashier is told, and may take it back).
+  A job its host TOOK never expires by that clock: it is in the host's own durable queue
+  and prints there when it can (out of paper → it retries) — failing it for the sender
+  would invite a second ticket. Only after `TAKEN_JOB_TTL` with no answer is it given up.
+  While it retries, the host may say why (`ack` with status `printing` and an error): the
+  sender's cashier sees "no paper at the bar" rather than silence (bon delivery audit, 10.2026).
 """
 from __future__ import annotations
 
@@ -83,8 +88,11 @@ SETTING_KEYS = (
     "printerFailoverPrompt",
 )
 
-#: A relayed ticket nobody printed by then is failed for its sender.
+#: A relayed ticket no till took by then is failed for its sender.
 JOB_TTL = timedelta(minutes=5)
+#: A ticket its host took (it is in that till's own queue) and never answered for is given up
+#: only after this long — a late print still counts (`ack_job`).
+TAKEN_JOB_TTL = timedelta(hours=12)
 #: A job handed to its host and not acknowledged within this is handed out again.
 JOB_LEASE = timedelta(minutes=2)
 #: How far back the dashboard's test-print results reach.
@@ -1506,14 +1514,29 @@ def sync_response(db: Session, machine: POSMachine, etag: Optional[str]) -> Dict
 # ── The relay ─────────────────────────────────────────────────────────────────
 
 
+def was_taken(job: KitchenPrintJob) -> bool:
+    """Its host took it at least once: it is in that till's own durable queue."""
+    return bool(job.deliveries) or job.delivered_at is not None
+
+
 def expire_jobs(db: Session, jobs: Iterable[KitchenPrintJob], now: Optional[datetime] = None) -> None:
-    """Jobs past their time and not finished become `expired` (in place)."""
+    """
+    Jobs past their time and not finished become `expired` (in place): one no till took, at
+    `expires_at`; one its host took, only after `TAKEN_JOB_TTL` (it may still print there —
+    the host retries it — and failing it for the sender would invite a second ticket).
+    """
     now = now or _now()
     for job in jobs:
-        if job.status in ("pending", "printing") and as_utc(job.expires_at) <= now:
-            job.status = "expired"
-            job.completed_at = now
-            job.error = job.error or "expired"
+        if job.status not in ("pending", "printing"):
+            continue
+        if was_taken(job):
+            if as_utc(job.created_at) + TAKEN_JOB_TTL > now:
+                continue
+        elif as_utc(job.expires_at) > now:
+            continue
+        job.status = "expired"
+        job.completed_at = now
+        job.error = job.error or "expired"
 
 
 def job_out(job: KitchenPrintJob, machines: Dict[uuid.UUID, POSMachine] | None = None) -> Dict[str, Any]:
@@ -1531,6 +1554,9 @@ def job_out(job: KitchenPrintJob, machines: Dict[uuid.UUID, POSMachine] | None =
         "createdAt": _iso(job.created_at),
         "expiresAt": _iso(job.expires_at),
         "completedAt": _iso(job.completed_at),
+        # Its host took it (it is in that till's queue — it prints there when it can).
+        "taken": was_taken(job),
+        "deliveries": job.deliveries or 0,
     }
 
 
@@ -1728,7 +1754,8 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
 
 def ack_job(db: Session, machine: POSMachine, job_id: Any, body: PrintJobAckIn) -> KitchenPrintJob:
     """The printing till's answer. Only the job's target may give it; a finished job keeps
-    its first answer (a repeated ack is harmless)."""
+    its first answer (a repeated ack is harmless). `printing` is not an answer but a note
+    while the host still retries it ("no paper"): kept as the job's error, the job open."""
     try:
         ident = _uuid(job_id)
     except (TypeError, ValueError):
@@ -1737,6 +1764,11 @@ def ack_job(db: Session, machine: POSMachine, job_id: Any, body: PrintJobAckIn) 
     if job is None or str(job.target_machine_id) != str(machine.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Print job not found")
     if job.status in ("done", "failed"):
+        return job
+    if body.status == "printing":
+        if job.status in ("pending", "printing"):
+            job.error = (body.error or None)
+            db.flush()
         return job
     now = _now()
     # Printed late is still printed: an ack beats the expiry.

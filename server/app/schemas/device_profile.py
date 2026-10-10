@@ -43,6 +43,9 @@ class KdsScreenOptionsIn(BaseModel):
     name: Optional[str] = Field(None, max_length=100)
     screen_role: Literal["station", "expo", "manager"] = Field("expo", alias="screenRole")
     station_ids: List[uuid.UUID] = Field(default_factory=list, alias="stationIds", max_length=30)
+    #: "מסך לקוח" (P:/specs/customer-display.md §4): the till a customer display mirrors. Optional —
+    #: chosen later on the customer-display page. Ignored for a KDS / board.
+    till_machine_id: Optional[uuid.UUID] = Field(None, alias="tillMachineId")
 
 
 class DeviceProfileIn(BaseModel):

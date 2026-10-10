@@ -11,6 +11,7 @@ with its own weekday (the pace), never folded into a period's averages.
 """
 from __future__ import annotations
 
+import logging
 import uuid as uuid_mod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -29,7 +30,9 @@ from app.services.company_hierarchy import user_covers_company
 from app.models.user import UserRole
 
 from . import analytics as A
+from . import anomalies as AN
 from . import data as D
+from . import till_stats as TS
 
 DEFAULT_DAYS = 28
 MAX_DAYS = 366
@@ -103,6 +106,16 @@ def resolve_period(clock: A.BusinessClock, from_date: Optional[date], to_date: O
         raise _bad(f"days must be between 1 and {MAX_DAYS}")
     end = today - timedelta(days=1)
     return Period(end - timedelta(days=n - 1), end)
+
+
+def event_period(clock: A.BusinessClock, starts_at: datetime, ends_at: datetime) -> Period:
+    """
+    An event's business days (docs/SPEC_EVENTS.md): from the day it starts to the day it
+    ends, up to today. One that has not started yet is its first day (and reads nothing).
+    """
+    first = clock.business_date(starts_at)
+    last = min(clock.business_date(ends_at - timedelta(seconds=1)), clock.today)
+    return Period(first, max(first, last))
 
 
 # ── The request context ──────────────────────────────────────────────────────
@@ -261,13 +274,33 @@ class InsightsContext:
 
 
 def meta_block(ctx: InsightsContext) -> dict:
-    return {
+    out = {
         "generatedAt": ctx.clock.now.isoformat(),
         "timezone": ctx.clock.tz_name,
         "dayStartHour": ctx.clock.day_start_hour,
         "today": ctx.today.isoformat(),
         "period": ctx.period.to_json(),
         "historyStart": ctx.history_start.isoformat() if ctx.history_start else None,
+    }
+    event = event_block(ctx)
+    if event is not None:
+        out["event"] = event
+    return out
+
+
+def event_block(ctx: InsightsContext) -> Optional[dict]:
+    """The event the scope is (`eventId`): its name, window and tills."""
+    event = ctx.scope.event
+    if event is None:
+        return None
+    return {
+        "id": str(event.id),
+        "name": event.name,
+        "shopId": str(event.shop_id),
+        "status": event.status,
+        "startsAt": D._as_dt(event.starts_at).isoformat(),
+        "endsAt": D._as_dt(event.ends_at).isoformat(),
+        "machineIds": [str(m) for m in ctx.scope.machine_ids or ()],
     }
 
 
@@ -514,6 +547,144 @@ def customers(ctx: InsightsContext) -> dict:
     cur = ctx.totals(ctx.period.start, ctx.period.end)
     rows = D.load_customers(ctx.db, ctx.scope, ctx.clock, *ctx.span(ctx.period.start, ctx.period.end))
     return {"summary": A.customers_summary(rows, sales=cur.sales, net=cur.net)}
+
+
+# ── Till anomalies (docs/SPEC_INSIGHTS.md §10.1) ─────────────────────────────
+
+#: "period" — the page's period (an event: its window); "today" — today's business day so far.
+ANOMALY_WINDOWS = ("period", "today")
+
+
+def _tenant_anomaly_layer(db: Session, tenant_id) -> Optional[dict]:
+    from app.models.tenant import Tenant
+
+    tenant = db.get(Tenant, tenant_id)
+    settings = tenant.settings if tenant is not None and isinstance(tenant.settings, dict) else {}
+    layer = settings.get(AN.TENANT_SETTINGS_KEY)
+    return layer if isinstance(layer, dict) else None
+
+
+def anomaly_thresholds(ctx: InsightsContext) -> dict:
+    """Defaults ← the organization's ← the event's own."""
+    event_layer = AN.from_event(ctx.scope.event.thresholds) if ctx.scope.event is not None else None
+    return AN.effective_thresholds(_tenant_anomaly_layer(ctx.db, ctx.scope.tenant_id), event_layer)
+
+
+def anomalies(ctx: InsightsContext, window: str = "period") -> dict:
+    """Each till against its peers: the cards, and per peer group its tills' figures."""
+    if window not in ANOMALY_WINDOWS:
+        raise _bad(f"window must be one of {', '.join(ANOMALY_WINDOWS)}")
+    now = ctx.clock.now
+    if window == "today":
+        start, end = ctx.clock.day_start(ctx.today), now
+    else:
+        start, end = ctx.span(ctx.period.start, ctx.period.end)
+    start, end = D.clamp_window(ctx.scope, start, min(end, now))
+    th = anomaly_thresholds(ctx)
+    tills = TS.load_till_stats(ctx.db, ctx.scope, ctx.clock, start, end, now=now)
+    out = AN.evaluate(tills, th)
+    if ctx.scope.machine_id is not None:
+        out["cards"] = TS.only_machine(out["cards"], ctx.scope.machine_id)
+        out["counts"] = {s: sum(1 for c in out["cards"] if c["severity"] == s) for s in ("critical", "warning")}
+    if window == "today" or (ctx.scope.event is not None and end >= now):
+        report_low_sales_alerts(ctx.db, out["cards"], business_day=ctx.today, event=ctx.scope.event, now=now)
+    out["window"] = {
+        "kind": window,
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "hours": round(max((end - start).total_seconds(), 0) / 3600, 1),
+    }
+    out["thresholds"] = th
+    return out
+
+
+def report_low_sales_alerts(db: Session, cards: List[dict], *, business_day, event=None, now=None) -> int:
+    """
+    "קופה כמעט לא מוכרת" on the phone (feat/event-live's hook,
+    app/services/exception_alerts/external.py `report_till_low_sales`): every `till_low_sales`
+    card of a LIVE window — today's, or a live event's — goes into the exceptions log and through
+    the alert rules (SMS and push). One entry per till and business day (the log's dedupe key), so
+    it is safe on every read of the cards; a past window never reports. Never fails the read; the
+    new entries are committed here. Returns how many cards were reported.
+    """
+    from app.models.pos_machine import POSMachine
+    from app.services.exception_alerts import external as EXT
+
+    reported = 0
+    for card in cards:
+        if card.get("type") != "till_low_sales":
+            continue
+        params = card.get("params") or {}
+        machine_id = params.get("machineId")
+        try:
+            machine = db.get(POSMachine, uuid_mod.UUID(str(machine_id))) if machine_id else None
+        except ValueError:
+            machine = None
+        if machine is None:
+            continue
+        # The rule's money is integer agorot; the hook's figures are ₪.
+        per_hour = params.get("netPerHour")
+        peers = params.get("peersNetPerHour")
+        EXT.report_till_low_sales(
+            db,
+            machine=machine,
+            business_day=business_day,
+            net_per_hour=None if per_hour is None else per_hour / 100,
+            peers_median_per_hour=None if peers is None else peers / 100,
+            ratio_pct=params.get("ratioPct"),
+            event_id=getattr(event, "id", None),
+            details={"metric": params.get("metric"), "severity": card.get("severity"), "peers": params.get("peers")},
+            now=now,
+        )
+        reported += 1
+    if reported:
+        try:
+            db.commit()
+        except Exception:  # noqa: BLE001 - an alert never fails the insights read
+            db.rollback()
+            logging.getLogger(__name__).exception("till_low_sales alerts: commit failed")
+    return reported
+
+
+#: The thresholds are the whole organization's (every company of the tenant): its super admin's.
+#: A company's own managers set an event's thresholds on the event.
+ANOMALY_SETTINGS_ROLES = (UserRole.SUPER_ADMIN,)
+
+
+def anomaly_settings(db: Session, user: User, tenant_id) -> dict:
+    """The organization's thresholds (each falling back to the default), the limits, who may edit."""
+    stored = AN.clean_thresholds(_tenant_anomaly_layer(db, tenant_id), strict=False)
+    return {
+        "thresholds": AN.effective_thresholds(stored),
+        "stored": stored,
+        "defaults": dict(AN.DEFAULT_THRESHOLDS),
+        "limits": {k: {"min": lo, "max": hi, "integer": integer} for k, (lo, hi, integer) in AN.LIMITS.items()},
+        "canEdit": user.role in ANOMALY_SETTINGS_ROLES,
+    }
+
+
+def set_anomaly_settings(db: Session, user: User, tenant_id, raw) -> dict:
+    """
+    Replace the organization's anomaly thresholds (`null` / missing keys: the defaults).
+    In `tenants.settings.insightAnomalies`, beside the organization's other settings; the
+    tills' settings watermark is not moved — they do not use these.
+    """
+    from app.models.tenant import Tenant
+
+    if user.role not in ANOMALY_SETTINGS_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    cleaned = AN.clean_thresholds(raw if raw is not None else {}, strict=True)
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant not found")
+    settings = dict(tenant.settings) if isinstance(tenant.settings, dict) else {}
+    if cleaned:
+        settings[AN.TENANT_SETTINGS_KEY] = cleaned
+    else:
+        settings.pop(AN.TENANT_SETTINGS_KEY, None)
+    tenant.settings = settings
+    db.commit()
+    return anomaly_settings(db, user, tenant_id)
 
 
 # ── Product costs ────────────────────────────────────────────────────────────

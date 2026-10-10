@@ -7,7 +7,8 @@ and promotions (its own rules, unchanged); online it also asks here —
 
 * is the product still sold on this kiosk — in the shop's assortment, available at every
   level (company / shop / area / till), in stock, its category active here, not "קופה בלבד",
-  on this till's own list;
+  not "מחייב אישור מנהל במכירה" (itself or a category above it), on this till's own list, and not
+  one no kiosk sells at all (the general item, an open-price or a weighed product — `never_on_kiosk`);
 * its price now (the shop's price, in agorot, without any menu — `price` of the till's sync,
   the very value the kiosk's catalog holds as the base price);
 * whether the promotions this kiosk runs changed (`promotionsEtag`: the ETag of
@@ -52,6 +53,15 @@ def _iso(value: datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def never_on_kiosk(product: Optional[Dict[str, Any]]) -> bool:
+    """
+    The products a customer can never order at a kiosk: the general item (`isGeneral`), an open-price
+    product (`isOpenPrice` — a person keys the price) and a weighed one (`isWeighed` — a weight goes on
+    a scale). Strict, like the devices: only a real `True` (an older row without the flags sells).
+    """
+    return bool(product) and any(product.get(key) is True for key in ("isGeneral", "isOpenPrice", "isWeighed"))
+
+
 def _products_by_id(db: Session, machine: POSMachine) -> Dict[str, Dict[str, Any]]:
     """The kiosk's catalog rows (its till sync), by their id and by the global product's id."""
     from app.services import sync as SY
@@ -73,12 +83,15 @@ def check(db: Session, machine: POSMachine, lines: List[Dict[str, Any]], promoti
     """Each line's verdict and the promotions' ETag. `ok` when nothing differs from what the kiosk sent."""
     from app.services import machine_catalog
     from app.services import promotions as P
+    from app.services import restricted_items as RI
     from app.services import sync as SY
 
     now = now or datetime.now(timezone.utc)
     tenant = str(machine.tenant_id) if machine.tenant_id else None
     by_id = _products_by_id(db, machine)
     categories = {str(c.get("id")): c for c in SY.get_categories_for_sync(db, tenant, str(machine.id))}
+    # "מחייב אישור מנהל במכירה": never on a kiosk — its own flag, or its category's (or above).
+    restricted = RI.restricted_ids_of_rows(categories.values())
     mode = machine_catalog.mode_of(machine)
 
     out_lines: List[Dict[str, Any]] = []
@@ -102,6 +115,13 @@ def check(db: Session, machine: POSMachine, lines: List[Dict[str, Any]], promoti
             elif cat is not None and cat.get("isActive") is False:
                 reason = "category_off"
             elif channel == "pos_only":
+                reason = "not_on_kiosk"
+            elif RI.is_restricted(p.get(RI.FIELD), p.get("categoryId"), restricted):
+                reason = "not_on_kiosk"
+            elif never_on_kiosk(p):
+                # The general item, an open-price and a weighed product: a customer keys no price and weighs
+                # nothing, so no kiosk ever sells them (the devices' own rule: pos-android KioskCatalogView.build,
+                # client lib/kioskSellable.ts) — a line of one is not sold here, however it got into the basket.
                 reason = "not_on_kiosk"
             elif p.get("shopListed") is False:
                 reason = "unavailable"

@@ -100,14 +100,16 @@ describe('what this kiosk can take now', () => {
     }
   });
 
-  it('only split_card and a voucher: as a method it does not know — the card beside the voucher', () => {
+  it('only split_card and a voucher: the card beside it, and the voucher kept but not usable with no terminal to pay what it leaves', () => {
     const { fetchFn } = fakeCloud();
     const svc = kiosk(fetchFn, { methods: ['voucher', 'split_card'] });
     try {
       const pay = svc.view().pay;
+      // A voucher is a leg of the document the card pays the rest of (as the Android kiosk), so it stays on the list; but with no usable
+      // card and no "מזומן בקופה" its order could not be finished here: never a dead end (voucherCanFinish).
       expect(pay.methods).toEqual(['card', 'voucher']);
       expect(pay.usable).not.toContain('split_card');
-      expect(pay.usable).toEqual(['voucher']);
+      expect(pay.usable).not.toContain('voucher');
     } finally {
       svc.stop();
     }
@@ -257,6 +259,21 @@ describe('vouchers', () => {
       expect(sent.some((s) => s.path.endsWith('prepaid-vouchers/redeem'))).toBe(false);
       answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({ status: 200, body: { redeemable: false, status: 'used' } });
       expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'y' })).toEqual({ kind: 'refused', reason: 'prepaid_voucher_used' });
+      // The cloud's own words come along…
+      answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({
+        status: 200, body: { redeemable: false, reason: 'prepaid_voucher_used', message: 'השובר מומש כבר בקופה 2 בשעה 14:05' },
+      });
+      expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'z' })).toEqual({
+        kind: 'refused', reason: 'prepaid_voucher_used', message: 'השובר מומש כבר בקופה 2 בשעה 14:05',
+      });
+      // …but a voucher this kiosk cannot book sends the customer to the till, never "update the till".
+      answers['POST sync/m/prepaid-vouchers/lookup'] = () => ({
+        status: 200, body: { redeemable: false, reason: 'prepaid_voucher_update_required', message: 'יש לעדכן את גרסת הקופה כדי לממש שובר מסוג זה' },
+      });
+      expect(await svc.redeemVoucher({ code: 'ABCD1234', basket: basket(), earlier: [], clientRequestId: 'u' })).toEqual({
+        kind: 'refused', reason: 'prepaid_voucher_update_required',
+      });
+      expect(sent.some((s) => s.path.endsWith('prepaid-vouchers/redeem'))).toBe(false);
     } finally {
       svc.stop();
     }

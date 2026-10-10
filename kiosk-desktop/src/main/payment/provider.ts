@@ -6,7 +6,7 @@
  *  - `newReference` names a charge (Nayax: the vuid) — the kiosk writes the attempt to disk with
  *    it BEFORE `sale` is called;
  *  - `sale` sends ONE charge and says approved / certainly not charged / unknown — it never
- *    retries (a re-sent sale may charge twice);
+ *    retries (a re-sent sale may charge twice); NOT_SENT when the frame never left at all;
  *  - `resolve` asks the terminal what became of a charge by its reference — it never charges;
  *  - `abort` stops a charge before the card is presented (never after an answer);
  *  - `check` is a cheap "are you there" with no card.
@@ -50,7 +50,12 @@ export interface ApprovedCard {
 export type SaleResult =
   | { answer: 'APPROVED'; card: ApprovedCard; raw: string }
   | { answer: 'DECLINED'; message: string; raw: string | null; statusCode: number | null }
-  | { answer: 'UNKNOWN'; message: string; raw: string | null };
+  | { answer: 'UNKNOWN'; message: string; raw: string | null }
+  /**
+   * Nothing reached the terminal (the link never opened, nothing was written): certainly not
+   * charged — a clean failure with its reason, never "unknown", nothing to look up.
+   */
+  | { answer: 'NOT_SENT'; message: string };
 
 export type Resolution =
   | { kind: 'approved'; card: ApprovedCard }

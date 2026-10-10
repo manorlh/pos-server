@@ -88,12 +88,12 @@ def heebo_only(monkeypatch):
     PDF.clear_font_caches()
 
 
-def batch_obj(*, show_items=True, show_credit=True, free_text=FREE, items=(("נקניקייה", 1), ("שתייה קלה", 2), ("צ׳יפס", 1)),
+def batch_obj(*, show_items=True, show_credit=True, show_validity=True, free_text=FREE, items=(("נקניקייה", 1), ("שתייה קלה", 2), ("צ׳יפס", 1)),
               kind="items", **kw):
     b = PrepaidVoucherBatch(
         name="הפקה — מזון", event_name="פסטיבל הקיץ", kind=kind, split_allowed=False, free_text=free_text,
         valid_until=datetime(2026, 8, 14, 20, tzinfo=timezone.utc), show_code=True, show_items=show_items,
-        show_credit=show_credit, **kw,
+        show_credit=show_credit, show_validity=show_validity, **kw,
     )
     b.items = [
         PrepaidVoucherBatchItem(product_id=uuid.uuid4(), product_name=n, quantity=q, sort_order=i)
@@ -376,7 +376,8 @@ BASE = {
 #: The inputs in the dashboard's words (camelCase): src/lib/voucherLayout.test.ts runs the same.
 CASES = [
     {"name": "ticket 80x50, goods", "w": 80, "h": 50, "content": BASE},
-    {"name": "card 54x86, logo", "w": 54, "h": 86, "content": {**BASE, "logo": True}},
+    {"name": "card 54x86, logo, type and value", "w": 54, "h": 86,
+     "content": {**BASE, "logo": True, "kicker": "שובר ארוחה", "valueLine": "שווי השובר: ₪80"}},
     {"name": "card 86x54, discount", "w": 86, "h": 54,
      "content": {**BASE, "items": [], "benefit": "₪30 הנחה על כל ההזמנה בקנייה מעל ₪100", "terms": "3 שימושים"}},
     {"name": "ticket 80x120, Code 128, many goods", "w": 80, "h": 120,
@@ -387,14 +388,16 @@ CASES = [
     {"name": "A4 sheet cell, no credit, no code, no validity", "w": 105, "h": 74.25,
      "content": {**BASE, "credit": None, "code": None, "validity": None}},
     {"name": "custom 30x30", "w": 30, "h": 30, "content": BASE},
+    {"name": "ticket 80x120, validity hidden", "w": 80, "h": 120, "content": {**BASE, "validity": None, "terms": None}},
 ]
 
 
 def _content(d) -> L.CardContent:
     return L.CardContent(
-        title=d["title"], terms=d["terms"], serial=d["serial"], barcode=d.get("barcode", "qr"),
+        title=d["title"], terms=d.get("terms"), serial=d["serial"], barcode=d.get("barcode", "qr"),
         logo=bool(d.get("logo")), benefit=d.get("benefit"), items=[tuple(i) for i in d.get("items") or []],
         free_text=d.get("freeText"), validity=d.get("validity"), code=d.get("code"), credit=d.get("credit"),
+        kicker=d.get("kicker"), value_line=d.get("valueLine"),
     )
 
 
@@ -404,7 +407,7 @@ def _labels() -> dict:
         "serial": lb.serial, "group": lb.group, "splitAllowed": lb.split_allowed, "oneTime": lb.one_time,
         "validUntil": lb.valid_until, "validFrom": lb.valid_from, "validBetween": lb.valid_between,
         "usesOne": lb.uses_one, "usesMany": lb.uses_many, "includeExtras": lb.include_extras,
-        "moreItems": lb.more_items, "credit": lb.credit,
+        "moreItems": lb.more_items, "credit": lb.credit, "valueFixed": lb.value_fixed, "valueCover": lb.value_cover,
     }
 
 
@@ -495,3 +498,28 @@ class TestDesign:
             for call in drawn:
                 x0, y0, x1, y1 = call.box
                 assert 0 <= x0 and x1 <= W and 0 <= y0 and y1 <= H, (preset, barcode, call.text)
+
+
+class TestShowValidity:
+    """"הצג תוקף על השובר" — off: no validity and no terms line, and no empty band where they were."""
+
+    def test_off_leaves_out_the_validity_and_the_terms(self, drawn):
+        card(batch_obj(show_validity=False), "ticket80x120")
+        out = texts(drawn)
+        assert PDF._visual("בתוקף עד 14/08/2026") not in out and PDF._visual("מימוש חד-פעמי") not in out
+        assert shows(drawn, "פסטיבל הקיץ") and PDF._visual("מס׳ 0008") in out
+
+    def test_the_gap_closes(self):
+        with_ = L.layout(80, 120, _content(BASE), L.fake_measure)
+        without = L.layout(80, 120, _content({**BASE, "validity": None, "terms": None}), L.fake_measure)
+        # The text block (centred above the barcode) is shorter by the footer and its gap, no more.
+        def text_span(ops):
+            ys = [o["y"] for o in ops if o["op"] == "text" and o["text"] not in (BASE["serial"], BASE["code"], BASE["credit"])]
+            return max(ys) - min(ys)
+        assert text_span(without) < text_span(with_)
+        assert not any(o["op"] == "text" and o["text"] in (BASE["validity"], BASE["terms"]) for o in without)
+
+    def test_on_by_default_and_per_batch(self, w):
+        assert make(w)["showValidity"] is True
+        off = make(w, showValidity=False)
+        assert off["showValidity"] is False and PDF.options_for(row(w, off["id"])).show_validity is False

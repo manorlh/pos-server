@@ -343,6 +343,31 @@ def _enrich_machine_status(
     return result
 
 
+#: The ₪ a till's list carries (its card legs not yet transmitted). `/machines` is a look-up every
+#: signed-in user reads (the board's tills for a user without "דוחות"); the money is not.
+MONEY_FIELDS = ("pendingTransmissionAmount", "untransmittedCardAmount")
+#: The sections that read a till's money: the reports, the Zs, the devices.
+MONEY_SECTIONS = ("reports", "z", "devices")
+
+
+def _may_read_till_money(db: Session, user: User) -> bool:
+    from app.services import dashboard_access
+
+    access = dashboard_access.effective_access(db, user)
+    return any(access.allows(section, "view") for section in MONEY_SECTIONS)
+
+
+def strip_money(rows: List[Dict[str, Any]], db: Session, user: User) -> List[Dict[str, Any]]:
+    """The till rows without their ₪ for a user who holds none of `MONEY_SECTIONS`."""
+    if _may_read_till_money(db, user):
+        return rows
+    for row in rows:
+        for key in MONEY_FIELDS:
+            if key in row:
+                row[key] = None
+    return rows
+
+
 def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict[str, Any]]:
     if not machines:
         return []
@@ -439,7 +464,7 @@ def list_machines(
     query = areas.filter_on_column(query, POSMachine.area_id, area_filter)
 
     machines = query.offset(skip).limit(limit).all()
-    return _enrich_machines_batch(machines, db)
+    return strip_money(_enrich_machines_batch(machines, db), db, current_user)
 
 
 @router.get("/unassigned", response_model=List[POSMachineResponse])
@@ -689,6 +714,16 @@ def post_my_heartbeat(
         machine.reported_open_shift_opened_at = (
             body.open_shift_opened_at if claimed else None
         )
+        # The till's own word, and when: the only place the claim's time is written.
+        from datetime import datetime as _dt, timezone as _tz
+
+        machine.reported_open_shift_claimed_at = _dt.now(_tz.utc)
+    # What this build can do ("remote_close_v2": remote control may ask it), replaced every beat —
+    # a build that no longer says it (a downgrade) is no longer asked.
+    if body is not None:
+        from app.services.remote_till_z import clean_capabilities
+
+        machine.capabilities = clean_capabilities(body.capabilities)
     # The shift the till says is open is one the cloud holds closed — closed administratively
     # (§2.9: dead-till recovery, `force` on a till that came back, or support's Z): the till is
     # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).
@@ -722,6 +757,11 @@ def post_my_heartbeat(
     device_identity.apply_heartbeat(machine, body, request)
     # Device owner and silent updates (app/services/device_management.py); never fails a beat.
     device_management.apply_heartbeat(machine, body)
+    # What the build can do ("device_logs_v1": "בקש לוגים"); absent leaves it as it was.
+    if body is not None and body.capabilities is not None:
+        from app.services import device_logs
+
+        device_logs.apply_heartbeat(machine, body.capabilities, body.app_version)
     # The dashboard's "הפעל מחדש", while it waits (a device-owner till only; the till decides when).
     pending_reboot = device_management.take_pending_reboot(machine)
     # Zs closed at the till with no connection, not uploaded yet (offline till Z §4.4).
@@ -888,7 +928,7 @@ def get_machine(
     elif not _check_machine_list_access(current_user, machine, db):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    return _enrich_machine_status(machine, db)
+    return strip_money([_enrich_machine_status(machine, db)], db, current_user)[0]
 
 
 @router.put("/{machine_id}", response_model=POSMachineResponse)

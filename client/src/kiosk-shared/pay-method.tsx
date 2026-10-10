@@ -37,15 +37,26 @@ export interface KioskPayVoucher {
   serial: number;
   amountAgorot: number;
   label?: string | null;
+  /** Its own words, in place of "שובר #N · label" (the Android kiosk's "שובר מס׳ 0008 · ארוחה"). */
+  title?: string | null;
+  /** What it covered ("מנה: נקניקייה ×1"), under it. */
+  lines?: string[];
 }
 
 export interface KioskLivePayMethod {
   /** This order's checkout steps (the step bar). */
   steps: CheckoutStep[];
   tiles: KioskPayTile[];
+  /** The order's total: after the promotions and the discount vouchers. */
   goodsAgorot: number;
   tipAgorot: number;
+  /** The goods vouchers taken: legs of the payment, each paying what it covers (the "נותר לתשלום" is less them). */
   vouchers: KioskPayVoucher[];
+  /**
+   * The discount vouchers ("שוברי הנחה") held for the order: each its own row — what it took off, its terms, why a line was
+   * left out — with "הסרה" until the payment starts. Already off `goodsAgorot`.
+   */
+  discounts?: KioskPayVoucher[];
   dueAgorot: number;
   /** A tile taken: the card goes to the payment, a voucher opens its window; cash is confirmed first (here). */
   onPick: (method: PaymentMethod) => void;
@@ -118,7 +129,47 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
   const money = (agorot: number) => m.money(agorot / 100);
   const radius = Math.min(Math.max(m.radius, 10), 20);
   const vouchered = live.vouchers.length > 0;
+  const discounted = (live.discounts?.length ?? 0) > 0;
   const voucherTotal = live.vouchers.reduce((s, v) => s + v.amountAgorot, 0);
+  /** A voucher's row: its words, what it took or pays, and "הסרה" while the payment has not started. */
+  const voucherRow = (v: KioskPayVoucher) => (
+    <div key={v.id} className="flex items-center justify-between gap-2 kt-13">
+      <span className="flex min-w-0 flex-col" style={{ color: m.c.mutedText }}>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Ticket className="h-4 w-4 shrink-0" />
+          <span className="truncate">
+            {v.title ? (
+              v.title
+            ) : (
+              <>
+                {m.txt('payVoucherLabel')}
+                {v.serial ? ` #${v.serial}` : ''}
+                {v.label ? ` · ${v.label}` : ''}
+              </>
+            )}
+          </span>
+        </span>
+        {v.lines && v.lines.length > 0 ? <span className="ps-[22px] kt-11 leading-snug">{v.lines.join(' · ')}</span> : null}
+      </span>
+      <span className="flex items-center gap-2">
+        <span className="font-semibold tabular-nums" dir="ltr">
+          −{money(v.amountAgorot)}
+        </span>
+        {live.onRemoveVoucher ? (
+          <button
+            type="button"
+            aria-label="remove"
+            onClick={() => live.onRemoveVoucher?.(v.id)}
+            disabled={live.busy}
+            className="flex h-8 w-8 items-center justify-center rounded-full"
+            style={{ background: `${m.c.button}14`, color: m.c.button }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        ) : null}
+      </span>
+    </div>
+  );
   const cashOff = live.tiles.find((t) => t.method === 'cash_at_till')?.off ?? null;
   // Working (a voucher checked, the order placed): the tiles, never the confirmation.
   const asking = confirming && !cashOff && !live.busy;
@@ -198,6 +249,20 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
               </BigButton>
             ) : null}
             {live.extra}
+            {discounted ? (
+              // "שוברי הנחה": already off the order's total below; each removable until the payment starts.
+              <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius }}>
+                {live.discounts?.map(voucherRow)}
+                {!vouchered ? (
+                  <div className="flex items-center justify-between border-t pt-2" style={{ borderColor: m.c.border }}>
+                    <span className="text-base font-bold">{payText(m, 'remainingToPay', { amount: '' }).trim()}</span>
+                    <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primary }}>
+                      {money(live.dueAgorot)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {vouchered ? (
               <div className="space-y-2 p-3.5" style={{ background: `${m.c.primary}0D`, borderRadius: radius }}>
                 <div className="flex items-center justify-between kt-13">
@@ -210,35 +275,7 @@ export function PayMethodStep({ m, live }: { m: PreviewModel; live: KioskLivePay
                     <span className="font-semibold tabular-nums">{money(live.tipAgorot)}</span>
                   </div>
                 ) : null}
-                {live.vouchers.map((v) => (
-                  <div key={v.id} className="flex items-center justify-between gap-2 kt-13">
-                    <span className="flex min-w-0 items-center gap-1.5" style={{ color: m.c.mutedText }}>
-                      <Ticket className="h-4 w-4 shrink-0" />
-                      <span className="truncate">
-                        {m.txt('payVoucherLabel')}
-                        {v.serial ? ` #${v.serial}` : ''}
-                        {v.label ? ` · ${v.label}` : ''}
-                      </span>
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <span className="font-semibold tabular-nums" dir="ltr">
-                        −{money(v.amountAgorot)}
-                      </span>
-                      {live.onRemoveVoucher ? (
-                        <button
-                          type="button"
-                          aria-label="remove"
-                          onClick={() => live.onRemoveVoucher?.(v.id)}
-                          disabled={live.busy}
-                          className="flex h-8 w-8 items-center justify-center rounded-full"
-                          style={{ background: `${m.c.button}14`, color: m.c.button }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      ) : null}
-                    </span>
-                  </div>
-                ))}
+                {live.vouchers.map(voucherRow)}
                 <div className="flex items-center justify-between border-t pt-2" style={{ borderColor: m.c.border }}>
                   <span className="text-base font-bold">{payText(m, 'remainingToPay', { amount: '' }).trim()}</span>
                   <span className="text-xl font-extrabold tabular-nums" style={{ color: m.c.primary }}>

@@ -12,13 +12,16 @@
  *  - promotions (domain/Promotions.kt `PromotionEngine`, domain/PromotionMapper.kt): the seven
  *    kinds, item promotions first by priority (the best order within one), spend thresholds after,
  *    each application spread over its units by price (largest remainder, to the agora);
- *  - the basket's total after promotions (domain/Cart.kt `totals`), the VAT once (domain/Vat.kt).
+ *  - the basket's total after promotions and discount vouchers (domain/Cart.kt `totals`, the vouchers
+ *    by lib/kioskVouchers.ts — "שוברי הנחה"), the VAT once (domain/Vat.kt).
  *
  * Pinned by the shared golden fixture server/tests/fixtures/kiosk_money_golden.json (whose header
  * names the Kotlin each case pins); the client's and the Windows kiosk's tests both run it.
  *
- * Money is integer agorot throughout. Pure; no imports (the node tests compile it alone).
+ * Money is integer agorot throughout. Pure; its one import is the voucher rules (the node tests compile both).
  */
+
+import { applyVoucherDiscounts, type AppliedDiscountVoucher, type VoucherOutcome } from './kioskVouchers';
 
 /* ------------------------------------------------------------------- money */
 
@@ -110,36 +113,122 @@ export interface OptionPick {
 }
 
 /**
- * A group of the cloud's `menu` block (MenuCodec.parse). The kiosks' one rule of their own: a
- * "choice" group with no maximum takes one ("מידת עשייה").
+ * A group of the cloud's `menu` block, exactly as the Android till reads it (MenuCodec.parse): no
+ * maximum is no maximum, whatever the kind — as the cloud's own validate_picks (a "choice" group
+ * that must take one says so with maxSelect 1). Pinned by kiosk_pricing_parity.json.
  */
 export function menuGroupOf(g: Record<string, unknown>): MenuGroup | null {
-  if (typeof g.id !== 'string') return null;
+  const id = str(g.id);
+  if (id === null) return null;
   const kind: GroupKind = g.kind === 'choice' || g.kind === 'removal' ? g.kind : 'addon';
   const max = num(g.maxSelect);
   const options = (Array.isArray(g.options) ? (g.options as Array<Record<string, unknown>>) : [])
-    .filter((o) => typeof o.id === 'string' && o.isActive !== false)
+    .filter((o) => str(o.id) !== null && o.isActive !== false)
     .map((o) => {
-      const maxQty = num(o.maxQty);
+      const maxQty = Math.trunc(num(o.maxQty) ?? 0);
       return {
         id: String(o.id),
         name: String(o.name ?? ''),
         priceAgorot: agorotOfShekels(num(o.price) ?? 0),
         isDefault: o.isDefault === true,
-        maxQty: maxQty !== null && maxQty > 0 ? Math.trunc(maxQty) : null,
+        maxQty: maxQty > 0 ? maxQty : null,
       };
     });
   return {
-    id: g.id,
+    id,
     name: String(g.name ?? ''),
     kind,
     minSelect: Math.max(0, Math.trunc(num(g.minSelect) ?? 0)),
-    maxSelect: max === null ? (kind === 'choice' ? 1 : null) : Math.max(1, Math.trunc(max)),
+    maxSelect: max === null ? null : Math.max(1, Math.trunc(max)),
     freeCount: Math.max(0, Math.trunc(num(g.freeCount) ?? 0)),
     allowQuantity: g.allowQuantity === true,
     allowPre: g.allowPre === true,
     options,
   };
+}
+
+/** The menu block's links: a key with a list is that target's own groups (`[]` = explicitly none); a missing key inherits. */
+export interface MenuLinks {
+  categories?: Record<string, unknown>;
+  products?: Record<string, unknown>;
+}
+
+const idList = (v: unknown): string[] | null => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length > 0) : null);
+
+/**
+ * The group ids a product is ordered with (Menu.groupsFor): the product's own list when it has one
+ * (by any id it is known by), else the nearest category up from its own that has one — `parentOf`
+ * walks up (a sub-category inherits its parent's groups). Null-safe on a broken tree (a loop ends).
+ */
+export function menuGroupIdsFor(
+  links: MenuLinks | null | undefined,
+  productIds: readonly string[],
+  categoryId: string | null,
+  parentOf: (categoryId: string) => string | null | undefined,
+): string[] {
+  for (const id of productIds) {
+    const own = idList(links?.products?.[id]);
+    if (own !== null) return own;
+  }
+  const seen = new Set<string>();
+  let current: string | null = categoryId;
+  while (current !== null && current !== '' && !seen.has(current)) {
+    seen.add(current);
+    const list = idList(links?.categories?.[current]);
+    if (list !== null) return list;
+    current = parentOf(current) ?? null;
+  }
+  return [];
+}
+
+/** The menu block's note chips ("הערות מהירות"): the shop's for every dish, by category, by product. */
+export interface MenuNotes {
+  all?: unknown;
+  categories?: Record<string, unknown>;
+  products?: Record<string, unknown>;
+}
+
+const chipTexts = (v: unknown): string[] =>
+  (Array.isArray(v) ? (v as Array<Record<string, unknown>>) : []).map((n) => (n && typeof n.text === 'string' && n.text.length > 0 ? n.text : null)).filter((t): t is string => t !== null);
+
+/**
+ * A dish's quick notes (Menu.notesFor): its own chips when it has some, else the nearest category's
+ * up its tree that has some; then the shop's for every dish — each text once, in that order.
+ */
+export function menuNotesFor(
+  notes: MenuNotes | null | undefined,
+  productIds: readonly string[],
+  categoryId: string | null,
+  parentOf: (categoryId: string) => string | null | undefined,
+): string[] {
+  let list: string[] | null = null;
+  for (const id of productIds) {
+    const own = chipTexts(notes?.products?.[id]);
+    if (own.length > 0) {
+      list = own;
+      break;
+    }
+  }
+  const seen = new Set<string>();
+  let current: string | null = categoryId;
+  while (list === null && current !== null && current !== '' && !seen.has(current)) {
+    seen.add(current);
+    const chips = chipTexts(notes?.categories?.[current]);
+    if (chips.length > 0) list = chips;
+    current = parentOf(current) ?? null;
+  }
+  return [...new Set([...(list ?? []), ...chipTexts(notes?.all)])];
+}
+
+/** A catalog's categories (`parentId`) as the walk up their tree. */
+export function parentOfCategories(categories: ReadonlyArray<Record<string, unknown>>): (categoryId: string) => string | null {
+  const parents = new Map<string, string>();
+  for (const c of categories) {
+    const id = str(c.id);
+    const parent = str(c.parentId);
+    if (id !== null && parent !== null) parents.set(id, parent);
+  }
+  return (id) => parents.get(id) ?? null;
 }
 
 /** Why a group's choices do not answer it (ModifierMath.validate). */
@@ -368,9 +457,90 @@ export function mealUnpickOne(chosen: readonly string[], productId: string): str
   return last < 0 ? [...chosen] : chosen.filter((_, i) => i !== last);
 }
 
-/** A slot that still needs a choice, or holds too many (MealDraft.slotProblem, components on their defaults). */
-export function mealSlotProblem(slot: MealSlot, chosen: readonly string[]): boolean {
-  return chosen.length < slot.minSelect || chosen.length > slot.maxSelect;
+/**
+ * A slot that still needs a choice, holds too many, or holds a component whose own groups its
+ * defaults do not answer (MealDraft.slotProblem — the kiosk's components go in on their defaults,
+ * so such a meal cannot be added, as on the Android kiosk). `componentValid`: the component on its
+ * defaults answers its groups (`dishOnDefaults(...) !== null`); absent: every component does.
+ */
+export function mealSlotProblem(slot: MealSlot, chosen: readonly string[], componentValid?: (productId: string) => boolean): boolean {
+  return chosen.length < slot.minSelect || chosen.length > slot.maxSelect || (componentValid !== undefined && chosen.some((p) => !componentValid(p)));
+}
+
+/* -------------------------------------------------------------------- tips */
+
+/** "סכום אחר": at most this many shekels, and never more than the order (KioskTip.OTHER_MAX_SHEKELS). */
+export const TIP_OTHER_MAX_SHEKELS = 999;
+
+/** The tip for a preset percentage of the goods, to the agora, half up (KioskCustomer.tipOf); null/0: none. */
+export function tipPercentOf(goodsAgorot: number, percent: number | null | undefined): number {
+  if (percent === null || percent === undefined || !(percent > 0)) return 0;
+  return Math.floor((goodsAgorot * Math.trunc(percent) + 50) / 100);
+}
+
+/** A tip of the customer's own the payment may take: whole shekels, positive, ≤ ₪999, never more than the order (KioskTip.otherValid). */
+export function tipOtherValid(agorot: number | null | undefined, goodsAgorot: number): boolean {
+  return typeof agorot === 'number' && Number.isInteger(agorot) && agorot > 0 && agorot % 100 === 0 && agorot <= TIP_OTHER_MAX_SHEKELS * 100 && agorot <= goodsAgorot;
+}
+
+/** What `payment` says of tips (KioskAppConfig.payment). */
+export interface TipRules {
+  tipEnabled: boolean;
+  /** "סכום אחר" offered (absent: offered — the config's default). */
+  tipOther?: boolean;
+}
+
+/**
+ * The tip charged (KioskViewModel.price): the customer's own amount when tips and "סכום אחר" are on
+ * and it is valid; else the preset's percent of the goods AFTER the promotions; nothing when tips are off.
+ */
+export function kioskTipAgorot(rules: TipRules, goodsAgorot: number, percent: number | null | undefined, otherAgorot: number | null | undefined): number {
+  if (!rules.tipEnabled) return 0;
+  if (rules.tipOther !== false && tipOtherValid(otherAgorot, goodsAgorot)) return otherAgorot as number;
+  return tipPercentOf(goodsAgorot, percent);
+}
+
+/**
+ * "מינימום הזמנה" (KioskViewModel.belowMinimum): "לתשלום" is refused while the goods after promotions are
+ * under `payment.minOrderAgorot` (0: none). As on the Android kiosk, "דלג על סל" straight to payment does not ask.
+ */
+export function belowMinimumOrder(minOrderAgorot: number | null | undefined, goodsAgorot: number): boolean {
+  return typeof minOrderAgorot === 'number' && minOrderAgorot > 0 && goodsAgorot < minOrderAgorot;
+}
+
+/* ---------------------------------------------------------------- the line */
+
+/** A line's words, as the Android cart and receipt show them (LineText). */
+export interface LineWords {
+  options: ReadonlyArray<Pick<ChosenOption, 'kind' | 'name' | 'pre' | 'qty' | 'chargedAgorot'>>;
+  components?: ReadonlyArray<{ name: string; upchargeAgorot: number; qty?: number; options: ReadonlyArray<Pick<ChosenOption, 'kind' | 'name' | 'pre' | 'qty' | 'chargedAgorot'>> }>;
+  notes?: readonly string[];
+  noteText?: string | null;
+}
+
+/** The cart's sub-lines (LineText.cartSubLines): every choice, a meal's components with theirs, the notes. */
+export function cartSubLines(l: LineWords): string[] {
+  const out: string[] = [];
+  if (l.options.length > 0) out.push(l.options.map(optionText).join(' · '));
+  for (const c of l.components ?? []) {
+    const mods = c.options.map(optionText).join(' · ');
+    out.push(mods ? `${c.name}: ${mods}` : c.name);
+  }
+  const note = [...(l.notes ?? []), ...(l.noteText && l.noteText.trim() ? [l.noteText.trim()] : [])].join(' · ');
+  if (note) out.push(note);
+  return out;
+}
+
+/** The receipt's sub-lines (LineText.receiptSubLines): the paid choices with their price, a meal's components (and upcharge). */
+export function receiptSubLines(l: LineWords): Array<[string, number | null]> {
+  const out: Array<[string, number | null]> = [];
+  for (const m of l.options) if (m.chargedAgorot > 0) out.push([optionText(m), m.chargedAgorot]);
+  for (const c of l.components ?? []) {
+    const q = c.qty ?? 1;
+    out.push([c.name, c.upchargeAgorot > 0 ? c.upchargeAgorot * q : null]);
+    for (const m of c.options) if (m.chargedAgorot > 0) out.push([`  ${optionText(m)}`, m.chargedAgorot * q]);
+  }
+  return out;
 }
 
 /** One component of a meal line (MealComponent): its upcharge and its own choices (the kiosk: their defaults). */
@@ -1103,10 +1273,15 @@ export interface PricedLine {
   qty: number;
   /** unit × qty, before promotions. */
   grossAgorot: number;
+  /** What promotions took off the line (less what gave way to a voucher: "ההטבה הטובה מבין השתיים"). */
   promotionAgorot: number;
   promotionId: string | null;
   promotionName: string | null;
-  /** What the line costs: gross less its promotions' share. */
+  /** What discount vouchers took off the line ("שוברי הנחה", lib/kioskVouchers.ts). */
+  voucherAgorot: number;
+  /** The promotion's share that gave way to a voucher on this line. */
+  promotionYieldedAgorot: number;
+  /** What the line costs: gross less its promotions' and vouchers' share. */
   totalAgorot: number;
 }
 
@@ -1114,38 +1289,120 @@ export interface PricedBasket {
   lines: PricedLine[];
   grossAgorot: number;
   promotionAgorot: number;
+  /** What discount vouchers took off the sale. */
+  voucherAgorot: number;
+  /** What each voucher of the order took and why it left a line out, in the order applied. */
+  voucherOutcomes: VoucherOutcome[];
   /** What the goods cost — what the customer pays before any tip. */
   totalAgorot: number;
   applied: AppliedPromotion[];
   itemCount: number;
+  /** A gift the basket earned and does not hold: "הוסף מתנה" (GiftOffer). */
+  giftOffers: GiftOffer[];
+  /** Spend thresholds the basket is close to ("חסרים 8 ₪ למתנה"). */
+  near: PromotionHint[];
+  /** A "one item at a special price" earned with none of it in the basket. */
+  rewardsAvailable: PromotionHint[];
 }
 
-/** The basket priced as it will be paid and documented (KioskViewModel.price → Cart.totals): promotions applied. */
-export function priceKioskBasket(lines: readonly PromoLine[], promotions: readonly Promotion[], now: LocalDateTime): PricedBasket {
+/**
+ * The basket priced as it will be paid and documented (KioskViewModel.price → Cart.totals): promotions applied, then
+ * the discount vouchers in the order they were applied (`cart.withPromotions(outcome).withVoucherDiscounts()`).
+ */
+export function priceKioskBasket(
+  lines: readonly PromoLine[],
+  promotions: readonly Promotion[],
+  now: LocalDateTime,
+  vouchers: readonly AppliedDiscountVoucher[] = [],
+): PricedBasket {
   const outcome = lines.length === 0 || promotions.length === 0 ? NO_PROMOTIONS : evaluatePromotions(lines, promotions, now);
-  const priced = lines.map((l) => {
+  const promoted = lines.map((l) => {
     const share = outcome.lineShares[l.id];
-    const gross = timesQty(l.unitAgorot, l.qty);
-    const promo = share?.discountAgorot ?? 0;
+    return { l, gross: timesQty(l.unitAgorot, l.qty), promo: share?.discountAgorot ?? 0, share };
+  });
+  const withVouchers = vouchers.length === 0 ? null : applyVoucherDiscounts(
+    promoted.map(({ l, gross, promo, share }) => ({
+      id: l.id,
+      productIds: l.productIds,
+      categoryId: l.categoryId,
+      qty: l.qty,
+      grossAgorot: gross,
+      promotionAgorot: promo,
+      promotionId: share?.promotionId ?? null,
+      noDiscount: l.noDiscount === true,
+    })),
+    vouchers,
+  );
+  const priced = promoted.map(({ l, gross, promo, share }) => {
+    const v = withVouchers?.lines[l.id];
+    const promotionAgorot = v ? v.promotionAgorot : promo;
+    const voucherAgorot = v?.voucherAgorot ?? 0;
     return {
       id: l.id,
       unitAgorot: l.unitAgorot,
       qty: l.qty,
       grossAgorot: gross,
-      promotionAgorot: promo,
+      promotionAgorot,
       promotionId: share?.promotionId ?? null,
       promotionName: share?.promotionName ?? null,
-      totalAgorot: gross - promo,
+      voucherAgorot,
+      promotionYieldedAgorot: v?.promotionYieldedAgorot ?? 0,
+      totalAgorot: gross - promotionAgorot - voucherAgorot,
     };
   });
   const gross = priced.reduce((s, l) => s + l.grossAgorot, 0);
   const promo = priced.reduce((s, l) => s + l.promotionAgorot, 0);
+  const voucher = priced.reduce((s, l) => s + l.voucherAgorot, 0);
+  // A promotion that gave way to a voucher on some lines is worth less now (and gone when nothing is left).
+  const yielded = withVouchers?.yielded ?? {};
+  const applied = outcome.applied.flatMap((a) => {
+    const gave = yielded[a.promotionId];
+    if (gave === undefined) return [a];
+    return a.discountAgorot - gave > 0 ? [{ ...a, discountAgorot: a.discountAgorot - gave }] : [];
+  });
   return {
     lines: priced,
     grossAgorot: gross,
     promotionAgorot: promo,
-    totalAgorot: gross - promo,
-    applied: outcome.applied,
+    voucherAgorot: voucher,
+    voucherOutcomes: withVouchers?.outcomes ?? [],
+    totalAgorot: gross - promo - voucher,
+    applied,
     itemCount: Math.ceil(lines.reduce((s, l) => s + l.qty, 0)),
+    giftOffers: outcome.giftOffers,
+    near: outcome.near,
+    rewardsAvailable: outcome.rewardsAvailable,
   };
+}
+
+/** What the order comes to: the basket after promotions, its VAT, the tip and what is due. */
+export interface PricedOrder extends PricedBasket {
+  netAgorot: number;
+  vatAgorot: number;
+  tipAgorot: number;
+  /** goods + tip — what the customer pays (before any voucher). */
+  dueAgorot: number;
+}
+
+/**
+ * The whole of KioskViewModel.price, ONE function for every TypeScript host (the Windows kiosk's
+ * main process and screens, the browser kiosk, the dashboard preview): the promotions, the total,
+ * the VAT once on it (Vat.net), the tip on the total after promotions (kioskTipAgorot).
+ * Pinned scenario by scenario by kiosk_pricing_parity.json, generated from the Android engines.
+ */
+export function priceKioskOrder(input: {
+  lines: readonly PromoLine[];
+  promotions: readonly Promotion[];
+  now: LocalDateTime;
+  vatRate: number;
+  tip: TipRules;
+  tipPercent?: number | null;
+  tipOtherAgorot?: number | null;
+  /** The discount vouchers held for this order, in the order applied ("שוברי הנחה"). */
+  vouchers?: readonly AppliedDiscountVoucher[];
+}): PricedOrder {
+  const basket = priceKioskBasket(input.lines, input.promotions, input.now, input.vouchers ?? []);
+  const { netAgorot, vatAgorot } = vatSplit(basket.totalAgorot, input.vatRate);
+  const tipAgorot = kioskTipAgorot(input.tip, basket.totalAgorot, input.tipPercent, input.tipOtherAgorot);
+  return { ...basket, netAgorot, vatAgorot, tipAgorot, dueAgorot: basket.totalAgorot + tipAgorot };
 }

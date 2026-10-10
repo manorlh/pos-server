@@ -103,8 +103,20 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("DISCOUNT", "הנחה (סל / שורה)", "sale",
                    "הנחת סל או הנחת שורה, וגם פתיחת ארוחת צוות / מנהל בשולחן. מעל האחוז שהוגדר נדרש אישור "
                    "של מי שמותר לו אחוז כזה.", limits=(_MAX_PERCENT,), scope="discount"),
+    PermissionSpec("VOUCHER_DISCOUNT_OVERRIDE", "אישור כפיית הנחה בשובר", "sale",
+                   "אישור הורדת מחיר של מוצר \"לא מקבל הנחות\" במימוש שובר הפקה, כשסוג השובר מגדיר "
+                   "כפייה באישור מנהל — רק בהיקף ובתקרות שהוגדרו בו."),
+    # Production vouchers (§18.5, helper): staff test vouchers — only at a till in training mode.
+    PermissionSpec("VOUCHER_TEST_REDEEM", "מימוש שובר בדיקה", "sale",
+                   "מימוש שובר הפקה מאצוות בדיקה לצוות (\"שובר בדיקה\"), רק בקופה של סניף במצב הדרכה. "
+                   "לא נכלל בהתחשבנות ובדוחות המכירה."),
     PermissionSpec("LINE_VOID", "ביטול שורה", "sale",
                    "הסרת שורה שכבר נוספה להזמנה (לפני תשלום / לפני שליחה למטבח). נרשם כאירוע קופה."),
+    # The owner (09.10.2026), held sales at a shift close or Z (app/services/held_sales_close.py):
+    # cancelling one at the till — with a reason, recorded as the till event `held_sale_cancelled`.
+    PermissionSpec("HELD_SALE_CANCEL", "ביטול מכירה מושהית", "sale",
+                   "ביטול מכירה מושהית בקופה (למשל בסגירת משמרת או Z), עם סיבה. אינה מסמך — נרשם "
+                   "כאירוע קופה: מי, מתי, הפריטים והסכום."),
     PermissionSpec("OTH", "על חשבון הבית (OTH)", "sale",
                    "מתן פריט על חשבון הבית, עם סיבה. כשהפרמטר \"OTH — באישור מנהל\" כבוי, \"דורש אישור\" "
                    "נחשב \"מותר\" (כמו היום)."),
@@ -114,6 +126,14 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("REPRINT", "הדפסה חוזרת", "sale",
                    "הדפסה חוזרת של חשבון / בונים בשולחן, ובקיוסק (פינת המנהל): שובר פריט, העתק חשבונית ובון למטבח.",
                    scope="table:reprint"),
+    # The owner (08.10.2026): "תוסיף אופציה בהגדרה לסיסמה לקטגוריה או לפריט מסויים שחייב סיסמת מנהל,
+    # תבנה את זה בהרשאות" — app/services/restricted_items.py. On the till, "אסור" asks for a
+    # manager's code exactly as "דורש אישור מנהל" does: the code *is* the restriction.
+    PermissionSpec("SELL_RESTRICTED_ITEMS", "מכירת פריט המחייב אישור מנהל", "sale",
+                   "הוספה להזמנה (בכל מכירה: מקשים, חיפוש, סריקה, שולחן, הזמנה בהמתנה) של מוצר או קטגוריה "
+                   "שסומנו \"מחייב אישור מנהל במכירה\". מי שמותר לו — לא נשאל; כל אחד אחר — קוד של מנהל שמותר לו, "
+                   "פעם אחת לכל שורה. כל אישור נרשם (מי אישר, איזה מוצר, באיזו קופה ומתי).",
+                   scope="sale:restricted"),
     # ── שולחנות ──
     PermissionSpec("TABLES.USE", "מודול שולחנות", "tables",
                    "כניסה למסך השולחנות, פתיחת שולחן ועבודה עליו."),
@@ -173,6 +193,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
                    scope="catalog:write"),
+    # specs/item-blocks-targets.md: from the till (a long press, the catalog, "חסומים כעת"), a kiosk's
+    # staff screen and a controlling till's kiosk panel. The cloud checks the approver named by the
+    # device against this (app/routers/item_blocks.py) — no elevation scope.
+    PermissionSpec("ITEM_BLOCK", "חסימת פריט / אזל", "admin",
+                   "חסימה או סימון \"אזל\" של פריט או מחלקה — לקופות, לקיוסקים או לשניהם, בסניף, "
+                   "בנקודת המכירה או במכשיר — וביטול חסימה, מהקופה ומהקיוסק."),
     PermissionSpec("ATTENDANCE_MANAGE", "נוכחות — אישור מנהל", "admin",
                    "יציאה ממשמרת עם שולחנות פתוחים / סיום משמרת שדורש אישור מנהל.",
                    scope="attendance:manage"),
@@ -191,6 +217,12 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
                    "במחשב Windows (קיוסק / קופה): יציאה ממסך מלא לשולחן העבודה בקוד מנהל, לא בזמן הזמנה או "
                    "תשלום. החזרה — מהאייקון ליד השעון או מקיצור הדרך \"חזרה לקיוסק\", בלי קוד. כל יציאה נרשמת.",
                    devices=(DEVICE_WINDOWS,)),
+    # "מצב עבודה: קיוסק / קופה" (P:\specs\kiosk-landscape-till-mode.md §5.3): a manager's code switches
+    # a kiosk device to the till, checked on the device against the roster (offline too) — no scope.
+    PermissionSpec("KIOSK_TILL_MODE", "מעבר למצב קופה בקיוסק", "admin",
+                   "בניהול הקיוסק: מעבר המכשיר ל\"מצב עבודה: קופה\" (כשהבעלים אפשר זאת — kioskTillModeEnabled). "
+                   "המסמכים נרשמים על שם העובד שנכנס; אותה מכונה, אותה סדרה ואותם חוקי Z. לא באמצע הזמנה או תשלום.",
+                   devices=(DEVICE_TILL, DEVICE_TABLET, DEVICE_WINDOWS)),
 )
 # fmt: on
 
@@ -245,13 +277,17 @@ SPEC_ROLE_KEYS: Tuple[str, ...] = (WAITER, CASHIER, SUPERVISOR, MANAGER)
 #: What `TillAuthority.SENIOR_MAY_ACT_ALONE` gated for a cashier before roles existed —
 #: the permissions a legacy cashier needs approval for (OTH rode on the discount scope).
 LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
-    "REFUND", "DISCOUNT", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK",
+    "REFUND", "DISCOUNT", "VOUCHER_DISCOUNT_OVERRIDE", "VOUCHER_TEST_REDEEM", "OTH", "CATALOG_WRITE", "TRANSMIT", "TABLE_CANCEL", "TABLE_UNLOCK",
     "REPRINT", "TABLE_VOID", "TABLE_RESTORE", "USER_SESSION_RELEASE", "KIOSK_UNLOCK",
     "KIOSK_CONTROL", "ATTENDANCE_MANAGE", "CARD_UNRESOLVED",
+    # Added after roles: a legacy cashier asks a manager, a legacy manager sells alone.
+    "SELL_RESTRICTED_ITEMS",
+    "HELD_SALE_CANCEL",
+    "ITEM_BLOCK",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
-LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT"})
+LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"})
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -267,10 +303,19 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CALCULATOR.USE":                    (D, A, A, A),
     "PRICE_OVERRIDE":                    (P, A, A, A),
     "DISCOUNT":                          (P, P, A, A),
+    # Production vouchers (§7): a manager-approved override — a supervisor or a manager approves.
+    "VOUCHER_DISCOUNT_OVERRIDE":         (P, P, A, A),
+    # Staff test vouchers (§18.5): a supervisor or a manager redeems one; others with their approval.
+    "VOUCHER_TEST_REDEEM":               (P, P, A, A),
     "LINE_VOID":                         (A, A, A, A),
+    # A held sale cancelled at a close: a manager or a supervisor alone; a waiter or a cashier on
+    # a manager's code.
+    "HELD_SALE_CANCEL":                  (P, P, A, A),
     "OTH":                               (P, P, A, A),
     "REFUND":                            (D, P, A, A),
     "REPRINT":                           (P, P, A, A),
+    # "מחייב אישור מנהל במכירה": the people who approve for others sell it alone.
+    "SELL_RESTRICTED_ITEMS":             (P, P, A, A),
     "TABLES.USE":                        (A, A, A, A),
     "TABLES.OPEN_OTHERS":                (P, A, A, A),
     "TABLE_CANCEL":                      (P, P, A, A),
@@ -298,6 +343,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.VIEW_LOG":              (D, D, A, A),
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
+    # "חסימת פריט / אזל": the shift supervisor and the manager alone; a cashier on a manager's code.
+    "ITEM_BLOCK":                        (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
     "USER_SESSION_RELEASE":              (P, P, A, A),
     "CARD_UNRESOLVED":                   (P, P, A, A),
@@ -306,6 +353,8 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     # The owner (08.10.2026): managers, not cashiers. "approval" means nothing here — the
     # Windows pad already asks for a manager's own code.
     "DESKTOP_EXIT":                      (D, D, D, A),
+    # The owner (09.10.2026): a manager switches a kiosk to the till ("מצב עבודה"); the others never.
+    "KIOSK_TILL_MODE":                   (D, D, D, A),
 }
 # fmt: on
 
@@ -517,7 +566,9 @@ def _role_value(role: Any) -> str:
 #: What makes a role a "shop_manager" for a till that predates roles: it may do alone
 #: everything such a till let a shop manager do alone. Anything less reads as a cashier
 #: there — the direction to fail in.
-LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES
+#: Not grown with codes added after roles (SELL_RESTRICTED_ITEMS): an older till never asks for
+#: them, and a custom role must not read as a cashier there because of one it cannot use.
+LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"}
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:

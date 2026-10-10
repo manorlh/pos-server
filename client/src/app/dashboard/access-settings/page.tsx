@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /** Entries that are not the role's to lose: the super admin's own pages, and one's profile. */
-const ALWAYS = new Set(['/dashboard/access-settings', '/dashboard/profile', '/dashboard/till-parameters', '/dashboard/app-updates']);
+const ALWAYS = new Set(['/dashboard/access-settings', '/dashboard/profile', '/dashboard/till-parameters', '/dashboard/app-updates', '/dashboard/device-logs']);
 
 export default function AccessSettingsPage() {
   const isSuperAdmin = useAuth((s) => s.authHydrated && s.user?.role === 'super_admin');

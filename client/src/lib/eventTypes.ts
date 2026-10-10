@@ -72,6 +72,8 @@ export interface EventFormValues {
   endDate: string;
   endTime: string;
   machineIds: string[];
+  /** "העבר לאירוע הזה": picked tills to take out of overlapping draft events on save. */
+  moveMachineIds?: string[];
   producerName: string;
   notes: string;
   thresholds: EventThresholds;
@@ -81,9 +83,32 @@ export interface EventTillOption {
   id: string;
   name: string;
   posNumber: string | null;
+  /** Its area ("נקודת מכירה"). */
+  areaId?: string | null;
   areaName: string | null;
+  /** A till converted to a self-order kiosk, or a till. */
+  kind?: 'till' | 'kiosk';
+  /** Its device groups ("קבוצות מכשירים") of the shop's company. */
+  groupIds?: string[];
   lastHeartbeatAt: string | null;
   busy: { eventId: string; eventName: string; startsAt: string; endsAt: string } | null;
+}
+
+/** `GET /report-events/tills`: the shop's tills and what the pickers select them by. */
+export interface EventTillsView {
+  shopId: string;
+  tills: EventTillOption[];
+  areas: { id: string; name: string }[];
+  groups: { id: string; name: string }[];
+  /** "העתק קופות מאירוע קודם": the shop's latest events with tills, newest first. */
+  recentEvents: { id: string; name: string; status: EventStatus; startsAt: string; endsAt: string; machineIds: string[] }[];
+}
+
+/** What `POST /report-events/{id}/tills` did. */
+export interface EventTillChangesResult {
+  added: string[];
+  removed: string[];
+  moved: { machineId: string; machineName: string; fromEventId: string; fromEventName: string }[];
 }
 
 export interface PeakHour {

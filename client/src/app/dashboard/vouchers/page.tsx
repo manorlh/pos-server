@@ -33,6 +33,9 @@ const EMPTY: Partial<Voucher> = {
 export default function VouchersPage() {
   const t = useTranslations('vouchers');
   const tc = useTranslations('common');
+  // The page's own title is its sidebar label ("שוברים"); `vouchers.title` is the voucher's print title ("כותרת להדפסה"),
+  // the column and the field below — not the heading.
+  const tn = useTranslations('nav');
   // Vouchers are tenant-level print templates (`Voucher.tenantId`); a company or
   // shop in scope does not narrow the list.
   const { resolution } = usePageScope({ maxLevel: 'tenant' });
@@ -72,7 +75,7 @@ export default function VouchersPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
+          <h1 className="text-2xl font-bold">{tn('vouchers')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
         <Button onClick={() => { setEditing(EMPTY); setOpen(true); }} size="sm">
@@ -85,11 +88,11 @@ export default function VouchersPage() {
       ) : null}
 
       <ReportExportToolbar
-        title={t('title')}
+        title={tn('vouchers')}
         disabled={vouchers.length === 0}
         // Every voucher, past the 200 the list loads (the endpoint's largest page).
         getSheets={async () => ({
-          name: t('title'),
+          name: tn('vouchers'),
           columns: [
             { header: t('name'), width: 26 },
             { header: t('title'), width: 26 },

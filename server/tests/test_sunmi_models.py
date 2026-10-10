@@ -172,7 +172,7 @@ class TestDetection:
 
     def test_the_others_are_as_before(self):
         assert detect_device_model({"model": "Nebullar P18"}) == "P18"
-        assert detect_device_model({"model": "C20 Pro", "manufacturer": "LANDI"}) == "LANDI"
+        assert detect_device_model({"model": "C20 SE", "manufacturer": "LANDI"}) == "LANDI"
         assert detect_device_model({"model": "F20", "manufacturer": "Feitian"}) is None
         # A Kozen "P1…" is not a SUNMI P1: the maker decides.
         assert detect_device_model({"model": "P1", "manufacturer": "Kozen"}) is None

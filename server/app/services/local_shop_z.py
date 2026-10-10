@@ -66,6 +66,7 @@ from app.models.pos_machine import POSMachine
 from app.models.shift import Shift, ShiftStatus
 from app.models.shop import Shop
 from app.models.z_report import ZOrigin, ZReport
+from app.services import z_expected_cash as ZEC
 
 logger = logging.getLogger(__name__)
 
@@ -1181,13 +1182,30 @@ def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:
         z.business_date = body.business_date
     z.totals_mismatch = False
     header = dict(z.header or {})
-    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal", "byWaiter"):
+    for key in ("lineDiscountsTotal", "promotionDiscountsTotal", "voucherDiscountsTotal",
+                "productionVoucherDeductionsTotal", "testVoucherDeductionsTotal", "byWaiter",
+                "reportSections"):
         header.pop(key, None)
+    # "דו״ח Z — גרסה 2": the shop's sections exactly as the main till printed them (its tills'
+    # own are on their sections, `report.reportSections`); none from an older till.
+    printed_sections = body.report.get("reportSections") if isinstance(body.report, dict) else None
+    if isinstance(printed_sections, dict):
+        header["reportSections"] = printed_sections
     if printed_drawer:
         # The drawer as printed: card tips paid out of it ("cardTipsFromDrawer") and its cash
         # ("drawerCash") are then read from the printed sections, never the cloud's build.
         for key in ("cardTipsFromDrawer", "drawerCash"):
             header.pop(key, None)
+        # "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": likewise — what went into the printed
+        # expected cash is what the tills' printed sections say (their `cashMovements` blocks,
+        # summed over the tills that had the parameter on), never the cloud's own build.
+        header.pop(ZEC.BLOCK, None)
+        moved = [m for m in (ZEC.movements_of_block(s.get(ZEC.BLOCK)) for s in sections) if m is not None]
+        if moved:
+            total = ZEC.NONE
+            for m in moved:
+                total = ZEC.add(total, m)
+            header[ZEC.BLOCK] = ZEC.block(total)
     header["asPrinted"] = {"producedBy": _ref(producer), "note": "נשמר כפי שהודפס בקופה הראשית"}
     z.header = header
 

@@ -140,10 +140,11 @@ def close_shift_administratively(
     shift.reconstructed = True
     shift.reconstructed_by = who
     shift.reconstruction_basis = basis
-    if getattr(machine, "reported_open_shift_id", None) == shift.id:
-        # The heartbeat claim is stale from this moment, exactly as on a till's close.
-        machine.reported_open_shift_id = None
-        machine.reported_open_shift_opened_at = None
+    # The till's own claim is left as it reported it (never wiped by a cloud-side action): a till
+    # still selling offline into this shift must not read as "last closed" ("חסימת Z כשיש משמרות
+    # פתוחות", app/services/z_shift_guard.py). The cloud already holds the shift closed, so the
+    # claim is not taken as live anywhere (`z_runs._reported_open_is_live`); the till's next beat,
+    # told the shift is closed, replaces it.
     db.flush()
     # A Z run or close request waiting for this shift must not wait for a till that is dead.
     from app.services.remote_close import on_shift_close_accepted

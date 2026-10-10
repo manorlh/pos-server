@@ -321,7 +321,9 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
     exactly what they were getting:
 
     * `products` — `{global_id: row}` for every global product assigned to the shop (its
-      price and listing), as `_serialize_merged_product` makes it with no till of its own;
+      price and listing), as `_serialize_merged_product` makes it with no till of its own (its
+      `salesChannel` is a till's; each device is served the one its kind reads, from the row's
+      `appearsIn` — `_sales_channel_for_device`);
     * `productGates` — the gated availability inputs: the product's own flag, its company
       level and (for a product the shop later drops) the shop level as it stood;
     * `categories` — `{id: row}` the shop's tills get (`_categories_for_shop`), with the
@@ -440,6 +442,8 @@ _PRODUCT_LIVE = frozenset({
     "stockQuantity", "inMachineCatalog", "createdAt", "updatedAt",
     # The deciding lock, laid over live with the levels it comes from (SPEC_AVAILABILITY).
     "availabilityLock",
+    # "אזל" / "חסום": the floor of the day, never part of a publication (app/services/sold_out.py).
+    "lockAvailable", "blocks",
 })
 _CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 
@@ -639,6 +643,36 @@ def catalog_pull(db: Session, machine: POSMachine, since: Optional[datetime]) ->
     return Pull(serve(db, machine, shop, publication, since), since)
 
 
+def _device_is_kiosk(db: Session, machine: POSMachine) -> bool:
+    """
+    Whether this device reads the catalog as a kiosk — exactly as the live pull asks it
+    (`sold_out.is_kiosk`: an enabled kiosk row, never a till in kiosk mode — `home_role` "till").
+    """
+    from app.services import sold_out
+
+    try:
+        return bool(sold_out.is_kiosk(db, machine))
+    except Exception:  # noqa: BLE001 - a world without the kiosk tables: a till, as the live pull says
+        return False
+
+
+def _sales_channel_for_device(published: Dict[str, Any], is_kiosk: bool) -> Any:
+    """
+    "מופיע ב" as this device kind reads it, from the publication's own `appearsIn` — the same
+    `product_channels.device_sales_channel` the live pull uses (`_serialize_merged_product`). The
+    snapshot is built with no device of its own, so its `salesChannel` is a till's: a product on
+    neither the tills nor the kiosks would reach a kiosk as "kiosk_only" — shown. A row published
+    before "מופיע ב" (no `appearsIn`) carries the stored code, the same for both kinds: kept.
+    """
+    from app.services import product_channels
+
+    appears = published.get("appearsIn")
+    if not isinstance(appears, list):
+        return published.get("salesChannel")
+    product = SimpleNamespace(appears_in=appears, sales_channel=published.get("salesChannel"))
+    return product_channels.device_sales_channel(product, is_kiosk)
+
+
 def _products_for_till(
     db: Session, machine: POSMachine, shop: Shop, snapshot: Dict[str, Any], since: Optional[datetime]
 ) -> List[Dict[str, Any]]:
@@ -684,6 +718,12 @@ def _products_for_till(
     items = machine_catalog.catalog_items(db, machine.id) if ids else {}
     moved = getattr(machine, "area_changed_at", None)
     moved = S._aware_utc(moved) if isinstance(moved, datetime) else None
+    # "אזל" / "חסום" — live, as on a till pulling the live catalog (S._serialize_merged_product).
+    from app.services import sold_out
+
+    blocks_by = sold_out.blocks_for_machine(db, machine, ids, since=since) if ids else {}
+    # A till or a kiosk: "מופיע ב" is sent as the `salesChannel` its kind reads, as live.
+    device_is_kiosk = _device_is_kiosk(db, machine) if rows else False
 
     out: List[Dict[str, Any]] = []
     for key, published in sorted(rows.items(), key=lambda kv: ((kv[1].get("name") or ""), kv[0])):
@@ -704,8 +744,13 @@ def _products_for_till(
             eff = max([s for s in stamps if s is not None], default=_now())
         if moved is not None and moved > eff:
             eff = moved
+        blocks = blocks_by.get(key)
+        blocked_at = S._aware_utc(getattr(blocks, "changed_at", None))
+        if blocked_at is not None and blocked_at > S._aware_utc(eff):
+            eff = blocked_at
         if since is not None and S._aware_utc(eff) <= S._aware_utc(since):
             continue
+        active_blocks = list(getattr(blocks, "active", None) or [])
 
         gate = gates.get(key) or {}
         listed = bool(published.get("shopListed", True))
@@ -725,6 +770,7 @@ def _products_for_till(
             base_in_stock = bool(published.get("inStock", True))
 
         row = dict(published)
+        row["salesChannel"] = _sales_channel_for_device(published, device_is_kiosk)
         row["id"] = str(loc.id) if loc is not None else key
         row["posMachineId"] = str(loc.pos_machine_id) if loc is not None and loc.pos_machine_id else None
         level = loc.catalog_level if loc is not None else (g.catalog_level if g is not None else None)
@@ -736,7 +782,10 @@ def _products_for_till(
         elif g is not None:
             row["imageUrl"] = g.image_url
         row["inStock"] = bool(listed and base_in_stock)
-        row["isAvailable"] = bool(listed and resolved.available)
+        row["lockAvailable"] = bool(listed and resolved.available)
+        row["isAvailable"] = row["lockAvailable"] and not sold_out.manual_in_force(active_blocks)
+        row["blocks"] = [sold_out.block_out(b) for b in active_blocks]
+        row["kioskDisplay"] = sold_out.kiosk_display(active_blocks)
         # The lock that decides, live like the levels it comes from (docs/SPEC_AVAILABILITY.md).
         row["availabilityLock"] = availability.lock_info(
             levels,
@@ -884,14 +933,18 @@ def _dropped(
             )
         }
         items = machine_catalog.catalog_items(db, machine.id, ids)
+        device_is_kiosk = _device_is_kiosk(db, machine)
         for key in gone:
             row = dict(old["products"][key])
+            row["salesChannel"] = _sales_channel_for_device(old["products"][key], device_is_kiosk)
             loc = locals_by_global.get(key)
             item = items.get(key)
             row["id"] = str(loc.id) if loc is not None else key
             row["shopListed"] = False
             row["inStock"] = False
             row["isAvailable"] = False
+            row["lockAvailable"] = False
+            row["blocks"] = []
             row["availabilityLock"] = None
             row["inMachineCatalog"] = bool(item is not None and item.is_included)
             row["updatedAt"] = stamp
@@ -955,11 +1008,13 @@ _PRODUCT_FIELDS = (
 )
 #: Compared only when both snapshots carry them: a publication made before the field
 #: existed has none, and that is not a change the merchant made.
-_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel")
+_PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel", "requiresManagerApproval")
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
 )
+#: Compared only when both snapshots carry them (as _PRODUCT_NEW_FIELDS).
+_CATEGORY_NEW_FIELDS = ("requiresManagerApproval",)
 _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQuantity", "allowPre")
 _OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
@@ -991,6 +1046,19 @@ def _same(a: Any, b: Any) -> bool:
 
 def _on_menu(row: Optional[Dict[str, Any]]) -> bool:
     return row is not None and bool(row.get("shopListed", True))
+
+
+def _device_appears(row: Optional[Dict[str, Any]]) -> Optional[List[str]]:
+    """
+    The tills' and kiosks' part of a row's "מופיע ב" — what a broadcast changes for them (online
+    and the digital menu are not theirs). None for a row published before `appearsIn`.
+    """
+    from app.services import product_channels
+
+    appears = (row or {}).get("appearsIn")
+    if not isinstance(appears, list):
+        return None
+    return [c for c in (product_channels.POS, product_channels.KIOSK) if c in appears]
 
 
 def _gate_available(gate: Optional[Dict[str, Any]]) -> Optional[bool]:
@@ -1040,6 +1108,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return bool(value)
         if field_name == "dietaryTags":
             return dietary.labels(value)
+        if field_name == "appearsIn":
+            from app.services import product_channels
+
+            return [product_channels.LABELS_HE.get(c, c) for c in value or []]
         return value
 
     def by_name(keys, *maps):
@@ -1072,11 +1144,17 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             for f in _PRODUCT_FIELDS
             if not _same(a.get(f), b.get(f))
         ]
+        # "מופיע ב": the tills' and the kiosks' part, as each kind reads it — a till's
+        # `salesChannel` alone misses a product put on (or taken off) the kiosks only.
+        appears_before, appears_after = _device_appears(a), _device_appears(b)
+        by_appears = appears_before is not None and appears_after is not None
         changes += [
             _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
             for f in _PRODUCT_NEW_FIELDS
-            if f in a and f in b and not _same(a.get(f), b.get(f))
+            if f in a and f in b and not _same(a.get(f), b.get(f)) and not (by_appears and f == "salesChannel")
         ]
+        if by_appears and appears_before != appears_after:
+            changes.append(_change("appearsIn", shown("appearsIn", appears_before, True), shown("appearsIn", appears_after)))
         if changes:
             out["products"].append(_item("changed", key, name, changes))
         before, after = _gate_available(og.get(key)), _gate_available(ng.get(key))
@@ -1097,6 +1175,11 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
                 _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
                 for f in _CATEGORY_FIELDS
                 if not _same(a.get(f), b.get(f))
+            ]
+            changes += [
+                _change(f, shown(f, a.get(f), True), shown(f, b.get(f)))
+                for f in _CATEGORY_NEW_FIELDS
+                if f in a and f in b and not _same(a.get(f), b.get(f))
             ]
             if changes:
                 out["categories"].append(_item("changed", key, name, changes))

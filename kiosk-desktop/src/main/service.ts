@@ -10,13 +10,15 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { kioskPayMethods, resolveKioskConfig, singleCardPayMethods, type PaymentMethod } from '@dash-lib/kioskConfig';
-import { orderCode, orderDue, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { kioskPayMethods, resolveKioskConfig, kioskOfflineBlocks, tsKioskPayMethods, voucherCanFinish, type PaymentMethod } from '@dash-lib/kioskConfig';
+import { legMarks, orderCode, orderDue, recountLegs, type OpenOrder, type VoucherLeg, type WebLineOption, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { DISCOUNT_PAY_HERE, startVouchersOf } from '@dash-lib/kioskVoucherClient';
+import { voucherLabel, type AppliedDiscountVoucher, type VoucherOutcome } from '@dash-lib/kioskVouchers';
+import { catalogNextChangeMs } from '@dash-lib/kioskSoldOut';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type OptionPick } from '@dash-lib/kioskMoney';
 import { localDate, kioskOperator, closerName, bonStep, receiptAfterApproval, type KioskOrder, type PickupRules } from '../core/kioskOrders';
 import { OfflineTracker } from '../core/kioskHealth';
 import { formatDocNumber, prefixFor } from '../core/documentNumbers';
-import { ofShekels } from '../core/money';
 import { bonDoc, receiptDoc, slipDoc, ticketDoc, zDoc, type BusinessInfo, type PrintDoc, type ReceiptLine } from '../core/printDocs';
 import { BON_NOT_ON_KIOSK, windowsBonRoute } from '../core/kioskBonRoute';
 import { ITEM_TICKET_PARAM, itemTicketSetting, itemTicketsPrint, resolveTicketMode, splitItemTickets, ticketModeFor } from '../core/itemTickets';
@@ -55,7 +57,7 @@ import { Api, type FetchFn } from './sync/api';
 import { CloudStore, parameterOn, PLAIN_BOX, type Credentials, type SecretBox } from './sync/cloud';
 import { Outbox, type OutboxRow } from './sync/outbox';
 import { pair as pairRequest, SyncEngine } from './sync/syncEngine';
-import { documentWire, Ledger, type AppliedPromotionRow, type DocDraft } from './fiscal/ledger';
+import { docVoucherDiscounts, documentWire, Ledger, type AppliedPromotionRow, type DocDraft, type DocVoucherLeg } from './fiscal/ledger';
 import { TillZService } from './fiscal/tillZService';
 import { FINAL_OUTCOMES, kioskSection, lanCloseReport, lanOutcomeMessage, planLanClose, type LanCloseOutcome, type LanCloseRequest } from './fiscal/shopZPart';
 import { MediaStore, type Downloader, type VariantMaker } from './media/mediaStore';
@@ -77,7 +79,6 @@ import { kdsSaleRelease, releasesToKds } from './kiosk/kdsRelease';
 import { FunnelStore } from './kiosk/funnel';
 import {
   basketChanges,
-  checkedBasePrice,
   cloudCheckRequest,
   CLOUD_CHECK_TIMEOUT_MS,
   overridesLive,
@@ -91,6 +92,9 @@ import {
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
+import { basketSold } from '@dash-lib/kioskBasketSold';
+import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from '@dash-lib/kioskMenus';
+import type { MenuBlock } from '@dash-lib/menuSchedule';
 import type {
   AdminAction,
   AdminInfo,
@@ -124,6 +128,11 @@ export interface PlatformHooks {
 
 export interface ServiceOptions {
   dataDir: string;
+  /**
+   * The screen it lays itself out on, for the cloud's fleet view (`status.display`, pos-server
+   * kiosk_till_mode.clean_display): the primary display in DIPs and its scale (displayReport.ts).
+   */
+  displayInfo?: () => Record<string, unknown> | null;
   appVersion: string;
   deviceInfo: Record<string, string>;
   secretBox?: SecretBox;
@@ -381,6 +390,8 @@ export class KioskService extends EventEmitter {
     if (this.emitTimer) clearTimeout(this.emitTimer);
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    if (this.menuTimer) clearTimeout(this.menuTimer);
+    this.menuTimer = null;
     this.offUsbWatch();
     if (this.ownsUsbWatch) this.usbWatch.stop();
     this.sync.stop();
@@ -538,8 +549,37 @@ export class KioskService extends EventEmitter {
     return { css, family: fam };
   }
 
+  /** When the catalog's sale states change next by the clock alone (a block's end): the view is built again then. */
+  private saleChangeAt: number | null = null;
+
+  /** "תפריטים": the block the view was built from, the menu it was built for, and the timer that looks at the clock at each minute. */
+  private menuBlock: MenuBlock | null = null;
+  private menuKey = '';
+  private menuTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * "תפריטים": the menu active now by the kiosk's OWN clock — offline too — looked at once per minute boundary (a handful of
+   * comparisons, no call, no catalog read). The view is built again only when the answer changes: a menu starts, ends, or
+   * yields to another (the Android kiosk's minute ticks, CatalogMenuRepository.minuteTicks).
+   */
+  private armMenuClock() {
+    if (this.menuTimer) clearTimeout(this.menuTimer);
+    this.menuTimer = null;
+    if (this.stopped || !hasMenus(this.menuBlock)) return;
+    this.menuTimer = setTimeout(() => {
+      this.menuTimer = null;
+      if (menuKeyAt(this.menuBlock, Date.now()) !== this.menuKey) this.dirty();
+      else this.armMenuClock();
+    }, msToNextMinute(Date.now()));
+    this.menuTimer.unref?.();
+  }
+
   private catalogData() {
-    return buildKioskCatalog(this.cloud.catalog(), this.settingsMap(), (url, size) => this.localMediaUrl(url, size));
+    const now = Date.now();
+    const catalog = this.cloud.catalog();
+    this.saleChangeAt = catalogNextChangeMs(catalog.products, now);
+    this.menuBlock = (catalog.catalogMenus as MenuBlock | null | undefined) ?? null;
+    return buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs: now });
   }
 
   private pausedState(): { paused: boolean; message: string | null; until: string | null } {
@@ -559,7 +599,11 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], groups: {}, meals: {}, quickNotes: {}, upsells: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    // "תפריטים": the menu the screens were built for; the clock looks again at the next minute boundary. Only a view build
+    // sets it — a basket priced in between does not hide a menu change from the screens.
+    this.menuKey = `${cat.menu.mode}:${cat.menu.menuId ?? ''}`;
+    if (phase === 'kiosk') this.armMenuClock();
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');
@@ -591,8 +635,10 @@ export class KioskService extends EventEmitter {
         paused: paused.paused,
         pausedMessage: paused.message,
         pausedUntil: paused.until,
-        // No terminal set up at all; a health check that did not answer is tried on the press.
-        noPayment: !this.pay.configured,
+        // No terminal set up at all (a health check that did not answer is tried on the press), or offline with
+        // "חסימת הזמנות כשאין אינטרנט" on (kioskOfflineBlocks — the Android kiosk's KioskPayBlock.OFFLINE).
+        noPayment: !this.pay.configured || this.offlineBlocked(cfg),
+        noPaymentReason: this.offlineBlocked(cfg) ? 'offline' : !this.pay.configured ? 'terminal' : null,
         terminal: this.pay.monitor.state,
         offline: this.offlineNow,
         offlineSince: this.offline.since,
@@ -686,6 +732,7 @@ export class KioskService extends EventEmitter {
         this.dirty();
       },
       onPromotions: () => this.dirty(),
+      onStock: () => this.dirty(),
       onSettings: () => {
         this.applyProvider();
         this.dirty();
@@ -758,6 +805,7 @@ export class KioskService extends EventEmitter {
       ...(this.kv.getJson(SHOP_Z_CLOSE_RESULT) ? { closeResult: this.kv.getJson(SHOP_Z_CLOSE_RESULT) } : {}),
       // "תקינות מכשירים" (pos-server kiosk_health.clean_health): what only the kiosk sees.
       health: this.healthReport(health),
+      ...(this.opts.displayInfo ? { display: this.opts.displayInfo() ?? undefined } : {}),
     };
   }
 
@@ -837,10 +885,12 @@ export class KioskService extends EventEmitter {
     const id = this.machineId;
     if (!id || this.offlineNow || input.lines.length === 0) return;
     const cat = this.catalogData();
-    const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
+    const byId = new Map<string, KProduct>([...cat.products, ...cat.held].map((p) => [p.id, p]));
+    // The base price each line remembers, without any menu: the cloud's word is about the catalog's price the customer saw
+    // (KioskPriceCheck.request: `line.product.basePrice`); the catalog held now only stands in for a line of an older screen.
     const body = cloudCheckRequest(input.lines, (pid) => {
       const p = byId.get(pid);
-      return p ? ofShekels(p.price) : undefined;
+      return p ? basePriceOf(p) : undefined;
     }, this.cloud.promotionsEtag());
     const reply = await this.api.post<CloudVerdict>(`sync/${id}/kiosk/basket-check`, body, { timeoutMs: CLOUD_CHECK_TIMEOUT_MS });
     if (reply.kind !== 'ok' || !reply.body || !Array.isArray(reply.body.lines)) return;
@@ -1092,35 +1142,56 @@ export class KioskService extends EventEmitter {
    * "הרבה"), a meal's components on their defaults with their upcharges, then the promotions — each
    * line's share is the document's discount. The screen's figures are only compared, never trusted.
    */
-  private priceBasket(input: StartPaymentIn, now = new Date()): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[] } {
+  private priceBasket(
+    input: StartPaymentIn,
+    now = new Date(),
+  ): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[]; voucherOutcomes: VoucherOutcome[] } {
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in test/kioskMenus.test.ts.
+    const heldById = new Map<string, KProduct>(cat.held.map((p) => [p.id, p]));
+    const block = this.menuBlock;
+    const menuPrices = menuPriceSets(block);
     const lines: SaleLine[] = [];
     const changes: BasketChange[] = [];
     const tracked = new Set<string>();
     // What the cloud said a moment ago wins over a catalog that has not caught up yet.
     const cloud = overridesLive(this.cloudBasket, Date.now());
-    const gone = (id: string, p: KProduct | undefined) => !p || p.soldOut || !!cloud?.gone.has(id);
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (client lib/kioskBasketSold.ts, the Android kiosk's
+    // KioskBasketLookup). A meal's component: found even when no screen shows it (hidden, not placed), but never blocked,
+    // sold out or gone.
+    const lookup = basketSold({ products: cat.products, categories: cat.categories, held: cat.held, cfg: this.config(), gone: cloud?.gone });
     for (const l of input.lines) {
-      const p = byId.get(l.productId);
+      const p = lookup.dish(l.productId, !!l.menuId);
       // A meal whose chosen component is no longer sold goes as a whole: the customer chooses again.
       const parts = l.meal?.components ?? [];
       const slots = cat.meals[l.productId] ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || gone(c.productId, byId.get(c.productId));
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !lookup.component(c.productId);
       });
-      if (!p || gone(l.productId, p) || brokenMeal) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
+      if (!p || brokenMeal) {
+        changes.push({ kind: 'removed', productId: l.productId, name: (byId.get(l.productId) ?? heldById.get(l.productId))?.name ?? '', key: l.key });
         continue;
       }
+      // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the basket is
+      // no price change), else what the kiosk sells it at now; the cloud's word moves a catalog-priced dish only.
+      const own = keptListPrice({ listAgorot: l.listAgorot, catalogAgorot: l.catalogAgorot }, pricesNow(p, cloud?.prices.get(p.id)), menuPrices.get(p.id));
+      // The menu the line says it was added under: only one this kiosk's block holds is recorded on the document.
+      const under = l.menuId ? menuById(block, l.menuId) : null;
       const options = this.chargedOptions(cat.groups[p.id] ?? [], l.options);
       const components = parts.map((c) => {
         const slot = slots.find((s) => s.id === c.slotId)!;
-        const cp = byId.get(c.productId)!;
+        const cp = (byId.get(c.productId) ?? heldById.get(c.productId))!;
         const groups = (cat.groups[cp.id] ?? []).map(moneyGroupOf);
-        // The kiosk's meal: each component on its own defaults (MealDraft.start).
-        const chosen = chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
+        // The kiosk's meal: each component on its own defaults (MealDraft.start), or with the required choice the
+        // customer answered in the meal window (MealDraft.updateDish) — priced by its groups here.
+        const own = c.options && c.options.length > 0 ? this.chargedOptions(cat.groups[cp.id] ?? [], c.options) : null;
+        const chosen = own ?? chosenOptions(groups, Object.fromEntries(groups.map((g) => [g.id, defaultPicks(g)])));
         if (cp.trackStock) tracked.add(cp.id);
         return {
           slotId: slot.id,
@@ -1128,9 +1199,9 @@ export class KioskService extends EventEmitter {
           productId: cp.id,
           name: cp.name,
           categoryId: cp.categoryId,
-          listPriceAgorot: checkedBasePrice(cp.id, cp.priceAgorot, cloud),
+          listPriceAgorot: pricesNow(cp, cloud?.prices.get(cp.id)).listAgorot,
           upchargeAgorot: slot.choices.find((x) => x.productId === cp.id)!.upchargeAgorot,
-          options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre, chargedAgorot: o.chargedAgorot })),
+          options: chosen.map((o): SaleOption => ({ groupId: o.groupId, groupName: o.groupName, kind: o.kind, optionId: o.optionId, name: o.name, priceAgorot: o.priceAgorot, qty: o.qty, pre: o.pre ?? null, chargedAgorot: o.chargedAgorot })),
         };
       });
       if (p.trackStock) tracked.add(p.id);
@@ -1139,23 +1210,33 @@ export class KioskService extends EventEmitter {
         productId: p.id,
         name: p.name,
         sku: p.sku,
-        basePriceAgorot: checkedBasePrice(p.id, p.priceAgorot, cloud),
+        basePriceAgorot: own,
         options,
         notes: l.notes.filter((n) => n.trim()),
         qty: Math.min(MAX_LINE_QTY, Math.max(1, Math.trunc(l.qty))),
         meal: components.length > 0 ? { productId: p.id, name: p.name, components } : null,
         categoryId: p.categoryId,
         noDiscount: p.noDiscount,
+        ...(under
+          ? {
+              menuId: l.menuId,
+              menuName: typeof under.name === 'string' ? under.name : null,
+              priceSource: l.priceSource === 'menu' ? ('menu' as const) : ('catalog' as const),
+              catalogPriceAgorot: pricesNow(p, cloud?.prices.get(p.id)).catalogAgorot,
+            }
+          : {}),
       });
     }
     // A price that moved since the screen showed it: shown to the customer, never charged as is.
     const priced = new Map(lines.map((x) => [x.key, { name: x.name, unitAgorot: unitAgorot(x) }] as const));
     for (const c of basketChanges(input.lines.filter((l) => priced.has(l.key)), priced)) if (c.kind === 'repriced') changes.push(c);
-    // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price).
+    // "מבצעים": the promotions on this basket now, by the kiosk's clock (KioskViewModel.price) — then the discount
+    // vouchers held for the order ("שוברי הנחה"), in the order applied (`withPromotions(...).withVoucherDiscounts()`).
     const promo = priceKioskBasket(
       lines.map((x) => ({ id: x.key, productIds: [x.productId], categoryId: x.categoryId ?? null, unitAgorot: unitAgorot(x), qty: x.qty, noDiscount: x.noDiscount === true })),
       promotionsOf(this.cloud.promotions()),
       localDateTimeOf(now),
+      input.vouchers?.discounts ?? [],
     );
     const shares = new Map(promo.lines.map((x) => [x.id, x] as const));
     for (const x of lines) {
@@ -1165,9 +1246,11 @@ export class KioskService extends EventEmitter {
         x.promotionId = share.promotionId;
         x.promotionName = share.promotionName;
       }
+      if (share && share.voucherAgorot > 0) x.voucherAgorot = share.voucherAgorot;
+      if (share && share.promotionYieldedAgorot > 0) x.promotionYieldedAgorot = share.promotionYieldedAgorot;
     }
     const promotions = promo.applied.map((a) => ({ promotionId: a.promotionId, name: a.name, type: a.type, applications: a.applications, discountAgorot: a.discountAgorot }));
-    return { lines, changes, tracked: [...tracked], promotions };
+    return { lines, changes, tracked: [...tracked], promotions, voucherOutcomes: promo.voucherOutcomes };
   }
 
   /** A dish's choices from its catalog groups, priced per unit of the dish (kioskMoney.ts pickCharges); unknown ones dropped. */
@@ -1191,15 +1274,29 @@ export class KioskService extends EventEmitter {
     // A screen (KDS, order status board) is not a till: it never sells.
     if (!this.fiscalRole) return { ok: false, reason: 'error', message: 'מכשיר תצוגה אינו קופה' };
     if (this.pay.cardInFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
-    // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
-    if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
-    if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
+    // The vouchers of the order (goods ones as legs, discount ones held for it), read field by field: the
+    // browser kiosk's bridge sends them over HTTP.
+    const vouchers = input.vouchers === undefined ? null : startVouchersOf(input.vouchers);
+    if (input.vouchers !== undefined && !vouchers) return { ok: false, reason: 'error', message: 'השוברים של ההזמנה אינם תקינים' };
+    const withVouchers = !!vouchers && vouchers.legs.length + vouchers.discounts.length > 0;
+    const terminalRefusal = (): StartPaymentOut | null => {
+      // No terminal set up: refused. One whose last check did not answer is tried now — its error said if it fails.
+      if (!this.pay.configured) return { ok: false, reason: 'terminal', message: 'לא הוגדר מסופון אשראי לקיוסק. אנא פנו לצוות.' };
+      if (this.pay.blocked()) return { ok: false, reason: 'unresolved', message: 'תשלום קודם ממתין לבירור. אנא פנו לצוות.' };
+      return null;
+    };
+    // The card is asked for what the vouchers do not pay: with none on the order, before anything else (as always);
+    // with some, once the order is priced — a sale they pay whole touches no terminal.
+    if (!withVouchers) {
+      const refused = terminalRefusal();
+      if (refused) return refused;
+    }
     // The cloud's word first, when it answers in time (core/basketCheck.ts).
     await this.cloudBasketCheck(input).catch(() => undefined);
-    const { lines, changes, tracked, promotions } = this.priceBasket(input);
+    const { lines, changes, tracked, promotions, voucherOutcomes } = this.priceBasket({ ...input, vouchers: vouchers ?? undefined });
     const nowTotal = saleTotals(lines, this.vatRate()).totalAgorot;
     if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: nowTotal };
-    // The total the customer saw: never a different one charged.
+    // The total the customer saw (after the promotions and the discount vouchers): never a different one charged.
     const shownTotal = input.expectedTotalAgorot;
     if (typeof shownTotal === 'number' && Number.isFinite(shownTotal) && Math.round(shownTotal) !== nowTotal) {
       return { ok: false, reason: 'changed', changes: [], totalAgorot: nowTotal };
@@ -1208,9 +1305,23 @@ export class KioskService extends EventEmitter {
     const cfg = this.config();
     const operator = this.operator();
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
+    // The goods vouchers' legs, worked out again from the basket as it stands now (CheckoutViewModel.applyVoucher): the
+    // card pays the rest of the goods and the tip; the vouchers never pay the tip.
+    const { legs, marks } = this.legsOf(lines, vouchers?.legs ?? []);
+    // "כלול בשובר #N": each line a goods voucher paid for carries its mark on the document (coverByVoucher).
+    for (const l of lines) {
+      const mark = marks.get(l.key);
+      if (mark) l.voucherMark = mark;
+    }
     const totals = saleTotals(lines, this.vatRate(), tip);
-    if (totals.chargeAgorot < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
+    const principal = Math.max(0, goods - legs.reduce((s, l) => s + l.amountAgorot, 0));
+    const chargeAgorot = principal + tip;
+    if (goods + tip < 1) return { ok: false, reason: 'empty', message: 'אין מה לחייב' };
+    if (withVouchers && chargeAgorot > 0) {
+      const refused = terminalRefusal();
+      if (refused) return refused;
+    }
     this.ledger.openShift(operator);
     const now = Date.now();
     const order: KioskOrder = {
@@ -1252,12 +1363,54 @@ export class KioskService extends EventEmitter {
       tracked,
       totals,
       promotions,
+      voucherDiscounts: docVoucherDiscounts(voucherOutcomes),
+      // A discount voucher that took nothing off this basket (it fell under its minimum): held, and given back once the sale is written.
+      voucherReleases: voucherOutcomes.filter((o) => o.amountAgorot <= 0).map((o) => o.voucher.reservationId),
+      voucherLegs: legs,
     });
     if (!doc) return { ok: false, reason: 'no_shift', message: 'אין משמרת פתוחה' };
     this.orders.update(order.localId, (o) => ({ ...o, transactionId: doc.id }));
-    this.progress({ orderId: order.localId, phase: 'starting', message: null, amountAgorot: totals.chargeAgorot, canCancel: true, cancelling: false });
-    void this.runCharge(order.localId, doc, totals.chargeAgorot, tip);
-    return { ok: true, orderId: order.localId, amountAgorot: totals.chargeAgorot };
+    if (chargeAgorot < 1) {
+      // The vouchers paid it all: the document is complete at once, with their legs and no card (the till's confirmCash with legs).
+      const done = this.ledger.completeCardSale(doc.id, null);
+      if (!done) return { ok: false, reason: 'error', message: 'המסמך לא נשמר' };
+      void this.afterApproval(order.localId, done, false);
+      return { ok: true, orderId: order.localId, amountAgorot: 0 };
+    }
+    this.progress({ orderId: order.localId, phase: 'starting', message: null, amountAgorot: chargeAgorot, canCancel: true, cancelling: false });
+    void this.runCharge(order.localId, doc, chargeAgorot, tip);
+    return { ok: true, orderId: order.localId, amountAgorot: chargeAgorot };
+  }
+
+  /**
+   * The goods vouchers' legs as this basket pays them: each voucher worth what it covers of the lines as they stand now
+   * (the promotions' and the discount vouchers' shares out), in the order taken, never more than the goods still owed —
+   * what the Android payment works out again at its start (CheckoutViewModel.applyVoucher). A voucher that covers
+   * nothing any more goes back on itself.
+   */
+  private legsOf(lines: SaleLine[], taken: readonly VoucherLeg[]): { legs: DocVoucherLeg[]; marks: Map<string, string> } {
+    if (taken.length === 0) return { legs: [], marks: new Map() };
+    const basket = this.webLines(lines);
+    const done = recountLegs(basket, taken);
+    for (const v of done) if (v.amountAgorot <= 0) void this.payAtTill.reverse(v.redemptionId);
+    const paid = done.filter((v) => v.amountAgorot > 0);
+    return {
+      legs: paid.map((v) => ({ redemptionId: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot })),
+      marks: legMarks(basket, paid),
+    };
+  }
+
+  /**
+   * The sale was written: its discount vouchers confirmed (their uses taken) — or given back when the basket
+   * ended up taking nothing off by them —, its goods vouchers linked to its document. Best effort, retried; the
+   * document itself confirms the vouchers in the cloud as well, through the outbox, if this never lands.
+   */
+  private settleVouchers(doc: DocDraft): void {
+    const discounts = doc.voucherDiscounts ?? [];
+    const releases = doc.voucherReleases ?? [];
+    const legs = doc.voucherLegs ?? [];
+    if (discounts.length + releases.length + legs.length === 0) return;
+    void this.payAtTill.settle(doc.id, discounts, releases, legs).catch((e: unknown) => this.log(`vouchers of ${doc.id}: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   private progress(p: PayProgress) {
@@ -1306,12 +1459,14 @@ export class KioskService extends EventEmitter {
 
   /** Money taken: the order paid, its pickup number, the bon (once), the slip, the receipt by policy. */
   private async afterApproval(orderId: string, doc: DocDraft, recovered: boolean) {
+    // Its vouchers: confirmed with this document (a sale recovered after a restart too).
+    this.settleVouchers(doc);
     const me = this.cloud.machine();
     const number = formatDocNumber(doc.prefix, String(doc.number));
     let order = this.orders.update(orderId, (o) => ({ ...o, paid: true, paidAt: doc.updatedAt, transactionId: doc.id, transactionNumber: number, recovered }));
     if (!order) return;
     const cfg = this.config();
-    const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max };
+    const rules: PickupRules = { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat };
     const pickup = order.pickupNumber ? { number: order.pickupNumber, label: order.pickupLabel ?? String(order.pickupNumber) } : await allocatePickup(this.kv, this.api, this.machineId, order, rules);
     order = this.orders.update(orderId, (o) => ({ ...o, pickupNumber: pickup.number, pickupLabel: pickup.label }))!;
     const policy = cfg.payment.receiptPolicy;
@@ -1350,8 +1505,13 @@ export class KioskService extends EventEmitter {
    * document here (DocDraft.card): "פיצול תשלום בכרטיסים" (split_card) is never offered
    * (singleCardPayMethods) — and never usable.
    */
+  /** Offline with "חסימת הזמנות כשאין אינטרנט" on: no orders at all. */
+  private offlineBlocked(cfg: { general?: { blockWhenOffline?: boolean } } | null): boolean {
+    return !!cfg && kioskOfflineBlocks(cfg.general, this.offlineNow);
+  }
+
   private payView(kiosk: boolean): KioskView['pay'] {
-    const methods = kiosk ? singleCardPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
+    const methods = kiosk ? tsKioskPayMethods(this.config().payment.methods) : (['card'] as PaymentMethod[]);
     const state = this.pay.monitor.state;
     // Off in advance only with no terminal set up (or the cloud's lock on an unresolved card):
     // a terminal that did not answer its check is tried on the press.
@@ -1363,9 +1523,12 @@ export class KioskService extends EventEmitter {
           ? 'לא הוגדר מסופון אשראי לקיוסק'
           : 'מסופון האשראי לא זמין כרגע';
     const usable = methods.filter((m) =>
-      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow : m === 'cash_at_till' ? this.fiscalRole : false,
+      // A voucher only where its order can be finished: by the card (the vouchers are legs of the document) or at the till
+      // (voucherCanFinish) — never a dead end.
+      m === 'card' ? this.fiscalRole && cardOff === null : m === 'voucher' ? !this.offlineNow && voucherCanFinish(methods, this.fiscalRole && cardOff === null) : m === 'cash_at_till' ? this.fiscalRole : false,
     );
-    return { methods, usable, cardOff };
+    // Offline with "חסימת הזמנות כשאין אינטרנט" on: nothing to take (the rest screen says why).
+    return { methods, usable: kiosk && this.offlineBlocked(this.config()) ? [] : usable, cardOff };
   }
 
   /** The basket priced here (priceBasket) as the till's held sale carries it (client lib/kioskWebOrders.ts WebOrderLine). */
@@ -1390,6 +1553,9 @@ export class KioskService extends EventEmitter {
         name: l.name,
         qty: l.qty,
         baseAgorot: l.basePriceAgorot,
+        ...(l.menuId
+          ? { menuId: l.menuId, menuName: l.menuName ?? null, priceSource: l.priceSource ?? 'catalog', ...(typeof l.catalogPriceAgorot === 'number' ? { catalogAgorot: l.catalogPriceAgorot } : {}) }
+          : {}),
         unitAgorot: unitAgorot(l),
         options: l.options.map(option),
         note: l.notes.join(' · ') || null,
@@ -1403,19 +1569,47 @@ export class KioskService extends EventEmitter {
           : null,
         noDiscount: l.noDiscount === true,
         ...((l.promotionAgorot ?? 0) > 0 ? { promotionAgorot: l.promotionAgorot, promotionId: l.promotionId ?? null, promotionName: l.promotionName ?? null } : {}),
+        ...((l.voucherAgorot ?? 0) > 0 ? { voucherAgorot: l.voucherAgorot } : {}),
+        // The promotion's share that gave way to a voucher: the rules read the basket as the promotions priced it.
+        ...((l.promotionYieldedAgorot ?? 0) > 0 ? { promotionYieldedAgorot: l.promotionYieldedAgorot, promotionId: l.promotionId ?? null } : {}),
       };
     });
   }
 
-  /** A voucher for this basket, redeemed online (kiosk/payAtTill.ts); the basket priced here. */
-  async redeemVoucher(input: { code: string; basket: StartPaymentIn; earlier: VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
+  /**
+   * A voucher for this basket (kiosk/payAtTill.ts; the basket priced here with the discount vouchers already on the order):
+   * goods redeemed online, or a discount voucher held in the cloud for this order.
+   */
+  async redeemVoucher(input: {
+    code: string;
+    basket: StartPaymentIn;
+    earlier: VoucherLeg[];
+    discounts?: AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    saleRef?: string;
+  }): Promise<VoucherResult> {
     if (!this.fiscalRole || !this.isKiosk()) return { kind: 'refused', reason: 'not_a_kiosk' };
-    const { lines } = this.priceBasket(input.basket);
-    return this.payAtTill.redeem({ code: input.code, lines: this.webLines(lines), earlier: input.earlier ?? [], forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId });
+    const discounts = input.discounts ?? [];
+    const { lines } = this.priceBasket({ ...input.basket, vouchers: { legs: [], discounts, saleRef: input.saleRef ?? input.clientRequestId } });
+    return this.payAtTill.redeem({
+      code: input.code,
+      lines: this.webLines(lines),
+      earlier: input.earlier ?? [],
+      discounts,
+      forfeitRest: input.forfeitRest,
+      clientRequestId: input.clientRequestId,
+      saleRef: input.saleRef,
+    });
   }
 
   async reverseVoucher(redemptionId: string): Promise<void> {
     if (typeof redemptionId === 'string' && redemptionId) await this.payAtTill.reverse(redemptionId);
+  }
+
+  /** Discount vouchers given back (removed from the order, the order left): the cloud lets the hold go. */
+  async releaseDiscounts(vouchers: Array<{ reservationId: string }>): Promise<void> {
+    this.payAtTill.releaseDiscounts((Array.isArray(vouchers) ? vouchers : []).filter((v) => v && typeof v.reservationId === 'string' && v.reservationId));
   }
 
   /**
@@ -1427,21 +1621,24 @@ export class KioskService extends EventEmitter {
     if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
     const cfg = this.config();
     if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
-    await this.cloudBasketCheck(input).catch(() => undefined);
-    const { lines, changes } = this.priceBasket(input);
+    // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
+    if ((input.discounts?.length ?? 0) > 0) return { ok: false, reason: 'error', message: DISCOUNT_PAY_HERE };
+    const basket: StartPaymentIn = { ...input, vouchers: undefined };
+    await this.cloudBasketCheck(basket).catch(() => undefined);
+    const { lines, changes } = this.priceBasket(basket);
     const goods = saleTotals(lines, this.vatRate()).totalAgorot;
     if (changes.length > 0) return { ok: false, reason: 'changed', changes, totalAgorot: goods };
     if (typeof input.expectedTotalAgorot === 'number' && Number.isFinite(input.expectedTotalAgorot) && Math.round(input.expectedTotalAgorot) !== goods) {
       return { ok: false, reason: 'changed', changes: [], totalAgorot: goods };
     }
     if (lines.length === 0) return { ok: false, reason: 'empty', message: 'הסל ריק' };
-    const tip = cfg.payment.tipEnabled ? tipToCharge(goods, input.tipPct, input.tipAgorot) : 0;
+    const tip = tipToCharge(cfg.payment, goods, input.tipPct, input.tipAgorot);
     const vouchers = (Array.isArray(input.vouchers) ? input.vouchers : []).filter((v) => v && typeof v.redemptionId === 'string' && Number.isInteger(v.amountAgorot) && v.amountAgorot >= 0);
     if (vouchers.reduce((s, v) => s + v.amountAgorot, 0) > goods + tip) return { ok: false, reason: 'error', message: 'השוברים עולים על ההזמנה' };
     const now = Date.now();
     const localId = randomUUID();
     const businessDate = localDate(now);
-    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max });
+    const pickup = await allocatePickup(this.kv, this.api, this.machineId, { localId, businessDate }, { scope: cfg.pickup.scope, prefix: cfg.pickup.prefix, start: cfg.pickup.start, max: cfg.pickup.max, labelFormat: cfg.pickup.labelFormat });
     const order: OpenOrder = {
       localId,
       createdAtMs: now,
@@ -1800,6 +1997,9 @@ export class KioskService extends EventEmitter {
         tipAgorot: doc.totals.tipAgorot,
         // "הנחת מבצע: <שם>" — the promotions the sale was priced with.
         promotions: (doc.promotions ?? []).map((p) => ({ name: p.name, discountAgorot: p.discountAgorot })),
+        // "שובר #12 — פסטיבל הקיץ" under the items (a discount) and "שובר הפקה" among the payments (the goods vouchers' legs).
+        voucherDiscounts: (doc.voucherDiscounts ?? []).map((v) => ({ label: voucherLabel(v.serial, v.batchName), amountAgorot: v.amountAgorot })),
+        voucherLegs: (doc.voucherLegs ?? []).map((l) => ({ amountAgorot: l.amountAgorot })),
         card: doc.card ? { brand: doc.card.brand, last4: doc.card.last4, authNum: doc.card.authNum, payments: doc.card.payments, firstPaymentAgorot: doc.card.firstPaymentAgorot } : null,
         footer,
         logoUrl: typeof logo === 'string' ? this.localMediaUrl(logo) : null,
@@ -2012,6 +2212,11 @@ export class KioskService extends EventEmitter {
     const was = this.offlineNow;
     this.offlineNow = this.paired && this.offline.update({ networkUp: this.platform.networkUp(), lastCloudOkAtMs: this.sync.status.lastBeatOkAt, startedAtMs: this.startedAt, nowMs: Date.now() });
     if (was !== this.offlineNow) this.dirty();
+    // "אזל" / "חסום" until a time: lifted here at its time, offline too (KioskCatalogView by the kiosk's clock).
+    if (this.saleChangeAt !== null && Date.now() >= this.saleChangeAt) {
+      this.saleChangeAt = null;
+      this.dirty();
+    }
     this.refreshBonStates();
   }
 

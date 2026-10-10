@@ -51,7 +51,7 @@ from app.services.shifts import (
     resolve_shift_for_document,
 )
 from app.services import document_filing as filing
-from app.services.stock import apply_movement
+from app.services.stock import apply_movement, refund_location, sale_location
 from app.services.promotions import replace_document_promotions
 from app.services import menu as _menu
 from app.services import product_alerts as _product_alerts
@@ -69,6 +69,7 @@ logger = logging.getLogger(__name__)
 #: Codes of the quiet notes a document may get at ingest (`transactions.ingest_notes`).
 TENDERS_DO_NOT_RECONCILE = "tenders_do_not_reconcile"
 REFUND_OF_OTHER_TENANT = "refund_of_other_tenant"
+REISSUE_OF_OTHER_TENANT = "reissue_of_other_tenant"
 ISSUED_BEFORE_PAIRING = "issued_before_pairing"
 #: Clock slack before "issued before this till was paired" is noted.
 PAIRING_SKEW = timedelta(minutes=10)
@@ -98,11 +99,36 @@ class _ItemForParts:
         self.details = details
 
 
+def _is_reissue_invoice(tx, refund_of) -> bool:
+    """
+    The new invoice of a re-issue in a customer's name ("הפק חשבונית על שם לקוח",
+    docs/SPEC_CUSTOMER_INVOICE.md): a sale that names the sale it replaces. It states the
+    vouchers its original redeemed, on paper, and redeems nothing itself — the owner, 10.10.2026:
+    production vouchers are not part of the income, and a voucher is never redeemed, confirmed or
+    released again. Whatever voucher data such a document carries (a till that sends it, an older
+    one) is ignored here: no row stored, no hold confirmed, no redemption linked, no share kept.
+    """
+    from app.services.tenders import is_refund_document
+
+    if getattr(tx, "reissue_of_transaction_id", None) is None:
+        return False
+    link = tx.refund_of_transaction_id if refund_of is ... else refund_of
+    return not is_refund_document(document_type=tx.document_type, refund_of_transaction_id=link)
+
+
 def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     """
     Store the document's discount vouchers (replacing a re-push's) and, on a sale, confirm
     each one's reservation. Returns the warnings of what could not be linked.
     """
+    if _is_reissue_invoice(tx, refund_of):
+        from app.models.prepaid_voucher import TransactionVoucherDiscount as _TVD
+
+        db.query(_TVD).filter(_TVD.transaction_id == tx.id).delete(synchronize_session=False)
+        sent = bool(getattr(tx, "voucher_discounts", None)) or any(
+            getattr(p, "reservation_id", None) for p in (getattr(tx, "payments", None) or [])
+        )
+        return ["voucher data ignored: the document re-issues another, and redeems nothing"] if sent else []
     from decimal import Decimal as _D
 
     from app.models.prepaid_voucher import TransactionVoucherDiscount
@@ -114,7 +140,8 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
         TransactionVoucherDiscount.transaction_id == tx.id
     ).delete(synchronize_session=False)
     if not entries:
-        return []
+        # No deduction — the document may still name its goods holds (a payment leg, memo lines).
+        return _confirm_document_holds(db, issuer, tx, refund_of, [])
     rows = []
     for e in entries:
         amount = _D(str(e.amount or 0)).copy_abs().quantize(_D("0.01"))
@@ -131,6 +158,9 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
                 uses=int(e.uses or 1),
                 discount_amount=amount,
                 lines=e.lines,
+                redemption_id=_promotion_uuid(getattr(e, "redemption_id", None)),
+                type_name=getattr(e, "type_name", None),
+                units=getattr(e, "units", None),
             )
         )
     db.bulk_save_objects(rows)
@@ -143,18 +173,100 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
         # Not a sale (yet): a card still waiting, or declined. Its re-push as completed
         # confirms; a declined one never does — the till releases the voucher.
         return []
+    # A production voucher's deduction names the redemption it books: the redemption learns
+    # its document (set once, as `…/redemptions/{id}/transaction` does).
+    _PV.link_deductions(db, issuer, str(tx.id), rows)
     warnings: List[str] = []
     for n, e in enumerate(entries):
         if e.reservation_id and _promotion_uuid(e.reservation_id) is None:
             warnings.append(f"voucherDiscounts[{n}].reservationId: unreadable, not confirmed")
-    readable = [e for e in entries if _promotion_uuid(e.reservation_id) is not None]
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+
+    # A production voucher's deduction books a redemption already made (its reservation, with
+    # reserve → confirm for goods, confirms through its own call); the rest are discount vouchers.
+    readable = [
+        e for e in entries
+        if _promotion_uuid(e.reservation_id) is not None and e.kind != PRODUCTION_VOUCHER_DEDUCTION
+    ]
     try:
         with db.begin_nested():
             warnings += _PV.confirm_from_document(db, issuer, str(tx.id), readable, tx.items)
     except Exception:  # noqa: BLE001 — the document stands; the next push confirms again
         logger.exception("document %s: its voucher reservations were not confirmed", tx.id)
         warnings.append("voucherDiscounts: not confirmed now (error); confirmed on the next push")
+    return warnings + _confirm_document_holds(db, issuer, tx, refund_of, entries)
+
+
+def _agorot_of(value) -> int:
+    from decimal import ROUND_HALF_UP
+    from decimal import Decimal as _D
+
+    return int((_D(str(value or 0)).copy_abs() * 100).quantize(_D(1), rounding=ROUND_HALF_UP))
+
+
+def _confirm_document_holds(db: Session, issuer, tx, refund_of, entries) -> List[str]:
+    """
+    A production voucher's goods hold (reserve → confirm, the contract's §3) named by the document,
+    in every accounting mode (review 09.10): a deduction (`voucherDiscounts[]` kind
+    production_voucher, §4.1), a `production_voucher` payment leg (§4.2) or memo lines (§4.3). The
+    document confirms it even when the till's own confirm never landed, with what the document
+    booked — the deduction's lines when present, else its amount; the leg's amount; 0 for memo
+    lines — compared with the hold's coverage (`amount_mismatch` when they differ).
+    """
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+    from app.services import prepaid_vouchers as _PV
+    from app.services.tenders import is_production_voucher, is_refund_document
+
+    link = tx.refund_of_transaction_id if refund_of is ... else refund_of
+    if is_refund_document(document_type=tx.document_type, refund_of_transaction_id=link):
+        return []
+    if tx.status in ("pending", "cancelled"):
+        return []
+    holds: List[tuple] = []  # (where, reservation id, how to read the amount, warn when unreadable)
+    for n, e in enumerate(entries):
+        if e.kind != PRODUCTION_VOUCHER_DEDUCTION or not e.reservation_id:
+            continue
+        # Read inside the hold's own guard (below): an unreadable line amount never refuses the document.
+        holds.append((f"voucherDiscounts[{n}]", e.reservation_id, lambda e=e: _deduction_agorot(e), False))
+    for n, p in enumerate(getattr(tx, "payments", None) or []):
+        if getattr(p, "reservation_id", None) and is_production_voucher(p.method):
+            holds.append((f"payments[{n}]", p.reservation_id, lambda p=p: _agorot_of(p.amount), True))
+    for it in getattr(tx, "items", None) or []:
+        # A memo line only (`zero` mode, its memo value): a priced line naming a hold confirms nothing.
+        rid = getattr(it, "voucher_reservation_id", None)
+        if rid and getattr(it, "voucher_memo_value_agorot", None) is not None:
+            holds.append((f"items[voucherReservationId={rid}]", rid, lambda: 0, True))
+    warnings: List[str] = []
+    seen: set = set()
+    for where, raw, read_amount, warn in holds:
+        rid = _promotion_uuid(raw)
+        if rid is None:
+            # A deduction's unreadable id is already warned about by `_voucher_discounts`.
+            if warn:
+                warnings.append(f"{where}.reservationId: unreadable, not confirmed")
+            continue
+        if rid in seen:
+            continue  # one hold, named twice in the document (a leg and its lines …): confirmed once
+        seen.add(rid)
+        try:
+            amount = read_amount()
+            with db.begin_nested():
+                _PV.confirm(db, issuer, str(rid), str(tx.id), amount, any_till=True, document_amount=amount)
+        except Exception as exc:  # noqa: BLE001 — the document stands; the next push confirms again
+            detail = getattr(exc, "detail", None) or exc.__class__.__name__
+            warnings.append(f"{where}: the hold was not confirmed ({detail})")
     return warnings
+
+
+def _deduction_agorot(e) -> int:
+    """A deduction's amount as the document booked it: its lines' sum when they all read, else its amount."""
+    lines = [ln for ln in (e.lines or []) if isinstance(ln, dict) and ln.get("amount") is not None]
+    if lines:
+        try:
+            return sum(_agorot_of(ln.get("amount")) for ln in lines)
+        except Exception:  # noqa: BLE001 — an optional field that does not read: the deduction's own amount
+            pass
+    return _agorot_of(e.amount)
 
 
 def _safe_item_product_id(
@@ -625,6 +737,7 @@ def _serialize_tx_for_upsert(
     ingest_notes: Optional[List[dict]] = None,
     refund_of_transaction_id: Any = ...,
     filing_fields: Optional[Dict[str, Any]] = None,
+    reissue_of_transaction_id: Any = ...,
 ) -> Dict:
     """
     Flatten one incoming document into the row the upsert writes.
@@ -683,6 +796,9 @@ def _serialize_tx_for_upsert(
         "basket_discount": getattr(tx, "basket_discount", None),
         "basket_discount_percent": getattr(tx, "basket_discount_percent", None),
         "basket_discount_kind": getattr(tx, "basket_discount_kind", None),
+        # Production vouchers' ₪0 memo document (§4.3): out of the counts, as on the till — only
+        # when that is safe (no total, no money leg, no tip; review 09.10), else a sale as any.
+        "voucher_memo": getattr(tx, "voucher_memo", False) is True and voucher_memo_problem(tx) is None,
         # A staff / managers' table meal: its kind, whose meal, why (app/services/table_policies.py).
         "meal_kind": getattr(tx, "meal_kind", None),
         "meal_employee_id": getattr(tx, "meal_employee_id", None),
@@ -703,6 +819,15 @@ def _serialize_tx_for_upsert(
         "customer_name": getattr(tx, "customer_name", None),
         "customer_phone": getattr(tx, "customer_phone", None),
         "customer_address": getattr(tx, "customer_address", None),
+        # "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): as printed, never resolved.
+        "customer_vat_number": getattr(tx, "customer_vat_number", None),
+        "customer_email": getattr(tx, "customer_email", None),
+        # "הפק חשבונית על שם לקוח": the original a credit + invoice pair re-issues; dropped
+        # (passed as None) when it names another tenant's document.
+        "reissue_of_transaction_id": (
+            getattr(tx, "reissue_of_transaction_id", None)
+            if reissue_of_transaction_id is ... else reissue_of_transaction_id
+        ),
         "approved_by_user_id": approved_by_user_id,
         "approved_by_pos_user_id": approved_by_pos_user_id,
         # The approver exactly as sent, and the quiet notes of ingest (docs/SHIFTS_API.md §1.2b).
@@ -718,6 +843,28 @@ def _serialize_tx_for_upsert(
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
     }
+
+
+def voucher_memo_problem(tx) -> Optional[str]:
+    """
+    Why a document's `voucherMemo` (production vouchers' ₪0 memo lines only, the contract's §4.3)
+    cannot be honoured — it would leave money out of the Z: a total, a money leg or a tip. None: safe.
+    """
+    from decimal import Decimal as _D
+    from decimal import InvalidOperation
+
+    if getattr(tx, "voucher_memo", False) is not True:
+        return None
+    try:
+        if _D(str(getattr(tx, "total_amount", 0) or 0)) != 0:
+            return "the document has a total"
+        if any(_D(str(getattr(p, "amount", 0) or 0)) != 0 for p in (getattr(tx, "payments", None) or [])):
+            return "the document has a money leg"
+        if _D(str(getattr(tx, "tip_amount", 0) or 0)) != 0:
+            return "the document has a tip"
+    except (InvalidOperation, TypeError, ValueError):
+        return "the document's amounts are unreadable"
+    return None
 
 
 def _vat_split(tx: TransactionIn) -> dict:
@@ -899,6 +1046,10 @@ def upsert_transactions(
                     "detail": tender_problem,
                 })
                 link_warnings.append(f"{tender_problem} — stored as sent")
+            memo_problem = voucher_memo_problem(tx)
+            if memo_problem is not None:
+                logger.warning("Transaction %s: voucherMemo ignored (%s)", tx.id, memo_problem)
+                link_warnings.append(f"voucherMemo ignored: {memo_problem}")
 
             # A refund link to another tenant's document: never resolved across tenants
             # (every read is tenant-scoped), so it is dropped — unless the link is what makes
@@ -923,6 +1074,25 @@ def upsert_transactions(
                     "refundOfTransactionId: names a document of another tenant, stored "
                     + ("as sent (it is what makes the document a credit)" if keep else "without the link")
                 )
+
+            # The re-issue link ("הפק חשבונית על שם לקוח") to another tenant's document: never
+            # resolved across tenants, so dropped with a note. It decides nothing about the money
+            # (the type and the refund link do), so the document is stored as it is.
+            reissue_of = ...
+            if _refund_of_other_tenant(db, getattr(tx, "reissue_of_transaction_id", None), issuer.tenant_id):
+                reissue_of = None
+                logger.warning(
+                    "Storing transaction %s: reissueOfTransactionId %s is another tenant's (dropped)",
+                    tx.id, tx.reissue_of_transaction_id,
+                )
+                ingest_notes.append({
+                    "code": REISSUE_OF_OTHER_TENANT,
+                    "text": "המסמך מפיק מחדש מסמך של עסק אחר — הקישור לא נשמר והמסמך נקלט",
+                })
+                link_warnings.append("reissueOfTransactionId: names a document of another tenant, stored without the link")
+            # The new invoice of a re-issue redeems no voucher (_is_reissue_invoice): its lines keep none of
+            # a voucher's shares either, so no item report counts what its original already did.
+            reissue_invoice = _is_reissue_invoice(tx, refund_of)
 
             # The approver: kept as sent, linked when they are of the issuing till's
             # business, never a reason to refuse or hold the document.
@@ -1100,6 +1270,7 @@ def upsert_transactions(
                 claimed_approver_pos_user_id=claim.claimed_pos_user_id,
                 ingest_notes=ingest_notes,
                 refund_of_transaction_id=refund_of,
+                reissue_of_transaction_id=reissue_of,
                 filing_fields={
                     "claimed_shift_id": tx.shift_id,
                     "pushed_by_machine_id": machine.id if issuer is not machine else None,
@@ -1159,7 +1330,11 @@ def upsert_transactions(
                         promotion_discount=it.promotion_discount,
                         promotion_id=_promotion_uuid(it.promotion_id),
                         # Discount vouchers' share (docs/SPEC_VOUCHER_PRODUCTION.md §7).
-                        voucher_discount=getattr(it, "voucher_discount", None),
+                        voucher_discount=None if reissue_invoice else getattr(it, "voucher_discount", None),
+                        # Production vouchers: the deduction's share, a ₪0 memo line's value.
+                        prepaid_deduction=None if reissue_invoice else getattr(it, "prepaid_deduction", None),
+                        voucher_memo_value=None if reissue_invoice else getattr(it, "voucher_memo_value_agorot", None),
+                        voucher_redemption_id=None if reissue_invoice else getattr(it, "voucher_redemption_id", None),
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),
@@ -1269,6 +1444,9 @@ def upsert_transactions(
                 ])
 
             if tx.stock_movements and issuer.shop_id and issuer.tenant_id:
+                from app.services.stock import _resolve_global_product_id
+
+                planned = []
                 for i, sm in enumerate(tx.stock_movements):
                     if sm.product_id is None:
                         continue  # nothing named, nothing to move (as before)
@@ -1280,6 +1458,23 @@ def upsert_transactions(
                         )
                         continue
                     reason = StockMovementReason(sm.reason)
+                    # The stock location this till sells the product from ("אופן ניהול מלאי",
+                    # app/services/stock_locations.py): the shop's unless managed lower or higher;
+                    # a refund goes back where the original sale took it from.
+                    location = (
+                        refund_location(db, tx.refund_of_transaction_id, sm.product_id)
+                        if reason == StockMovementReason.REFUND else None
+                    ) or sale_location(db, issuer, sm.product_id)
+                    key_product = _resolve_global_product_id(db, sm.product_id) or sm.product_id
+                    planned.append((location, key_product, i, sm, reason))
+                # Applied in one order — by location, then product — the order the daily reset locks
+                # rows in too (stock_reset._rows): two writers never wait on each other's rows in
+                # opposite orders (no deadlock with the 04:00 reset, or between two documents).
+                planned.sort(key=lambda p: (
+                    p[0].level if p[0] is not None else "", str(p[0].target_id) if p[0] is not None else "",
+                    str(p[1]), p[2],
+                ))
+                for location, _key, _i, sm, reason in planned:
                     apply_movement(
                         db,
                         movement_id=sm.id,
@@ -1293,6 +1488,7 @@ def upsert_transactions(
                         transaction_item_id=sm.transaction_item_id,
                         machine_id=issuer.id,
                         note=sm.note,
+                        location=location,
                     )
 
             is_duplicate = previous is not None and (
@@ -1659,3 +1855,7 @@ def publish_transactions_synced(tenant_id: Optional[uuid.UUID], machine_id: uuid
     if not tenant_id:
         return
     ably_tx_synced(str(tenant_id), str(machine_id), count)
+    # "מצב אירוע חי": a tick to the live screens of the events this till is in (Ably only).
+    from app.services.report_events.live_push import notify_machine_synced
+
+    notify_machine_synced(tenant_id, machine_id, count)

@@ -80,6 +80,12 @@ class ZReportOut(BaseModel):
     #: "מזומן במגירה": cash sales (net of cash refunds) + cash tips − `cardTipsFromDrawer`.
     #: Null with it.
     drawer_cash: Optional[Decimal] = Field(None, alias="drawerCash")
+    #: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" (till parameter `cashDrawer.zExpectedCashMovements`):
+    #: the Cash In / Cash Out / safe deposits that are part of `expectedCash` —
+    #: `{cashIn, cashOut, deposits}` as the Z froze them when it was produced (summed over the tills
+    #: the parameter applied to). Null when it was off: `expectedCash` then does not move with them,
+    #: as ever. A management figure: no sales, VAT or document total ever moves with it.
+    cash_movements: Optional[Dict[str, Any]] = Field(None, alias="cashMovements")
     #: Σ of the per-till `offline` blocks: offline-approved card sales that went through an
     #: authorization run, and those of them the acquirer declined. Null on a Z built before
     #: the block was stored, and on a legacy Z.
@@ -207,6 +213,13 @@ class ZReportDetailOut(ZReportOut):
     #: it was stored, read now from its documents; null — none (a till-issued Z).
     by_waiter: List[Dict[str, Any]] = Field(default_factory=list, alias="byWaiter")
     by_waiter_source: Optional[str] = Field(None, alias="byWaiterSource")
+    #: "דו״ח Z — גרסה 2" (app/services/z_sections.py): the owner's sections — sales, VAT,
+    #: payments, tips, receipts, the drawer, the card transmission, "כמה נמכר", the order types,
+    #: the card brands and (with `zShowPerEmployee`) per employee. "stored" — frozen at build
+    #: (or, on a Z stored as printed, its tills' printed sections summed); "documents" — a Z
+    #: built before them, read now from its documents; null — none.
+    report_sections: Optional[Dict[str, Any]] = Field(None, alias="reportSections")
+    report_sections_source: Optional[str] = Field(None, alias="reportSectionsSource")
 
 
 class ZReportWindow(BaseModel):

@@ -30,7 +30,7 @@ const lines: SaleLine[] = [
 const input = (over: Record<string, unknown> = {}) => ({
   transactionId: 'c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77',
   transactionNumber: '40000057',
-  order: { serviceType: 'take_away' as const, customerName: ' דנה ', customerPhone: '0501234567', pickupNumber: 17 },
+  order: { serviceType: 'take_away' as const, customerName: ' דנה ', customerPhone: '0501234567', pickupNumber: 17, pickupLabel: 'A-17' as string | null },
   lines,
   categoryOf: (id: string) => (id.endsWith('01') ? 'cat-mains' : null),
   actorName: 'קיוסק Windows',
@@ -65,6 +65,7 @@ describe('the body (the Android kiosk’s payload)', () => {
       contactPhone: '0501234567',
       transactionNumber: '40000057',
       pickupNumber: 17,
+      pickupLabel: 'A-17',
       waiterName: 'קיוסק Windows',
       noteUpdates: [],
     });
@@ -79,8 +80,8 @@ describe('the body (the Android kiosk’s payload)', () => {
   });
 
   it('leaves out what it does not know, and a pickup number the engine would refuse', () => {
-    const b = kdsSaleRelease(input({ transactionNumber: null, actorName: null, order: { serviceType: 'eat_in', customerName: null, customerPhone: '  ', pickupNumber: 12000 } }));
-    for (const k of ['transactionNumber', 'actorName', 'waiterName', 'pickupName', 'contactPhone', 'pickupNumber']) expect(b).not.toHaveProperty(k);
+    const b = kdsSaleRelease(input({ transactionNumber: null, actorName: null, order: { serviceType: 'eat_in', customerName: null, customerPhone: '  ', pickupNumber: 12000, pickupLabel: ' ' } }));
+    for (const k of ['transactionNumber', 'actorName', 'waiterName', 'pickupName', 'contactPhone', 'pickupNumber', 'pickupLabel']) expect(b).not.toHaveProperty(k);
     expect(b.serviceType).toBe('eat_in');
   });
 });

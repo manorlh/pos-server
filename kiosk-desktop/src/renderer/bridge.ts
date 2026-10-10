@@ -7,6 +7,9 @@
 import { KIOSK_DEFAULTS, UI_STYLES, kioskPayMethods, resolveKioskConfig, type PaymentMethod, type UiStyle } from '@dash-lib/kioskConfig';
 import type { KioskBridge, KioskEvents, KioskView, PayProgress } from '../shared/bridge';
 import { tipToCharge } from '../core/sale';
+
+/** The demo's tips: on, with "סכום אחר" (the demo config's checkout asks both). */
+const DEMO_TIPS = { tipEnabled: true, tipOther: true } as const;
 import { demoLayoutLayer, demoRich, richCatalog } from './demoLayouts';
 
 /** `?style=ios|wolt|classic|minimal_dark|tech` picks the demo's look, as a kiosk's `theme.uiStyle` would. */
@@ -208,7 +211,7 @@ function webBridge(): KioskBridge {
       // The total the screen priced (choices, meals, promotions) is the demo's: it has no money of its own.
       const shown = typeof input.expectedTotalAgorot === 'number' ? input.expectedTotalAgorot : goods;
       // The tip on top, as the real service charges it.
-      const amount = shown + tipToCharge(shown, input.tipPct, input.tipAgorot);
+      const amount = shown + tipToCharge(DEMO_TIPS, shown, input.tipPct, input.tipAgorot);
       const base: PayProgress = { orderId, phase: 'starting', message: null, amountAgorot: amount, canCancel: true, cancelling: false };
       setTimeout(() => fire('pay', { ...base, phase: 'charging' }), 400);
       setTimeout(() => fire('pay', { ...base, phase: 'approved', canCancel: false, pickupLabel: String(order), documentNumber: `9000000${order}`, receipt: 'ask' }), 2500);
@@ -218,7 +221,7 @@ function webBridge(): KioskBridge {
     placeOpenOrder: async (input) => {
       const n = ++order;
       const goods = typeof input.expectedTotalAgorot === 'number' ? input.expectedTotalAgorot : 0;
-      const tip = tipToCharge(goods, input.tipPct, input.tipAgorot);
+      const tip = tipToCharge(DEMO_TIPS, goods, input.tipPct, input.tipAgorot);
       const paid = input.vouchers.reduce((s, v) => s + v.amountAgorot, 0);
       return { ok: true, localId: `demo-open-${n}`, pickupLabel: String(n), vouchers: input.vouchers, dueAgorot: Math.max(0, goods + tip - paid), pending: false, code: `KO:demo-open-${n}` };
     },

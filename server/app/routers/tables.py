@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -177,20 +177,52 @@ def _actor(machine: POSMachine, body) -> T.Actor:
 
 
 def _wake(background_tasks: BackgroundTasks, db: Session, machine: POSMachine, table_id: Optional[str] = None) -> None:
-    targets = T.notify_targets(db, machine.shop_id, except_machine_id=machine.id)
-    if targets:
-        background_tasks.add_task(T.publish_tables_notify, targets, table_id)
+    """
+    After the commit of a till's write: the shop's tables version is raised and the change
+    joins the shop's next coalesced "tables" signal — every other till of the shop, in one
+    Ably request (app/services/tables_state.py). [background_tasks]: kept for the callers.
+    """
+    T.tables_changed(db, machine.shop_id, tenant_id=machine.tenant_id, table_id=table_id, origin=machine.id)
+
+
+def _wake_all(db: Session, machine: POSMachine, table_id: Optional[str] = None) -> None:
+    """The same, the acting till included (a layout edit: its own map is redrawn too)."""
+    T.tables_changed(db, machine.shop_id, tenant_id=machine.tenant_id, table_id=table_id)
 
 
 @router.get("/sync/{machine_id}/tables")
 def get_tables_state(
     machine_id: str,
+    since: Optional[str] = Query(None, description="The `stateTag` the till holds: unchanged → `syncType: unchanged`."),
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
+    request: Request = None,
+    response: Response = None,
 ):
-    """The tables screen: zones, tables with their order and lock, the reasons."""
-    out = T.till_state(db, machine)
+    """
+    The tables screen: zones, tables (order summary, lock), the reasons — with `stateVersion`
+    (the shop's tables version, the one the realtime "tables" signal carries) and `stateTag`
+    (also the `ETag`). A till that sends its tag back — `If-None-Match` (304, no body) or
+    `?since=` (`{"syncType": "unchanged", ...}`) — while nothing changed gets no state at all:
+    nothing is built (app/services/tables_state.py). Without either, the full state as always.
+    """
+    from app.services import tables_state as TS
+
+    since = since.strip() if isinstance(since, str) and since.strip() else None
+    version = TS.current_version(db, machine.shop_id)
+    now = T._now()
+    if since is not None and TS.tag_matches(since, machine, version, now):
+        return {"syncType": "unchanged", "stateVersion": version, "stateTag": since}
+    held = TS.parse_tags(request.headers.get("if-none-match")) if request is not None else []
+    for tag in held:
+        if TS.tag_matches(tag, machine, version, now):
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": f'"{tag}"'})
+    out, tag = T.till_state_cached(db, machine, version=version, now=now)
     db.commit()  # the default reasons, the first time a tenant's are read
+    out["stateVersion"] = version
+    out["stateTag"] = tag
+    if response is not None:
+        response.headers["ETag"] = f'"{tag}"'
     return out
 
 
@@ -225,7 +257,8 @@ def get_tables_reports(
     shop = db.query(Shop).filter(Shop.id == machine.shop_id).first()
     if shop is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="no_shop")
-    return T.report(db, shop, date_from, date_to)
+    # Locked to its point of sale: that area's and the shop-wide zones' tables (area_lock.py).
+    return T.report(db, shop, date_from, date_to, machine=machine)
 
 
 @router.get("/sync/{machine_id}/tables/closed")
@@ -484,9 +517,7 @@ def rename_table(
     """
     out = T.rename(db, _actor(machine, body), table_id, body.name)
     db.commit()
-    targets = T.notify_targets(db, machine.shop_id)
-    if targets:
-        background_tasks.add_task(T.publish_tables_notify, targets, str(table_id))
+    _wake_all(db, machine, str(table_id))
     return out
 
 
@@ -534,6 +565,7 @@ def till_create_reservation(
     if machine.shop_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="table_not_found")
     shop = db.get(Shop, machine.shop_id)
+    T.check_reservation_area(db, machine, body.table_id)
     r = T.create_reservation(db, shop, body, by_name=body.pos_user_name)
     db.commit()
     _wake(background_tasks, db, machine, None)
@@ -551,6 +583,7 @@ def till_reservation_status(
 ):
     """The party came ("הגיעו"), cancelled, or did not come."""
     r = T.get_reservation(db, reservation_id, machine.shop_id)
+    T.check_reservation_area(db, machine, r.table_id, kind="reservation")
     r.status = body.status
     r.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -573,9 +606,7 @@ def adhoc_table(
     out = T.adhoc_table(db, machine, body.number)
     db.commit()
     if out["created"]:
-        targets = T.notify_targets(db, machine.shop_id)
-        if targets:
-            background_tasks.add_task(T.publish_tables_notify, targets, None)
+        _wake_all(db, machine)
     return out
 
 
@@ -595,9 +626,7 @@ def save_till_layout(
     """
     out = T.apply_till_layout(db, machine, body)
     db.commit()
-    targets = T.notify_targets(db, machine.shop_id)
-    if targets:
-        background_tasks.add_task(T.publish_tables_notify, targets, None)
+    _wake_all(db, machine)
     return out
 
 
@@ -615,7 +644,9 @@ def release_table(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="use_force_release")
     out = T.release(db, _actor(machine, body), table_id)
     db.commit()
-    _wake(background_tasks, db, machine, str(table_id))
+    if out.get("released"):
+        # A release that let go of nothing changed nothing: no new version, nobody woken.
+        _wake(background_tasks, db, machine, str(table_id))
     return out
 
 
@@ -633,9 +664,7 @@ def force_release_table(
     out = T.release(db, _actor(machine, body), table_id, force=True, approval=_approval(db, auth))
     _spend(db, auth)
     db.commit()
-    targets = T.notify_targets(db, machine.shop_id)
-    if targets:
-        background_tasks.add_task(T.publish_tables_notify, targets, str(table_id))
+    _wake_all(db, machine, str(table_id))
     return out
 
 
@@ -663,9 +692,9 @@ def _writable_shop(db: Session, shop_id, user: User, tenant_id) -> Shop:
 
 
 def _wake_shop(background_tasks: BackgroundTasks, db: Session, shop_id) -> None:
-    targets = T.notify_targets(db, shop_id)
-    if targets:
-        background_tasks.add_task(T.publish_tables_notify, targets, None)
+    """A dashboard change to the shop's tables: a new version, and every till of the shop woken."""
+    shop = db.get(Shop, shop_id)
+    T.tables_changed(db, shop_id, tenant_id=shop.tenant_id if shop is not None else None)
 
 
 @router.get("/tables/layout")
@@ -849,6 +878,17 @@ def dashboard_force_release(
     return out
 
 
+def _reasons_changed(db: Session, tenant_id) -> None:
+    """The reasons are the tenant's: every shop's tables version moves (no wake, as before)."""
+    from app.services import tables_state as TS
+
+    try:
+        TS.bump_tenant(db, tenant_id)
+        db.commit()
+    except Exception:  # noqa: BLE001 - committed already; the tag's age bounds the rest
+        db.rollback()
+
+
 @router.get("/tables/cancel-reasons")
 def list_reasons(
     include_inactive: bool = Query(False, alias="includeInactive"),
@@ -878,6 +918,7 @@ def create_reason(
     )
     db.add(reason)
     db.commit()
+    _reasons_changed(db, active_tenant_id)
     return T.reason_out(reason)
 
 
@@ -902,6 +943,7 @@ def update_reason(
     if body.is_active is not None:
         reason.is_active = body.is_active
     db.commit()
+    _reasons_changed(db, active_tenant_id)
     return T.reason_out(reason)
 
 

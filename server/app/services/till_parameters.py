@@ -37,6 +37,14 @@ from app.models.till_parameter import (
 from app.services.ably_notify import publish_settings_notify
 from app.services.areas import as_utc
 
+#: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): above this sale amount before VAT the
+#: till requires the buyer's name and ח.פ. / ע.מ.; and how many days back an invoice may be
+#: re-issued in a customer's name from the till's history. Both empty (off) by default.
+INVOICE_CUSTOMER_REQUIRED_ABOVE_KEY = "invoiceCustomerRequiredAbove"
+INVOICE_REISSUE_MAX_DAYS_KEY = "invoiceReissueMaxDays"
+#: "הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)" (§3.5): the history's "הדפס העתק עם פרטי לקוח". Off by default.
+INVOICE_COPY_WITH_DETAILS_KEY = "invoiceCopyWithCustomerDetails"
+
 #: The Ably `settings` notify reason for any change to parameters or their values.
 NOTIFY_REASON = "till_parameters_updated"
 
@@ -401,6 +409,12 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     from app.services.kiosk_technician import hash_for_machine
 
     hash_for_machine(machine, resolved.parameters)
+    # "חסימת Z כשיש משמרות פתוחות" ships with remote control's shop close (REMOTE_TILL_Z_ENABLED):
+    # until then the till reads it as off, whatever is set — its local shop Z exactly as today.
+    from app.services import z_shift_guard
+
+    if z_shift_guard.KEY in resolved.parameters and not z_shift_guard.flag_on():
+        resolved.parameters[z_shift_guard.KEY] = False
     return resolved
 
 
@@ -507,6 +521,9 @@ class BuiltinParameter:
     description: str
     default_value: Any
     enum_options: Optional[Tuple[str, ...]] = None
+    #: Changed by a super admin or a distributor only, whatever route writes it
+    #: (`kioskTillModeEnabled` — app/services/kiosk_till_mode.py ADMIN_ONLY_KEYS).
+    admin_only: bool = False
 
 
 #: Parameters the cloud itself reads or the dashboard edits specially. Created once if
@@ -542,6 +559,21 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "חוזר. בענן הוא נבדק מול המסמכים, ופער נרשם כחריגה. שידור האשראי מתבצע לפני הסגירה "
             "(דרך המסוף, לא דרך הענן). חל רק במצב \"Z לכל קופה\" — ב-Z סניפי וב-Z לפי נקודת "
             "מכירה הפרמטר לא משפיע."
+        ),
+    ),
+    # "דו״ח Z — גרסה 2" (app/services/z_sections.py): read by the cloud when it builds a Z and
+    # by the till for its X and an offline Z; presentation only.
+    BuiltinParameter(
+        key="zShowPerEmployee",
+        label="Z ו-X — פירוט לפי עובד",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, דו״ח ה-Z (ודו״ח ה-X בקופה) מציג גם סעיף \"לפי עובד\": לכל מלצר / קופאי — מכירות "
+            "באשראי, מכירות במזומן (ואמצעי תשלום אחרים כשיש), טיפ באשראי, טיפ במזומן והסיכומים. מסמך של "
+            "שולחן שייך למלצר של השולחן, כל מסמך אחר לקופאי שהפיק אותו. הסכומים לכל העובדים מתאימים "
+            "לסה״כ התשלומים והטיפים בדו״ח. תצוגה בלבד — הנתונים הפיסקליים לא משתנים. ב-Z סניפי הסעיף "
+            "מוצג כשהפרמטר מופעל באחת הקופות הכלולות. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
         ),
     ),
     # Read by the till, not the cloud; built in because the dashboard edits it with an
@@ -1185,6 +1217,22 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "וההפניה נרשמת. כבוי — כמו קודם: הבון ממתין בתור ומנסה שוב, עם ההתראה האדומה."
         ),
     ),
+    # Read by the till's kitchen print queue (pos-android hardware/kitchen KitchenPrintService
+    # `PARAM_STATUS_CHECK`, KitchenDelivery): on unless this says false.
+    BuiltinParameter(
+        key="kitchenPrinterStatusCheck",
+        label="בדיקת מצב מדפסת בונים (DLE EOT)",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל): סביב כל בון שנשלח למדפסת רשת או Bluetooth הקופה קוראת את מצב המדפסת "
+            "(פקודת הסטטוס DLE EOT) — לפני ההדפסה, כדי לא לשלוח למדפסת בלי נייר או עם מכסה פתוח, ואחריה, "
+            "כדי לדעת שהבון אכן יצא. כך תקלה מוצגת מיד (נגמר הנייר, המכסה פתוח) והבון ממתין בתור במקום "
+            "ללכת לאיבוד. כבוי — הבון נשלח בלי לקרוא את מצב המדפסת, ללא אישור שיצא: רק למדפסת שמתנהגת "
+            "לא טוב כשהיא נשאלת על מצבה (מתנתקת, קופאת או מדפיסה תווים מוזרים). ניתן לקבוע לפי חברה, "
+            "סניף, נקודת מכירה או קופה."
+        ),
+    ),
     # The menu layer ("תוספות ושינויים", docs/SPEC_MENU_MODIFIERS.md) — read by the till.
     BuiltinParameter(
         key="upsellEnabled",
@@ -1208,6 +1256,29 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "כמה הצעות (כרטיס או חלון) הקופה מציגה לכל היותר בהזמנה אחת, מכל הכללים יחד — "
             "בהזמנה מהירה ובשולחן. 0 (ברירת מחדל) — בלי הגבלה, כמו קודם; כל כלל עדיין מוצע לפי "
             "ההגדרות שלו (פעם אחת בהזמנה, עדיפות, ימים ושעות). בקיוסק המגבלה נקבעת בהגדרות הקיוסק."
+        ),
+    ),
+    # "יעדים ותחרות" (app/services/sales_targets.py): the till's small leaderboard, off by default.
+    BuiltinParameter(
+        key="leaderboardEnabled",
+        label="לוח מובילים ויעד בקופה",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל, בראש מסך המכירה מוצג שבב קטן עם התקדמות יעד הסניף להיום, ובלחיצה — לוח מובילים "
+            "של העובדים בסניף היום (לפי הפרמטר \"לוח מובילים — מדד\"). היעדים נקבעים בדשבורד, בדף \"יעדים\". "
+            "מתעדכן כל דקה כשיש חיבור לענן."
+        ),
+    ),
+    BuiltinParameter(
+        key="leaderboardMetric",
+        label="לוח מובילים — מדד",
+        value_type="enum",
+        enum_options=("מכירות", "פריטי אפסייל"),
+        default_value="מכירות",
+        description=(
+            "לפי מה מדורגים העובדים בלוח המובילים בקופה: «מכירות» — סך המכירות נטו של כל עובד היום; "
+            "«פריטי אפסייל» — כמה פריטים כל עובד הוסיף מהצעות \"הגדלת מכירה\" היום."
         ),
     ),
     BuiltinParameter(
@@ -1331,7 +1402,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "מהפסקה, סיום משמרת ובקשת תיקון נוכחות. הנוכחות נפרדת מההתחברות לקופה: החלפת עובד, התנתקות, "
             "נעילה בחוסר שימוש או מעבר לקופה אחרת לא מסיימים משמרת — רק \"סיום משמרת\" או סגירה של מנהל. "
             "עובד גם בלי אינטרנט (נשמר בקופה ונשלח כשהחיבור חוזר). בדשבורד: \"עובדים במשמרת\", דוח נוכחות "
-            "ותיקוני נוכחות. כבוי (ברירת מחדל) — אין שינוי בקופה."
+            "ותיקוני נוכחות. במסך הכניסה של הקופה מופיע \"שעון נוכחות\": כל עובד מקיש את הקוד שלו ומבצע "
+            "כניסה, יציאה להפסקה, חזרה מהפסקה או יציאה — בלי להיכנס לקופה ובלי הרשאת מכירה (בקופות "
+            "בלבד, לא בקיוסק ולא במסך מטבח). כבוי (ברירת מחדל) — אין שינוי בקופה."
         ),
     ),
     BuiltinParameter(
@@ -1363,6 +1436,23 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
         description=(
             "כשמופעל: \"סיום משמרת\" דורש קוד מנהל (נבדק בקופה, עובד גם בלי אינטרנט); מנהל שמסיים "
             "את המשמרת של עצמו מאשר בעצמו. המאשר נשמר עם המשמרת. כבוי (ברירת מחדל) — העובד מסיים לבד."
+        ),
+    ),
+    # Unlike the four above, on by default: the owner's rule "חייב קוד" (09.10). It only bites
+    # where "נוכחות עובדים" is on, so shops that never turned attendance on see no change.
+    BuiltinParameter(
+        key="attendanceRequireCodePerAction",
+        label="נוכחות — קוד עובד בכל פעולה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "מופעל (ברירת מחדל): כל פעולת נוכחות — כניסה, יציאה להפסקה, חזרה מהפסקה, יציאה ובקשת תיקון — "
+            "דורשת את הקוד האישי של העובד ברגע הפעולה, גם מהתפריט \"נוכחות\" בתוך הקופה: העובד המחובר "
+            "מקיש שוב את הקוד שלו. מנהל שפועל בשם עובד מאשר בקוד מנהל, והפעולה נרשמת עם שמו (ובחריגות). "
+            "הקוד נבדק בקופה מול רשימת העובדים, כמו בכניסה לקופה, ועובד גם בלי אינטרנט; חמישה קודים "
+            "שגויים נועלים לדקה, כמו בקוד מנהל. "
+            "\"שעון נוכחות\" במסך הכניסה דורש קוד תמיד. כבוי — פעולה מהתפריט בתוך הקופה נעשית בלי קוד "
+            "נוסף, כמו קודם. חל רק כש\"נוכחות עובדים\" מופעל."
         ),
     ),
     # OTH ("על חשבון הבית") and the club button ("מועדון לקוחות") on the order screens —
@@ -1431,6 +1521,43 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "רק אחרי שיוך לקוח. כבוי — שיוך לקוח רשות."
         ),
     ),
+    # "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md) — read by the till only.
+    BuiltinParameter(
+        key=INVOICE_CUSTOMER_REQUIRED_ABOVE_KEY,
+        label="פרטי לקוח לחשבונית — חובה מעל סכום",
+        value_type="decimal",
+        default_value=None,
+        description=(
+            "סכום בשקלים, לפני מע\"מ. מכירה שסכומה לפני מע\"מ גבוה ממנו לא תשולם בלי שם הלקוח ומספר ח.פ. / ע.מ. "
+            "על החשבונית (\"פרטי לקוח לחשבונית\" בתפריט ההזמנה או במסך התשלום). ריק — כבוי. "
+            "ערך מומלץ: 5000 — הסף של חשבוניות ישראל (מספר הקצאה, מ-1.6.2026) ושל הפירוט בדוח המפורט למע\"מ. "
+            "מכירה קמעונית לצרכן אינה חייבת בפרטי קונה, ולכן כבוי כברירת מחדל."
+        ),
+    ),
+    BuiltinParameter(
+        key=INVOICE_REISSUE_MAX_DAYS_KEY,
+        label="הפקת חשבונית על שם לקוח — עד כמה ימים אחורה",
+        value_type="integer",
+        default_value=None,
+        description=(
+            "מההיסטוריה בקופה: \"הפק חשבונית על שם לקוח\" מזכה את המסמך המקורי ומפיקה חשבונית חדשה עם פרטי הלקוח "
+            "(בלי תנועת כסף). מסמך ישן יותר ממספר הימים הזה יידחה. ריק — בלי מגבלה (לא נמצאה מגבלת זמן בדין "
+            "להוצאת חשבונית זיכוי; ההתאמה נרשמת בתקופת הדיווח שבה הוצא הזיכוי)."
+        ),
+    ),
+    BuiltinParameter(
+        key=INVOICE_COPY_WITH_DETAILS_KEY,
+        label="הדפסת העתק עם פרטי לקוח (בלי שינוי המסמך)",
+        value_type="boolean",
+        default_value=False,
+        description=(
+            "כשמופעל: במסמך מכירה שהושלם, בהיסטוריה בקופה, מופיע \"הדפס העתק עם פרטי לקוח\". הפרטים (שם, ח.פ. / ע.מ., "
+            "ופרטים רשות) נשמרים בנפרד מהמסמך, עם מי הוסיף אותם ומתי, ומודפסים על העתק בלבד, מסומן \"העתק\", עם השורה "
+            "\"פרטי לקוח נוספו בתאריך … ע\"י …\". המסמך המקורי, סכומיו והקובץ במבנה האחיד אינם משתנים, וההדפסה של המקור "
+            "אינה מציגה אותם. הבעלים אישר ב-10.10.2026; מומלץ לקבל אישור בכתב מרואה החשבון. ניתן להגדיר לארגון, לחברה, "
+            "לסניף, לנקודת מכירה או לקופה בודדת."
+        ),
+    ),
 )
 
 
@@ -1452,7 +1579,7 @@ from app.services.device_identity import CELLULAR_PARAMETER_SPECS as _CELLULAR_S
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CELLULAR_SPECS)
 
-# "הדפסת עסקאות שלא הושלמו בדוחות" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
+# "הדפסת עסקאות שלא הושלמו בדוח משמרת / Z" (docs/SPEC_FAILED_PAYMENTS.md): the till's paper only.
 from app.services.failed_payments import FAILED_PAYMENTS_PARAMETER_SPECS as _FAILED_PAYMENTS_SPECS  # noqa: E402
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _FAILED_PAYMENTS_SPECS)
@@ -1500,15 +1627,78 @@ from app.services.card_lock import CARD_LOCK_PARAMETER_SPECS as _CARD_LOCK_SPECS
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CARD_LOCK_SPECS)
 
+# "חסימת Z כשיש משמרות פתוחות" (app/services/z_shift_guard.py): no shop Z while a till's shift is open.
+from app.services.z_shift_guard import PARAMETER_SPECS as _Z_SHIFT_GUARD_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _Z_SHIFT_GUARD_SPECS)
+
+# "התאמת אשראי מול Z-Credit" (app/services/zcredit_reconcile.py): on / off and the nightly run time.
+from app.services.zcredit_reconcile import PARAMETER_SPECS as _ZCREDIT_RECON_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _ZCREDIT_RECON_SPECS)
+
+# Held sales at a close (app/services/held_sales_close.py): "סגירה עם מכירות מושהות" (off),
+# "ביטול מכירות מושהות מהענן בסגירה מרחוק" (on), "סגירה מרחוק גם עם עגלה פתוחה" (off).
+from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _HELD_SALES_SPECS)
+
+# "זיכוי באשראי מהענן (Z-Credit)" (app/services/cloud_refund_z_gate.py, SPEC_REMOTE_CREDIT.md §11.8):
+# offered per layer, which shift its credit note lands in, and "חובה לפני ה-Z הבא".
+from app.services.cloud_refund_z_gate import PARAMETER_SPECS as _CLOUD_REFUND_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CLOUD_REFUND_SPECS)
+
+# "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py, docs/SPEC_AREA_LOCK.md): a till in an
+# area sees and acts on its area's data only. Default on; no effect on a till without an area.
+from app.services.area_lock import AREA_LOCK_PARAMETER_SPECS as _AREA_LOCK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AREA_LOCK_SPECS)
+
+
+# "מצב עבודה: קיוסק / קופה" and "כיוון מסך" (app/services/kiosk_till_mode.py): the owner's gate (admin
+# only), the idle return, the manager's code, the kiosk's orientation lock.
+from app.services.kiosk_till_mode import PARAMETER_SPECS as _KIOSK_TILL_MODE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_TILL_MODE_SPECS)
+
+# "כפיית סגירה מרחוק כברירת מחדל" (app/services/remote_close_force.py): remote control's close or Z
+# forced from the moment the manager sends it (on); off waits for rest as before.
+from app.services.remote_close_force import PARAMETER_SPECS as _REMOTE_FORCE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _REMOTE_FORCE_SPECS)
+
+# "קופה עצמאית — Z בלבד, בלי משמרות" and "לשאול קופה פותחת" (app/services/independent_z_only.py): read by the till only;
+# an independent till works with no shifts in its UI, its internal shift opened silently, every close a Z.
+from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ONLY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
+
+#: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
+ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
-    from app.services import kiosk_technician
+    from app.services import kiosk_technician, kiosk_till_mode
+
+    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
+        try:
+            return kiosk_till_mode.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
 
     if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:
         try:
             return kiosk_technician.clean_code(value)
         except kiosk_technician.TechnicianCodeError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    from app.services import zcredit_reconcile
+
+    if key == zcredit_reconcile.PARAM_TIME and value is not None:
+        try:
+            return zcredit_reconcile.validate_time(value)
+        except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value
 

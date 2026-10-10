@@ -10,6 +10,7 @@
 import {
   CREDIT_DOCUMENT_TYPES,
   creditFor,
+  defaultTarget,
   selectedLines,
   type RemoteCreditEvent,
   type RemoteCreditPrepare,
@@ -99,6 +100,18 @@ export interface CloudCardRefund {
   targetOnline: boolean;
   attention?: CloudCardRefundAttention | null;
   attentionLabel?: string | null;
+  /**
+   * "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (§11.8–§11.10): where the owed note waits — the open
+   * shift, or the till's next one ("ממתין למשמרת הבאה בקופה X") — whether it holds the next Z, the
+   * warning when it does not, and a super admin's release from the next Z.
+   */
+  documentLanding?: 'open_shift' | 'next_shift' | null;
+  documentLandingWords?: string | null;
+  blocksNextZ?: boolean;
+  zGateWarning?: string | null;
+  zGateReleased?: boolean;
+  /** "זיכוי אשראי מהענן ממתין להפקה (₪X)" while the note is owed. */
+  pendingWords?: string | null;
   document: CloudCardRefundDocument;
   events?: RemoteCreditEvent[];
 }
@@ -112,6 +125,8 @@ export interface CloudCardRefundPrepare {
     available: boolean;
     terminal?: string | null;
     source?: string | null;
+    /** The layer of the terminal number: `machine` — the till's own; else shared by its branch / point of sale. */
+    terminalSource?: string | null;
     refusal?: { code: string; message: string } | null;
   };
   /** The remote credit's prepare: lines, money, tills, reasons (the card refund's). */
@@ -280,6 +295,27 @@ export function canResend(r: Pick<CloudCardRefund, 'status' | 'document'>): bool
 /** Sending it elsewhere moves a note still waiting at a till (needs the user's confirmation). */
 export function resendNeedsForce(r: Pick<CloudCardRefund, 'document'>): boolean {
   return PENDING_REQUEST.has(r.document.requestStatus ?? '');
+}
+
+/**
+ * The till the dialog starts on: the server's proposal (§11.8 — the sale's till first; for a terminal
+ * the branch shares, an open till of the branch before the sale's till's next shift), else the
+ * remote credit's rule.
+ */
+export function cardDefaultTarget(prepare: CloudCardRefundPrepare): string | null {
+  const proposed = prepare.document.defaultTargetId;
+  // An older server says nothing: the remote credit's rule. A null proposal is "none" — the user picks.
+  if (proposed === undefined) return defaultTarget(prepare.document.targets);
+  return proposed && prepare.document.targets.some((t) => t.machineId === proposed) ? proposed : null;
+}
+
+/** "כפה Z בלי הזיכוי" (support): a refunded card whose owed note holds the next Z and is not released yet. */
+export function canReleaseFromZ(
+  r: Pick<CloudCardRefund, 'status' | 'document' | 'blocksNextZ' | 'zGateReleased'>,
+  role: string | null | undefined,
+): boolean {
+  return role === 'super_admin' && r.status === 'refunded' && !r.document.creditTransactionId &&
+    !r.document.landed && r.blocksNextZ !== false && !r.zGateReleased;
 }
 
 /** The card as the dialog names it: "****4580", or the brand alone. */

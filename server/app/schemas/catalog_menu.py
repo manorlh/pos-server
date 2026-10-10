@@ -72,6 +72,8 @@ class MenuIn(_Body):
     valid_from: Optional[date] = Field(None, alias="validFrom")
     valid_to: Optional[date] = Field(None, alias="validTo")
     color: Optional[str] = None
+    #: The web channels it is offered on too ("online" / "menu"); None = leave as it is.
+    web_channels: Optional[List[Literal["online", "menu"]]] = Field(None, alias="webChannels")
     categories: List[MenuCategoryIn] = Field(default_factory=list, max_length=CATEGORIES_MAX)
     products: List[MenuProductIn] = Field(default_factory=list, max_length=PRODUCTS_MAX)
 
@@ -131,7 +133,8 @@ class TargetMenuIn(_Body):
 
 
 class TargetAssignmentsIn(_Body):
-    level: Literal["company", "shop", "area", "machine"]
+    #: "group": a device group ("קבוצת מכשירים", app/models/machine_group.py).
+    level: Literal["company", "shop", "area", "group", "machine"]
     target_id: uuid.UUID = Field(alias="targetId")
     menus: List[TargetMenuIn] = Field(default_factory=list, max_length=MENUS_PER_TARGET_MAX)
     #: "catalog" — "הקטלוג המלא"; "none" — "לא למכור"; null — inherit from the level above.

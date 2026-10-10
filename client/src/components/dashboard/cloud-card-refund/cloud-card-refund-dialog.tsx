@@ -34,7 +34,9 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime } from '@/lib/format';
 import {
   buildRefundBody,
+  canReleaseFromZ,
   canResend,
+  cardDefaultTarget,
   cardLabel,
   initialFull,
   isLiveRefund,
@@ -51,10 +53,12 @@ import {
   createCloudCardRefund,
   fetchCloudCardRefund,
   fetchCloudCardRefundPrepare,
+  releaseCloudCardRefundFromZ,
   resendCloudCardRefund,
   resolveCloudCardRefund,
 } from '@/lib/cloudCardRefundApi';
-import { defaultTarget, newCommandId } from '@/lib/remoteCredit';
+import { useAuth } from '@/lib/auth';
+import { newCommandId } from '@/lib/remoteCredit';
 
 function httpStatus(err: unknown): number | undefined {
   return (err as { response?: { status?: number } } | null)?.response?.status;
@@ -159,7 +163,7 @@ function CloudCardRefundForm({
     () => ({
       full: picked.full ?? (prepare ? initialFull(prepare, leg) : false),
       quantities: picked.quantities ?? {},
-      machineId: picked.machineId ?? (prepare ? defaultTarget(prepare.document.targets) : null),
+      machineId: picked.machineId ?? (prepare ? cardDefaultTarget(prepare) : null),
       reasonCode: picked.reasonCode ?? null,
       reason: picked.reason ?? '',
     }),
@@ -367,6 +371,12 @@ function CloudCardRefundForm({
                       {m.isOriginalTill ? (
                         <span className="block text-xs text-emerald-700 dark:text-emerald-400">{t('target.originalTill')}</span>
                       ) : null}
+                      {/* Where the note lands: its open shift, or its next one (SPEC_REMOTE_CREDIT.md §11.8). */}
+                      {m.landingWords ? (
+                        <span className={`block text-xs ${m.landing === 'next_shift' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                          {m.landingWords}
+                        </span>
+                      ) : null}
                     </span>
                   </label>
                 ))}
@@ -377,6 +387,10 @@ function CloudCardRefundForm({
                 <WifiOff className="h-3.5 w-3.5" aria-hidden />
                 {t('target.offlineHint')}
               </p>
+            ) : null}
+            {target?.landingWords ? <p className="text-xs font-medium">{target.landingWords}</p> : null}
+            {target && target.landing === 'next_shift' && target.blocksNextZ === false ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400">{t('zGate.notBlocking')}</p>
             ) : null}
           </fieldset>
 
@@ -439,6 +453,7 @@ export function CloudCardRefundStatusView({
   const t = useTranslations('cloudCardRefund');
   const qc = useQueryClient();
   const refresh = useRefreshAfterRefund();
+  // Intentionally not in "פקודות שנשלחו" (lib/deviceCommandsStore.ts): a cloud card refund runs cloud → Z-Credit, not a device command; its own money flow stays as is.
   const { data: r, isError, error } = useQuery<CloudCardRefund>({
     queryKey: ['cloud-card-refund', refundId],
     queryFn: () => fetchCloudCardRefund(refundId),
@@ -450,6 +465,8 @@ export function CloudCardRefundStatusView({
   });
   const [note, setNote] = useState('');
   const [resendTo, setResendTo] = useState<string | null>(null);
+  const [releaseReason, setReleaseReason] = useState('');
+  const { user } = useAuth();
   const { data: prepare } = useQuery<CloudCardRefundPrepare>({
     queryKey: ['cloud-card-refund-prepare', r?.transactionId],
     queryFn: () => fetchCloudCardRefundPrepare(r!.transactionId),
@@ -477,6 +494,17 @@ export function CloudCardRefundStatusView({
       settle(next);
     },
     onError: (e) => toast.error(axiosErrorToToastMessage(e, t('document.resendFailed'))),
+  });
+
+  // "כפה Z בלי הזיכוי" (support only, typed reason): the next Z of the note's till goes without it.
+  const release = useMutation({
+    mutationFn: () => releaseCloudCardRefundFromZ(refundId, releaseReason),
+    onSuccess: (next) => {
+      toast.success(t('zGate.released'));
+      setReleaseReason('');
+      settle(next);
+    },
+    onError: (e) => toast.error(axiosErrorToToastMessage(e, t('zGate.releaseFailed'))),
   });
 
   const endedFor = r && !isLiveRefund(r) ? r.transactionId : null;
@@ -537,7 +565,10 @@ export function CloudCardRefundStatusView({
           ) : resendNeedsForce(r) ? (
             <p className="flex items-center gap-1 text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              {t('document.pending', { till: r.targetMachineName ?? '—' })}
+              {/* "ממתין למשמרת הבאה בקופה X" when the till holds it for its next shift (§11.8). */}
+              {r.documentLanding === 'next_shift' && r.documentLandingWords
+                ? r.documentLandingWords
+                : t('document.pending', { till: r.targetMachineName ?? '—' })}
               {!r.targetOnline ? <WifiOff className="h-3.5 w-3.5 text-amber-600" aria-hidden /> : null}
             </p>
           ) : (
@@ -546,6 +577,30 @@ export function CloudCardRefundStatusView({
               {doc.requestErrorMessage ? ` — ${doc.requestErrorMessage}` : ''}
             </p>
           )}
+          {r.zGateWarning ? <p className="text-xs text-amber-700 dark:text-amber-400">{r.zGateWarning}</p> : null}
+          {r.zGateReleased ? <p className="text-xs text-muted-foreground">{t('zGate.releasedState')}</p> : null}
+          {canReleaseFromZ(r, user?.role) ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                className="h-8 max-w-xs"
+                value={releaseReason}
+                maxLength={300}
+                placeholder={t('zGate.reason')}
+                onChange={(e) => setReleaseReason(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={releaseReason.trim().length < 5 || release.isPending}
+                onClick={() => {
+                  if (window.confirm(t('zGate.confirm'))) release.mutate();
+                }}
+              >
+                {release.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}
+                {t('zGate.release')}
+              </Button>
+            </div>
+          ) : null}
           {canResend(r) && targets.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
               <select

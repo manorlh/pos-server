@@ -21,6 +21,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import Date, Integer, and_, case, cast, func, or_
+
+from app.services.shift_totals import production_deduction_expr
 from sqlalchemy.orm import Query, Session, aliased
 
 from app.models.audit_exception import TillEvent
@@ -88,6 +90,12 @@ class InsightScope:
     #: None (no filter), `AREA_NONE`, or an area id — as `parse_area_filter` returns.
     area_filter: Any = None
     machine_id: Optional[uuid_mod.UUID] = None
+    #: An event's scope (`eventId`, docs/SPEC_EVENTS.md): its tills and its window narrow
+    #: every document read; `event` is the `ReportEvent` itself.
+    machine_ids: Optional[Tuple[uuid_mod.UUID, ...]] = None
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
+    event: Any = field(default=None, repr=False)
     _machine: Any = field(default=None, repr=False)
 
     def machine(self, db: Session) -> Optional[POSMachine]:
@@ -99,11 +107,21 @@ class InsightScope:
         return self._machine or None
 
 
+def clamp_window(scope: InsightScope, start: datetime, end: datetime) -> Tuple[datetime, datetime]:
+    """[start, end) inside the scope's own window (an event's); an empty one ends where it starts."""
+    if scope.window_start is not None and start < scope.window_start:
+        start = scope.window_start
+    if scope.window_end is not None and end > scope.window_end:
+        end = scope.window_end
+    return start, max(start, end)
+
+
 def scoped_documents(db: Session, scope: InsightScope, clock: BusinessClock, start: datetime, end: datetime) -> Optional[Query]:
     """The reportable documents of the scope created in [start, end); None for no access."""
+    start, end = clamp_window(scope, start, end)
     window = ReportWindow(
         from_date=clock.business_date(start),
-        to_date=clock.business_date(end - timedelta(seconds=1)),
+        to_date=max(clock.business_date(start), clock.business_date(end - timedelta(seconds=1))),
         from_hour=None,
         to_hour=None,
         tz_name=clock.tz_name,
@@ -117,6 +135,8 @@ def scoped_documents(db: Session, scope: InsightScope, clock: BusinessClock, sta
     if query is not None and scope.company_id is not None:
         group = descendant_company_ids(db, scope.company_id)
         query = query.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
+    if query is not None and scope.machine_ids is not None:
+        query = query.filter(Transaction.machine_id.in_(list(scope.machine_ids)))
     return query
 
 
@@ -174,6 +194,9 @@ def load_hour_cells(
         return cells
     refund = _is_refund_condition()
     discount = func.coalesce(Transaction.document_discount, 0)
+    # A production voucher's deduction is in neither the gross nor the discounts (as the till's X): the
+    # net is the same, the discount KPIs never rise when vouchers are redeemed (review 09.10).
+    deduction = production_deduction_expr(db)
     keys, decode = _local_keys(db, clock, Transaction.created_at)
     rows = (
         query.with_entities(
@@ -181,8 +204,8 @@ def load_hour_cells(
             func.coalesce(func.sum(case((refund, -Transaction.total_amount), else_=Transaction.total_amount - discount)), 0).label("net"),
             func.count(Transaction.id).label("docs"),
             func.coalesce(func.sum(case((refund, 0), else_=1)), 0).label("sales"),
-            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount)), 0).label("gross"),
-            func.coalesce(func.sum(case((refund, 0), else_=discount)), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount - deduction)), 0).label("gross"),
+            func.coalesce(func.sum(case((refund, 0), else_=discount - deduction)), 0).label("discounts"),
             func.coalesce(func.sum(case((refund, Transaction.total_amount), else_=0)), 0).label("refunds"),
             func.coalesce(func.sum(case((refund, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
@@ -423,10 +446,15 @@ class StockRow:
 def load_stock(db: Session, shops: Sequence[Shop]) -> List[StockRow]:
     if not shops:
         return []
+    # A shop's stock is every location of it (the shop, its points of sale, its devices) together.
     rows = (
-        db.query(StockLevel.shop_id, StockLevel.product_id, StockLevel.quantity, StockLevel.reorder_min, StockLevel.reorder_max)
+        db.query(
+            StockLevel.shop_id, StockLevel.product_id, func.sum(StockLevel.quantity).label("quantity"),
+            func.min(StockLevel.reorder_min).label("reorder_min"), func.max(StockLevel.reorder_max).label("reorder_max"),
+        )
         .join(Product, Product.id == StockLevel.product_id)
         .filter(StockLevel.shop_id.in_([s.id for s in shops]), Product.track_stock.is_(True))
+        .group_by(StockLevel.shop_id, StockLevel.product_id)
         .all()
     )
     return [
@@ -575,8 +603,10 @@ def load_cashiers(
         query.with_entities(
             Transaction.cashier_id,
             func.coalesce(func.sum(case((refund, 0), else_=1)), 0).label("sales"),
-            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount)), 0).label("gross"),
-            func.coalesce(func.sum(case((refund, 0), else_=func.coalesce(Transaction.document_discount, 0))), 0).label("discounts"),
+            func.coalesce(func.sum(case((refund, 0), else_=Transaction.total_amount - production_deduction_expr(db))), 0).label("gross"),
+            # Without production vouchers' deductions — a voucher paid for, never the employee's discount.
+            func.coalesce(func.sum(case((refund, 0), else_=func.coalesce(Transaction.document_discount, 0)
+                                        - production_deduction_expr(db))), 0).label("discounts"),
             func.coalesce(func.sum(case((refund, 1), else_=0)), 0).label("refunds_count"),
             func.coalesce(func.sum(case((refund, Transaction.total_amount), else_=0)), 0).label("refunds"),
         )
@@ -602,6 +632,7 @@ def load_cashiers(
         agg = out.setdefault(r.cashier_id or None, CashierAgg(cashier_id=r.cashier_id or None))
         agg.promotions += to_agorot(r.promo)
 
+    ev_start, ev_end = clamp_window(scope, start, end)
     events = db.query(
         TillEvent.pos_user_id,
         TillEvent.event_type,
@@ -609,8 +640,8 @@ def load_cashiers(
         func.coalesce(func.sum(TillEvent.amount), 0).label("amount"),
     ).filter(
         TillEvent.tenant_id == scope.tenant_id,
-        TillEvent.occurred_at >= start,
-        TillEvent.occurred_at < end,
+        TillEvent.occurred_at >= ev_start,
+        TillEvent.occurred_at < ev_end,
         TillEvent.event_type.in_(("line_void", "basket_cancel")),
     )
     events = scope_query_by_user(events, scope.user, db, shop_column=TillEvent.shop_id, machine_column=TillEvent.machine_id)
@@ -619,6 +650,8 @@ def load_cashiers(
             events = events.filter(TillEvent.shop_id == scope.shop_id)
         if scope.machine_id is not None:
             events = events.filter(TillEvent.machine_id == scope.machine_id)
+        if scope.machine_ids is not None:
+            events = events.filter(TillEvent.machine_id.in_(list(scope.machine_ids)))
         if scope.area_filter == AREA_NONE:
             events = events.filter(TillEvent.area_id.is_(None))
         elif scope.area_filter is not None:

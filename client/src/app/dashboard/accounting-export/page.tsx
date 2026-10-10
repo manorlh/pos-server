@@ -44,6 +44,8 @@ import {
   type ExportRequest,
 } from '@/lib/accountingApi';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
+import { ZDateBasisToggle } from '@/components/dashboard/z-report/by-date/z-date-basis-toggle';
+import type { ZDateBasis } from '@/lib/zByDate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -96,9 +98,17 @@ export default function AccountingExportPage() {
   const [level, setLevel] = useState<'' | AccountingExportLevel>('');
   const [consolidate, setConsolidate] = useState<'' | 'true' | 'false'>('');
 
+  /**
+   * Which Zs the range picks: by business date (as always), or by the date each Z was produced.
+   * Only the choice of Zs — the export of a Z, and the uniform file, are the same either way.
+   */
+  const [zDateBasis, setZDateBasis] = useState<ZDateBasis>('business');
+  const tb = useTranslations('zByDate');
+
   const zs = useQuery({
-    queryKey: ['accounting-zs', companyId, shopId, from, to, onlyUnexported],
-    queryFn: () => fetchAccountingZs({ companyId: companyId!, shopId, from, to, onlyUnexported }),
+    queryKey: ['accounting-zs', companyId, shopId, from, to, onlyUnexported, zDateBasis],
+    queryFn: () =>
+      fetchAccountingZs({ companyId: companyId!, shopId, from, to, onlyUnexported, dateBasis: zDateBasis }),
     enabled: Boolean(companyId) && Boolean(from) && Boolean(to) && from <= to,
   });
   const settings = useQuery({
@@ -236,6 +246,19 @@ export default function AccountingExportPage() {
 
             <Card>
               <CardContent className="flex flex-wrap items-end gap-4 pt-6">
+                <div className="basis-full space-y-1">
+                  <ZDateBasisToggle
+                    value={zDateBasis}
+                    onChange={(basis) => {
+                      setZDateBasis(basis);
+                      setSelected(new Set());
+                      setPreview(null);
+                    }}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    {zDateBasis === 'production' ? tb('accounting.basisHintProduction') : tb('accounting.basisHintBusiness')}
+                  </p>
+                </div>
                 <div className="space-y-1">
                   <Label className="text-xs">{t('from')}</Label>
                   <DatePicker value={from} max={to} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} />
@@ -280,7 +303,12 @@ export default function AccountingExportPage() {
                       </TableHead>
                       <TableHead>{t('col.z')}</TableHead>
                       <TableHead>{t('col.shop')}</TableHead>
-                      <TableHead>{t('col.businessDate')}</TableHead>
+                      <TableHead className={zDateBasis === 'business' ? 'text-foreground' : undefined}>
+                        {t('col.businessDate')}
+                      </TableHead>
+                      <TableHead className={zDateBasis === 'production' ? 'text-foreground' : undefined}>
+                        {tb('accounting.productionDate')}
+                      </TableHead>
                       <TableHead className="text-end">{t('col.net')}</TableHead>
                       <TableHead className="text-end">{t('col.vat')}</TableHead>
                       <TableHead>{t('col.status')}</TableHead>
@@ -289,7 +317,7 @@ export default function AccountingExportPage() {
                   <TableBody>
                     {rows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-muted-foreground py-8 text-center">
+                        <TableCell colSpan={8} className="text-muted-foreground py-8 text-center">
                           {t('noZs')}
                         </TableCell>
                       </TableRow>
@@ -310,6 +338,7 @@ export default function AccountingExportPage() {
                           </TableCell>
                           <TableCell>{z.shopName ?? '—'}</TableCell>
                           <TableCell>{formatDate(z.businessDate)}</TableCell>
+                          <TableCell>{z.productionDate ? formatDate(z.productionDate) : '—'}</TableCell>
                           <TableCell className="text-end tabular-nums">{formatCurrency(z.netSales)}</TableCell>
                           <TableCell className="text-end tabular-nums">
                             {z.vatTotal != null ? formatCurrency(z.vatTotal) : '—'}
@@ -335,7 +364,7 @@ export default function AccountingExportPage() {
                     <TableFooter>
                       <TableRow>
                         <TableCell />
-                        <TableCell colSpan={3}>{t('selectedCount', { count: selectedRows.length })}</TableCell>
+                        <TableCell colSpan={4}>{t('selectedCount', { count: selectedRows.length })}</TableCell>
                         <TableCell className="text-end font-semibold tabular-nums">
                           {formatCurrency(selectedNet)}
                         </TableCell>

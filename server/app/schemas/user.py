@@ -96,6 +96,30 @@ class CurrentUserResponse(UserBase):
     #: "הרשאות דשבורד": `{restricted, sections: {id: "view"|"edit"}, orgWide, companyIds,
     #: shopIds, template}`. `restricted` false = everything the role allows.
     dashboard_access: Optional[dict] = Field(None, alias="dashboardAccess")
+    #: The user's own choices (app/services/user_preferences.py), defaults filled in:
+    #: `{"homePage": "board"}`. Read with `read_preferences`, never straight off the column.
+    preferences: Optional[dict] = None
+
+
+class UserPreferencesUpdate(BaseModel):
+    """`PUT /users/me/preferences` — only the keys sent change; null = back to the default."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    home_page: Optional[str] = Field(None, alias="homePage")
+    #: "תצוגת מנהל פשוטה"; null = the default for the user's role / template.
+    simple_mode: Optional[bool] = Field(None, alias="simpleMode")
+
+
+class UserPreferencesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    home_page: str = Field(..., alias="homePage")
+    #: The opening pages offered, in order (the profile's list).
+    home_pages: List[str] = Field(default_factory=list, alias="homePages")
+    simple_mode: bool = Field(False, alias="simpleMode")
+    #: What `simpleMode` is when the user has not chosen (their role / template's).
+    simple_mode_default: bool = Field(False, alias="simpleModeDefault")
 
 
 class UserResponse(UserBase):

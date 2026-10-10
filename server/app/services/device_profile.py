@@ -47,7 +47,8 @@ ROLE_KIOSK = "kiosk"
 #: The display devices (app/services/display_devices.py): not tills, not accounting systems.
 ROLE_KDS = DD.ROLE_KDS
 ROLE_ORDER_STATUS_BOARD = DD.ROLE_ORDER_STATUS_BOARD
-ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
+ROLE_CUSTOMER_DISPLAY = DD.ROLE_CUSTOMER_DISPLAY
+ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
 
 INVALID_CONTROLLER_MESSAGE = (
     "אחת הקופות השולטות שנבחרו אינה קופה פעילה של אותה חברה (או שהיא קיוסק בעצמה). בחרו שוב."
@@ -99,7 +100,7 @@ def prime_kiosks(db: Session, machines: Iterable[POSMachine]) -> Dict[Any, Kiosk
     machines = list(machines)
     kiosks = kiosk_devices_by_machine(db, [m.id for m in machines])
     for m in machines:
-        set_kiosk_cache(m, m.id in kiosks)
+        set_kiosk_cache(m, m.id in kiosks and getattr(kiosks[m.id], "home_role", None) is None)
     # And their KDS screen rows: a display device's role, a till's legacy screen.
     DD.prime_kds(db, machines)
     return kiosks
@@ -113,7 +114,8 @@ def role_of(device: Optional[KioskDevice], machine: Optional[POSMachine] = None)
     """
     if machine is not None and not DD.is_fiscal(machine):
         return DD.role_of_display(None, machine)
-    return ROLE_KIOSK if device is not None else ROLE_TILL
+    # A till's kiosk-mode row ("מצב עבודה", home_role "till") leaves it a till.
+    return ROLE_KIOSK if device is not None and getattr(device, "home_role", None) is None else ROLE_TILL
 
 
 def current_role(db: Session, machine: POSMachine) -> str:
@@ -134,12 +136,12 @@ def effective_role(db: Optional[Session], machine: POSMachine) -> str:
     if db is None:
         return ROLE_TILL
     device = kiosk_device(db, machine.id)
-    return ROLE_KIOSK if device is not None and device.enabled else ROLE_TILL
+    return ROLE_KIOSK if device is not None and device.enabled and getattr(device, "home_role", None) is None else ROLE_TILL
 
 
 def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[str, Any]:
     """The role and model fields of the machines list and the machine page."""
-    from app.models.pos_machine import detect_device_model, device_driver_pending, device_has_cash_drawer_port
+    from app.models.pos_machine import device_driver_pending, device_has_cash_drawer_port, reported_device_model
 
     model = getattr(machine, "device_model", None)
     screen = DD.kds_device_of(None, machine)
@@ -153,7 +155,7 @@ def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[s
         "kdsScreen": DD.kds_screen_fields(screen),
         "kioskEnabled": bool(device.enabled) if device is not None else None,
         "deviceModelChosen": getattr(machine, "device_model_chosen", None),
-        "deviceModelReported": detect_device_model(getattr(machine, "device_info", None)),
+        "deviceModelReported": reported_device_model(getattr(machine, "device_info", None), model),
         "hasCashDrawerPort": device_has_cash_drawer_port(model),
         "deviceDriverPending": device_driver_pending(model),
     }

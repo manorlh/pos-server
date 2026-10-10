@@ -325,6 +325,8 @@ OPEN_WRITES = {
     # "הפעל מחדש" (app/routers/device_management.py): any device-owner device, a screen too.
     ("POST", "/sync/{machine_id}/reboot/ack"),
     ("POST", "/sync/{machine_id}/till-reset/result"),
+    # "שם המכשיר" (docs/SPEC_PAIRING_QR.md §4): any device names itself, a screen too — no fiscal effect.
+    ("PATCH", "/sync/{machine_id}/name"),
     ("POST", "/sync/{machine_id}/messages/{message_id}/ack"),
     ("POST", "/sync/{machine_id}/events"),
     ("POST", "/sync/{machine_id}/attendance/actions"),
@@ -336,6 +338,8 @@ OPEN_WRITES = {
     ("POST", "/sync/{machine_id}/print-jobs/{job_id}/ack"),
     ("POST", "/sync/{machine_id}/print-jobs/{job_id}/cancel"),
     ("POST", "/sync/{machine_id}/print-redirects"),
+    # "בון לא הודפס" (app/services/bon_alerts.py): the device's own print queue, reported — no fiscal effect.
+    ("POST", "/sync/{machine_id}/kitchen/bon-alerts"),
     ("POST", "/sync/{machine_id}/printers"),
     ("POST", "/sync/{machine_id}/printers/discovered"),
     ("POST", "/sync/{machine_id}/upsell-stats"),
@@ -358,6 +362,8 @@ OPEN_WRITES = {
     ("POST", "/sync/{machine_id}/kiosk/alerts/{alert_id}/ack"),
     # The kiosk's web-renderer status (app/routers/kiosk_web.py): a report, no fiscal effect.
     ("POST", "/sync/{machine_id}/kiosk-web/status"),
+    # "שליחת לוגים לענן" (app/routers/device_logs.py): a screen sends its logs to support too.
+    ("POST", "/sync/{machine_id}/device-logs"),
     # Removed (410), kept answering old builds.
     ("POST", "/sync/{machine_id}/catalog"),
     ("POST", "/sync/{machine_id}/z-report"),

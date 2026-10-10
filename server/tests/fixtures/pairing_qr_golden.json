@@ -1,0 +1,510 @@
+{
+  "spec": "pos-server docs/SPEC_PAIRING_QR.md",
+  "description": "Shared golden cases for the pairing-code QR the dashboard draws (client/src/lib/pairingCodeQr.ts builds it) and the till's reading of it (DashboardPairingQr.kt). The same bytes in pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin the LF-normalised SHA-256.",
+  "version": 1,
+  "format": "r2mpos://pair?v=1&server=<percent-encoded API base>&code=<CODE>&exp=<epoch seconds>",
+  "build": [
+    {
+      "name": "the production shape: an https API base with its /api/v1 path",
+      "server": "https://api.r2m-pos.example/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500"
+    },
+    {
+      "name": "a LAN install: http, a private address and a port",
+      "server": "http://192.168.1.20:8001/api/v1",
+      "code": "AB12CD34",
+      "exp": 1791634500,
+      "payload": "r2mpos://pair?v=1&server=http%3A%2F%2F192.168.1.20%3A8001%2Fapi%2Fv1&code=AB12CD34&exp=1791634500"
+    },
+    {
+      "name": "a bare host: the till adds /api/v1 itself when it connects",
+      "server": "https://pos.example.co.il",
+      "code": "ZZ9TEST1",
+      "exp": 1791634500,
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fpos.example.co.il&code=ZZ9TEST1&exp=1791634500"
+    },
+    {
+      "name": "a trailing slash is dropped from the address",
+      "server": "https://api.r2m-pos.example/api/v1/",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500"
+    }
+  ],
+  "refusedBuild": [
+    {
+      "name": "a server that is not http(s)",
+      "server": "ftp://files.example.test/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a loopback server: no device can reach it",
+      "server": "http://localhost:8001/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a loopback address",
+      "server": "http://127.0.0.1:8001/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "an IPv6 loopback address",
+      "server": "http://[::1]:8001/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a server with a space in it",
+      "server": "https://api.example.test/a b",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a server with credentials in it",
+      "server": "https://user:pw@api.example.test/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a code with a character outside A-Z and 0-9",
+      "server": "https://api.r2m-pos.example/api/v1",
+      "code": "QR7F-K2M",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "a code that is too short",
+      "server": "https://api.r2m-pos.example/api/v1",
+      "code": "AB1",
+      "exp": 1791634500,
+      "payload": null
+    },
+    {
+      "name": "no expiry",
+      "server": "https://api.r2m-pos.example/api/v1",
+      "code": "QR7F4K2M",
+      "exp": 0,
+      "payload": null
+    }
+  ],
+  "parse": [
+    {
+      "name": "the QR the dashboard draws, scanned a minute before it expires",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634440,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "scanned at the very second it expires: still good",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634500,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "scanned one second after: expired",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634501,
+      "result": {
+        "outcome": "expired"
+      }
+    },
+    {
+      "name": "scanned an hour late: expired",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791638100,
+      "result": {
+        "outcome": "expired"
+      }
+    },
+    {
+      "name": "the LAN install",
+      "payload": "r2mpos://pair?v=1&server=http%3A%2F%2F192.168.1.20%3A8001%2Fapi%2Fv1&code=AB12CD34&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "http://192.168.1.20:8001/api/v1",
+        "code": "AB12CD34",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a bare host stays bare (the connect step adds /api/v1)",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fpos.example.co.il&code=ZZ9TEST1&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://pos.example.co.il",
+        "code": "ZZ9TEST1",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a trailing slash on the address is dropped",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1%2F&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "the scanner's trailing newline and spaces are ignored",
+      "payload": "  r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500\r\n",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "the scheme and host are not case-sensitive",
+      "payload": "R2MPOS://PAIR?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "the code is upper-cased",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=qr7f4k2m&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "the order of the parameters does not matter",
+      "payload": "r2mpos://pair?exp=1791634500&code=QR7F4K2M&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&v=1",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a parameter a later build adds is ignored",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500&label=%D7%A7%D7%95%D7%A4%D7%94",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a stray ampersand and a flag with no value are ignored",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500&&flag",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "https://api.r2m-pos.example/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a loopback address still reads (the dashboard just never draws one)",
+      "payload": "r2mpos://pair?v=1&server=http%3A%2F%2F127.0.0.1%3A8001%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "http://127.0.0.1:8001/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "an IPv6 address",
+      "payload": "r2mpos://pair?v=1&server=http%3A%2F%2F%5Bfd00%3A%3A20%5D%3A8001%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "valid",
+        "server": "http://[fd00::20]:8001/api/v1",
+        "code": "QR7F4K2M",
+        "exp": 1791634500
+      }
+    },
+    {
+      "name": "a malformed code is unrecognized even when the QR is also late",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F-K2M&exp=1791634500",
+      "now": 1791638100,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "the installer-phone QR (JSON) is not this format",
+      "payload": "{\"v\":1,\"api\":\"https://api.r2m-pos.example/api/v1\",\"nonce\":\"n\",\"exp\":1791634500}",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "an ordinary web link",
+      "payload": "https://example.test/",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a product barcode",
+      "payload": "7290000000012",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "empty",
+      "payload": "",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "only spaces",
+      "payload": "   ",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "another scheme",
+      "payload": "r2mpay://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "another host",
+      "payload": "r2mpos://unpair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a newer version this build cannot read",
+      "payload": "r2mpos://pair?v=2&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "version 0",
+      "payload": "r2mpos://pair?v=0&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "no version",
+      "payload": "r2mpos://pair?server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "no server",
+      "payload": "r2mpos://pair?v=1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "no code",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "no expiry",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a repeated parameter",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500&code=AB12CD34",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server that is not http(s)",
+      "payload": "r2mpos://pair?v=1&server=ftp%3A%2F%2Ffiles.example.test%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a javascript: server",
+      "payload": "r2mpos://pair?v=1&server=javascript%3Aalert%281%29&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with credentials",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fuser%3Apw%40api.example.test%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with no host",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2F%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with a query",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.example.test%2Fapi%2Fv1%3Fx%3D1&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with a fragment",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.example.test%2Fapi%2Fv1%23x&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with a space in it",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.example.test%2Fa%20b&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a server with a stray percent sign",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.example.test%2F%zz&code=QR7F4K2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a code that is too short",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=AB1&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a code that is too long",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "a code with a symbol",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F%2DK2M&exp=1791634500",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "an expiry that is not digits",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=tomorrow",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "an expiry with a sign",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=-5",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "an expiry of zero",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=0",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "an expiry in milliseconds, 13 digits",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500000",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    },
+    {
+      "name": "longer than any real payload",
+      "payload": "r2mpos://pair?v=1&server=https%3A%2F%2Fapi.r2m-pos.example%2Fapi%2Fv1&code=QR7F4K2M&exp=1791634500&pad=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "now": 1791634499,
+      "result": {
+        "outcome": "unrecognized"
+      }
+    }
+  ]
+}

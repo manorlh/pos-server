@@ -463,6 +463,8 @@ def create_product(
         is_weighed=data.is_weighed,
         unit_label=data.unit_label,
         no_discount=data.no_discount,
+        # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
+        requires_manager_approval=data.requires_manager_approval,
         # "סימוני תזונה", already cleaned by the schema (app/services/dietary.py).
         dietary_tags=data.dietary_tags or None,
         # "היכן הפריט נמכר", validated by the schema (app/services/sales_channel.py).
@@ -470,6 +472,11 @@ def create_product(
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )
+    # "מופיע ב" (app/services/product_channels.py): when sent, it decides `sales_channel` too.
+    if data.appears_in is not None:
+        from app.services import product_channels
+
+        product_channels.apply(product, appears=product_channels.clean(data.appears_in))
     # An explicit id so the shop rows below can reference it before the insert.
     product.id = uuid_mod.uuid4()
     # "הודעות לעובד" / "פריטים נלווים": only what the request sent.
@@ -576,6 +583,15 @@ def update_product(
 
     for field, value in updates.items():
         setattr(product, field, value)
+    # "מופיע ב" (app/services/product_channels.py): sent, it sets `sales_channel` too; a new
+    # `sales_channel` alone moves the pos / kiosk part of a product with its own list.
+    from app.services import product_channels
+
+    product_channels.apply(
+        product,
+        appears=product_channels.clean(data.appears_in) if data.appears_in is not None else None,
+        sales_channel_changed="sales_channel" in updates,
+    )
     # "הודעות לעובד" / "פריטים נלווים" (not in `updates`): what the request sent, validated.
     product_alerts.apply(db, product, data, active_tenant_id)
 

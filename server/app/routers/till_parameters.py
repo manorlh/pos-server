@@ -53,6 +53,11 @@ def _refuse_restricted(key: str, user: User) -> None:
     """
     if not TCB.may_change(key, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="till_parameter_restricted")
+    # "קיוסק — מצב קופה": a super admin or a distributor only (app/services/kiosk_till_mode.py).
+    if key in TP.ADMIN_ONLY_KEYS:
+        from app.services import kiosk_till_mode
+
+        kiosk_till_mode.refuse_admin_only(key, user)
 
 
 def _parameter(db: Session, parameter_id: uuid.UUID) -> TillParameter:
@@ -85,6 +90,7 @@ def _out(parameter: TillParameter, value_count: int = 0) -> TillParameterOut:
         widget=TP.parameter_widget(parameter.key, parameter.value_type),
         image_kind=TP.image_kind(parameter.key, parameter.value_type),
         managed_on=TP.managed_on(parameter.key),
+        admin_only=parameter.key in TP.ADMIN_ONLY_KEYS,
         created_at=parameter.created_at,
         updated_at=parameter.updated_at,
     )

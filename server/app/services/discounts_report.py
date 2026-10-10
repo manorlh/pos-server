@@ -132,7 +132,10 @@ def build_discounts_report(
         "vouchers": {
             "totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0},
             "byBatch": [], "byTill": [], "byDay": [],
+            "testDeductions": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0},
         },
+        # Production vouchers booked as a deduction: not discounts — their own category.
+        "productionVouchers": {"totals": {"count": 0, "uses": 0, "amount": 0.0, "documents": 0}, "byBatch": []},
     }
     tx_q = build_scoped_transaction_query(db, user, tenant_id, window, shop_id=shop_id, machine_id=machine_id)
     if tx_q is None:
@@ -237,17 +240,31 @@ def build_discounts_report(
         return {"count": b["count"], "amount": _money(b["amount"])}
 
     # ── Discount vouchers ──
-    from app.models.prepaid_voucher import TransactionVoucherDiscount as TVD
+    from sqlalchemy import and_, case
 
-    voucher_rows = (
+    from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
+    from app.models.prepaid_voucher import TransactionVoucherDiscount as TVD
+    from app.services.shift_totals import production_deduction_conditions
+
+    # The one rule of every report and the Z (shift_totals.production_deduction_conditions): a
+    # production voucher's deduction, unless it is a staff test batch's.
+    production = case((and_(*production_deduction_conditions(db)), True), else_=False).label("production")
+    all_voucher_rows = (
         db.query(
             TVD.discount_amount, TVD.uses, TVD.batch_id, TVD.batch_name,
-            Transaction.id, Transaction.created_at, Transaction.machine_id,
+            Transaction.id, Transaction.created_at, Transaction.machine_id, TVD.kind, production,
         )
         .join(Transaction, Transaction.id == TVD.transaction_id)
         .filter(TVD.transaction_id.in_(db.query(sale_ids.c.id)))
         .all()
     )
+    # A production voucher's deduction is "שוברי הפקה", apart. A staff test voucher's that reached a
+    # real sale anyway (flagged `test_real`) is no production's: an ordinary voucher discount here,
+    # as in the cashier report, the Z and insights — counted with the discount vouchers and shown as
+    # "of which" (`vouchers.testDeductions`).
+    voucher_rows = [r[:7] for r in all_voucher_rows if not r[8]]
+    deduction_rows = [r[:7] for r in all_voucher_rows if r[8]]
+    test_rows = [r[:7] for r in all_voucher_rows if r[7] == PRODUCTION_VOUCHER_DEDUCTION and not r[8]]
 
     def voucher_bucket():
         return {"count": 0, "uses": 0, "amount": Decimal("0"), "documents": set()}
@@ -314,8 +331,32 @@ def build_discounts_report(
     out["basketByKind"] = [
         {"kind": kind, **club_flat(by_kind[kind])} for kind in (CLUB, MANUAL) if kind in by_kind
     ]
+    d_totals = voucher_bucket()
+    d_by_batch: Dict[Optional[str], dict] = {}
+    for amount, uses, batch_id, batch_name, tx_id, _created_at, _till in deduction_rows:
+        batch_key = str(batch_id) if batch_id else None
+        if batch_name:
+            v_batch_names[batch_key] = batch_name
+        for b in (d_totals, d_by_batch.setdefault(batch_key, voucher_bucket())):
+            b["count"] += 1
+            b["uses"] += int(uses or 1)
+            b["amount"] += abs(_dec(amount))
+            b["documents"].add(tx_id)
+    out["productionVouchers"] = {
+        "totals": voucher_flat(d_totals),
+        "byBatch": by_value([
+            {"batchId": k, "name": v_batch_names.get(k), **voucher_flat(b)} for k, b in d_by_batch.items()
+        ], "amount"),
+    }
+    t_totals = voucher_bucket()
+    for amount, uses, _batch_id, _batch_name, tx_id, _created_at, _till in test_rows:
+        t_totals["count"] += 1
+        t_totals["uses"] += int(uses or 1)
+        t_totals["amount"] += abs(_dec(amount))
+        t_totals["documents"].add(tx_id)
     out["vouchers"] = {
         "totals": voucher_flat(v_totals),
+        "testDeductions": voucher_flat(t_totals),
         "byBatch": by_value([
             {"batchId": k, "name": v_batch_names.get(k), **voucher_flat(b)} for k, b in v_by_batch.items()
         ], "amount"),

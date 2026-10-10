@@ -738,6 +738,9 @@ export async function fetchDashboardStats(params: {
 export async function fetchOverview(params: {
   /** `YYYY-MM-DD`; the server's today when omitted. */
   date?: string;
+  /** A range instead of one day (the comparisons' breakdown of a week or a month). */
+  from?: string;
+  to?: string;
   companyId?: string;
   shopId?: string;
   machineId?: string;
@@ -818,6 +821,8 @@ export async function createZRun(body: {
    * (pos-server docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else 409 `cloud_data_confirmation_required`.
    */
   confirmCloudData?: boolean;
+  /** A super admin starting past cloud card refunds whose credit note the Z would go without (typed reason). */
+  forceCloudRefundReason?: string;
 }): Promise<ZRun> {
   const { data } = await api.post<ZRun>('/z-runs', body);
   return data;
@@ -889,6 +894,15 @@ export async function fetchMachineTransmission(
 
 export async function fetchUntransmittedCardSales(machineId: string): Promise<UntransmittedCardSales> {
   const { data } = await api.get<UntransmittedCardSales>(`/machines/${machineId}/untransmitted`);
+  return data;
+}
+
+/**
+ * Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": the refunds holding the run are released
+ * from it (a super admin, a typed reason — 403 / 422 otherwise) and go into the next Z.
+ */
+export async function forceZRunCloudRefunds(id: string, reason: string): Promise<ZRun> {
+  const { data } = await api.post<ZRun>(`/z-runs/${id}/force-cloud-refunds`, { reason });
   return data;
 }
 
@@ -1302,8 +1316,16 @@ export async function fetchTillMessages(params: { limit?: number; offset?: numbe
   return data;
 }
 
-export async function sendTillMessage(body: TillMessageCreate): Promise<TillMessage> {
-  const { data } = await api.post<TillMessage>('/till-messages', body);
+/**
+ * With `idempotencyKey` (one per compose) the POST carries an `Idempotency-Key`: a retry of the
+ * same submit after a network error returns the first message instead of sending a second one.
+ */
+export async function sendTillMessage(body: TillMessageCreate, idempotencyKey?: string): Promise<TillMessage> {
+  const { data } = await api.post<TillMessage>(
+    '/till-messages',
+    body,
+    idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined,
+  );
   return data;
 }
 

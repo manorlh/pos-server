@@ -74,7 +74,11 @@ class PickupNumberIn(_Camel):
 class KioskCommandIn(_Camel):
     #: `bon_print` / `bon_handled` ("הדפס עכשיו" / "סמן כטופל", docs/SPEC_KIOSK.md §16.8): the
     #: order's local id in `message`.
-    action: Literal["pause", "resume", "close_shift", "till_z", "schedule", "bon_print", "bon_handled"]
+    #: `enter_till` / `return_kiosk` ("מצב עבודה: קיוסק / קופה", app/services/kiosk_till_mode.py), both ways.
+    #: `reprint_bon` / `reprint_receipt` ("הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה"): the order's local
+    #: id, or "last", in `message`.
+    action: Literal["pause", "resume", "close_shift", "till_z", "schedule", "bon_print", "bon_handled",
+                    "enter_till", "return_kiosk", "reprint_bon", "reprint_receipt"]
     message: Optional[str] = Field(None, max_length=300)
     force: bool = False
     #: "נעילה למכירה" (pause): until reopened by hand ("manual", the default), HH:MM today

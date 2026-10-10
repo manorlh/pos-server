@@ -7,6 +7,7 @@
  */
 
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@dash-lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -88,10 +89,19 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   useKioskRenderProfile,
+  UpsellWindow,
 } from '@kiosk-shared/index';
+// "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
+import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
+import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
 import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
-import { localDateTimeOf, promotionsOf } from '@dash-lib/kioskMoney';
-import { dueAgorot as dueOf, newId, voucherCodeOf, type VoucherLeg } from '@dash-lib/kioskWebOrders';
+import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@dash-lib/kioskMenus';
+import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
+import { voucherCodeOf } from '@dash-lib/kioskWebOrders';
+import { DISCOUNT_PAY_HERE } from '@dash-lib/kioskVoucherClient';
+import type { VoucherSessionDeps, VoucherWords } from '@dash-lib/kioskVoucherSession';
+import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
+import { useKioskVouchers } from '@kiosk-shared/use-vouchers';
 import {
   backAction,
   busy as flowBusy,
@@ -111,7 +121,7 @@ import {
   type KioskFlowState,
 } from '../../core/kioskFlow';
 import { inTechnicianZone, mayOpen as technicianMayOpen, TapSequence } from '../../core/technician';
-import type { BasketChange, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn } from '../../shared/bridge';
+import type { BasketChange, KioskView, PayProgress, PlaceOrderOut, StartPaymentIn, VoucherAnswer } from '../../shared/bridge';
 import { scannedVoucherCode } from '../../core/kioskScan';
 import { kiosk } from '../bridge';
 import { formatMoney, t, txtOf, voucherReason } from '../i18n';
@@ -131,21 +141,27 @@ const ADMIN_ZONE = 48;
 
 type FlowAction = { event: KioskEvent; cartEmpty: boolean };
 
-/** "מזומן בקופה" and the vouchers of this order (main/kiosk/payAtTill.ts). */
+/**
+ * "מזומן בקופה" and the vouchers of this order (main/kiosk/payAtTill.ts). The order's own vouchers — goods ones as legs of
+ * the payment, discount ones held for it — are the vouchers session's (lib/kioskVoucherSession.ts, shared with the browser
+ * kiosk); `busy` / `note` / `error` here are the Android-hosted path's (the APK holds them).
+ */
 interface TillState {
-  vouchers: VoucherLeg[];
   busy: boolean;
   note: string | null;
   error: string | null;
   /** The voucher's code typed in the kiosk's window. */
   entry: boolean;
-  /** A one-time voucher only partly taken: the customer is asked (its code). */
-  forfeit: string | null;
   /** The order sent to the tills. */
   placed: Extract<PlaceOrderOut, { ok: true }> | null;
+  /**
+   * Android: the APK holds this order's vouchers (voucherApply / voucherRemove) — its last answer.
+   * It keeps them while the flow reports "details" or "pay"; leaving the checkout gives them back there.
+   */
+  native: VoucherAnswer | null;
 }
 
-const NO_TILL: TillState = { vouchers: [], busy: false, note: null, error: null, entry: false, forfeit: null, placed: null };
+const NO_TILL: TillState = { busy: false, note: null, error: null, entry: false, placed: null, native: null };
 
 /** Screens outside the checkout: an order that reaches one before it went to the tills gives its vouchers back. */
 const LEAVES_CHECKOUT: ReadonlySet<string> = new Set(['attract', 'paused', 'closed', 'no_payment', 'setup', 'service', 'catalog', 'cart', 'confirm']);
@@ -160,8 +176,34 @@ function useWindowSize() {
   return size;
 }
 
+/**
+ * "שיתאים את עצמו" (P:/specs/kiosk-landscape-till-mode.md §2, §4): the window in device-independent pixels — the
+ * Windows screen as its own scaling gives it, unaffected by this app's page zoom (outerWidth), which is what the
+ * layout's decisions read (the side cart, the rail or the tabs, two columns). In a WebView the window as it is.
+ */
+function useKioskDisplay() {
+  const read = () => {
+    const w = window.outerWidth || window.innerWidth;
+    const h = window.outerHeight || window.innerHeight;
+    return { display: kioskDisplay(displayProfile(browserFacts(w, h, 1))), cssPerDip: w > 0 ? window.innerWidth / w : 1 };
+  };
+  const [state, setState] = useState(read);
+  useEffect(() => {
+    const on = () => setState(read());
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return state;
+}
+
 export function KioskApp({ view }: { view: KioskView }) {
-  const cfg = view.config as unknown as KioskConfig;
+  const screenDisplay = useKioskDisplay();
+  const cfg = useMemo(() => {
+    const base = view.config as unknown as KioskConfig;
+    if (!screenDisplay.display.landscape) return base;
+    const theme = kioskDisplayTheme(base.theme, screenDisplay.display);
+    return theme === base.theme ? base : { ...base, theme };
+  }, [view.config, screenDisplay.display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // "איך תרצו לשלם?" (payment.methods, stepModes.payMethod — payMethodAsk): what this kiosk can take now
   // (the card through its terminal, a voucher online, cash at the till), asked by the step's mode.
@@ -191,6 +233,13 @@ export function KioskApp({ view }: { view: KioskView }) {
   flowRef.current = flow;
 
   const [productId, setProductId] = useState<string | null>(null);
+  // The screen the sheet was opened on (the menu, or the basket — an offer that needs a choice): it shows there only,
+  // so a sheet opened from an offer never pops up later on another screen.
+  const [productAt, setProductAt] = useState<string | null>(null);
+  const openSheetFor = (id: string) => {
+    setProductId(id);
+    setProductAt(flow.screen);
+  };
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [details, setDetails] = useState<DetailsValue>(NO_DETAILS);
   const [pay, setPay] = useState<PayProgress | null>(null);
@@ -240,7 +289,8 @@ export function KioskApp({ view }: { view: KioskView }) {
 
   const view2 = useMemo(() => {
     const products = view.catalog.products.map((p) => ({ ...p, available: p.available }));
-    return kioskCatalogView(view.catalog.categories, products, cfg);
+    // "תפריטים": the active menu's order is the kiosk's while it is on (the kiosk's own hidden items and pictures stay).
+    return kioskCatalogView(view.catalog.categories, products, withMenuOrder(cfg, view.catalog.menu));
   }, [view.catalog, cfg]);
   const required = useCallback((id: string) => (view.catalog.groups[id] ?? []).some((g) => g.min > 0), [view.catalog.groups]);
   // quickAdd "always" (the wall): the dishes whose options' defaults answer what they require (never a meal).
@@ -261,9 +311,16 @@ export function KioskApp({ view }: { view: KioskView }) {
   );
   const featured = useMemo(() => view2.featured.map((x) => toP(x.product, x.soldOut, required(x.product.id), answered(x.product))), [view2, required, answered]);
   const allProducts = useMemo(() => categories.flatMap((c) => c.products), [categories]);
-  const product = productId ? (allProducts.find((p) => p.id === productId) ?? null) : null;
-  /** Every product the kiosk sells (a meal's component may sit in no category shown). */
-  const soldById = useMemo(() => new Map(view.catalog.products.map((p) => [p.id, p])), [view.catalog.products]);
+  const product = productId && productAt === flow.screen ? (allProducts.find((p) => p.id === productId) ?? null) : null;
+  /** A line now added through a window's sheet: it opens no window of its own, the flow's "added" follows. */
+  const upsellTaking = useRef(false);
+  /** The order's product ids (what a window never offers again). */
+  const cartIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    cartIdsRef.current = cart.map((l) => l.product.id);
+  }, [cart]);
+  /** Every product the kiosk sells (a meal's component may sit in no category shown) — and what the active menu holds back. */
+  const soldById = useMemo(() => new Map([...(view.catalog.held ?? []), ...view.catalog.products].map((p) => [p.id, p])), [view.catalog.products, view.catalog.held]);
   const groupsOf = useCallback((id: string): PGroup[] => pGroupsOf(view.catalog.groups[id] ?? []), [view.catalog.groups]);
   /** A meal's window (menu.meals): each slot's products, a component's groups. */
   const mealOf = useCallback(
@@ -290,10 +347,50 @@ export function KioskApp({ view }: { view: KioskView }) {
   // "מבצעים": the basket priced as it will be charged (kioskMoney.ts — the till's promotions), by the minute.
   const promotions = useMemo(() => promotionsOf(view.catalog.promotions ?? []), [view.catalog.promotions]);
   const minute = Math.floor(nowMs / 60_000);
-  const { pricing } = useMemo(
-    () => basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true),
+  // The discount vouchers held for the order ("שוברי הנחה", lib/kioskVouchers.ts) come after the promotions, in the order applied.
+  const price = useCallback(
+    (discounts: readonly AppliedDiscountVoucher[]) =>
+      basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true, discounts),
     [cart, promotions, minute, soldById],
   );
+  /** A basket line as the goods vouchers read it (the dish's own price: a voucher covers it, the paid extras are paid). */
+  const voucherLine = useCallback(
+    (key: string) => {
+      const l = cartRef.current.find((x) => x.key === key);
+      return l ? { productId: l.product.id, baseAgorot: soldById.get(l.product.id)?.priceAgorot ?? Math.round(l.product.price * 100), name: l.product.name } : null;
+    },
+    [soldById],
+  );
+  const tipOnGoods = useCallback((goods: number) => tipOfDetails(details, goods, cfg.payment), [details, cfg.payment]);
+  /** A voucher scanned or typed, through the service (it prices the basket itself) — set below, once the basket's input exists. */
+  const voucherCall = useRef<VoucherSessionDeps<ReturnType<typeof basketPricing>>['call'] | null>(null);
+  const voucherWords = useMemo<VoucherWords>(
+    () => ({
+      checking: t('voucherChecking'),
+      appliedLeg: (agorot) => t('voucherAppliedNote', { amount: formatMoney(agorot / 100) }),
+      appliedDiscount: (serial, agorot) => t('voucherDiscountApplied', { serial, amount: formatMoney(agorot / 100) }),
+      offline: configuredText(cfg, 'he', 'voucherOffline') ?? txtOf(undefined, 'voucherOffline'),
+      noMatch: configuredText(cfg, 'he', 'voucherNoMatch') ?? txtOf(undefined, 'voucherNoMatch'),
+      reason: voucherReason,
+      codeOf: (raw) => scannedVoucherCode(raw) ?? voucherCodeOf(raw),
+    }),
+    [cfg],
+  );
+  const { session: voucherSession, view: vView } = useKioskVouchers({
+    price,
+    lineInfo: voucherLine,
+    tipOf: tipOnGoods,
+    call: (input) => (voucherCall.current ? voucherCall.current(input) : Promise.resolve({ kind: 'offline' as const })),
+    reverse: (id) => void kiosk.reverseVoucher?.(id),
+    release: (vouchers) => void kiosk.releaseDiscounts?.(vouchers),
+    words: voucherWords,
+    // The vouchers pay all and no tip is left: the document is written by the vouchers alone (no terminal), once, on this answer.
+    onCovered: () => {
+      methodRef.current = 'card';
+      dispatch({ type: 'detailsDone' });
+    },
+  });
+  const { pricing } = vView.price;
   const pricingRef = useRef(pricing);
   pricingRef.current = pricing;
 
@@ -317,13 +414,18 @@ export function KioskApp({ view }: { view: KioskView }) {
     return () => window.clearInterval(id);
   }, [cfg.hours, dispatch]);
 
-  // The flow, as the cloud's status and the automatic close read it.
+  // The flow, as the cloud's status and the automatic close read it — and, on Android, as the APK
+  // follows it: the checkout's steps ("איך תרצו לשלם?" included) are the "details" screen and the
+  // charge is "pay", where the APK keeps the order's vouchers; any other screen gives them back.
   useEffect(() => {
     kiosk.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
   }, [flow]);
 
   // Back to rest: the order's own state cleared.
   const resting = !['service', 'catalog', 'cart', 'confirm', 'details', 'pay', 'success'].includes(flow.screen);
+  // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
+  // when the basket opens and on the way to payment — never a strip on the basket.
+  const upsellWin = useKioskUpsell(cfg, view.catalog.upsellRules, allProducts, resting, { shown: (w) => funnel.upsell('shown', w.moment, w.offer.rule.id, w.offer.productIds[0] ?? null) });
   useEffect(() => {
     if (!resting) return;
     setCart([]);
@@ -337,30 +439,38 @@ export function KioskApp({ view }: { view: KioskView }) {
     setEntry(null);
     setReachToggled(false);
     setTill(NO_TILL);
+    voucherSession.reset();
     methodRef.current = null;
-  }, [resting]);
+  }, [resting, voucherSession]);
 
-  // Out of the checkout before the order went to the tills: its vouchers back on themselves.
+  // Out of the checkout before the order was paid or went to the tills: its vouchers back on themselves (a discount voucher's
+  // hold released, a goods voucher reversed). An order the card (or the vouchers) paid keeps them: they are on its document.
   const prevScreen = useRef(flow.screen);
+  const payNow = useRef(pay);
+  payNow.current = pay;
   useEffect(() => {
     const was = prevScreen.current;
     prevScreen.current = flow.screen;
-    if (was === flow.screen || LEAVES_CHECKOUT.has(was) || !LEAVES_CHECKOUT.has(flow.screen) || tillRef.current.placed) return;
-    for (const v of tillRef.current.vouchers) void kiosk.reverseVoucher?.(v.redemptionId);
+    if (was === flow.screen || LEAVES_CHECKOUT.has(was) || !LEAVES_CHECKOUT.has(flow.screen) || tillRef.current.placed || payNow.current?.phase === 'approved') return;
+    voucherSession.giveBack();
     setTill(NO_TILL);
     methodRef.current = null;
-  }, [flow.screen]);
+  }, [flow.screen, voucherSession]);
 
   useEffect(() => setVisit((v) => v + 1), [flow.screen]);
 
   /* -------------------------------------------------------------- payment */
 
-  /** The basket as the service takes it (it prices it again from its own catalog). */
+  /** The basket as the service takes it (it prices it again from its own catalog); [withVouchers]: the order's vouchers ride with it. */
   const paymentInput = useCallback(
-    (): StartPaymentIn => ({
+    (withVouchers = false): StartPaymentIn => ({
+      // The vouchers of the order: the service prices the sale with the discount ones and recounts the goods ones as legs.
+      ...(withVouchers && voucherSession.state.legs.length + voucherSession.state.discounts.length > 0
+        ? { vouchers: { legs: voucherSession.state.legs, discounts: voucherSession.state.discounts, saleRef: voucherSession.state.saleRef } }
+        : {}),
       // The unit prices and the total the customer saw: never charged if they moved (core/basketCheck.ts).
       expectedTotalAgorot: pricingRef.current.totalAgorot,
-      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
+      lines: cartRef.current.map((l) => ({ key: l.key, productId: l.product.id, qty: l.qty, unitAgorot: lineUnitAgorot(l), ...menuMemoryOf(l), options: orderOptionsOf(l), meal: orderMealOf(l), notes: l.note ? [l.note] : [] })),
       service: orderServiceOf(flowRef.current.service, cfgIn),
       customerName: details.name.trim() || null,
       customerPhone: details.phone.trim() || null,
@@ -369,21 +479,26 @@ export function KioskApp({ view }: { view: KioskView }) {
       tipPct: details.tipAgorot === null ? details.tipPct : null,
       tipAgorot: details.tipAgorot,
     }),
-    [details, cfgIn],
+    [details, cfgIn, voucherSession],
   );
+  voucherCall.current = (input) =>
+    kiosk.redeemVoucher
+      ? kiosk.redeemVoucher({ code: input.code, basket: paymentInput(), earlier: input.earlier, discounts: input.discounts, forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId, saleRef: input.saleRef })
+      : Promise.resolve({ kind: 'offline' as const });
 
   const startPayment = useCallback(async () => {
     dispatch({ type: 'paymentStarted' });
     setPayBlocked(null);
     // The total the customer saw, after the promotions.
     const shownAgorot = pricingRef.current.totalAgorot;
-    funnel.noteTip(tipOfDetails(details, shownAgorot));
+    funnel.noteTip(tipOfDetails(details, shownAgorot, cfg.payment));
     const input = paymentInput();
-    // "מזומן בקופה": the order to the shop's tills, with its vouchers (no document here).
+    // "מזומן בקופה": the order to the shop's tills, with its vouchers (no document here). By card, the vouchers are legs of
+    // the document (goods) and a discount on it (discount ones): the card is charged what they leave.
     const cash = (methodRef.current ?? fallbackMethod) === 'cash_at_till';
     const r: PlaceOrderOut | Awaited<ReturnType<typeof kiosk.startPayment>> = cash
-      ? ((await kiosk.placeOpenOrder?.({ ...input, vouchers: tillRef.current.vouchers })) ?? { ok: false, reason: 'error', message: t('placeFailed') })
-      : await kiosk.startPayment(input);
+      ? ((await kiosk.placeOpenOrder?.({ ...input, vouchers: voucherSession.state.legs, discounts: voucherSession.state.discounts })) ?? { ok: false, reason: 'error', message: t('placeFailed') })
+      : await kiosk.startPayment(paymentInput(true));
     if (r.ok) {
       if (cash && 'pickupLabel' in r) {
         setTill((p) => ({ ...p, placed: r }));
@@ -417,47 +532,56 @@ export function KioskApp({ view }: { view: KioskView }) {
       // The new total, to confirm before anything is charged.
       if (typeof r.totalAgorot === 'number' && r.totalAgorot !== shownAgorot) lines.push(t('basketNewTotal', { total: formatMoney(r.totalAgorot / 100) }));
       // Back to the basket: a voucher already taken goes back with the checkout, to be scanned again.
-      if (tillRef.current.vouchers.length > 0) lines.push(t('basketVouchersBack'));
+      if (voucherSession.state.legs.length + voucherSession.state.discounts.length > 0 || (tillRef.current.native?.vouchers.length ?? 0) > 0) lines.push(t('basketVouchersBack'));
       setChanges(lines.length > 0 ? lines : [t('basketNewTotal', { total: formatMoney((r.totalAgorot ?? shownAgorot) / 100) })]);
       return;
     }
     setPayBlocked('message' in r ? r.message || t('placeFailed') : t('placeFailed'));
-  }, [details, dispatch, funnel, paymentInput, fallbackMethod]);
+  }, [details, dispatch, funnel, paymentInput, fallbackMethod, cfg.payment, voucherSession]);
 
   /* --------------------------------------------------------------- vouchers */
 
-  /** A screen text: the business's, else the built-in one. */
-  const screenText = useCallback((key: KioskTextKey) => configuredText(cfg, 'he', key) ?? txtOf(undefined, key), [cfg]);
-
-  const voucherAttempt = useRef<{ code: string; id: string } | null>(null);
-  /** A voucher scanned or typed: redeemed online for this basket (the service prices it). */
+  /** A voucher scanned or typed: Android — the APK holds it; here — the order's vouchers session applies it (goods as a leg, discount held). */
   const redeem = useCallback(
     async (raw: string, forfeitRest = false) => {
       const code = scannedVoucherCode(raw) ?? voucherCodeOf(raw);
-      if (!code || tillRef.current.busy || !kiosk.redeemVoucher) return;
-      if (!voucherAttempt.current || voucherAttempt.current.code !== code) voucherAttempt.current = { code, id: newId() };
-      setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false, forfeit: null }));
-      const r = await kiosk.redeemVoucher({ code, basket: paymentInput(), earlier: tillRef.current.vouchers, forfeitRest, clientRequestId: voucherAttempt.current.id });
-      if (r.kind === 'ok') {
-        voucherAttempt.current = null;
-        const legs = [...tillRef.current.vouchers, r.leg];
-        tillRef.current = { ...tillRef.current, vouchers: legs };
-        setTill((p) => ({ ...p, busy: false, error: null, vouchers: legs, note: t('voucherAppliedNote', { amount: formatMoney(r.leg.amountAgorot / 100) }) }));
-        // Everything paid by the vouchers (no tip left): the order goes to the tills by itself — once, on this answer.
-        const goods = pricingRef.current.totalAgorot;
-        if (dueOf(goods, tipOfDetails(details, goods), legs) === 0) {
-          methodRef.current = 'cash_at_till';
+      if (!code || tillRef.current.busy) return;
+      if (kiosk.voucherApply) {
+        // Android: the APK redeems it and holds it (its own path, the payment books it), and answers
+        // with the order's vouchers and what is left to pay.
+        setTill((p) => ({ ...p, busy: true, error: null, note: t('voucherChecking'), entry: false }));
+        const had = new Set((tillRef.current.native?.vouchers ?? []).map((v) => v.serial));
+        const a = await kiosk.voucherApply({ code, payment: paymentInput() });
+        if (!a) {
+          setTill((p) => ({ ...p, busy: false, note: null, error: t('voucherNoAnswer') }));
+          return;
+        }
+        const added = a.error ? undefined : a.vouchers.find((v) => !had.has(v.serial));
+        const note = a.error ? null : (a.note ?? (added ? t('voucherAppliedNote', { amount: formatMoney(added.amountAgorot / 100) }) : null));
+        tillRef.current = { ...tillRef.current, native: a };
+        setTill((p) => ({ ...p, busy: false, native: a, error: a.error, note }));
+        // Everything paid by the vouchers (no tip left): the payment books them with no card — once, on this answer.
+        if (added && a.dueAgorot === 0) {
+          methodRef.current = 'card';
           dispatch({ type: 'detailsDone' });
         }
         return;
       }
-      const error =
-        r.kind === 'offline' ? screenText('voucherOffline') : r.kind === 'no_match' ? screenText('voucherNoMatch') : r.kind === 'forfeit' ? null : voucherReason(r.reason);
-      if (r.kind !== 'offline') voucherAttempt.current = r.kind === 'forfeit' ? voucherAttempt.current : null;
-      setTill((p) => ({ ...p, busy: false, note: null, error, forfeit: r.kind === 'forfeit' ? code : null }));
+      if (!kiosk.redeemVoucher) return;
+      setTill((p) => ({ ...p, entry: false }));
+      await voucherSession.redeem(raw, forfeitRest);
     },
-    [details, dispatch, paymentInput, screenText],
+    [dispatch, paymentInput, voucherSession],
   );
+
+  /** Android: a voucher off the order — the APK gives its hold back and answers the order's vouchers now. */
+  const removeNative = useCallback(async (serial: number) => {
+    if (tillRef.current.busy || !kiosk.voucherRemove) return;
+    setTill((p) => ({ ...p, busy: true, error: null, note: null }));
+    const a = await kiosk.voucherRemove(serial);
+    if (a) tillRef.current = { ...tillRef.current, native: a };
+    setTill((p) => (a ? { ...p, busy: false, native: a, error: a.error, note: a.note } : { ...p, busy: false, error: t('voucherNoAnswer') }));
+  }, []);
 
   // Into the pay screen: the charge starts at once (as on the till).
   useEffect(() => {
@@ -521,6 +645,11 @@ export function KioskApp({ view }: { view: KioskView }) {
   const cols = productColumns(catalogColumns(cfg.theme.gridDensity, wide, panel, side), layoutOf(cfg).productSize, size.w);
   const rules = { ...rulesOf(cfgIn, cart.length === 0), asksPayMethod: asksPay };
   const back = () => {
+    // An upsell window: "לא תודה" — unless it is "חובה" (answered only, never backed out of).
+    if (upsellWin.window) {
+      if (!upsellWin.window.required) finishUpsell();
+      return;
+    }
     const a = backAction(flow, rules);
     if (a === 'confirm_leave') setLeaveAsk(true);
     else if (a === 'cancel_payment') {
@@ -536,8 +665,18 @@ export function KioskApp({ view }: { view: KioskView }) {
       if (s === 'attract') dispatch({ type: 'start' });
       else if (s === 'service' && pendingService.current) dispatch({ type: 'chooseService', service: pendingService.current });
       else dispatch({ type: 'backToCatalog' });
-    } else if (target === 'cart') dispatch({ type: 'openCart' });
-    else if (target === 'pay') dispatch({ type: 'checkout' });
+    } else if (target === 'cart') {
+      dispatch({ type: 'openCart' });
+      // The basket's step ("מעבר בין מסכים" to_cart): its window over the basket.
+      upsellWin.atStep('to_cart', cartIdsRef.current);
+    }
+    // "מינימום הזמנה": refused under the minimum, as the Android kiosk's checkout (the button shows why).
+    else if (target === 'pay') {
+      if (belowMinimumOrder(cfg.payment.minOrderAgorot, pricingRef.current.totalAgorot)) return;
+      // The way to payment ("to_pay", every order's rules): its window first, the payment after its answer.
+      if (upsellWin.atStep('to_pay', cartIdsRef.current)) return;
+      dispatch({ type: 'checkout' });
+    }
     else if (target === 'attract') dispatch({ type: 'reset' });
   };
 
@@ -594,6 +733,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
+    twoColumns: screenDisplay.display.twoColumns,
+    contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -602,7 +744,11 @@ export function KioskApp({ view }: { view: KioskView }) {
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
     // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one.
-    txt: (key: KioskTextKey) => configuredText(cfg, 'he', key) ?? txtOf(undefined, key),
+    // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+    txt: (key: KioskTextKey) => {
+      const text = configuredText(cfg, 'he', key) ?? txtOf(undefined, key);
+      return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
+    },
     t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? t(key, values),
     kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
     // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
@@ -620,7 +766,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     openProduct: (p) => {
       if (p.soldOut) return;
       funnel.itemOpen(p.id);
-      setProductId(p.id);
+      openSheetFor(p.id);
     },
     cart,
     setCart,
@@ -649,13 +795,18 @@ export function KioskApp({ view }: { view: KioskView }) {
   if (atCheckout && asksPay) nowSteps.push('payMethod');
   const detailsSteps: CheckoutStep[] = nowSteps.length > 0 ? nowSteps : ['details'];
   const goodsAgorot = pricing.totalAgorot;
-  const tipNow = tipOfDetails(details, goodsAgorot);
-  const dueNow = dueOf(goodsAgorot, tipNow, till.vouchers);
+  const tipNow = tipOfDetails(details, goodsAgorot, cfg.payment);
+  // Android: what the APK says is left (its vouchers, the tip included) once one is on the order.
+  const native = till.native && till.native.vouchers.length > 0 ? till.native : null;
+  const dueNow = native ? native.dueAgorot : vView.dueAgorot;
   const atPayMethod = flow.screen === 'details' && flow.detailsNext === 'pay';
   const usable = new Set(payInfo.usable);
+  const vState = vView.state;
+  // A voucher being checked: the order's session, or the APK's.
+  const vBusy = till.busy || vState.busy;
   const voucherOffered = usable.has('voucher') && dueNow > 0;
-  // The card's tile: never with a voucher (one tender per document here — the rest is paid at the till).
-  const cardOff = till.vouchers.length > 0 ? t('cardWithVoucher') : payInfo.cardOff;
+  // The card's tile: a voucher is a leg of the document and the card pays the rest (the Android kiosk's way).
+  const cardOff = payInfo.cardOff;
   const payMethodLive: KioskLivePayMethod | null = detailsSteps.includes('payMethod')
     ? {
         steps: detailsSteps,
@@ -663,25 +814,35 @@ export function KioskApp({ view }: { view: KioskView }) {
           method,
           off: method === 'card' ? cardOff : method === 'voucher' && !usable.has('voucher') ? t('voucherOffline') : method === 'voucher' && dueNow === 0 ? m.txt('voucherApplied') : null,
         })),
-        goodsAgorot,
+        goodsAgorot: native?.totalAgorot ?? goodsAgorot,
         tipAgorot: tipNow,
-        vouchers: till.vouchers.map((v) => ({ id: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot, label: v.eventName })),
+        // The goods vouchers (legs: what each pays) and, apart, the discount ones (already off the order's total).
+        vouchers: native
+          ? native.vouchers.map((v) => ({ id: String(v.serial), serial: v.serial, amountAgorot: v.amountAgorot, title: v.title, lines: v.lines }))
+          : vView.rows.filter((r) => !vState.discounts.some((d) => d.reservationId === r.id)),
+        discounts: native ? [] : vView.rows.filter((r) => vState.discounts.some((d) => d.reservationId === r.id)),
         dueAgorot: dueNow,
         onPick: (method) => {
           setLastTouch(Date.now());
           if (method === 'voucher') setTill((p) => ({ ...p, entry: true, error: null, note: null }));
-          else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
+          else if (method === 'cash_at_till' && vState.discounts.length > 0) {
+            // A discount voucher is held for this kiosk's own payment: not taken to a till (removed first).
+            setTill((p) => ({ ...p, error: DISCOUNT_PAY_HERE, note: null }));
+          } else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
             methodRef.current = method;
             dispatch({ type: 'detailsDone' });
           }
         },
         onRemoveVoucher: (id) => {
-          void kiosk.reverseVoucher?.(id);
-          setTill((p) => ({ ...p, vouchers: p.vouchers.filter((v) => v.redemptionId !== id), note: null }));
+          if (native) {
+            void removeNative(Number(id));
+            return;
+          }
+          voucherSession.remove(id);
         },
-        busy: till.busy,
-        note: till.note,
-        error: till.error,
+        busy: vBusy,
+        note: till.note ?? vState.note,
+        error: till.error ?? vState.error,
         // "רשות": passed with the default method.
         skip:
           payAsk.optional && payAsk.fallback && payAsk.fallback !== 'voucher' && !(payAsk.fallback === 'card' && cardOff !== null)
@@ -706,16 +867,16 @@ export function KioskApp({ view }: { view: KioskView }) {
   }, []);
   const justAddedTimer = useRef<number | null>(null);
   /** `merge`: the cart line this one joins (the same plain dish, as on the till). */
-  const addLine = (line: PLine, from: DOMRect | null, merge?: (l: PLine) => boolean) => {
+  /** `quiet`: a line taken straight from an upsell window — the window says what follows, not the add. */
+  const addLine = (line: PLine, from: DOMRect | null, merge?: (l: PLine) => boolean, quiet = false) => {
     setCart((c) => {
       const i = merge ? c.findIndex(merge) : -1;
       return i >= 0 ? c.map((l, j) => (j === i ? { ...l, qty: l.qty + line.qty } : l)) : [...c, line];
     });
     setJustAdded(line.product.id);
-    // From the basket's offers: an upsell taken.
-    const fromUpsell = flowRef.current.screen === 'cart' && upsellRef.current.some((u) => u.id === line.product.id);
+    // Taken from an upsell window (a direct add, or the sheet it opened).
+    const fromUpsell = quiet || upsellTaking.current;
     funnel.itemAdd(line.product.id, line.qty, fromUpsell, lineUnitAgorot(line));
-    if (fromUpsell) funnel.upsell('accepted', 'steps', null, line.product.id);
     if (justAddedTimer.current) window.clearTimeout(justAddedTimer.current);
     justAddedTimer.current = window.setTimeout(() => setJustAdded(null), 900);
     const box = screenRef.current?.getBoundingClientRect();
@@ -731,8 +892,38 @@ export function KioskApp({ view }: { view: KioskView }) {
       setCartBump((n) => n + 1);
     }
     setProductId(null);
+    if (quiet) return;
+    const taken = upsellTaking.current;
+    upsellTaking.current = false;
+    // A line of the customer's own: its window first (KioskViewModel.afterAdd); the flow's "added" after its answer.
+    if (!taken && upsellWin.afterAdd(line.product.id, line.product.categoryId, [...cart.map((l) => l.product.id), line.product.id])) return;
     dispatchFlow({ event: { type: 'itemAdded' }, cartEmpty: false });
   };
+  /** The window closed ("לא תודה", "המשך", or its one item taken): what it held back goes on. */
+  const finishUpsell = () => {
+    const then = upsellWin.close();
+    if (then === 'item_added') dispatchFlow({ event: { type: 'itemAdded' }, cartEmpty: false });
+    else if (then === 'checkout') dispatch({ type: 'checkout' });
+  };
+  /** "הוסף" on one of the window's items (KioskViewModel.takeUpsell): straight in on its defaults, else its sheet. */
+  const takeUpsell = (p: PProduct, from: DOMRect | null) => {
+    const w = upsellWin.window;
+    if (!w || p.soldOut) return;
+    funnel.upsell('accepted', w.moment, w.offer.rule.id, p.id);
+    const d = p.addPath === 'direct' ? defaultsLine(p, groupsOf(p.id)) : null;
+    if (d) {
+      upsellSeq.current += 1;
+      const key = `upsell-${w.offer.rule.id}-${p.id}-${upsellSeq.current}`;
+      addLine({ key, product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from, undefined, true);
+      if (w.offer.productIds.length <= 1) finishUpsell();
+      else upsellWin.taken(p.id);
+      return;
+    }
+    upsellWin.close();
+    upsellTaking.current = true;
+    openSheetFor(p.id);
+  };
+  const upsellSeq = useRef(0);
   m.quickAdd = (p, from) => {
     // quickAdd "always" (the wall): a dish with a required choice goes in on its options' defaults — a
     // line of its own, as the window adds it; a choice with no default opens the window.
@@ -742,9 +933,10 @@ export function KioskApp({ view }: { view: KioskView }) {
       addLine({ key: defaultsLineKey(p.id), product: p, qty: 1, unit: d.unitAgorot / 100, unitAgorot: d.unitAgorot, extras: d.texts, options: d.options }, from);
       return;
     }
-    const plain = (l: PLine) => l.product.id === p.id && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
-    // At most one plain line per dish (the next joins it), so its key is unique.
-    addLine({ key: `${p.id}-plain`, product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
+    // The same dish at the same price under the same menu joins (Cart.add): after a menu switch a tap is a line of its own.
+    const plain = (l: PLine) => joinsPlainLine(l, p) && l.extras.length === 0 && !l.note && (l.options?.length ?? 0) === 0;
+    // At most one plain line per dish, menu and price (the next joins it), so its key is unique.
+    addLine({ key: plainLineKey(p), product: p, qty: 1, unit: p.price, unitAgorot: p.priceAgorot, extras: [], options: [] }, from, plain);
   };
 
   // Barcode scans (a USB HID scanner), 1D and 2D, no button first — the Android kiosk's rules (kioskScanner.tsx).
@@ -761,28 +953,14 @@ export function KioskApp({ view }: { view: KioskView }) {
     choose: (p) => {
       // The sheet opens over the menu.
       if (flowRef.current.screen !== 'catalog') dispatch({ type: 'backToCatalog' });
-      setProductId(p.id);
+      openSheetFor(p.id);
     },
     start: () => dispatch({ type: 'start' }),
     serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
     // A voucher scanned on "איך תרצו לשלם?" is redeemed there.
-    onVoucher: atPayMethod && voucherOffered && !till.busy ? (code) => void redeem(code) : null,
+    onVoucher: atPayMethod && voucherOffered && !vBusy ? (code) => void redeem(code) : null,
   });
-
-  // "חובה / רשות / כבוי" (payment.stepModes.upsellSteps): the basket's offers are that moment's.
-  const upsellOn = stepMode(cfg, 'upsellSteps') !== 'off';
-  const upsell = useMemo(() => (upsellOn ? upsellFor(view, cfg, cart, allProducts) : []), [upsellOn, view, cfg, cart, allProducts]);
-  const upsellRef = useRef(upsell);
-  upsellRef.current = upsell;
-  const upsellShown = useRef<string | null>(null);
-  useEffect(() => {
-    if (flow.screen !== 'cart' || upsell.length === 0) return;
-    const key = `${funnel.session}:${visit}`;
-    if (upsellShown.current === key) return;
-    upsellShown.current = key;
-    funnel.upsell('shown', 'steps', null, upsell[0].id);
-  }, [flow.screen, upsell, funnel, visit]);
 
   /* ------------------------------------------------------------ the screen */
 
@@ -883,7 +1061,7 @@ export function KioskApp({ view }: { view: KioskView }) {
               </GuidedFrame>
             ) : s === 'cart' ? (
               <GuidedFrame m={m} screen={s}>
-                <CartScreen m={m} upsell={upsell} />
+                <CartScreen m={m} upsell={NO_BASKET_OFFERS} />
               </GuidedFrame>
             ) : s === 'details' ? (
               <DetailsScreen
@@ -930,7 +1108,7 @@ export function KioskApp({ view }: { view: KioskView }) {
               // "יצאתי לנוח… תכף אשוב" (paused / closed): the pause's own message and end, as the cloud sent them.
               <PausedScreen
                 m={m}
-                variant={s === 'closed' ? 'closed' : s === 'no_payment' ? 'noPayment' : 'paused'}
+                variant={s === 'closed' ? 'closed' : s === 'no_payment' ? (view.state.noPaymentReason === 'offline' ? 'offline' : 'noPayment') : 'paused'}
                 pause={{ message: view.state.pausedMessage, until: view.state.pausedUntil }}
               />
             )
@@ -938,7 +1116,24 @@ export function KioskApp({ view }: { view: KioskView }) {
           )}
         />
         </ReachFrame>
-        {screen === 'catalog' && product ? (
+        {upsellWin.window ? (
+          <ReachSheets m={m}>
+            <UpsellWindow
+              m={m}
+              title={upsellTitle(upsellWin.window, m.txt('upsellTitle'))}
+              text={upsellText(upsellWin.window)}
+              imageUrl={upsellImage(upsellWin.window)}
+              items={upsellWin.window.offer.productIds.map((id) => allProducts.find((x) => x.id === id)).filter((x): x is PProduct => !!x)}
+              added={upsellWin.window.added}
+              showPrice={upsellWin.window.offer.rule.showPrice}
+              required={upsellWin.window.required}
+              onAdd={takeUpsell}
+              onContinue={finishUpsell}
+              onSkip={finishUpsell}
+            />
+          </ReachSheets>
+        ) : null}
+        {(screen === 'catalog' || screen === 'cart') && product ? (
           <ReachSheets m={m}>
           <LayoutProductSheet
             key={product.id}
@@ -947,7 +1142,10 @@ export function KioskApp({ view }: { view: KioskView }) {
             groups={groupsOf(product.id)}
             allergens={view.catalog.products.find((p) => p.id === product.id)?.allergens ?? []}
             quickNotes={view.catalog.quickNotes[product.id] ?? []}
-            onClose={() => setProductId(null)}
+            onClose={() => {
+              upsellTaking.current = false;
+              setProductId(null);
+            }}
             onAdd={addLine}
           />
           </ReachSheets>
@@ -972,7 +1170,7 @@ export function KioskApp({ view }: { view: KioskView }) {
         {t('poweredBy')}
       </div>
       {/* The product sheet's note: typed in the kiosk's window, over the sheet. */}
-      {entry && screen === 'catalog' && product ? (
+      {entry && (screen === 'catalog' || screen === 'cart') && product ? (
         <EntryWindow m={m} caption={entry.caption} steps={entry.steps} onFinish={() => setEntry(null)} onClose={() => setEntry(null)} />
       ) : null}
       {idleState.kind === 'warn' ? (
@@ -1037,13 +1235,13 @@ export function KioskApp({ view }: { view: KioskView }) {
           onClose={() => setTill((p) => ({ ...p, entry: false }))}
         />
       ) : null}
-      {till.forfeit && atPayMethod ? (
+      {vState.forfeit && atPayMethod ? (
         <Dialog
           m={m}
           title={m.txt('voucherTitle')}
           body={m.txt('voucherForfeit')}
-          primary={{ label: t('voucherForfeitYes'), onClick: () => void redeem(till.forfeit ?? '', true) }}
-          secondary={{ label: t('voucherForfeitNo'), onClick: () => setTill((p) => ({ ...p, forfeit: null })) }}
+          primary={{ label: t('voucherForfeitYes'), onClick: () => void redeem(vState.forfeit ?? '', true) }}
+          secondary={{ label: t('voucherForfeitNo'), onClick: () => voucherSession.dismissForfeit() }}
         />
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
@@ -1070,6 +1268,7 @@ function toP(p: KioskView['catalog']['products'][number], soldOut: boolean, requ
     name: p.name,
     price: p.price,
     priceAgorot: p.priceAgorot,
+    ...(p.menuId ? { catalogPriceAgorot: p.catalogPriceAgorot, menuId: p.menuId, menuName: p.menuName ?? null, priceSource: p.priceSource ?? 'catalog' } : {}),
     imageUrl: p.imageUrl,
     imageLarge: p.imageLarge,
     soldOut,
@@ -1094,37 +1293,23 @@ function pGroupsOf(groups: KioskView['catalog']['groups'][string]): PGroup[] {
   }));
 }
 
-/**
- * The offers: the kiosk's own rules ("הצעה", config.upsell — as the preview), else the till's menu
- * upsells; triggered by what is in the cart, never sold out, never in it already.
- */
-function upsellFor(view: KioskView, cfg: KioskConfig, cart: PLine[], all: PProduct[]): PProduct[] {
-  if (cart.length === 0) return [];
-  const inCart = new Set(cart.map((l) => l.product.id));
-  const own = (cfg as KioskConfig & { upsell?: { rules?: Array<{ triggerProductIds: string[]; offerProductIds: string[] }> } }).upsell?.rules ?? [];
-  if (own.length > 0) {
-    const byId = new Map(all.map((p) => [p.id, p]));
-    return own
-      .filter((r) => r.triggerProductIds.length === 0 || r.triggerProductIds.some((id) => inCart.has(id)))
-      .flatMap((r) => r.offerProductIds)
-      .map((id) => byId.get(id))
-      .filter((p): p is PProduct => !!p && !p.soldOut && !inCart.has(p.id))
-      .slice(0, 6);
-  }
-  const catsInCart = new Set(cart.map((l) => l.product.categoryId).filter(Boolean) as string[]);
-  const ids: string[] = [];
-  for (const u of view.catalog.upsells) {
-    const hit = u.triggerType === 'order' || (u.triggerType === 'product' && u.triggerIds.some((id) => inCart.has(id))) || (u.triggerType === 'category' && u.triggerIds.some((id) => catsInCart.has(id)));
-    if (!hit) continue;
-    ids.push(...u.productIds);
-    for (const c of u.categoryIds) ids.push(...all.filter((p) => p.categoryId === c).map((p) => p.id));
-  }
-  const byId = new Map(all.map((p) => [p.id, p]));
-  return Array.from(new Set(ids))
-    .map((id) => byId.get(id))
-    .filter((p): p is PProduct => !!p && !p.soldOut && !inCart.has(p.id))
-    .slice(0, 4);
+/** The window's question: the rule's own ("האם הצעת שתייה?"), its message, else the kiosk's "upsellTitle". */
+function upsellTitle(w: UpsellWindowState, fallback: string): string {
+  return w.offer.rule.prompt || w.offer.rule.message || fallback;
 }
+
+/** The message under a question of its own. */
+function upsellText(w: UpsellWindowState): string | null {
+  return w.offer.rule.prompt && w.offer.rule.message !== w.offer.rule.prompt ? w.offer.rule.message : null;
+}
+
+/** The window's picture: the item's own picture (the screens never load a network URL). */
+function upsellImage(_w: UpsellWindowState): string | null {
+  return null;
+}
+
+/** No strip of offers on the basket: the Android kiosk asks them in a window (kiosk-shared/upsell-window.ts). */
+const NO_BASKET_OFFERS: PProduct[] = [];
 
 /** The dish's free note: looks like a field, shows the note; a tap opens the kiosk's window ("הערות למנה"). */
 function NoteField({ m, value, onOpen }: { m: PreviewModel; value: string; onOpen: () => void }) {
@@ -1167,12 +1352,12 @@ function Toast({ m, text, onDone }: { m: PreviewModel; text: string; onDone: () 
   );
 }
 
-/** "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish (an offered product that is a meal), up to three. */
+/** "רוצים להפוך לארוחה?" (KioskMealUpsell.optionsFor, kiosk-shared/basket-upsell.ts): up to three meals, cheapest first. */
 function mealsFor(view: KioskView, productId: string, all: PProduct[]): PProduct[] {
-  const meals = new Set(view.catalog.products.filter((p) => p.meal).map((p) => p.id));
-  const ids = view.catalog.upsells.filter((u) => u.triggerType === 'product' && u.triggerIds.includes(productId)).flatMap((u) => u.productIds).filter((id) => meals.has(id));
-  return Array.from(new Set(ids))
-    .map((id) => all.find((p) => p.id === id && !p.soldOut))
-    .filter((p): p is PProduct => !!p)
-    .slice(0, 3);
+  const sellable = new Map(all.filter((p) => !p.soldOut).map((p) => [p.id, p] as const));
+  const ids = mealUpsellIds(view.catalog.upsellRules, productId, view.catalog.meals, (id) => {
+    const p = sellable.get(id);
+    return p ? (p.priceAgorot ?? Math.round(p.price * 100)) : null;
+  });
+  return ids.map((id) => sellable.get(id)).filter((p): p is PProduct => !!p);
 }

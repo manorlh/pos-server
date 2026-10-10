@@ -1,3 +1,4 @@
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_, func
@@ -49,10 +50,23 @@ def _check_access(user: User, category: Category, db: Session):
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
+def _uid(value) -> str:
+    """An id in one spelling (lower case, dashes): `{ID}` and `{id}` in a URL are the same category."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except ValueError:
+        return str(value)
+
+
 def _check_circular(db: Session, category_id: str, parent_id: str) -> bool:
-    if category_id == parent_id:
+    """
+    Whether making `parent_id` the parent of `category_id` would close a loop: the category is its own
+    parent, or is already an ancestor of the new parent (walked up the tree from it).
+    """
+    category_id = _uid(category_id)
+    current = _uid(parent_id)
+    if category_id == current:
         return True
-    current = parent_id
     visited: set = set()
     while current:
         if current in visited or current == category_id:
@@ -61,8 +75,22 @@ def _check_circular(db: Session, category_id: str, parent_id: str) -> bool:
         parent = db.query(Category).filter(Category.id == current).first()
         if not parent or not parent.parent_id:
             break
-        current = str(parent.parent_id)
+        current = _uid(parent.parent_id)
     return False
+
+
+def _check_parent(db: Session, active_tenant_id, parent_id, category_id: Optional[str] = None) -> Category:
+    """
+    The category `parent_id` names, as a parent for `category_id` (a new category when None): it exists, it is
+    this tenant's, and it does not close a loop. The dashboard's "קטגוריית אב" select offers only what passes.
+    """
+    parent = db.query(Category).filter(Category.id == parent_id).first()
+    if not parent:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
+    ensure_same_tenant(parent.tenant_id, active_tenant_id)
+    if category_id is not None and _check_circular(db, category_id, str(parent_id)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Circular reference detected")
+    return parent
 
 
 def _trigger_catalog_notify(db: Session, category: Category):
@@ -198,10 +226,7 @@ def create_category(
     )
 
     if data.parent_id:
-        parent = db.query(Category).filter(Category.id == data.parent_id).first()
-        if not parent:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
-        ensure_same_tenant(parent.tenant_id, active_tenant_id)
+        _check_parent(db, active_tenant_id, data.parent_id)
 
     category = Category(
         tenant_id=active_tenant_id,
@@ -216,6 +241,8 @@ def create_category(
         parent_id=data.parent_id,
         voucher_id=data.voucher_id,
         ticket_mode=item_ticket.normalize(data.ticket_mode),
+        # "מחייב אישור מנהל במכירה" (app/services/restricted_items.py).
+        requires_manager_approval=data.requires_manager_approval,
         is_active=data.is_active,
         sort_order=data.sort_order,
     )
@@ -318,11 +345,10 @@ def update_category(
     ensure_same_tenant(category.tenant_id, active_tenant_id)
     _check_access(current_user, category, db)
 
+    # A parent: an existing category of this tenant that is neither the category nor beneath it. `null` clears it
+    # ("ללא"), and an omitted field leaves it as it is.
     if data.parent_id is not None:
-        if _check_circular(db, category_id, str(data.parent_id)):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Circular reference detected")
-        if not db.query(Category).filter(Category.id == data.parent_id).first():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parent category not found")
+        _check_parent(db, active_tenant_id, data.parent_id, category_id=str(category.id))
 
     patch = data.model_dump(exclude_unset=True, by_alias=False)
     voucher_changed = "voucher_id" in patch and patch["voucher_id"] != category.voucher_id

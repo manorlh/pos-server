@@ -6,7 +6,7 @@ and hands every matching document here — never a page of them. One row per doc
 what a bookkeeper reconciles on: the number as printed (`20000057`), its type and status,
 shop, till and employee, the money (total, discount, what was collected, VAT, net of VAT,
 tip), the tender split from the legs, card brands and the card's last four digits, the shift
-and the Z it went into, and the original of a credit note.
+and the Z it went into, the original of a credit note, and the buyer's name and ח.פ. / ע.מ.
 
 Bulk lookups only — one query per kind of thing, chunked — so 50,000 documents is a handful
 of queries, not 50,000.
@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.models.customer import Customer
 from app.models.pos_machine import POSMachine
 from app.models.shift import Shift
 from app.models.shop import Shop
@@ -106,6 +107,9 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
     zs = _by_id(db, ZReport, (s.z_report_id for s in shifts.values()))
     originals = _originals(db, (r.refund_of_transaction_id for r in rows))
     names = cashier_names(db, (r.cashier_id for r in rows))
+    # The buyer's ח.פ. / ע.מ.: what the document printed ("פרטי לקוח לחשבונית") first, else the
+    # linked cloud customer's — the same order as the document copy and the search.
+    customers = _by_id(db, Customer, (r.customer_ref_id for r in rows if not r.customer_vat_number))
 
     out: List[Dict[str, Any]] = []
     for tx in rows:
@@ -116,7 +120,10 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
             document_type=tx.document_type,
             refund_of_transaction_id=tx.refund_of_transaction_id,
         )
-        split = {"cash": Decimal("0"), "card": Decimal("0"), "other": Decimal("0"), "exchange": Decimal("0")}
+        split = {
+            "cash": Decimal("0"), "card": Decimal("0"), "other": Decimal("0"), "exchange": Decimal("0"),
+            "production_voucher": Decimal("0"),
+        }
         brands: List[str] = []
         last4: List[str] = []
         approvals: List[str] = []
@@ -141,6 +148,7 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
         shift = shifts.get(tx.shift_id)
         z = zs.get(shift.z_report_id) if shift is not None and shift.z_report_id else None
         vat = tx.vat_amount
+        linked = customers.get(tx.customer_ref_id) if tx.customer_ref_id else None
         out.append({
             "id": str(tx.id),
             "createdAt": _iso(tx.created_at),
@@ -171,6 +179,8 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
             "card": _money(split["card"]),
             "other": _money(split["other"]),
             "exchange": _money(split["exchange"]),
+            # "שוברי הפקה": what production vouchers paid.
+            "productionVoucher": _money(split["production_voucher"]),
             "legs": len(doc_legs),
             "cardBrands": brands,
             "cardLast4": last4,
@@ -182,6 +192,7 @@ def export_rows(db: Session, rows: Sequence[Transaction]) -> List[Dict[str, Any]
             "zReportId": str(z.id) if z else None,
             "zNumber": z.z_number if z else None,
             "customerName": tx.customer_name,
+            "customerVatNumber": tx.customer_vat_number or (linked.vat_number if linked is not None else None) or None,
             "mealKind": tx.meal_kind,
         })
     return out

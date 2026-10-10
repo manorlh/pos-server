@@ -60,6 +60,8 @@ from app.models.failed_payment import FailedPaymentAttempt
 from app.models.remote_credit import RemoteCreditEvent, RemoteCreditRequest
 # "זיכוי באשראי מהענן (Z-Credit)" (docs/SPEC_REMOTE_CREDIT.md §11): the cloud refunds the card.
 from app.models.cloud_card_refund import CloudCardRefund, CloudCardRefundEvent
+# "התאמת אשראי מול Z-Credit" (docs/SPEC_ZCREDIT.md "חלק ג׳"): our card legs against the terminal's report.
+from app.models.zcredit_reconciliation import ZCreditReconItem, ZCreditReconRun
 from app.models.document_refusal import DocumentRefusal
 # "יומן חריגות" + "התראות SMS על חריגות" (app/services/exception_alerts).
 from app.models.exception_alerts import (
@@ -69,16 +71,25 @@ from app.models.exception_alerts import (
     ExceptionLogEntry,
 )
 from app.models.prepaid_voucher import (
+    PrepaidProduction,
     PrepaidVoucher,
     PrepaidVoucherBatch,
     PrepaidVoucherBatchItem,
     PrepaidVoucherEvent,
+    PrepaidVoucherOfflineAssignment,
+    PrepaidVoucherOverrideAudit,
     PrepaidVoucherRedemption,
     PrepaidVoucherReservation,
+    PrepaidVoucherType,
+    PrepaidVoucherTypeEvent,
+    PrepaidVoucherTypeItem,
     TransactionVoucherDiscount,
 )
+# Settlement, deliveries, replacements, pauses, quotas, test batches (the helper's §14/§16/§18).
+from app.models import prepaid_voucher_extras  # noqa: F401,E402
 from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
+from app.models.tables_state import TablesStateVersion  # noqa: F401
 from app.models.platform_setting import PlatformSetting
 from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
 from app.models.menu import (
@@ -95,7 +106,9 @@ from app.models.menu import (
     UpsellStat,
 )
 from app.models.product_cost import ProductCost
-from app.models.report_event import ReportEvent, ReportEventMachine
+# "פעולות מהירות" from the insights: a quick message / promotion, its log and its result anchor.
+from app.models.insight_quick_action import InsightQuickAction
+from app.models.report_event import ReportEvent, ReportEventMachine, ReportEventMachineChange
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
 from app.models.pos_user_session import PosUserSession
 # "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
@@ -110,6 +123,8 @@ from app.models.catalog_menu import (
     CatalogMenuProduct,
     CatalogMenuSyncState,
 )
+# "קבוצות מכשירים": named groups of tills, a menu assignment level of their own.
+from app.models.machine_group import MachineGroup, MachineGroupMember
 from app.models.payment_secret import PaymentIntegrationSecret
 # "מכשירי תשלום": the card terminals a till without its own works with (app/services/payment_devices.py).
 from app.models.payment_device import PaymentDevice
@@ -137,6 +152,7 @@ from app.models.till_design import TillDesignSettings
 # "תפקידים והרשאות" for till users (docs/SPEC_ROLES_PERMISSIONS.md).
 from app.models.till_role import TillRole, TillRoleChange
 from app.models.cash_drawer import CashDrawerEvent, CashMovement
+from app.models.transaction_customer_details import TransactionCustomerDetails
 # "שירות הודעות ו-019" + "מועדון לקוחות" (docs/SPEC_NOTIFICATIONS_CLUB.md).
 from app.models.outbox import OutboxEvent
 from app.models.notifications import (
@@ -155,6 +171,26 @@ from app.models.kds import (
 )
 # "הרשאות דשבורד": per dashboard user — sections, org scope, templates, audit.
 from app.models.dashboard_access import DashboardAccessAudit, DashboardAccessProfile, DashboardAccessTemplate
+# "הפצה בוואטסאפ": prepaid vouchers sent per recipient (app/services/voucher_distribution.py).
+from app.models import voucher_distribution as _voucher_distribution  # noqa: F401,E402
+# "שליטה חיה": blocks on items ("אזל" / "חסום"), the kiosks' quick hides, remote commands to devices.
+from app.models.sold_out import SoldOutMark
+from app.models.kiosk_live import KioskQuickHide
+from app.models.device_command import DeviceCommand, DeviceRemoteState
+# "פקודות שנשלחו": the dashboard's Idempotency-Key per command request (app/services/command_idempotency.py).
+from app.models.command_request_key import CommandRequestKey
+# "שליחת לוגים לענן": a device's logs, uploaded for support (app/services/device_logs.py).
+from app.models.device_log_upload import DeviceLogUpload
+# Stock locations: managed levels, low-stock alerts, the daily reset (app/services/stock_locations.py).
+from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
+# "יעדים ותחרות" (app/services/sales_targets.py).
+from app.models.sales_target import SalesTarget, SalesTargetHit
+# "סדר תצוגה" — orderings and which channel uses which at a level (app/services/display_ordering.py).
+from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
+# "תפריט דיגיטלי" / "הזמנות אונליין": profiles, revisions and their audit (app/services/presentation_profiles.py).
+from app.models.presentation_profile import PresentationAudit, PresentationProfile, PresentationRevision
+# "מסך לקוח": the cloud relay of a till's customer screen (app/services/customer_display.py).
+from app.models.customer_display import CustomerDisplayState
 
 __all__ = [
     "User", "UserRole",
@@ -207,19 +243,23 @@ __all__ = [
     "AuditException", "ExceptionRuleValue", "TillEvent",
     "FailedPaymentAttempt",
     "PrepaidVoucherBatch", "PrepaidVoucherBatchItem", "PrepaidVoucher", "PrepaidVoucherRedemption",
-    "PrepaidVoucherEvent", "PrepaidVoucherReservation", "TransactionVoucherDiscount",
+    "PrepaidVoucherEvent", "PrepaidVoucherReservation", "TransactionVoucherDiscount", "PrepaidVoucherOverrideAudit",
+    "PrepaidVoucherOfflineAssignment",
+    "PrepaidProduction",
     "Promotion", "TransactionPromotion",
     "TableZone", "DiningTable", "TableOrder", "TableEvent", "TableCancelReason", "TableReservation", "TableType", "PlatformSetting",
     "KitchenPrinter", "KitchenPrinterRoute", "KitchenPrintJob",
     "ModifierGroup", "ModifierOption", "ModifierLink", "PrepNotePreset", "MealSlot", "MealSlotOption",
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
-    "ReportEvent", "ReportEventMachine",
+    "ReportEvent", "ReportEventMachine", "ReportEventMachineChange",
+    "InsightQuickAction",
     "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",
     "CatalogMenu", "CatalogMenuAssignment", "CatalogMenuCategory", "CatalogMenuFallback",
     "CatalogMenuProduct", "CatalogMenuSyncState",
+    "MachineGroup", "MachineGroupMember",
     "PaymentIntegrationSecret",
     "PaymentDevice",
     "CardAttemptCommand",
@@ -233,10 +273,19 @@ __all__ = [
     "KioskSession", "KioskEvent", "DeviceBatteryAlert", "KioskWebDeviceStatus",
     "RemoteCreditRequest", "RemoteCreditEvent",
     "CloudCardRefund", "CloudCardRefundEvent",
+    "ZCreditReconRun", "ZCreditReconItem",
     "DocumentRefusal",
     "ExceptionLogEntry", "ExceptionAlertRule", "ExceptionAlertDispatch", "ExceptionAlertRuleChange",
     "TillDesignSettings",
     "DashboardAccessAudit", "DashboardAccessProfile", "DashboardAccessTemplate",
     "TillRole", "TillRoleChange",
     "CashDrawerEvent", "CashMovement",
+    "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",
+    "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
+    "SalesTarget", "SalesTargetHit",
+    "DisplayOrdering", "DisplayOrderingBinding",
+    "PresentationAudit", "PresentationProfile", "PresentationRevision",
+    "CustomerDisplayState",
 ]
+# "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).
+from app.models import business_card as _business_card  # noqa: F401,E402

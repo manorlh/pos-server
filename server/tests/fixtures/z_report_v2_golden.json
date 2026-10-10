@@ -1,0 +1,3827 @@
+{
+ "version": 1,
+ "about": "Z report v2 sections, one computation in both repos: pos-server app/services/z_sections.py, pos-android domain/ZReportSections.kt, the dashboard client/src/lib/zReportSections.ts. Each case: the documents' facts in, the sections and the paper's lines out (money plain, times as given). A merge case sums the named cases' sections (a shop Z of its tills). Same bytes in pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin its LF-normalised SHA-256.",
+ "cases": [
+  {
+   "name": "golden",
+   "about": "The owner's example: cola 10 by card with a 10 card tip (waiter A, at a table), ice pop 5 in cash (cashier B, quick order), VAT 18%, float 500, counting not required.",
+   "input": {
+    "documents": [
+     {
+      "id": "cola",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "10.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "1.53",
+      "vatRate": "0.18",
+      "tip": "10.00",
+      "tipMethod": "card",
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "card",
+        "amount": "10.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": "tables",
+      "employeeId": "waiter-a",
+      "employeeName": "מלצר א",
+      "voucherMemo": false
+     },
+     {
+      "id": "ice-pop",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "5.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "0.76",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "5.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": "quick",
+      "employeeId": "cashier-b",
+      "employeeName": "קופאי ב",
+      "voucherMemo": false
+     }
+    ],
+    "drawer": {
+     "opening": "500.00",
+     "expected": "505.00",
+     "counted": null,
+     "overShort": null,
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null
+    },
+    "transmission": null,
+    "showEmployees": true,
+    "countRequired": false
+   },
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "15.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "total": "15.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "12.71",
+     "vat": "2.29",
+     "total": "15.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "15.00",
+       "vat": "2.29",
+       "base": "12.71"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "5.00"
+      },
+      {
+       "method": "card",
+       "amount": "10.00"
+      }
+     ],
+     "total": "15.00"
+    },
+    "tips": {
+     "cash": "0.00",
+     "card": "10.00",
+     "refunds": "0.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "0.00",
+     "net": "10.00",
+     "paidFromDrawer": null,
+     "direct": "0.00",
+     "toDistribute": "10.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "5.00",
+       "tips": "0.00",
+       "total": "5.00"
+      },
+      {
+       "method": "card",
+       "sales": "10.00",
+       "tips": "10.00",
+       "total": "20.00"
+      }
+     ],
+     "total": "25.00"
+    },
+    "drawer": {
+     "opening": "500.00",
+     "cashReceipts": "5.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null,
+     "expected": "505.00",
+     "countRequired": false,
+     "showCount": false,
+     "counted": null,
+     "gap": null
+    },
+    "sold": {
+     "documents": 2,
+     "units": "2",
+     "average": "7.50"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "tables",
+       "count": 1,
+       "total": "10.00",
+       "average": "10.00"
+      },
+      {
+       "type": "quick",
+       "count": 1,
+       "total": "5.00",
+       "average": "5.00"
+      }
+     ],
+     "count": 2,
+     "total": "15.00",
+     "average": "7.50"
+    },
+    "employees": [
+     {
+      "id": "waiter-a",
+      "name": "מלצר א",
+      "cash": "0.00",
+      "card": "10.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "10.00",
+      "sales": "10.00",
+      "tips": "10.00",
+      "total": "20.00"
+     },
+     {
+      "id": "cashier-b",
+      "name": "קופאי ב",
+      "cash": "5.00",
+      "card": "0.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "0.00",
+      "sales": "5.00",
+      "tips": "0.00",
+      "total": "5.00"
+     }
+    ],
+    "cardBrands": {
+     "rows": [
+      {
+       "brand": "other",
+       "count": 1,
+       "sale": "10.00",
+       "tip": "10.00",
+       "amount": "20.00"
+      }
+     ],
+     "count": 1,
+     "sale": "10.00",
+     "tip": "10.00",
+     "amount": "20.00"
+    },
+    "transmission": null
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "15.00",
+       false
+      ],
+      [
+       "הנחות",
+       "0.00",
+       false
+      ],
+      [
+       "החזרים",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "15.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "12.71",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "2.29",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "15.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "5.00",
+       false
+      ],
+      [
+       "אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "15.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "טיפים שנגבו בקופה",
+     [
+      [
+       "טיפ מזומן",
+       "0.00",
+       false
+      ],
+      [
+       "טיפ אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "סה״כ טיפים נטו",
+       "10.00",
+       true
+      ],
+      [
+       "יתרה לחלוקה",
+       "10.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "5.00",
+       false
+      ],
+      [
+       "אשראי",
+       "20.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "25.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "500.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "5.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "505.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "2",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "2",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "7.50",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "שולחנות (1)",
+       "10.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "10.00",
+       false
+      ],
+      [
+       "הזמנה מהירה (1)",
+       "5.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "5.00",
+       false
+      ],
+      [
+       "סה״כ (2)",
+       "15.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "7.50",
+       false
+      ]
+     ]
+    ],
+    [
+     "אשראי לפי מותג",
+     [
+      [
+       "אחר (1)",
+       "20.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "10.00 / 10.00",
+       false
+      ],
+      [
+       "סה״כ אשראי (1)",
+       "20.00",
+       true
+      ],
+      [
+       "  מכירה / טיפ",
+       "10.00 / 10.00",
+       false
+      ]
+     ]
+    ],
+    [
+     "לפי עובד",
+     [
+      [
+       "מלצר א",
+       "20.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "0.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "10.00",
+       false
+      ],
+      [
+       "קופאי ב",
+       "5.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "0.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "busy",
+   "about": "A discount, a split basket on two brands, a tip on the last card leg, a refund of a card tip, a cash refund, a production voucher, an exchange basket, a no-money credit, a 0% document, a kiosk, takeaway and delivery, a cancelled document and a voucher memo (neither counted), the X's drawer with its movements and card tips paid out, blind count with a gap, two terminals partly transmitted.",
+   "input": {
+    "documents": [
+     {
+      "id": "s1",
+      "type": 320,
+      "status": "partial_refund",
+      "refundOf": null,
+      "total": "120.00",
+      "discount": "20.00",
+      "deduction": "0.00",
+      "vat": "15.25",
+      "vatRate": "0.18",
+      "tip": "12.00",
+      "tipMethod": "card",
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "40.00",
+        "brand": null
+       },
+       {
+        "method": "card",
+        "amount": "60.00",
+        "brand": "VISA"
+       }
+      ],
+      "units": "3",
+      "orderType": "tables",
+      "employeeId": "emp-a",
+      "employeeName": "דנה",
+      "voucherMemo": false
+     },
+     {
+      "id": "s2",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "50.00",
+      "discount": null,
+      "deduction": null,
+      "vat": "7.63",
+      "vatRate": "18",
+      "tip": "5.00",
+      "tipMethod": null,
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "card",
+        "amount": "30.00",
+        "brand": "mastercard"
+       },
+       {
+        "method": "credit",
+        "amount": "20.00",
+        "brand": "isracard"
+       }
+      ],
+      "units": "2.5",
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "s3",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "35.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "5.34",
+      "vatRate": "18.0000",
+      "tip": null,
+      "tipMethod": null,
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "card",
+        "amount": "35.00",
+        "brand": "amex"
+       }
+      ],
+      "units": "1",
+      "orderType": "kiosk",
+      "employeeId": null,
+      "employeeName": null,
+      "voucherMemo": false
+     },
+     {
+      "id": "s4",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "40.00",
+      "discount": "10.00",
+      "deduction": "10.00",
+      "vat": "4.58",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "production_voucher",
+      "payments": [
+       {
+        "method": "production_voucher",
+        "amount": "30.00",
+        "brand": null
+       }
+      ],
+      "units": "2",
+      "orderType": "takeaway",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "s5",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "20.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "0.00",
+      "vatRate": "0",
+      "tip": "3.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [],
+      "units": "1",
+      "orderType": "delivery",
+      "employeeId": "emp-c",
+      "employeeName": "רון",
+      "voucherMemo": false
+     },
+     {
+      "id": "e1",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "25.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "3.81",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "exchange",
+      "payments": [
+       {
+        "method": "exchange",
+        "amount": "25.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": null,
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "e2",
+      "type": 330,
+      "status": "completed",
+      "refundOf": "s9",
+      "total": "25.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "3.81",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "exchange",
+      "payments": [
+       {
+        "method": "exchange",
+        "amount": "25.00",
+        "brand": null
+       }
+      ],
+      "units": null,
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "r1",
+      "type": 330,
+      "status": "completed",
+      "refundOf": "s0",
+      "total": "15.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "2.29",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "15.00",
+        "brand": null
+       }
+      ],
+      "units": null,
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "r2",
+      "type": null,
+      "status": "completed",
+      "refundOf": "s1",
+      "total": "10.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "1.53",
+      "vatRate": "18",
+      "tip": "2.00",
+      "tipMethod": "card",
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "card",
+        "amount": "10.00",
+        "brand": "visa"
+       }
+      ],
+      "units": null,
+      "orderType": "tables",
+      "employeeId": "emp-a",
+      "employeeName": "דנה",
+      "voucherMemo": false
+     },
+     {
+      "id": "n1",
+      "type": 330,
+      "status": "completed",
+      "refundOf": "x7",
+      "total": "8.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "1.22",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "no_money",
+        "amount": "8.00",
+        "brand": null
+       }
+      ],
+      "units": null,
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "c1",
+      "type": 320,
+      "status": "cancelled",
+      "refundOf": null,
+      "total": "99.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "15.10",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "card",
+      "payments": [
+       {
+        "method": "card",
+        "amount": "99.00",
+        "brand": "visa"
+       }
+      ],
+      "units": "9",
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": false
+     },
+     {
+      "id": "m1",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "0.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "0.00",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "production_voucher",
+      "payments": [],
+      "units": "4",
+      "orderType": "quick",
+      "employeeId": "emp-b",
+      "employeeName": "יוסי",
+      "voucherMemo": true
+     }
+    ],
+    "drawer": {
+     "opening": "300.00",
+     "expected": "263.00",
+     "counted": "260.00",
+     "overShort": "-3.00",
+     "tipsPaidFromDrawer": "15.00",
+     "betweenShifts": "0.00",
+     "cashIn": "50.00",
+     "expenses": "20.00",
+     "safeDrop": "100.00"
+    },
+    "transmission": {
+     "terminals": [
+      {
+       "terminal": "088 123 4567",
+       "legs": 4,
+       "transmittedLegs": 3,
+       "transmitted": "125.00",
+       "batches": [
+        {
+         "at": "2026-10-09T20:15:00+00:00",
+         "batch": "0042",
+         "count": 7,
+         "amount": "210.50"
+        }
+       ]
+      },
+      {
+       "terminal": "12345678",
+       "legs": 1,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    },
+    "showEmployees": true,
+    "countRequired": true
+   },
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "280.00",
+     "discounts": "20.00",
+     "refunds": "58.00",
+     "total": "202.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "174.24",
+     "vat": "27.76",
+     "total": "202.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "182.00",
+       "vat": "27.76",
+       "base": "154.24"
+      },
+      {
+       "rate": "0",
+       "total": "20.00",
+       "vat": "0.00",
+       "base": "20.00"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "45.00"
+      },
+      {
+       "method": "card",
+       "amount": "135.00"
+      },
+      {
+       "method": "voucher",
+       "amount": "30.00"
+      },
+      {
+       "method": "no_money",
+       "amount": "-8.00"
+      }
+     ],
+     "total": "202.00"
+    },
+    "tips": {
+     "cash": "3.00",
+     "card": "17.00",
+     "refunds": "2.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "2.00",
+     "net": "18.00",
+     "paidFromDrawer": "15.00",
+     "direct": "0.00",
+     "toDistribute": "3.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "45.00",
+       "tips": "3.00",
+       "total": "48.00"
+      },
+      {
+       "method": "card",
+       "sales": "135.00",
+       "tips": "15.00",
+       "total": "150.00"
+      },
+      {
+       "method": "voucher",
+       "sales": "30.00",
+       "tips": "0.00",
+       "total": "30.00"
+      },
+      {
+       "method": "no_money",
+       "sales": "-8.00",
+       "tips": "0.00",
+       "total": "-8.00"
+      }
+     ],
+     "total": "220.00"
+    },
+    "drawer": {
+     "opening": "300.00",
+     "cashReceipts": "48.00",
+     "tipsPaidFromDrawer": "15.00",
+     "betweenShifts": "0.00",
+     "cashIn": "50.00",
+     "expenses": "20.00",
+     "safeDrop": "100.00",
+     "expected": "263.00",
+     "countRequired": true,
+     "showCount": true,
+     "counted": "260.00",
+     "gap": "-3.00"
+    },
+    "sold": {
+     "documents": 6,
+     "units": "10.5",
+     "average": "33.67"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "tables",
+       "count": 1,
+       "total": "90.00",
+       "average": "90.00"
+      },
+      {
+       "type": "quick",
+       "count": 2,
+       "total": "27.00",
+       "average": "13.50"
+      },
+      {
+       "type": "kiosk",
+       "count": 1,
+       "total": "35.00",
+       "average": "35.00"
+      },
+      {
+       "type": "takeaway",
+       "count": 1,
+       "total": "30.00",
+       "average": "30.00"
+      },
+      {
+       "type": "delivery",
+       "count": 1,
+       "total": "20.00",
+       "average": "20.00"
+      }
+     ],
+     "count": 6,
+     "total": "202.00",
+     "average": "33.67"
+    },
+    "employees": [
+     {
+      "id": "emp-a",
+      "name": "דנה",
+      "cash": "40.00",
+      "card": "50.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "10.00",
+      "sales": "90.00",
+      "tips": "10.00",
+      "total": "100.00"
+     },
+     {
+      "id": "emp-b",
+      "name": "יוסי",
+      "cash": "-15.00",
+      "card": "50.00",
+      "other": "22.00",
+      "cashTip": "0.00",
+      "cardTip": "5.00",
+      "sales": "57.00",
+      "tips": "5.00",
+      "total": "62.00"
+     },
+     {
+      "id": null,
+      "name": null,
+      "cash": "0.00",
+      "card": "35.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "0.00",
+      "sales": "35.00",
+      "tips": "0.00",
+      "total": "35.00"
+     },
+     {
+      "id": "emp-c",
+      "name": "רון",
+      "cash": "20.00",
+      "card": "0.00",
+      "other": "0.00",
+      "cashTip": "3.00",
+      "cardTip": "0.00",
+      "sales": "20.00",
+      "tips": "3.00",
+      "total": "23.00"
+     }
+    ],
+    "cardBrands": {
+     "rows": [
+      {
+       "brand": "visa",
+       "count": 2,
+       "sale": "50.00",
+       "tip": "10.00",
+       "amount": "60.00"
+      },
+      {
+       "brand": "mastercard",
+       "count": 1,
+       "sale": "30.00",
+       "tip": "0.00",
+       "amount": "30.00"
+      },
+      {
+       "brand": "isracard",
+       "count": 1,
+       "sale": "20.00",
+       "tip": "5.00",
+       "amount": "25.00"
+      },
+      {
+       "brand": "amex",
+       "count": 1,
+       "sale": "35.00",
+       "tip": "0.00",
+       "amount": "35.00"
+      }
+     ],
+     "count": 5,
+     "sale": "135.00",
+     "tip": "15.00",
+     "amount": "150.00"
+    },
+    "transmission": {
+     "status": "partial",
+     "legs": 5,
+     "transmittedLegs": 3,
+     "transmitted": "125.00",
+     "cardTotal": "150.00",
+     "matched": false,
+     "terminals": [
+      {
+       "terminal": "****4567",
+       "status": "partial",
+       "legs": 4,
+       "transmittedLegs": 3,
+       "transmitted": "125.00",
+       "batches": [
+        {
+         "at": "2026-10-09T20:15:00+00:00",
+         "batch": "0042",
+         "count": 7,
+         "amount": "210.50"
+        }
+       ]
+      },
+      {
+       "terminal": "****5678",
+       "status": "not_sent",
+       "legs": 1,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    }
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "280.00",
+       false
+      ],
+      [
+       "הנחות",
+       "-20.00",
+       false
+      ],
+      [
+       "החזרים",
+       "-58.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "202.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "174.24",
+       false
+      ],
+      [
+       "בסיס 18%",
+       "154.24",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "27.76",
+       false
+      ],
+      [
+       "בסיס 0%",
+       "20.00",
+       false
+      ],
+      [
+       "מע״מ 0%",
+       "0.00",
+       false
+      ],
+      [
+       "מע״מ",
+       "27.76",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "202.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "45.00",
+       false
+      ],
+      [
+       "אשראי",
+       "135.00",
+       false
+      ],
+      [
+       "שוברים",
+       "30.00",
+       false
+      ],
+      [
+       "זיכוי ללא החזר",
+       "-8.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "202.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "טיפים שנגבו בקופה",
+     [
+      [
+       "טיפ מזומן",
+       "3.00",
+       false
+      ],
+      [
+       "טיפ אשראי",
+       "17.00",
+       false
+      ],
+      [
+       "החזרי טיפ",
+       "-2.00",
+       false
+      ],
+      [
+       "סה״כ טיפים נטו",
+       "18.00",
+       true
+      ],
+      [
+       "שולם לעובדים מהמגירה",
+       "-15.00",
+       false
+      ],
+      [
+       "יתרה לחלוקה",
+       "3.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "48.00",
+       false
+      ],
+      [
+       "אשראי",
+       "150.00",
+       false
+      ],
+      [
+       "שוברים",
+       "30.00",
+       false
+      ],
+      [
+       "זיכוי ללא החזר",
+       "-8.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "220.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "300.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "48.00",
+       false
+      ],
+      [
+       "טיפים ששולמו מהמגירה",
+       "-15.00",
+       false
+      ],
+      [
+       "הכנסות מזומן",
+       "50.00",
+       false
+      ],
+      [
+       "הוצאות",
+       "-20.00",
+       false
+      ],
+      [
+       "הפקדה לכספת",
+       "-100.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "263.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "260.00",
+       false
+      ],
+      [
+       "פער",
+       "-3.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "שידור אשראי",
+     [
+      [
+       "סטטוס",
+       "שודר חלקית",
+       true
+      ],
+      [
+       "מסוף",
+       "****4567",
+       false
+      ],
+      [
+       "אצווה 0042",
+       "2026-10-09T20:15:00+00:00",
+       false
+      ],
+      [
+       "  עסקאות · סכום",
+       "7 · 210.50",
+       false
+      ],
+      [
+       "ממתינות לשידור",
+       "1",
+       false
+      ],
+      [
+       "מסוף",
+       "****5678",
+       false
+      ],
+      [
+       "ממתינות לשידור",
+       "1",
+       false
+      ],
+      [
+       "אשראי בקופה",
+       "150.00",
+       false
+      ],
+      [
+       "שודר",
+       "125.00",
+       false
+      ],
+      [
+       "התאמה",
+       "לא תואם",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "6",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "10.5",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "33.67",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "שולחנות (1)",
+       "90.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "90.00",
+       false
+      ],
+      [
+       "הזמנה מהירה (2)",
+       "27.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "13.50",
+       false
+      ],
+      [
+       "קיוסק (1)",
+       "35.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "35.00",
+       false
+      ],
+      [
+       "טייק אוויי (1)",
+       "30.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "30.00",
+       false
+      ],
+      [
+       "משלוחים (1)",
+       "20.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "20.00",
+       false
+      ],
+      [
+       "סה״כ (6)",
+       "202.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "33.67",
+       false
+      ]
+     ]
+    ],
+    [
+     "אשראי לפי מותג",
+     [
+      [
+       "ויזה (2)",
+       "60.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "50.00 / 10.00",
+       false
+      ],
+      [
+       "מאסטרקארד (1)",
+       "30.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "30.00 / 0.00",
+       false
+      ],
+      [
+       "ישראכרט (1)",
+       "25.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "20.00 / 5.00",
+       false
+      ],
+      [
+       "אמריקן אקספרס (1)",
+       "35.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "35.00 / 0.00",
+       false
+      ],
+      [
+       "סה״כ אשראי (5)",
+       "150.00",
+       true
+      ],
+      [
+       "  מכירה / טיפ",
+       "135.00 / 15.00",
+       false
+      ]
+     ]
+    ],
+    [
+     "לפי עובד",
+     [
+      [
+       "דנה",
+       "100.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "50.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "90.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "10.00",
+       false
+      ],
+      [
+       "יוסי",
+       "62.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "50.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "-15.00",
+       false
+      ],
+      [
+       "  אמצעי תשלום אחרים",
+       "22.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "57.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "5.00",
+       false
+      ],
+      [
+       "ללא שיוך",
+       "35.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "35.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "0.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "35.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "0.00",
+       false
+      ],
+      [
+       "רון",
+       "23.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "20.00",
+       false
+      ],
+      [
+       "  טיפ מזומן",
+       "3.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "20.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "3.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "exempt counted anyway",
+   "about": "An exempt dealer's receipt (400) in cash, no tips, counting not required but the drawer counted anyway: the count is shown. No employees (the parameter off), no card, nothing transmitted.",
+   "input": {
+    "documents": [
+     {
+      "id": "q1",
+      "type": 400,
+      "status": "completed",
+      "refundOf": null,
+      "total": "30.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "0.00",
+      "vatRate": "0",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "30.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": "quick",
+      "employeeId": "emp-c",
+      "employeeName": "רון",
+      "voucherMemo": false
+     }
+    ],
+    "drawer": {
+     "opening": "100.00",
+     "expected": "130.00",
+     "counted": "135.00",
+     "overShort": "5.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null
+    },
+    "transmission": {
+     "terminals": [
+      {
+       "terminal": "777",
+       "legs": 0,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    },
+    "showEmployees": false,
+    "countRequired": false
+   },
+   "exempt": true,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "30.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "total": "30.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "30.00",
+     "vat": "0.00",
+     "total": "30.00",
+     "rates": [
+      {
+       "rate": "0",
+       "total": "30.00",
+       "vat": "0.00",
+       "base": "30.00"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "30.00"
+      },
+      {
+       "method": "card",
+       "amount": "0.00"
+      }
+     ],
+     "total": "30.00"
+    },
+    "tips": {
+     "cash": "0.00",
+     "card": "0.00",
+     "refunds": "0.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "0.00",
+     "net": "0.00",
+     "paidFromDrawer": null,
+     "direct": "0.00",
+     "toDistribute": "0.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "30.00",
+       "tips": "0.00",
+       "total": "30.00"
+      },
+      {
+       "method": "card",
+       "sales": "0.00",
+       "tips": "0.00",
+       "total": "0.00"
+      }
+     ],
+     "total": "30.00"
+    },
+    "drawer": {
+     "opening": "100.00",
+     "cashReceipts": "30.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null,
+     "expected": "130.00",
+     "countRequired": false,
+     "showCount": true,
+     "counted": "135.00",
+     "gap": "5.00"
+    },
+    "sold": {
+     "documents": 1,
+     "units": "1",
+     "average": "30.00"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "quick",
+       "count": 1,
+       "total": "30.00",
+       "average": "30.00"
+      }
+     ],
+     "count": 1,
+     "total": "30.00",
+     "average": "30.00"
+    },
+    "employees": null,
+    "cardBrands": {
+     "rows": [],
+     "count": 0,
+     "sale": "0.00",
+     "tip": "0.00",
+     "amount": "0.00"
+    },
+    "transmission": null
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "30.00",
+       false
+      ],
+      [
+       "הנחות",
+       "0.00",
+       false
+      ],
+      [
+       "החזרים",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "30.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "מע״מ",
+       "עוסק פטור — ללא מע״מ",
+       false
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "30.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "30.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "30.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "30.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "100.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "30.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "130.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "135.00",
+       false
+      ],
+      [
+       "פער",
+       "+5.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "1",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "1",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "30.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "הזמנה מהירה (1)",
+       "30.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "30.00",
+       false
+      ],
+      [
+       "סה״כ (1)",
+       "30.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "30.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "shop of golden and busy",
+   "about": "The sections of two tills summed: a shop Z of their parts.",
+   "merge": [
+    "golden",
+    "busy"
+   ],
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "295.00",
+     "discounts": "20.00",
+     "refunds": "58.00",
+     "total": "217.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "186.95",
+     "vat": "30.05",
+     "total": "217.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "197.00",
+       "vat": "30.05",
+       "base": "166.95"
+      },
+      {
+       "rate": "0",
+       "total": "20.00",
+       "vat": "0.00",
+       "base": "20.00"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "50.00"
+      },
+      {
+       "method": "card",
+       "amount": "145.00"
+      },
+      {
+       "method": "voucher",
+       "amount": "30.00"
+      },
+      {
+       "method": "no_money",
+       "amount": "-8.00"
+      }
+     ],
+     "total": "217.00"
+    },
+    "tips": {
+     "cash": "3.00",
+     "card": "27.00",
+     "refunds": "2.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "2.00",
+     "net": "28.00",
+     "paidFromDrawer": "15.00",
+     "direct": "0.00",
+     "toDistribute": "13.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "50.00",
+       "tips": "3.00",
+       "total": "53.00"
+      },
+      {
+       "method": "card",
+       "sales": "145.00",
+       "tips": "25.00",
+       "total": "170.00"
+      },
+      {
+       "method": "voucher",
+       "sales": "30.00",
+       "tips": "0.00",
+       "total": "30.00"
+      },
+      {
+       "method": "no_money",
+       "sales": "-8.00",
+       "tips": "0.00",
+       "total": "-8.00"
+      }
+     ],
+     "total": "245.00"
+    },
+    "drawer": {
+     "opening": "800.00",
+     "cashReceipts": "53.00",
+     "tipsPaidFromDrawer": "15.00",
+     "betweenShifts": "0.00",
+     "cashIn": "50.00",
+     "expenses": "20.00",
+     "safeDrop": "100.00",
+     "expected": "768.00",
+     "countRequired": true,
+     "showCount": true,
+     "counted": null,
+     "gap": null
+    },
+    "sold": {
+     "documents": 8,
+     "units": "12.5",
+     "average": "27.13"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "tables",
+       "count": 2,
+       "total": "100.00",
+       "average": "50.00"
+      },
+      {
+       "type": "quick",
+       "count": 3,
+       "total": "32.00",
+       "average": "10.67"
+      },
+      {
+       "type": "kiosk",
+       "count": 1,
+       "total": "35.00",
+       "average": "35.00"
+      },
+      {
+       "type": "takeaway",
+       "count": 1,
+       "total": "30.00",
+       "average": "30.00"
+      },
+      {
+       "type": "delivery",
+       "count": 1,
+       "total": "20.00",
+       "average": "20.00"
+      }
+     ],
+     "count": 8,
+     "total": "217.00",
+     "average": "27.13"
+    },
+    "employees": [
+     {
+      "id": "emp-a",
+      "name": "דנה",
+      "cash": "40.00",
+      "card": "50.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "10.00",
+      "sales": "90.00",
+      "tips": "10.00",
+      "total": "100.00"
+     },
+     {
+      "id": "emp-b",
+      "name": "יוסי",
+      "cash": "-15.00",
+      "card": "50.00",
+      "other": "22.00",
+      "cashTip": "0.00",
+      "cardTip": "5.00",
+      "sales": "57.00",
+      "tips": "5.00",
+      "total": "62.00"
+     },
+     {
+      "id": null,
+      "name": null,
+      "cash": "0.00",
+      "card": "35.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "0.00",
+      "sales": "35.00",
+      "tips": "0.00",
+      "total": "35.00"
+     },
+     {
+      "id": "emp-c",
+      "name": "רון",
+      "cash": "20.00",
+      "card": "0.00",
+      "other": "0.00",
+      "cashTip": "3.00",
+      "cardTip": "0.00",
+      "sales": "20.00",
+      "tips": "3.00",
+      "total": "23.00"
+     },
+     {
+      "id": "waiter-a",
+      "name": "מלצר א",
+      "cash": "0.00",
+      "card": "10.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "10.00",
+      "sales": "10.00",
+      "tips": "10.00",
+      "total": "20.00"
+     },
+     {
+      "id": "cashier-b",
+      "name": "קופאי ב",
+      "cash": "5.00",
+      "card": "0.00",
+      "other": "0.00",
+      "cashTip": "0.00",
+      "cardTip": "0.00",
+      "sales": "5.00",
+      "tips": "0.00",
+      "total": "5.00"
+     }
+    ],
+    "cardBrands": {
+     "rows": [
+      {
+       "brand": "visa",
+       "count": 2,
+       "sale": "50.00",
+       "tip": "10.00",
+       "amount": "60.00"
+      },
+      {
+       "brand": "mastercard",
+       "count": 1,
+       "sale": "30.00",
+       "tip": "0.00",
+       "amount": "30.00"
+      },
+      {
+       "brand": "isracard",
+       "count": 1,
+       "sale": "20.00",
+       "tip": "5.00",
+       "amount": "25.00"
+      },
+      {
+       "brand": "amex",
+       "count": 1,
+       "sale": "35.00",
+       "tip": "0.00",
+       "amount": "35.00"
+      },
+      {
+       "brand": "other",
+       "count": 1,
+       "sale": "10.00",
+       "tip": "10.00",
+       "amount": "20.00"
+      }
+     ],
+     "count": 6,
+     "sale": "145.00",
+     "tip": "25.00",
+     "amount": "170.00"
+    },
+    "transmission": {
+     "status": "partial",
+     "legs": 5,
+     "transmittedLegs": 3,
+     "transmitted": "125.00",
+     "cardTotal": "170.00",
+     "matched": false,
+     "terminals": [
+      {
+       "terminal": "****4567",
+       "status": "partial",
+       "legs": 4,
+       "transmittedLegs": 3,
+       "transmitted": "125.00",
+       "batches": [
+        {
+         "at": "2026-10-09T20:15:00+00:00",
+         "batch": "0042",
+         "count": 7,
+         "amount": "210.50"
+        }
+       ]
+      },
+      {
+       "terminal": "****5678",
+       "status": "not_sent",
+       "legs": 1,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    }
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "295.00",
+       false
+      ],
+      [
+       "הנחות",
+       "-20.00",
+       false
+      ],
+      [
+       "החזרים",
+       "-58.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "217.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "186.95",
+       false
+      ],
+      [
+       "בסיס 18%",
+       "166.95",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "30.05",
+       false
+      ],
+      [
+       "בסיס 0%",
+       "20.00",
+       false
+      ],
+      [
+       "מע״מ 0%",
+       "0.00",
+       false
+      ],
+      [
+       "מע״מ",
+       "30.05",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "217.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "50.00",
+       false
+      ],
+      [
+       "אשראי",
+       "145.00",
+       false
+      ],
+      [
+       "שוברים",
+       "30.00",
+       false
+      ],
+      [
+       "זיכוי ללא החזר",
+       "-8.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "217.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "טיפים שנגבו בקופה",
+     [
+      [
+       "טיפ מזומן",
+       "3.00",
+       false
+      ],
+      [
+       "טיפ אשראי",
+       "27.00",
+       false
+      ],
+      [
+       "החזרי טיפ",
+       "-2.00",
+       false
+      ],
+      [
+       "סה״כ טיפים נטו",
+       "28.00",
+       true
+      ],
+      [
+       "שולם לעובדים מהמגירה",
+       "-15.00",
+       false
+      ],
+      [
+       "יתרה לחלוקה",
+       "13.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "53.00",
+       false
+      ],
+      [
+       "אשראי",
+       "170.00",
+       false
+      ],
+      [
+       "שוברים",
+       "30.00",
+       false
+      ],
+      [
+       "זיכוי ללא החזר",
+       "-8.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "245.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "800.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "53.00",
+       false
+      ],
+      [
+       "טיפים ששולמו מהמגירה",
+       "-15.00",
+       false
+      ],
+      [
+       "הכנסות מזומן",
+       "50.00",
+       false
+      ],
+      [
+       "הוצאות",
+       "-20.00",
+       false
+      ],
+      [
+       "הפקדה לכספת",
+       "-100.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "768.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "לא נספר",
+       false
+      ],
+      [
+       "פער",
+       "לא חושב",
+       true
+      ]
+     ]
+    ],
+    [
+     "שידור אשראי",
+     [
+      [
+       "סטטוס",
+       "שודר חלקית",
+       true
+      ],
+      [
+       "מסוף",
+       "****4567",
+       false
+      ],
+      [
+       "אצווה 0042",
+       "2026-10-09T20:15:00+00:00",
+       false
+      ],
+      [
+       "  עסקאות · סכום",
+       "7 · 210.50",
+       false
+      ],
+      [
+       "ממתינות לשידור",
+       "1",
+       false
+      ],
+      [
+       "מסוף",
+       "****5678",
+       false
+      ],
+      [
+       "ממתינות לשידור",
+       "1",
+       false
+      ],
+      [
+       "אשראי בקופה",
+       "170.00",
+       false
+      ],
+      [
+       "שודר",
+       "125.00",
+       false
+      ],
+      [
+       "התאמה",
+       "לא תואם",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "8",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "12.5",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "27.13",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "שולחנות (2)",
+       "100.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "50.00",
+       false
+      ],
+      [
+       "הזמנה מהירה (3)",
+       "32.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "10.67",
+       false
+      ],
+      [
+       "קיוסק (1)",
+       "35.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "35.00",
+       false
+      ],
+      [
+       "טייק אוויי (1)",
+       "30.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "30.00",
+       false
+      ],
+      [
+       "משלוחים (1)",
+       "20.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "20.00",
+       false
+      ],
+      [
+       "סה״כ (8)",
+       "217.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "27.13",
+       false
+      ]
+     ]
+    ],
+    [
+     "אשראי לפי מותג",
+     [
+      [
+       "ויזה (2)",
+       "60.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "50.00 / 10.00",
+       false
+      ],
+      [
+       "מאסטרקארד (1)",
+       "30.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "30.00 / 0.00",
+       false
+      ],
+      [
+       "ישראכרט (1)",
+       "25.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "20.00 / 5.00",
+       false
+      ],
+      [
+       "אמריקן אקספרס (1)",
+       "35.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "35.00 / 0.00",
+       false
+      ],
+      [
+       "אחר (1)",
+       "20.00",
+       false
+      ],
+      [
+       "  מכירה / טיפ",
+       "10.00 / 10.00",
+       false
+      ],
+      [
+       "סה״כ אשראי (6)",
+       "170.00",
+       true
+      ],
+      [
+       "  מכירה / טיפ",
+       "145.00 / 25.00",
+       false
+      ]
+     ]
+    ],
+    [
+     "לפי עובד",
+     [
+      [
+       "דנה",
+       "100.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "50.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "90.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "10.00",
+       false
+      ],
+      [
+       "יוסי",
+       "62.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "50.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "-15.00",
+       false
+      ],
+      [
+       "  אמצעי תשלום אחרים",
+       "22.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "57.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "5.00",
+       false
+      ],
+      [
+       "ללא שיוך",
+       "35.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "35.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "0.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "35.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "0.00",
+       false
+      ],
+      [
+       "רון",
+       "23.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "20.00",
+       false
+      ],
+      [
+       "  טיפ מזומן",
+       "3.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "20.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "3.00",
+       false
+      ],
+      [
+       "מלצר א",
+       "20.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "0.00",
+       false
+      ],
+      [
+       "  טיפ אשראי",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "10.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "10.00",
+       false
+      ],
+      [
+       "קופאי ב",
+       "5.00",
+       true
+      ],
+      [
+       "  מכירות אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "  מכירות מזומן",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ מכירות",
+       "5.00",
+       false
+      ],
+      [
+       "  סה״כ טיפים",
+       "0.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "z drawer, parameter on: the movements are in the expected cash",
+   "about": "A till Z with \"Z — מזומן צפוי כולל הפקדות ותנועות מזומן\" on: float 100, a cash sale of 40, Cash In 20, Cash Out 10 and a safe deposit of 90 — the till counted 60. The expected cash takes the movements (100 + 40 + 20 − 10 − 90 = 60), the three lines are in the drawer block, and the gap is 0.",
+   "input": {
+    "documents": [
+     {
+      "id": "cash-40",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "40.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "6.10",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "40.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": "quick",
+      "employeeId": "emp-d",
+      "employeeName": "קופאי ד",
+      "voucherMemo": false
+     }
+    ],
+    "drawer": {
+     "opening": "100.00",
+     "expected": "60.00",
+     "counted": "60.00",
+     "overShort": "0.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": "20.00",
+     "expenses": "10.00",
+     "safeDrop": "90.00"
+    },
+    "transmission": {
+     "terminals": [
+      {
+       "terminal": "888",
+       "legs": 0,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    },
+    "showEmployees": false,
+    "countRequired": false
+   },
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "40.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "total": "40.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "33.90",
+     "vat": "6.10",
+     "total": "40.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "40.00",
+       "vat": "6.10",
+       "base": "33.90"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "40.00"
+      },
+      {
+       "method": "card",
+       "amount": "0.00"
+      }
+     ],
+     "total": "40.00"
+    },
+    "tips": {
+     "cash": "0.00",
+     "card": "0.00",
+     "refunds": "0.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "0.00",
+     "net": "0.00",
+     "paidFromDrawer": null,
+     "direct": "0.00",
+     "toDistribute": "0.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "40.00",
+       "tips": "0.00",
+       "total": "40.00"
+      },
+      {
+       "method": "card",
+       "sales": "0.00",
+       "tips": "0.00",
+       "total": "0.00"
+      }
+     ],
+     "total": "40.00"
+    },
+    "drawer": {
+     "opening": "100.00",
+     "cashReceipts": "40.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": "20.00",
+     "expenses": "10.00",
+     "safeDrop": "90.00",
+     "expected": "60.00",
+     "countRequired": false,
+     "showCount": true,
+     "counted": "60.00",
+     "gap": "0.00"
+    },
+    "sold": {
+     "documents": 1,
+     "units": "1",
+     "average": "40.00"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "quick",
+       "count": 1,
+       "total": "40.00",
+       "average": "40.00"
+      }
+     ],
+     "count": 1,
+     "total": "40.00",
+     "average": "40.00"
+    },
+    "employees": null,
+    "cardBrands": {
+     "rows": [],
+     "count": 0,
+     "sale": "0.00",
+     "tip": "0.00",
+     "amount": "0.00"
+    },
+    "transmission": null
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "40.00",
+       false
+      ],
+      [
+       "הנחות",
+       "0.00",
+       false
+      ],
+      [
+       "החזרים",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "33.90",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "6.10",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "100.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "40.00",
+       false
+      ],
+      [
+       "הכנסות מזומן",
+       "20.00",
+       false
+      ],
+      [
+       "הוצאות",
+       "-10.00",
+       false
+      ],
+      [
+       "הפקדה לכספת",
+       "-90.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "60.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "60.00",
+       false
+      ],
+      [
+       "פער",
+       "0.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "1",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "1",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "הזמנה מהירה (1)",
+       "40.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "40.00",
+       false
+      ],
+      [
+       "סה״כ (1)",
+       "40.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "z drawer, parameter off: the same day, the deposit reads as a shortage",
+   "about": "The same day with the parameter off (the default): the Z is as it always was — no movement lines, the expected cash is 140, and the deposit shows as a shortage of 80 against the count of 60.",
+   "input": {
+    "documents": [
+     {
+      "id": "cash-40",
+      "type": 320,
+      "status": "completed",
+      "refundOf": null,
+      "total": "40.00",
+      "discount": "0.00",
+      "deduction": null,
+      "vat": "6.10",
+      "vatRate": "0.18",
+      "tip": "0.00",
+      "tipMethod": null,
+      "paymentMethod": "cash",
+      "payments": [
+       {
+        "method": "cash",
+        "amount": "40.00",
+        "brand": null
+       }
+      ],
+      "units": "1",
+      "orderType": "quick",
+      "employeeId": "emp-d",
+      "employeeName": "קופאי ד",
+      "voucherMemo": false
+     }
+    ],
+    "drawer": {
+     "opening": "100.00",
+     "expected": "140.00",
+     "counted": "60.00",
+     "overShort": "-80.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null
+    },
+    "transmission": {
+     "terminals": [
+      {
+       "terminal": "888",
+       "legs": 0,
+       "transmittedLegs": 0,
+       "transmitted": "0.00",
+       "batches": []
+      }
+     ]
+    },
+    "showEmployees": false,
+    "countRequired": false
+   },
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "40.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "total": "40.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "33.90",
+     "vat": "6.10",
+     "total": "40.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "40.00",
+       "vat": "6.10",
+       "base": "33.90"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "40.00"
+      },
+      {
+       "method": "card",
+       "amount": "0.00"
+      }
+     ],
+     "total": "40.00"
+    },
+    "tips": {
+     "cash": "0.00",
+     "card": "0.00",
+     "refunds": "0.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "0.00",
+     "net": "0.00",
+     "paidFromDrawer": null,
+     "direct": "0.00",
+     "toDistribute": "0.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "40.00",
+       "tips": "0.00",
+       "total": "40.00"
+      },
+      {
+       "method": "card",
+       "sales": "0.00",
+       "tips": "0.00",
+       "total": "0.00"
+      }
+     ],
+     "total": "40.00"
+    },
+    "drawer": {
+     "opening": "100.00",
+     "cashReceipts": "40.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": null,
+     "expenses": null,
+     "safeDrop": null,
+     "expected": "140.00",
+     "countRequired": false,
+     "showCount": true,
+     "counted": "60.00",
+     "gap": "-80.00"
+    },
+    "sold": {
+     "documents": 1,
+     "units": "1",
+     "average": "40.00"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "quick",
+       "count": 1,
+       "total": "40.00",
+       "average": "40.00"
+      }
+     ],
+     "count": 1,
+     "total": "40.00",
+     "average": "40.00"
+    },
+    "employees": null,
+    "cardBrands": {
+     "rows": [],
+     "count": 0,
+     "sale": "0.00",
+     "tip": "0.00",
+     "amount": "0.00"
+    },
+    "transmission": null
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "40.00",
+       false
+      ],
+      [
+       "הנחות",
+       "0.00",
+       false
+      ],
+      [
+       "החזרים",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "33.90",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "6.10",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "40.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "100.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "40.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "140.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "60.00",
+       false
+      ],
+      [
+       "פער",
+       "-80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "1",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "1",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "הזמנה מהירה (1)",
+       "40.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "40.00",
+       false
+      ],
+      [
+       "סה״כ (1)",
+       "40.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "shop of the two z days",
+   "about": "A shop Z of one till with the parameter on and one with it off (it is a till parameter): the movement lines are the sum of the tills that have them, the expected cash the sum of both.",
+   "merge": [
+    "z drawer, parameter on: the movements are in the expected cash",
+    "z drawer, parameter off: the same day, the deposit reads as a shortage"
+   ],
+   "exempt": false,
+   "expected": {
+    "version": 1,
+    "sales": {
+     "gross": "80.00",
+     "discounts": "0.00",
+     "refunds": "0.00",
+     "total": "80.00"
+    },
+    "vat": {
+     "known": true,
+     "base": "67.80",
+     "vat": "12.20",
+     "total": "80.00",
+     "rates": [
+      {
+       "rate": "18",
+       "total": "80.00",
+       "vat": "12.20",
+       "base": "67.80"
+      }
+     ]
+    },
+    "payments": {
+     "rows": [
+      {
+       "method": "cash",
+       "amount": "80.00"
+      },
+      {
+       "method": "card",
+       "amount": "0.00"
+      }
+     ],
+     "total": "80.00"
+    },
+    "tips": {
+     "cash": "0.00",
+     "card": "0.00",
+     "refunds": "0.00",
+     "cashRefunds": "0.00",
+     "cardRefunds": "0.00",
+     "net": "0.00",
+     "paidFromDrawer": null,
+     "direct": "0.00",
+     "toDistribute": "0.00"
+    },
+    "receipts": {
+     "rows": [
+      {
+       "method": "cash",
+       "sales": "80.00",
+       "tips": "0.00",
+       "total": "80.00"
+      },
+      {
+       "method": "card",
+       "sales": "0.00",
+       "tips": "0.00",
+       "total": "0.00"
+      }
+     ],
+     "total": "80.00"
+    },
+    "drawer": {
+     "opening": "200.00",
+     "cashReceipts": "80.00",
+     "tipsPaidFromDrawer": null,
+     "betweenShifts": "0.00",
+     "cashIn": "20.00",
+     "expenses": "10.00",
+     "safeDrop": "90.00",
+     "expected": "200.00",
+     "countRequired": false,
+     "showCount": true,
+     "counted": "120.00",
+     "gap": "-80.00"
+    },
+    "sold": {
+     "documents": 2,
+     "units": "2",
+     "average": "40.00"
+    },
+    "orderTypes": {
+     "rows": [
+      {
+       "type": "quick",
+       "count": 2,
+       "total": "80.00",
+       "average": "40.00"
+      }
+     ],
+     "count": 2,
+     "total": "80.00",
+     "average": "40.00"
+    },
+    "employees": null,
+    "cardBrands": {
+     "rows": [],
+     "count": 0,
+     "sale": "0.00",
+     "tip": "0.00",
+     "amount": "0.00"
+    },
+    "transmission": null
+   },
+   "lines": [
+    [
+     "מכירות (כולל מע״מ, ללא טיפ)",
+     [
+      [
+       "לפני הנחות והחזרים",
+       "80.00",
+       false
+      ],
+      [
+       "הנחות",
+       "0.00",
+       false
+      ],
+      [
+       "החזרים",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ מכירות",
+       "80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "סיכום מע״מ",
+     [
+      [
+       "סה״כ לפני מע״מ",
+       "67.80",
+       false
+      ],
+      [
+       "מע״מ 18%",
+       "12.20",
+       false
+      ],
+      [
+       "סה״כ כולל מע״מ",
+       "80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תשלומים עבור מכירות",
+     [
+      [
+       "מזומן",
+       "80.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תשלומים",
+       "80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "תקבולים ממכירות וטיפים",
+     [
+      [
+       "מזומן",
+       "80.00",
+       false
+      ],
+      [
+       "אשראי",
+       "0.00",
+       false
+      ],
+      [
+       "סה״כ תקבולים",
+       "80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "התאמת מגירת מזומן",
+     [
+      [
+       "קופה פותחת",
+       "200.00",
+       false
+      ],
+      [
+       "תקבולי מזומן כולל טיפ",
+       "80.00",
+       false
+      ],
+      [
+       "הכנסות מזומן",
+       "20.00",
+       false
+      ],
+      [
+       "הוצאות",
+       "-10.00",
+       false
+      ],
+      [
+       "הפקדה לכספת",
+       "-90.00",
+       false
+      ],
+      [
+       "מזומן צפוי",
+       "200.00",
+       true
+      ],
+      [
+       "מזומן שנספר",
+       "120.00",
+       false
+      ],
+      [
+       "פער",
+       "-80.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "כמה נמכר",
+     [
+      [
+       "מסמכי מכירה",
+       "2",
+       false
+      ],
+      [
+       "יחידות שנמכרו",
+       "2",
+       false
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       true
+      ]
+     ]
+    ],
+    [
+     "לפי סוג הזמנה",
+     [
+      [
+       "הזמנה מהירה (2)",
+       "80.00",
+       false
+      ],
+      [
+       "  ממוצע",
+       "40.00",
+       false
+      ],
+      [
+       "סה״כ (2)",
+       "80.00",
+       true
+      ],
+      [
+       "ממוצע למכירה",
+       "40.00",
+       false
+      ]
+     ]
+    ]
+   ]
+  }
+ ]
+}

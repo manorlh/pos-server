@@ -60,6 +60,19 @@ export interface DiscountsReport {
     byBatch: (VoucherFigures & { batchId: string | null; name: string | null })[];
     byTill: (VoucherFigures & TillLabel)[];
     byDay: (VoucherFigures & { date: string })[];
+    /**
+     * Of which: staff test vouchers' deductions that reached a real sale — no production's, so an
+     * ordinary discount here, as in every report and the Z. Absent from an older server.
+     */
+    testDeductions?: VoucherFigures;
+  };
+  /**
+   * Production vouchers booked as a document deduction ("קיזוז שוברי הפקה"): not discounts —
+   * apart, so the discount figures above leave them out. Absent from an older server.
+   */
+  productionVouchers?: {
+    totals: VoucherFigures;
+    byBatch: (VoucherFigures & { batchId: string | null; name: string | null })[];
   };
 }
 

@@ -9,12 +9,15 @@
  */
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { QRCodeSVG } from 'qrcode.react';
 import { Check, Copy, Loader2, Power, QrCode, ShieldCheck, Terminal } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { phaseOfReboot } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { formatDateTime } from '@/lib/format';
 import {
   ADB_ACCOUNTS_CHECK,
@@ -42,8 +45,10 @@ import {
   type WifiSecurity,
   type WithDeviceManagement,
 } from '@/lib/deviceManagement';
+import { deviceTypeOptions } from '@/lib/deviceModelSearch';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Combobox } from '@/components/ui/combobox';
 import {
   Dialog,
   DialogContent,
@@ -136,6 +141,9 @@ function Steps({ items }: { items: string[] }) {
   );
 }
 
+/** "סוג המכשיר", searchable by name, id, maker (also in Hebrew) and deviceTypeFor's words. */
+const DEVICE_TYPE_OPTIONS = deviceTypeOptions();
+
 /**
  * "איך מפעילים": the adb command per device type (with the checks before it), or the QR for a
  * factory-reset device. `shopId` (or the device's own) picks the release the QR installs.
@@ -151,6 +159,7 @@ export function SilentUpdateHelpDialog({
   target?: DeviceManagementTarget | null;
   shopId?: string | null;
 }) {
+  const tc = useTranslations('combobox.deviceType');
   const guessed = target ? deviceTypeFor(target) : null;
   const [tab, setTab] = useState<'adb' | 'qr'>('adb');
   const [typeId, setTypeId] = useState<string>(guessed?.id ?? DEVICE_TYPES[0].id);
@@ -222,19 +231,17 @@ export function SilentUpdateHelpDialog({
         {tab === 'adb' ? (
           <div className="space-y-3 text-sm">
             <div className="space-y-1">
-              <Label>סוג המכשיר</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {DEVICE_TYPES.map((t) => (
-                  <Button
-                    key={t.id}
-                    size="sm"
-                    variant={t.id === type.id ? 'default' : 'outline'}
-                    onClick={() => setTypeId(t.id)}
-                  >
-                    {t.name} · {t.android}
-                  </Button>
-                ))}
-              </div>
+              <Label htmlFor="silent-update-device-type">סוג המכשיר</Label>
+              <Combobox
+                id="silent-update-device-type"
+                aria-label="סוג המכשיר"
+                options={DEVICE_TYPE_OPTIONS}
+                value={type.id}
+                onValueChange={(next) => {
+                  if (next) setTypeId(next);
+                }}
+                emptyText={tc('noResults')}
+              />
             </div>
             <div className="space-y-1">
               <p className="font-medium">1. בדיקות לפני (מחשב עם adb, המכשיר מחובר ב-USB):</p>
@@ -503,7 +510,14 @@ function RebootDialog({
       return data;
     },
     onSuccess: (data) => {
-      toast.success(data.created ? 'הבקשה נשלחה — המכשיר יופעל מחדש כשיהיה פנוי' : 'בקשה כבר ממתינה למכשיר');
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): followed in the background (its popup, the
+      // tray, the device's chip) — the dialog closes, nothing waits for the device.
+      const req = data?.rebootRequest;
+      if (req?.id) {
+        const p = phaseOfReboot(req.status, req.reason);
+        trackCommand({ kind: 'reboot', id: req.id, action: 'reboot', machineId, machineName: name || null, phase: p.phase, detail: p.detail });
+      }
+      if (!data?.created) toast.info('בקשה כבר ממתינה למכשיר');
       onDone();
       onClose();
     },

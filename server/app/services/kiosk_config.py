@@ -22,7 +22,8 @@ A stored layer is never trusted blindly: `effective_config` drops whatever no lo
 validates in a layer (a key the schema lost, a value out of a narrowed range) and repairs
 the few cross-field rules a parent's later change can break below it (warningSec <
 inactivitySec, pickup start < max, `bonMode: single` without a printer, the club's URL,
-KDS while it is not available). So what a kiosk receives always validates.
+KDS while it is not available) — and `pickup.labelFormat: "number"` always takes the shop's shared
+counter (`scope: "shop"`). So what a kiosk receives always validates.
 
 KDS (docs/SPEC_KDS.md, docs/SPEC_LAN_MODE.md §8): `kds_available()` — the kitchen engine's
 release API exists and every kiosk releases through it: a paid `fulfillmentMode: "KDS"` order
@@ -301,6 +302,10 @@ SUCCESS_MESSAGE_MAX = 300
 WAIT_LOGO_STYLES = ("plain", "plate")
 BON_MODES = ("routing", "single")
 PICKUP_SCOPES = ("kiosk", "shop")
+#: "מספר הזמנה": with the kiosk's letter ("A-17", today's) or the number alone ("17", the owner
+#: 09.10.2026). The number alone is told apart by nothing but the number, so it always comes from
+#: the shop's shared daily counter: `repair` forces `scope: "shop"` (app/services/kiosk_pickup.py).
+PICKUP_LABEL_FORMATS = ("prefixed", "number")
 MEDIA_KINDS = ("image", "video", "font")
 
 TEXT_MAX = 200
@@ -524,7 +529,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # its queue and the staff's alert. `bonMode: "single"` with a named printer is unchanged.
         "bonOnKiosk": False,
     },
-    "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999},
+    "pickup": {"scope": "kiosk", "prefix": "", "start": 1, "max": 999, "labelFormat": "prefixed"},
     "timers": {"inactivitySec": 60, "warningSec": 20, "successSec": 12, "attractSlideSec": 8},
     "club": {"enabled": False, "joinUrl": "", "title": "", "body": ""},
     "operations": {"autoCloseAt": "", "pausedTitle": "", "pausedBody": "", "closeWithShopZ": False},
@@ -1361,6 +1366,7 @@ SCHEMA = Obj({
         "prefix": Str(PICKUP_PREFIX_MAX, pattern=_PICKUP_PREFIX, pattern_message="up to 3 of A-Z a-z 0-9 א-ת -"),
         "start": Int(1, 9998),
         "max": Int(2, 9999),
+        "labelFormat": Enum(PICKUP_LABEL_FORMATS),
     }),
     "timers": Obj({
         "inactivitySec": Int(15, 600),
@@ -1499,6 +1505,7 @@ def limits() -> Dict[str, Any]:
             "customerFieldModes": list(CUSTOMER_FIELD_MODES),
             "bonMode": list(BON_MODES),
             "pickupScope": list(PICKUP_SCOPES),
+            "pickupLabelFormat": list(PICKUP_LABEL_FORMATS),
             "servicePlacement": list(SERVICE_PLACEMENTS),
             "waitLogoStyle": list(WAIT_LOGO_STYLES),
             "serviceSelect": list(SERVICE_SELECTS),
@@ -1843,6 +1850,10 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
         timers["warningSec"] = max(5, timers["inactivitySec"] - 1)
     if pickup["start"] >= pickup["max"]:
         pickup["start"], pickup["max"] = DEFAULT_CONFIG["pickup"]["start"], DEFAULT_CONFIG["pickup"]["max"]
+    # "מספר בלבד": two kiosks' own sequences would both say "17" — the number alone always
+    # comes from the shop's shared daily counter, whatever a layer says about the scope.
+    if pickup.get("labelFormat") == "number":
+        pickup["scope"] = "shop"
     if printing["bonMode"] == "single" and not printing.get("bonPrinterId"):
         printing["bonMode"] = "routing"
     if club.get("enabled") and not _http_url_ok(club.get("joinUrl") or ""):
@@ -2000,7 +2011,11 @@ def machine_layers(db: Session, machine) -> Layers:
 def effective_config(db: Session, machine) -> Dict[str, Any]:
     """What this kiosk gets: DEFAULTS ⊕ company ⊕ shop ⊕ machine (sanitised, repaired)."""
     layers = machine_layers(db, machine)
-    return resolve(layers.company, layers.shop, layers.machine)
+    # "שליטה מרחוק בקיוסקים": the shop's quick hides and the kiosk's banner, over its settings
+    # (app/services/kiosk_live.py) — every kiosk already applies both.
+    from app.services import kiosk_live
+
+    return kiosk_live.overlay(db, machine, resolve(layers.company, layers.shop, layers.machine))
 
 
 def effective_bundle(db: Session, machine) -> Dict[str, Any]:

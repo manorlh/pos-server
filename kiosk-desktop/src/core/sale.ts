@@ -6,7 +6,8 @@
  *    price + what each choice was charged (free choices, quantities, "הרבה" — client/src/lib/kioskMoney.ts)
  *    + on a meal, each component's upcharge and paid choices;
  *  - the promotions (kioskMoney.ts, the till's PromotionEngine) are the document's discount: each
- *    line carries its share, the total is the gross less them;
+ *    line carries its share, the total is the gross less them — and so are the discount vouchers
+ *    ("שוברי הנחה", kioskVouchers.ts): a share of each line, inside the same discount, never a tender;
  *  - the VAT is computed ONCE per document: net = round(total / (1 + rate)), vat = total − net;
  *  - the card is charged total + tip; the card tender is the goods total, the tip goes in
  *    `tipAmount` (tipPaymentMethod "card");
@@ -15,7 +16,7 @@
  * Pure: amounts in agorot inside, shekels (2 decimals) on the wire.
  */
 
-import { optionText } from '@dash-lib/kioskMoney';
+import { kioskTipAgorot, optionText, TIP_OTHER_MAX_SHEKELS, tipPercentOf, type TipRules } from '@dash-lib/kioskMoney';
 import { ofShekels, times, toShekels, vatNet } from './money';
 
 /** At most this many of one line (the Android kiosk's KioskViewModel.MAX_QTY). */
@@ -71,6 +72,20 @@ export interface SaleLine {
   promotionAgorot?: number;
   promotionId?: string | null;
   promotionName?: string | null;
+  /** The line's share of the discount vouchers, agorot; and the promotion's share that gave way to one. */
+  voucherAgorot?: number;
+  promotionYieldedAgorot?: number;
+  /** "כלול בשובר #7 (1)": the goods voucher that paid for the line, as the till's document marks it (coverByVoucher); never printed in the kitchen. */
+  voucherMark?: string;
+  /**
+   * "תפריטים": the menu active when the line was added and where its price came from (`menu` / `catalog`) — the document's
+   * item carries them (`menuId` / `menuName` / `priceSource`) for the sales-by-menu report. Absent: no menu.
+   */
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
+  /** With a menu: the catalog's own price then (the till's held sale carries it as `catalogPrice`). */
+  catalogPriceAgorot?: number | null;
 }
 
 /** What one choice adds to one unit of the dish. */
@@ -105,7 +120,10 @@ export function lineGross(l: SaleLine): number {
 export interface SaleTotals {
   /** Σ line gross (before discounts) — the wire's totalAmount. */
   grossAgorot: number;
+  /** Everything taken off: the promotions' and the discount vouchers' shares (the document's `documentDiscount`). */
   discountAgorot: number;
+  /** What discount vouchers took off, inside [discountAgorot]. */
+  voucherDiscountAgorot: number;
   /** What the goods cost: gross − discounts. The card tender. */
   totalAgorot: number;
   netAgorot: number;
@@ -118,13 +136,16 @@ export interface SaleTotals {
 
 export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgorot = 0): SaleTotals {
   const gross = lines.reduce((s, l) => s + lineGross(l), 0);
-  // The promotions' shares (Cart.totals): the document's discount.
-  const discount = lines.reduce((s, l) => s + Math.max(0, l.promotionAgorot ?? 0), 0);
+  // The promotions' and the discount vouchers' shares (Cart.totals): the document's discount.
+  const promotion = lines.reduce((s, l) => s + Math.max(0, l.promotionAgorot ?? 0), 0);
+  const voucher = lines.reduce((s, l) => s + Math.max(0, l.voucherAgorot ?? 0), 0);
+  const discount = promotion + voucher;
   const total = gross - discount;
   const net = vatNet(total, vatRate);
   return {
     grossAgorot: gross,
     discountAgorot: discount,
+    voucherDiscountAgorot: voucher,
     totalAgorot: total,
     netAgorot: net,
     vatAgorot: total - net,
@@ -134,23 +155,21 @@ export function saleTotals(lines: readonly SaleLine[], vatRate: number, tipAgoro
   };
 }
 
-/** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers. */
+/** KioskCustomer.tipOf: (goods × pct + 50) / 100 in integers (lib/kioskMoney.ts tipPercentOf — one copy). */
 export function tipOf(goodsAgorot: number, pct: number | null): number {
-  if (!pct || pct <= 0) return 0;
-  return Math.trunc((goodsAgorot * pct + 50) / 100);
+  return tipPercentOf(goodsAgorot, pct);
 }
 
-/** "סכום אחר" at most ₪999 (the dashboard's TIP_OTHER_MAX_SHEKELS). */
-export const TIP_OTHER_MAX_AGOROT = 99_900;
+/** "סכום אחר" at most ₪999 (KioskTip.OTHER_MAX_SHEKELS). */
+export const TIP_OTHER_MAX_AGOROT = TIP_OTHER_MAX_SHEKELS * 100;
 
 /**
- * The tip to charge: "סכום אחר" when it is a whole-shekel amount above zero, not more than the
- * goods and ₪999; else the preset's percent (tipOf).
+ * The tip to charge (KioskViewModel.price, lib/kioskMoney.ts kioskTipAgorot — the Android kiosk's rule):
+ * none with tips off; "סכום אחר" when "other" is on and it is whole shekels above zero, at most the
+ * goods and ₪999; else the preset's percent of the goods after promotions.
  */
-export function tipToCharge(goodsAgorot: number, pct: number | null, otherAgorot: number | null | undefined): number {
-  const other = otherAgorot ?? 0;
-  if (Number.isInteger(other) && other > 0 && other % 100 === 0 && other <= goodsAgorot && other <= TIP_OTHER_MAX_AGOROT) return other;
-  return tipOf(goodsAgorot, pct);
+export function tipToCharge(rules: TipRules, goodsAgorot: number, pct: number | null, otherAgorot: number | null | undefined): number {
+  return kioskTipAgorot(rules, goodsAgorot, pct, otherAgorot);
 }
 
 /** The sale document type by the dealer type: an exempt dealer issues 400 receipts. */

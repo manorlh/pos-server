@@ -19,6 +19,10 @@
  * the top of the till's sell screen and tables floor, with an optional product whose chip
  * adds it to the order, a colour and an end ("עד מתי"). A banner that went out can still
  * change its text, product, colour and end.
+ *
+ * Sending never waits for the tills: the POST returns at once (with an Idempotency-Key, one per
+ * message written) and a full-screen message sent now is followed in the background by
+ * "פקודות שנשלחו" (lib/deviceCommandsStore.ts); more messages can be sent meanwhile.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -50,6 +54,8 @@ import {
   updateTillMessage,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { isKeyReused, keyRing } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
 import { formatDate, formatShortDateTime, isoDate } from '@/lib/format';
 import type {
   TillMessage,
@@ -882,9 +888,15 @@ export default function TillMessagesPage() {
     (when !== 'scheduled' || !!sendAt) &&
     (when !== 'recurring' || recurrenceValid(rec));
 
+  // One Idempotency-Key per message as written (lib/deviceCommands.ts `keyRing`): a retry of the
+  // same submit (after a network error) reuses it — the server answers with the first message,
+  // never sends it twice; an edited message (another body, target, schedule…) gets a new key, as
+  // does a `422 idempotency_key_reused`; a successful send starts afresh.
+  const [keys] = useState(() => keyRing());
+
   const send = useMutation({
-    mutationFn: () =>
-      sendTillMessage({
+    mutationFn: () => {
+      const request = {
         title: title.trim() || null,
         body: body.trim(),
         targetLevel: target!.level as TillMessageLevel,
@@ -894,15 +906,43 @@ export default function TillMessagesPage() {
         ...(when === 'scheduled' ? { sendAt } : {}),
         ...(when === 'recurring' ? recurrenceBody(rec) : {}),
         ...(banner ? { display, productId, color } : {}),
-      }),
+      };
+      return sendTillMessage(request, keys.keyFor(request)).catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+    },
     onSuccess: (out) => {
-      toast.success(
-        when === 'scheduled'
-          ? t('schedule.scheduledToast')
-          : when === 'recurring'
-            ? t('schedule.recurringToast')
-            : t('sent', { count: out.counts?.total ?? 0 }),
-      );
+      keys.forget();
+      if (when === 'now' && !banner && out.id) {
+        // Sent now, full-screen: followed in the background ("פקודות שנשלחו": delivered → "קראתי"
+        // by every till), which pops its own non-blocking notice — no toast here.
+        const total = out.counts?.total ?? 0;
+        const name = out.targetName?.trim();
+        trackCommand({
+          kind: 'till_message',
+          id: out.id,
+          action: 'till_message',
+          machineId: out.targetLevel === 'machine' ? out.targetId : null,
+          machineName: name
+            ? out.targetLevel === 'machine'
+              ? name
+              : `${t(`levels.${out.targetLevel}`)} ${name}`
+            : total > 0
+              ? t('tills', { count: total })
+              : null,
+        });
+      } else {
+        // Scheduled / recurring (nothing goes to a till yet) or a banner (no "קראתי" to wait for —
+        // it shows until its end): not a command to follow; the list below shows it.
+        toast.success(
+          when === 'scheduled'
+            ? t('schedule.scheduledToast')
+            : when === 'recurring'
+              ? t('schedule.recurringToast')
+              : t('sent', { count: out.counts?.total ?? 0 }),
+        );
+      }
       setTitle('');
       setBody('');
       setProductId(null);

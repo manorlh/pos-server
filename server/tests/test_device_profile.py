@@ -172,8 +172,11 @@ class TestCatalog:
         # The six, then the SUNMI family (tests/test_sunmi_models.py), then the SynqPay
         # terminals (tests/test_synqpay_devices.py).
         assert DEVICE_MODELS[:6] == ("N55F", "MODO", "P18", "LANDI", "FEITIAN_TABLET", "GENERIC_ANDROID")
-        # And PAX A77 / Urovo i9100 (tests/test_vendor_devices.py).
-        assert all(m.startswith(("SUNMI", "SYNQPAY", "PAX_", "UROVO_")) for m in DEVICE_MODELS[6:])
+        # And PAX A77 / Urovo i9100 (tests/test_vendor_devices.py), then iMin / LANDI / Feitian
+        # docks (tests/test_builtin_printers.py).
+        assert all(
+            m.startswith(("SUNMI", "SYNQPAY", "PAX_", "UROVO_", "IMIN", "LANDI_", "FEITIAN_")) for m in DEVICE_MODELS[6:]
+        )
 
     def test_no_driverless_model_claims_a_printer(self):
         assert not any(
@@ -185,7 +188,9 @@ class TestCatalog:
     @pytest.mark.parametrize(
         "info, expected",
         [
-            ({"model": "C20 Pro", "manufacturer": "LANDI"}, "LANDI"),
+            # A LANDI the built-in printer table names is that model (tests/test_builtin_printers.py).
+            ({"model": "C20 Pro", "manufacturer": "LANDI"}, "LANDI_C20_PRO"),
+            ({"model": "C20 Lite", "manufacturer": "LANDI"}, "LANDI"),
             ({"model": "x", "manufacturer": " landi "}, "LANDI"),
             ({"model": "Nebullar P18", "manufacturer": "LANDI"}, "P18"),
             ({"model": "F20", "manufacturer": "Feitian"}, None),

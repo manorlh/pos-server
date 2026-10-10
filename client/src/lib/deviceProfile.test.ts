@@ -8,8 +8,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  BUILTIN_PRINTER_MODEL_IDS,
   DEVICE_MODEL_CAPABILITIES,
   DEVICE_MODEL_IDS,
+  DEVICE_NAME_MAX,
   DEVICE_PLATFORMS,
   DEVICE_ROLES,
   NON_FISCAL_ROLES,
@@ -18,6 +20,7 @@ import {
   VENDOR_DEVICE_MODEL_IDS,
   addDeviceMissing,
   capabilitiesOf,
+  cleanDeviceName,
   deviceModelIdOf,
   deviceModelWarning,
   deviceProfileBody,
@@ -25,6 +28,7 @@ import {
   deviceProfileErrorMessage,
   devicePlatformOf,
   deviceRoleOf,
+  expectedRegisterNumber,
   isDisplayDevice,
   isFiscalRole,
   kioskDraftError,
@@ -51,7 +55,7 @@ describe('the model catalog', () => {
     );
     assert.deepEqual(
       [...DEVICE_MODEL_IDS].slice(6),
-      [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS, ...VENDOR_DEVICE_MODEL_IDS],
+      [...SUNMI_MODEL_IDS, ...SYNQPAY_DEVICE_MODEL_IDS, ...VENDOR_DEVICE_MODEL_IDS, ...BUILTIN_PRINTER_MODEL_IDS],
     );
   });
 
@@ -172,9 +176,43 @@ describe('PAX A77 / Urovo i9100 (app/models/vendor_devices.py)', () => {
   });
 });
 
+describe('iMin / LANDI / Feitian docks (app/models/builtin_printers.py)', () => {
+  // The server's table, shared byte-for-byte with pos-android (BuiltinPrinterModels.kt).
+  const golden = JSON.parse(
+    readFileSync(join(process.cwd(), '..', 'server', 'tests', 'fixtures', 'builtin_printers_golden.json'), 'utf8'),
+  ) as { models: { id: string; paperMm: 58 | 80; drawerPort: boolean; support: 'auto' | 'partial' | 'sdk' }[] };
+
+  it('the same table as the server, model by model', () => {
+    assert.deepEqual(
+      golden.models.map((m) => m.id),
+      [...BUILTIN_PRINTER_MODEL_IDS],
+    );
+    for (const m of golden.models) {
+      const c = DEVICE_MODEL_CAPABILITIES[m.id as keyof typeof DEVICE_MODEL_CAPABILITIES];
+      const prints = m.support !== 'sdk';
+      assert.deepEqual(
+        [c.builtinPrinter, c.paperWidthMm, c.cashDrawerPort, c.builtinScanner, c.builtinTerminal, c.driverPending],
+        [prints, prints ? m.paperMm : null, prints && m.drawerPort, false, false, !prints],
+        m.id,
+      );
+    }
+  });
+
+  it('iMin Falcon 2 prints at 80 mm and opens the drawer by itself; a LANDI handheld waits for its SDK', () => {
+    assert.equal(capabilitiesOf('IMIN_FALCON2').paperWidthMm, 80);
+    assert.equal(capabilitiesOf('IMIN_FALCON2').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('IMIN_FALCON2_58').paperWidthMm, 58);
+    assert.equal(capabilitiesOf('IMIN_FALCON1').cashDrawerPort, false);
+    assert.equal(capabilitiesOf('LANDI_M20').driverPending, true);
+    assert.equal(capabilitiesOf('LANDI_M20').builtinPrinter, false);
+    assert.equal(deviceModelIdOf(' imin_falcon2 '), 'IMIN_FALCON2');
+  });
+});
+
 describe('roles', () => {
   it('a till, a kiosk, a KDS or the ready / not-ready board', () => {
-    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board']);
+    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display']);
+    assert.equal(deviceRoleOf('customer_display'), 'customer_display');
     assert.equal(deviceRoleOf('kiosk'), 'kiosk');
     assert.equal(deviceRoleOf(' TILL '), 'till');
     assert.equal(deviceRoleOf('kds'), 'kds');
@@ -184,7 +222,9 @@ describe('roles', () => {
   });
 
   it('a KDS and the board are not tills, not accounting systems', () => {
-    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board']);
+    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display']);
+    // "מסך לקוח" (P:/specs/customer-display.md §4): a screen too — no sales, no Z.
+    assert.equal(isFiscalRole('customer_display'), false);
     assert.equal(isFiscalRole('till'), true);
     assert.equal(isFiscalRole('kiosk'), true);
     assert.equal(isFiscalRole(null), true);
@@ -232,6 +272,9 @@ describe('platforms', () => {
     assert.deepEqual(platformsFor('kds'), ['android', 'windows', 'web']);
     assert.deepEqual(platformsFor('order_status_board'), ['android', 'windows', 'web']);
     assert.deepEqual([webPathOf('kiosk'), webPathOf('kds'), webPathOf('order_status_board'), webPathOf('till')], ['/k', '/kds', '/board', null]);
+    assert.deepEqual(platformsFor('customer_display'), ['android', 'windows', 'web']);
+    assert.equal(webPathOf('customer_display'), '/display');
+    assert.equal(webScreenLink('http://localhost:3002', 'customer_display', 'ab12'), 'http://localhost:3002/display#pair=AB12');
     assert.equal(webScreenLink('https://pos-cloud-app.vercel.app/', 'kds', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/kds#pair=AB12CD34');
     assert.equal(webScreenLink('http://localhost:3002', 'order_status_board', ' xy9 8zz1 '), 'http://localhost:3002/board#pair=XY98ZZ1');
     assert.equal(webScreenLink('http://localhost:3002', 'order_status_board'), 'http://localhost:3002/board');
@@ -269,13 +312,71 @@ describe('the model warning', () => {
 });
 
 describe('adding a device', () => {
-  const draft = { role: 'till' as const, model: 'N55F' as const, machineCode: 'Bar', companyId: '', shopId: '' };
+  const draft = { role: 'till' as const, model: 'N55F' as const, name: '', companyId: '', shopId: '' };
 
   it('both choices are required, in order', () => {
     assert.equal(addDeviceMissing({ ...draft, role: '' }), 'role');
     assert.equal(addDeviceMissing({ ...draft, model: '' }), 'model');
-    assert.equal(addDeviceMissing({ ...draft, machineCode: '  ' }), 'machineCode');
     assert.equal(addDeviceMissing(draft), null);
+  });
+
+  it('the name is optional — and there is no device code to type: the server makes its own', () => {
+    // Blank, spaces, or none at all: still ready to generate.
+    assert.equal(addDeviceMissing({ ...draft, name: '' }), null);
+    assert.equal(addDeviceMissing({ ...draft, name: '   ' }), null);
+    assert.equal(addDeviceMissing({ role: 'till', model: 'N55F', companyId: '', shopId: '' }), null);
+    // What the form used to ask ("קוד מכשיר", required and never sent) is not part of the draft any more.
+    assert.equal('machineCode' in draft, false);
+    assert.equal(
+      addDeviceMissing({ ...draft, machineCode: 'x' } as Parameters<typeof addDeviceMissing>[0]),
+      null,
+    );
+  });
+
+  it('a name travels with a till code, cleaned; none is sent when it is blank', () => {
+    assert.deepEqual(pairingRequestBody({ ...draft, name: '  קופה   בר  ' }, noKiosk), {
+      deviceRole: 'till',
+      deviceModel: 'N55F',
+      platform: 'android',
+      name: 'קופה בר',
+    });
+    for (const blank of ['', '   ', undefined]) {
+      assert.equal('name' in pairingRequestBody({ ...draft, name: blank }, noKiosk), false);
+    }
+    assert.equal(cleanDeviceName(' a \t b\n'), 'a b');
+    assert.equal(cleanDeviceName(null), '');
+    // At most what the server takes.
+    assert.equal((pairingRequestBody({ ...draft, name: 'x'.repeat(250) }, noKiosk).name as string).length, DEVICE_NAME_MAX);
+    assert.equal(DEVICE_NAME_MAX, 100);
+  });
+
+  it('a kiosk, a screen and a display keep their own names: the form\'s is a till\'s only', () => {
+    const inShop = { ...draft, name: 'בר', companyId: 'c', shopId: 's' };
+    for (const role of ['kiosk', 'kds', 'order_status_board', 'customer_display'] as const) {
+      assert.equal('name' in pairingRequestBody({ ...inShop, role }, noKiosk), false, role);
+    }
+  });
+
+  it('"הקופה תקבל מספר N": the server\'s peek, for a register, once the shop is chosen', () => {
+    const peek = { shopId: 'S-1', nextRegisterNumber: 4 };
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: 's-1' }, peek), 4);
+    assert.equal(expectedRegisterNumber({ role: 'kiosk', shopId: 'S-1' }, peek), 4);
+    // Before the role is chosen the shop's number is already known.
+    assert.equal(expectedRegisterNumber({ role: '', shopId: 'S-1' }, peek), 4);
+    // No shop yet, no answer yet, or an answer for the shop that was chosen before.
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: '' }, peek), null);
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: 'S-1' }, undefined), null);
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: 'S-1' }, null), null);
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: 'S-2' }, peek), null);
+    // A screen is not a register: nothing to number.
+    for (const role of ['kds', 'order_status_board', 'customer_display'] as const) {
+      assert.equal(expectedRegisterNumber({ role, shopId: 'S-1' }, peek), null, role);
+    }
+    // Never "קופה 0" or "קופה NaN".
+    for (const bad of [0, -1, 1.5, Number.NaN, 'x', null, undefined]) {
+      assert.equal(expectedRegisterNumber({ role: 'till', shopId: 'S-1' }, { shopId: 'S-1', nextRegisterNumber: bad }), null);
+    }
+    assert.equal(expectedRegisterNumber({ role: 'till', shopId: 'S-1' }, { shopId: 'S-1', nextRegisterNumber: '7' }), 7);
   });
 
   it('a kiosk needs its shop', () => {
@@ -336,6 +437,18 @@ describe('adding a device', () => {
       { name: 'TV' },
     );
     assert.equal(pairingRequestBody({ ...inShop, role: 'order_status_board' }, noKiosk).kiosk, undefined);
+  });
+
+  it('a customer display code: its shop, its name and the till it mirrors (optional)', () => {
+    assert.equal(roleNeedsShop('customer_display'), true);
+    assert.equal(addDeviceMissing({ ...draft, role: 'customer_display' }), 'shop');
+    const inShop = { ...draft, companyId: 'c', shopId: 's' };
+    assert.equal(addDeviceMissing({ ...inShop, role: 'customer_display' }), null);
+    assert.deepEqual(
+      pairingRequestBody({ ...inShop, role: 'customer_display', platform: 'web', kds: { name: ' מסך 1 ', screenRole: 'expo', stationIds: [] }, mirrorTillId: 't1' }, noKiosk).kds,
+      { name: 'מסך 1', tillMachineId: 't1' },
+    );
+    assert.deepEqual(pairingRequestBody({ ...inShop, role: 'customer_display' }, noKiosk).kds, {});
   });
 
   it('the generate body carries the role, and the kiosk options for a kiosk only', () => {
@@ -420,12 +533,12 @@ describe('a kiosk charges on an external pinpad', () => {
 
   it('a typed address travels with the kiosk, as the existing pinpad keys', () => {
     const body = pairingRequestBody(
-      { role: 'kiosk', model: 'P18', machineCode: 'K', companyId: 'c', shopId: 's' },
+      { role: 'kiosk', model: 'P18', companyId: 'c', shopId: 's' },
       { ...noKiosk, pinpadHost: ' 10.0.0.5 ', pinpadPort: '9000' },
     );
     assert.deepEqual(body.kiosk, { controllerMachineIds: [], lockDevice: false, pinpadHost: '10.0.0.5', pinpadPort: 9000 });
     const noPort = pairingRequestBody(
-      { role: 'kiosk', model: 'P18', machineCode: 'K', companyId: 'c', shopId: 's' },
+      { role: 'kiosk', model: 'P18', companyId: 'c', shopId: 's' },
       { ...noKiosk, pinpadHost: '10.0.0.5' },
     );
     assert.deepEqual(noPort.kiosk, { controllerMachineIds: [], lockDevice: false, pinpadHost: '10.0.0.5' });

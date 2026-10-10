@@ -22,12 +22,18 @@ DeviceModel = Literal[
     "SYNQPAY_S1P2", "SYNQPAY_S1U2_M4", "SYNQPAY_VERIFONE", "SYNQPAY",
     # PAX A77 / Urovo i9100 (`app.models.vendor_devices.VENDOR_DEVICE_MODEL_IDS`): Agamento / TC.
     "PAX_A77", "UROVO_I9100",
+    # iMin / LANDI / Feitian docks (`app.models.builtin_printers.BUILTIN_PRINTER_MODEL_IDS`): the head with no SDK.
+    "IMIN_FALCON2", "IMIN_FALCON2_58", "IMIN_FALCON2MAX", "IMIN_D4_PRO",
+    "IMIN_SWAN2", "IMIN_SWIFT2", "IMIN_FALCON1", "IMIN_D4",
+    "IMIN_D1", "IMIN_M2", "IMIN_SWIFT1", "IMIN",
+    "LANDI_C20_PRO", "LANDI_M20", "LANDI_P20", "LANDI_APOS_A8",
+    "FEITIAN_M60", "FEITIAN_F360", "FEITIAN_F310", "FEITIAN_M500",
 ]
 
 #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
 #: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
 #: and not accounting systems (app/services/display_devices.py).
-DeviceRole = Literal["till", "kiosk", "kds", "order_status_board"]
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display"]
 
 #: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
 #: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
@@ -162,6 +168,9 @@ class MachineHeartbeatBody(BaseModel):
         serialization_alias="mqttConnected",
     )
     app_version: Optional[str] = Field(None, alias="appVersion")
+    #: What this build can do (e.g. "remote_close_v2"), cleaned in remote_till_z.clean_capabilities —
+    #: never a 422. Absent: an older build that says nothing.
+    capabilities: Optional[Any] = None
 
     # Outbox depth. Accepted and logged rather than stored: it is a live number that
     # is stale the moment it lands, and the machine's real backlog is derivable from
@@ -221,6 +230,9 @@ class MachineHeartbeatBody(BaseModel):
     #: The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what it holds that the cloud
     #: copy has not got yet. Sent only while it serves the LAN; absent leaves it as it was.
     lan_sync: Optional[HeartbeatLanSync] = Field(None, alias="lanSync")
+    #: What this build can do, e.g. ["device_logs_v1"] ("שליחת לוגים לענן"), cleaned in
+    #: app/services/device_logs.py `apply_heartbeat`. Absent (an older build): as it was.
+    capabilities: Optional[List[Any]] = None
 
     model_config = ConfigDict(populate_by_name=True)
 

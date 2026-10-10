@@ -428,6 +428,20 @@ describe('kioskCatalogView', () => {
     assert.deepEqual(shape(view({}, 'hide')), ['drinks:cola,water', 'mains:burger,salad', 'desserts:cake']);
   });
 
+  it("follows a block's own look: hide leaves it out, grey keeps it greyed where sold out hides", () => {
+    // pos-server specs/item-blocks-targets.md: the catalog row's `kioskDisplay`.
+    const looks = [
+      { id: 'cola', categoryId: 'drinks', available: false, kioskDisplay: 'grey' as const },
+      { id: 'water', categoryId: 'drinks', available: false, kioskDisplay: 'hide' as const },
+      { id: 'juice', categoryId: 'drinks', available: false, kioskDisplay: null },
+    ];
+    const cfg = (soldOutMode: 'disable' | 'hide') => ({ catalog: KIOSK_DEFAULTS.catalog, general: { soldOutMode } });
+    const ids = (soldOutMode: 'disable' | 'hide') =>
+      kioskCatalogView(categories, looks, cfg(soldOutMode)).categories.flatMap((c) => c.products.map((p) => `${p.product.id}${p.soldOut ? '*' : ''}`));
+    assert.deepEqual(ids('disable'), ['cola*', 'juice*']);
+    assert.deepEqual(ids('hide'), ['cola*']);
+  });
+
   it('keeps everything, marked, for the editor', () => {
     const v = view({ hiddenCategories: ['mains'], hiddenProducts: ['cake'] }, 'disable', true);
     assert.deepEqual(shape(v), ['drinks:cola,water,juice', 'mains:burger,salad', 'desserts:cake', 'empty:']);
@@ -456,6 +470,31 @@ describe('helpers', () => {
     assert.equal(pickupLabel('', 17), '17');
     assert.equal(pickupLabel(null, 5), '5');
     assert.equal(pickupLabel(' B ', 3), 'B-3');
+  });
+
+  it('"מספר הזמנה": with its letter (the default) or the number alone', () => {
+    assert.equal(KIOSK_DEFAULTS.pickup.labelFormat, 'prefixed');
+    assert.equal(pickupLabel('A', 17, 'prefixed'), 'A-17');
+    assert.equal(pickupLabel('A', 17, 'number'), '17');
+    assert.equal(pickupLabel('', 17, 'number'), '17');
+    assert.equal(pickupLabel('A', 17, null), 'A-17');
+  });
+
+  it('the number alone always takes the shop\'s shared counter (unique across the kiosks)', () => {
+    assert.equal(resolveKioskConfig({ pickup: { labelFormat: 'number' } }).pickup.scope, 'shop');
+    // A lower layer asking for the kiosk's own sequence cannot undo it …
+    assert.equal(resolveKioskConfig({ pickup: { labelFormat: 'number' } }, {}, { pickup: { scope: 'kiosk' } }).pickup.scope, 'shop');
+    // … and with the letter the scope is as set.
+    assert.equal(resolveKioskConfig({ pickup: { scope: 'kiosk' } }).pickup.scope, 'kiosk');
+    const cfg = repairKioskConfig({ ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'number' } });
+    assert.equal(cfg.pickup.scope, 'shop');
+  });
+
+  it('validates the format like the server', () => {
+    const ok = { ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'number' as const } };
+    assert.deepEqual(validateKioskConfig(ok).filter((e) => e.path.startsWith('pickup')), []);
+    const bad = { ...KIOSK_DEFAULTS, pickup: { ...KIOSK_DEFAULTS.pickup, labelFormat: 'letters' as unknown as 'number' } };
+    assert.deepEqual(validateKioskConfig(bad).filter((e) => e.path.startsWith('pickup')).map((e) => e.path), ['pickup.labelFormat']);
   });
 
   it('moves and toggles', () => {
