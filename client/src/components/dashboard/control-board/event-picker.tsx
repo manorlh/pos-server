@@ -50,7 +50,6 @@ export function EventPicker({
   label,
   title,
   excludeId,
-  dark,
   className,
 }: {
   value: string | null;
@@ -63,7 +62,6 @@ export function EventPicker({
   title: string;
   /** An event that may not be picked here (the one already compared). */
   excludeId?: string | null;
-  dark: boolean;
   className?: string;
 }) {
   const t = useTranslations('controlBoard.event');
@@ -123,7 +121,7 @@ export function EventPicker({
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className={cn(boardSurface(dark), 'bg-cb-card text-cb-ink sm:max-w-md')}>
+        <DialogContent className={cn(boardSurface(), 'bg-cb-card text-cb-ink sm:max-w-md')}>
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold">{title}</DialogTitle>
           </DialogHeader>

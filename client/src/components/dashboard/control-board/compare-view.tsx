@@ -133,7 +133,6 @@ export function CompareView({
   scopeParams,
   areas,
   areaId,
-  dark,
   canSeeVouchers,
   canOpenVouchers,
   now,
@@ -147,7 +146,6 @@ export function CompareView({
   scopeParams: CompareScope;
   areas: { id: string; name: string }[];
   areaId: string | null;
-  dark: boolean;
   canSeeVouchers: boolean;
   /** May open the vouchers module (the card's rows link there). */
   canOpenVouchers: boolean;
@@ -493,7 +491,6 @@ export function CompareView({
             onChange={pickEvent}
             label={tEvent('label')}
             title={tEvent('pick')}
-            dark={dark}
           />
         </div>
 
@@ -588,7 +585,6 @@ export function CompareView({
               label={tEvent('label')}
               title={tEvent('pickCompare')}
               excludeId={params.event}
-              dark={dark}
             />
           ) : (
             <Segmented

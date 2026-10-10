@@ -13,9 +13,13 @@ import { ChevronDown, ChevronUp, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { deltaTone, pctChange } from '@/lib/controlBoard';
 
-/** The classes a portalled sheet needs to look like the board it opens from. */
-export function boardSurface(dark: boolean): string {
-  return cn('cb-board', dark && 'dark');
+/**
+ * The classes a portalled sheet needs to look like the board it opens from. Light or dark comes
+ * from `.dark` on <html> (lib/theme), never from the sheet itself: the board's neutral tokens are
+ * the app's, and a second `.dark` here would make `--card` and `--cb-card` refer to each other.
+ */
+export function boardSurface(): string {
+  return 'cb-board';
 }
 
 /** A white rounded card with a hairline and a very soft shadow. */
