@@ -90,15 +90,18 @@ def _open(w, till, seq=1):
     return w.shift(till, seq, status=ShiftStatus.OPEN, opening_cash="100.00")
 
 
-def _c100(w, rows):
+def _report(w, rows):
     bases = load_base_documents(w.db, w.tenant.id, rows)
     dicts = [transform_transaction_for_open_format(tx, 18.0, bases) for tx in rows]
-    result = generate_tax_report(
+    return generate_tax_report(
         dicts, {"vatNumber": "515151515", "companyName": "Acme"},
         {"start": NOW - timedelta(days=1), "end": NOW + timedelta(days=1)},
         global_tax_rate=18.0,
     )
-    return [line for line in result.bkmv_content if line.startswith("C100")]
+
+
+def _c100(w, rows):
+    return [line for line in _report(w, rows).bkmv_content if line.startswith("C100")]
 
 
 def _reissue(original, shift_id, *, minutes=5, **customer):
@@ -269,6 +272,156 @@ class TestTheReissue:
         _push(w, till, [_doc(shift.id, "10.00", ("cash", "10.00", True))])
 
         assert compute_totals(w.db, [shift.id]).payment_breakdown.get("cash") == Decimal("10.00")
+
+
+# ── Production vouchers and a mixed basket's document ─────────────────────────
+
+
+def _voucher_entry(item_id, amount="40.00"):
+    """A production voucher's deduction as a till sends it (the contract's §4.1), with its holds."""
+    return {
+        "kind": "production_voucher", "voucherId": str(uuid.uuid4()), "batchId": str(uuid.uuid4()),
+        "redemptionId": str(uuid.uuid4()), "reservationId": str(uuid.uuid4()), "serial": 8, "uses": 1,
+        "amount": amount, "lines": [{"itemId": item_id, "amount": amount}],
+    }
+
+
+class TestVouchersAndBaskets:
+    """
+    The owner, 10.10.2026: "שוברי הפקה הם לא חלק מההכנסה" - a document paid with them is re-issued like
+    any other, the voucher legs mirrored as no-money legs and the vouchers themselves never redeemed,
+    confirmed or released again; a mixed basket's document is re-issued on its own.
+    """
+
+    @pytest.fixture
+    def spies(self, monkeypatch):
+        from app.services import prepaid_vouchers as PV
+
+        calls = []
+        monkeypatch.setattr(PV, "confirm", lambda *a, **k: calls.append("confirm"))
+        monkeypatch.setattr(PV, "confirm_from_document", lambda *a, **k: calls.append("confirm_from_document") or [])
+        monkeypatch.setattr(PV, "link_deductions", lambda *a, **k: calls.append("link_deductions"))
+        return calls
+
+    def _voucher_sale(self, shift, **extra):
+        item = _line("100.00")
+        return _doc(
+            shift.id, "100.00", ("cash", "60.00"), ("production_voucher", "40.00"), items=[item],
+            voucherDiscounts=[_voucher_entry(item["id"])], **extra,
+        )
+
+    def test_the_invoice_of_a_reissue_never_redeems_confirms_or_stores_a_voucher(self, w, spies):
+        from app.models.prepaid_voucher import TransactionVoucherDiscount
+
+        till = w.tills[0]
+        shift = _open(w, till)
+        original = self._voucher_sale(shift)
+        _push(w, till, [original])
+        # Control: an ordinary sale carrying voucher data does link and confirm (the spies see it).
+        assert spies
+        before = list(spies)
+
+        credit, invoice = _reissue(original, shift.id, customerName="Acme", customerVatNumber="515151512")
+        # An older or foreign till that sends the vouchers on the new invoice: every one of them is ignored.
+        invoice["voucherDiscounts"] = [_voucher_entry(invoice["items"][0]["id"])]
+        invoice["payments"][1]["reservationId"] = str(uuid.uuid4())
+        invoice["items"][0].update(prepaidDeduction="40.00", voucherDiscount="5.00", voucherMemoValueAgorot=900,
+                                   voucherReservationId=str(uuid.uuid4()), voucherRedemptionId=str(uuid.uuid4()))
+        result = _push(w, till, [credit, invoice])
+
+        assert [r.status for r in result.results] == ["accepted", "accepted"]
+        assert spies == before, "no hold confirmed, no redemption linked, for the credit or the new invoice"
+        stored = _get(w, invoice)
+        assert w.db.query(TransactionVoucherDiscount).filter(TransactionVoucherDiscount.transaction_id == stored.id).count() == 0
+        # The original keeps its own row; the invoice keeps no share of a voucher on its lines.
+        assert w.db.query(TransactionVoucherDiscount).filter(
+            TransactionVoucherDiscount.transaction_id == uuid.UUID(original["id"])).count() == 1
+        line = stored.items[0]
+        assert (line.prepaid_deduction, line.voucher_discount, line.voucher_memo_value, line.voucher_redemption_id) == (None, None, None, None)
+
+    def test_a_voucher_leg_nets_in_the_originals_shift(self, w, spies):
+        till = w.tills[0]
+        shift = _open(w, till)
+        original = self._voucher_sale(shift)
+        _push(w, till, [original])
+        credit, invoice = _reissue(original, shift.id, customerName="Acme", customerVatNumber="515151512")
+        _push(w, till, [credit, invoice])
+
+        breakdown = compute_totals(w.db, [shift.id]).payment_breakdown
+        assert breakdown.get("cash") == Decimal("60.00")
+        # The credit takes the voucher leg out, the invoice puts it back: the original's own figure.
+        assert breakdown.get("production_voucher") == Decimal("40.00")
+        assert breakdown.get(NO_MONEY_BUCKET, Decimal("0")) == Decimal("0")
+
+    def test_in_a_later_shift_the_voucher_leg_is_apart_with_the_pair(self, w, spies):
+        till = w.tills[0]
+        first = w.shift(till, 1)
+        original = self._voucher_sale(first, minutes=-120)
+        _push(w, till, [original])
+        later = w.shift(till, 2, status=ShiftStatus.OPEN, opening_cash="0.00")
+        credit, invoice = _reissue(original, later.id, customerName="Acme", customerVatNumber="515151512")
+        _push(w, till, [credit, invoice])
+
+        totals = compute_totals(w.db, [later.id])
+        assert totals.payment_breakdown.get("cash", Decimal("0")) == Decimal("0")
+        assert totals.payment_breakdown.get("production_voucher", Decimal("0")) == Decimal("0")
+        assert totals.payment_breakdown.get(NO_MONEY_BUCKET) == Decimal("0")
+        assert totals.production_voucher_deductions_total == Decimal("0")
+
+    def test_the_uniform_file_of_a_voucher_pair_adds_up_and_nets(self, w, spies):
+        from test_open_format_131 import _check_document, c100
+
+        till = w.tills[0]
+        shift = _open(w, till)
+        original = self._voucher_sale(shift)
+        _push(w, till, [original])
+        credit, invoice = _reissue(original, shift.id, customerName="Acme", customerVatNumber="515151512")
+        _push(w, till, [credit, invoice])
+
+        rows = [_get(w, d) for d in (original, credit, invoice)]
+        documents = _check_document(_report(w, rows))  # every total adds up; no D120 under the credit note
+        heads = {h["1203"]: h for h, _ in documents if h["1203"] == "330"}
+        sales = [h for h, _ in documents if h["1203"] == "320"]
+        assert len(documents) == 3 and len(sales) == 2
+        # The credit cancels exactly what the new invoice restates, which is what the original said.
+        credit_head = heads["330"]
+        assert abs(credit_head["1223"]) == sales[0]["1223"] == sales[1]["1223"]
+        # The voucher leg is a D120 of the invoice like any other leg of a 320.
+        result = _report(w, rows)
+        assert len([l for l in result.bkmv_content if l.startswith("D120")]) == 4
+
+    def test_a_baskets_320_is_reissued_alone_with_its_exchange_leg(self, w, spies):
+        from app.models.transaction import Transaction as T
+
+        till = w.tills[0]
+        shift = _open(w, till)
+        basket = str(uuid.uuid4())
+        older = _doc(shift.id, "80.00", ("cash", "80.00"), minutes=-30)
+        sale = _doc(shift.id, "100.00", ("cash", "20.00"), ("exchange", "80.00"), basketId=basket)
+        returns = _doc(
+            shift.id, "80.00", ("exchange", "80.00"), doc_type=330, basketId=basket,
+            refundOfTransactionId=older["id"], items=[_line("80.00", refundOfItemId=older["items"][0]["id"])],
+        )
+        _push(w, till, [older, sale, returns])
+        sibling = {
+            "status": _get(w, returns).status, "updated": _get(w, returns).updated_at, "basket": _get(w, returns).basket_id,
+            "older_status": _get(w, older).status,
+        }
+
+        credit, invoice = _reissue(sale, shift.id, customerName="Acme", customerVatNumber="515151512")
+        assert _push(w, till, [credit, invoice]).results[0].status == "accepted"
+
+        # Neither document of the pair joins the basket, and the basket's other documents are as they were.
+        assert _get(w, credit).basket_id is None and _get(w, invoice).basket_id is None
+        again = _get(w, returns)
+        assert {"status": again.status, "updated": again.updated_at, "basket": again.basket_id,
+                "older_status": _get(w, older).status} == sibling
+        assert _get(w, sale).status == TransactionStatus.REFUNDED
+        # The shift is what it was: cash and the basket's exchange, with the pair adding nothing.
+        breakdown = compute_totals(w.db, [shift.id]).payment_breakdown
+        assert breakdown.get("cash") == Decimal("100.00")  # older 80 + the sale's 20
+        assert breakdown.get("exchange") == Decimal("0.00")  # 80 in on the sale, 80 out on the returns
+        assert breakdown.get(NO_MONEY_BUCKET, Decimal("0")) == Decimal("0")
 
 
 # ── The uniform file ──────────────────────────────────────────────────────────

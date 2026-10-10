@@ -99,11 +99,36 @@ class _ItemForParts:
         self.details = details
 
 
+def _is_reissue_invoice(tx, refund_of) -> bool:
+    """
+    The new invoice of a re-issue in a customer's name ("הפק חשבונית על שם לקוח",
+    docs/SPEC_CUSTOMER_INVOICE.md): a sale that names the sale it replaces. It states the
+    vouchers its original redeemed, on paper, and redeems nothing itself — the owner, 10.10.2026:
+    production vouchers are not part of the income, and a voucher is never redeemed, confirmed or
+    released again. Whatever voucher data such a document carries (a till that sends it, an older
+    one) is ignored here: no row stored, no hold confirmed, no redemption linked, no share kept.
+    """
+    from app.services.tenders import is_refund_document
+
+    if getattr(tx, "reissue_of_transaction_id", None) is None:
+        return False
+    link = tx.refund_of_transaction_id if refund_of is ... else refund_of
+    return not is_refund_document(document_type=tx.document_type, refund_of_transaction_id=link)
+
+
 def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     """
     Store the document's discount vouchers (replacing a re-push's) and, on a sale, confirm
     each one's reservation. Returns the warnings of what could not be linked.
     """
+    if _is_reissue_invoice(tx, refund_of):
+        from app.models.prepaid_voucher import TransactionVoucherDiscount as _TVD
+
+        db.query(_TVD).filter(_TVD.transaction_id == tx.id).delete(synchronize_session=False)
+        sent = bool(getattr(tx, "voucher_discounts", None)) or any(
+            getattr(p, "reservation_id", None) for p in (getattr(tx, "payments", None) or [])
+        )
+        return ["voucher data ignored: the document re-issues another, and redeems nothing"] if sent else []
     from decimal import Decimal as _D
 
     from app.models.prepaid_voucher import TransactionVoucherDiscount
@@ -1065,6 +1090,9 @@ def upsert_transactions(
                     "text": "המסמך מפיק מחדש מסמך של עסק אחר — הקישור לא נשמר והמסמך נקלט",
                 })
                 link_warnings.append("reissueOfTransactionId: names a document of another tenant, stored without the link")
+            # The new invoice of a re-issue redeems no voucher (_is_reissue_invoice): its lines keep none of
+            # a voucher's shares either, so no item report counts what its original already did.
+            reissue_invoice = _is_reissue_invoice(tx, refund_of)
 
             # The approver: kept as sent, linked when they are of the issuing till's
             # business, never a reason to refuse or hold the document.
@@ -1302,11 +1330,11 @@ def upsert_transactions(
                         promotion_discount=it.promotion_discount,
                         promotion_id=_promotion_uuid(it.promotion_id),
                         # Discount vouchers' share (docs/SPEC_VOUCHER_PRODUCTION.md §7).
-                        voucher_discount=getattr(it, "voucher_discount", None),
+                        voucher_discount=None if reissue_invoice else getattr(it, "voucher_discount", None),
                         # Production vouchers: the deduction's share, a ₪0 memo line's value.
-                        prepaid_deduction=getattr(it, "prepaid_deduction", None),
-                        voucher_memo_value=getattr(it, "voucher_memo_value_agorot", None),
-                        voucher_redemption_id=getattr(it, "voucher_redemption_id", None),
+                        prepaid_deduction=None if reissue_invoice else getattr(it, "prepaid_deduction", None),
+                        voucher_memo_value=None if reissue_invoice else getattr(it, "voucher_memo_value_agorot", None),
+                        voucher_redemption_id=None if reissue_invoice else getattr(it, "voucher_redemption_id", None),
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),
