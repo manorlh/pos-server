@@ -105,6 +105,7 @@ export function StateBadges({ k }: { k: KioskSummary }) {
   return (
     <span className="flex flex-wrap items-center gap-1">
       {!k.enabled ? <Badge variant="outline">{t('disabled')}</Badge> : null}
+      {k.homeRole === 'till' ? <Badge variant="outline">{t('homeTill')}</Badge> : null}
       {k.paused ? (
         <Badge className="bg-amber-500 text-white">
           <PauseCircle /> {t('paused')}

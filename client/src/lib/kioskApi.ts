@@ -104,6 +104,8 @@ export interface KioskSummary {
   flowState: KioskFlowState | null;
   /** "מצב עבודה: קיוסק / קופה" — absent from an older server. */
   tillMode?: KioskTillMode | null;
+  /** The role it was given: a kiosk, or a till its owner lets work as a kiosk (P:/specs/kiosk-landscape-till-mode.md §5.10). */
+  homeRole?: 'kiosk' | 'till';
   display?: KioskDisplayReport | null;
   shiftOpen: boolean | null;
   /** Who produces this till's Z: "till" (it does, on request) or "cloud" (the shop Z). */
