@@ -51,8 +51,11 @@ ROLE_TILL = "till"
 ROLE_KIOSK = "kiosk"
 ROLE_KDS = "kds"
 ROLE_ORDER_STATUS_BOARD = "order_status_board"
+#: "מסך לקוח" (app/services/customer_display.py, P:/specs/customer-display.md §4): a device that shows the
+#: customer one till's sale. Told apart by its own settings layer (customerDisplay.device), not a KDS row.
+ROLE_CUSTOMER_DISPLAY = "customer_display"
 FISCAL_ROLES = (ROLE_TILL, ROLE_KIOSK)
-NON_FISCAL_ROLES = (ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
+NON_FISCAL_ROLES = (ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
 ROLES = FISCAL_ROLES + NON_FISCAL_ROLES
 
 PLATFORM_ANDROID = "android"
@@ -63,7 +66,7 @@ PLATFORM_WEB = "web"
 PLATFORMS = (PLATFORM_ANDROID, PLATFORM_WINDOWS, PLATFORM_WEB)
 PLATFORM_LABELS = {PLATFORM_ANDROID: "Android", PLATFORM_WINDOWS: "Windows", PLATFORM_WEB: "דפדפן (Web)"}
 #: The roles a browser may be added as.
-WEB_ROLES = (ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
+WEB_ROLES = (ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
 WEB_PLATFORM_NOT_A_TILL = "web_platform_not_a_till"
 WEB_PLATFORM_NOT_A_TILL_MESSAGE = (
     "בדפדפן אפשר להפעיל קיוסק, מסך מטבח (KDS) או מסך מוכן / לא מוכן — לא קופה. לקופה בחרו Android או Windows."
@@ -82,6 +85,7 @@ PLATFORM_MISMATCH = "platform_mismatch"
 REQUIRES_SHOP_MESSAGES = {
     ROLE_KDS: "מסך מטבח (KDS) נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
     ROLE_ORDER_STATUS_BOARD: "מסך מוכן / לא מוכן נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
+    ROLE_CUSTOMER_DISPLAY: "מסך לקוח נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
 }
 STATION_NEEDED_MESSAGE = (
     "מסך עמדה צריך לפחות עמדת מטבח אחת. בחרו עמדות, או סוג מסך אחר (Expo / מנהל מטבח)."
@@ -183,6 +187,10 @@ def prime_kds(db: Session, machines: Sequence[Any]) -> None:
 
 
 def role_of_display(db: Optional[Session], machine: Any) -> str:
+    from app.services import customer_display
+
+    if customer_display.is_display_device(machine):
+        return ROLE_CUSTOMER_DISPLAY
     return display_role(kds_device_of(db, machine))
 
 
@@ -259,6 +267,17 @@ def check_pairing_request(db: Session, *, role: str, shop_id: Any, kds: Any = No
     if shop is None:
         raise _refuse("shop_not_found", None, "הסניף לא נמצא.", status.HTTP_404_NOT_FOUND)
     name = _clean_name(getattr(kds, "name", None))
+    if role == ROLE_CUSTOMER_DISPLAY:
+        # The till it mirrors (optional: chosen later on the customer-display page) — a till of this shop.
+        from app.services import customer_display
+
+        till = getattr(kds, "till_machine_id", None)
+        if till is not None:
+            try:
+                till = str(customer_display.check_till_for_display(db, shop.id, till).id)
+            except customer_display.CustomerDisplayError as exc:
+                raise _refuse(exc.code, None, exc.message, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return {"name": name, customer_display.MIRROR_KEY: till}
     if role == ROLE_ORDER_STATUS_BOARD:
         return {"name": name, "screenRole": BOARD_SCREEN_ROLE, "stationIds": []}
     screen_role = getattr(kds, "screen_role", None) or DEFAULT_KDS_SCREEN_ROLE
@@ -326,6 +345,21 @@ def apply_on_pairing(db: Session, pairing_code: Any, machine: Any) -> bool:
         return False
     options = getattr(pairing_code, "kds_options", None)
     options = options if isinstance(options, dict) else {}
+    if role == ROLE_CUSTOMER_DISPLAY:
+        # "מסך לקוח": no KDS row — its own settings layer says what it is and which till it mirrors.
+        from app.services import customer_display
+
+        try:
+            if options.get("name"):
+                machine.name = options["name"]
+            customer_display.apply_on_pairing(machine, options)
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 - the pairing stands; the page binds the till
+            db.rollback()
+            logger.warning("customer display code %s: machine %s not marked yet (%s)", pairing_code.id, machine.id, exc)
+            return False
+        forget(machine)
+        return True
     try:
         shop = db.get(Shop, machine.shop_id)
         screen_role = BOARD_SCREEN_ROLE if role == ROLE_ORDER_STATUS_BOARD else (
@@ -423,7 +457,7 @@ def role_change_refusal(machine: Any, current: str, wanted: str):
 
     labels = {
         ROLE_TILL: "קופה", ROLE_KIOSK: "קיוסק", ROLE_KDS: "מסך מטבח (KDS)",
-        ROLE_ORDER_STATUS_BOARD: "מסך מוכן / לא מוכן",
+        ROLE_ORDER_STATUS_BOARD: "מסך מוכן / לא מוכן", ROLE_CUSTOMER_DISPLAY: "מסך לקוח",
     }
     return _refuse(
         ROLE_CHANGE_REQUIRES_PAIRING, machine,
@@ -448,6 +482,9 @@ def change_display_role(db: Session, machine: Any, wanted: str, kds: Any = None)
     current = role_of_display(db, machine)
     if wanted == current:
         return False
+    if ROLE_CUSTOMER_DISPLAY in (wanted, current):
+        # A customer display mirrors a till; a KDS / board shows the kitchen: a new pairing, not a switch.
+        raise role_change_refusal(machine, current, wanted)
     if machine.shop_id is None:
         raise _refuse(
             f"{wanted}_requires_shop", machine, REQUIRES_SHOP_MESSAGES[wanted], status.HTTP_400_BAD_REQUEST,

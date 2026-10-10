@@ -394,6 +394,12 @@ from app.routers import till_design as till_design_router  # noqa: E402
 
 app.include_router(till_design_router.till_router, prefix=_prefix)
 app.include_router(till_design_router.router, prefix=_prefix)
+# "מסך לקוח" (app/routers/customer_display.py, P:/specs/customer-display.md): the settings layers,
+# the devices' configuration and the cloud relay of a till's customer screen.
+from app.routers import customer_display as customer_display_router  # noqa: E402
+
+app.include_router(customer_display_router.till_router, prefix=_prefix)
+app.include_router(customer_display_router.router, prefix=_prefix)
 # A kiosk's alerts on the tills ("התראות לקופות", app/routers/kiosk_alerts.py).
 from app.routers import kiosk_alerts as kiosk_alerts_router  # noqa: E402
 

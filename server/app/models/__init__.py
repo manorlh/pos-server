@@ -182,6 +182,8 @@ from app.models.device_log_upload import DeviceLogUpload
 from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, StockResetItem
 # "יעדים ותחרות" (app/services/sales_targets.py).
 from app.models.sales_target import SalesTarget, SalesTargetHit
+# "מסך לקוח": the cloud relay of a till's customer screen (app/services/customer_display.py).
+from app.models.customer_display import CustomerDisplayState
 
 __all__ = [
     "User", "UserRole",
@@ -273,4 +275,5 @@ __all__ = [
     "SoldOutMark", "KioskQuickHide", "DeviceCommand", "DeviceRemoteState", "CommandRequestKey", "DeviceLogUpload",
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
+    "CustomerDisplayState",
 ]

@@ -47,7 +47,8 @@ ROLE_KIOSK = "kiosk"
 #: The display devices (app/services/display_devices.py): not tills, not accounting systems.
 ROLE_KDS = DD.ROLE_KDS
 ROLE_ORDER_STATUS_BOARD = DD.ROLE_ORDER_STATUS_BOARD
-ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD)
+ROLE_CUSTOMER_DISPLAY = DD.ROLE_CUSTOMER_DISPLAY
+ROLES = (ROLE_TILL, ROLE_KIOSK, ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
 
 INVALID_CONTROLLER_MESSAGE = (
     "אחת הקופות השולטות שנבחרו אינה קופה פעילה של אותה חברה (או שהיא קיוסק בעצמה). בחרו שוב."

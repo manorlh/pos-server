@@ -172,7 +172,7 @@ SECTIONS: Tuple[Section, ...] = (
         "till_settings", "הגדרות קופות",
         "הגדרות הקופות לפי רמה (ארגון, חברה, סניף, עמדה, קופה): אמצעי תשלום, חריגים, מצב הדרכה "
         "ופרמטרי מגירת המזומן.",
-        ("/dashboard/payment-methods", "/dashboard/exception-settings"),
+        ("/dashboard/payment-methods", "/dashboard/exception-settings", "/dashboard/customer-display"),
     ),
     Section(
         "pos_users", "קופאים (POS)", "עובדי הקופה, קודי PIN, מי מחובר איפה ותפקידים והרשאות בקופה.",
@@ -507,6 +507,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
+    # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.
+    (_ALL, "/customer-display/*", S("till_settings", "devices")),
     # ── Devices ──
     ("POST", "/device-management/*", S("devices")),
     (_ALL, "/pairing/*", S("devices")),
