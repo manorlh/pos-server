@@ -181,11 +181,15 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // turn; in landscape the side cart where there is room and the rail or the top tabs (lib/displayProfile.ts,
   // the same rules as the Android kiosk). Portrait: the config exactly as it is. The cart and the flow are
   // state, never the layout's — a resize keeps them.
-  const size = useWindowSize();
-  const display = useMemo(
-    () => kioskDisplay(displayProfile(browserFacts(size.w, size.h, typeof window !== 'undefined' ? window.devicePixelRatio : 1))),
-    [size.w, size.h],
+  const raw = useWindowSize();
+  const screenProfile = useMemo(
+    () => displayProfile(browserFacts(raw.w, raw.h, typeof window !== 'undefined' ? window.devicePixelRatio : 1)),
+    [raw.w, raw.h],
   );
+  // The screen in its effective dp: a 4K screen at ratio 1 is laid out as full HD and drawn at twice the size
+  // (the root's zoom, below); every other screen exactly as its window says.
+  const size = useMemo(() => ({ w: screenProfile.widthDp, h: screenProfile.heightDp }), [screenProfile.widthDp, screenProfile.heightDp]);
+  const display = useMemo(() => kioskDisplay(screenProfile), [screenProfile]);
   const cfg = useMemo(() => {
     const base = view.config as KioskConfig;
     if (!display.landscape) return base;
@@ -745,6 +749,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    // Landscape (lib/displayProfile.ts): the cart and the checkout's steps in two columns, a readable width.
+    twoColumns: display.twoColumns,
+    contentMaxWidth: display.contentMaxWidthDp,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -948,7 +955,16 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       ref={screenRef}
       dir="rtl"
       className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
-      style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
+      style={{
+        ...rootVars,
+        ...chrome.style,
+        background: colors.background,
+        color: colors.text,
+        fontFamily: m.font,
+        touchAction: 'manipulation',
+        // A 4K screen at ratio 1: laid out in its effective size and drawn at the profile's scale.
+        ...(screenProfile.scale !== 1 ? { zoom: screenProfile.scale, width: size.w, height: size.h } : {}),
+      }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
         // "ניהול הקיוסק": a 2 s press in the physical top-right corner.

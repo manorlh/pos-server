@@ -11,7 +11,8 @@ import { layoutOf, mealViewOf, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { Smartphone, Tablet } from 'lucide-react';
+import { Monitor, Smartphone, Tablet } from 'lucide-react';
+import { AS_TODAY, displayProfile, kioskDisplay, kioskDisplayTheme } from '@/lib/displayProfile';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 import { fetchGroups, fetchProductMenu, fetchUpsells } from '@/lib/menuApi';
@@ -97,19 +98,24 @@ export interface KioskPreviewControls {
 const SCREENS: PreviewScreen[] = ['attract', 'service', 'catalog', 'product', 'cart', 'tip', 'details', 'pay', 'success', 'paused'];
 const PAUSED_VARIANTS: PausedVariant[] = ['paused', 'closed', 'noPayment', 'offline'];
 
-type Frame = 'phone' | 'tablet';
+type Frame = 'phone' | 'tablet' | 'landscape';
 
 const FRAME_SIZE: Record<Frame, { w: number; h: number }> = {
   phone: { w: 300, h: 620 },
   tablet: { w: 400, h: 600 },
+  // "קיוסק לרוחב" (P:/specs/kiosk-landscape-till-mode.md §4): a 1920×1080 kiosk, drawn at a third.
+  landscape: { w: 640, h: 360 },
 };
+
+/** The landscape frame's display: a 21.5" full-HD kiosk at mdpi — the side cart, the rail (lib/displayProfile.ts). */
+const LANDSCAPE_DISPLAY = kioskDisplay(displayProfile({ widthPx: 1920, heightPx: 1080, densityDpi: 160, xdpi: 102.5, ydpi: 102.5 }));
 
 /**
  * The device each frame stands for, in dp, for the till's width rules: a phone and a PORTRAIT
  * tablet. The side order panel needs a wide (landscape) screen on the till (900 dp and up), so
  * both frames show the bar, as the till does on them.
  */
-const FRAME_DEVICE_DP: Record<Frame, number> = { phone: 360, tablet: 800 };
+const FRAME_DEVICE_DP: Record<Frame, number> = { phone: 360, tablet: 800, landscape: 1920 };
 
 /** The preview's sample pause ("הפסקה"): ending in half an hour, on a round five minutes — so "נחזור ב-HH:MM" shows. */
 function samplePauseEnd(nowMs: number): string {
@@ -393,9 +399,13 @@ export function KioskPreview({
   const after = (s: 'cart' | 'tip' | 'details'): PreviewScreen => (s === 'cart' ? checkoutSteps[0] : checkoutSteps[checkoutSteps.indexOf(s) + 1]) ?? 'pay';
   const before = (s: 'tip' | 'details'): PreviewScreen => checkoutSteps[checkoutSteps.indexOf(s) - 1] ?? 'cart';
 
-  const wide = frame === 'tablet';
-  const panel = cartPanelShown(config.theme, FRAME_DEVICE_DP[frame]);
-  const side = config.theme.categoryLayout !== 'top';
+  const wide = frame !== 'phone';
+  // The landscape frame draws what a landscape kiosk decides by itself (the side cart, the rail or the tabs).
+  const display = frame === 'landscape' ? LANDSCAPE_DISPLAY : AS_TODAY;
+  const shownTheme = kioskDisplayTheme(config.theme, display);
+  const shownConfig = shownTheme === config.theme ? config : { ...config, theme: shownTheme };
+  const panel = cartPanelShown(shownTheme, FRAME_DEVICE_DP[frame]);
+  const side = shownTheme.categoryLayout !== 'top';
   // "אפקטים": the preview draws the configured profile ("auto" — the device's choice — previews the full look).
   const profile = kioskRenderProfile(config.motion.effects);
   // "מנוע הנפשות": every event resolved once (the preset, the speed, the events' own values, the profile).
@@ -474,7 +484,9 @@ export function KioskPreview({
   /** The start button's box over the whole frame (below a strip at the top). */
   const ctaOnFrame = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const model: PreviewModel = {
-    cfg: config,
+    cfg: shownConfig,
+    twoColumns: display.twoColumns,
+    contentMaxWidth: display.contentMaxWidthDp ? Math.round((display.contentMaxWidthDp * FRAME_SIZE[frame].w) / FRAME_DEVICE_DP[frame]) : null,
     c: colors,
     radius: config.theme.cornerRadius,
     btnRadius: buttonRadius(config.theme),
@@ -654,7 +666,7 @@ export function KioskPreview({
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold">{t('title')}</span>
         <div className="inline-flex rounded-xl bg-muted p-1">
-          {(['phone', 'tablet'] as const).map((f) => (
+          {(['phone', 'tablet', 'landscape'] as const).map((f) => (
             <button
               key={f}
               type="button"
@@ -665,7 +677,7 @@ export function KioskPreview({
                 frame === f ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground',
               )}
             >
-              {f === 'phone' ? <Smartphone className="h-3.5 w-3.5" /> : <Tablet className="h-3.5 w-3.5" />}
+              {f === 'phone' ? <Smartphone className="h-3.5 w-3.5" /> : f === 'tablet' ? <Tablet className="h-3.5 w-3.5" /> : <Monitor className="h-3.5 w-3.5" />}
               {t(f)}
             </button>
           ))}

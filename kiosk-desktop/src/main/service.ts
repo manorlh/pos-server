@@ -124,6 +124,11 @@ export interface PlatformHooks {
 
 export interface ServiceOptions {
   dataDir: string;
+  /**
+   * The screen it lays itself out on, for the cloud's fleet view (`status.display`, pos-server
+   * kiosk_till_mode.clean_display): the primary display in DIPs and its scale (displayReport.ts).
+   */
+  displayInfo?: () => Record<string, unknown> | null;
   appVersion: string;
   deviceInfo: Record<string, string>;
   secretBox?: SecretBox;
@@ -758,6 +763,7 @@ export class KioskService extends EventEmitter {
       ...(this.kv.getJson(SHOP_Z_CLOSE_RESULT) ? { closeResult: this.kv.getJson(SHOP_Z_CLOSE_RESULT) } : {}),
       // "תקינות מכשירים" (pos-server kiosk_health.clean_health): what only the kiosk sees.
       health: this.healthReport(health),
+      ...(this.opts.displayInfo ? { display: this.opts.displayInfo() ?? undefined } : {}),
     };
   }
 

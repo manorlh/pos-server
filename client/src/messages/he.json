@@ -15276,6 +15276,7 @@
       "tickerLabel": "כיתוב רץ",
       "phone": "טלפון",
       "tablet": "טאבלט",
+      "landscape": "קיוסק לרוחב",
       "screens": {
         "attract": "פתיחה",
         "service": "שירות",
