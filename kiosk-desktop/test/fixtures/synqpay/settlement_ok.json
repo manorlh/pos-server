@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "id": "1234567890",
+  "result": {
+    "result": "OK",
+    "settlement": {
+      "terminalId": "0883198",
+      "settlementId": "5b884a09-7d48-457a-91d6-fae615d6aeeb",
+      "batchNo": "01649624",
+      "report": " בדיקות ארנה          <!>מספר מסוף:  0884401   <!>תאריך:      27/11/2024<!>",
+      "settledTransactions": [
+        { "type": "R", "referenceId": "5544a15f-2759-4622-8a97-53adfbbee184", "transactionId": "24111020193508831988304" },
+        { "type": "R", "referenceId": "65f0bf12-8a42-40d1-98aa-a91cb920cf1f", "transactionId": "24111020204508831983607" }
+      ],
+      "time": "2024-11-28T01:34:00.264+08:00"
+    }
+  }
+}

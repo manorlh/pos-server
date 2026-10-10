@@ -1,0 +1,1028 @@
+{
+  "_comment": "Shared by pos-android app/src/test/resources and pos-server tests/fixtures (keep both copies equal): the display profile every screen lays itself out by (P:/specs/kiosk-landscape-till-mode.md section 2) - the facts a display reports, the profile (size class, believable physical size, scale, effective dp, the kiosk's text scale), the kiosk's landscape decisions and the till's layout. domain/DisplayProfile.kt and client/src/lib/displayProfile.ts must both match it.",
+  "cases": [
+    {
+      "name": "11in tablet 1280x800 mdpi",
+      "facts": {
+        "widthPx": 1280,
+        "heightPx": 800,
+        "densityDpi": 160,
+        "xdpi": 137.9,
+        "ydpi": 137.9
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "11",
+        "diagonalInches": 10.9,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1280,
+        "heightDp": 800,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": true,
+        "contentMaxWidthDp": 794,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "10.1in P18 1920x1200 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1200,
+        "densityDpi": 240,
+        "xdpi": 224.2,
+        "ydpi": 224.2
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "11",
+        "diagonalInches": 10.1,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1280,
+        "heightDp": 800,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": true,
+        "contentMaxWidthDp": 794,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "11in 1920x1200 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1200,
+        "densityDpi": 240,
+        "xdpi": 205.8,
+        "ydpi": 205.8
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "11",
+        "diagonalInches": 11.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1280,
+        "heightDp": 800,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": true,
+        "contentMaxWidthDp": 794,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "13.3in 1920x1080 mdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 165.6,
+        "ydpi": 165.6
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "13",
+        "diagonalInches": 13.3,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "13.3in 1920x1080 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 240,
+        "xdpi": 165.6,
+        "ydpi": 165.6
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "13",
+        "diagonalInches": 13.3,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1280,
+        "heightDp": 720,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": true,
+        "contentMaxWidthDp": 794,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "15.6in 1920x1080 mdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 141.2,
+        "ydpi": 141.2
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "15",
+        "diagonalInches": 15.6,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.04
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.04
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "15.6in 1920x1080 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 240,
+        "xdpi": 141.2,
+        "ydpi": 141.2
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "15",
+        "diagonalInches": 15.6,
+        "physicalTrusted": true,
+        "scale": 0.96,
+        "widthDp": 1333,
+        "heightDp": 750,
+        "kioskTypeScale": 1.04
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 347,
+        "rail": true,
+        "contentMaxWidthDp": 826,
+        "twoColumns": true,
+        "typeScale": 1.04
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "15.6in 3840x2160 xhdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 320,
+        "xdpi": 282.4,
+        "ydpi": 282.4
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "15",
+        "diagonalInches": 15.6,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.04
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.04
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "21.5in 1920x1080 mdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 102.5,
+        "ydpi": 102.5
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "21",
+        "diagonalInches": 21.5,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.1
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.1
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "21.5in 1920x1080 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 240,
+        "xdpi": 102.5,
+        "ydpi": 102.5
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "21",
+        "diagonalInches": 21.5,
+        "physicalTrusted": true,
+        "scale": 0.86,
+        "widthDp": 1488,
+        "heightDp": 837,
+        "kioskTypeScale": 1.1
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 387,
+        "rail": true,
+        "contentMaxWidthDp": 923,
+        "twoColumns": true,
+        "typeScale": 1.1
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 420
+      }
+    },
+    {
+      "name": "21.5in 3840x2160 xhdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 320,
+        "xdpi": 204.9,
+        "ydpi": 204.9
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "21",
+        "diagonalInches": 21.5,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.1
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.1
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "27in 1920x1080 mdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 81.6,
+        "ydpi": 81.6
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "27",
+        "diagonalInches": 27.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.16
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.16
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "27in 1920x1080 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 240,
+        "xdpi": 81.6,
+        "ydpi": 81.6
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "27",
+        "diagonalInches": 27.0,
+        "physicalTrusted": true,
+        "scale": 0.77,
+        "widthDp": 1662,
+        "heightDp": 935,
+        "kioskTypeScale": 1.16
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 432,
+        "rail": true,
+        "contentMaxWidthDp": 1030,
+        "twoColumns": true,
+        "typeScale": 1.16
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 465
+      }
+    },
+    {
+      "name": "27in 3840x2160 mdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 160,
+        "xdpi": 163.2,
+        "ydpi": 163.2
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "27",
+        "diagonalInches": 27.0,
+        "physicalTrusted": true,
+        "scale": 1.41,
+        "widthDp": 2723,
+        "heightDp": 1531,
+        "kioskTypeScale": 1.16
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1200,
+        "twoColumns": true,
+        "typeScale": 1.16
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 560
+      }
+    },
+    {
+      "name": "27in 3840x2160 xhdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 320,
+        "xdpi": 163.2,
+        "ydpi": 163.2
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "27",
+        "diagonalInches": 27.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.16
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.16
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "32in 1920x1080 mdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 68.8,
+        "ydpi": 68.8
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.22
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.22
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "32in 1920x1080 hdpi",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 240,
+        "xdpi": 68.8,
+        "ydpi": 68.8
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 0.75,
+        "widthDp": 1706,
+        "heightDp": 960,
+        "kioskTypeScale": 1.22
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 444,
+        "rail": true,
+        "contentMaxWidthDp": 1058,
+        "twoColumns": true,
+        "typeScale": 1.22
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 478
+      }
+    },
+    {
+      "name": "32in 3840x2160 mdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 160,
+        "xdpi": 137.7,
+        "ydpi": 137.7
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 1.3,
+        "widthDp": 2953,
+        "heightDp": 1661,
+        "kioskTypeScale": 1.22
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1200,
+        "twoColumns": true,
+        "typeScale": 1.22
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 560
+      }
+    },
+    {
+      "name": "32in 3840x2160 xhdpi",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 320,
+        "xdpi": 137.7,
+        "ydpi": 137.7
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.22
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.22
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "HDMI 1920x1080 xdpi copied from the bucket",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 160.0,
+        "ydpi": 160.0
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "13",
+        "diagonalInches": 13.8,
+        "physicalTrusted": false,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "HDMI 4K xdpi copied from the bucket",
+      "facts": {
+        "widthPx": 3840,
+        "heightPx": 2160,
+        "densityDpi": 160,
+        "xdpi": 160.0,
+        "ydpi": 160.0
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "27",
+        "diagonalInches": 27.5,
+        "physicalTrusted": false,
+        "scale": 2.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 538
+      }
+    },
+    {
+      "name": "1280x800 xdpi copied from the bucket",
+      "facts": {
+        "widthPx": 1280,
+        "heightPx": 800,
+        "densityDpi": 160,
+        "xdpi": 160.0,
+        "ydpi": 160.0
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "11",
+        "diagonalInches": 9.4,
+        "physicalTrusted": false,
+        "scale": 1.0,
+        "widthDp": 1280,
+        "heightDp": 800,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": true,
+        "contentMaxWidthDp": 794,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "no physical claim (a browser, CSS px as dp) 1920x1080",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 0.0,
+        "ydpi": 0.0
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "13",
+        "diagonalInches": 13.8,
+        "physicalTrusted": false,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "anisotropic claim 1920x1080",
+      "facts": {
+        "widthPx": 1920,
+        "heightPx": 1080,
+        "densityDpi": 160,
+        "xdpi": 100.0,
+        "ydpi": 160.0
+      },
+      "profile": {
+        "landscape": true,
+        "sizeClass": "13",
+        "diagonalInches": 13.8,
+        "physicalTrusted": false,
+        "scale": 1.0,
+        "widthDp": 1920,
+        "heightDp": 1080,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": true,
+        "sideCart": true,
+        "panelWidthDp": 480,
+        "rail": true,
+        "contentMaxWidthDp": 1190,
+        "twoColumns": true,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "portrait 21.5in 1080x1920 hdpi (the HIT reference)",
+      "facts": {
+        "widthPx": 1080,
+        "heightPx": 1920,
+        "densityDpi": 240,
+        "xdpi": 102.5,
+        "ydpi": 102.5
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "21",
+        "diagonalInches": 21.5,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 720,
+        "heightDp": 1280,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "portrait 21.5in 1080x1920 mdpi",
+      "facts": {
+        "widthPx": 1080,
+        "heightPx": 1920,
+        "densityDpi": 160,
+        "xdpi": 102.5,
+        "ydpi": 102.5
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "21",
+        "diagonalInches": 21.5,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1080,
+        "heightDp": 1920,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 420
+      }
+    },
+    {
+      "name": "portrait 1080x1920 xdpi copied from the bucket",
+      "facts": {
+        "widthPx": 1080,
+        "heightPx": 1920,
+        "densityDpi": 240,
+        "xdpi": 240.0,
+        "ydpi": 240.0
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "11",
+        "diagonalInches": 9.2,
+        "physicalTrusted": false,
+        "scale": 1.0,
+        "widthDp": 720,
+        "heightDp": 1280,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "portrait 32in 2160x3840 xhdpi",
+      "facts": {
+        "widthPx": 2160,
+        "heightPx": 3840,
+        "densityDpi": 320,
+        "xdpi": 137.7,
+        "ydpi": 137.7
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 1080,
+        "heightDp": 1920,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 420
+      }
+    },
+    {
+      "name": "portrait 32in 2160x3840 mdpi",
+      "facts": {
+        "widthPx": 2160,
+        "heightPx": 3840,
+        "densityDpi": 160,
+        "xdpi": 137.7,
+        "ydpi": 137.7
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "32",
+        "diagonalInches": 32.0,
+        "physicalTrusted": true,
+        "scale": 1.3,
+        "widthDp": 1661,
+        "heightDp": 2953,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "BIG",
+        "bigBasketWidthDp": 465
+      }
+    },
+    {
+      "name": "portrait tablet 800x1280 mdpi",
+      "facts": {
+        "widthPx": 800,
+        "heightPx": 1280,
+        "densityDpi": 160,
+        "xdpi": 149.0,
+        "ydpi": 149.0
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "11",
+        "diagonalInches": 10.1,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 800,
+        "heightDp": 1280,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "TABLET",
+        "bigBasketWidthDp": null
+      }
+    },
+    {
+      "name": "F20 handheld 720x1280 xhdpi",
+      "facts": {
+        "widthPx": 720,
+        "heightPx": 1280,
+        "densityDpi": 320,
+        "xdpi": 267.7,
+        "ydpi": 267.7
+      },
+      "profile": {
+        "landscape": false,
+        "sizeClass": "handheld",
+        "diagonalInches": 5.5,
+        "physicalTrusted": true,
+        "scale": 1.0,
+        "widthDp": 360,
+        "heightDp": 640,
+        "kioskTypeScale": 1.0
+      },
+      "kiosk": {
+        "landscape": false,
+        "sideCart": false,
+        "panelWidthDp": 340,
+        "rail": null,
+        "contentMaxWidthDp": null,
+        "twoColumns": false,
+        "typeScale": 1.0
+      },
+      "till": {
+        "layout": "HANDHELD",
+        "bigBasketWidthDp": null
+      }
+    }
+  ]
+}

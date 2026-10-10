@@ -271,6 +271,9 @@ class PromotionIn(BaseModel):
     max_applications: Optional[int] = Field(None, alias="maxApplications", ge=1, le=MAX_APPLICATIONS_MAX)
     priority: int = Field(0, ge=PRIORITY_MIN, le=PRIORITY_MAX)
     is_paused: bool = Field(False, alias="isPaused")
+    #: "שלח הודעה לעובדים": `{"enabled", "text", "endEnabled", "endText"}`; None keeps
+    #: what the promotion has (app/services/promotion_announcements.py).
+    announcement: Optional[Dict[str, Any]] = None
 
     @field_validator("name", mode="before")
     @classmethod

@@ -115,6 +115,9 @@ re-derives it.
   is shown (settings / device info) and on the printed and on-screen X under the till
   name: `אזור: <name>` / `Area: <name>`. Nothing else on the till changes: the till never
   sends an area, never filters by it, and an older server without the field means "no area".
+  *Since 09.10.2026:* the till parameter `areaScopeLock` ("נעילת הקופה לנקודת המכירה שלה", default
+  on) narrows a till that stands in an area to that area's data — see `docs/SPEC_AREA_LOCK.md`.
+  It changes nothing fiscal (numbering, the Z, the shop Z).
 - The X records the area name it printed (so a reprint shows the same area even after a
   move or rename).
 

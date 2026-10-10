@@ -1,10 +1,11 @@
+from datetime import datetime
 from typing import List, Optional
 import uuid as uuid_mod
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
-from app.services import licenses
+from app.services import dealer_types, licenses
 from app.database import get_db
 from app.models.company import Company
 from app.models.pos_machine import POSMachine
@@ -267,6 +268,10 @@ def create_company(
     licenses.apply_license(
         current_user, company, data.model_dump(include=set(licenses.FIELDS)), creating=True
     )
+    # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): "company" unless the form chose otherwise.
+    dealer_types.apply_dealer_type(
+        current_user, company, data.model_dump(include={dealer_types.FIELD}), creating=True
+    )
     db.add(company)
     db.flush()
     # Company 1, 2, 3 in the tenant, drawn in this transaction so a failed create
@@ -314,6 +319,9 @@ def update_company(
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     # The license fields leave `updates` here: the super admin's only.
     licenses.apply_license(current_user, company, updates)
+    # "סוג עוסק": leaves `updates` too. A change is the company administrators' only,
+    # recorded with who and when, and applies to new documents only.
+    dealer_type_changed = dealer_types.apply_dealer_type(current_user, company, updates)
 
     requested_parent = updates.get("parent_company_id", _UNCHANGED)
     # Only an actual *move* is gated. A dashboard that PUTs the whole company back,
@@ -349,9 +357,34 @@ def update_company(
     invalidate_company_hierarchy_cache(db)
     for shop_id in touched:
         notify_machines_for_shop(db, shop_id, reason="company_moved")
-    if profile_changed:
+    if profile_changed or dealer_type_changed:
+        # The tills pull the new identity — and, for a new dealer type, issue every new
+        # document by it.
         notify_machines_for_company_settings(db, str(company.id), reason="company_profile_updated")
     return company
+
+
+@router.get("/{company_id}/dealer-turnover")
+def get_dealer_turnover(
+    company_id: str,
+    year: Optional[int] = Query(None, ge=2000, le=2100),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The year's turnover against the exempt dealer's ceiling (docs/SPEC_BUSINESS_TYPE.md):
+    `{year, dealerType, turnover, threshold, warnRatio, ratio, status}`, `status` one of
+    none | ok | approaching | exceeded. "none" when no ceiling is set or the company is
+    not an exempt dealer. Anyone who may see the company may see this.
+    """
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    ensure_same_tenant(company.tenant_id, active_tenant_id)
+    _check_company_access(current_user, company, db)
+    out = dealer_types.turnover_status(db, company, year or datetime.now().year)
+    return {**out, "turnover": float(out["turnover"])}
 
 
 @router.delete("/{company_id}", status_code=status.HTTP_204_NO_CONTENT)

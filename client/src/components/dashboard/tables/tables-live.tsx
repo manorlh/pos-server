@@ -29,16 +29,25 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 /**
- * Tables look as on the till: off-white objects, the state as a coloured ring (the till's
- * legend uses the same colours: free grey, occupied blue, kitchen orange, to pay green,
- * at another till red).
+ * Tables look as on the till: crisp shapes with a thin edge; a free table quiet, a taken one
+ * in a light tint of its state's colour with that colour on its edge and a bar along the
+ * start (occupied blue, kitchen orange, to pay amber, at another till violet).
  */
 export const STATE_CLASSES: Record<TableStateCode, string> = {
-  free: 'bg-[#fffdf8] text-stone-600 border-stone-300 border-2',
-  occupied: 'bg-[#fffdf8] text-stone-700 border-blue-500 border-4',
-  sent: 'bg-[#fffdf8] text-stone-700 border-orange-500 border-4',
-  awaiting_payment: 'bg-[#fffdf8] text-stone-700 border-green-600 border-4',
-  locked: 'bg-[#fffdf8] text-stone-700 border-red-600 border-4',
+  free: 'bg-card text-foreground border-border',
+  occupied: 'bg-blue-50 text-foreground border-blue-500 dark:bg-blue-950/40',
+  sent: 'bg-orange-50 text-foreground border-orange-500 dark:bg-orange-950/40',
+  awaiting_payment: 'bg-amber-50 text-foreground border-amber-500 dark:bg-amber-950/40',
+  locked: 'bg-violet-50 text-foreground border-violet-500 dark:bg-violet-950/40',
+};
+
+/** The state's accent: the bar along the card's start. */
+const STATE_ACCENT: Record<TableStateCode, string> = {
+  free: 'bg-transparent',
+  occupied: 'bg-blue-500',
+  sent: 'bg-orange-500',
+  awaiting_payment: 'bg-amber-500',
+  locked: 'bg-violet-500',
 };
 
 export function TablesLive({ shopId }: { shopId: string }) {
@@ -120,7 +129,7 @@ export function TablesLive({ shopId }: { shopId: string }) {
       <div className="flex flex-wrap gap-3 text-xs">
         {(Object.keys(STATE_CLASSES) as TableStateCode[]).map((s) => (
           <span key={s} className="flex items-center gap-1">
-            <span className={`inline-block h-3 w-3 rounded-full border ${STATE_CLASSES[s]}`} />
+            <span className={`inline-block h-3 w-3 rounded-sm border ${STATE_CLASSES[s]}`} />
             {t(`state.${s}`)}
           </span>
         ))}
@@ -135,20 +144,21 @@ export function TablesLive({ shopId }: { shopId: string }) {
               key={tb.id}
               type="button"
               onClick={() => (tb.order || tb.lock ? setPicked(tb) : undefined)}
-              className={`flex min-h-24 flex-col items-center justify-center rounded-2xl p-2 text-center shadow-md ${STATE_CLASSES[tb.state]}`}
+              className={`relative flex min-h-24 flex-col items-center justify-center overflow-hidden rounded-lg border p-2 text-center ${STATE_CLASSES[tb.state]}`}
             >
-              <span className="text-xl font-bold">{tb.number}</span>
-              {tb.name ? <span className="text-xs opacity-90">{tb.name}</span> : null}
+              <span className={`absolute inset-y-0 start-0 w-1 ${STATE_ACCENT[tb.state]}`} />
+              <span className="text-2xl font-semibold tabular-nums leading-tight">{tb.number}</span>
+              {tb.name ? <span className="max-w-full truncate text-xs text-muted-foreground">{tb.name}</span> : null}
               {tb.order ? (
                 <>
-                  <span className="text-sm font-medium">{formatCurrency(tb.order.total)}</span>
-                  <span className="text-xs opacity-90">
+                  <span className="text-sm font-medium tabular-nums">{formatCurrency(tb.order.total)}</span>
+                  <span className="text-xs text-muted-foreground">
                     {t('minutesOpen', { minutes: tb.minutesOpen ?? 0 })}
                     {tb.order.guests ? ` · ${t('guestsShort', { guests: tb.order.guests })}` : ''}
                   </span>
                 </>
               ) : null}
-              {tb.order?.waiterName ? <span className="text-xs opacity-90">{tb.order.waiterName}</span> : null}
+              {tb.order?.waiterName ? <span className="max-w-full truncate text-xs text-muted-foreground">{tb.order.waiterName}</span> : null}
               {tb.lock ? (
                 <span className="text-xs">
                   {t('lockedBy', { till: tb.lock.posNumber ?? tb.lock.machineName ?? '?', user: tb.lock.posUserName ?? '' })}
@@ -156,7 +166,7 @@ export function TablesLive({ shopId }: { shopId: string }) {
               ) : null}
               {!tb.order && tb.cleaningSince ? (
                 // Paid, not cleared yet — as the till shows it.
-                <span className="mt-1 rounded-full bg-[#8e8e93] px-2 py-0.5 text-xs font-semibold text-white">{t('cleaning')}</span>
+                <span className="mt-1 text-xs font-medium text-muted-foreground">{t('cleaning')}</span>
               ) : null}
             </button>
           ))}

@@ -117,84 +117,113 @@ class TestResolution:
 
 
 class TestTheBatchIsCheckedBeforeAnythingIsWritten:
+    """
+    Which unknown shifts of a batch must wait (docs/SHIFTS_API.md §1.2c-bis). Since
+    2026-10-07 nothing is refused for it: the documents naming them wait in the till's
+    "documents waiting for a shift" and the rest of the batch lands.
+    """
+
     def test_known_shifts_pass(self, w):
         till = w.tills[0]
         s = w.shift(till, 1, status=ShiftStatus.OPEN)
 
-        precheck_document_shifts(w.db, till, [s.id, s.id, None])
+        assert precheck_document_shifts(w.db, till, [s.id, s.id, None]) == (set(), None)
 
     def test_one_unknown_shift_with_nothing_open_passes(self, w):
-        precheck_document_shifts(w.db, w.tills[0], [uuid.uuid4()])
+        assert precheck_document_shifts(w.db, w.tills[0], [uuid.uuid4()]) == (set(), None)
 
-    def test_an_unknown_shift_while_another_is_open_refuses_the_batch(self, w):
+    def test_an_unknown_shift_while_another_is_open_waits(self, w):
         till = w.tills[0]
         n = w.shift(till, 1, status=ShiftStatus.OPEN)
         stranger = uuid.uuid4()
 
-        with pytest.raises(ShiftConflict) as e:
-            precheck_document_shifts(w.db, till, [n.id, stranger])
+        assert precheck_document_shifts(w.db, till, [n.id, stranger]) == ({stranger}, n.id)
 
-        assert e.value.body() == {
-            "detail": "another_shift_open",
-            "openShiftId": str(n.id),
-            "unknownShiftIds": [str(stranger)],
-        }
-
-    def test_two_unknown_shifts_in_one_batch_are_refused(self, w):
+    def test_two_unknown_shifts_in_one_batch_both_wait(self, w):
         """Only one of them could be opened, and which one is not a guess to make."""
-        with pytest.raises(ShiftConflict) as e:
-            precheck_document_shifts(w.db, w.tills[0], [uuid.uuid4(), uuid.uuid4()])
-
-        assert e.value.open_shift_id is None
+        a, b = uuid.uuid4(), uuid.uuid4()
+        assert precheck_document_shifts(w.db, w.tills[0], [a, b]) == ({a, b}, None)
 
 
-class TestTheUpsertRaisesTheConflictRatherThanRejectingDocuments:
-    def test_the_conflict_escapes_the_per_document_savepoint(self, w, monkeypatch):
+class TestAnUnknownShiftWhileAnotherIsOpenNeverBlocksTheBatch:
+    def test_the_document_waits_and_the_rest_of_the_batch_lands(self, w):
         """
-        A per-document `rejected` is terminal on the till — it marks the row failed and
-        stops retrying. A shift conflict is retryable, so it must reach the router as a
-        conflict for the whole batch, not be swallowed as one bad document.
+        Gap 3 (2026-10-07): one document naming a shift the cloud has not seen while
+        another shift of the till is open used to make the whole batch a 409. Now the
+        document is stored in the till's waiting bucket with the shift it named, and the
+        others land in their own shift.
         """
-        from unittest.mock import MagicMock
-
-        import app.services.transactions as T
+        from app.models.transaction import Transaction
+        from app.services.document_filing import WAITING_KIND, is_waiting
+        from app.services.transactions import upsert_transactions
 
         till = w.tills[0]
-        w.shift(till, 1, status=ShiftStatus.OPEN)
-        doc = MagicMock()
-        doc.id = uuid.uuid4()
-        doc.shift_id = uuid.uuid4()
+        n = w.shift(till, 1, status=ShiftStatus.OPEN)
+        stranger = uuid.uuid4()
+        own, waiting = _tx_in(n.id), _tx_in(stranger)
 
-        with pytest.raises(ShiftConflict):
-            T.upsert_transactions(w.db, till, [doc])
+        results = upsert_transactions(w.db, till, [own, waiting])
+
+        assert [r.status for r in results] == ["accepted", "accepted"]
+        assert any("waiting" in x for x in results[1].warnings or [])
+        assert w.db.get(Transaction, own.id).shift_id == n.id
+        stored = w.db.get(Transaction, waiting.id)
+        bucket = w.db.get(Shift, stored.shift_id)
+        assert is_waiting(bucket) and bucket.reconstruction_basis["kind"] == WAITING_KIND
+        assert bucket.status == ShiftStatus.CLOSED and bucket.z_report_id is None
+        assert stored.claimed_shift_id == stranger
+        assert "waiting_for_shift" in [x["code"] for x in stored.ingest_notes]
+        # Never created open beside the open one (that is the adoption bug in reverse).
+        assert w.db.query(Shift).filter(Shift.id == stranger).first() is None
+
+    def test_when_its_shift_arrives_the_document_moves_in(self, w):
+        from app.models.transaction import Transaction
+        from app.schemas.shift import ShiftOpenIn
+        from app.services.shifts import apply_shift_close, report_shift_open
+        from app.schemas.shift import ShiftCloseIn
+        from app.services.transactions import upsert_transactions
+
+        till = w.tills[0]
+        n = w.shift(till, 1, status=ShiftStatus.OPEN, close_now=False)
+        n_plus_1 = uuid.uuid4()
+        doc = _tx_in(n_plus_1, "25.00")
+        upsert_transactions(w.db, till, [doc])
+        bucket_id = w.db.get(Transaction, doc.id).shift_id
+
+        # close(N) and open(N+1) arrive: the document is taken into N+1, the bucket is gone.
+        apply_shift_close(w.db, till, n.id, ShiftCloseIn.model_validate({"closedAt": NOW.isoformat(), "transactionIds": []}))
+        report_shift_open(w.db, till, ShiftOpenIn.model_validate({
+            "id": str(n_plus_1), "businessDate": str(TODAY), "sequenceNumber": 2, "openedAt": NOW.isoformat(),
+        }))
+
+        assert w.db.get(Transaction, doc.id).shift_id == n_plus_1
+        assert w.db.get(Shift, bucket_id) is None
+        assert "waiting_for_shift" not in [x["code"] for x in w.db.get(Transaction, doc.id).ingest_notes or []]
 
 
-class TestTheRouterAnswers409:
-    def test_post_transactions_returns_409_with_the_open_shift(self, w):
+class TestTheRouterAnswers200:
+    def test_post_transactions_accepts_the_batch_with_a_warning(self, w):
         from app.routers import sync as sync_router
         from app.schemas.transaction import TransactionsBatchEnvelope
 
         till = w.tills[0]
-        n = w.shift(till, 1, status=ShiftStatus.OPEN)
+        w.shift(till, 1, status=ShiftStatus.OPEN)
         w.db.commit()
         body = TransactionsBatchEnvelope(transactions=[{
             "id": str(uuid.uuid4()), "transactionNumber": "1", "shiftId": str(uuid.uuid4()),
-            "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(),
+            "totalAmount": "5.00", "createdAt": NOW.isoformat(), "updatedAt": NOW.isoformat(),
         }])
 
         response = sync_router.post_transactions(
             machine_id=str(till.id), body=body, machine=till, db=w.db
         )
 
-        assert response.status_code == 409
-        import json
-
-        payload = json.loads(response.body)
-        assert payload["detail"] == "another_shift_open"
-        assert payload["openShiftId"] == str(n.id)
+        (result,) = response.results
+        assert result.status == "accepted"
+        assert any("unknown_shift_while_open" in x for x in result.warnings or [])
 
 
-# ── A document that names no shift is an orphan, not a phantom shift ─────────
+# ── A document that names no shift: never a phantom shift, never in no shift ──
 
 
 def _tx_in(shift_id=None, total="15.00", **extra):
@@ -211,12 +240,15 @@ def _tx_in(shift_id=None, total="15.00", **extra):
     return TransactionIn.model_validate(body)
 
 
-class TestOrphanDocuments:
-    def test_orphan_then_a_real_shift_then_close_then_z(self, w, monkeypatch):
+class TestDocumentsWithNoShift:
+    def test_no_shift_and_nothing_covering_waits_then_the_next_z_takes_it(self, w, monkeypatch):
         """
         The exact sequence that used to break: a document with no shiftId while nothing
         is open made a phantom open shift; the till's real open then got 409
         another_shift_open, and the phantom (no sequence, sorts first) blocked every Z.
+        Then it became an orphan in no Z at all. Now (2026-10-07) it waits in the till's
+        "documents waiting for a shift" bucket — closed, cloud-built — and the till's next
+        Z takes it, in a section of its own.
         """
         from app.models.transaction import Transaction
         from app.models.z_report import ZReport
@@ -225,15 +257,17 @@ class TestOrphanDocuments:
         from app.schemas.shift import ShiftCloseIn, ShiftOpenIn
         from app.services import ably_notify
         from app.services import z_runs as ZR
+        from app.services.document_filing import is_waiting
         from app.services.transactions import upsert_transactions
 
         monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
         till = w.tills[0]
 
-        orphan = _tx_in()
-        assert [r.status for r in upsert_transactions(w.db, till, [orphan])] == ["accepted"]
-        assert w.db.get(Transaction, orphan.id).shift_id is None
-        assert w.db.query(Shift).count() == 0
+        stray = _tx_in(transactionNumber="1")
+        assert [r.status for r in upsert_transactions(w.db, till, [stray])] == ["accepted"]
+        bucket = w.db.get(Shift, w.db.get(Transaction, stray.id).shift_id)
+        assert is_waiting(bucket)
+        assert w.db.query(Shift).filter(Shift.status == ShiftStatus.OPEN).count() == 0
 
         shift_id = uuid.uuid4()
         opened = sync_router.post_shift_open(
@@ -246,7 +280,7 @@ class TestOrphanDocuments:
         )
         assert opened.status == "open"
 
-        sale = _tx_in(shift_id, "40.00")
+        sale = _tx_in(shift_id, "40.00", transactionNumber="2")
         upsert_transactions(w.db, till, [sale])
         closed = sync_router.post_shift_close(
             machine_id=str(till.id), shift_id=shift_id,
@@ -258,14 +292,28 @@ class TestOrphanDocuments:
 
         cands = zr_router.get_z_candidates(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
         mine = next(m for m in cands.machines if m.machine_id == till.id)
-        assert mine.orphan_documents == 1
-        assert [s.id for s in mine.closed_shifts] == [shift_id]
+        assert mine.orphan_documents == 0
+        assert [s.id for s in mine.closed_shifts] == [bucket.id, shift_id]
 
         r = ZR.create_z_run(w.db, w.admin, w.tenant, w.shop, [ZR.MachineSelection(machine_id=till.id)], now=NOW)
         z = w.db.get(ZReport, r.z_report_id)
         assert r.status == "completed"
-        assert z.total_sales == 40  # the orphan is in no shift, so in no Z
-        assert w.db.get(Transaction, orphan.id).shift_id is None
+        assert z.total_sales == 55  # the waiting document is in the Z, once
+        assert [s["shiftId"] for s in z.header["documentsAwaitingShift"]] == [str(bucket.id)]
+        assert w.db.get(Shift, bucket.id).z_report_id == z.id
+
+    def test_no_shift_is_filed_in_the_shift_covering_its_time(self, w):
+        from app.models.transaction import Transaction
+        from app.services.transactions import upsert_transactions
+
+        till = w.tills[0]
+        shift = w.shift(till, 1, status=ShiftStatus.OPEN)
+        doc = _tx_in()
+        upsert_transactions(w.db, till, [doc])
+
+        stored = w.db.get(Transaction, doc.id)
+        assert stored.shift_id == shift.id
+        assert "filed_by_time" in [x["code"] for x in stored.ingest_notes]
 
     def test_a_repush_without_a_shift_id_keeps_the_document_in_its_shift(self, w):
         from app.models.transaction import Transaction
@@ -280,18 +328,21 @@ class TestOrphanDocuments:
                        updatedAt=(NOW + timedelta(minutes=1)).replace(tzinfo=None).isoformat())
         upsert_transactions(w.db, till, [again])
 
-        assert w.db.get(Transaction, doc.id).shift_id == shift.id
+        stored = w.db.get(Transaction, doc.id)
+        assert stored.shift_id == shift.id
+        assert stored.claimed_shift_id == shift.id  # a push naming none never wipes the claim
 
-    def test_the_machines_list_counts_orphans(self, w):
+    def test_the_machines_list_counts_only_documents_stored_before_the_rule(self, w):
         from unittest.mock import patch
 
         from app.routers import machines as machines_router
         from app.services.transactions import upsert_transactions
 
-        upsert_transactions(w.db, w.tills[0], [_tx_in(), _tx_in()])
+        upsert_transactions(w.db, w.tills[0], [_tx_in(), _tx_in()])  # filed: a waiting bucket
+        w.doc(w.tills[0], None, "5.00")  # an orphan stored before the rule (shift_id null)
 
         with patch.object(machines_router, "get_catalog_change_watermark_for_machine", return_value=None):
             rows = {r["id"]: r for r in machines_router._enrich_machines_batch(w.tills, w.db)}
 
-        assert rows[w.tills[0].id]["orphanDocuments"] == 2
+        assert rows[w.tills[0].id]["orphanDocuments"] == 1
         assert rows[w.tills[1].id]["orphanDocuments"] == 0

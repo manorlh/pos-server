@@ -4,9 +4,10 @@
  * The machine-level actions of Z on the till (docs/SHIFTS_API.md §5.1, §5.4):
  *
  * * **"בקש Z מהקופה"** — `POST /machines/{id}/till-z`, for a `till`-mode till. The dialog
- *   confirms, then follows the request until it ends. Closing it cancels nothing: asking
- *   again returns the pending request (the server answers with it), and the row's
- *   details show the latest request too.
+ *   confirms, sends and closes: the request is followed in the background ("פקודות שנשלחו",
+ *   lib/deviceCommandsStore.ts). Closing cancels nothing: asking again returns the pending
+ *   request (the server answers with it), which the dialog then shows with its progress and
+ *   its cancel.
  * * **Who produces the Z** — `PUT /machines/{id}` `{zMode}`, by the roles that produce Zs.
  *   The cloud refuses a switch while the till has closed shifts no Z took, or a Z is
  *   being produced for it; those refusals are said in words, with the way out.
@@ -19,6 +20,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FilePlus2, Loader2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { cancelTillZRequest, requestMachineTillZ, setMachineZMode } from '@/lib/api';
+import { phaseOfRequest } from '@/lib/deviceCommands';
+import { trackCommand, useDeviceCommandsStore } from '@/lib/deviceCommandsStore';
 import { tillNameForZ, zModeOf, zModeSwitchRefusal } from '@/lib/tillZ';
 import { zWizardHref } from '@/lib/zAccess';
 import type { PosMachine, TillZRequest, ZMode } from '@/lib/types';
@@ -37,12 +40,40 @@ import {
   useTillZRequest,
   ZModeBadge,
 } from './till-z-request';
+import { ForceCloseOption } from '@/components/dashboard/z-wizard/force-close-option';
 
 /** Whether this till can be asked for its own Z now. */
 export function canRequestTillZ(m: PosMachine): boolean {
   return (
     zModeOf(m) === 'till' && m.isActive !== false && m.pairingStatus === 'assigned' && !!m.shopId
   );
+}
+
+/**
+ * Follow a till-Z request in "פקודות שנשלחו" (the tray reads `GET /till-z-requests/{id}` in the
+ * background; the till's row shows a chip).
+ */
+export function trackTillZ(r: TillZRequest, machineName: string | null): void {
+  const p = phaseOfRequest(r.status, r.errorMessage);
+  trackCommand({
+    kind: 'till_z',
+    id: r.id,
+    action: 'till_z',
+    machineId: r.machineId,
+    machineName,
+    phase: p.phase,
+    detail: p.detail,
+  });
+}
+
+/**
+ * Whether asking returned the till's request already waiting (the server answers with it)
+ * rather than a new one: it is already followed, or was made well before this ask.
+ */
+function isEarlierRequest(r: TillZRequest, askedAt: number): boolean {
+  if (useDeviceCommandsStore.getState().commands.some((c) => c.kind === 'till_z' && c.id === r.id)) return true;
+  const created = r.createdAt ? Date.parse(r.createdAt) : Number.NaN;
+  return Number.isFinite(created) && askedAt - created > 30_000;
 }
 
 export function RequestTillZDialog({
@@ -60,12 +91,16 @@ export function RequestTillZDialog({
   const qc = useQueryClient();
   const refresh = useRefreshAfterTillZ();
   const [created, setCreated] = useState<TillZRequest | null>(null);
+  const [force, setForce] = useState(false);
 
   // A fresh dialog for each opening: the last till's request must not show on the next.
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
     setWasOpen(open);
-    if (open) setCreated(null);
+    if (open) {
+      setCreated(null);
+      setForce(false);
+    }
   }
   const handleOpenChange = (next: boolean) => {
     if (!next) setCreated(null);
@@ -80,12 +115,21 @@ export function RequestTillZDialog({
   );
 
   const create = useMutation({
-    mutationFn: () => requestMachineTillZ(machine!.id),
+    mutationFn: () => requestMachineTillZ(machine!.id, force),
     onSuccess: (next) => {
       qc.setQueryData(['till-z-request', next.id], next);
-      setCreated(next);
-      toast.success(t('sent'));
       refresh(next.machineId);
+      // Asked again for a till whose Z already waits: the server returned that request —
+      // show its progress (and its cancel), as before.
+      const earlier = isEarlierRequest(next, Date.now());
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): followed in the background (its popup,
+      // the tray, the till's chip) — the dialog closes, nothing waits for the till.
+      trackTillZ(next, machine?.name ?? next.machineName ?? null);
+      if (earlier) {
+        setCreated(next);
+        return;
+      }
+      handleOpenChange(false);
     },
     onError: (e) => toast.error(errors.forError(e)),
   });
@@ -94,6 +138,7 @@ export function RequestTillZDialog({
     onSuccess: (next) => {
       qc.setQueryData(['till-z-request', next.id], next);
       refresh(next.machineId);
+      trackTillZ(next, machine?.name ?? next.machineName ?? null);
     },
     onError: (e) => {
       toast.error(errors.forError(e));
@@ -119,6 +164,7 @@ export function RequestTillZDialog({
               <p className="text-amber-700 dark:text-amber-400">{t('confirmOffline')}</p>
             ) : null}
             <p className="text-muted-foreground text-xs">{t('cardHint')}</p>
+            <ForceCloseOption checked={force} onChange={setForce} className="pt-1" />
           </div>
         ) : (
           <div className="space-y-2">
@@ -242,7 +288,11 @@ function ZModeForm({
         ? t('zInProgress')
         : refusal?.code === 'till_open'
           ? t('tillOpen')
-          : errors.forError(save.error);
+          : refusal?.code === 'till_offline_zs_unsynced'
+            ? refusal.reason === 'not_seen'
+              ? t('offlineNotSeen')
+              : t('offlineUnsynced', { count: refusal.pending ?? 1 })
+            : errors.forError(save.error);
 
   return (
     <>

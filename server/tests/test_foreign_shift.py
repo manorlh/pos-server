@@ -7,8 +7,9 @@ but the till keeps naming it — on its sales, its close, its open and its heart
 Before this was checked, a sale naming it was attached to the old machine's shift, so
 another till's X and a future Z would take it. Now:
 
-* a document naming it is stored as an **orphan** of the pushing till and accepted (the
-  outbox is not jammed): in no X, in no Z, counted in `orphanDocuments`;
+* a document naming it is filed on the pushing till by rule 2 (its covering shift, else its
+  "documents waiting for a shift", docs/SHIFTS_API.md §1.2c-bis) and accepted — never in no
+  shift (2026-10-07); with a re-pair link it is filed under the till that issued it;
 * its open and close are `403 {"detail": "shift_belongs_to_another_machine"}` — the
   close too when it lists documents, never the 409 missing-ids loop first;
 * the heartbeat's claim of it is dropped, so the Z wizard shows no phantom open shift;
@@ -118,8 +119,16 @@ def _open(w, till, shift_id):
 # ── Documents ────────────────────────────────────────────────────────────────
 
 
-class TestADocumentNamingAnotherTillsShiftIsAnOrphan:
-    def test_it_is_accepted_and_stored_with_no_shift_on_the_pushing_till(self, w):
+class TestADocumentNamingAnotherTillsShift:
+    """
+    No link between the two tills here (no shared device serial): the document is the
+    pushing till's, filed by rule 2 (docs/SHIFTS_API.md §1.2c-bis) — its shift covering the
+    issue time, else its "documents waiting for a shift" — never in no shift (2026-10-07).
+    """
+
+    def test_it_is_accepted_and_filed_on_the_pushing_till_never_in_no_shift(self, w):
+        from app.services.document_filing import is_waiting
+
         theirs = w.shift(w.old, 7, status=ShiftStatus.OPEN)
         sale = _tx_in(theirs.id, "40.00")
 
@@ -127,22 +136,24 @@ class TestADocumentNamingAnotherTillsShiftIsAnOrphan:
 
         assert [r.status for r in results] == ["accepted"]
         stored = w.db.get(Transaction, sale.id)
-        assert stored.shift_id is None
         assert stored.machine_id == w.new.id
-        assert orphan_documents_by_machine(w.db, [w.new.id, w.old.id]) == {w.new.id: 1}
-        # The old till's shift took nothing and no shift was created for the new one.
+        assert is_waiting(w.db.get(Shift, stored.shift_id))  # the new till has no shift: it waits
+        assert stored.claimed_shift_id == theirs.id
+        assert orphan_documents_by_machine(w.db, [w.new.id, w.old.id]) == {}
+        # The old till's shift took nothing.
         assert compute_totals(w.db, [theirs.id]).transactions_count == 0
-        assert w.db.query(Shift).count() == 1
 
     def test_it_is_not_a_conflict_while_the_new_till_has_a_shift_open(self, w):
-        """Known to the cloud, just not this till's: an orphan, never a 409 that jams it."""
+        """Known to the cloud, just not this till's: filed in this till's open shift, never a 409."""
         theirs = w.shift(w.old, 7, status=ShiftStatus.OPEN)
-        w.shift(w.new, 1, status=ShiftStatus.OPEN)
+        mine = w.shift(w.new, 1, status=ShiftStatus.OPEN)
 
-        precheck_document_shifts(w.db, w.new, [theirs.id])  # does not raise
+        assert precheck_document_shifts(w.db, w.new, [theirs.id]) == (set(), None)
         sale = _tx_in(theirs.id)
         assert [r.status for r in upsert_transactions(w.db, w.new, [sale])] == ["accepted"]
-        assert w.db.get(Transaction, sale.id).shift_id is None
+        stored = w.db.get(Transaction, sale.id)
+        assert stored.shift_id == mine.id
+        assert "filed_by_time" in [n["code"] for n in stored.ingest_notes]
 
     def test_a_closed_foreign_shift_is_neither_recomputed_nor_counted_late(self, w):
         theirs = w.shift(w.old, 7)
@@ -171,20 +182,21 @@ class TestADocumentNamingAnotherTillsShiftIsAnOrphan:
         assert w.db.get(Transaction, sale.id).shift_id == mine.id
         assert compute_totals(w.db, [theirs.id]).transactions_count == 0
 
-    def test_the_z_candidates_show_the_orphan_and_no_open_shift(self, w):
+    def test_the_z_candidates_show_the_waiting_bucket_and_no_open_shift(self, w):
         from app.routers import z_runs as zr_router
 
         theirs = w.shift(w.old, 7, status=ShiftStatus.OPEN)
-        upsert_transactions(w.db, w.new, [_tx_in(theirs.id)])
+        sale = _tx_in(theirs.id)
+        upsert_transactions(w.db, w.new, [sale])
         w.db.commit()
 
         cands = zr_router.get_z_candidates(
             w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db
         )
         mine = next(m for m in cands.machines if m.machine_id == w.new.id)
-        assert mine.orphan_documents == 1
+        assert mine.orphan_documents == 0
         assert mine.open_shift is None
-        assert mine.closed_shifts == []
+        assert [s.id for s in mine.closed_shifts] == [w.db.get(Transaction, sale.id).shift_id]
 
 
 class TestADocumentAnotherTillAlreadyHolds:
@@ -224,15 +236,19 @@ class TestADocumentAlreadyMisfiledUnderAnotherTillsShift:
         assert compute_totals(w.db, [theirs.id]).gross_sales == Decimal("25.00")
         assert orphan_documents_by_machine(w.db, [w.new.id, w.old.id]) == {w.new.id: 1}
 
-    def test_a_repush_detaches_it_into_an_orphan(self, w):
+    def test_a_repush_files_it_on_its_own_till(self, w):
+        """Out of the other till's shift (no Z took it) and into this till's — here, its waiting bucket."""
+        from app.services.document_filing import is_waiting
+
         theirs, stray = self._misfiled(w)
         tx = _tx_in(theirs.id, "40.00", id=str(stray.id), transactionNumber=stray.transaction_number)
 
         assert [r.status for r in upsert_transactions(w.db, w.new, [_later(tx)])] == ["accepted"]
 
         w.db.expire_all()  # the upsert is a Core statement
-        assert w.db.get(Transaction, stray.id).shift_id is None
-        assert orphan_documents_by_machine(w.db, [w.new.id]) == {w.new.id: 1}
+        stored = w.db.get(Transaction, stray.id)
+        assert is_waiting(w.db.get(Shift, stored.shift_id))
+        assert orphan_documents_by_machine(w.db, [w.new.id]) == {}
 
     def test_a_close_of_the_new_tills_own_shift_moves_it_home(self, w):
         theirs, stray = self._misfiled(w)

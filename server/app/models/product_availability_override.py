@@ -87,6 +87,9 @@ class AreaProductOverride(Base):
         index=True,
     )
     is_available = Column(Boolean, nullable=True)
+    #: "חסימה קבועה" and when the lock began — see `ShopProductOverride`.
+    block_permanent = Column(Boolean, nullable=False, default=False, server_default="false")
+    blocked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
@@ -115,6 +118,9 @@ class MachineProductOverride(Base):
         index=True,
     )
     is_available = Column(Boolean, nullable=True)
+    #: "חסימה קבועה" and when the lock began — see `ShopProductOverride`.
+    block_permanent = Column(Boolean, nullable=False, default=False, server_default="false")
+    blocked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

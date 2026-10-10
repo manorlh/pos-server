@@ -178,8 +178,11 @@ class TestALateDocumentBeforeAZ:
 
 
 class TestALateDocumentAfterTheZ:
-    def test_it_is_stored_and_both_the_shift_and_the_z_are_flagged(self, w):
+    def test_it_is_stored_and_carried_into_the_next_z(self, w):
+        # The owner: every document in exactly one Z (SPEC_OFFLINE_TILL_Z §4.6.3) — a late one
+        # is carried into the till's next Z, never left in none.
         from app.models.transaction import Transaction
+        from app.services.late_documents import is_carry
 
         till = w.tills[0]
         shift = closed_shift(w, till, 1, [dict(total="10.00")])
@@ -189,10 +192,13 @@ class TestALateDocumentAfterTheZ:
         results = upsert_transactions(w.db, till, [late])
 
         assert [r.status for r in results] == ["accepted"]
-        assert w.db.get(Transaction, late.id).shift_id == shift.id
-        stored_shift = w.db.get(Shift, shift.id)
-        assert stored_shift.late_documents == 1
-        assert w.db.get(ZReport, z.id).late_documents == 1
+        carry = w.db.get(Shift, w.db.get(Transaction, late.id).shift_id)
+        assert is_carry(carry) and carry.z_report_id is None and carry.total_sales == Decimal("30.00")
+        assert w.db.get(Shift, shift.id).late_documents == 0
+        stored = w.db.get(ZReport, z.id)
+        assert stored.late_documents == 0 and stored.header["lateCarriedOut"] == 1
+        nxt = z_of(w, run(w, sel(till)))
+        assert w.db.get(Shift, carry.id).z_report_id == nxt.id and nxt.total_sales == Decimal("30.00")
 
     def test_the_zs_figures_and_the_shifts_x_are_not_rewritten(self, w):
         till = w.tills[0]
@@ -219,8 +225,9 @@ class TestALateDocumentAfterTheZ:
             page=1, page_size=50, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
 
-        assert out.items[0].late_documents == 1
-        assert out.model_dump(by_alias=True)["items"][0]["lateDocuments"] == 1
+        # Carried into the next Z: not "in none" here, and the list says how many left.
+        assert out.items[0].late_documents == 0
+        assert out.model_dump(by_alias=True)["items"][0]["lateCarriedOut"] == 1
 
 
 # ── Z numbers of older shifts, on the heartbeat ──────────────────────────────

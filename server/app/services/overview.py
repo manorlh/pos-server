@@ -47,7 +47,7 @@ from app.schemas.reports import (
     OverviewResponse,
     OverviewShop,
 )
-from app.services.company_hierarchy import company_scope_ids, descendant_company_ids
+from app.services.company_hierarchy import descendant_company_ids, visible_shop_ids
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.permission_matrix import SHOP_SCOPED_ROLES
 from app.services.reports import (
@@ -64,7 +64,7 @@ def _visible_shops_query(db: Session, user: User, tenant_id):
     """`GET /shops`'s role rule, or None when the role sees no shop at all."""
     query = db.query(Shop).filter(Shop.tenant_id == tenant_id)
     if user.role == UserRole.COMPANY_MANAGER:
-        return query.filter(Shop.company_id.in_(company_scope_ids(db, user)))
+        return query.filter(Shop.id.in_(visible_shop_ids(db, user)))
     if user.role in SHOP_SCOPED_ROLES:
         if not user.shop_id:
             return None
@@ -75,11 +75,15 @@ def _visible_shops_query(db: Session, user: User, tenant_id):
 
 
 def _visible_machines_query(db: Session, user: User, tenant_id, shop_ids: List[uuid_mod.UUID]):
-    """`GET /machines`'s role rule, limited to active tills standing in `shop_ids`."""
+    """
+    `GET /machines`'s role rule, limited to active tills standing in `shop_ids` — tills only:
+    a display device (a KDS / the board, app/services/display_devices.py) sells nothing.
+    """
     query = db.query(POSMachine).filter(
         POSMachine.tenant_id == tenant_id,
         POSMachine.is_active.is_(True),
         POSMachine.shop_id.in_(shop_ids),
+        POSMachine.is_fiscal.is_(True),
     )
     if user.role == UserRole.DISTRIBUTOR:
         return query.filter(POSMachine.distributor_id == user.id)
@@ -103,8 +107,9 @@ def _sales_fields(bucket: Dict[str, float]) -> dict:
         cash=_cents(bucket["cash_net"]),
         card=_cents(bucket["card_net"]),
         # `exchange` nets to zero over a complete basket; folded into "other" so
-        # cash + card + other is the day's net, as on the area report's totals.
-        other=_cents(bucket["other_net"] + bucket["exchange_net"]),
+        # cash + card + other is the day's net, as on the area report's totals. The home
+        # page has no voucher figure: production vouchers count under "other" here.
+        other=_cents(bucket["other_net"] + bucket["exchange_net"] + bucket["production_voucher_net"]),
         tips=_cents(bucket["tips"]),
     )
 
@@ -214,7 +219,7 @@ def build_overview(
         shift_q = scope_transactions_by_user(
             db.query(Transaction).filter(
                 Transaction.tenant_id == tenant_id,
-                Transaction.status.in_(SALE_STATUSES),
+                Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
                 Transaction.shift_id.in_(list(open_shift_of.values())),
             ),
             current_user,

@@ -45,8 +45,19 @@ from app.schemas.reports import (
     TipsRangeReportResponse,
 )
 from app.schemas.offline_authorization import OfflineAuthorizationReportResponse
+from app.schemas.period_compare import EventOptionsResponse, PeriodCompareResponse, SideBySideResponse
+from app.schemas.voucher_board import VoucherBoardResponse
 from app.services import offline_authorizations
 from app.services.overview import build_overview
+from app.services.period_compare import (
+    ITEMS_MAX,
+    Period,
+    build_period_compare,
+    build_side_by_side,
+    list_event_options,
+    load_event_lens,
+)
+from app.services.voucher_board import build_voucher_board
 from app.schemas.live_items import LiveItemsResponse
 from app.services.live_items import (
     LIVE_ITEMS_DEFAULT,
@@ -263,7 +274,9 @@ def get_shop_transactions(
     db: Session = Depends(get_db),
 ):
     """
-    Recent documents across every terminal in the shop this machine belongs to.
+    Recent documents across every terminal in the shop this machine belongs to — or, for a
+    till locked to its point of sale (`areaScopeLock`, app/services/area_lock.py), across the
+    terminals of its area, with `area: {areaId, areaName}` saying so.
 
     Fixed contract — the shipped Android till calls this. Do not rename fields.
 
@@ -275,10 +288,15 @@ def get_shop_transactions(
 
     Capped at 200 rows, newest first.
     """
+    from app.services import area_lock
+
     rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q)
     return ShopTransactionsResponse(
         server_time=datetime.now(timezone.utc).isoformat(),
         transactions=rows,
+        # Locked to its point of sale (app/services/area_lock.py): the till captions the list
+        # "נקודת מכירה: <name>" instead of "גם של כל החנות".
+        area=area_lock.scope_for(db, machine).as_json(),
     )
 
 
@@ -390,12 +408,20 @@ def get_overview_report(
     ),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    from_date: Optional[date] = Query(
+        None, alias="from", description="Start day of a range (instead of `date`); `to` defaults to today."
+    ),
+    to_date: Optional[date] = Query(
+        None, alias="to", description="End day of a range (inclusive); `from` defaults to it."
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """
-    The manager overview (לוח מנהל): one day's takings as company › shop › area › till.
+    The manager overview (לוח מנהל): one day's takings as company › shop › area › till —
+    or a range's (`from`–`to`, up to the reports' 366 days), from the same grouped queries:
+    the comparisons' breakdown of a week or a month under the scope.
 
     Dashboard-only (Clerk/user JWT). Lists every shop and active till the caller can
     see — with zeros where nothing was sold — and the day's money for each, the
@@ -404,10 +430,14 @@ def get_overview_report(
     Sales only: whether a till is online, its open shift and its alerts are the
     machines list's (`GET /machines`); the dashboard joins the two on the till's id.
     """
-    if day is None:
-        # "Today" is the report timezone's today, not the server's.
-        day = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz).to_date
-    window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
+    # A handler called directly sees the `Query(...)` defaults themselves: no range.
+    if isinstance(from_date, date) or isinstance(to_date, date):
+        window = _day_range(db, active_tenant_id, from_date, to_date, tz)
+    else:
+        if not isinstance(day, date):
+            # "Today" is the report timezone's today, not the server's.
+            day = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz).to_date
+        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
     return build_overview(
         db, current_user, active_tenant_id, window,
         company_id=company_id, shop_id=shop_id, machine_id=machine_id,
@@ -475,4 +505,228 @@ def get_live_items_report(
         db, current_user, active_tenant_id, window,
         period=period, company_id=company_id, shop_id=shop_id, machine_id=machine_id,
         area_filter=parse_area_filter(area_id), limit=limit if isinstance(limit, int) else LIVE_ITEMS_DEFAULT,
+    )
+
+
+
+def _day_range(db, tenant_id, from_date, to_date, tz):
+    """`from`–`to` as a window: `to` defaults to today, `from` to `to` (one day)."""
+    end = to_date if isinstance(to_date, date) else None
+    if end is None:
+        end = resolve_report_window(db, tenant_id, from_date=None, to_date=None, tz=tz).to_date
+    start = from_date if isinstance(from_date, date) else end
+    return resolve_report_window(db, tenant_id, from_date=start, to_date=end, tz=tz)
+
+
+def _periods(db, user, tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz):
+    """
+    The two periods of a comparison: each days (`from`–`to`, `cmpFrom`–`cmpTo`) or an event
+    (`eventId`, `cmpEventId`), which wins over days. No compared period: None.
+    """
+    has_from, has_to = isinstance(cmp_from, date), isinstance(cmp_to, date)
+    if has_from != has_to:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cmpFrom and cmpTo must be supplied together",
+        )
+    if isinstance(event_id, uuid.UUID):
+        current = Period.of_event(load_event_lens(db, user, tenant_id, event_id))
+    else:
+        current = Period(_day_range(db, tenant_id, from_date, to_date, tz))
+    previous = None
+    if isinstance(cmp_event_id, uuid.UUID):
+        previous = Period.of_event(load_event_lens(db, user, tenant_id, cmp_event_id))
+    elif has_from:
+        previous = Period(resolve_report_window(db, tenant_id, from_date=cmp_from, to_date=cmp_to, tz=tz))
+    return current, previous
+
+
+_GRANULARITY_DESC = (
+    "`hour` (by the hour of day) or `day` (by the n-th day of each period). Default: by the "
+    "hour when every period is one day, else by the day."
+)
+
+
+@router.get(
+    "/compare",
+    response_model=PeriodCompareResponse,
+    response_model_by_alias=True,
+)
+def get_period_compare_report(
+    from_date: Optional[date] = Query(None, alias="from", description="Start day of the period. Defaults to `to`."),
+    to_date: Optional[date] = Query(None, alias="to", description="End day of the period (inclusive). Defaults to today."),
+    cmp_from: Optional[date] = Query(None, alias="cmpFrom", description="Start day of the period compared with."),
+    cmp_to: Optional[date] = Query(None, alias="cmpTo", description="End day of the period compared with (inclusive)."),
+    granularity: Optional[str] = Query(None, pattern="^(hour|day)$", description=_GRANULARITY_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    event_id: Optional[uuid.UUID] = Query(
+        None, alias="eventId", description="The period is this event (its window and tills) instead of from–to."
+    ),
+    cmp_event_id: Optional[uuid.UUID] = Query(
+        None, alias="cmpEventId", description="Compare with this event instead of cmpFrom–cmpTo."
+    ),
+    items: int = Query(0, ge=0, le=ITEMS_MAX, description="The best sellers to return (0: none)."),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    השוואות: a period (a day, a week, a month, any range, an event) against another, in one
+    request.
+
+    Dashboard-only (Clerk/user JWT), scoped like every report; `companyId` / `shopId` /
+    `areaId` / `machineId` only narrow. Both periods' headline figures (the overview's
+    definitions), each figure's change as a number and a percent (`pct` null from zero —
+    "new" — never a division by zero), and the two curves aligned: by the hour for days,
+    by the n-th day for longer periods. Without `cmpFrom`/`cmpTo` there is no comparison.
+
+    An event (`eventId`, `cmpEventId` — "אירוע", docs/SPEC_EVENTS.md) is its exact window and
+    its tills, read only when the caller may open the event; two events are aligned by the
+    hours since each began.
+    """
+    current, previous = _periods(
+        db, current_user, active_tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+    )
+    return build_period_compare(
+        db, current_user, active_tenant_id, current, previous,
+        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
+        machine_id=machine_id if isinstance(machine_id, uuid.UUID) else None,
+        granularity=granularity if isinstance(granularity, str) else None,
+        items=items if isinstance(items, int) else 0,
+    )
+
+
+@router.get(
+    "/side-by-side",
+    response_model=SideBySideResponse,
+    response_model_by_alias=True,
+)
+def get_side_by_side_report(
+    kind: str = Query(..., pattern="^(shop|area|machine|cashier)$", description="What is compared."),
+    ids: List[str] = Query(..., description="2–4 ids (repeatable): shops, areas, tills or cashiers."),
+    from_date: Optional[date] = Query(None, alias="from", description="Start day of the period. Defaults to `to`."),
+    to_date: Optional[date] = Query(None, alias="to", description="End day of the period (inclusive). Defaults to today."),
+    granularity: Optional[str] = Query(None, pattern="^(hour|day)$", description=_GRANULARITY_DESC),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    event_id: Optional[uuid.UUID] = Query(
+        None, alias="eventId", description="Over this event (its window and tills) instead of from–to."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId", description="Within this shop (the board's scope)."),
+    area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId", description="Within this till."),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    זה מול זה: up to four shops, points of sale, tills or cashiers over one period — each
+    one's sales, documents, average ticket, items, tender split and curve.
+
+    Dashboard-only (Clerk/user JWT). A shop, area or till the caller cannot see is left
+    out (not listed with someone else's figures); a cashier is named only from documents
+    the caller's scope reads. Three grouped queries whatever is compared. `shopId` / `areaId` /
+    `machineId` narrow it to the board's scope: cashiers compared on shop A count shop A's
+    sales only.
+    """
+    current, _ = _periods(
+        db, current_user, active_tenant_id, from_date, to_date, None, None, event_id, None, tz,
+    )
+    return build_side_by_side(
+        db, current_user, active_tenant_id, current,
+        kind=kind,
+        ids=ids if isinstance(ids, list) else [],
+        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
+        machine_id=machine_id if isinstance(machine_id, uuid.UUID) else None,
+        granularity=granularity if isinstance(granularity, str) else None,
+    )
+
+
+
+@router.get(
+    "/prepaid-vouchers",
+    response_model=VoucherBoardResponse,
+    response_model_by_alias=True,
+)
+def get_voucher_board_report(
+    from_date: Optional[date] = Query(None, alias="from", description="Start day of the period. Defaults to `to`."),
+    to_date: Optional[date] = Query(None, alias="to", description="End day of the period (inclusive). Defaults to today."),
+    cmp_from: Optional[date] = Query(None, alias="cmpFrom", description="Start day of the period compared with."),
+    cmp_to: Optional[date] = Query(None, alias="cmpTo", description="End day of the period compared with (inclusive)."),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(
+        None, alias="areaId", description="An area's id, or `none`: the tills standing in it now."
+    ),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    event_id: Optional[uuid.UUID] = Query(
+        None, alias="eventId", description="The period is this event (its window and tills)."
+    ),
+    cmp_event_id: Optional[uuid.UUID] = Query(None, alias="cmpEventId", description="Compare with this event."),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    שוברים: the prepaid vouchers redeemed in the scope over a period, by voucher name —
+    vouchers used, redemptions, units and value — against a compared period.
+
+    Dashboard-only (Clerk/user JWT), scoped by role like the overview; a reversed redemption
+    counts nowhere. Open to a user with "דוחות" or "שוברי הפקה" (app/services/dashboard_sections.py).
+    An event (`eventId`, `cmpEventId`) is its exact window and its tills.
+    """
+    current, previous = _periods(
+        db, current_user, active_tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+    )
+    return build_voucher_board(
+        db, current_user, active_tenant_id, current, previous,
+        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
+        machine_id=machine_id if isinstance(machine_id, uuid.UUID) else None,
+    )
+
+
+
+@router.get(
+    "/event-options",
+    response_model=EventOptionsResponse,
+    response_model_by_alias=True,
+)
+def get_event_options(
+    q: Optional[str] = Query(None, max_length=120, description="Part of the event's name."),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    ids: Optional[List[uuid.UUID]] = Query(
+        None, description="Exactly these events (repeatable): a link to one older than the newest listed."
+    ),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The control board's "אירוע" filter: the events of the shops the caller sees, newest
+    first, each with its window and tills — three queries, never one per event.
+    """
+    return EventOptionsResponse(
+        events=list_event_options(
+            db, current_user, active_tenant_id,
+            q=q if isinstance(q, str) else None,
+            shop_id=shop_id if isinstance(shop_id, uuid.UUID) else None,
+            ids=[i for i in ids if isinstance(i, uuid.UUID)] if isinstance(ids, list) else [],
+        )
     )

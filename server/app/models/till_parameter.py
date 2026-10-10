@@ -95,3 +95,34 @@ class TillParameterValue(Base):
     value = Column(JSONB, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class TillParameterChange(Base):
+    """
+    Every change made to a parameter on the parameters page — who, when, at which level, from
+    what to what (app/services/till_parameter_audit.py). Never updated or deleted, and outlives
+    the definition and the person: no foreign keys, the key and the user's email kept as text.
+
+    `action`: "set" / "clear" (a level's value), "default" / "active" (the definition's default
+    or activation; `scope_type` "default"), "deleted" (the definition and all its values).
+    """
+
+    __tablename__ = "till_parameter_changes"
+    __table_args__ = (
+        Index("ix_till_parameter_changes_key_at", "parameter_key", "created_at"),
+        Index("ix_till_parameter_changes_scope", "scope_type", "scope_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    parameter_id = Column(UUID(as_uuid=True), nullable=True)
+    parameter_key = Column(String(64), nullable=False)
+    #: "company" | "shop" | "area" | "machine" | "default" (the definition itself).
+    scope_type = Column(String(16), nullable=False)
+    scope_id = Column(UUID(as_uuid=True), nullable=True)
+    action = Column(String(16), nullable=False)
+    old_value = Column(JSONB(none_as_null=True), nullable=True)
+    new_value = Column(JSONB(none_as_null=True), nullable=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    user_email = Column(String(255), nullable=True)
+    user_role = Column(String(32), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

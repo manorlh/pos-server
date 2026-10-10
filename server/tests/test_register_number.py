@@ -135,6 +135,14 @@ class _Query:
     def count(self):
         return 0
 
+    def all(self):
+        # Scans — the "קידומת מסמכים" uniqueness check after a number is drawn
+        # (app/services/document_prefix.py): nothing else in scope holds a prefix here.
+        return []
+
+    def distinct(self):
+        return self
+
 
 class _Db:
     """The rows the service reads, and a record of what it did to them."""

@@ -18,7 +18,7 @@ from app.schemas.shift import ShiftListResponse, ShiftOut
 from app.services.areas import filter_on_column, parse_area_filter
 from app.services.scoping import scope_query_by_user
 from app.services.shift_totals import compute_totals
-from app.services.shifts import shift_to_out
+from app.services.shifts import register_number_of, shift_to_out
 from app.services.offline_authorizations import declined_by_shift, offline_block
 from app.services.transmissions import period_block
 
@@ -47,6 +47,7 @@ def _out(shift: Shift, **kw) -> ShiftOut:
         z_number=shift.z_report.z_number if shift.z_report is not None else None,
         machine_name=shift.machine.name if shift.machine is not None else None,
         shop_name=shift.shop.name if shift.shop is not None else None,
+        pos_number=register_number_of(shift),
         **kw,
     )
 

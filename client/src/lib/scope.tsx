@@ -181,8 +181,16 @@ export interface ScopeContextValue extends ScopeSelection {
   setMachine: (machineId: string | null) => void;
   /** Back to the whole organization. */
   clear: () => void;
-  /** Set every level at once — used when a drill-down page syncs from its route. */
-  setScope: (next: Partial<ScopeSelection>, mode?: 'push' | 'replace') => void;
+  /**
+   * Set every level at once — used when a drill-down page syncs from its route, and by
+   * the control board, whose own params (`extra`: a value sets, null removes) change in
+   * the same URL write as the levels.
+   */
+  setScope: (
+    next: Partial<ScopeSelection>,
+    mode?: 'push' | 'replace',
+    extra?: Record<string, string | null>,
+  ) => void;
 
   /** The current page's declaration, and what it resolves to. Null before a page registers. */
   spec: PageScopeSpec | null;
@@ -290,9 +298,12 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
 
   const tree = useMemo(() => buildCompanyTree(companies), [companies]);
 
-  /** Write a selection into the URL, keeping every other query param intact. */
+  /**
+   * Write a selection into the URL, keeping every other query param intact. `extra`
+   * sets (a string) or removes (null) a page's own params in the same write.
+   */
   const commit = useCallback(
-    (next: ScopeSelection, mode: 'push' | 'replace') => {
+    (next: ScopeSelection, mode: 'push' | 'replace', extra?: Record<string, string | null>) => {
       // Between a tenant switch and the URL being cleaned, nothing may write: a
       // drill-down page's route-sync would otherwise put the old organization's
       // ids back into the URL, and remember them under the new tenant's key.
@@ -308,6 +319,10 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
       apply(SCOPE_PARAM.company, next.companyId, !!implied.companyId);
       apply(SCOPE_PARAM.shop, next.shopId, !!implied.shopId);
       apply(SCOPE_PARAM.machine, next.machineId, !!implied.machineId);
+      for (const [key, value] of Object.entries(extra ?? {})) {
+        if (value) params.set(key, value);
+        else params.delete(key);
+      }
       const query = params.toString();
       const href = query ? `${pathname}?${query}` : pathname;
       writeStored(activeTenantId, next);
@@ -530,7 +545,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   }, [commit, pathname, router]);
 
   const setScope = useCallback(
-    (next: Partial<ScopeSelection>, mode: 'push' | 'replace' = 'push') => {
+    (next: Partial<ScopeSelection>, mode: 'push' | 'replace' = 'push', extra?: Record<string, string | null>) => {
       commit(
         {
           companyId: next.companyId ?? null,
@@ -538,6 +553,7 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
           machineId: next.machineId ?? null,
         },
         mode,
+        extra,
       );
     },
     [commit],

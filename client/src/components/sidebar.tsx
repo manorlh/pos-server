@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 import { useCanProduceZ } from '@/lib/zAccess';
 import { useRoleAccess } from '@/lib/accessApi';
+import { canAccess, isHomePath, navHrefAllowed } from '@/lib/dashboardAccess';
+import { useDashboardAccess } from '@/lib/dashboardAccessApi';
 import { useScopeQuery } from '@/lib/scope';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -24,6 +26,7 @@ import {
 import { TenantLicenseDialog } from '@/components/dashboard/tenant-license-dialog';
 import {
   NAV_SECTIONS,
+  SIMPLE_NAV_SECTIONS,
   filterNavSections,
   findNavEntry,
   findNavSectionId,
@@ -69,6 +72,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { entitySelectItems } from '@/lib/selectItems';
+import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
 import { toast } from 'sonner';
 
 /**
@@ -156,6 +160,8 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   const isSuperAdmin = authHydrated && internalUser?.role === 'super_admin';
   const activeTenant = tenants.find((x) => x.id === activeTenantId) ?? null;
   const roleAccess = useRoleAccess();
+  // "הרשאות דשבורד": this user's own sections (the server refuses the rest anyway).
+  const dashboardAccess = useDashboardAccess();
   // Payment methods: whoever may write settings at some level — the server decides per
   // level (company managers and up for a company; shop managers for their shop, its
   // points of sale and tills). Cashiers and shift supervisors write none.
@@ -169,8 +175,11 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
   const allows = (item: NavItem): boolean => {
-    // "הרשאות": an entry the super admin hid from this role.
-    if (roleAccess.hidden.has(item.href)) return false;
+    // "הרשאות": an entry the super admin hid from this role — never the home page (the
+    // control board), where every sign-in lands and which shows each user what they may see.
+    if (!isHomePath(item.href) && roleAccess.hidden.has(item.href)) return false;
+    // "הרשאות דשבורד": a section this user was not given.
+    if (!navHrefAllowed(dashboardAccess, item.href)) return false;
     if (item.gate === 'canReadUsers') return canReadUsers;
     if (item.gate === 'canManagePosUsers') return canManagePosUsers;
     if (item.gate === 'branding') return canManageBranding;
@@ -180,15 +189,18 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
     return true;
   };
 
+  // "תצוגת מנהל פשוטה": the manager's short menu (their profile's switch; on by default for a
+  // manager who runs one place).
+  const simpleMode = authHydrated && internalUser?.simpleMode === true;
   const sections = useMemo(
     () =>
-      NAV_SECTIONS.map((section) => ({
+      (simpleMode ? SIMPLE_NAV_SECTIONS : NAV_SECTIONS).map((section) => ({
         ...section,
         items: section.items.filter(allows),
       })).filter((section) => section.items.length > 0),
     // `allows` closes over the three capability flags; recompute when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden],
+    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden, dashboardAccess, simpleMode],
   );
 
   const activeEntry = findNavEntry(pathname);
@@ -238,6 +250,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
   };
 
   const handleSignOut = async () => {
+    await forgetThisBrowserOnSignOut(); // feat/event-live: this browser stops getting the person's alerts
     clearUser();
     await signOut({ redirectUrl: '/sign-in' });
   };
@@ -265,27 +278,31 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
               </SelectContent>
             </Select>
             <div className="flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="flex-1"
-                onClick={() => setCreateOpen(true)}
-              >
-                <Plus className="size-3.5" />
-                {t('createTenant')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="size-8 shrink-0"
-                disabled={!activeTenantId}
-                title={tps('tenantTitle')}
-                onClick={() => setSettingsOpen(true)}
-              >
-                <Settings2 className="size-3.5" />
-              </Button>
+              {canAccess(dashboardAccess, 'organization', 'edit') ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => setCreateOpen(true)}
+                >
+                  <Plus className="size-3.5" />
+                  {t('createTenant')}
+                </Button>
+              ) : null}
+              {canAccess(dashboardAccess, 'till_settings', 'view') ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8 shrink-0"
+                  disabled={!activeTenantId}
+                  title={tps('tenantTitle')}
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  <Settings2 className="size-3.5" />
+                </Button>
+              ) : null}
               {isSuperAdmin ? (
                 <Button
                   type="button"

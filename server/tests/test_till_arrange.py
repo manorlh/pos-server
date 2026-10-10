@@ -115,18 +115,18 @@ class TestProductImage:
     def test_stored_and_set_on_a_product_of_this_shop_alone(self, w, monkeypatch):
         seen = {}
 
-        async def fake_store(contents, tenant_id, resource, keep_background):
-            seen.update(resource=resource, keep=keep_background)
+        async def fake_store(contents, tenant_id, resource, keep_background, enhance=False):
+            seen.update(resource=resource, keep=keep_background, enhance=enhance)
             return images_router.ImageUploadResponse(
-                url="https://img/cut.png", publicId="p1", originalUrl="https://img/orig.jpg", backgroundRemoved=True,
+                url="https://img/cut.png", publicId="p1", originalUrl="https://img/orig.jpg", backgroundRemoved=True, processed=True,
             )
 
         monkeypatch.setattr(images_router, "store_upload", fake_store)
         monkeypatch.setattr(sync_router, "_product_belongs_only_to", lambda db, p, sid: True)
         monkeypatch.setattr(sync_router, "notify_all_machines_for_tenant", lambda *a, **k: None)
         out = self._upload(w, w.P)
-        assert out == {"url": "https://img/cut.png", "originalUrl": "https://img/orig.jpg", "backgroundRemoved": True}
-        assert seen == {"resource": "products", "keep": False}
+        assert out == {"url": "https://img/cut.png", "originalUrl": "https://img/orig.jpg", "backgroundRemoved": True, "processed": True}
+        assert seen == {"resource": "products", "keep": False, "enhance": True}
         assert w.db.get(type(w.P), w.P.id).image_url == "https://img/cut.png"
 
     def test_a_product_other_shops_list_too_is_refused(self, w, monkeypatch):

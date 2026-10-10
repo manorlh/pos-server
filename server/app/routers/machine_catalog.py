@@ -45,6 +45,8 @@ from app.schemas.machine_catalog import (
 from app.services import general_item
 from app.services import machine_catalog
 from app.services import product_availability as availability
+from app.services import restricted_items
+from app.services import sales_channel
 
 router = APIRouter(prefix="/machines", tags=["machine-catalog"])
 
@@ -86,6 +88,8 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
     )
     area_levels = availability.area_overrides(db, machine.area_id, ids)
     machine_levels = availability.machine_overrides(db, machine.id, ids)
+    # "מחייב אישור מנהל במכירה", resolved over the tenant's category tree.
+    restricted = restricted_items.restricted_category_ids_in_tenant(db, machine.tenant_id or shop.tenant_id)
 
     products: List[MachineCatalogProduct] = []
     category_ids = set()
@@ -113,6 +117,10 @@ def build_picture(db: Session, machine: POSMachine, shop: Shop, can_edit: bool) 
                 shop_listed=listed,
                 available=bool(listed and resolved.available),
                 on_till=listed and machine_catalog.on_till(mode, included),
+                sales_channel=sales_channel.out(getattr(p, "sales_channel", None)),
+                requires_manager_approval=restricted_items.is_restricted(
+                    getattr(p, "requires_manager_approval", False), p.category_id, restricted,
+                ),
             )
         )
 

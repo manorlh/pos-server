@@ -1,0 +1,1 @@
+{ "jsonrpc": "2.0", "id": "1234", "error": { "code": 102, "message": "payment method is missing" } }

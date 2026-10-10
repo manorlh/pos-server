@@ -16,8 +16,12 @@ import {
 } from '@/lib/paymentOptions';
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
+import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/lib/availabilityReopen';
 import { TIP_PRESETS_MAX } from '@/lib/types';
-import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey } from '@/lib/types';
+import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, parseIdleReturnInput } from '@/lib/desktopIdleReturn';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
+import { PaymentIntegrationSection } from '@/components/payment-integration-section';
+import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
 
 /**
  * A patch, not plain settings, so a payment-option or sell-screen key can hold `null`
@@ -40,6 +44,12 @@ type Props = {
   tenantLevel?: boolean;
   /** May change the Z scope (distributor / super admin); otherwise it is shown read-only. */
   zScopeEditable?: boolean;
+  /**
+   * The layer edited and its id: the payment-integration section then reads what the
+   * server knows (a till's hardware, saved secrets, what it charges on). Optional.
+   */
+  settingsLevel?: SettingsLevel;
+  entityId?: string | null;
 };
 
 const Z_SCOPES = ['shop', 'machine'] as const;
@@ -76,6 +86,8 @@ export function PosSettingsForm({
   paymentOptionsRejected,
   tenantLevel,
   zScopeEditable = false,
+  settingsLevel,
+  entityId,
 }: Props) {
   const t = useTranslations('posSettings');
 
@@ -209,6 +221,72 @@ export function PosSettingsForm({
           </SelectContent>
         </Select>
         {inheritedHint('outOfStockPolicy')}
+      </div>
+
+      {/* "פתיחת פריטים אוטומטית אחרי Z" (lib/availabilityReopen.ts; also on the stock page,
+          per point of sale). "ירושה" sends null: this layer stops setting it. */}
+      <div className="space-y-1">
+        <Label>
+          {t('autoReopenAfterZ')}
+          {overrideBadge('autoReopenAfterZ')}
+        </Label>
+        {(() => {
+          const label = (m: AutoReopenMode) => t(`autoReopen_${m}`);
+          const items = [
+            {
+              value: 'inherit',
+              label: t('autoReopenInherit', { value: label(inherited?.autoReopenAfterZ ?? AUTO_REOPEN_DEFAULT) }),
+            },
+            ...AUTO_REOPEN_MODES.map((m) => ({ value: m, label: label(m) })),
+          ];
+          return (
+            <Select
+              value={value.autoReopenAfterZ ?? 'inherit'}
+              onValueChange={(v) =>
+                set('autoReopenAfterZ', v === 'inherit' ? null : (v as AutoReopenMode))
+              }
+              items={items}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {items.map((i) => (
+                  <SelectItem key={i.value} value={i.value} label={i.label}>
+                    {i.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          );
+        })()}
+        <p className="text-xs text-muted-foreground">{t('autoReopenDesc')}</p>
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <Label>
+            {t('autoReopenIgnoreStock')}
+            {overrideBadge('autoReopenIgnoreStock')}
+          </Label>
+          <p className="text-xs text-muted-foreground">{t('autoReopenIgnoreStockDesc')}</p>
+          {inheritedHint('autoReopenIgnoreStock', onOff)}
+          {typeof value.autoReopenIgnoreStock === 'boolean' ? (
+            <Button
+              type="button"
+              variant="link"
+              size="xs"
+              className="h-auto px-0 text-xs"
+              onClick={() => set('autoReopenIgnoreStock', null)}
+            >
+              {t('payResetToInherited')}
+            </Button>
+          ) : null}
+        </div>
+        <Switch
+          checked={value.autoReopenIgnoreStock ?? inherited?.autoReopenIgnoreStock === true}
+          onCheckedChange={(c) => set('autoReopenIgnoreStock', c)}
+        />
       </div>
 
       <div className="border-t pt-4 space-y-3">
@@ -556,55 +634,35 @@ export function PosSettingsForm({
         </div>
       </div>
 
-      <div className="border-t pt-4 space-y-3">
-        <p className="text-sm font-medium">{t('nayaxTitle')}</p>
-        <div className="flex items-center justify-between gap-4">
-          <Label>
-            {t('nayaxEnabled')}
-            {overrideBadge('nayaxEnabled')}
-          </Label>
-          <Switch
-            checked={value.nayaxEnabled ?? inherited?.nayaxEnabled ?? false}
-            onCheckedChange={(c) => set('nayaxEnabled', c)}
-          />
-        </div>
-        <div className="space-y-1">
-          <Label>
-            {t('nayaxHost')}
-            {overrideBadge('nayaxDeviceHost')}
-          </Label>
-          <Input
-            placeholder={placeholderFor('nayaxDeviceHost', value, inherited)}
-            value={value.nayaxDeviceHost ?? ''}
-            onChange={(e) => set('nayaxDeviceHost', e.target.value || undefined)}
-          />
-          {inheritedHint('nayaxDeviceHost')}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label>
-              {t('nayaxPort')}
-              {overrideBadge('nayaxDevicePort')}
-            </Label>
-            <Input
-              placeholder={placeholderFor('nayaxDevicePort', value, inherited) || '8080'}
-              value={value.nayaxDevicePort ?? ''}
-              onChange={(e) => set('nayaxDevicePort', e.target.value || undefined)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>
-              {t('nayaxPath')}
-              {overrideBadge('nayaxSpicyPath')}
-            </Label>
-            <Input
-              placeholder={placeholderFor('nayaxSpicyPath', value, inherited) || '/SPICy'}
-              value={value.nayaxSpicyPath ?? ''}
-              onChange={(e) => set('nayaxSpicyPath', e.target.value || undefined)}
-            />
-          </div>
-        </div>
-      </div>
+      {/* "חזרה אוטומטית לקיוסק" (R2M POS for Windows): on / off and the idle minutes, per layer. */}
+      <DesktopIdleReturnSection
+        own={value.desktopIdleReturnMinutes}
+        inherited={inherited?.desktopIdleReturnMinutes}
+        showOverrideHints={!!showOverrideHints}
+        onSet={(v) => set('desktopIdleReturnMinutes', v)}
+      />
+
+      {/* "סוג אינטגרציית אשראי" and the fields of the type chosen (Nayax's address
+          among them). The older `nayaxEnabled` switch is gone: choosing Nayax is the way
+          now, though "אוטומטי" with it on still means Nayax. */}
+      <PaymentIntegrationSection
+        value={value}
+        onChange={onChange}
+        inherited={inherited}
+        showOverrideHints={showOverrideHints}
+        settingsLevel={settingsLevel}
+        entityId={entityId}
+      />
+
+      {/* "מכשירי תשלום": a shop's / a till's switch and default device (a till without
+          built-in clearing choosing between several payment devices). */}
+      <PaymentDevicesSettingsSection
+        value={value}
+        onChange={onChange}
+        inherited={inherited}
+        settingsLevel={settingsLevel}
+        entityId={entityId}
+      />
 
       {/* How the tenant's Zs are produced. One choice for the whole tenant, read by the
           Z wizard and enforced by POST /z-runs (422 z_scope_machine_one_till). */}
@@ -651,6 +709,90 @@ export function PosSettingsForm({
           <p className="text-xs text-muted-foreground">{t('zScopeLegal')}</p>
           <p className="text-xs text-muted-foreground">{t('zScopeTenantWide')}</p>
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * "חזרה אוטומטית לקיוסק": the switch saves 0 (off) or the minutes; the box edits the minutes;
+ * "חזרה לערך בירושה" sends `null`. What the device uses — this layer's, the one above's, or 10 —
+ * is lib/desktopIdleReturn.ts's rule, the Windows app's too.
+ */
+function DesktopIdleReturnSection({
+  own,
+  inherited,
+  showOverrideHints,
+  onSet,
+}: {
+  own: number | null | undefined;
+  inherited: number | undefined;
+  showOverrideHints: boolean;
+  onSet: (v: number | null) => void;
+}) {
+  const t = useTranslations('posSettings');
+  const view = idleReturnView(own, inherited);
+  const [text, setText] = useState<string | null>(null);
+  const shown = text ?? (view.on ? String(view.minutes) : '');
+  const invalid = text !== null && text.trim() !== '' && (parseIdleReturnInput(text) ?? 0) < 1;
+  const label = (minutes: number) => (minutes > 0 ? t('desktopIdleOn', { minutes }) : t('desktopIdleOff'));
+  return (
+    <div className="border-t pt-4 space-y-2">
+      <p className="text-sm font-medium">{t('desktopIdleTitle')}</p>
+      <p className="text-xs text-muted-foreground">{t('desktopIdleDesc')}</p>
+      <div className="flex items-center justify-between gap-4">
+        <Label>
+          {t('desktopIdleSwitch')}
+          {showOverrideHints && view.from === 'own' ? (
+            <Badge variant="secondary" className="text-xs ms-2">
+              {t('override')}
+            </Badge>
+          ) : null}
+        </Label>
+        <Switch
+          checked={view.on}
+          onCheckedChange={(c) => {
+            setText(null);
+            onSet(idleReturnSwitchValue(c, view));
+          }}
+        />
+      </div>
+      <div className="space-y-1">
+        <Label>{t('desktopIdleMinutes')}</Label>
+        <Input
+          dir="ltr"
+          inputMode="numeric"
+          className="w-28 font-mono"
+          disabled={!view.on}
+          aria-invalid={invalid}
+          value={shown}
+          onChange={(e) => {
+            const next = e.target.value.replace(/\D/g, '').slice(0, 3);
+            setText(next);
+            const v = parseIdleReturnInput(next);
+            if (typeof v === 'number' && v >= 1) onSet(v);
+          }}
+        />
+        {invalid ? <p className="text-xs text-destructive">{t('desktopIdleInvalid')}</p> : null}
+      </div>
+      {view.from === 'inherited' && showOverrideHints ? (
+        <p className="text-xs text-muted-foreground">{t('desktopIdleInherited', { value: label(view.minutes) })}</p>
+      ) : view.from === 'default' ? (
+        <p className="text-xs text-muted-foreground">{t('desktopIdleDefault', { value: label(DESKTOP_IDLE_RETURN_DEFAULT) })}</p>
+      ) : null}
+      {view.from === 'own' && showOverrideHints ? (
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          className="h-auto px-0 text-xs"
+          onClick={() => {
+            setText(null);
+            onSet(null);
+          }}
+        >
+          {t('payResetToInherited')}
+        </Button>
       ) : null}
     </div>
   );

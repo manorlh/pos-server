@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "shiftId": null,
+    "sequenceNumber": null,
+    "businessDate": null,
+    "closedAt": null,
+    "countedCash": null,
+    "expectedCash": null,
+    "reconstructed": false,
+    "highestTransactionNumber": null,
+    "highestTransactionNumbers": null
+  }
+}

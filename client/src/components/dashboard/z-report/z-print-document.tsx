@@ -22,6 +22,10 @@
 import { useTranslations } from 'next-intl';
 import { formatCurrency, formatDate, formatDateTime, moneyValue } from '@/lib/format';
 import type { Money, ZReportDetail, ZReportMachineSection } from '@/lib/types';
+import { numberLabelKey, zShowsExempt } from '@/lib/dealerType';
+import { hasDrawerTips } from '@/lib/drawerTips';
+import { cashMovementRows } from '@/lib/zCashMovements';
+import { zSectionLines, type ZReportSections, type ZSectionsLabels } from '@/lib/zReportSections';
 import {
   hasBetweenShiftAdjustments,
   usePaymentMethodLabel,
@@ -69,6 +73,34 @@ function Payments({ breakdown }: { breakdown: Record<string, Money> | null | und
   );
 }
 
+/** The owner's sections (lib/zReportSections.ts) as A4 sections: the same lines as the till's paper. */
+function ZSectionsPrintBlocks({ sections, exempt }: { sections: ZReportSections; exempt: boolean }) {
+  const t = useTranslations('zReports.reportSections');
+  const blocks = zSectionLines(sections, t.raw('labels') as ZSectionsLabels, {
+    exempt,
+    fmt: (v) => formatCurrency(v),
+    stamp: (iso) => formatDateTime(iso),
+  });
+  return (
+    <>
+      {blocks.map(([title, rows]) => (
+        <Section key={title} title={title}>
+          <table className="w-full text-xs">
+            <tbody>
+              {rows.map(([label, value, bold], i) => (
+                <tr key={`${label}-${i}`} className={`border-b border-neutral-300 ${bold ? 'font-bold' : ''}`}>
+                  <td className={`py-0.5 pe-4 ${label.startsWith('  ') ? 'ps-3' : ''}`}>{label.trim()}</td>
+                  <td className="py-0.5 text-end tabular-nums">{value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
+      ))}
+    </>
+  );
+}
+
 /** A sub-heading row inside a section's table. */
 function SubHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -81,8 +113,11 @@ function SubHeading({ children }: { children: React.ReactNode }) {
 }
 
 /** Sales from gross to net, in the order they are computed (see the Z page's SalesRows). */
-function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
+function SalesRows({ x, dealerType }: { x: ZReportDetail | ZReportMachineSection; dealerType?: string | null }) {
   const t = useTranslations('zReports.print');
+  const tb = useTranslations('businessType');
+  // An exempt dealer's Z has no VAT to split (docs/SPEC_BUSINESS_TYPE.md).
+  const exempt = zShowsExempt(dealerType, x.vatTotal);
   const hasGross = x.grossSales != null;
   const missing = 'vatMissingCount' in x ? (x.vatMissingCount ?? 0) : 0;
   return (
@@ -100,7 +135,9 @@ function SalesRows({ x }: { x: ZReportDetail | ZReportMachineSection }) {
       <Row
         label={t('vat')}
         value={
-          x.vatTotal == null
+          exempt
+            ? tb('zExemptNoVat')
+            : x.vatTotal == null
             ? t('vatMissing')
             : missing > 0
               ? t('vatPartial', { amount: formatCurrency(x.vatTotal), count: missing })
@@ -143,7 +180,7 @@ function OfflineRows({ s }: { s: ZReportMachineSection }) {
   );
 }
 
-function TillSection({ s }: { s: ZReportMachineSection }) {
+function TillSection({ s, dealerType }: { s: ZReportMachineSection; dealerType?: string | null }) {
   const t = useTranslations('zReports.print');
   const heading = useTillHeading()(s);
   const uncounted = (s.uncountedShiftCount ?? 0) > 0;
@@ -169,7 +206,7 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
           <Row label={t('creditNotesCount')} value={count(s.creditNotesCount)} />
           <Row label={t('nonSaleCount')} value={count(s.nonSaleDocumentsCount)} />
           <Row label={t('documents')} value={count(s.transactionsCount)} />
-          <SalesRows x={s} />
+          <SalesRows x={s} dealerType={dealerType} />
           <SubHeading>{t('paymentsTitle')}</SubHeading>
           <Payments breakdown={s.paymentBreakdown} />
           <SubHeading>{t('cashTitle')}</SubHeading>
@@ -177,12 +214,23 @@ function TillSection({ s }: { s: ZReportMachineSection }) {
           {hasBetweenShiftAdjustments(s.betweenShiftAdjustments) ? (
             <Row label={t('betweenShiftAdjustments')} value={signedMoney(s.betweenShiftAdjustments)} />
           ) : null}
+          {/* "Z — מזומן צפוי כולל הפקדות ותנועות מזומן": only on a Z the parameter applied to. */}
+          {cashMovementRows(s.cashMovements).map((r) => (
+            <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+          ))}
           <Row label={t('expectedCash')} value={formatCurrency(s.expectedCash)} />
           <Row
             label={t('countedCash')}
             value={uncounted ? t('notCounted', { count: s.uncountedShiftCount ?? 0 }) : formatCurrency(s.countedCash)}
           />
           <Row label={t('overShort')} value={uncounted ? t('withheld') : signedMoney(s.overShort)} />
+          {/* "טיפ באשראי משולם מהמזומן": card tips paid from the drawer, and what it holds. */}
+          {hasDrawerTips(s.cardTipsFromDrawer) ? (
+            <>
+              <Row label={t('cardTipsFromDrawer')} value={formatCurrency(s.cardTipsFromDrawer)} />
+              <Row label={t('drawerCash')} value={formatCurrency(s.drawerCash)} />
+            </>
+          ) : null}
           {(s.reconstructedShiftCount ?? 0) > 0 ? (
             <Row label={t('reconstructedShifts')} value={s.reconstructedShiftCount} />
           ) : null}
@@ -208,6 +256,7 @@ function signedMoney(v: Money | null | undefined): React.ReactNode {
 
 export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: string }) {
   const t = useTranslations('zReports.print');
+  const tb = useTranslations('businessType');
   const tz = useTranslations('zReports');
   const shiftLabel = useShiftLabel();
   const offlineLine = useOfflineLine();
@@ -227,7 +276,13 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
     <div className="hidden bg-white text-[11px] leading-snug text-black print:block" dir="rtl">
       <header className="border-b-2 border-black pb-2">
         <p className="text-base font-bold">{b?.businessName ?? z.shopName ?? '—'}</p>
-        {b?.vatNumber ? <p>{t('vatNumber', { number: b.vatNumber })}</p> : null}
+        {b?.vatNumber ? (
+          <p>
+            {b.dealerType === 'exempt' || b.dealerType === 'licensed'
+              ? `${tb(numberLabelKey(b.dealerType))} ${b.vatNumber}`
+              : t('vatNumber', { number: b.vatNumber })}
+          </p>
+        ) : null}
         {b?.companyRegNumber ? <p>{t('companyReg', { number: b.companyRegNumber })}</p> : null}
         {place ? <p>{place}</p> : null}
         <p>
@@ -270,10 +325,15 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
         <p className={offline.declinedCount > 0 ? 'mt-2 font-bold' : 'mt-1'}>{offlineLine(offline)}</p>
       ) : null}
 
+      {/* "דו״ח Z — גרסה 2": the owner's sections, the lines the till and the cloud print. */}
+      {z.reportSections ? (
+        <ZSectionsPrintBlocks sections={z.reportSections} exempt={z.business?.dealerType === 'exempt'} />
+      ) : (
+      <>
       <Section title={t('totalsTitle')}>
         <table className="w-full text-xs">
           <tbody>
-            <SalesRows x={z} />
+            <SalesRows x={z} dealerType={z.business?.dealerType} />
             <Row label={t('documents')} value={count(z.transactionsCount)} />
           </tbody>
         </table>
@@ -304,6 +364,9 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
             {hasBetweenShiftAdjustments(z.betweenShiftAdjustments) ? (
               <Row label={t('betweenShiftAdjustments')} value={signedMoney(z.betweenShiftAdjustments)} />
             ) : null}
+            {cashMovementRows(z.cashMovements).map((r) => (
+              <Row key={r.key} label={t(r.key)} value={signedMoney(r.value)} />
+            ))}
             <Row label={t('expectedCash')} value={formatCurrency(z.expectedCash)} />
             <Row
               label={t('countedCash')}
@@ -320,12 +383,20 @@ export function ZPrintDocument({ z, printedAt }: { z: ZReportDetail; printedAt: 
               label={t('overShort')}
               value={withheld || z.discrepancy == null ? t('withheld') : signedMoney(z.discrepancy)}
             />
+            {hasDrawerTips(z.cardTipsFromDrawer) ? (
+              <>
+                <Row label={t('cardTipsFromDrawer')} value={formatCurrency(z.cardTipsFromDrawer)} />
+                <Row label={t('drawerCash')} value={formatCurrency(z.drawerCash)} />
+              </>
+            ) : null}
           </tbody>
         </table>
       </Section>
+      </>
+      )}
 
       {z.perMachine.map((s) => (
-        <TillSection key={s.machineId} s={s} />
+        <TillSection key={s.machineId} s={s} dealerType={z.business?.dealerType} />
       ))}
 
       {z.shifts.length > 0 ? (

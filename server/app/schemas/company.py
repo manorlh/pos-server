@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict, Field
-from typing import List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 from datetime import date, datetime
 
@@ -17,6 +17,8 @@ class CompanyBase(BaseModel):
     license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
     #: A temporary customer's last day of sales.
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    #: "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): "company" (default) | "licensed" | "exempt".
+    dealer_type: Optional[Literal["company", "licensed", "exempt"]] = Field(None, alias="dealerType")
 
     class Config:
         populate_by_name = True
@@ -38,6 +40,8 @@ class CompanyUpdate(BaseModel):
     license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
     #: A temporary customer's last day of sales.
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    #: A change applies to new documents only; the company's administrators only.
+    dealer_type: Optional[Literal["company", "licensed", "exempt"]] = Field(None, alias="dealerType")
 
     class Config:
         populate_by_name = True
@@ -56,8 +60,23 @@ class CompanyResponse(BaseModel):
     is_active: bool = Field(..., alias="isActive")
     license_type: str = Field("permanent", alias="licenseType")
     license_expires_on: Optional[date] = Field(None, alias="licenseExpiresOn")
+    dealer_type: str = Field("company", alias="dealerType")
+    dealer_type_changed_at: Optional[datetime] = Field(None, alias="dealerTypeChangedAt")
+    dealer_type_changed_by: Optional[uuid.UUID] = Field(None, alias="dealerTypeChangedBy")
+    #: Every change, oldest first: `{from, to, at, by, byName}`.
+    dealer_type_history: List[Dict[str, Any]] = Field(default_factory=list, alias="dealerTypeHistory")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+    @field_validator("dealer_type", mode="before")
+    @classmethod
+    def _dealer_type_default(cls, v):
+        return v or "company"
+
+    @field_validator("dealer_type_history", mode="before")
+    @classmethod
+    def _history_default(cls, v):
+        return v or []
 
     class Config:
         from_attributes = True

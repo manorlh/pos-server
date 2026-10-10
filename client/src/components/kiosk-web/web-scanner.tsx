@@ -1,0 +1,206 @@
+'use client';
+
+/**
+ * Barcode scans on the browser kiosk — a USB / Bluetooth HID scanner types like a keyboard, 1D and
+ * 2D, no button first — by the Windows kiosk's rules (kiosk-desktop renderer/kiosk/kioskScanner.tsx,
+ * lib/kioskScan.ts — the Android kiosk's KioskScan.kt):
+ *
+ *  - every key is taken at the window, before the screens: no character types anywhere, no Enter
+ *    presses a button, no Tab moves the focus (F-keys and OS shortcuts excepted). On the staff
+ *    screen a key goes on to a field that has the focus;
+ *  - a product found among what the kiosk shows: into the basket with the pop and the flight, or its
+ *    sheet when something must be chosen; the attract screen starts the order;
+ *  - not found: "המוצר לא נמצא";
+ *  - a prepaid voucher ("PV:…"): on "איך תרצו לשלם?" it is redeemed (`onVoucher`); anywhere else
+ *    "יש להציג את השובר בקופה" (or, with vouchers offered, it waits for the payment step);
+ *  - ignored on payment, success, details, the rest screens, a sheet and the staff screen;
+ *    the same code within 800 ms counts once.
+ */
+
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { cardStyle, type PProduct, type PreviewModel } from '@/kiosk-shared';
+import { ORDERING, type KioskScreen } from '@/lib/kioskFlow';
+import { decideScan, IDLE_END_MS, keyLeftAlone, parseScan, scannedVoucherCode, ScanDedupe, ScanKeyReader, type ScanProduct } from '@/lib/kioskScan';
+
+export interface WebScanInput {
+  m: PreviewModel;
+  screen: KioskScreen;
+  busy: boolean;
+  staff: boolean;
+  sheetOpen: boolean;
+  shown: PProduct[];
+  codes: Array<{ id: string; barcode?: string | null; sku: string | null }>;
+  screenRef: RefObject<HTMLDivElement | null>;
+  add: (p: PProduct, from: DOMRect | null) => void;
+  choose: (p: PProduct) => void;
+  start: () => void;
+  /** "לקחת / לשבת" are on the attract screen (only they start): a dish scanned there waits for them. */
+  serviceOnAttract?: boolean;
+  touch: () => void;
+  /** "איך תרצו לשלם?" is on the screen with a voucher to take: a voucher scan is redeemed. */
+  onVoucher: ((code: string) => void) | null;
+}
+
+type Shown = ScanProduct & { p: PProduct };
+
+const MENU: ReadonlySet<KioskScreen> = new Set(['catalog', 'cart', 'confirm']);
+
+/** How long a dish scanned on the attract screen waits for "לקחת" / "לשבת" there (never for the next customer). */
+const ATTRACT_SCAN_HOLD_MS = 20_000;
+
+function typingInField(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable;
+}
+
+/** Wires the scanner; returns the note to draw over the screens ("המוצר לא נמצא"). */
+export function useWebScanner(input: WebScanInput): ReactNode {
+  const latest = useRef(input);
+  useEffect(() => {
+    latest.current = input;
+  });
+  const pending = useRef<string | null>(null);
+  const [note, setNote] = useState<{ text: string; id: number; ms: number } | null>(null);
+
+  const say = useCallback((text: string, ms: number) => setNote({ text, id: performance.now(), ms }), []);
+
+  const centre = useCallback((): DOMRect | null => {
+    const box = latest.current.screenRef.current?.getBoundingClientRect();
+    return box ? new DOMRect(box.left + box.width / 2 - 60, box.top + box.height / 2 - 60, 120, 120) : null;
+  }, []);
+
+  const put = useCallback(
+    (p: PProduct) => {
+      const i = latest.current;
+      if (p.addPath === 'direct') i.add(p, centre());
+      else i.choose(p);
+    },
+    [centre],
+  );
+
+  const onCode = useCallback(
+    (raw: string, dedupe: ScanDedupe) => {
+      const i = latest.current;
+      const code = parseScan(raw);
+      const duplicate = !dedupe.accept(code.text, performance.now());
+      // A voucher on the payment method step: redeemed there (the cloud checks it).
+      const voucher = scannedVoucherCode(raw);
+      if (voucher && i.onVoucher && !i.staff) {
+        if (!duplicate) {
+          i.touch();
+          i.onVoucher(voucher);
+        }
+        return;
+      }
+      const byId = new Map(i.codes.map((c) => [c.id, c]));
+      const shown: Shown[] = i.shown.map((p) => ({ id: p.id, barcode: byId.get(p.id)?.barcode ?? null, sku: byId.get(p.id)?.sku ?? null, soldOut: p.soldOut, p }));
+      const all = i.codes.map((c) => ({ barcode: c.barcode ?? null, sku: c.sku }));
+      const action = decideScan(code, { screen: i.screen, staff: i.staff, sheetOpen: i.sheetOpen, busy: i.busy }, shown, (s) => s.p.addPath ?? 'sheet', { all, duplicate });
+      switch (action.kind) {
+        case 'ignore':
+          return;
+        case 'not_found':
+          say(i.m.txt('scanNotFound'), 1800);
+          return;
+        case 'voucher':
+          say(i.m.txt('scanVoucherAtTill'), 3500);
+          return;
+        default: {
+          i.touch();
+          const p = action.product.p;
+          if (action.start === 'now') put(p);
+          else {
+            pending.current = p.id;
+            if (action.start === 'start_order') {
+              i.start();
+              // The order did not start (the screen changed under the scan): nothing waits — except with
+              // "לקחת / לשבת" on the attract screen, where only they start: the dish waits for them a while.
+              window.setTimeout(() => {
+                if (latest.current.screen === 'attract' && !latest.current.serviceOnAttract) pending.current = null;
+              }, 120);
+              if (i.serviceOnAttract) {
+                window.setTimeout(() => {
+                  if (pending.current === p.id && latest.current.screen === 'attract') pending.current = null;
+                }, ATTRACT_SCAN_HOLD_MS);
+              }
+            }
+          }
+        }
+      }
+    },
+    [put, say],
+  );
+
+  useEffect(() => {
+    const reader = new ScanKeyReader();
+    const dedupe = new ScanDedupe();
+    let idleTimer: number | null = null;
+    const deliver = (code: string | null) => {
+      if (code) onCode(code, dedupe);
+    };
+    const leftToPage = (e: KeyboardEvent) => keyLeftAlone({ code: e.code, meta: e.metaKey }) || (latest.current.staff && typingInField());
+    const onDown = (e: KeyboardEvent) => {
+      if (leftToPage(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.isComposing) return;
+      deliver(reader.down({ code: e.code, key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey, caps: e.getModifierState?.('CapsLock') ?? false, repeat: e.repeat, at: e.timeStamp }));
+      if (idleTimer !== null) window.clearTimeout(idleTimer);
+      idleTimer = reader.pending ? window.setTimeout(() => deliver(reader.idle(performance.now())), IDLE_END_MS + 20) : null;
+    };
+    const swallow = (e: KeyboardEvent) => {
+      if (leftToPage(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    window.addEventListener('keydown', onDown, true);
+    window.addEventListener('keyup', swallow, true);
+    window.addEventListener('keypress', swallow, true);
+    return () => {
+      window.removeEventListener('keydown', onDown, true);
+      window.removeEventListener('keyup', swallow, true);
+      window.removeEventListener('keypress', swallow, true);
+      if (idleTimer !== null) window.clearTimeout(idleTimer);
+    };
+  }, [onCode]);
+
+  // The menu is up: the dish scanned before it (attract, service) goes in, after the screen's slide.
+  const screen = input.screen;
+  useEffect(() => {
+    const id = pending.current;
+    if (!id) return;
+    if (!ORDERING.has(screen)) {
+      // Scanned on the attract screen with "לקחת / לשבת" there: it waits for the choice (a while, above).
+      if (screen === 'attract' && latest.current.serviceOnAttract) return;
+      pending.current = null;
+      return;
+    }
+    if (!MENU.has(screen)) return;
+    const timer = window.setTimeout(() => {
+      pending.current = null;
+      const p = latest.current.shown.find((x) => x.id === id && !x.soldOut);
+      if (p) put(p);
+      else say(latest.current.m.txt('scanNotFound'), 1800);
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [screen, put, say]);
+
+  useEffect(() => {
+    if (!note) return;
+    const timer = window.setTimeout(() => setNote(null), note.ms);
+    return () => window.clearTimeout(timer);
+  }, [note]);
+
+  return note ? <ScanNote key={note.id} m={input.m} text={note.text} /> : null;
+}
+
+function ScanNote({ m, text }: { m: PreviewModel; text: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-1/2 z-[61] flex -translate-y-1/2 justify-center p-6">
+      <div className="max-w-[85%] px-6 py-4 text-center text-lg font-extrabold shadow-2xl animate-in fade-in zoom-in-95 duration-200" style={{ ...cardStyle(m), background: m.c.surface }}>
+        {text}
+      </div>
+    </div>
+  );
+}

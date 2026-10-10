@@ -29,6 +29,10 @@ class ShiftCloseRequestOut(BaseModel):
     sent_at: Optional[datetime] = Field(None, alias="sentAt")
     received_at: Optional[datetime] = Field(None, alias="receivedAt")
     completed_at: Optional[datetime] = Field(None, alias="completedAt")
+    #: "כפה סגירה" (app/services/remote_close_force.py): asked forced from remote control.
+    remote_force: bool = Field(False, alias="remoteForce")
+    #: Completed in that mode: "נסגר בכפייה מרחוק ע״י <מנהל>" (the chip and the notices); else null.
+    forced_words: Optional[str] = Field(None, alias="forcedWords")
     # The till's last report, as the status light reads it (a reading, not live).
     online: Optional[bool] = None
     pending_documents: Optional[int] = Field(None, alias="pendingDocuments")

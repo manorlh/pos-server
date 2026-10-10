@@ -9,7 +9,15 @@
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, CircleAlert, Info } from 'lucide-react';
-import type { ImportCategoryRow, ImportMessage, ImportProductRow, ImportRowStatus } from '@/lib/catalogImportApi';
+import type {
+  ImportCategoryRow,
+  ImportGroupRow,
+  ImportMessage,
+  ImportNoteRow,
+  ImportOptionRow,
+  ImportProductRow,
+  ImportRowStatus,
+} from '@/lib/catalogImportApi';
 import { cn } from '@/lib/utils';
 import { IOS, IosHairline } from './ios';
 
@@ -188,5 +196,84 @@ export function CategoryRows({ rows, filter }: { rows: ImportCategoryRow[]; filt
         />
       ))}
     </ul>
+  );
+}
+
+/** The rows of one of the add-on layer's sheets, paged like the products. */
+function SheetRows<R extends { row: number; status: ImportRowStatus; changes: ImportProductRow['changes']; messages: ImportMessage[] }>({
+  rows,
+  filter,
+  title,
+  details,
+}: {
+  rows: R[];
+  filter: RowFilter;
+  title: (r: R) => string;
+  details: (r: R) => string[];
+}) {
+  const t = useTranslations('catalogImport');
+  const changeText = useChangeText();
+  const [limit, setLimit] = useState(PAGE);
+  const shown = rows.filter((r) => matchesFilter(filter, r.status, r.messages));
+  if (shown.length === 0) return <p className="px-4 py-6 text-center text-[15px] text-[#8E8E93]">{t('preview.noRows')}</p>;
+  return (
+    <>
+      <ul>
+        {shown.slice(0, limit).map((r, i) => (
+          <Row
+            key={`${r.row}-${i}`}
+            first={i === 0}
+            tone={rowTone(r.status, r.messages)}
+            rowLabel={t('preview.row', { row: r.row })}
+            title={title(r)}
+            status={r.status}
+            details={details(r).filter(Boolean)}
+            changes={r.status === 'update' || r.status === 'create' ? r.changes.map(changeText) : []}
+            messages={r.messages}
+          />
+        ))}
+      </ul>
+      {shown.length > limit ? (
+        <button
+          type="button"
+          onClick={() => setLimit((n) => n + PAGE)}
+          className="relative w-full px-4 py-3 text-[15px] font-medium text-[#007AFF]"
+        >
+          <IosHairline />
+          {t('preview.showMore', { count: Math.min(PAGE, shown.length - limit) })}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+export function GroupRows({ rows, filter }: { rows: ImportGroupRow[]; filter: RowFilter }) {
+  return <SheetRows rows={rows} filter={filter} title={(r) => r.name} details={(r) => [r.kind]} />;
+}
+
+export function OptionRows({ rows, filter }: { rows: ImportOptionRow[]; filter: RowFilter }) {
+  const t = useTranslations('catalogImport');
+  return (
+    <SheetRows
+      rows={rows}
+      filter={filter}
+      title={(r) => r.name}
+      details={(r) => [
+        r.group ? t('preview.inGroup', { group: r.group }) : '',
+        r.price !== null ? (Number(r.price) === 0 ? t('preview.free') : t('preview.price', { price: r.price })) : '',
+      ]}
+    />
+  );
+}
+
+export function NoteRows({ rows, filter }: { rows: ImportNoteRow[]; filter: RowFilter }) {
+  const t = useTranslations('catalogImport');
+  return (
+    <SheetRows
+      rows={rows}
+      filter={filter}
+      title={(r) => r.text}
+      details={(r) => [r.targets ? t('preview.appliesTo', { targets: r.targets }) : '']}
+    />
   );
 }

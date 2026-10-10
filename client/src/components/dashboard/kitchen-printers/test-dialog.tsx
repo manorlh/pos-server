@@ -3,12 +3,16 @@
 /**
  * A test print and how it went, per till: the jobs `POST /printers/{id}/test` made,
  * polled every two seconds until each is printed, failed or expired.
+ *
+ * Opened only on demand ("תוצאות בדיקה" on the printer's row) — never after a send: a test is
+ * fire-and-forget, followed in the background by "פקודות שנשלחו" (lib/deviceCommandsStore.ts).
  */
 
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Clock, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, ListChecks, XCircle } from 'lucide-react';
 import { fetchPrinterTestJobs, type KitchenPrinter, type PrintJob } from '@/lib/kitchenPrintersApi';
+import { useDeviceCommandsStore } from '@/lib/deviceCommandsStore';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -52,6 +56,30 @@ function StatusLine({ job }: { job: PrintJob }) {
         </div>
       </div>
     </li>
+  );
+}
+
+/** The job ids ("a,b") of the printer's latest test this session sent (newest first in the store), or null. */
+function useLastTestJobIds(printerId: string): string | null {
+  return useDeviceCommandsStore(
+    (s) => s.commands.find((c) => c.kind === 'printer_test' && c.ref?.printerId === printerId)?.ref?.jobIds ?? null,
+  );
+}
+
+/** "תוצאות בדיקה": the per-till results of the printer's latest test, opened on demand. */
+export function TestResultsLink({ printerId, onOpen }: { printerId: string; onOpen: (jobIds: string[]) => void }) {
+  const t = useTranslations('kitchenPrinters.test');
+  const jobIds = useLastTestJobIds(printerId);
+  if (!jobIds) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(jobIds.split(',').filter(Boolean))}
+      className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs font-normal text-primary underline-offset-2 hover:underline"
+    >
+      <ListChecks className="size-3.5" aria-hidden />
+      {t('results')}
+    </button>
   );
 }
 

@@ -8,6 +8,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { AvailabilityControl, EffectiveBadge } from '@/components/dashboard/product-availability';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import { cn } from '@/lib/utils';
 import {
   ShopProductCatalogCandidate,
@@ -496,6 +497,7 @@ export default function ShopAssortmentPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div>
         <h1 className="text-2xl font-bold">{t('title')}</h1>
         <p className="text-muted-foreground text-sm">{t('subtitle')}</p>

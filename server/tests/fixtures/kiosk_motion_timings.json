@@ -1,0 +1,62 @@
+{
+  "about": "\"הנפשות ומעברים\" — the kiosk's motion, one table for every renderer: pos-android domain/KioskTransitions.kt (KioskTransitions.of, speedFactor, KioskEase), domain/KioskPresentation.kt (KioskMotion.of) and domain/KioskPerf.kt (KioskMotionConfig.lightened, KioskFrameVerdict); the dashboard's and the web kiosks' client/src/lib/kioskConfig.ts (transitionSpec, motionSpec, EASE_*, lightenMotion, frameVerdict) and preview-motion.tsx MOTION_CSS. Times in ms at normal speed; a curve is a CSS cubic-bezier(x1, y1, x2, y2). Each repo's tests read this file; change it in both repos together.",
+  "speedFactor": { "fast": 0.75, "normal": 1, "relaxed": 1.35 },
+  "screenChange": { "slide": 220, "fade": 180, "zoom": 200, "none": 0 },
+  "categorySwitch": { "slide": 240, "fade": 200, "fade_scale": 220, "push": 280, "none": 0 },
+  "itemsEnter": { "pop": 260, "cascade": 260, "rise": 280, "flip": 300, "none": 0 },
+  "stagger": { "pop": 16, "cascade": 32, "rise": 24, "flip": 28, "none": 0 },
+  "staggerCapMs": 200,
+  "staggerMaxCards": 12,
+  "sheet": { "slide_up": 260, "scale": 220, "fade": 180, "none": 0 },
+  "add": {
+    "lively": { "popMs": 160, "popScale": 1.45, "flyMs": 400, "arcDp": 170, "bounce": 1.25, "countUpMs": 360 },
+    "subtle": { "popMs": 150, "popScale": 1.3, "flyMs": 380, "arcDp": 110, "bounce": 1.12, "countUpMs": 300 },
+    "bounceOnly": { "lively": 1.4, "subtle": 1.28 },
+    "reduceMotionFadeMs": 280,
+    "maxMs": 1000
+  },
+  "curves": {
+    "arrive": [0.2, 0.7, 0.2, 1],
+    "leave": [0.4, 0, 1, 1],
+    "strip": [0.3, 0, 0.2, 1],
+    "popRise": [0.22, 1, 0.36, 1],
+    "popSettle": [0.45, 0, 0.55, 1]
+  },
+  "light": { "categorySwitch": "fade", "itemsEnter": "none", "screenChange": "fade", "sheet": "fade", "speed": "fast" },
+  "effects": ["auto", "full", "light"],
+  "frameProbe": { "minFrames": 120, "slowFactor": 1.25, "slowShare": 0.25, "p90Budgets": 2 },
+  "examples": [
+    {
+      "motion": { "categorySwitch": "slide", "itemsEnter": "cascade", "screenChange": "slide", "sheet": "scale", "addToCart": "fly", "speed": "normal" },
+      "animation": "lively",
+      "transitions": { "categoryMs": 240, "itemMs": 260, "staggerMs": 32, "staggerCapMs": 200, "screenMs": 220, "sheetMs": 220, "gridEnterMs": 460 },
+      "add": { "popMs": 160, "flyMs": 400, "countUpMs": 360 }
+    },
+    {
+      "motion": { "categorySwitch": "push", "itemsEnter": "pop", "screenChange": "fade", "sheet": "scale", "addToCart": "fly", "speed": "fast" },
+      "animation": "subtle",
+      "transitions": { "categoryMs": 210, "itemMs": 195, "staggerMs": 12, "staggerCapMs": 150, "screenMs": 135, "sheetMs": 165, "gridEnterMs": 327 },
+      "add": { "popMs": 113, "flyMs": 285, "countUpMs": 225 }
+    },
+    {
+      "motion": { "categorySwitch": "fade_scale", "itemsEnter": "cascade", "screenChange": "zoom", "sheet": "slide_up", "addToCart": "fly", "speed": "relaxed" },
+      "animation": "lively",
+      "transitions": { "categoryMs": 297, "itemMs": 351, "staggerMs": 43, "staggerCapMs": 270, "screenMs": 270, "sheetMs": 351, "gridEnterMs": 621 },
+      "add": { "popMs": 216, "flyMs": 540, "countUpMs": 486 }
+    },
+    {
+      "motion": { "categorySwitch": "slide", "itemsEnter": "flip", "screenChange": "slide", "sheet": "slide_up", "addToCart": "fly", "speed": "normal" },
+      "light": true,
+      "animation": "lively",
+      "transitions": { "categoryMs": 150, "itemMs": 0, "staggerMs": 0, "staggerCapMs": 0, "screenMs": 135, "sheetMs": 135, "gridEnterMs": 0 },
+      "add": { "popMs": 120, "flyMs": 300, "countUpMs": 270 }
+    },
+    {
+      "motion": { "categorySwitch": "none", "itemsEnter": "rise", "screenChange": "none", "sheet": "none", "addToCart": "bounce", "speed": "normal" },
+      "light": true,
+      "animation": "subtle",
+      "transitions": { "categoryMs": 0, "itemMs": 0, "staggerMs": 0, "staggerCapMs": 0, "screenMs": 0, "sheetMs": 0, "gridEnterMs": 0 },
+      "add": { "popMs": 0, "flyMs": 0, "countUpMs": 225 }
+    }
+  ]
+}

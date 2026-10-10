@@ -72,7 +72,7 @@ describe('the chart rows', () => {
 describe('clockLabel', () => {
   it('writes the time in the event timezone, with the date when asked', () => {
     assert.equal(clockLabel('2026-09-27T15:00:00Z', 'Asia/Jerusalem'), '18:00');
-    assert.equal(clockLabel('2026-09-27T21:30:00Z', 'Asia/Jerusalem', true), '28/9 00:30');
+    assert.equal(clockLabel('2026-09-27T21:30:00Z', 'Asia/Jerusalem', true), '28/09 00:30');
     assert.equal(clockLabel(null, 'Asia/Jerusalem'), '—');
   });
 });

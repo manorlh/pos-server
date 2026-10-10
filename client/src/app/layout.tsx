@@ -39,8 +39,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ClerkProvider
           signInUrl="/sign-in"
           signUpUrl="/sign-up"
-          signInFallbackRedirectUrl="/dashboard"
-          signUpFallbackRedirectUrl="/dashboard"
+          signInFallbackRedirectUrl="/dashboard/start"
+          signUpFallbackRedirectUrl="/dashboard/start"
         >
           <NextIntlClientProvider messages={messages}>
             <Providers>{children}</Providers>

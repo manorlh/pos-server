@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "body": {
+    "syncType": "full",
+    "serverTime": "2026-10-06T14:06:32.407867Z",
+    "users": [
+      {
+        "id": "6e37525e-82b3-4fc9-a9f9-ca2807fff46d",
+        "shopId": "2b67dd9e-6541-43eb-b2f3-6d26b6ecb03d",
+        "username": "default",
+        "firstName": "Default",
+        "lastName": "Cashier",
+        "workerNumber": null,
+        "pinHash": "<redacted>",
+        "role": "shop_manager",
+        "isActive": true,
+        "createdAt": "2026-10-06T12:52:30.576205Z",
+        "updatedAt": "2026-10-06T12:52:30.576205Z"
+      }
+    ]
+  }
+}

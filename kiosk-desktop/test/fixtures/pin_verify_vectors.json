@@ -1,0 +1,95 @@
+{
+  "_comment": "Shared by pos-server tests/fixtures and kiosk-desktop test/fixtures (keep both copies equal): a till user's PIN against the bcrypt hash the cloud ships on the roster (GET /sync/{m}/pos-users). The server (passlib) must agree with every line; kiosk-desktop core/desktopExit.ts verifyPin (the port of the Android till's domain/PinVerifier.kt: bcrypt $2a$/$2b$/$2y$ only, no fallback) must too.",
+  "vectors": [
+    {
+      "pin": "4821",
+      "hash": "$2b$12$SINTkcpjJVHzBiz2.v7AsuIbPXQ/e9JrIJlaLw3LJ4AO/V/uqxmku",
+      "expect": true,
+      "note": "the cloud's own hash (get_password_hash)"
+    },
+    {
+      "pin": "4822",
+      "hash": "$2b$12$SINTkcpjJVHzBiz2.v7AsuIbPXQ/e9JrIJlaLw3LJ4AO/V/uqxmku",
+      "expect": false,
+      "note": "one digit off"
+    },
+    {
+      "pin": "1234",
+      "hash": "$2b$10$uWCw6bTunUcNucnohAOuwelvn852LT3oeHJxrZKQsSrg.CuvclUBW",
+      "expect": true,
+      "note": "$2b$, cost 10"
+    },
+    {
+      "pin": "12345",
+      "hash": "$2b$10$uWCw6bTunUcNucnohAOuwelvn852LT3oeHJxrZKQsSrg.CuvclUBW",
+      "expect": false,
+      "note": "a digit too many"
+    },
+    {
+      "pin": "123",
+      "hash": "$2b$10$uWCw6bTunUcNucnohAOuwelvn852LT3oeHJxrZKQsSrg.CuvclUBW",
+      "expect": false,
+      "note": "a digit too few"
+    },
+    {
+      "pin": "",
+      "hash": "$2b$10$uWCw6bTunUcNucnohAOuwelvn852LT3oeHJxrZKQsSrg.CuvclUBW",
+      "expect": false,
+      "note": "blank PIN"
+    },
+    {
+      "pin": "0000",
+      "hash": "$2a$10$hKwaHkUCkGgcVd9./ykP3OqnJDrP8OiVqEzoo4R1LcJnHPGpVJQgi",
+      "expect": true,
+      "note": "$2a$"
+    },
+    {
+      "pin": "987654",
+      "hash": "$2y$04$EF4YLtim0/AsEK3ZJ3e/bOdTfTU0pvkCY.imB8pIhp1XHWFG.Rlve",
+      "expect": true,
+      "note": "$2y$, six digits"
+    },
+    {
+      "pin": "0123",
+      "hash": "$2b$04$YD.K5YbRu7eYUF0cCzzx9eno3biQ5WKlilxDzHsROk1UvUk8MwJOK",
+      "expect": true,
+      "note": "leading zero kept"
+    },
+    {
+      "pin": "123",
+      "hash": "$2b$04$YD.K5YbRu7eYUF0cCzzx9eno3biQ5WKlilxDzHsROk1UvUk8MwJOK",
+      "expect": false,
+      "note": "leading zero is not optional"
+    },
+    {
+      "pin": "1234",
+      "hash": "1234",
+      "expect": false,
+      "note": "plaintext stored: never compared (no plaintext branch)"
+    },
+    {
+      "pin": "1234",
+      "hash": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4",
+      "expect": false,
+      "note": "SHA-256 digest: not bcrypt, refused"
+    },
+    {
+      "pin": "1234",
+      "hash": "",
+      "expect": false,
+      "note": "no hash"
+    },
+    {
+      "pin": "1234",
+      "hash": "$2b$10$tooShort",
+      "expect": false,
+      "note": "malformed bcrypt"
+    },
+    {
+      "pin": "1234",
+      "hash": "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",
+      "expect": false,
+      "note": "another scheme: refused"
+    }
+  ]
+}

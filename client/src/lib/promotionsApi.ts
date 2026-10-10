@@ -75,10 +75,22 @@ export interface Promotion {
   maxApplications: number | null;
   priority: number;
   isPaused: boolean;
+  /** "שלח הודעה לעובדים": the settings, and when its messages are planned. */
+  announcement?: PromotionAnnouncement;
   status: PromotionStatus;
   canEdit: boolean;
   createdAt: string | null;
   updatedAt: string | null;
+}
+
+export interface PromotionAnnouncement {
+  enabled: boolean;
+  text: string | null;
+  endEnabled: boolean;
+  endText: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  messages?: number;
 }
 
 export interface PromotionList {
@@ -101,6 +113,8 @@ export interface PromotionInput {
   maxApplications?: number | null;
   priority: number;
   isPaused: boolean;
+  /** Null / missing: keep what the promotion has. */
+  announcement?: Pick<PromotionAnnouncement, 'enabled' | 'text' | 'endEnabled' | 'endText'> | null;
 }
 
 export async function fetchPromotions(params: { search?: string; status?: PromotionStatus } = {}): Promise<PromotionList> {

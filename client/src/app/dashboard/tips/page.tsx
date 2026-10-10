@@ -36,7 +36,7 @@ import {
   ReportWindowSummary,
 } from '@/components/dashboard/report-window-summary';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -166,11 +166,19 @@ export default function TipsReportPage() {
             <div className="flex flex-wrap gap-4 items-end print:hidden">
               <div className="space-y-1">
                 <Label>{t('from')}</Label>
-                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                <DatePicker
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                />
               </div>
               <div className="space-y-1">
                 <Label>{t('to')}</Label>
-                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                <DatePicker
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                />
               </div>
               <Button
                 disabled={!shopId || !from || !to || isFetching}

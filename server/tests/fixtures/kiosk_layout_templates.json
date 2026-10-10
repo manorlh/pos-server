@@ -1,0 +1,900 @@
+{
+  "version": 1,
+  "vocabulary": {
+    "template": [
+      "standard",
+      "guided",
+      "tabs",
+      "landing",
+      "fastfood",
+      "cafe",
+      "combo",
+      "list",
+      "magazine",
+      "wall"
+    ],
+    "catalog": [
+      "rail",
+      "top",
+      "landing",
+      "list",
+      "shelves",
+      "magazine",
+      "wall"
+    ],
+    "categoryIcons": [
+      "photo",
+      "line",
+      "filled",
+      "duotone",
+      "emoji",
+      "none"
+    ],
+    "railSize": [
+      "s",
+      "m",
+      "l"
+    ],
+    "landingColumns": [
+      2,
+      3,
+      4
+    ],
+    "productSize": [
+      "s",
+      "m",
+      "l"
+    ],
+    "hero": [
+      "off",
+      "manual",
+      "auto"
+    ],
+    "card": [
+      "tile",
+      "row",
+      "plate",
+      "bleed",
+      "button",
+      "outlined"
+    ],
+    "flow": [
+      "free",
+      "guided"
+    ],
+    "itemView": [
+      "sheet",
+      "full",
+      "modal",
+      "inline",
+      "steps",
+      "popover"
+    ],
+    "quickAdd": [
+      "off",
+      "no_required",
+      "always"
+    ],
+    "mealView": [
+      "sheet",
+      "steps",
+      "tray"
+    ],
+    "mealUpsell": [
+      "off",
+      "first",
+      "after"
+    ],
+    "basket": [
+      "bar",
+      "panel",
+      "summary",
+      "fab",
+      "drawer",
+      "receipt"
+    ],
+    "service": [
+      "cards",
+      "split",
+      "rows",
+      "sheet"
+    ],
+    "name": [
+      "card",
+      "dock",
+      "avatar"
+    ],
+    "reach": [
+      "normal",
+      "low"
+    ]
+  },
+  "defaults": {
+    "template": "standard",
+    "catalog": null,
+    "categoryIcons": null,
+    "railSize": "m",
+    "landingColumns": 3,
+    "productSize": "m",
+    "landingShowCounts": true,
+    "hero": "off",
+    "magazineFeed": false,
+    "card": null,
+    "flow": "free",
+    "itemView": "sheet",
+    "quickAdd": "off",
+    "mealView": "sheet",
+    "mealUpsell": "off",
+    "basket": null,
+    "service": "cards",
+    "name": "card",
+    "nameAvatars": [],
+    "reach": "normal",
+    "reachToggle": false
+  },
+  "templates": {
+    "standard": {
+      "layout": {}
+    },
+    "guided": {
+      "layout": {
+        "catalog": "landing",
+        "categoryIcons": "line",
+        "flow": "guided",
+        "itemView": "steps",
+        "basket": "bar",
+        "service": "cards",
+        "name": "card",
+        "card": "row",
+        "landingColumns": 2
+      }
+    },
+    "tabs": {
+      "layout": {
+        "catalog": "top",
+        "categoryIcons": "filled",
+        "itemView": "full",
+        "basket": "bar",
+        "service": "sheet",
+        "name": "card"
+      },
+      "catalog": {
+        "oneCategory": false
+      }
+    },
+    "landing": {
+      "layout": {
+        "catalog": "landing",
+        "categoryIcons": "duotone",
+        "itemView": "modal",
+        "basket": "summary",
+        "service": "cards",
+        "name": "card",
+        "landingColumns": 3
+      }
+    },
+    "fastfood": {
+      "layout": {
+        "catalog": "rail",
+        "categoryIcons": "photo",
+        "itemView": "sheet",
+        "basket": "summary",
+        "service": "split",
+        "name": "card",
+        "railSize": "l",
+        "mealUpsell": "first",
+        "card": "plate"
+      }
+    },
+    "cafe": {
+      "layout": {
+        "catalog": "shelves",
+        "categoryIcons": "emoji",
+        "itemView": "full",
+        "basket": "fab",
+        "service": "rows",
+        "name": "avatar",
+        "hero": "manual"
+      }
+    },
+    "combo": {
+      "layout": {
+        "catalog": "top",
+        "categoryIcons": "filled",
+        "itemView": "sheet",
+        "basket": "summary",
+        "service": "cards",
+        "name": "card",
+        "mealView": "tray"
+      }
+    },
+    "list": {
+      "layout": {
+        "catalog": "list",
+        "categoryIcons": "none",
+        "itemView": "inline",
+        "basket": "drawer",
+        "service": "cards",
+        "name": "dock"
+      },
+      "general": {
+        "searchEnabled": true
+      }
+    },
+    "magazine": {
+      "layout": {
+        "catalog": "magazine",
+        "categoryIcons": "none",
+        "itemView": "full",
+        "basket": "bar",
+        "service": "rows",
+        "name": "card",
+        "magazineFeed": true
+      }
+    },
+    "wall": {
+      "layout": {
+        "catalog": "wall",
+        "categoryIcons": "emoji",
+        "itemView": "popover",
+        "basket": "receipt",
+        "name": "avatar",
+        "quickAdd": "always"
+      }
+    }
+  },
+  "implemented": [
+    "standard",
+    "guided",
+    "tabs",
+    "landing",
+    "fastfood",
+    "cafe",
+    "combo",
+    "list",
+    "magazine",
+    "wall"
+  ],
+  "backCompat": {
+    "categoryLayout": {
+      "rail": "side",
+      "top": "top",
+      "landing": "side",
+      "list": "side",
+      "shelves": "top",
+      "magazine": "side",
+      "wall": "side"
+    },
+    "cartStyle": {
+      "bar": "bar",
+      "panel": "panel",
+      "summary": "bar",
+      "fab": "bar",
+      "drawer": "bar",
+      "receipt": "bar"
+    }
+  },
+  "welcome": {
+    "vocabulary": {
+      "position": [
+        "top",
+        "middle",
+        "bottom"
+      ],
+      "align": [
+        "start",
+        "center",
+        "end"
+      ],
+      "size": [
+        "s",
+        "m",
+        "l",
+        "xl"
+      ],
+      "weight": [
+        "regular",
+        "bold",
+        "black"
+      ],
+      "backdrop": [
+        "scrim",
+        "card",
+        "blur",
+        "none"
+      ]
+    },
+    "defaults": {
+      "enabled": true,
+      "position": "bottom",
+      "align": "start",
+      "size": "l",
+      "weight": "black",
+      "titleColor": null,
+      "subtitleColor": null,
+      "backdrop": "scrim",
+      "showSubtitle": true,
+      "maxWidthPct": 100
+    },
+    "maxWidthPct": {
+      "min": 40,
+      "max": 100
+    }
+  },
+  "limits": {
+    "nameAvatarsMax": 12,
+    "nameAvatarMax": 24
+  },
+  "resolveCases": [
+    {
+      "name": "no layer: standard, the layout of today",
+      "layers": [],
+      "expect": {
+        "layout.template": "standard",
+        "layout.catalog": null,
+        "layout.basket": null,
+        "layout.flow": "free",
+        "layout.itemView": "sheet",
+        "theme.categoryLayout": "side",
+        "theme.cartStyle": "bar",
+        "catalog.oneCategory": true
+      }
+    },
+    {
+      "name": "the company picks tabs: chips at the top over one scrolling menu",
+      "layers": [
+        {
+          "layout": {
+            "template": "tabs"
+          }
+        }
+      ],
+      "expect": {
+        "layout.catalog": "top",
+        "layout.categoryIcons": "filled",
+        "layout.itemView": "full",
+        "layout.basket": "bar",
+        "catalog.oneCategory": false,
+        "theme.categoryLayout": "top",
+        "theme.cartStyle": "bar"
+      }
+    },
+    {
+      "name": "fastfood in the classic style: the summary bar, a bar for an old kiosk",
+      "layers": [
+        {
+          "theme": {
+            "uiStyle": "classic"
+          },
+          "layout": {
+            "template": "fastfood"
+          }
+        }
+      ],
+      "expect": {
+        "layout.catalog": "rail",
+        "layout.railSize": "l",
+        "layout.mealUpsell": "first",
+        "layout.basket": "summary",
+        "layout.categoryIcons": "photo",
+        "layout.card": "plate",
+        "theme.categoryLayout": "side",
+        "theme.cartStyle": "bar",
+        "theme.uiStyle": "classic"
+      }
+    },
+    {
+      "name": "a shop's explicit key beats the company's template",
+      "layers": [
+        {
+          "layout": {
+            "template": "landing"
+          }
+        },
+        {
+          "layout": {
+            "landingColumns": 2
+          }
+        }
+      ],
+      "expect": {
+        "layout.template": "landing",
+        "layout.catalog": "landing",
+        "layout.landingColumns": 2,
+        "layout.basket": "summary"
+      }
+    },
+    {
+      "name": "the kiosk picks another template; a key the company set itself stays",
+      "layers": [
+        {
+          "layout": {
+            "template": "tabs",
+            "categoryIcons": "line"
+          }
+        },
+        {},
+        {
+          "layout": {
+            "template": "fastfood"
+          }
+        }
+      ],
+      "expect": {
+        "layout.template": "fastfood",
+        "layout.catalog": "rail",
+        "layout.categoryIcons": "line",
+        "catalog.oneCategory": true
+      }
+    },
+    {
+      "name": "guided with an inline dish is repaired to steps",
+      "layers": [
+        {
+          "layout": {
+            "template": "guided",
+            "itemView": "inline"
+          }
+        }
+      ],
+      "expect": {
+        "layout.flow": "guided",
+        "layout.itemView": "steps",
+        "layout.catalog": "landing",
+        "layout.landingColumns": 2
+      }
+    },
+    {
+      "name": "reach low: the add-to-cart bounces (the flight would cross the display half)",
+      "layers": [
+        {
+          "layout": {
+            "reach": "low"
+          }
+        }
+      ],
+      "expect": {
+        "layout.reach": "low",
+        "motion.addToCart": "bounce"
+      }
+    },
+    {
+      "name": "reach low keeps a chosen none",
+      "layers": [
+        {
+          "layout": {
+            "reach": "low"
+          },
+          "motion": {
+            "addToCart": "none"
+          }
+        }
+      ],
+      "expect": {
+        "motion.addToCart": "none"
+      }
+    },
+    {
+      "name": "the wall template adds on a tap",
+      "layers": [
+        {
+          "layout": {
+            "template": "wall"
+          }
+        }
+      ],
+      "expect": {
+        "layout.quickAdd": "always",
+        "layout.catalog": "wall",
+        "theme.categoryLayout": "side",
+        "theme.cartStyle": "bar"
+      }
+    },
+    {
+      "name": "a wall of buttons adds on a tap at least without required choices",
+      "layers": [
+        {
+          "layout": {
+            "catalog": "wall",
+            "quickAdd": "off"
+          }
+        }
+      ],
+      "expect": {
+        "layout.quickAdd": "no_required"
+      }
+    },
+    {
+      "name": "the list template turns the search on",
+      "layers": [
+        {
+          "layout": {
+            "template": "list"
+          }
+        }
+      ],
+      "expect": {
+        "general.searchEnabled": true,
+        "layout.basket": "drawer"
+      }
+    },
+    {
+      "name": "a template's catalog replaces an explicit categoryLayout for old kiosks",
+      "layers": [
+        {
+          "theme": {
+            "categoryLayout": "top"
+          },
+          "layout": {
+            "template": "landing"
+          }
+        }
+      ],
+      "expect": {
+        "theme.categoryLayout": "side"
+      }
+    },
+    {
+      "name": "standard keeps an explicit categoryLayout and cartStyle",
+      "layers": [
+        {
+          "theme": {
+            "categoryLayout": "top",
+            "cartStyle": "panel"
+          }
+        }
+      ],
+      "expect": {
+        "theme.categoryLayout": "top",
+        "theme.cartStyle": "panel",
+        "layout.catalog": null,
+        "layout.basket": null
+      }
+    },
+    {
+      "name": "shelves are a top strip and the fab a bar for an old kiosk",
+      "layers": [
+        {
+          "layout": {
+            "template": "cafe"
+          }
+        }
+      ],
+      "expect": {
+        "theme.categoryLayout": "top",
+        "theme.cartStyle": "bar",
+        "layout.hero": "manual"
+      }
+    },
+    {
+      "name": "a panel basket is a panel for an old kiosk too",
+      "layers": [
+        {
+          "layout": {
+            "basket": "panel"
+          }
+        }
+      ],
+      "expect": {
+        "theme.cartStyle": "panel"
+      }
+    }
+  ],
+  "parseCases": [
+    {
+      "name": "no layout at all (an older cloud): the layout of today",
+      "layout": null,
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "only the template (an older cloud): the template's own keys",
+      "layout": {
+        "template": "tabs"
+      },
+      "expect": {
+        "template": "tabs",
+        "catalog": "top",
+        "categoryIcons": "filled",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "full",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "bar",
+        "service": "sheet",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "a template and one key of its own",
+      "layout": {
+        "template": "fastfood",
+        "railSize": "m"
+      },
+      "expect": {
+        "template": "fastfood",
+        "catalog": "rail",
+        "categoryIcons": "photo",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": "plate",
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "first",
+        "basket": "summary",
+        "service": "split",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "an unknown template is standard; a known key still counts",
+      "layout": {
+        "template": "spaceship",
+        "catalog": "top"
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": "top",
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "an unknown value is the template's (null here); a known one stays",
+      "layout": {
+        "catalog": "bogus",
+        "basket": "panel",
+        "landingColumns": 7
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "panel",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "an explicit null is the template's value",
+      "layout": {
+        "template": "landing",
+        "basket": null
+      },
+      "expect": {
+        "template": "landing",
+        "catalog": "landing",
+        "categoryIcons": "duotone",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "modal",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "summary",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "the accessible mode and its toggle",
+      "layout": {
+        "reach": "low",
+        "reachToggle": true
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "low",
+        "reachToggle": true
+      }
+    },
+    {
+      "name": "the guided flow, complete as the cloud sends it",
+      "layout": {
+        "template": "guided",
+        "catalog": "landing",
+        "categoryIcons": "line",
+        "railSize": "m",
+        "landingColumns": 2,
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": "row",
+        "flow": "guided",
+        "itemView": "steps",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "bar",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      },
+      "expect": {
+        "template": "guided",
+        "catalog": "landing",
+        "categoryIcons": "line",
+        "railSize": "m",
+        "landingColumns": 2,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": "row",
+        "flow": "guided",
+        "itemView": "steps",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "bar",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "the product size: a known one stays over the template's",
+      "layout": {
+        "template": "landing",
+        "productSize": "l"
+      },
+      "expect": {
+        "template": "landing",
+        "catalog": "landing",
+        "categoryIcons": "duotone",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "l",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "modal",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "summary",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    },
+    {
+      "name": "the product size: an unknown one is the template's (m)",
+      "layout": {
+        "template": "landing",
+        "productSize": "xl"
+      },
+      "expect": {
+        "template": "landing",
+        "catalog": "landing",
+        "categoryIcons": "duotone",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "modal",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": "summary",
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false
+      }
+    }
+  ]
+}

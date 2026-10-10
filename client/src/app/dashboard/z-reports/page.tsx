@@ -8,6 +8,10 @@
  *
  * The till filter is the scope bar's (`machineIds`); the origin filter tells the shop's
  * Zs from the tills' own.
+ *
+ * By date ("תאריך הפקת Z", the default, or "יום עסקי" — lib/zByDate.ts): the list is cut into
+ * days, the picked day's Zs are summed in a card (by shop, area and kind), and the month view
+ * shows each Z's documents by document month. Presentation only — components/dashboard/z-report/by-date.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -27,11 +31,13 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { OverShort } from '@/components/dashboard/shifts/shift-parts';
 import { ZBadges } from '@/components/dashboard/z-report/z-badges';
+import { ZScopeLine } from '@/components/dashboard/z-report/z-scope-line';
+import { BranchCode, ZRun } from '@/components/dashboard/z-report/z-identity';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { numberedLabel } from '@/lib/orgNumber';
 import { useZNumberLabel } from '@/components/dashboard/z-report/z-number';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
+import { DatePicker, DateTimePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
@@ -42,12 +48,36 @@ import { ChevronLeft, ChevronRight, FileDown, FilePlus2, ListOrdered, Printer } 
 import { ZPrintViewToggle, type ZPrintView } from '@/components/dashboard/z-report/z-print-view-toggle';
 import { ZA4Batch, useZSequencePrint } from '@/components/dashboard/z-report/z-sequence-print';
 import { ZRangePrintDialog } from '@/components/dashboard/z-report/z-range-print-dialog';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
+import { Z_TYPES, fetchZTable, type ZType } from '@/lib/reportCenterApi';
+import { zTableSheets } from '@/lib/reportSheets';
+import { businessToday } from '@/lib/format';
+import {
+  DEFAULT_Z_DATE_BASIS,
+  groupByDay,
+  productionTimeOf,
+  summaryWindow,
+  zKindOf,
+  type ZDateBasis,
+} from '@/lib/zByDate';
+import type { ZByDateFilters } from '@/lib/zByDateApi';
+import {
+  ZDateBasisToggle,
+  ZListViewToggle,
+  type ZListView,
+} from '@/components/dashboard/z-report/by-date/z-date-basis-toggle';
+import { ZDaySummaryCard, useZSummaryByDate } from '@/components/dashboard/z-report/by-date/z-day-summary-card';
+import { ZDayGroupHeading, ZDayGroupRow } from '@/components/dashboard/z-report/by-date/z-day-group-row';
+import { ZMonthView } from '@/components/dashboard/z-report/by-date/z-month-view';
+import { ZListCsvButton } from '@/components/dashboard/z-report/by-date/z-list-csv-button';
+import { ZKindBadge } from '@/components/dashboard/z-report/by-date/z-by-date-parts';
 
 const PAGE_SIZE = 50;
 const ORIGIN_ANY = '__any__';
-const COLS = 14;
+const COLS = 17;
 
-type DateBasis = 'business' | 'production';
+type DateBasis = ZDateBasis;
 
 /** The zone a `datetime-local` input's value is read in — the browser's own. */
 const BROWSER_TZ = (() => {
@@ -92,9 +122,15 @@ export default function ZReportsPage() {
   const [page, setPage] = useState(1);
   /** `''` = any, `none` = Zs run for no area, else an area of the shop in scope. */
   const [area, setArea] = useState<string>('');
-  /** What `from`/`to` and the order are on: the business date (default) or production. */
-  const [dateBasis, setDateBasis] = useState<DateBasis>('business');
+  /**
+   * What `from`/`to`, the day groups and the order are on: "תאריך הפקת Z" (the default — a Z
+   * produced at 02:00 on 1.10 is a Z of 1.10) or "יום עסקי".
+   */
+  const [dateBasis, setDateBasis] = useState<DateBasis>(DEFAULT_Z_DATE_BASIS);
+  /** The list by day, or the month's Zs with their documents by document month. */
+  const [view, setView] = useState<ZListView>('list');
   const tp = useTranslations('zReports.tillPrint');
+  const tb = useTranslations('zByDate');
   /** Zs ticked for "הדפס רצף" — kept across pages and filters until cleared. */
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   /** Which paper a sequence prints on: A4, or the till's 80 mm roll. */
@@ -103,6 +139,15 @@ export default function ZReportsPage() {
   const sequence = useZSequencePrint();
   /** `''` = both, `cloud` = the shop's Zs, `till` = Zs the tills produced themselves. */
   const [origin, setOrigin] = useState<'' | 'cloud' | 'till'>('');
+  /** "סוג Z" (docs/SPEC_REPORTS.md §4): none ticked = every type. */
+  const [zTypes, setZTypes] = useState<ZType[]>([]);
+  const tz = useTranslations('reportCenter');
+  const tzc = useTranslations('reportCenter.cols');
+  const paymentLabel = usePaymentMethodLabel();
+  const toggleZType = (type: ZType) => {
+    setZTypes((prev) => (prev.includes(type) ? prev.filter((x) => x !== type) : [...prev, type]));
+    setPage(1);
+  };
 
   /*
    * `?zReportId=` used to open a dialog here; the Z now has its own page. Old links
@@ -138,10 +183,30 @@ export default function ZReportsPage() {
     if (cf) p.closedFrom = cf;
     if (ct) p.closedTo = ct;
     if (area) p.areaId = area;
-    if (dateBasis !== 'business') p.dateBasis = dateBasis;
+    // Always sent: the server's own default is the business date.
+    p.dateBasis = dateBasis;
     if (origin) p.origin = origin;
+    if (zTypes.length) p.zTypes = zTypes;
     return p;
-  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, page]);
+  }, [machineId, shopId, from, to, closedFrom, closedTo, area, dateBasis, origin, zTypes, page]);
+  /** The list's filters other than dates, for the day card, the month and the CSV. */
+  const byDateFilters = useMemo<ZByDateFilters>(() => {
+    const f: ZByDateFilters = { dateBasis };
+    if (shopId) f.shopId = shopId;
+    if (machineId) f.machineIds = [machineId];
+    if (area) f.areaId = area;
+    if (origin) f.origin = origin;
+    if (zTypes.length) f.zTypes = zTypes;
+    return f;
+  }, [dateBasis, shopId, machineId, area, origin, zTypes]);
+  // The day card: the picked day (or range), else today on the shop's clock.
+  const card = summaryWindow(from, to, businessToday());
+  const closedRange = { closedFrom: localInputToIso(closedFrom), closedTo: localInputToIso(closedTo) };
+  const daySummary = useZSummaryByDate(card.from, card.to, byDateFilters, closedRange);
+  const dayTotals = useMemo(
+    () => new Map((daySummary.data?.byDay ?? []).map((d) => [d.date ?? '', d])),
+    [daySummary.data],
+  );
   const originItems = [
     { value: ORIGIN_ANY, label: t('originAll') },
     { value: 'cloud', label: t('originCloudOption') },
@@ -158,6 +223,12 @@ export default function ZReportsPage() {
   const resetPage = () => setPage(1);
   const hasClosedFilter = Boolean(closedFrom || closedTo);
   const open = (z: ZReport) => router.push(`/dashboard/z-reports/${z.id}`);
+  /** The shop's zone the server measured production days in. */
+  const zone = data?.window?.timezone ?? undefined;
+  const dayOf = (z: ZReport) => (dateBasis === 'production' ? z.productionDate : z.businessDate) ?? '';
+  // The page cut into its days; a day's count and totals come from the summary when it covers it.
+  const groups = groupByDay(data?.items ?? [], dayOf);
+  const totalsOfDay = (day: string) => (day >= card.from && day <= card.to ? dayTotals.get(day) ?? null : null);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -195,49 +266,37 @@ export default function ZReportsPage() {
 
       <ScopeGate resolution={resolution}>
       <div className="rounded-lg border bg-card p-4 space-y-3">
-        {/* Which date the range and the order are on. A Z produced after midnight is
-            filed under the day before as a business date, under the new day as produced. */}
-        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('dateBasisLabel')}>
-          <span className="text-muted-foreground text-xs">{t('dateBasisLabel')}</span>
-          <div className="inline-flex rounded-md border p-0.5">
-            {(['business', 'production'] as const).map((basis) => (
-              <button
-                key={basis}
-                type="button"
-                aria-pressed={dateBasis === basis}
-                onClick={() => { setDateBasis(basis); resetPage(); }}
-                className={`rounded px-2.5 py-1 text-xs ${
-                  dateBasis === basis
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {t(`dateBasis.${basis}`)}
-              </button>
-            ))}
-          </div>
+        {/* Which date the range, the day groups and the order are on. A Z produced after
+            midnight is filed under the new day as produced, under the day before as a business date. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <ZDateBasisToggle value={dateBasis} onChange={(basis) => { setDateBasis(basis); resetPage(); }} />
+          <ZListViewToggle value={view} onChange={setView} />
         </div>
         <div className="grid gap-3 md:grid-cols-4">
+          {view === 'list' ? (
+          <>
           <div className="space-y-1">
             <Label className="text-xs">
               {dateBasis === 'production' ? t('filterFromProduction') : t('filterFrom')}
             </Label>
-            <Input
-              type="date"
+            <DatePicker
               value={from}
               onChange={(e) => { setFrom(e.target.value); resetPage(); }}
+              range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); resetPage(); } }}
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">
               {dateBasis === 'production' ? t('filterToProduction') : t('filterTo')}
             </Label>
-            <Input
-              type="date"
+            <DatePicker
               value={to}
               onChange={(e) => { setTo(e.target.value); resetPage(); }}
+              range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); resetPage(); } }}
             />
           </div>
+          </>
+          ) : null}
           <AreaFilterSelect
             shopId={shopId}
             value={area}
@@ -266,6 +325,32 @@ export default function ZReportsPage() {
             </Select>
           </div>
         </div>
+        {/* "סוג Z": the shop's Z, an independent till's, a per-till Z, a kiosk's. None = all. */}
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label={tz('zTypeFilter')}>
+          <span className="text-muted-foreground text-xs">{tz('zTypeFilter')}</span>
+          <Button
+            size="sm"
+            variant={zTypes.length === 0 ? 'default' : 'outline'}
+            className="rounded-full"
+            onClick={() => { setZTypes([]); resetPage(); }}
+          >
+            {tz('zTypeAll')}
+          </Button>
+          {Z_TYPES.map((type) => (
+            <Button
+              key={type}
+              size="sm"
+              variant={zTypes.includes(type) ? 'default' : 'outline'}
+              className="rounded-full"
+              aria-pressed={zTypes.includes(type)}
+              onClick={() => toggleZType(type)}
+            >
+              {tz(`zType.${type}`)}
+            </Button>
+          ))}
+        </div>
+        {view === 'list' ? (
+        <>
         <p className="text-muted-foreground text-xs">
           {dateBasis === 'production'
             ? t('productionDateFilterHint', { tz: data?.window?.timezone ?? '—' })
@@ -279,16 +364,14 @@ export default function ZReportsPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label className="text-xs">{t('filterClosedFrom')}</Label>
-            <Input
-              type="datetime-local"
+            <DateTimePicker
               value={closedFrom}
               onChange={(e) => { setClosedFrom(e.target.value); resetPage(); }}
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">{t('filterClosedTo')}</Label>
-            <Input
-              type="datetime-local"
+            <DateTimePicker
               value={closedTo}
               onChange={(e) => { setClosedTo(e.target.value); resetPage(); }}
             />
@@ -309,7 +392,16 @@ export default function ZReportsPage() {
             </Button>
           </div>
         ) : null}
+        </>
+        ) : null}
       </div>
+
+      {view === 'month' ? (
+        <ZMonthView filters={byDateFilters} />
+      ) : (
+      <>
+      {/* "דוחות Z שהופקו ב־1.10": the picked day (or range, else today) — count, totals, by shop and area. */}
+      <ZDaySummaryCard from={card.from} to={card.to} filters={byDateFilters} closed={closedRange} />
 
       {/* Printing several Zs: the ticked ones, or a range of one shop, in Z-number order. */}
       <div className="flex flex-wrap items-center gap-2">
@@ -334,6 +426,29 @@ export default function ZReportsPage() {
           <ListOrdered className="h-4 w-4 me-1" aria-hidden />
           {tp('printRange')}
         </Button>
+        {/* "טבלת זדים מרוכזת": every Z the filters match (not this page) and each one's tills. */}
+        <ReportExportToolbar
+          className="ms-auto"
+          excelOnly
+          title={tz('zTableTitle')}
+          from={from || undefined}
+          to={to || undefined}
+          disabled={!data || data.total === 0}
+          getSheets={async () => {
+            // The list's own filters without its page: the table is every Z they match.
+            const table = await fetchZTable({ ...params, page: undefined, pageSize: undefined });
+            return zTableSheets(table, tzc, paymentLabel);
+          }}
+        />
+        {/* The whole list (every page) as CSV: both dates, kind, time produced, totals. */}
+        <ZListCsvButton
+          from={from}
+          to={to}
+          closedFrom={closedRange.closedFrom}
+          closedTo={closedRange.closedTo}
+          filters={byDateFilters}
+          disabled={!data || data.total === 0}
+        />
       </div>
 
       {isError ? (
@@ -349,7 +464,9 @@ export default function ZReportsPage() {
         ) : !data || data.items.length === 0 ? (
           <li className="py-6 text-center text-sm text-muted-foreground">{t('noReports')}</li>
         ) : (
-          data.items.map((z) => {
+          groups.map((group, gi) => [
+          <ZDayGroupHeading key={`day-${gi}-${group.day}`} day={group.day} basis={dateBasis} totals={totalsOfDay(group.day)} />,
+          ...group.rows.map((z) => {
             const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
             return (
               <li key={z.id} className="flex items-start">
@@ -363,16 +480,18 @@ export default function ZReportsPage() {
                 <Link href={`/dashboard/z-reports/${z.id}`} className="block min-w-0 flex-1 space-y-1 p-3 text-sm hover:bg-muted/50">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-medium tabular-nums">
-                      {t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}
+                      {/* A till Z always names its till: "קופה 6 · Z 3". */}
+                      {z.origin === 'till' ? zNumberLabel(z) : <>{t('zNumber')} {(z.zNumber ?? z.shopSequenceNumber) ?? '—'}</>}
                       <ZBadges z={z} />
                     </span>
                     <span className="font-medium tabular-nums">{formatCurrency(z.totalSales)}</span>
                   </div>
-                  <div className="text-muted-foreground flex flex-wrap gap-x-2 text-xs">
-                    {/* Both dates, the chosen basis first. */}
+                  <div className="text-muted-foreground flex flex-wrap items-center gap-x-2 text-xs">
+                    <ZKindBadge kind={zKindOf(z)} />
+                    {/* Both dates, the chosen basis first; the production with its time. */}
                     {dateBasis === 'production' && z.productionDate ? (
                       <>
-                        <span>{t('productionDate')} {formatDate(z.productionDate)}</span>
+                        <span>{t('productionDate')} {formatDate(z.productionDate)} {productionTimeOf(z.closedAt, zone)}</span>
                         <span>· {t('businessDate')} {formatDate(z.businessDate)}</span>
                       </>
                     ) : (
@@ -386,10 +505,16 @@ export default function ZReportsPage() {
                     <span>· {numberedLabel(z.shopNumber, shopName ?? '—')}</span>
                     {z.areaName ? <span>· {z.areaName}</span> : null}
                     {z.legacy && z.machineName ? <span>· {z.machineName}</span> : null}
+                    {z.branchCode ? <span>· <BranchCode code={z.branchCode} /></span> : null}
+                    <ZRun z={z} prefix="· " />
                   </div>
+                  <ZScopeLine z={z} compact />
                   <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 text-xs">
                     <span>{t('cash')} {formatCurrency(z.totalCashSales)}</span>
                     <span>{t('card')} {formatCurrency(z.totalCardSales)}</span>
+                    <span>{t('vat')} {formatCurrency(z.vatTotal)}</span>
+                    <span>{t('tips')} {formatCurrency(z.totalTips)}</span>
+                    <span>{t('transactionsCount')} {z.transactionsCount ?? '—'}</span>
                     <span className="inline-flex items-center gap-1">
                       {t('discrepancy')}{' '}
                       <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
@@ -398,7 +523,8 @@ export default function ZReportsPage() {
                 </Link>
               </li>
             );
-          })
+          }),
+          ])
         )}
       </ul>
 
@@ -418,21 +544,24 @@ export default function ZReportsPage() {
               </TableHead>
               {/* First column after the tick: it is the document's name, not an attribute of it. */}
               <TableHead>{t('zNumber')}</TableHead>
-              <TableHead className={dateBasis === 'business' ? 'text-foreground' : undefined}>
-                {t('businessDate')}
-              </TableHead>
+              <TableHead>{tb('cols.kind')}</TableHead>
               <TableHead className={dateBasis === 'production' ? 'text-foreground' : undefined}>
-                {t('productionDate')}
+                {tb('cols.producedAt')}
+              </TableHead>
+              <TableHead className={dateBasis === 'business' ? 'text-foreground' : undefined}>
+                {tb('cols.businessDay')}
               </TableHead>
               <TableHead>{t('shop')}</TableHead>
               <TableHead>{t('area')}</TableHead>
-              <TableHead>{t('period')}</TableHead>
               <TableHead className="text-end">{t('tills')}</TableHead>
               <TableHead className="text-end">{t('shiftsCount')}</TableHead>
               <TableHead className="text-end">{t('totalSales')}</TableHead>
               <TableHead className="text-end">{t('totalRefunds')}</TableHead>
+              <TableHead className="text-end">{t('vat')}</TableHead>
               <TableHead className="text-end">{t('cash')}</TableHead>
               <TableHead className="text-end">{t('card')}</TableHead>
+              <TableHead className="text-end">{t('tips')}</TableHead>
+              <TableHead className="text-end">{t('transactionsCount')}</TableHead>
               <TableHead className="text-end">{t('discrepancy')}</TableHead>
             </TableRow>
           </TableHeader>
@@ -450,7 +579,15 @@ export default function ZReportsPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              data.items.map((z) => {
+              groups.map((group, gi) => [
+              <ZDayGroupRow
+                key={`day-${gi}-${group.day}`}
+                day={group.day}
+                basis={dateBasis}
+                colSpan={COLS}
+                totals={totalsOfDay(group.day)}
+              />,
+              ...group.rows.map((z) => {
                 const shopName = z.shopName ?? findBySameId(scope.shops, z.shopId)?.name;
                 return (
                   <TableRow key={z.id} className="cursor-pointer" onClick={() => open(z)}>
@@ -474,23 +611,37 @@ export default function ZReportsPage() {
                         {zNumberLabel(z)}
                       </Link>
                       <ZBadges z={z} />
+                      {/* One till can have two "Z 1": a later run says when it started. */}
+                      <ZRun z={z} className="block text-muted-foreground text-xs font-normal" />
                     </TableCell>
-                    <TableCell>{formatDate(z.businessDate)}</TableCell>
-                    <TableCell>{z.productionDate ? formatDate(z.productionDate) : '—'}</TableCell>
+                    <TableCell><ZKindBadge kind={zKindOf(z)} /></TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">
+                      {z.productionDate ? formatDate(z.productionDate) : '—'}{' '}
+                      <span className="text-muted-foreground">{productionTimeOf(z.closedAt, zone)}</span>
+                    </TableCell>
+                    {/* The business day it covers; its shifts' span on hover. */}
+                    <TableCell
+                      className="whitespace-nowrap"
+                      title={
+                        z.periodStart || z.periodEnd
+                          ? `${t('period')}: ${formatDateTime(z.periodStart)} – ${formatDateTime(z.periodEnd)}`
+                          : undefined
+                      }
+                    >
+                      {formatDate(z.businessDate)}
+                    </TableCell>
                     <TableCell>
                       <NumberPill n={z.shopNumber} className="me-1" />
                       {shopName ?? '—'}
                       {(z.legacy || z.origin === 'till') && z.machineName ? (
                         <div className="text-muted-foreground text-xs">{z.machineName}</div>
                       ) : null}
+                      <BranchCode code={z.branchCode} className="block text-muted-foreground text-xs" />
+                      {/* What the Z includes ("קופה עצמאית בתוך סניף"), when the server says. */}
+                      <ZScopeLine z={z} compact />
                     </TableCell>
                     <TableCell className="text-sm">
                       <AreaName name={z.areaName} />
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                      {z.periodStart || z.periodEnd
-                        ? `${formatDateTime(z.periodStart)} – ${formatDateTime(z.periodEnd)}`
-                        : formatDateTime(z.closedAt)}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">
                       {z.machineCount ?? (z.legacy ? 1 : '—')}
@@ -498,15 +649,19 @@ export default function ZReportsPage() {
                     <TableCell className="text-end tabular-nums">{z.shiftCount ?? '—'}</TableCell>
                     <TableCell className="text-end font-medium">{formatCurrency(z.totalSales)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalRefunds)}</TableCell>
+                    <TableCell className="text-end">{formatCurrency(z.vatTotal)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalCashSales)}</TableCell>
                     <TableCell className="text-end">{formatCurrency(z.totalCardSales)}</TableCell>
+                    <TableCell className="text-end">{formatCurrency(z.totalTips)}</TableCell>
+                    <TableCell className="text-end tabular-nums">{z.transactionsCount ?? '—'}</TableCell>
                     <TableCell className="text-end">
                       {/* Withheld, not zero, when any of its shifts was not counted. */}
                       <OverShort value={z.discrepancy} uncountedLabel={t('discrepancyWithheld')} />
                     </TableCell>
                   </TableRow>
                 );
-              })
+              }),
+              ])
             )}
           </TableBody>
         </Table>
@@ -532,6 +687,8 @@ export default function ZReportsPage() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
         </div>
+      )}
+      </>
       )}
       </ScopeGate>
       <ZRangePrintDialog

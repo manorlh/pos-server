@@ -1,9 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { fetchTillRoles } from '@/lib/tillRolesApi';
+import { visibleRoles } from '@/lib/tillRoles';
 import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { SignedInNowCard } from '@/components/dashboard/signed-in-now-card';
@@ -28,6 +31,9 @@ import { Plus, Pencil, KeyRound, Power } from 'lucide-react';
 
 const ALL_ROLES: PosUserRole[] = ['cashier', 'shop_manager'];
 
+const NATIVE_SELECT =
+  'border-input bg-background h-9 w-full rounded-md border px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 interface UserForm {
   id?: string;
   username: string;
@@ -35,6 +41,8 @@ interface UserForm {
   lastName: string;
   workerNumber: string;
   role: PosUserRole;
+  /** "תפקידים והרשאות": the till role; '' = keep / the company's legacy role for `role`. */
+  tillRoleId: string;
   pin: string;
   isActive: boolean;
 }
@@ -45,6 +53,7 @@ const EMPTY: UserForm = {
   lastName: '',
   workerNumber: '',
   role: 'cashier',
+  tillRoleId: '',
   pin: '',
   isActive: true,
 };
@@ -73,6 +82,14 @@ export default function PosUsersPage() {
 
   // Named from the shared scope's own shop list (server-RBAC-scoped /shops).
   const selectedShop = scope.shop;
+  // Till roles are the shop's company's ("תפקידים והרשאות").
+  const companyId = selectedShop?.companyId ?? '';
+  const tillRoles = useQuery({
+    queryKey: ['till-roles', companyId],
+    queryFn: () => fetchTillRoles(companyId),
+    enabled: !!companyId,
+  });
+  const roleChoices = visibleRoles(tillRoles.data?.roles ?? [], true);
 
   const { data: users = [], isLoading } = useQuery<PosUser[]>({
     queryKey: ['pos-users', shopId, includeInactive],
@@ -92,8 +109,9 @@ export default function PosUsersPage() {
           firstName: u.firstName || undefined,
           lastName: u.lastName || undefined,
           workerNumber: u.workerNumber || null,
-          role: u.role,
           isActive: u.isActive,
+          // The till role decides `role` on the server; the legacy select only without roles.
+          ...(u.tillRoleId ? { tillRoleId: u.tillRoleId } : roleChoices.length ? {} : { role: u.role }),
         };
         if (u.pin) payload.pin = u.pin;
         return api.put(`/shops/${shopId}/pos-users/${u.id}`, payload);
@@ -104,12 +122,14 @@ export default function PosUsersPage() {
         lastName: u.lastName || undefined,
         workerNumber: u.workerNumber || undefined,
         role: u.role,
+        ...(u.tillRoleId ? { tillRoleId: u.tillRoleId } : {}),
         pin: u.pin,
       };
       return api.post(`/shops/${shopId}/pos-users`, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pos-users', shopId] });
+      if (companyId) qc.invalidateQueries({ queryKey: ['till-roles', companyId] });
       toast.success(isNew ? t('created') : t('updated'));
       setOpenEdit(false);
     },
@@ -141,7 +161,9 @@ export default function PosUsersPage() {
   });
 
   const openCreate = () => {
-    setEditing(EMPTY);
+    // A new employee starts as the spec's cashier when the company's roles exist.
+    const cashier = roleChoices.find((r) => r.builtinKey === 'cashier');
+    setEditing({ ...EMPTY, tillRoleId: cashier?.id ?? '' });
     setOpenEdit(true);
   };
 
@@ -153,6 +175,7 @@ export default function PosUsersPage() {
       lastName: u.lastName ?? '',
       workerNumber: u.workerNumber ?? '',
       role: u.role,
+      tillRoleId: u.tillRoleId ?? '',
       pin: '',
       isActive: u.isActive,
     });
@@ -183,11 +206,16 @@ export default function PosUsersPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        {canManage && shopId && (
-          <Button onClick={openCreate} size="sm">
-            <Plus className="h-4 w-4 ms-1" /> {t('add')}
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/dashboard/till-roles" className="text-sm text-primary underline-offset-4 hover:underline">
+            {t('manageRoles')}
+          </Link>
+          {canManage && shopId && (
+            <Button onClick={openCreate} size="sm">
+              <Plus className="h-4 w-4 ms-1" /> {t('add')}
+            </Button>
+          )}
+        </div>
       </div>
 
       <ScopeGate resolution={resolution}>
@@ -240,7 +268,7 @@ export default function PosUsersPage() {
                     <TableCell>{u.lastName ?? ''}</TableCell>
                     <TableCell>{u.workerNumber ?? '—'}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{t(`roles.${u.role}`)}</Badge>
+                      <Badge variant="secondary">{u.tillRoleName ?? t(`roles.${u.role}`)}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant={u.isActive ? 'outline' : 'destructive'}>
@@ -315,19 +343,35 @@ export default function PosUsersPage() {
                 <Input value={editing.workerNumber} onChange={(e) => setEditing((u) => ({ ...u, workerNumber: e.target.value }))} />
               </div>
               <div className="space-y-1">
-                <Label>{t('role')}</Label>
-                <Select
-                  value={editing.role}
-                  onValueChange={(v) => setEditing((u) => ({ ...u, role: v as PosUserRole }))}
-                  items={ALL_ROLES.map((r) => ({ value: r, label: t(`roles.${r}`) }))}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ALL_ROLES.map((r) => (
-                      <SelectItem key={r} value={r} label={t(`roles.${r}`)}>{t(`roles.${r}`)}</SelectItem>
+                <Label htmlFor="pos-user-till-role">{roleChoices.length ? t('tillRole') : t('role')}</Label>
+                {roleChoices.length ? (
+                  // "תפקידים והרשאות": what this person may do at the till.
+                  <select
+                    id="pos-user-till-role"
+                    className={NATIVE_SELECT}
+                    value={editing.tillRoleId}
+                    onChange={(e) => setEditing((u) => ({ ...u, tillRoleId: e.target.value }))}
+                  >
+                    {!editing.tillRoleId ? <option value="">{t(`roles.${editing.role}`)}</option> : null}
+                    {roleChoices.map((r) => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </select>
+                ) : (
+                  <Select
+                    value={editing.role}
+                    onValueChange={(v) => setEditing((u) => ({ ...u, role: v as PosUserRole }))}
+                    items={ALL_ROLES.map((r) => ({ value: r, label: t(`roles.${r}`) }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {ALL_ROLES.map((r) => (
+                        <SelectItem key={r} value={r} label={t(`roles.${r}`)}>{t(`roles.${r}`)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {roleChoices.length ? <p className="text-xs text-muted-foreground">{t('tillRoleHint')}</p> : null}
               </div>
             </div>
             <div className="space-y-1">

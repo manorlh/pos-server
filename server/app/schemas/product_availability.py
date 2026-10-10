@@ -6,6 +6,7 @@ would get if it set nothing (`inherited`), and what it actually resolves to
 `app/services/product_availability.py`; the dashboard only displays them.
 """
 import uuid
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -25,6 +26,10 @@ class AvailabilitySet(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     is_available: Optional[bool] = Field(..., alias="isAvailable")
+    #: "חסימה קבועה" — with `isAvailable: false` at the shop, area or till level: a lock
+    #: "פתיחת פריטים אוטומטית אחרי Z" never opens (docs/SPEC_AVAILABILITY.md). Absent:
+    #: a new lock is temporary, a lock already in place keeps its flag. Ignored otherwise.
+    is_permanent: Optional[bool] = Field(None, alias="isPermanent")
 
 
 class _Node(BaseModel):
@@ -35,6 +40,10 @@ class _Node(BaseModel):
     effective: bool
     source: AvailabilityLevel
     can_edit: bool = Field(False, alias="canEdit")
+    #: "חסימה קבועה" on this level's own lock (only while `value` is false; never on the
+    #: company level, which no Z opens), and when that lock began.
+    permanent: bool = False
+    blocked_at: Optional[datetime] = Field(None, alias="blockedAt")
 
 
 class MachineAvailability(_Node):
@@ -99,6 +108,12 @@ class TillAvailabilitySet(BaseModel):
 
     scope: TillScope
     active: Optional[bool] = None
+    #: "חסימה קבועה" with `active: false`. Absent — every till's "sold out" unless the
+    #: manager says so — a new lock is temporary: "פתיחת פריטים אוטומטית אחרי Z" may open it.
+    permanent: Optional[bool] = None
+    #: When a lock the till queued with no connection was set there; a new lock begins then
+    #: (never later than now), so "locked during the day" reads the till's moment.
+    blocked_at: Optional[datetime] = Field(None, alias="blockedAt")
 
 
 class TillAvailabilityResponse(BaseModel):

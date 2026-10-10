@@ -6,7 +6,8 @@
  * * תוספות — how often each option was chosen and what it brought in; removals apart.
  * * ארוחות — each meal and its components, with the meal's money allocated to them
  *   (upcharges and paid modifiers to their component, the base by list price).
- * * הגדלות מכירה — per rule: shown, taken, dismissed, the rate, and the taken lines' money.
+ * * הגדלות מכירה — per rule: shown, taken, dismissed, declined ("הלקוח סירב" in the
+ *   window), the rate, the taken lines' money, and which options were taken.
  *
  * Server: `GET /reports/modifier-sales`, `/reports/meal-sales`, `/reports/upsells`.
  */
@@ -291,7 +292,10 @@ function MealsView({ data }: { data: MealSalesReport }) {
 function UpsellsView({ data }: { data: UpsellReport }) {
   const t = useTranslations('menuReports');
   const tu = useTranslations('upsells');
+  const tr = useTranslations('specials.report');
   const pct = (r: number | null) => (r === null ? '—' : `${Math.round(r * 100)}%`);
+  const taken = (r: UpsellReport['rows'][number]) =>
+    (r.optionsTaken ?? []).map((o) => `${o.name ?? '—'} ×${o.count}`).join(', ');
   return (
     <div className="space-y-4">
       <ReportExportToolbar
@@ -306,11 +310,18 @@ function UpsellsView({ data }: { data: UpsellReport }) {
               { header: t('col.shown'), kind: 'number' as const },
               { header: t('col.accepted'), kind: 'number' as const },
               { header: t('col.dismissed'), kind: 'number' as const },
+              { header: tr('declined'), kind: 'number' as const },
               { header: t('col.rate') },
               { header: t('col.revenue'), kind: 'money' as const },
+              { header: tr('optionsTakenHeader') },
             ],
-            rows: data.rows.map((r) => [r.name ?? '', r.shown, r.accepted, r.dismissed, pct(r.acceptanceRate), r.revenue]),
-            totals: [t('total'), data.totals.shown, data.totals.accepted, data.totals.dismissed, pct(data.totals.acceptanceRate), data.totals.revenue],
+            rows: data.rows.map((r) => [
+              r.name ?? '', r.shown, r.accepted, r.dismissed, r.declined ?? 0, pct(r.acceptanceRate), r.revenue, taken(r),
+            ]),
+            totals: [
+              t('total'), data.totals.shown, data.totals.accepted, data.totals.dismissed, data.totals.declined ?? 0,
+              pct(data.totals.acceptanceRate), data.totals.revenue, '',
+            ],
           },
         ]}
       />
@@ -327,6 +338,7 @@ function UpsellsView({ data }: { data: UpsellReport }) {
                   <TableHead className="text-end">{t('col.shown')}</TableHead>
                   <TableHead className="text-end">{t('col.accepted')}</TableHead>
                   <TableHead className="text-end">{t('col.dismissed')}</TableHead>
+                  <TableHead className="text-end">{tr('declined')}</TableHead>
                   <TableHead className="text-end">{t('col.rate')}</TableHead>
                   <TableHead className="text-end">{t('col.revenue')}</TableHead>
                 </TableRow>
@@ -337,10 +349,14 @@ function UpsellsView({ data }: { data: UpsellReport }) {
                     <TableCell className="font-medium">
                       <span className="me-2">{r.name ?? t('deletedRule')}</span>
                       {r.action ? <IosTag tone={r.action === 'upgrade' ? 'blue' : 'green'}>{tu(`action.${r.action}`)}</IosTag> : null}
+                      {r.optionsTaken?.length ? (
+                        <span className="block text-xs font-normal text-muted-foreground">{tr('optionsTaken', { items: taken(r) })}</span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-end tabular-nums">{formatQuantity(r.shown)}</TableCell>
                     <TableCell className="text-end tabular-nums">{formatQuantity(r.accepted)}</TableCell>
                     <TableCell className="text-end tabular-nums">{formatQuantity(r.dismissed)}</TableCell>
+                    <TableCell className="text-end tabular-nums">{formatQuantity(r.declined ?? 0)}</TableCell>
                     <TableCell className="text-end font-semibold tabular-nums">{pct(r.acceptanceRate)}</TableCell>
                     <TableCell className="text-end tabular-nums">{formatCurrency(r.revenue)}</TableCell>
                   </TableRow>
@@ -352,6 +368,7 @@ function UpsellsView({ data }: { data: UpsellReport }) {
                   <TableCell className="text-end tabular-nums">{formatQuantity(data.totals.shown)}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatQuantity(data.totals.accepted)}</TableCell>
                   <TableCell className="text-end tabular-nums">{formatQuantity(data.totals.dismissed)}</TableCell>
+                  <TableCell className="text-end tabular-nums">{formatQuantity(data.totals.declined ?? 0)}</TableCell>
                   <TableCell className="text-end font-bold tabular-nums">{pct(data.totals.acceptanceRate)}</TableCell>
                   <TableCell className="text-end font-bold tabular-nums">{formatCurrency(data.totals.revenue)}</TableCell>
                 </TableRow>

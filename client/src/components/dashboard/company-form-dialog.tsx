@@ -28,6 +28,9 @@ import {
   licensePayload,
   useIsSuperAdmin,
 } from '@/components/dashboard/license-fields';
+import { DealerTypeField } from '@/components/dashboard/dealer-type-field';
+import { useAuth } from '@/lib/auth';
+import { canChangeDealerType, dealerTypeOf, isDealerTypeChange, numberLabelKey } from '@/lib/dealerType';
 import {
   Dialog,
   DialogContent,
@@ -52,7 +55,7 @@ export function CompanyFormDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md">
         {/*
           Mounted only while open, so the form seeds itself from `company` in
           `useState` and never needs an effect to re-sync a draft — closing the
@@ -77,10 +80,14 @@ function CompanyForm({
 }) {
   const t = useTranslations('companies');
   const tc = useTranslations('common');
+  const tb = useTranslations('businessType');
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Partial<Company>>(() => company ?? EMPTY);
   const isNew = !draft.id;
   const isSuperAdmin = useIsSuperAdmin();
+  // "סוג עוסק": the company's administrators change it (the server enforces the same).
+  const myRole = useAuth((s) => s.user?.role);
+  const mayChangeDealerType = canChangeDealerType(myRole);
 
   // Only while creating: on an existing company this picker would be the quiet
   // dropdown the module comment argues against.
@@ -102,6 +109,11 @@ function CompanyForm({
         ...(c.id ? {} : { parentCompanyId: c.parentCompanyId || null }),
         // "לקוח קבוע / זמני": a super admin's only — anyone else's save leaves it alone.
         ...licensePayload(c, isSuperAdmin),
+        // "סוג עוסק": chosen on create; on an edit sent only when it changed, so saving a
+        // name never re-asserts it (docs/SPEC_BUSINESS_TYPE.md).
+        ...(!c.id || isDealerTypeChange(company?.dealerType, c.dealerType)
+          ? { dealerType: dealerTypeOf(c.dealerType) }
+          : {}),
       };
       const { data } = c.id
         ? await api.put<Company>(`/companies/${c.id}`, payload)
@@ -160,7 +172,7 @@ function CompanyForm({
         ) : null}
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1">
-            <Label>{t('vat')}</Label>
+            <Label>{tb(numberLabelKey(draft.dealerType))}</Label>
             <Input
               value={draft.vatNumber ?? ''}
               placeholder={t('vatPlaceholder')}
@@ -182,6 +194,13 @@ function CompanyForm({
             onChange={(e) => setDraft((c) => ({ ...c, address: e.target.value }))}
           />
         </div>
+        <DealerTypeField
+          value={draft.dealerType}
+          saved={company?.id ? dealerTypeOf(company.dealerType) : undefined}
+          isNew={isNew}
+          canChange={mayChangeDealerType}
+          onChange={(dealerType) => setDraft((c) => ({ ...c, dealerType }))}
+        />
         <LicenseFields
           idPrefix="company"
           value={draft}

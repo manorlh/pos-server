@@ -516,7 +516,7 @@ class TestShopHooks:
         by_hand = _product(world, world.A, sku="5")
 
         shop = shops_router.create_shop(
-            ShopCreate(name="New A1 shop", companyId=world.A1),
+            ShopCreate(name="New A1 shop", companyId=world.A1, branchId="701"),
             _distributor(),
             world.tenant,
             world.db,

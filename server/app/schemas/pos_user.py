@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, Field, field_validator
@@ -30,6 +30,8 @@ class PosUserCreate(BaseModel):
     last_name: Optional[str] = Field(None, alias="lastName", max_length=100)
     worker_number: Optional[str] = Field(None, alias="workerNumber", max_length=32)
     role: PosUserRole = PosUserRole.CASHIER
+    #: The till role ("תפקידים והרשאות"). Omitted: the company's legacy role for `role`.
+    till_role_id: Optional[uuid.UUID] = Field(None, alias="tillRoleId")
     pin: str
 
     @field_validator("pin")
@@ -54,6 +56,7 @@ class PosUserUpdate(BaseModel):
     last_name: Optional[str] = Field(None, alias="lastName", max_length=100)
     worker_number: Optional[str] = Field(None, alias="workerNumber", max_length=32)
     role: Optional[PosUserRole] = None
+    till_role_id: Optional[uuid.UUID] = Field(None, alias="tillRoleId")
     is_active: Optional[bool] = Field(None, alias="isActive")
     # Optional PIN reset in-line with update; explicit reset endpoint also exists.
     pin: Optional[str] = None
@@ -90,6 +93,10 @@ class PosUserResponse(BaseModel):
     worker_number: Optional[str] = Field(None, alias="workerNumber")
     role: PosUserRole
     is_active: bool = Field(..., alias="isActive")
+    till_role_id: Optional[uuid.UUID] = Field(None, alias="tillRoleId")
+    #: Set by the router (not a column): the role's name as resolved now.
+    till_role_name: Optional[str] = Field(None, alias="tillRoleName")
+    permission_overrides: Optional[dict] = Field(None, alias="permissionOverrides")
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 
@@ -110,8 +117,19 @@ class PosUserSyncRow(BaseModel):
     last_name: Optional[str] = Field(None, alias="lastName")
     worker_number: Optional[str] = Field(None, alias="workerNumber")
     pin_hash: str = Field(..., alias="pinHash")
+    #: What older tills read (`cashier` / `shop_manager`); kept equal to the till role's
+    #: legacy reading (app/services/till_permissions.py `legacy_role_for`).
     role: PosUserRole
     is_active: bool = Field(..., alias="isActive")
+    #: "תפקידים והרשאות" (docs/SPEC_ROLES_PERMISSIONS.md): the till role and the user's
+    #: *effective* permissions — every catalogue code → allow | approval | deny, and the
+    #: limits that apply. Resolved here, so the till needs no role tables; cached on the
+    #: till for offline. Absent from an older server: the till derives them from `role`.
+    till_role_id: Optional[uuid.UUID] = Field(None, alias="tillRoleId")
+    till_role_key: Optional[str] = Field(None, alias="tillRoleKey")
+    till_role_name: Optional[str] = Field(None, alias="tillRoleName")
+    permissions: Optional[Dict[str, str]] = None
+    limits: Optional[Dict[str, Dict[str, float]]] = None
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
 

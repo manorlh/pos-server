@@ -47,6 +47,11 @@ class CategoryAvailabilityOverride(Base):
         index=True,
     )
     is_active = Column(Boolean, nullable=True)
+    #: "חסימה קבועה": never opened by "פתיחת פריטים אוטומטית אחרי Z"
+    #: (app/services/availability_reopen.py); meaningful only while `is_active` is false.
+    block_permanent = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: When the current switch-off began; NULL when on, or for one older than the column.
+    blocked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

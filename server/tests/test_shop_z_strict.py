@@ -280,13 +280,22 @@ class TestTotalsMismatch:
         # Its closed shift waits for the next Z.
         assert w.db.get(Shift, s2.id).z_report_id is None
 
-    def test_a_dashboard_run_is_not_held_by_the_tills_own_figures(self, w):
+    def test_a_dashboard_run_is_not_held_by_the_tills_own_money_figures(self, w):
+        t1, _ = w.tills
+        s1, d1 = open_shift_with_sales(w, t1, 1, "10.00")
+        close(w, t1, s1, d1, till_figures=figures("25.00", count=1))
+        run = ZR.create_z_run(w.db, w.admin, w.tenant, w.shop, [ZR.MachineSelection(machine_id=t1.id)])
+        assert run.strict_cloud_check is False
+        assert run.status == ZRunStatus.COMPLETED
+
+    def test_but_any_run_waits_while_the_till_counted_more_documents(self, w):
+        """No Z with missing documents (docs/SHIFTS_API.md §2.6-bis, 2026-10-07)."""
         t1, _ = w.tills
         s1, d1 = open_shift_with_sales(w, t1, 1, "10.00")
         close(w, t1, s1, d1, till_figures=figures("10.00", "15.00"))
         run = ZR.create_z_run(w.db, w.admin, w.tenant, w.shop, [ZR.MachineSelection(machine_id=t1.id)])
-        assert run.strict_cloud_check is False
-        assert run.status == ZRunStatus.COMPLETED
+        assert run.status == ZRunStatus.WAITING
+        assert run.items[0].error_code == "waiting_documents"
 
 
 # ── The fast heartbeat ───────────────────────────────────────────────────────

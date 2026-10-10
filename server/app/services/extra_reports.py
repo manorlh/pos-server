@@ -57,6 +57,7 @@ from app.schemas.extra_reports import (
     SequenceGap,
     SequenceRow,
 )
+from app.services.company_hierarchy import descendant_company_ids
 from app.services.reports import (
     ReportWindow,
     _is_refund_condition,
@@ -298,11 +299,22 @@ def build_hourly_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
+    area_filter=None,
 ) -> HourlyReportResponse:
+    """
+    `company_id` (the company and its subsidiaries, as on the overview) and `area_filter`
+    (the area each document's shift was stamped with) only narrow the caller's scope —
+    the control board's hourly chart for a company or a point of sale.
+    """
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=area_filter,
     )
+    if tx_q is not None and company_id is not None:
+        group = descendant_company_ids(db, company_id)
+        tx_q = tx_q.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     grid: Dict[Tuple[int, int], List] = defaultdict(lambda: [0.0, 0, 0])  # net, docs, sales
     if tx_q is not None:
         net = _signed_document_net()
@@ -395,7 +407,7 @@ def build_department_report(
                 func.sum(case((
                     is_refund.is_(False),
                     # The line's own discount and its promotions' share ("מבצעים").
-                    func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0),
+                    func.coalesce(TransactionItem.discount, 0) + func.coalesce(TransactionItem.promotion_discount, 0) + func.coalesce(TransactionItem.voucher_discount, 0),
                 ), else_=0)), 0
             ).label("discounts"),
             # A credit-note line's total_price is already net of its discount.
@@ -460,7 +472,9 @@ def build_document_sequence_report(
     its number — so this is deliberately NOT the reportable set of the other reports.
     """
     now = datetime.now(timezone.utc)
-    q = db.query(Transaction.machine_id, Transaction.document_type, Transaction.transaction_number).filter(
+    # Per number series, not per type: each type is numbered on its own counter, and an
+    # exempt dealer's refund (-400) shares the 400 series (docs/SPEC_DOCUMENT_PREFIX.md).
+    q = db.query(Transaction.machine_id, Transaction.document_series, Transaction.transaction_number).filter(
         Transaction.tenant_id == tenant_id,
         Transaction.created_at >= window.start,
         Transaction.created_at < window.end,

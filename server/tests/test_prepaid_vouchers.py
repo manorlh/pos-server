@@ -100,6 +100,8 @@ def make_batch(w, *, count=3, split=False, user=None, shops=None, valid_from=Non
     body = PrepaidVoucherBatchCreate(
         name="הפקה — פסטיבל",
         companyId=w.company.id,
+        # What today's tills book (the `voucher` tender at list prices): no `features` needed.
+        redemptionAccounting="payment",
         shopIds=shops,
         eventName="פסטיבל הקיץ",
         freeText="בתוקף 12–14.8",
@@ -130,7 +132,7 @@ def lookup(w, code, till=None):
     return R.lookup_prepaid_voucher(str(till.id), PrepaidVoucherLookupIn(code=code), machine=till, db=w.db)
 
 
-def redeem(w, code, items, *, till=None, request_id=None, forfeit=False):
+def redeem(w, code, items, *, till=None, request_id=None, forfeit=False, features=None):
     till = till or w.tills[0]
     body = PrepaidVoucherRedeemIn(
         code=code,
@@ -139,6 +141,7 @@ def redeem(w, code, items, *, till=None, request_id=None, forfeit=False):
         forfeitRest=forfeit,
         posUserId=7,
         posUserName="דנה",
+        features=features,
     )
     return R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
 
@@ -174,9 +177,39 @@ class TestBatches:
         assert PV.normalize_code(" pv:abcd-efgh 2345-6789 ") == "ABCDEFGH23456789"
         assert PV.format_code("ABCDEFGH23456789") == "ABCD-EFGH-2345-6789"
 
-    def test_only_global_products_of_the_tenant(self, w):
-        assert refused(make_batch, w, items=[{"productId": w.general.id, "quantity": 1}]).detail == PV.PRODUCT_INVALID
+    def test_only_products_of_the_tenant_and_never_the_general_item(self, w):
+        # The general item has no identity: refused with why (docs/SPEC_VOUCHER_PRODUCTION.md §7.14).
+        assert refused(make_batch, w, items=[{"productId": w.general.id, "quantity": 1}]).detail == \
+            PV.product_refusal(PV.BLOCK_GENERAL) == "prepaid_voucher_product_general"
         assert refused(make_batch, w, items=[{"productId": uuid.uuid4(), "quantity": 1}]).detail == PV.PRODUCT_INVALID
+
+    def test_the_picker_shows_what_a_batch_may_carry_and_why_not(self, w):
+        # 07.10.2026: the picker listed every company's products and the save refused one of
+        # another company as "אינו מתאים"; then it hid what it could not take. Now (the owner,
+        # "תוודא ששוברי הפקה תומכים בכל סוגי המוצרים") it shows each with whether it can go on
+        # and why not — the save's own rule.
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="חברה אחרת")
+        w.db.add(other)
+        w.db.flush()
+        foreign = Product(
+            id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, category_id=w.hotdog.category_id,
+            catalog_level=CatalogLevel.GLOBAL, name="של חברה אחרת", price=5, sku="sku-foreign",
+        )
+        w.db.add(foreign)
+        w.db.commit()
+
+        def offered(search=None):
+            out = R.list_prepaid_voucher_products(company_id=str(w.company.id), search=search, limit=50, **_ctx(w))
+            return [(p["name"], p["blocked"]["goods"]) for p in out["items"]]
+
+        # The usable ones first; the general item with its reason; another company's only when searched for.
+        assert offered() == [("נקניקייה", None), ("שתייה", None), ("כללי", "general")]
+        assert offered("שתי") == [("שתייה", None)]
+        assert offered("חברה") == [("של חברה אחרת", "other_company")]
+        # …and what the picker marks is what the save refuses; what it does not, it takes.
+        assert refused(make_batch, w, items=[{"productId": foreign.id, "quantity": 1}]).detail == \
+            PV.product_refusal(PV.BLOCK_OTHER_COMPANY)
+        assert make_batch(w, items=[{"productId": w.drink.id, "quantity": 1}])["items"][0]["name"] == "שתייה"
 
     def test_the_form_is_validated(self, w):
         with pytest.raises(ValidationError):
@@ -397,6 +430,7 @@ def test_the_till_routes_are_mounted():
     assert ("POST", "/api/v1/sync/{machine_id}/prepaid-vouchers/lookup") in mounted
     assert ("POST", "/api/v1/sync/{machine_id}/prepaid-vouchers/redeem") in mounted
     assert ("POST", "/api/v1/prepaid-vouchers/batches") in mounted
+    assert ("GET", "/api/v1/prepaid-vouchers/products") in mounted
 
 
 class TestReverse:

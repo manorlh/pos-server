@@ -14,13 +14,22 @@
  * (קבוע). Times are the tenant's local time; the server sends scheduled ones when they
  * come due (lazily, on the tills' next fetch), and each recurring occurrence needs its
  * own "קראתי". A recurring message's list row shows its latest occurrence.
+ *
+ * "סוג תצוגה": full-screen (default) or a banner ("באנר מבצעים") — a slim coloured strip at
+ * the top of the till's sell screen and tables floor, with an optional product whose chip
+ * adds it to the order, a colour and an end ("עד מתי"). A banner that went out can still
+ * change its text, product, colour and end.
+ *
+ * Sending never waits for the tills: the POST returns at once (with an Idempotency-Key, one per
+ * message written) and a full-screen message sent now is followed in the background by
+ * "פקודות שנשלחו" (lib/deviceCommandsStore.ts); more messages can be sent meanwhile.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { format, formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import {
   Ban,
@@ -45,14 +54,20 @@ import {
   updateTillMessage,
 } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { isKeyReused, keyRing } from '@/lib/deviceCommands';
+import { trackCommand } from '@/lib/deviceCommandsStore';
+import { formatDate, formatShortDateTime, isoDate } from '@/lib/format';
 import type {
   TillMessage,
+  TillMessageColor,
+  TillMessageDisplay,
   TillMessageLevel,
   TillMessageReceipt,
   TillMessageScheduleKind,
   TillMessageUpdate,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { ProductListPicker } from '@/components/dashboard/promotions/group-picker';
 import {
   EMPTY_ORG_SCOPE,
   deepestOrgScope,
@@ -62,6 +77,7 @@ import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { DatePicker, DateTimePicker, TimeInput } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -137,19 +153,16 @@ function expiryValue(choice: Expiry, custom: string, sendAtLocal: string | null)
 }
 
 function time(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : format(d, 'dd/MM HH:mm', { locale: he });
+  return isoDate(iso) ? formatShortDateTime(iso) : '';
 }
 
 /** dd/MM HH:mm in the message's zone (the tenant's), whatever the browser's. */
 function zonedTime(iso: string | null | undefined, tz: string | null | undefined): string {
-  const local = inZone(iso, tz || DEFAULT_TZ);
-  return local ? `${local.slice(8, 10)}/${local.slice(5, 7)} ${local.slice(11, 16)}` : '';
+  return isoDate(iso) ? formatShortDateTime(iso, tz || DEFAULT_TZ) : '';
 }
 
 function shortDate(ymd: string | null | undefined): string {
-  return ymd ? `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}/${ymd.slice(2, 4)}` : '';
+  return ymd ? formatDate(ymd) : '';
 }
 
 function browserZone(): string {
@@ -162,12 +175,129 @@ function browserZone(): string {
 
 function useErrorText() {
   const t = useTranslations('tillMessages');
+  const tb = useTranslations('specials.banner');
   const tc = useTranslations('common');
   return (err: unknown) => {
     const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
     if (typeof detail === 'string' && t.has(`errors.${detail}`)) return t(`errors.${detail}`);
+    if (typeof detail === 'string' && tb.has(`errors.${detail}`)) return tb(`errors.${detail}`);
     return axiosErrorToToastMessage(err, tc('error'));
   };
+}
+
+// ── Banners ("באנר מבצעים") ──────────────────────────────────────────────────
+
+const DISPLAYS: TillMessageDisplay[] = ['fullscreen', 'banner'];
+const COLORS: TillMessageColor[] = ['amber', 'blue', 'green', 'red', 'purple', 'dark'];
+/** The till's presets (pos-android domain/SpecialsBanner.kt), for the swatches and the preview. */
+const COLOR_STYLE: Record<TillMessageColor, { bg: string; fg: string }> = {
+  amber: { bg: '#FFC233', fg: '#2B1D00' },
+  blue: { bg: '#0A6CFF', fg: '#FFFFFF' },
+  green: { bg: '#1E9E4A', fg: '#FFFFFF' },
+  red: { bg: '#E5322D', fg: '#FFFFFF' },
+  purple: { bg: '#8E44D9', fg: '#FFFFFF' },
+  dark: { bg: '#1C1C1E', fg: '#FFFFFF' },
+};
+
+const isBanner = (m: Pick<TillMessage, 'display'>) => m.display === 'banner';
+
+/** "סוג תצוגה": full-screen until "קראתי", or the specials strip. */
+function DisplayChoice({ value, onChange }: { value: TillMessageDisplay; onChange: (v: TillMessageDisplay) => void }) {
+  const tb = useTranslations('specials.banner');
+  return (
+    <div className="space-y-2">
+      <Label id="msg-display">{tb('display')}</Label>
+      <div role="radiogroup" aria-labelledby="msg-display" className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+        {DISPLAYS.map((k) => (
+          <button
+            key={k}
+            type="button"
+            role="radio"
+            aria-checked={value === k}
+            onClick={() => onChange(k)}
+            className={cn(
+              'flex min-h-11 items-center justify-center gap-1.5 rounded-md px-2 text-sm font-medium transition-colors',
+              value === k ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            {k === 'banner' ? <Megaphone className="h-4 w-4" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+            {tb(k)}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">{value === 'banner' ? tb('bannerHint') : tb('fullscreenHint')}</p>
+    </div>
+  );
+}
+
+/** A banner's product, colour and a preview of the strip as the till draws it. */
+function BannerFields({
+  title,
+  body,
+  productId,
+  onProduct,
+  color,
+  onColor,
+}: {
+  title: string;
+  body: string;
+  productId: string | null;
+  onProduct: (id: string | null) => void;
+  color: TillMessageColor;
+  onColor: (c: TillMessageColor) => void;
+}) {
+  const tb = useTranslations('specials.banner');
+  const style = COLOR_STYLE[color];
+  const line = [title.trim(), body.trim()].filter(Boolean).join(' · ');
+  return (
+    <div className="space-y-3 rounded-lg border border-dashed p-3">
+      <ProductListPicker
+        label={tb('product')}
+        value={productId ? [productId] : []}
+        onChange={(ids) => onProduct(ids.length ? ids[ids.length - 1] : null)}
+      />
+      <p className="text-xs text-muted-foreground">{tb('productHint')}</p>
+      <div className="space-y-1">
+        <Label id="msg-color">{tb('color')}</Label>
+        <div role="radiogroup" aria-labelledby="msg-color" className="flex flex-wrap gap-2">
+          {COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              role="radio"
+              aria-checked={color === c}
+              aria-label={tb(`colors.${c}`)}
+              title={tb(`colors.${c}`)}
+              onClick={() => onColor(c)}
+              className={cn(
+                'h-11 w-11 rounded-full border-2 transition-transform',
+                color === c ? 'scale-110 border-foreground' : 'border-transparent',
+              )}
+              style={{ backgroundColor: COLOR_STYLE[c].bg }}
+            />
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <span className="text-xs text-muted-foreground">{tb('preview')}</span>
+        <div
+          className="flex min-h-10 items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold"
+          style={{ backgroundColor: style.bg, color: style.fg }}
+        >
+          <span aria-hidden>📣</span>
+          <span className="min-w-0 flex-1 truncate">{line || '…'}</span>
+          {productId ? (
+            <span className="shrink-0 rounded-full px-3 py-1 text-xs font-bold" style={{ backgroundColor: `${style.fg}2E` }}>
+              +
+            </span>
+          ) : null}
+          <span aria-hidden className="opacity-80">
+            ✕
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const RECEIPT_STYLE: Record<TillMessageReceipt['status'], string> = {
@@ -269,9 +399,8 @@ function RecurrenceFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-time`}>{t('schedule.time')}</Label>
-          <Input
+          <TimeInput
             id={`${idPrefix}-time`}
-            type="time"
             required
             value={value.time}
             onChange={(e) => set({ time: e.target.value })}
@@ -299,9 +428,8 @@ function RecurrenceFields({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-start`}>{t('schedule.startDate')}</Label>
-          <Input
+          <DatePicker
             id={`${idPrefix}-start`}
-            type="date"
             value={value.startDate}
             onChange={(e) => set({ startDate: e.target.value })}
             className="h-11"
@@ -309,9 +437,8 @@ function RecurrenceFields({
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-end`}>{t('schedule.endDate')}</Label>
-          <Input
+          <DatePicker
             id={`${idPrefix}-end`}
-            type="date"
             value={value.endDate}
             min={value.startDate || undefined}
             onChange={(e) => set({ endDate: e.target.value })}
@@ -326,9 +453,17 @@ function RecurrenceFields({
 
 // ── The list ─────────────────────────────────────────────────────────────────
 
-function ReceiptRow({ r }: { r: TillMessageReceipt }) {
+function ReceiptRow({ r, banner = false }: { r: TillMessageReceipt; banner?: boolean }) {
   const t = useTranslations('tillMessages');
+  const tb = useTranslations('specials.banner');
   const where = [r.shopName, r.areaName].filter(Boolean).join(' › ');
+  // A banner is not acknowledged: "הוצג" once the till has it, "הוסתר ע״י" once closed there.
+  const label =
+    banner && r.status === 'acknowledged'
+      ? tb('hiddenBy', { name: r.acknowledgedByName || t('receipt.unknownUser'), at: time(r.acknowledgedAt) })
+      : banner && r.status === 'delivered'
+        ? tb('seen')
+        : null;
   return (
     <li className="flex min-h-11 items-center gap-2 px-3 py-2 text-sm">
       <div className="min-w-0 flex-1">
@@ -342,12 +477,13 @@ function ReceiptRow({ r }: { r: TillMessageReceipt }) {
         className={cn('inline-flex shrink-0 items-center rounded border px-1.5 py-1 text-[11px] leading-tight', RECEIPT_STYLE[r.status])}
         title={r.deliveredAt ? t('receipt.deliveredAt', { at: time(r.deliveredAt) }) : undefined}
       >
-        {r.status === 'acknowledged'
-          ? t('receipt.acknowledgedBy', {
-              name: r.acknowledgedByName || t('receipt.unknownUser'),
-              at: time(r.acknowledgedAt),
-            })
-          : t(`receipt.${r.status}`)}
+        {label ??
+          (r.status === 'acknowledged'
+            ? t('receipt.acknowledgedBy', {
+                name: r.acknowledgedByName || t('receipt.unknownUser'),
+                at: time(r.acknowledgedAt),
+              })
+            : t(`receipt.${r.status}`))}
       </span>
     </li>
   );
@@ -417,12 +553,25 @@ function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
     };
   });
   const recurring = m.scheduleKind === 'recurring';
-  const valid = body.trim().length > 0 && (recurring ? recurrenceValid(rec) : !!sendAt);
+  // A message that went out (now, or scheduled and sent): only a banner gets here — its
+  // text, product, colour and end change; never when or how it went out.
+  const sent = (m.scheduleKind ?? 'now') === 'now' || (m.scheduleKind === 'scheduled' && !!m.sentAt);
+  const [display, setDisplay] = useState<TillMessageDisplay>(m.display ?? 'fullscreen');
+  const [productId, setProductId] = useState<string | null>(m.productId ?? null);
+  const [color, setColor] = useState<TillMessageColor>(m.color ?? 'amber');
+  const [until, setUntil] = useState(inZone(m.expiresAt, tz));
+  const banner = display === 'banner';
+  const tb = useTranslations('specials.banner');
+  const valid = body.trim().length > 0 && (sent || (recurring ? recurrenceValid(rec) : !!sendAt));
 
   const save = useMutation({
     mutationFn: () => {
       const patch: TillMessageUpdate = { title: title.trim() || null, body: body.trim() };
-      Object.assign(patch, recurring ? recurrenceBody(rec) : { sendAt });
+      if (!sent) Object.assign(patch, recurring ? recurrenceBody(rec) : { sendAt });
+      if (!sent) patch.display = display;
+      if (banner) Object.assign(patch, { productId, color });
+      // "עד מתי": wall time in the tenant's zone; empty — until cancelled. Not per occurrence.
+      if (banner && !recurring && until !== inZone(m.expiresAt, tz)) patch.expiresAt = until || null;
       return updateTillMessage(m.id, patch);
     },
     onSuccess: () => {
@@ -463,14 +612,35 @@ function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
           className="w-full min-w-0 rounded-lg border border-input bg-background px-2.5 py-2 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
         />
       </div>
-      {recurring ? (
+      {sent ? null : <DisplayChoice value={display} onChange={setDisplay} />}
+      {banner ? (
+        <BannerFields title={title} body={body} productId={productId} onProduct={setProductId} color={color} onColor={setColor} />
+      ) : null}
+      {banner && !recurring ? (
+        <div className="space-y-1">
+          <Label htmlFor={`edit-until-${m.id}`}>{tb('until')}</Label>
+          <div className="flex gap-2">
+            <DateTimePicker
+              id={`edit-until-${m.id}`}
+              value={until}
+              onChange={(e) => setUntil(e.target.value)}
+              className="h-11 flex-1"
+            />
+            {until ? (
+              <Button type="button" variant="ghost" className="min-h-11" onClick={() => setUntil('')}>
+                {tb('untilNone')}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {sent ? null : recurring ? (
         <RecurrenceFields value={rec} onChange={setRec} idPrefix={`edit-${m.id}`} />
       ) : (
         <div className="space-y-1">
           <Label htmlFor={`edit-send-${m.id}`}>{t('schedule.sendAt')}</Label>
-          <Input
+          <DateTimePicker
             id={`edit-send-${m.id}`}
-            type="datetime-local"
             required
             value={sendAt}
             onChange={(e) => setSendAt(e.target.value)}
@@ -478,7 +648,7 @@ function EditPanel({ m, onDone }: { m: TillMessage; onDone: () => void }) {
           />
         </div>
       )}
-      <p className="text-xs text-muted-foreground">{t('schedule.editHint')}</p>
+      <p className="text-xs text-muted-foreground">{sent ? tb('editHint') : t('schedule.editHint')}</p>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" className="min-h-11 flex-1 sm:flex-none" disabled={!valid || save.isPending}>
           {t('schedule.save')}
@@ -525,9 +695,15 @@ function MessageCard({ m }: { m: TillMessage }) {
   });
 
   const kind = m.scheduleKind ?? 'now';
-  const pct = m.counts.total ? Math.round((m.counts.acknowledged / m.counts.total) * 100) : 0;
+  const banner = isBanner(m);
+  const tb = useTranslations('specials.banner');
+  // A banner is not acknowledged: the bar is how many tills show it.
+  const pct = m.counts.total
+    ? Math.round(((banner ? m.counts.delivered : m.counts.acknowledged) / m.counts.total) * 100)
+    : 0;
   const showCounts = kind === 'now' || m.counts.total > 0;
   const occurrenceLive = kind !== 'recurring' || !!m.occurrence?.live;
+  const swatch = COLOR_STYLE[m.color ?? 'amber'];
   return (
     <li className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
       <div className="space-y-2 p-3">
@@ -536,10 +712,26 @@ function MessageCard({ m }: { m: TillMessage }) {
             {m.title ? <p className="font-semibold">{m.title}</p> : null}
             <p className="whitespace-pre-wrap break-words text-sm">{m.body}</p>
           </div>
-          <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', MESSAGE_STYLE[m.status])}>
-            {t(`status.${m.status}`)}
-          </span>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <span className={cn('rounded-full px-2 py-0.5 text-[11px]', MESSAGE_STYLE[m.status])}>
+              {t(`status.${m.status}`)}
+            </span>
+            {/* The kind: a banner in its colour, full-screen plain. */}
+            <span
+              className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                banner ? '' : 'bg-muted text-muted-foreground',
+              )}
+              style={banner ? { backgroundColor: swatch.bg, color: swatch.fg } : undefined}
+            >
+              {banner ? <Megaphone className="h-3 w-3" aria-hidden /> : null}
+              {banner ? tb('kindBanner') : tb('kindFullscreen')}
+            </span>
+          </div>
         </div>
+        {banner && m.productName ? (
+          <p className="text-xs font-medium">{tb('productTag', { name: m.productName })}</p>
+        ) : null}
         <ScheduleLine m={m} />
         <p className="text-xs text-muted-foreground">
           {t('meta', {
@@ -547,17 +739,25 @@ function MessageCard({ m }: { m: TillMessage }) {
             at: time(m.createdAt),
             sender: m.senderName ?? '—',
           })}
-          {m.expiresAt && (m.status === 'active' || m.status === 'scheduled') ? ` · ${t('expiresAt', { at: time(m.expiresAt) })}` : ''}
+          {m.expiresAt && (m.status === 'active' || m.status === 'scheduled')
+            ? ` · ${banner ? tb('endAt', { at: time(m.expiresAt) }) : t('expiresAt', { at: time(m.expiresAt) })}`
+            : ''}
         </p>
         {showCounts ? (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
               <span>
-                {t('counts', {
-                  acknowledged: m.counts.acknowledged,
-                  delivered: m.counts.delivered,
-                  total: m.counts.total,
-                })}
+                {banner
+                  ? tb('countsBanner', {
+                      acknowledged: m.counts.acknowledged,
+                      delivered: m.counts.delivered,
+                      total: m.counts.total,
+                    })
+                  : t('counts', {
+                      acknowledged: m.counts.acknowledged,
+                      delivered: m.counts.delivered,
+                      total: m.counts.total,
+                    })}
               </span>
               <span className="tabular-nums text-muted-foreground">{pct}%</span>
             </div>
@@ -627,7 +827,7 @@ function MessageCard({ m }: { m: TillMessage }) {
       {open ? (
         <ul className="divide-y border-t">
           {m.tills.map((r) => (
-            <ReceiptRow key={r.machineId} r={r} />
+            <ReceiptRow key={r.machineId} r={r} banner={banner} />
           ))}
         </ul>
       ) : null}
@@ -650,6 +850,12 @@ export default function TillMessagesPage() {
   const [when, setWhen] = useState<TillMessageScheduleKind>('now');
   const [sendAt, setSendAt] = useState('');
   const [rec, setRec] = useState<RecurrenceDraft>(EMPTY_RECURRENCE);
+  // "סוג תצוגה": full-screen (default) or the specials banner, with its product and colour.
+  const [display, setDisplay] = useState<TillMessageDisplay>('fullscreen');
+  const [productId, setProductId] = useState<string | null>(null);
+  const [color, setColor] = useState<TillMessageColor>('amber');
+  const banner = display === 'banner';
+  const tb = useTranslations('specials.banner');
   const target = deepestOrgScope(scope);
   const targetLabel = useOrgScopeLabel(scope);
 
@@ -682,9 +888,15 @@ export default function TillMessagesPage() {
     (when !== 'scheduled' || !!sendAt) &&
     (when !== 'recurring' || recurrenceValid(rec));
 
+  // One Idempotency-Key per message as written (lib/deviceCommands.ts `keyRing`): a retry of the
+  // same submit (after a network error) reuses it — the server answers with the first message,
+  // never sends it twice; an edited message (another body, target, schedule…) gets a new key, as
+  // does a `422 idempotency_key_reused`; a successful send starts afresh.
+  const [keys] = useState(() => keyRing());
+
   const send = useMutation({
-    mutationFn: () =>
-      sendTillMessage({
+    mutationFn: () => {
+      const request = {
         title: title.trim() || null,
         body: body.trim(),
         targetLevel: target!.level as TillMessageLevel,
@@ -693,17 +905,47 @@ export default function TillMessagesPage() {
         scheduleKind: when,
         ...(when === 'scheduled' ? { sendAt } : {}),
         ...(when === 'recurring' ? recurrenceBody(rec) : {}),
-      }),
+        ...(banner ? { display, productId, color } : {}),
+      };
+      return sendTillMessage(request, keys.keyFor(request)).catch((err) => {
+        if (isKeyReused(err)) keys.forget(request);
+        throw err;
+      });
+    },
     onSuccess: (out) => {
-      toast.success(
-        when === 'scheduled'
-          ? t('schedule.scheduledToast')
-          : when === 'recurring'
-            ? t('schedule.recurringToast')
-            : t('sent', { count: out.counts?.total ?? 0 }),
-      );
+      keys.forget();
+      if (when === 'now' && !banner && out.id) {
+        // Sent now, full-screen: followed in the background ("פקודות שנשלחו": delivered → "קראתי"
+        // by every till), which pops its own non-blocking notice — no toast here.
+        const total = out.counts?.total ?? 0;
+        const name = out.targetName?.trim();
+        trackCommand({
+          kind: 'till_message',
+          id: out.id,
+          action: 'till_message',
+          machineId: out.targetLevel === 'machine' ? out.targetId : null,
+          machineName: name
+            ? out.targetLevel === 'machine'
+              ? name
+              : `${t(`levels.${out.targetLevel}`)} ${name}`
+            : total > 0
+              ? t('tills', { count: total })
+              : null,
+        });
+      } else {
+        // Scheduled / recurring (nothing goes to a till yet) or a banner (no "קראתי" to wait for —
+        // it shows until its end): not a command to follow; the list below shows it.
+        toast.success(
+          when === 'scheduled'
+            ? t('schedule.scheduledToast')
+            : when === 'recurring'
+              ? t('schedule.recurringToast')
+              : t('sent', { count: out.counts?.total ?? 0 }),
+        );
+      }
       setTitle('');
       setBody('');
+      setProductId(null);
       void qc.invalidateQueries({ queryKey: ['till-messages'] });
     },
     onError: (err) => toast.error(errorText(err)),
@@ -766,6 +1008,10 @@ export default function TillMessagesPage() {
                 {body.length}/{BODY_MAX}
               </p>
             </div>
+            <DisplayChoice value={display} onChange={setDisplay} />
+            {banner ? (
+              <BannerFields title={title} body={body} productId={productId} onProduct={setProductId} color={color} onColor={setColor} />
+            ) : null}
             <div className="space-y-2">
               <Label>{t('compose.target')}</Label>
               <ScopePicker value={scope} onChange={setScope} defaultOpen />
@@ -800,9 +1046,8 @@ export default function TillMessagesPage() {
               {when === 'scheduled' ? (
                 <div className="space-y-1">
                   <Label htmlFor="msg-send-at">{t('schedule.sendAt')}</Label>
-                  <Input
+                  <DateTimePicker
                     id="msg-send-at"
-                    type="datetime-local"
                     required
                     value={sendAt}
                     min={localInput(new Date())}
@@ -825,30 +1070,33 @@ export default function TillMessagesPage() {
             {when !== 'recurring' ? (
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <Label>{t('compose.expiry')}</Label>
+                  {/* A banner's "עד מתי": with no end it shows until cancelled (not until read). */}
+                  <Label>{banner ? tb('until') : t('compose.expiry')}</Label>
                   <Select
                     value={expiry}
                     onValueChange={(v) => v && setExpiry(v as Expiry)}
-                    items={EXPIRIES.map((x) => ({ value: x, label: t(`expiry.${x}`) }))}
+                    items={EXPIRIES.map((x) => ({ value: x, label: banner && x === 'none' ? tb('untilNone') : t(`expiry.${x}`) }))}
                   >
                     <SelectTrigger className="h-11 w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {EXPIRIES.map((x) => (
-                        <SelectItem key={x} value={x} label={t(`expiry.${x}`)}>
-                          {t(`expiry.${x}`)}
-                        </SelectItem>
-                      ))}
+                      {EXPIRIES.map((x) => {
+                        const label = banner && x === 'none' ? tb('untilNone') : t(`expiry.${x}`);
+                        return (
+                          <SelectItem key={x} value={x} label={label}>
+                            {label}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
                 {expiry === 'custom' ? (
                   <div className="space-y-1">
                     <Label htmlFor="msg-expiry">{t('compose.expiryAt')}</Label>
-                    <Input
+                    <DateTimePicker
                       id="msg-expiry"
-                      type="datetime-local"
                       value={customExpiry}
                       onChange={(e) => setCustomExpiry(e.target.value)}
                       className="h-11"

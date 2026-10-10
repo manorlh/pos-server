@@ -1,4 +1,11 @@
-"""Default OPEN FORMAT software/tax config for cloud exports."""
+"""
+Default OPEN FORMAT software/tax config for cloud exports.
+
+`DEFAULT_SOFTWARE_INFO` holds **placeholders** only. The cloud export writes the software
+details from the platform setting `openFormat` (`app/services/open_format/software.py`,
+`PUT /system/open-format`, the super admin's); a field nobody configured falls back to
+these values and is reported as a placeholder.
+"""
 
 from dataclasses import dataclass
 from typing import Literal

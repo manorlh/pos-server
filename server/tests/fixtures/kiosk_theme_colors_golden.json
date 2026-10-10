@@ -1,0 +1,315 @@
+{
+  "_doc": "Shared golden: the kiosk's own background ('רקע הקיוסק'), its veil and 'גודל טקסט'. pos-server server/tests/fixtures and pos-android app/src/test/resources, byte for byte - change both repos together. colors: the theme's mode and colours (as resolved) -> what the kiosk paints with (lib/kioskConfig.ts resolveThemeColors, domain/KioskThemeColors.kt). scrim: the background colour's alpha over the picture (theme.backgroundOverlay; the attract screen at half). textSizes: the per-element sizes in percent over theme.typeScale.",
+  "minContrast": 3,
+  "colors": [
+    {
+      "name": "nothing set, light (wolt)",
+      "mode": "light",
+      "backgroundColor": null,
+      "surfaceColor": null,
+      "textColor": null,
+      "expect": {
+        "dark": false,
+        "background": "#F5F6F8",
+        "surface": "#FFFFFF",
+        "text": "#111827"
+      }
+    },
+    {
+      "name": "nothing set, dark",
+      "mode": "dark",
+      "backgroundColor": null,
+      "surfaceColor": null,
+      "textColor": null,
+      "expect": {
+        "dark": true,
+        "background": "#0E1116",
+        "surface": "#1A1E26",
+        "text": "#F3F4F6"
+      }
+    },
+    {
+      "name": "ios preset",
+      "mode": "light",
+      "backgroundColor": "#F2F2F7",
+      "surfaceColor": "#FFFFFF",
+      "textColor": null,
+      "expect": {
+        "dark": false,
+        "background": "#F2F2F7",
+        "surface": "#FFFFFF",
+        "text": "#111827"
+      }
+    },
+    {
+      "name": "classic preset",
+      "mode": "light",
+      "backgroundColor": "#FFFFFF",
+      "surfaceColor": "#FFFFFF",
+      "textColor": "#000000",
+      "expect": {
+        "dark": false,
+        "background": "#FFFFFF",
+        "surface": "#FFFFFF",
+        "text": "#000000"
+      }
+    },
+    {
+      "name": "minimal_dark preset",
+      "mode": "dark",
+      "backgroundColor": "#0B0B0D",
+      "surfaceColor": "#16161A",
+      "textColor": "#F5F5F4",
+      "expect": {
+        "dark": true,
+        "background": "#0B0B0D",
+        "surface": "#16161A",
+        "text": "#F5F5F4"
+      }
+    },
+    {
+      "name": "tech preset",
+      "mode": "dark",
+      "backgroundColor": "#0B0F14",
+      "surfaceColor": "#111821",
+      "textColor": "#E6EDF3",
+      "expect": {
+        "dark": true,
+        "background": "#0B0F14",
+        "surface": "#111821",
+        "text": "#E6EDF3"
+      }
+    },
+    {
+      "name": "tech with a light background",
+      "mode": "dark",
+      "backgroundColor": "#F5F0E6",
+      "surfaceColor": "#111821",
+      "textColor": "#E6EDF3",
+      "expect": {
+        "dark": false,
+        "background": "#F5F0E6",
+        "surface": "#FFFFFF",
+        "text": "#111827"
+      }
+    },
+    {
+      "name": "tech with white",
+      "mode": "dark",
+      "backgroundColor": "#FFFFFF",
+      "surfaceColor": "#111821",
+      "textColor": "#E6EDF3",
+      "expect": {
+        "dark": false,
+        "background": "#FFFFFF",
+        "surface": "#FFFFFF",
+        "text": "#111827"
+      }
+    },
+    {
+      "name": "tech with navy",
+      "mode": "dark",
+      "backgroundColor": "#1E3A8A",
+      "surfaceColor": "#111821",
+      "textColor": "#E6EDF3",
+      "expect": {
+        "dark": true,
+        "background": "#1E3A8A",
+        "surface": "#111821",
+        "text": "#E6EDF3"
+      }
+    },
+    {
+      "name": "minimal_dark with yellow",
+      "mode": "dark",
+      "backgroundColor": "#FDE68A",
+      "surfaceColor": "#16161A",
+      "textColor": "#F5F5F4",
+      "expect": {
+        "dark": false,
+        "background": "#FDE68A",
+        "surface": "#FFFFFF",
+        "text": "#111827"
+      }
+    },
+    {
+      "name": "wolt with a dark background",
+      "mode": "light",
+      "backgroundColor": "#1F2937",
+      "surfaceColor": null,
+      "textColor": null,
+      "expect": {
+        "dark": true,
+        "background": "#1F2937",
+        "surface": "#1A1E26",
+        "text": "#F3F4F6"
+      }
+    },
+    {
+      "name": "classic with a dark background",
+      "mode": "light",
+      "backgroundColor": "#222222",
+      "surfaceColor": "#FFFFFF",
+      "textColor": "#000000",
+      "expect": {
+        "dark": true,
+        "background": "#222222",
+        "surface": "#343434",
+        "text": "#F3F4F6"
+      }
+    },
+    {
+      "name": "an owner's own grey words kept",
+      "mode": "light",
+      "backgroundColor": "#FFFFFF",
+      "surfaceColor": null,
+      "textColor": "#777777",
+      "expect": {
+        "dark": false,
+        "background": "#FFFFFF",
+        "surface": "#FFFFFF",
+        "text": "#777777"
+      }
+    },
+    {
+      "name": "mid grey background",
+      "mode": "light",
+      "backgroundColor": "#777777",
+      "surfaceColor": null,
+      "textColor": null,
+      "expect": {
+        "dark": true,
+        "background": "#777777",
+        "surface": "#1A1E26",
+        "text": "#F3F4F6"
+      }
+    },
+    {
+      "name": "dark style, own light words, own white cards on dark",
+      "mode": "dark",
+      "backgroundColor": "#101010",
+      "surfaceColor": "#FFFFFF",
+      "textColor": "#FFFFFF",
+      "expect": {
+        "dark": true,
+        "background": "#101010",
+        "surface": "#232323",
+        "text": "#FFFFFF"
+      }
+    }
+  ],
+  "overlay": {
+    "min": 0,
+    "max": 90,
+    "default": 70
+  },
+  "scopes": [
+    "all",
+    "rest"
+  ],
+  "scrim": [
+    {
+      "overlay": 70,
+      "attract": false,
+      "alpha": 0.7
+    },
+    {
+      "overlay": 70,
+      "attract": true,
+      "alpha": 0.35
+    },
+    {
+      "overlay": 0,
+      "attract": false,
+      "alpha": 0.0
+    },
+    {
+      "overlay": 90,
+      "attract": true,
+      "alpha": 0.45
+    },
+    {
+      "overlay": 90,
+      "attract": false,
+      "alpha": 0.9
+    },
+    {
+      "overlay": 55,
+      "attract": true,
+      "alpha": 0.275
+    },
+    {
+      "overlay": 120,
+      "attract": false,
+      "alpha": 0.9
+    },
+    {
+      "overlay": -5,
+      "attract": false,
+      "alpha": 0.0
+    }
+  ],
+  "textSizes": {
+    "keys": [
+      "productName",
+      "productDescription",
+      "productPrice",
+      "categoryName",
+      "itemName",
+      "itemDescription",
+      "itemOptions",
+      "cartLines",
+      "buttons"
+    ],
+    "min": 80,
+    "max": 150,
+    "step": 10,
+    "default": 100,
+    "clean": [
+      [
+        null,
+        100
+      ],
+      [
+        80,
+        80
+      ],
+      [
+        100,
+        100
+      ],
+      [
+        150,
+        150
+      ],
+      [
+        160,
+        150
+      ],
+      [
+        70,
+        80
+      ],
+      [
+        115,
+        120
+      ],
+      [
+        114,
+        110
+      ],
+      [
+        125,
+        130
+      ],
+      [
+        "120",
+        100
+      ],
+      [
+        99.6,
+        100
+      ]
+    ]
+  }
+}

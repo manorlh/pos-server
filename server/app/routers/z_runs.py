@@ -7,9 +7,10 @@ company manager, shop manager, distributor, super admin), and access to the shop
 from __future__ import annotations
 
 import uuid
-from typing import Iterable, Optional
+from typing import Iterable, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -34,6 +35,7 @@ from app.services.shifts import orphan_documents_by_machine, shift_to_out
 from app.services import areas
 from app.services import main_till as MT
 from app.services import z_runs as ZR
+from app.services import z_state
 from app.services.till_z import TillZRefused, z_mode_of
 from fastapi.responses import JSONResponse
 
@@ -83,6 +85,10 @@ def _run_or_404(db: Session, run_id: uuid.UUID, user: User, tenant_id) -> "ZR.ZR
     _shop_for(db, run.shop_id, user, tenant_id)
     _check_tills(db, user, [i.machine for i in run.items if i.machine is not None], tenant_id)
     return run
+
+
+def _initiator_name(user: User) -> str:
+    return user.username or user.email or str(user.id)
 
 
 def _summary(shift):
@@ -189,6 +195,7 @@ def get_z_candidates(
                 is_active=bool(machine.is_active),
                 area_id=machine.area_id,
                 area_name=machine.area_name,
+                data_state=z_state.till_state(db, machine),
             )
         )
     return ZCandidatesOut(
@@ -202,6 +209,47 @@ def get_z_candidates(
         main_till=MT.till_ref(MT.main_till_of_shop(db, shop.id)),
         dashboard_z_blocked=MT.dashboard_z_refusal(db, shop) is not None,
     )
+
+
+def _require_cloud_data_confirmation(db: Session, shop, body: ZRunCreateIn, active_tenant_id) -> None:
+    """
+    `409 {code: cloud_data_confirmation_required, tills}` while a till the run takes shows
+    a warning and `confirmCloudData` is not given. A till that produces its own Z is not
+    taken by the run, and not checked here.
+    """
+    if body.confirm_cloud_data:
+        return
+    own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+    wanted = [m.machine_id for m in body.machines if m.machine_id not in own_z]
+    machines = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+    flagged = [s for s in z_state.states(db, machines) if s["warnings"]]
+    if flagged:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "cloud_data_confirmation_required",
+                "message": "יש קופות עם משמרות, מסמכים או דוחות Z שלא הגיעו לענן — יש לאשר שהנתונים בענן הם הנתונים הקיימים.",
+                "tills": flagged,
+            },
+        )
+
+
+def _note_cloud_data_confirmation(db: Session, run, shop, body: ZRunCreateIn, user: User, active_tenant_id) -> None:
+    """Who confirmed the cloud's data for this run, when, and the state the tills were in."""
+    from datetime import datetime, timezone
+
+    own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+    wanted = [m.machine_id for m in body.machines if m.machine_id not in own_z]
+    machines = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+    flagged = [s for s in z_state.states(db, machines) if s["warnings"]]
+    if flagged:
+        run.cloud_data_confirmation = {
+            "by": user.username or user.email or str(user.id),
+            "byUserId": str(user.id),
+            "at": datetime.now(timezone.utc).isoformat(),
+            "text": z_state.CONFIRMATION_TEXT,
+            "tills": flagged,
+        }
 
 
 @router.post(
@@ -223,43 +271,10 @@ def post_z_run(
     would leave tills with open (or un-Z'd) shifts behind and the shop's `shopZOpenTills`
     parameter forbids it, or wants `confirmOpenTills: true` first.
     """
-    shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
-    # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
-    # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
-    # קופה") is not a shop Z and stays the dashboard's to start.
-    refusal = MT.dashboard_z_refusal(db, shop)
-    if refusal is not None:
-        own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
-        if any(m.machine_id not in own_z for m in body.machines):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
-    if _is_distributor(current_user):
-        wanted = [m.machine_id for m in body.machines]
-        found = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
-        if len({m.id for m in found}) != len(set(wanted)):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-        _check_tills(db, current_user, found, active_tenant_id)
-    try:
-        run = ZR.create_z_run(
-            db,
-            current_user,
-            _tenant(db, active_tenant_id),
-            shop,
-            [
-                ZR.MachineSelection(
-                    machine_id=m.machine_id,
-                    through_shift_id=m.through_shift_id,
-                    include_open_shift=m.include_open_shift,
-                )
-                for m in body.machines
-            ],
-            business_date=body.business_date,
-            area_id=body.area_id,
-            confirm_open_tills=body.confirm_open_tills,
-        )
-    except TillZRefused as refused:
-        # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
-        db.rollback()
-        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    out = create_run_from_body(db, current_user, active_tenant_id, body)
+    if isinstance(out, JSONResponse):
+        return out
+    run = out
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
@@ -292,7 +307,67 @@ def post_z_run_proceed(
 ):
     """Build now without the listed tills; their shifts wait for the next Z."""
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.proceed_without(db, run, body.exclude_machine_ids)
+    # Who decided to go without them, frozen on the Z with the tills (`openTillsLeftOut`).
+    ZR.proceed_without(db, run, body.exclude_machine_ids, deferred_by=_initiator_name(current_user))
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+class ZRunForceIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    exclude_machine_ids: List[uuid.UUID] = Field(default_factory=list, alias="excludeMachineIds", max_length=500)
+    #: Typed by the super admin: why the Z goes without these tills (on the Z and the record).
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/z-runs/{run_id}/force", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_force(
+    run_id: uuid.UUID,
+    body: ZRunForceIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force ("חסימת Z כשיש משמרות פתוחות", app/services/z_shift_guard.py): a super
+    admin builds the Z without the listed tills, with a typed reason — recorded on the Z and
+    as an exception; their shifts go into the next Z. 403 for anyone else, 422 without a reason.
+    """
+    from app.services import remote_till_z
+    from app.services import z_shift_guard
+
+    remote_till_z.require_enabled()  # off: no such route — everything exactly as before
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
+    db.commit()
+    db.refresh(run)
+    return ZR.run_to_out(db, run)
+
+
+class ZRunForceCloudRefundsIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    #: Typed by the super admin: why the Z goes ahead before the cloud card refunds' credit notes.
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/z-runs/{run_id}/force-cloud-refunds", response_model=ZRunOut, response_model_by_alias=True)
+def post_z_run_force_cloud_refunds(
+    run_id: uuid.UUID,
+    body: ZRunForceCloudRefundsIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" (app/services/cloud_refund_z_gate.py):
+    a super admin, a typed reason — the refunds holding this run are released from it (recorded on
+    each refund and as an exception) and go into the next Z. 403 for anyone else, 422 without a reason.
+    """
+    run = _run_or_404(db, run_id, current_user, active_tenant_id)
+    ZR.force_cloud_refunds(db, run, current_user, body.reason)
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
@@ -306,7 +381,64 @@ def post_z_run_cancel(
     db: Session = Depends(get_db),
 ):
     run = _run_or_404(db, run_id, current_user, active_tenant_id)
-    ZR.cancel_run(db, run)
+    ZR.cancel_run(db, run, cancelled_by=_initiator_name(current_user))
     db.commit()
     db.refresh(run)
     return ZR.run_to_out(db, run)
+
+
+def create_run_from_body(db: Session, current_user: User, active_tenant_id, body: ZRunCreateIn, *, wait_for_rest: bool = False,
+                         remote_force: Optional[bool] = None):
+    """
+    The one way a shop's cloud Z run starts — the dashboard's wizard and remote control's "סגירת
+    יום סניפית" alike (app/services/remote_till_z.py, `wait_for_rest`): the same refusals, the
+    same confirmations, the same run. Returns the run (not committed), or the refusal response.
+    """
+    shop = _shop_for(db, body.shop_id, current_user, active_tenant_id)
+    # "Z only from the main till" (app/services/main_till.py): a shop Z of a shop that has
+    # one is started there, not here — 409 `z_only_from_main_till`. A till's own Z ("Z לכל
+    # קופה") is not a shop Z and stays the dashboard's to start.
+    refusal = MT.dashboard_z_refusal(db, shop)
+    if refusal is not None:
+        own_z = ZR.per_till_ids(db, ZR.shop_tills(db, shop.id), _tenant(db, active_tenant_id), shop)
+        if any(m.machine_id not in own_z for m in body.machines):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
+    if _is_distributor(current_user):
+        wanted = [m.machine_id for m in body.machines]
+        found = db.query(POSMachine).filter(POSMachine.id.in_(wanted)).all() if wanted else []
+        if len({m.id for m in found}) != len(set(wanted)):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+        _check_tills(db, current_user, found, active_tenant_id)
+    # The state before a Z from the cloud (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1): a till the
+    # run takes that shows a warning is taken only on the operator's explicit word.
+    _require_cloud_data_confirmation(db, shop, body, active_tenant_id)
+    try:
+        run = ZR.create_z_run(
+            db,
+            current_user,
+            _tenant(db, active_tenant_id),
+            shop,
+            [
+                ZR.MachineSelection(
+                    machine_id=m.machine_id,
+                    through_shift_id=m.through_shift_id,
+                    include_open_shift=m.include_open_shift,
+                )
+                for m in body.machines
+            ],
+            business_date=body.business_date,
+            area_id=body.area_id,
+            confirm_open_tills=body.confirm_open_tills,
+            force=body.force,
+            wait_for_rest=wait_for_rest,
+            force_reason=body.force_reason,
+            force_cloud_refund_reason=body.force_cloud_refund_reason,
+            remote_force=remote_force,
+        )
+        if body.confirm_cloud_data:
+            _note_cloud_data_confirmation(db, run, shop, body, current_user, active_tenant_id)
+    except TillZRefused as refused:
+        # `422 machine_issues_its_own_z` with the till's id beside the detail (§5.4).
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
+    return run

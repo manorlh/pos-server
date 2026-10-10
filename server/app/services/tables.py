@@ -58,6 +58,7 @@ from app.models.tables import (
     TableZone,
 )
 from app.models.user import User
+from app.schemas.tables import SKETCH_KIND_SINCE, SKETCH_SCHEMA, SKETCH_VARIANT_SINCE, SKETCH_VARIANTS
 from app.services.areas import as_utc
 
 logger = logging.getLogger(__name__)
@@ -383,7 +384,15 @@ def zone_out(zone: TableZone) -> dict:
     }
 
 
-def table_out(table: DiningTable) -> dict:
+def table_out(table: DiningTable, types: Optional[Dict[Any, Any]] = None) -> dict:
+    """
+    A table as the till and the dashboard read it — with its policy ("סוג שולחן": its
+    own `kind` / `discountPercent` / `typeId`, and the resolved `policy` the till applies,
+    app/services/table_policies.py). [types]: the shop's types by id, when the caller
+    has them (one query for a whole floor).
+    """
+    from app.services.table_policies import policy_fields
+
     return {
         "id": str(table.id),
         "zoneId": str(table.zone_id),
@@ -397,6 +406,7 @@ def table_out(table: DiningTable) -> dict:
         "height": table.height,
         "rotation": table.rotation,
         "cleaningSince": _iso(table.cleaning_since),
+        **policy_fields(table, types),
     }
 
 
@@ -525,7 +535,10 @@ NotifyTarget = Tuple[str, str]
 
 
 def notify_targets(db: Session, shop_id: Any, *, except_machine_id: Any = None) -> List[NotifyTarget]:
-    """The shop's active tills, but the one that made the change."""
+    """
+    The shop's active tills, but the one that made the change. Not a display device (a KDS
+    screen, the "מוכן / לא מוכן" board): it never shows tables.
+    """
     if shop_id is None:
         return []
     machines = (
@@ -536,46 +549,115 @@ def notify_targets(db: Session, shop_id: Any, *, except_machine_id: Any = None) 
     return [
         (str(m.tenant_id), str(m.id))
         for m in machines
-        if m.tenant_id and (except_machine_id is None or str(m.id) != str(except_machine_id))
+        if m.tenant_id
+        and getattr(m, "is_fiscal", True) is not False
+        and (except_machine_id is None or str(m.id) != str(except_machine_id))
     ]
 
 
 def publish_tables_notify(targets: Iterable[NotifyTarget], table_id: Optional[str] = None) -> None:
-    """Best effort: a till that misses it sees the change at its next poll."""
-    from app.services.ably_notify import _notify_base, publish_notify
+    """
+    Best effort: a till that misses it sees the change at its next poll. One Ably request
+    for every till (batch publish), not one per till.
+    """
+    from app.services import ably_notify
+    from app.services.tables_state import signal_body
 
-    for tenant_id, machine_id in targets:
-        body = _notify_base()
-        if table_id:
-            body["tableId"] = table_id
-        try:
-            publish_notify(tenant_id, machine_id, NOTIFY_EVENT, body)
-        except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
-            logger.exception("tables notify failed for %s", machine_id)
+    channels = [ably_notify.machine_channel(str(t), str(m)) for t, m in targets]
+    if not channels:
+        return
+    try:
+        ably_notify.publish_batch(channels, NOTIFY_EVENT, signal_body(None, None, [table_id]))
+    except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
+        logger.exception("tables notify failed for %d till(s)", len(channels))
+
+
+def tables_changed(
+    db: Session,
+    shop_id: Any,
+    *,
+    tenant_id: Any,
+    table_id: Optional[str] = None,
+    origin: Any = None,
+    wake: bool = True,
+) -> Optional[int]:
+    """
+    After a committed write that changes the tills' tables state: the shop's version is
+    raised (app/services/tables_state.py) and committed, and — `wake` — the change joins the
+    shop's next coalesced "tables" signal. `origin`: the till that made it (not woken by its
+    own change on its own channel). Never fails the write it follows: returns None then.
+    """
+    from app.services import tables_state as TS
+
+    if shop_id is None:
+        return None
+    version: Optional[int] = None
+    try:
+        version = TS.bump(db, shop_id)
+        db.commit()
+    except Exception:  # noqa: BLE001 - the write is committed; the tag's age bounds the rest
+        db.rollback()
+        logger.exception("tables version not raised for shop %s", shop_id)
+    if not wake:
+        return version
+    try:
+        targets = notify_targets(db, shop_id) if TS.NOTIFY_DEVICE_CHANNELS else []
+        TS.NOTIFIER.changed(
+            tenant_id=tenant_id, shop_id=shop_id, version=version, table_id=table_id,
+            origin=str(origin) if origin is not None else None, targets=targets,
+        )
+    except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
+        logger.exception("tables signal not queued for shop %s", shop_id)
+    return version
 
 
 # ── The till's view ──────────────────────────────────────────────────────────
 
 
-def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> dict:
+@dataclass(frozen=True)
+class _TableRow:
+    zone_id: str
+    table_id: str
+    base: dict
+    order: Optional[dict]
+    #: `table_state` without the lock: free / occupied / sent / awaiting_payment.
+    order_state: str
+    #: `lock_out` as any till reads it (`mine` false); None when not locked.
+    lock: Optional[dict]
+    lock_machine_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class ShopTables:
     """
-    Everything the tables screen draws: the zones and tables this till sees, each with
-    its open order's summary and its lock, the cancellation reasons, the lock time.
+    The shop-wide part of the tills' state, as plain values: every live zone (with its point
+    of sale), every live table with its open synced order and its lock, the bookings around
+    the build time, the tenant's reasons. Never changed once built (shared between requests).
     """
-    now = now or _now()
-    params = machine_params(db, machine)
-    out: Dict[str, Any] = {
-        "serverTime": now.isoformat(),
-        "mode": mode_of(params.get(TABLES_MODE_KEY)),
-        "lockMinutes": lock_minutes_of(params),
-        "blockCloseWithOpenTables": blocks_close(params),
-        "zones": [],
-        "tables": [],
-        "cancelReasons": [reason_out(r) for r in reasons_for(db, machine.tenant_id)] if machine.tenant_id else [],
-    }
-    if machine.shop_id is None:
-        return out
-    zones = zones_for(db, machine.shop_id, machine.area_id)
+
+    reasons: Tuple[dict, ...]
+    zones: Tuple[Tuple[Optional[str], str, dict], ...]
+    tables: Tuple[_TableRow, ...]
+    reservations: Tuple[Tuple[datetime, Optional[str], dict], ...]
+
+
+#: The bookings a till shows, from `RESERVATION_GRACE` ago to this far ahead.
+RESERVATIONS_AHEAD = timedelta(hours=36)
+RESERVATIONS_LIMIT = 200
+
+
+def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[ShopTables, datetime]:
+    """
+    The shop-wide state at `now`, and until when it holds with no write: the first live lock
+    to run out (a lock ends by time alone), or the tag's maximal age.
+    """
+    import copy
+
+    from app.services.table_policies import types_by_id
+    from app.services.tables_state import MAX_AGE
+
+    reasons = tuple(reason_out(r) for r in reasons_for(db, machine.tenant_id)) if machine.tenant_id else ()
+    zones = zones_for(db, machine.shop_id, all_areas=True)
     tables = tables_in(db, [z.id for z in zones])
     orders = {}
     if tables:
@@ -589,19 +671,116 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
             .all()
         ):
             orders[order.table_id] = order
-    out["zones"] = [zone_out(z) for z in zones]
+    types = types_by_id(db, machine.shop_id) if tables else {}
+    valid_until = now + MAX_AGE
+    rows = []
     for table in tables:
         order = orders.get(table.id)
-        lock = lock_out(db, table, now, viewer=machine)
-        row = table_out(table)
-        row["order"] = order_summary(order) if order is not None else None
-        row["lock"] = lock
-        row["state"] = table_state(order, lock)
-        out["tables"].append(row)
+        lock = lock_out(db, table, now)
+        if lock is not None:
+            expires = as_utc(table.lock_expires_at)
+            if expires is not None and expires < valid_until:
+                valid_until = expires
+        rows.append(_TableRow(
+            zone_id=str(table.zone_id),
+            table_id=str(table.id),
+            base=copy.deepcopy(table_out(table, types)),
+            order=order_summary(order) if order is not None else None,
+            order_state=table_state(order, None),
+            lock=lock,
+            lock_machine_id=str(table.lock_machine_id) if lock is not None else None,
+        ))
+    # Wider than any one till's window (it moves with the clock until the next build); each
+    # request cuts its own (`_compose`).
+    bookings = (
+        db.query(TableReservation)
+        .filter(
+            TableReservation.shop_id == machine.shop_id,
+            TableReservation.status == "booked",
+            TableReservation.reserved_at >= now - RESERVATION_GRACE,
+            TableReservation.reserved_at < now + RESERVATIONS_AHEAD + MAX_AGE,
+        )
+        .order_by(TableReservation.reserved_at.asc())
+        .limit(RESERVATIONS_LIMIT * 2)
+        .all()
+    )
+    shop = ShopTables(
+        reasons=reasons,
+        zones=tuple(
+            (str(z.area_id) if z.area_id else None, str(z.id), copy.deepcopy(zone_out(z))) for z in zones
+        ),
+        tables=tuple(rows),
+        reservations=tuple(
+            (as_utc(r.reserved_at), str(r.table_id) if r.table_id else None, reservation_out(r)) for r in bookings
+        ),
+    )
+    return shop, valid_until
+
+
+def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str, Any]) -> Dict[str, Any]:
+    """The till's own view of the shop state: its point of sale's zones, its own lock, its bookings."""
+    area = str(machine.area_id) if machine.area_id else None
+    me = str(machine.id)
+    visible = set()
+    for zone_area, zone_id, zone in shop.zones:
+        if zone_area is None or (area is not None and zone_area == area):
+            visible.add(zone_id)
+            out["zones"].append(zone)
+    seen = set()
+    for row in shop.tables:
+        if row.zone_id not in visible:
+            continue
+        seen.add(row.table_id)
+        lock = row.lock
+        if lock is not None:
+            lock = {**lock, "mine": row.lock_machine_id == me}
+        out["tables"].append({
+            **row.base,
+            "order": row.order,
+            "lock": lock,
+            "state": "locked" if lock is not None and not lock["mine"] else row.order_state,
+        })
     # "הזמנות": the day's bookings still to come (and those due a while ago, not seated yet).
+    low, high = now - RESERVATION_GRACE, now + RESERVATIONS_AHEAD
+    window = [(table_id, r) for at, table_id, r in shop.reservations if at is not None and low <= at < high]
     out["reservations"] = [
-        reservation_out(r) for r in upcoming_reservations(db, machine, now, {t.id for t in tables})
+        r for table_id, r in window[:RESERVATIONS_LIMIT] if table_id is None or table_id in seen
     ]
+    return out
+
+
+def till_state(
+    db: Session,
+    machine: POSMachine,
+    *,
+    now: Optional[datetime] = None,
+    shop: Optional[ShopTables] = None,
+) -> dict:
+    """
+    Everything the tables screen draws: the zones and tables this till sees, each with
+    its open order's summary and its lock, the cancellation reasons, the lock time.
+
+    [shop]: the shop-wide part already built (`till_state_cached`); built here otherwise.
+    """
+    now = now or _now()
+    params = machine_params(db, machine)
+    out: Dict[str, Any] = {
+        "serverTime": now.isoformat(),
+        "mode": mode_of(params.get(TABLES_MODE_KEY)),
+        "lockMinutes": lock_minutes_of(params),
+        "blockCloseWithOpenTables": blocks_close(params),
+        "zones": [],
+        "tables": [],
+    }
+    if machine.shop_id is None:
+        out["cancelReasons"] = (
+            [reason_out(r) for r in reasons_for(db, machine.tenant_id)] if machine.tenant_id else []
+        )
+        return out
+    if shop is None:
+        shop, _ = build_shop_tables(db, machine, now)
+    out["cancelReasons"] = list(shop.reasons) if machine.tenant_id else []
+    _compose(shop, machine, now, out)
     if out["mode"] == MODE_LAN:
         # Who holds the shop's tables on the LAN, and the secret the tills present to it.
         from app.services.printers import print_secret
@@ -611,6 +790,26 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
     return out
 
 
+def till_state_cached(db: Session, machine: POSMachine, *, version: int, now: Optional[datetime] = None) -> Tuple[dict, str]:
+    """
+    `till_state` from the shop's snapshot for `version` (built once per shop and version, per
+    process — app/services/tables_state.py), and the tag that describes it.
+    """
+    from app.services import tables_state as TS
+
+    now = now or _now()
+    if machine.shop_id is None:
+        return till_state(db, machine, now=now), TS.make_tag(version, now + TS.MAX_AGE, machine)
+
+    def build() -> "TS.Snapshot":
+        data, valid_until = build_shop_tables(db, machine, now)
+        return TS.Snapshot(version=version, built_at=now, valid_until=valid_until, data=data)
+
+    snap = TS.SNAPSHOTS.get((str(machine.shop_id), str(machine.tenant_id)), version, now, build)
+    out = till_state(db, machine, now=now, shop=snap.data)
+    return out, TS.make_tag(version, snap.valid_until, machine)
+
+
 def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     """
     The LAN mode's tables host ("קופה ראשית לשולחנות"): the active till whose
@@ -618,14 +817,19 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     agrees on one — else the shop's main till ("קופה ראשית", app/services/main_till.py),
     else the shop's print server, else the shop's only till, else none.
     """
+    from app.services.lan_server import server_candidates
     from app.services.main_till import main_till_of_shop
     from app.services.printers import print_host_of_shop, shop_machines
     from app.services.till_parameters import till_parameters_for_machine
 
     if shop_id is None:
         return None
+    # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its host;
+    # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py) — not even as the
+    # shop's one possible host below.
+    members = server_candidates(db, shop_machines(db, shop_id))
     hosts = [
-        m for m in shop_machines(db, shop_id)
+        m for m in members
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
     if not hosts:
@@ -635,8 +839,7 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         # A shop with one till: it holds the tables, there being no other. Without this a
         # one-till shop in the LAN mode had no host at all, and its till — the main one by
         # any reading — said the main till was out of reach and refused every table.
-        tills = shop_machines(db, shop_id)
-        return tills[0] if len(tills) == 1 else None
+        return members[0] if len(members) == 1 else None
 
     def order(m: POSMachine):
         number = (m.pos_number or "").strip()
@@ -648,8 +851,12 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The tables host as `machine` needs it: who, and where on the LAN it last said it listens."""
     from app.models.printers import DEFAULT_LAN_PORT, KitchenPrintHost
+    from app.services.independent_till import is_independent
     from app.services.printers import machine_label
 
+    if is_independent(machine):
+        # "קופה עצמאית": it never uses the shop's tables host.
+        return None
     host = tables_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
@@ -1734,7 +1941,47 @@ def layout(db: Session, shop: Shop) -> dict:
         row = zone_out(z)
         row["areaName"] = area_names.get(z.area_id) if z.area_id else None
         zone_rows.append(row)
-    return {"shopId": str(shop.id), "zones": zone_rows, "tables": [table_out(t) for t in tables]}
+    from app.services.table_policies import type_out, types_by_id
+
+    types = types_by_id(db, shop.id)
+    return {
+        "shopId": str(shop.id),
+        "zones": zone_rows,
+        "tables": [table_out(t, types) for t in tables],
+        # "סוגי שולחנות": the shop's live table types, for the editor's picker.
+        "tableTypes": [type_out(t) for t in types.values() if t.archived_at is None],
+        # What a "logo" shape of the map shows when it has no picture of its own.
+        "logoUrl": business_logo_url(db, shop),
+    }
+
+
+def business_logo_url(db: Session, shop: Shop) -> Optional[str]:
+    """
+    The business's logo, as the shop's tills print it: the till parameter "לוגו בקבלה"
+    (`receiptLogoUrl`, the shop's own or its company's), else the branding's receipt logo,
+    else its logo. None when the business has none.
+    """
+    from app.models.company import Company
+    from app.models.tenant import Tenant
+    from app.services.settings_merge import merge_settings
+    from app.services.till_parameters import resolve_for_shop
+
+    try:
+        param = resolve_for_shop(db, shop).get("receiptLogoUrl")
+    except Exception:  # noqa: BLE001 - a logo is never worth failing the layout
+        param = None
+    if isinstance(param, str) and param.strip():
+        return param.strip()
+    company = db.get(Company, shop.company_id) if shop.company_id else None
+    if company is None:
+        return None
+    tenant = db.get(Tenant, company.tenant_id) if getattr(company, "tenant_id", None) else None
+    merged = merge_settings(company, shop, tenant)
+    for key in ("brandReceiptLogoUrl", "brandLogoUrl"):
+        value = merged.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def create_zone(db: Session, shop: Shop, body) -> TableZone:
@@ -1772,6 +2019,9 @@ def sketch_json(sketch: Any) -> Optional[dict]:
         if e.kind == "counter":
             out["variant"] = e.variant or "straight"
             out["stools"] = e.stools
+        elif e.kind in SKETCH_VARIANTS and e.variant:
+            # Restrooms (men / women / accessible) and a plain exit; none — the default.
+            out["variant"] = e.variant
         if e.points:
             out["points"] = e.points
         if e.color:
@@ -1780,6 +2030,8 @@ def sketch_json(sketch: Any) -> Optional[dict]:
             out["stroke"] = e.stroke
         if e.filled is not None:
             out["filled"] = e.filled
+        if e.kind == "logo" and getattr(e, "src", None):
+            out["src"] = e.src
         return out
 
     return {
@@ -1930,6 +2182,10 @@ def create_table(db: Session, zone: TableZone, body) -> DiningTable:
         height=body.height,
         rotation=body.rotation,
     )
+    # "סוג שולחן": its kind, discount and type — validated before it is added.
+    from app.services.table_policies import apply_table_policy
+
+    apply_table_policy(db, table, body, creating=True)
     try:
         with db.begin_nested():
             db.add(table)
@@ -1952,6 +2208,12 @@ def bulk_create(db: Session, zone: TableZone, body) -> dict:
     }
     width, height = default_table_size(zone, body.shape)
     index = len(tables_in(db, [zone.id]))
+    # "סוג שולחן": every table added of the type named, when one is.
+    type_id = getattr(body, "type_id", None)
+    if type_id is not None:
+        from app.services.table_policies import live_type
+
+        type_id = live_type(db, zone.shop_id, type_id).id
     created, skipped = [], []
     for number in range(low, high + 1):
         if number in taken:
@@ -1962,6 +2224,7 @@ def bulk_create(db: Session, zone: TableZone, body) -> dict:
         table = DiningTable(
             id=uuid.uuid4(), tenant_id=zone.tenant_id, shop_id=zone.shop_id, zone_id=zone.id,
             number=number, seats=body.seats, shape=body.shape, x=x, y=y, width=width, height=height,
+            kind="regular", type_id=type_id,
         )
         db.add(table)
         created.append(number)
@@ -1986,6 +2249,10 @@ def update_table(db: Session, table: DiningTable, body, tenant_id: Any) -> Dinin
         value = getattr(body, attr)
         if value is not None:
             setattr(table, attr, value)
+    # "סוג שולחן": the kind, discount and type sent (a null discount / type clears it).
+    from app.services.table_policies import apply_table_policy
+
+    apply_table_policy(db, table, body, creating=False)
     table.updated_at = _now()
     try:
         with db.begin_nested():
@@ -2052,6 +2319,41 @@ def table_in_use(db: Session, table: DiningTable, now: datetime) -> bool:
     )
 
 
+def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: int = 1) -> Optional[dict]:
+    """
+    A plan saved by a till whose map designer speaks an older sketch schema than this
+    server ([till_schema]; a till that sends no `sketchSchema` speaks 1): what that till
+    could not know is kept from the plan as it was. Its designer drops shapes of kinds it
+    does not know (a DJ booth) and turns variants it does not know into its own (a U bar
+    into a straight one, restrooms for men / women / accessible into the plain sign, a
+    plain exit into the emergency one) — the till never showed them, so it cannot have
+    meant to change them. Kept: every such shape it left out (after its own, in their
+    order), and such a variant on a shape it kept. A plan it cleared (null) stays cleared
+    — "ניקוי הסקיצה" is meant whole.
+    """
+    if saved is None or not isinstance(before, dict):
+        return saved
+    old = [e for e in (before.get("elements") or []) if isinstance(e, dict) and e.get("id")]
+    if not old:
+        return saved
+    elements = [dict(e) for e in (saved.get("elements") or [])]
+    by_id = {e.get("id"): e for e in elements}
+    for o in old:
+        kind = o.get("kind")
+        variant = o.get("variant")
+        mine = by_id.get(o.get("id"))
+        if mine is None:
+            if SKETCH_KIND_SINCE.get(kind, 1) > till_schema:
+                elements.append(dict(o))
+            continue
+        if SKETCH_VARIANT_SINCE.get((kind, variant), 1) > till_schema and mine.get("kind") == kind:
+            # The old designer's own word for it: "straight" for a counter, none otherwise.
+            coerced = "straight" if kind == "counter" else None
+            if mine.get("variant") == coerced:
+                mine["variant"] = variant
+    return {**saved, "elements": elements}
+
+
 def _merged_sketch(zone: TableZone, background: str) -> dict:
     """The zone's sketch with another floor: its drawn shapes (and anything else in it) kept."""
     sketch = dict(zone.sketch) if isinstance(zone.sketch, dict) else {"template": None, "elements": []}
@@ -2064,8 +2366,9 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     """
     "שמור" in a till's edit mode: zones and tables added, changed and removed — all of it,
     or (on any refusal) none of it. A zone may carry its whole floor plan (`sketch`, from
-    the till's map designer — the dashboard's shape and validation). Only the zones and
-    tables this till sees. Refused:
+    the till's map designer — the dashboard's shape and validation; from a till that sends
+    no `sketchSchema` ≥ 2, the decor symbols it cannot know are kept,
+    keep_decor_unknown_to_till). Only the zones and tables this till sees. Refused:
     a table someone is at that would move, change its number or go (409 `table_in_use`);
     a number another live table of the shop has once the batch is applied (409
     `table_number_taken`); a zone removed with tables still in it (409 `zone_not_empty`).
@@ -2119,7 +2422,11 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
         # The plan drawn on the till's map designer: the whole sketch, as the dashboard
         # saves it (null clears it); a floor sent beside it is laid under it.
         if "sketch" in fields:
-            zone.sketch = sketch_json(item.sketch)
+            saved = sketch_json(item.sketch)
+            till_schema = getattr(body, "sketch_schema", None) or 1
+            if till_schema < SKETCH_SCHEMA:
+                saved = keep_decor_unknown_to_till(zone.sketch, saved, till_schema)
+            zone.sketch = saved
         if item.background is not None:
             zone.sketch = _merged_sketch(zone, item.background)
         if item.canvas_width is not None:
@@ -2270,10 +2577,13 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
                 orders[order.table_id] = order
     rows = []
     open_count, open_total, guests = 0, Decimal("0"), 0
+    from app.services.table_policies import types_by_id
+
+    types = types_by_id(db, shop.id) if tables else {}
     for table in tables:
         order = orders.get(table.id)
         lock = lock_out(db, table, now)
-        row = table_out(table)
+        row = table_out(table, types)
         row["zoneName"] = zone_names.get(table.zone_id)
         row["order"] = order_summary(order) if order is not None else None
         row["lock"] = lock
@@ -2379,6 +2689,29 @@ def _transaction_ids(order: TableOrder) -> List[str]:
     return ids
 
 
+def _order_zone_area(db: Session, order: TableOrder, zone_areas: Optional[Dict[Any, Any]] = None) -> Any:
+    """The area of the zone an order was on (its snapshot, else its table's zone now); None = shop-wide."""
+    zone_id = order.zone_id
+    if zone_id is None:
+        table = db.get(DiningTable, order.table_id) if order.table_id is not None else None
+        zone_id = table.zone_id if table is not None else None
+    if zone_id is None:
+        return None
+    if zone_areas is not None and zone_id in zone_areas:
+        return zone_areas[zone_id]
+    zone = db.get(TableZone, zone_id)
+    return zone.area_id if zone is not None else None
+
+
+def _area_locked_orders(db: Session, machine: POSMachine, orders: Sequence[TableOrder], zone_areas: Dict[Any, Any]) -> List[TableOrder]:
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if not scope.locked:
+        return list(orders)
+    return [o for o in orders if scope.covers_shared(_order_zone_area(db, o, zone_areas))]
+
+
 def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> List[dict]:
     """
     The till's "נסגרו היום": its shop's tables paid or cancelled in the last day, not merged
@@ -2401,7 +2734,11 @@ def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] =
         .limit(100)
         .all()
     )
-    zone_names = {z.id: z.name for z in db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()}
+    zones = db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()
+    zone_names = {z.id: z.name for z in zones}
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till restores the tables
+    # of its point of sale's zones and of the shop-wide ones, like the tables it sees.
+    rows = _area_locked_orders(db, machine, rows, {z.id: z.area_id for z in zones})
     return [
         {
             "orderId": str(o.id),
@@ -2442,6 +2779,11 @@ def mark_restored(
     order = db.get(TableOrder, _uuid(order_id))
     if order is None or order.shop_id != machine.shop_id:
         raise _not_found("order_not_found")
+    # Another point of sale's table, while this till is locked to its own (403 `area_locked`).
+    from app.services import area_lock
+
+    if not area_lock.scope_for(db, machine).covers_shared(_order_zone_area(db, order)):
+        raise area_lock.refusal("table")
     if order.status not in ("paid", "cancelled") or order.merged_into_id is not None:
         raise _conflict("order_not_closed")
     if order.restored_at is not None:
@@ -2457,7 +2799,7 @@ def mark_restored(
     return order
 
 
-def report(db: Session, shop: Shop, start: date, end: date) -> dict:
+def report(db: Session, shop: Shop, start: date, end: date, *, machine: Optional[POSMachine] = None) -> dict:
     """
     The tables report for the local days `start`..`end`: revenue and seating time per
     table and per zone (paid orders, by when they were paid), and cancellations by
@@ -2483,7 +2825,11 @@ def report(db: Session, shop: Shop, start: date, end: date) -> dict:
         )
         .all()
     )
-    zone_names = {z.id: z.name for z in db.query(TableZone).filter(TableZone.shop_id == shop.id).all()}
+    zones = db.query(TableZone).filter(TableZone.shop_id == shop.id).all()
+    zone_names = {z.id: z.name for z in zones}
+    if machine is not None:
+        # The till's own "דוחות שולחנות", locked to its point of sale (app/services/area_lock.py).
+        orders = _area_locked_orders(db, machine, orders, {z.id: z.area_id for z in zones})
     reason_names = {
         r.id: r.name for r in db.query(TableCancelReason).filter(TableCancelReason.tenant_id == shop.tenant_id).all()
     }
@@ -2717,6 +3063,25 @@ def _check_reservation_table(db: Session, shop_id: Any, table_id: Any) -> Option
     if table is None or table.shop_id != shop_id or table.archived_at is not None:
         raise _not_found("table_not_found")
     return table
+
+
+def check_reservation_area(db: Session, machine: POSMachine, table_id: Any, *, kind: str = "table") -> None:
+    """
+    A till's booking on a table of another point of sale's zone, while the till is locked to its
+    own (app/services/area_lock.py): 403 `area_locked`. A booking with no table, a shop-wide zone's
+    table, or an unknown table (refused later, as before) pass.
+    """
+    if table_id is None:
+        return
+    from app.services import area_lock
+
+    scope = area_lock.scope_for(db, machine)
+    if not scope.locked:
+        return
+    table = db.get(DiningTable, _uuid(table_id))
+    zone = db.get(TableZone, table.zone_id) if table is not None else None
+    if zone is not None and not scope.covers_shared(zone.area_id):
+        raise area_lock.refusal(kind)
 
 
 def _refuse_overlap(db: Session, r: TableReservation) -> None:

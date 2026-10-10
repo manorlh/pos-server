@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -63,6 +63,20 @@ class ShiftCloseRequest(Base):
     error_code = Column(String(64), nullable=True)
     error_message = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+    #: Asked from remote control ("שליטה מרחוק", app/services/remote_till_z.py): the till waits until
+    #: it is at rest — no sale, no payment, no card in flight — and never closes mid-sale.
+    wait_for_rest = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "סגור בכל זאת — המכירות המושהות יישמרו" (app/services/held_sales_close.py): the till closes
+    #: keeping its held sales instead of deferring on them (`keepHeldSales`).
+    keep_held_sales = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: The held sales the till reported when it deferred (`held_sales`), and the cancel a manager
+    #: confirmed ("בטל מכירות מושהות וסגור": ids, reason, who, when) — app/services/held_sales_close.py.
+    held_sales = Column(JSONB, nullable=True)
+    cancel_held_sales = Column(JSONB, nullable=True)
+    #: "כפה סגירה" from remote control (app/services/remote_close_force.py): forced from the moment the
+    #: manager sent it — the till's `remoteCloseForceByDefault`, or the manager's tick for this request.
+    #: Handed to the till as `remoteForce` beside `waitForRest` (a build without it waits for rest).
+    remote_force = Column(Boolean, nullable=False, default=False, server_default="false")
     sent_at = Column(DateTime(timezone=True), nullable=True)
     received_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)

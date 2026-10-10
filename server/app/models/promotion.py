@@ -85,6 +85,11 @@ class Promotion(Base):
     #: Higher wins first. Within one priority the till picks what is best for the customer.
     priority = Column(Integer, nullable=False, default=0, server_default="0")
     is_paused = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "שלח הודעה לעובדים" (app/services/promotion_announcements.py): the settings
+    #: (`enabled`, `text`, `endEnabled`, `endText`) and the till messages it planned
+    #: (`startMessageIds`, `endMessageIds`, `startAt`, `endAt`). Null: never asked for.
+    #: Not part of what the tills pull.
+    announcement = Column(JSON, nullable=True)
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

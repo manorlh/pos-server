@@ -164,5 +164,8 @@ class TestTheAblyToken:
 
         ably_notify.create_token_request_for_machine(machine)
 
-        (capability,) = captured["capability"].values()
-        assert sorted(capability) == ["history", "subscribe"]
+        # Its own channel, and its shop's (the coalesced "tables" signal): read only, both.
+        capabilities = captured["capability"]
+        assert f"pos:{machine.tenant_id}:{machine.id}" in capabilities
+        for capability in capabilities.values():
+            assert sorted(capability) == ["history", "subscribe"]

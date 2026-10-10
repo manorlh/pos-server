@@ -52,6 +52,9 @@ from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 @pytest.fixture
 def w(monkeypatch):
+    # The phase-1 machinery, as it will run once the devices implement training mode; turning it
+    # on is blocked until then (TM.AVAILABLE — tested below with `w_blocked`).
+    monkeypatch.setattr(TM, "AVAILABLE", True)
     accept_str_uuids(monkeypatch)
     world = make_world()
     monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
@@ -511,15 +514,74 @@ def test_a_new_shop_opens_in_training_mode_when_asked(w, monkeypatch):
     monkeypatch.setattr(shops_module, "ensure_default_pos_user", lambda *a, **k: None)
     monkeypatch.setattr(shops_module, "reconcile_shops", lambda *a, **k: set())
     trained = shops_router.create_shop(
-        ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True}),
+        ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True, "branchId": "801"}),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
     assert trained.training_mode is True and trained.training_started_by == w.admin.id
     plain = shops_router.create_shop(
-        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id)}),
+        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id), "branchId": "802"}),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
     assert plain.training_mode is False
     from app.schemas.shop import ShopResponse
 
     assert ShopResponse.model_validate(trained).model_dump(by_alias=True)["trainingMode"] is True
+
+
+# ── Blocked until the devices implement it (PARITY.md gap 6) ─────────────────────
+
+
+@pytest.fixture
+def w_blocked(w, monkeypatch):
+    monkeypatch.setattr(TM, "AVAILABLE", False)
+    return w
+
+
+def test_turning_it_on_is_refused_while_no_device_implements_it(w_blocked):
+    w = w_blocked
+    with pytest.raises(HTTPException) as err:
+        _enable(w)
+    assert err.value.status_code == 409 and err.value.detail["code"] == TM.NOT_AVAILABLE
+    assert "הדרכה" in err.value.detail["message"]
+    w.db.expire_all()
+    assert w.shop.training_mode is False
+    assert w.db.query(TrainingAuditLog).count() == 0
+    status_out = R.get_training_mode(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+    assert status_out["available"] is False and status_out["trainingMode"] is False
+
+
+def test_a_new_shop_cannot_open_in_training_mode_while_it_is_blocked(w_blocked, monkeypatch):
+    import app.routers.shops as shops_module
+
+    w = w_blocked
+    monkeypatch.setattr(shops_module, "ensure_default_pos_user", lambda *a, **k: None)
+    monkeypatch.setattr(shops_module, "reconcile_shops", lambda *a, **k: set())
+    with pytest.raises(HTTPException) as err:
+        shops_router.create_shop(
+            ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True, "branchId": "803"}),
+            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+    assert err.value.detail["code"] == TM.NOT_AVAILABLE
+    plain = shops_router.create_shop(
+        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id), "branchId": "804"}),
+        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    assert plain.training_mode is False
+
+
+def test_a_shop_already_in_training_mode_can_still_leave_it(w_blocked):
+    w = w_blocked
+    # Turned on before the block (a dev or production shop that has it on today).
+    w.shop.training_mode = True
+    w.db.flush()
+    out = R.disable_training_mode(
+        w.shop.id, R.DisableIn(confirmName=w.shop.name, force=True), BackgroundTasks(),
+        current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+    assert "deleted" in out
+    w.db.expire_all()
+    assert w.shop.training_mode is False
+    # Turning it on again is what is refused, and nothing else.
+    with pytest.raises(HTTPException) as err:
+        _enable(w)
+    assert err.value.detail["code"] == TM.NOT_AVAILABLE

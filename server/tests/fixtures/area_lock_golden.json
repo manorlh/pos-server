@@ -1,0 +1,41 @@
+{
+  "about": "נעילת הקופה לנקודת המכירה שלה (P:/specs/area-lock.md). Same bytes in pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin its LF-normalised SHA-256.",
+  "parameter": {
+    "key": "areaScopeLock",
+    "label": "נעילת הקופה לנקודת המכירה שלה",
+    "valueType": "boolean",
+    "default": true
+  },
+  "refusal": {
+    "status": 403,
+    "detail": "area_locked"
+  },
+  "messages": {
+    "document": "המסמך שייך לנקודת מכירה אחרת",
+    "table": "השולחן שייך לנקודת מכירה אחרת",
+    "held_sale": "העסקה המושהית שייכת לנקודת מכירה אחרת",
+    "kiosk": "הקיוסק שייך לנקודת מכירה אחרת",
+    "order": "ההזמנה שייכת לנקודת מכירה אחרת",
+    "device": "המכשיר שייך לנקודת מכירה אחרת",
+    "reservation": "ההזמנה לשולחן שייכת לנקודת מכירה אחרת"
+  },
+  "lan": {
+    "tillAreaHeader": "x-till-area",
+    "tillAreaLockHeader": "x-till-area-lock",
+    "kioskAreaField": "kioskAreaId"
+  },
+  "locked": [
+    {"area": "bar", "param": null, "locked": true},
+    {"area": "bar", "param": true, "locked": true},
+    {"area": "bar", "param": false, "locked": false},
+    {"area": null, "param": true, "locked": false},
+    {"area": null, "param": null, "locked": false}
+  ],
+  "coversShared": [
+    {"locked": true, "resourceArea": "bar", "covers": true},
+    {"locked": true, "resourceArea": "terrace", "covers": false},
+    {"locked": true, "resourceArea": null, "covers": true},
+    {"locked": false, "resourceArea": "terrace", "covers": true},
+    {"locked": false, "resourceArea": null, "covers": true}
+  ]
+}

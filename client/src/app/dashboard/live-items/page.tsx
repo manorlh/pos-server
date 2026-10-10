@@ -24,13 +24,15 @@ import { normalizeNavText } from '@/lib/navigation';
 import type { LiveItemRow } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
-import { ScopePicker } from '@/components/dashboard/live/scope-picker';
+import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const REFRESH_MS = 30_000;
 const TOP_N = 20;
@@ -68,9 +70,11 @@ function ShareBar({ share }: { share: number }) {
 
 export default function LiveItemsPage() {
   const t = useTranslations('liveBoard.items');
+  const tc = useTranslations('common');
   const now = useNow(15_000);
 
   const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
+  const scopeName = useOrgScopeLabel(scope);
   const [period, setPeriod] = useState<Period>('today');
   const [from, setFrom] = useState(todayIso);
   const [to, setTo] = useState(todayIso);
@@ -156,6 +160,54 @@ export default function LiveItemsPage() {
           <LayoutDashboard className="h-4 w-4" aria-hidden />
           {t('toBoard')}
         </Link>
+        {/* Every product of the scope and period (and the search), not just the top 20 shown. */}
+        <ReportExportToolbar
+          title={t('title')}
+          from={report.data?.window.from}
+          to={report.data?.window.to}
+          // The page's own scope (not the dashboard's), the search and the row limit.
+          scopeLabel={[
+            scopeName,
+            searching ? t('export.search', { q: query.trim() }) : '',
+            report.data?.truncated ? t('truncated', { n: report.data.rowLimit }) : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+          disabled={!report.data || rows.length === 0}
+          getSheets={() => {
+            const data = report.data!;
+            const sum = (pick: (r: LiveItemRow) => number) => rows.reduce((n, r) => n + pick(r), 0);
+            return {
+              name: t('kpi.products'),
+              columns: [
+                { header: t('col.name'), width: 26 },
+                { header: t('export.sku'), width: 12 },
+                { header: t('col.qty'), kind: 'number' },
+                { header: t('export.unitsSold'), kind: 'number' },
+                { header: t('export.unitsRefunded'), kind: 'number' },
+                { header: t('col.gross'), kind: 'money' },
+                { header: t('export.discounts'), kind: 'money' },
+                { header: t('export.refunds'), kind: 'money' },
+                { header: t('col.net'), kind: 'money' },
+                { header: t('col.share'), kind: 'percent' },
+              ],
+              rows: rows.map((r) => [
+                r.name || t('unnamed'), r.sku ?? null, r.qty, r.unitsSold, r.unitsRefunded, r.gross, r.discounts,
+                r.refunds, r.net, r.share,
+              ]),
+              // The scope's own totals (every product, even past the row limit); a search sums its rows.
+              totals: searching
+                ? [
+                    tc('total'), null, sum((r) => r.qty), sum((r) => r.unitsSold), sum((r) => r.unitsRefunded),
+                    sum((r) => r.gross), sum((r) => r.discounts), sum((r) => r.refunds), sum((r) => r.net), null,
+                  ]
+                : [
+                    tc('total'), null, data.totals.qty, null, null, data.totals.gross, data.totals.discounts,
+                    data.totals.refunds, data.totals.net, null,
+                  ],
+            };
+          }}
+        />
       </div>
 
       <ScopePicker value={scope} onChange={(s) => { setScope(s); setShowAll(false); }} allowAll />
@@ -181,11 +233,11 @@ export default function LiveItemsPage() {
           <div className="grid grid-cols-2 gap-2 sm:max-w-md">
             <div className="space-y-1">
               <Label htmlFor="live-from">{t('period.from')}</Label>
-              <Input id="live-from" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="h-11" />
+              <DatePicker id="live-from" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} className="h-11" />
             </div>
             <div className="space-y-1">
               <Label htmlFor="live-to">{t('period.to')}</Label>
-              <Input id="live-to" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="h-11" />
+              <DatePicker id="live-to" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }} className="h-11" />
             </div>
           </div>
         ) : null}

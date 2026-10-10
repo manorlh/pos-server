@@ -8,6 +8,9 @@
  * quarantine), turns the mode on, opens the "מעבר לעבודה אמיתית" wizard that turns it
  * off, and holds the training report — the practice sales summed, to see they arrive.
  *
+ * Turning it on is disabled, with a note, while the server says it is not `available`: no
+ * device implements it yet, so a practice sale would be a real tax document (PARITY.md gap 6).
+ *
  * Everyone who sees the shop sees the card; the buttons are for `canManage` (super admin,
  * dealer, or a manager who manages the shop — pos-server app/routers/training_mode.py).
  */
@@ -25,7 +28,7 @@ import {
   type TrainingModeStatus,
   type TrainingTillRef,
 } from '@/lib/trainingModeApi';
-import { apiErrorInfo, hasQuarantinedData } from '@/lib/trainingMode';
+import { apiErrorInfo, hasQuarantinedData, trainingCanBeEnabled } from '@/lib/trainingMode';
 import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/format';
 import { usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
 import { TrainingModeDisableWizard } from '@/components/dashboard/training-mode-disable-wizard';
@@ -80,6 +83,8 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
   const [wizardOpen, setWizardOpen] = useState(false);
   const on = data.trainingMode;
   const quarantined = hasQuarantinedData(data.counts);
+  // Not implemented on any device yet: a practice sale would be a real document (server 409).
+  const available = trainingCanBeEnabled(data);
 
   const statusLine = on
     ? data.startedAt
@@ -91,7 +96,9 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
       ? data.endedBy?.name
         ? t('endedBy', { at: formatDateTime(data.endedAt), name: data.endedBy.name })
         : t('endedAt', { at: formatDateTime(data.endedAt) })
-      : t('neverEnabled');
+      : available
+        ? t('neverEnabled')
+        : t('neverEnabledUnavailable');
 
   return (
     <>
@@ -119,7 +126,7 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
               {t('disable')}
             </Button>
           ) : (
-            <Button size="sm" variant="outline" onClick={() => setEnableOpen(true)}>
+            <Button size="sm" variant="outline" disabled={!available} onClick={() => setEnableOpen(true)}>
               <GraduationCap className="h-3.5 w-3.5" aria-hidden />
               {t('enable')}
             </Button>
@@ -128,6 +135,7 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
       ) : (
         <p className="text-xs text-amber-700 dark:text-amber-400">{t('readOnly')}</p>
       )}
+      {!on && !available ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('notAvailable')}</p> : null}
 
       {on || quarantined ? <TrainingReportSection shopId={shopId} /> : null}
 
@@ -172,6 +180,12 @@ function EnableDialogBody({ shopId, shopName, onClose }: { shopId: string; shopN
       const { status, code, detail } = apiErrorInfo(err);
       if (code === 'real_shift_open') {
         setBlockedBy(Array.isArray(detail?.tills) ? (detail.tills as TrainingTillRef[]) : []);
+        return;
+      }
+      if (code === 'training_not_available') {
+        void qc.invalidateQueries({ queryKey: ['training-mode', shopId] });
+        toast.error(t('notAvailable'));
+        onClose();
         return;
       }
       toast.error(status === 403 ? t('forbidden') : axiosErrorToToastMessage(err, tc('error')));

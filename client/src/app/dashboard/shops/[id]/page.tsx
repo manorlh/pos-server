@@ -24,6 +24,7 @@ import {
   Pencil,
   Settings2,
   Store,
+  Tv,
 } from 'lucide-react';
 import { api, fetchCompanies, fetchMachines, fetchShopStock, fetchShops } from '@/lib/api';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
@@ -34,9 +35,16 @@ import { SalesStats } from '@/components/dashboard/sales-stats';
 import { ShopFormDialog } from '@/components/dashboard/shop-form-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ClockSkewChip } from '@/components/dashboard/machine-health';
+import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
+import { DevicePlatformBadge, DeviceRoleBadge } from '@/components/dashboard/machines/device-role';
+import { splitDisplayDevices } from '@/lib/deviceProfile';
 import { ShopAreasCard } from '@/components/dashboard/areas/shop-areas-card';
 import { ZScopeCard } from '@/components/dashboard/z-scope-card';
+import { ZParticipationCard } from '@/components/dashboard/z-participation-card';
+import { LocalShopZRequestCard } from '@/components/dashboard/local-shop-z-panel';
+import { ShopZProducerCard } from '@/components/dashboard/shop-z-producer-card';
 import { MainTillCard } from '@/components/dashboard/main-till-card';
+import { WorkTypesCard } from '@/components/dashboard/work-types-card';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { TrainingModeCard } from '@/components/dashboard/training-mode-card';
 import { DemoMenuCard } from '@/components/dashboard/demo-menu-card';
@@ -102,6 +110,9 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
     () => (machinesQuery.data ?? []).filter((machine) => sameId(machine.shopId, id)),
     [id, machinesQuery.data],
   );
+  // "מסכים": KDS screens and "מוכן / לא מוכן" boards are not tills — their own card, and
+  // not counted among the shop's tills (docs/SPEC_DEVICE_ROLE_MODEL.md §2.2).
+  const { tills, screens } = useMemo(() => splitDisplayDevices(machines), [machines]);
 
   const posUsersQuery = useQuery<PosUser[]>({
     queryKey: ['pos-users', id, false],
@@ -186,10 +197,10 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
-          <Field label={t('branchId')} value={shop.branchId ?? '—'} />
+          <Field label={t('branchId')} value={shop.branchId ? <span className="font-mono">{shop.branchId}</span> : '—'} />
           <Field label={t('city')} value={shop.city ?? '—'} />
           <Field label={t('address')} value={shop.address ?? '—'} />
-          <Field label={t('machines')} value={machines.length} />
+          <Field label={t('machines')} value={tills.length} />
         </CardContent>
       </Card>
 
@@ -256,6 +267,14 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
 
       <ZScopeCard shopId={shop.id} />
 
+      <ZParticipationCard shopId={shop.id} />
+
+      <ShopZProducerCard shopId={shop.id} />
+
+      <LocalShopZRequestCard shopId={shop.id} />
+
+      <WorkTypesCard shopId={shop.id} />
+
       <MainTillCard shopId={shop.id} />
 
       <TrainingModeCard shopId={shop.id} shopName={shop.name} />
@@ -281,22 +300,27 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
               </TableRow>
             </TableHeader>
             <TableBody>
-              {machines.length === 0 ? (
+              {tills.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="py-6 text-center text-muted-foreground">
                     {t('noMachines')}
                   </TableCell>
                 </TableRow>
               ) : (
-                machines.map((machine) => (
+                tills.map((machine) => (
                   <TableRow key={machine.id}>
                     <TableCell className="font-medium">
-                      <Link
-                        href={`/dashboard/machines/${machine.id}`}
-                        className="hover:underline"
-                      >
-                        {machine.name}
-                      </Link>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Link
+                          href={`/dashboard/machines/${machine.id}`}
+                          className="hover:underline"
+                        >
+                          {machine.name}
+                        </Link>
+                        {/* "סוג מכשיר": קופה / קיוסק and the model. */}
+                        <DeviceRoleBadge m={machine} showTill />
+                        <DeviceModelBadge m={machine} />
+                      </span>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">
                       {machine.machineCode}
@@ -323,6 +347,59 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
           </Table>
         </CardContent>
       </Card>
+
+      {screens.length > 0 ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Tv className="h-4 w-4" aria-hidden />
+              {tMachines('deviceRole.screensGroup')}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">{tMachines('deviceRole.screensGroupHint')}</p>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{tMachines('deviceRole.screensGroup')}</TableHead>
+                  <TableHead>{tMachines('machineCode')}</TableHead>
+                  <TableHead>{tAreas('area')}</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {screens.map((machine) => (
+                  <TableRow key={machine.id}>
+                    <TableCell className="font-medium">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Link href={`/dashboard/machines/${machine.id}`} className="hover:underline">
+                          {machine.name}
+                        </Link>
+                        {/* מסך מטבח / מסך מוכן-לא מוכן, and Android / Windows. */}
+                        <DeviceRoleBadge m={machine} />
+                        <DevicePlatformBadge m={machine} showAndroid />
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{machine.machineCode}</TableCell>
+                    <TableCell className="text-sm">
+                      <AreaName name={machine.areaName} />
+                    </TableCell>
+                    <TableCell className="text-end">
+                      <Link
+                        href={`/dashboard/machines/${machine.id}`}
+                        aria-label={t('openMachine')}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronLeft className="h-4 w-4" aria-hidden />
+                      </Link>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader className="pb-2">

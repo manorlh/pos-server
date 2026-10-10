@@ -1,0 +1,275 @@
+{
+    "template":  "cafeBar",
+    "background":  "clean",
+    "elements":  [
+                     {
+                         "id":  "wall0001",
+                         "kind":  "wall",
+                         "x":  0,
+                         "y":  0,
+                         "w":  1000,
+                         "h":  11,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "door0001",
+                         "kind":  "door",
+                         "x":  80,
+                         "y":  674,
+                         "w":  160,
+                         "h":  25,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "wind0001",
+                         "kind":  "window",
+                         "x":  15,
+                         "y":  140,
+                         "w":  15,
+                         "h":  175,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "cntr0001",
+                         "kind":  "counter",
+                         "x":  300,
+                         "y":  476,
+                         "w":  530,
+                         "h":  210,
+                         "rotation":  0,
+                         "text":  null,
+                         "variant":  "L",
+                         "stools":  7
+                     },
+                     {
+                         "id":  "kitc0001",
+                         "kind":  "kitchen",
+                         "x":  840,
+                         "y":  11,
+                         "w":  145,
+                         "h":  210,
+                         "rotation":  0,
+                         "text":  "מטבח חם"
+                     },
+                     {
+                         "id":  "rest0001",
+                         "kind":  "restroom",
+                         "x":  840,
+                         "y":  525,
+                         "w":  145,
+                         "h":  165,
+                         "rotation":  90,
+                         "text":  null
+                     },
+                     {
+                         "id":  "plnt0001",
+                         "kind":  "plant",
+                         "x":  400,
+                         "y":  616,
+                         "w":  50,
+                         "h":  49,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "colm0001",
+                         "kind":  "column",
+                         "x":  450,
+                         "y":  315,
+                         "w":  30,
+                         "h":  28,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "stai0001",
+                         "kind":  "stairs",
+                         "x":  40,
+                         "y":  400,
+                         "w":  84,
+                         "h":  140,
+                         "rotation":  180,
+                         "text":  null
+                     },
+                     {
+                         "id":  "cash0001",
+                         "kind":  "cashier",
+                         "x":  600,
+                         "y":  300,
+                         "w":  98,
+                         "h":  70,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "host0001",
+                         "kind":  "host",
+                         "x":  250,
+                         "y":  600,
+                         "w":  70,
+                         "h":  56,
+                         "rotation":  45,
+                         "text":  "מארחת"
+                     },
+                     {
+                         "id":  "exit0001",
+                         "kind":  "exit",
+                         "x":  700,
+                         "y":  650,
+                         "w":  112,
+                         "h":  35,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "stag0001",
+                         "kind":  "stage",
+                         "x":  300,
+                         "y":  100,
+                         "w":  245,
+                         "h":  98,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "sofa0001",
+                         "kind":  "sofa",
+                         "x":  100,
+                         "y":  200,
+                         "w":  168,
+                         "h":  63,
+                         "rotation":  270,
+                         "text":  null
+                     },
+                     {
+                         "id":  "labl0001",
+                         "kind":  "label",
+                         "x":  380,
+                         "y":  210,
+                         "w":  140,
+                         "h":  35,
+                         "rotation":  0,
+                         "text":  "רחבת ריקודים",
+                         "color":  "#2563eb",
+                         "stroke":  null,
+                         "filled":  null
+                     },
+                     {
+                         "id":  "line0001",
+                         "kind":  "line",
+                         "x":  10,
+                         "y":  10,
+                         "w":  300,
+                         "h":  0,
+                         "rotation":  0,
+                         "text":  null,
+                         "points":  [
+                                        10,
+                                        10,
+                                        310,
+                                        10
+                                    ],
+                         "color":  "#6b4423",
+                         "stroke":  4.2,
+                         "filled":  null
+                     },
+                     {
+                         "id":  "poly0001",
+                         "kind":  "polyline",
+                         "x":  100,
+                         "y":  100,
+                         "w":  200,
+                         "h":  150,
+                         "rotation":  0,
+                         "text":  null,
+                         "points":  [
+                                        100,
+                                        100,
+                                        300,
+                                        100,
+                                        300,
+                                        250,
+                                        100,
+                                        250,
+                                        100,
+                                        100
+                                    ],
+                         "color":  "#111827",
+                         "stroke":  8.4,
+                         "filled":  null
+                     },
+                     {
+                         "id":  "free0001",
+                         "kind":  "freehand",
+                         "x":  500,
+                         "y":  500,
+                         "w":  40.5,
+                         "h":  20.2,
+                         "rotation":  0,
+                         "text":  null,
+                         "points":  [
+                                        500,
+                                        500,
+                                        510.5,
+                                        507.1,
+                                        525.3,
+                                        515,
+                                        540.5,
+                                        520.2
+                                    ],
+                         "color":  "#dc2626",
+                         "stroke":  2.1,
+                         "filled":  null
+                     },
+                     {
+                         "id":  "rect0001",
+                         "kind":  "rect",
+                         "x":  620,
+                         "y":  120,
+                         "w":  160,
+                         "h":  90,
+                         "rotation":  0,
+                         "text":  null,
+                         "color":  "#ffffff",
+                         "stroke":  4.2,
+                         "filled":  true
+                     },
+                     {
+                         "id":  "rect0002",
+                         "kind":  "rect",
+                         "x":  620,
+                         "y":  240,
+                         "w":  120,
+                         "h":  50,
+                         "rotation":  0,
+                         "text":  null,
+                         "color":  "#2563eb",
+                         "stroke":  8.4,
+                         "filled":  false
+                     },
+                     {
+                         "id":  "logo0001",
+                         "kind":  "logo",
+                         "x":  40,
+                         "y":  560,
+                         "w":  200,
+                         "h":  84,
+                         "rotation":  0,
+                         "text":  null
+                     },
+                     {
+                         "id":  "logo0002",
+                         "kind":  "logo",
+                         "x":  760,
+                         "y":  300,
+                         "w":  140,
+                         "h":  140,
+                         "rotation":  90,
+                         "text":  null,
+                         "src":  "https://cdn.example.com/brand/cafe-logo.png"
+                     }
+                 ]
+}

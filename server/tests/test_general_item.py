@@ -146,10 +146,12 @@ def world(monkeypatch):
     H = new_company("Holding")
     A = new_company("Alpha", parent=H)
 
+    branch_codes = itertools.count(1)
+
     def shop(name, company, active=True):
         # Through the endpoint, so the product-rule hook runs as it does in production.
         return shops_router.create_shop(
-            ShopCreate(name=name, companyId=company.id, isActive=active),
+            ShopCreate(name=name, companyId=company.id, isActive=active, branchId=str(next(branch_codes))),
             current_user=admin, active_tenant_id=tid, db=db,
         )
 
@@ -342,7 +344,7 @@ class TestReach:
     def test_a_shop_opened_later_gets_it(self, world):
         w = world
         new = shops_router.create_shop(
-            ShopCreate(name="h3", companyId=w.H.id),
+            ShopCreate(name="h3", companyId=w.H.id, branchId="903"),
             current_user=w.admin, active_tenant_id=w.tid, db=w.db,
         )
         row = _rows(w, _general(w, w.H))[str(new.id)]
@@ -361,7 +363,7 @@ class TestReach:
         assert str(w.a1.id) not in _rows(w, _general(w, w.H))
         assert set(_rows(w, _general(w, w.A))) == {str(w.a1.id)}
         later = shops_router.create_shop(
-            ShopCreate(name="a2", companyId=w.A.id),
+            ShopCreate(name="a2", companyId=w.A.id, branchId="902"),
             current_user=w.admin, active_tenant_id=w.tid, db=w.db,
         )
         assert str(later.id) not in _rows(w, _general(w, w.H))

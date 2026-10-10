@@ -149,13 +149,22 @@ def test_a_cashier_or_supervisor_is_not_a_machine_admin(role) -> None:
 
 def test_every_z_run_endpoint_checks_the_shop() -> None:
     """The role alone would let a shop manager run another shop's Z."""
-    for fn in (z_runs_router.post_z_run, z_runs_router.get_z_candidates):
+    # A run starts through the one creation path — the wizard's and remote control's day close
+    # (app/services/remote_till_z.py) alike — and that path checks the shop and the tills.
+    assert "create_run_from_body(" in inspect.getsource(z_runs_router.post_z_run)
+    from app.services import remote_till_z
+
+    assert "create_run_from_body(" in inspect.getsource(remote_till_z.shop_request)
+    for fn in (z_runs_router.create_run_from_body, z_runs_router.get_z_candidates):
         assert "_shop_for(" in inspect.getsource(fn)
         # …and shop access alone would let any distributor at another distributor's tills.
         assert "_check_tills(" in inspect.getsource(fn)
     assert "_shop_for(" in inspect.getsource(z_runs_router._run_or_404)
     assert "_check_tills(" in inspect.getsource(z_runs_router._run_or_404)
-    for fn in (z_runs_router.get_z_run, z_runs_router.post_z_run_proceed, z_runs_router.post_z_run_cancel):
+    for fn in (
+        z_runs_router.get_z_run, z_runs_router.post_z_run_proceed, z_runs_router.post_z_run_cancel,
+        z_runs_router.post_z_run_force,
+    ):
         assert "_run_or_404(" in inspect.getsource(fn)
 
 

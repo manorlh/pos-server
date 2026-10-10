@@ -101,6 +101,8 @@ class OfflineDeclinedLegOut(BaseModel):
     matched: bool = False
     transaction_id: Optional[uuid.UUID] = Field(None, alias="transactionId")
     document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: 320 / 330 / 400 / -400: a number names a document only with its type.
+    document_type: Optional[int] = Field(None, alias="documentType")
     amount: Optional[Decimal] = None
     #: The original sale's time, not the run's.
     sold_at: Optional[datetime] = Field(None, alias="soldAt")

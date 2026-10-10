@@ -736,7 +736,7 @@ class TestMigration:
         assert after == before, "no till's answer changes on upgrade"
 
     def test_the_conversion_runs_only_while_the_column_is_not_null(self):
-        source = pathlib.Path(_migration().__file__).read_text()
+        source = pathlib.Path(_migration().__file__).read_text(encoding="utf-8")
         assert "is_nullable = 'NO'" in source
         assert "DROP NOT NULL" in source
 

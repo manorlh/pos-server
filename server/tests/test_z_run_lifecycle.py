@@ -174,8 +174,10 @@ class TestEveryRoadToAClosedShiftCompletesTheWait:
 
         assert r.status == ZRunStatus.COMPLETED
         assert w.db.get(Shift, open_shift.id).z_report_id == r.z_report_id
-        # The heartbeat claim is dropped, as on the till's own close.
-        assert till.reported_open_shift_id is None
+        # The till's own claim is kept as it reported it (never wiped by a cloud-side action), and
+        # is not taken as live: the cloud holds the shift closed.
+        assert till.reported_open_shift_id == open_shift.id
+        assert ZR._reported_open_is_live(w.db, till) is False
 
     def test_an_administrative_close_completes_a_close_request(self, w):
         till = w.tills[0]

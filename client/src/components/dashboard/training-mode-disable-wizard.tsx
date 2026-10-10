@@ -38,7 +38,7 @@ import {
   tableLabel,
   type TrainingDeletionCounts,
 } from '@/lib/trainingMode';
-import { formatDateTime } from '@/lib/format';
+import { businessToday, formatDateTime, formatShortDateTime, formatTime, isoDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useDemoCountsText } from '@/components/dashboard/demo-menu-card';
 import { useTrainingTillLabel } from '@/components/dashboard/training-badge';
@@ -74,12 +74,10 @@ export function TrainingModeDisableWizard({
 
 /** "HH:MM" today, "dd/MM HH:MM" before that. */
 function formatAsOf(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-  if (d.toDateString() === new Date().toDateString()) return time;
-  return `${d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit' })} ${time}`;
+  const day = isoDate(iso);
+  if (!day) return null;
+  if (day === businessToday()) return formatTime(iso);
+  return formatShortDateTime(iso);
 }
 
 function Wizard({ shopId, shopName, onClose }: { shopId: string; shopName: string; onClose: () => void }) {

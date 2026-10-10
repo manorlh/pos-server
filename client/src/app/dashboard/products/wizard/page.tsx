@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeft, ArrowRight, Check, Plus, Sparkles, Trash2, X } from 'lucide-react';
 import { api } from '@/lib/api';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { createGroup, fetchGroups, saveProductMenu, type GroupKind, type ModifierGroupList } from '@/lib/menuApi';
@@ -252,6 +253,7 @@ export default function ProductWizardPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold">

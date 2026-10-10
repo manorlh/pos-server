@@ -2,10 +2,10 @@
 A document approved by a **till user** (a shop manager on the till's roster):
 `approvedByPosUserId`, the elevation grant's `approverPosUserId`.
 
-Checked like `approvedByUserId` (tests/test_document_approval.py): the till user must be
-real, active, of the till's tenant, of the till's own shop, and hold what the document
-needed. A claim that fails refuses the document — stripping it would pass a false
-approval off as an ordinary document. Naming both kinds of approver is refused too.
+Since 2026-10-07 (the owner: "כרגע אין הרשאות, כולם יכולים לעשות הכל. כל מסמך שבוצע
+במכשירים חייב לעלות לענן") an approver never refuses or holds a document: the claim is kept
+exactly as sent (`claimed_approver_*`), linked when the till user is of the till's business,
+and an id that names nobody of this business gets one quiet note (`ingest_notes`).
 
 Runs on the in-memory SQLite world in tests/shift_world.py.
 """
@@ -89,15 +89,21 @@ class TestATillUserApprover:
         manager = _pos_user(w, w.shop, tenant_id=None)
         assert _push(w, _credit(shift.id, approvedByPosUserId=str(manager.id))).status == "accepted"
 
-    def test_a_cashier_cannot_approve_a_refund(self, w, shift):
+    def test_a_cashier_named_as_approver_is_stored_as_sent(self, w, shift):
+        """Permissions are not in force: the role is not a reason to refuse."""
         cashier = _pos_user(w, w.shop, role=PosUserRole.CASHIER)
+        doc = _credit(shift.id, approvedByPosUserId=str(cashier.id))
 
-        result = _push(w, _credit(shift.id, approvedByPosUserId=str(cashier.id)))
+        result = _push(w, doc)
 
-        assert (result.status, result.reason) == ("rejected", "approver_lacks_scope:refund")
+        assert result.status == "accepted"
+        stored = w.db.get(Transaction, uuid.UUID(doc["id"]))
+        assert stored.approved_by_pos_user_id == cashier.id
+        assert stored.claimed_approver_pos_user_id == cashier.id
+        assert "approver_not_known" not in [n["code"] for n in stored.ingest_notes or []]
 
     @pytest.mark.parametrize("case", ["unknown", "inactive", "other_tenant"])
-    def test_an_unknown_inactive_or_foreign_one_is_refused(self, w, shift, case):
+    def test_an_unknown_inactive_or_foreign_one_still_lands(self, w, shift, case):
         if case == "unknown":
             approver = uuid.uuid4()
         elif case == "inactive":
@@ -114,30 +120,51 @@ class TestATillUserApprover:
 
         result = _push(w, doc)
 
-        assert (result.status, result.reason) == ("rejected", "approver_unknown_or_inactive")
-        assert w.db.get(Transaction, uuid.UUID(doc["id"])) is None
+        assert result.status == "accepted"
+        stored = w.db.get(Transaction, uuid.UUID(doc["id"]))
+        assert stored is not None and stored.shift_id == shift.id
+        # Kept exactly as sent, whatever it names.
+        assert stored.claimed_approver_pos_user_id == approver
+        codes = [n["code"] for n in stored.ingest_notes or []]
+        if case == "inactive":
+            # A person of this business: linked, no note (who approved it then).
+            assert stored.approved_by_pos_user_id == approver
+            assert "approver_not_known" not in codes
+        else:
+            # Nobody of this business: never linked (no other tenant's name shown here).
+            assert stored.approved_by_pos_user_id is None
+            assert "approver_not_known" in codes
 
-    def test_a_manager_of_another_shop_is_not_permitted_here(self, w, shift):
+    def test_a_manager_of_another_shop_is_stored(self, w, shift):
         elsewhere = _pos_user(w, w.other_shop)
+        doc = _credit(shift.id, approvedByPosUserId=str(elsewhere.id))
 
-        result = _push(w, _credit(shift.id, approvedByPosUserId=str(elsewhere.id)))
+        result = _push(w, doc)
 
-        assert (result.status, result.reason) == ("rejected", "approver_not_permitted_at_machine")
+        assert result.status == "accepted"
+        assert w.db.get(Transaction, uuid.UUID(doc["id"])).approved_by_pos_user_id == elsewhere.id
 
-    def test_naming_both_kinds_of_approver_is_refused(self, w, shift):
+    def test_naming_both_kinds_of_approver_keeps_both(self, w, shift):
         manager = _pos_user(w, w.shop)
+        doc = _credit(shift.id, approvedByPosUserId=str(manager.id), approvedByUserId=str(w.admin.id))
 
-        result = _push(w, _credit(
-            shift.id, approvedByPosUserId=str(manager.id), approvedByUserId=str(w.admin.id),
-        ))
+        result = _push(w, doc)
 
-        assert (result.status, result.reason) == ("rejected", "approver_ambiguous")
+        assert result.status == "accepted"
+        stored = w.db.get(Transaction, uuid.UUID(doc["id"]))
+        assert stored.claimed_approver_pos_user_id == manager.id
+        assert stored.claimed_approver_user_id == w.admin.id
+        assert "approver_both" in [n["code"] for n in stored.ingest_notes or []]
 
-    def test_an_unreadable_one_refuses_the_document(self, w, shift):
-        result = _push(w, _credit(shift.id, approvedByPosUserId="dana"))
+    def test_an_unreadable_one_never_refuses_the_document(self, w, shift):
+        doc = _credit(shift.id, approvedByPosUserId="dana")
 
-        assert result.status == "rejected"
-        assert result.reason.startswith("approvedByPosUserId:")
+        result = _push(w, doc)
+
+        assert result.status == "accepted"
+        assert any(x.startswith("approvedByPosUserId: unreadable") for x in result.warnings or [])
+        stored = w.db.get(Transaction, uuid.UUID(doc["id"]))
+        assert stored.approved_by_pos_user_id is None and stored.claimed_approver_pos_user_id is None
 
     def test_it_comes_back_out_on_the_document(self, w, shift):
         from app.schemas.transaction import TransactionOut

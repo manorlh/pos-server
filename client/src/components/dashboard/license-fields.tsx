@@ -13,8 +13,9 @@
 import { useTranslations } from 'next-intl';
 import { CalendarClock } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { businessToday, formatDate } from '@/lib/format';
 import type { LicenseType } from '@/lib/types';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 
@@ -50,14 +51,11 @@ export function licenseIncomplete(v: LicenseValue, isSuperAdmin: boolean): boole
 }
 
 function today(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return businessToday();
 }
 
 function formatDay(iso: string): string {
-  const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
+  return formatDate(iso);
 }
 
 /** The choice and the last day — rendered for a super admin only. */
@@ -102,9 +100,8 @@ export function LicenseFields({
       {kind === 'temporary' ? (
         <div className="space-y-1">
           <Label htmlFor={`${idPrefix}-license-ends`}>{t('lastDay')}</Label>
-          <Input
+          <DatePicker
             id={`${idPrefix}-license-ends`}
-            type="date"
             min={today()}
             value={value.licenseExpiresOn ?? ''}
             onChange={(e) => onChange({ licenseType: 'temporary', licenseExpiresOn: e.target.value || null })}

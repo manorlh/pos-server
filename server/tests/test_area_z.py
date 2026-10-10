@@ -33,6 +33,8 @@ def post_run(w, *tills, area_id=None, shop=None):
             shopId=(shop or w.shop).id,
             areaId=area_id,
             machines=[{"machineId": str(t.id)} for t in tills],
+            # The tills here are not seen "now": the state is confirmed (offline till Z §4.6.1).
+            confirmCloudData=True,
         ),
         **_ctx(w),
     )

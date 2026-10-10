@@ -29,6 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from app.models.z_report import ZReport
 from app.services import card_brands, offline_authorizations
+from app.services import z_expected_cash as ZEC
 
 TITLE = "דו״ח Z"
 #: The widest label that still leaves room for a value on 80 mm paper.
@@ -40,7 +41,8 @@ CENT = Decimal("0.01")
 #: Tenders by their bucket on paper; anything else is "other" (`exchange` has its own line).
 _CASH = {"cash"}
 _CARD = {"card", "credit"}
-_VOUCHER = {"voucher", "vouchers"}
+#: "שוברי הפקה": every code a production voucher leg goes by (services/tenders.py).
+_VOUCHER = {"voucher", "vouchers", "production_voucher"}
 _EXCHANGE = "exchange"
 
 
@@ -169,6 +171,8 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
     rows: List[Optional[dict]] = []
     if sales is not None and discounts is not None:
         rows.append(row("מכירות ברוטו", money(sales + discounts)))
+        # A production voucher's deduction is in neither the gross nor the discounts (as the
+        # till's X): it has its own section, "שוברי הפקה".
         rows.append(row("הנחות", credit(discounts)))
         # Item discounts are already inside the lines (and so inside the gross above):
         # shown for information, not taken off again.
@@ -179,6 +183,14 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
         promotion_discounts = _dec((z.header or {}).get("promotionDiscountsTotal"))
         if promotion_discounts:
             rows.append(row("הנחות מבצעים (כלולות)", credit(promotion_discounts)))
+        # Discount vouchers ("שוברי הנחה") likewise — a discount, never a tender.
+        voucher_discounts = _dec((z.header or {}).get("voucherDiscountsTotal"))
+        if voucher_discounts:
+            rows.append(row("הנחות שוברים (כלולות)", credit(voucher_discounts)))
+        # Staff test vouchers that reached real sales: no production pays them — a discount.
+        test_vouchers = _dec((z.header or {}).get("testVoucherDeductionsTotal"))
+        if test_vouchers:
+            rows.append(row("שוברי בדיקה (כלולים)", credit(test_vouchers)))
     else:
         rows.append(row("מכירות", money(sales)))
     rows.append(row("זיכויים", credit(refunds)))
@@ -187,10 +199,30 @@ def _sales_rows(z: ZReport) -> List[Optional[dict]]:
     return rows
 
 
-def _vat_rows(z: ZReport) -> List[Optional[dict]]:
+#: An exempt dealer's Z, in place of the VAT split (docs/SPEC_BUSINESS_TYPE.md).
+EXEMPT_NO_VAT = "עוסק פטור — ללא מע״מ"
+
+
+def _voucher_sections(z) -> List[dict]:
+    """
+    "שוברי הפקה": what production vouchers booked as a document deduction took off — in neither
+    the gross nor the discounts above, as on the till's X (the production vouchers contract §4.1).
+    """
+    deductions = _dec((z.header or {}).get("productionVoucherDeductionsTotal"))
+    if not deductions:
+        return []
+    return [section("שוברי הפקה", [row("קיזוז שוברי הפקה", credit(deductions))])]
+
+
+def _vat_rows(z: ZReport, dealer_type: Optional[str] = None) -> List[Optional[dict]]:
     vat = _dec(z.vat_total)
     sales = _dec(z.total_sales)
     net = None if sales is None else sales - (_dec(z.total_refunds) or ZERO)
+    dealer = dealer_type or (getattr(z, "header", None) or {}).get("dealerType")
+    # An exempt dealer's Z has no VAT to split. Only when it really has none: a Z of the
+    # day the type changed may still hold VAT documents, and then the split is printed.
+    if dealer == "exempt" and (vat is None or vat == 0):
+        return [row("מע״מ", EXEMPT_NO_VAT)]
     if vat is None:
         return [row("מע״מ", "לא ידוע")]
     return [
@@ -205,7 +237,7 @@ def _payment_rows(z: ZReport) -> List[Optional[dict]]:
     return [
         row("מזומן", money(b["cash"])),
         row("אשראי", money(b["card"])),
-        row("שוברים", money(b["voucher"])),
+        row("שוברי הפקה", money(b["voucher"])),
         row("אחר", money(b["other"])),
         # Only on a Z with mixed baskets: an offset, never money anyone took.
         row("קיזוז החלפה", money(b["exchange"])) if b["exchange"] != 0 else None,
@@ -224,6 +256,103 @@ def _uncounted_shifts(z: ZReport) -> int:
     return sum(int(s.get("uncountedShiftCount") or 0) for s in _sections_of(z))
 
 
+#: "טיפ באשראי משולם מהמזומן" on paper, at the bottom of the drawer block. The screens say
+#: "טיפים באשראי ששולמו מהמגירה"; 80 mm keeps labels within LABEL_MAX.
+CARD_TIPS_FROM_DRAWER_LABEL = "טיפ אשראי ששולם מהמגירה"
+DRAWER_CASH_LABEL = "מזומן במגירה"
+
+
+def _section_drawer_cash(s: dict) -> Optional[Decimal]:
+    """A section's drawer cash: as frozen, else (no card tips paid out) its cash + cash tips."""
+    if s.get("drawerCash") is not None:
+        return _dec(s.get("drawerCash"))
+    cash = _dec(s.get("cashSalesNet"))
+    if cash is None:
+        cash = _dec(s.get("totalCash"))
+    return None if cash is None else cash + (_dec(s.get("totalCashTips")) or ZERO)
+
+
+def drawer_tips_of(z: ZReport) -> Optional[Dict[str, Optional[Decimal]]]:
+    """
+    The card tips a Z's tills paid out of their drawers and the drawer cash ("מזומן
+    במגירה"): `{"cardTipsFromDrawer", "drawerCash"}`, or None when no included close froze
+    the figure (the parameter was off, kiosks, older Zs) — then nothing new is shown.
+
+    As the Z froze them on its header at build time; else (a Z stored as a till printed it,
+    a till's own section read as a Z) from its sections: Σ of their `cardTipsFromDrawer`
+    and of their drawer cash.
+    """
+    header = getattr(z, "header", None) or {}
+    if header.get("cardTipsFromDrawer") is not None:
+        return {"cardTipsFromDrawer": _dec(header.get("cardTipsFromDrawer")), "drawerCash": _dec(header.get("drawerCash"))}
+    sections = _sections_of(z)
+    if not any(s.get("cardTipsFromDrawer") is not None for s in sections):
+        return None
+    paid_out = sum((_dec(s.get("cardTipsFromDrawer")) or ZERO for s in sections), ZERO)
+    drawer = [_section_drawer_cash(s) for s in sections]
+    return {
+        "cardTipsFromDrawer": paid_out,
+        "drawerCash": None if any(d is None for d in drawer) else sum(drawer, ZERO),
+    }
+
+
+def _section_drawer_tips(s: dict) -> Optional[Dict[str, Optional[Decimal]]]:
+    """One till's section: its frozen card tips paid from the drawer, None without them."""
+    if s.get("cardTipsFromDrawer") is None:
+        return None
+    return {"cardTipsFromDrawer": _dec(s.get("cardTipsFromDrawer")), "drawerCash": _section_drawer_cash(s)}
+
+
+def _drawer_tips_rows(tips: Optional[Dict[str, Optional[Decimal]]]) -> List[Optional[dict]]:
+    if tips is None:
+        return []
+    return [
+        row(CARD_TIPS_FROM_DRAWER_LABEL, money(tips["cardTipsFromDrawer"])),
+        row(DRAWER_CASH_LABEL, money(tips["drawerCash"]), emphasis=True),
+    ]
+
+
+#: "Z — מזומן צפוי כולל הפקדות ותנועות מזומן" on paper, in the drawer block above the expected cash
+#: they are part of (app/services/z_expected_cash.py): Cash In adds, the others take off. The same
+#: words as the owner's Z layout ("דו״ח Z — גרסה 2", `z_sections.LABELS_HE`) and the X — one
+#: vocabulary whichever layout a Z prints in.
+CASH_IN_LABEL = "הכנסות מזומן"
+CASH_OUT_LABEL = "הוצאות"
+DEPOSIT_LABEL = "הפקדה לכספת"
+
+
+def cash_movements_of(z: ZReport) -> Optional[ZEC.Movements]:
+    """
+    The Cash In / Cash Out / deposits that went into a Z's expected cash, as the Z froze them: its
+    header's `cashMovements` block, else (a Z stored as a till printed it, a till's own section read
+    as a Z) the sum of its sections'. None when the parameter was off — then nothing is shown and
+    the Z reads exactly as it did before it. Never the parameter as it stands now.
+    """
+    header = getattr(z, "header", None) or {}
+    frozen = ZEC.movements_of_block(header.get(ZEC.BLOCK))
+    if frozen is not None:
+        return frozen
+    moved = [m for m in (ZEC.movements_of_block(s.get(ZEC.BLOCK)) for s in _sections_of(z)) if m is not None]
+    if not moved:
+        return None
+    total = ZEC.NONE
+    for m in moved:
+        total = ZEC.add(total, m)
+    return total
+
+
+def _movement_rows(movements: Optional[ZEC.Movements]) -> List[Optional[dict]]:
+    """The lines of the cash movements, each only when it moved something (a zero is no line)."""
+    if movements is None:
+        return []
+    cash_in, cash_out, deposits = movements
+    return [
+        row(CASH_IN_LABEL, signed(cash_in)) if cash_in else None,
+        row(CASH_OUT_LABEL, signed(-cash_out)) if cash_out else None,
+        row(DEPOSIT_LABEL, signed(-deposits)) if deposits else None,
+    ]
+
+
 def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     adjustments = None
     sections = _sections_of(z)
@@ -238,10 +367,14 @@ def _cash_rows(z: ZReport) -> List[Optional[dict]]:
     return [
         row("קופה פותחת", money(z.opening_cash)),
         row("תנועות בין משמרות", signed(adjustments)) if adjustments else None,
+        # Only on a Z the parameter applied to: the movements that are part of the expected cash.
+        *_movement_rows(cash_movements_of(z)),
         row("מזומן צפוי", money(z.expected_cash), emphasis=True),
         row("מזומן שנספר", counted),
         # Withheld, not a balanced zero, when any drawer was not counted.
         row("הפרש", "לא חושב" if withheld or z.discrepancy is None else signed(z.discrepancy), emphasis=True),
+        # Card tips paid to staff from the drawer, and what it holds: at the bottom.
+        *_drawer_tips_rows(drawer_tips_of(z)),
     ]
 
 
@@ -348,13 +481,41 @@ def _till_title(s: dict) -> str:
     return f"{head} · {name}" if name else head
 
 
+#: The document range rows of a Z, per number series (docs/SPEC_DOCUMENT_PREFIX.md).
+DOCUMENT_RANGE_LABELS = {320: "חשבוניות מס קבלה", 330: "חשבוניות זיכוי", 400: "קבלות"}
+
+
+def _document_rows(s: dict) -> List[Dict[str, Any]]:
+    """
+    "מסמכים" as a range per document type — each type is numbered on its own series — from
+    the section's `documentRanges`; a Z built before that has the one range it had.
+    """
+    ranges = s.get("documentRanges") if isinstance(s.get("documentRanges"), list) else []
+    rows: List[Dict[str, Any]] = []
+    for r in ranges:
+        if not isinstance(r, dict):
+            continue
+        first, last = r.get("first"), r.get("last")
+        if not (first or last):
+            continue
+        value = f"{first}–{last}" if first and last and first != last else (last or first)
+        try:
+            label = DOCUMENT_RANGE_LABELS.get(int(r.get("documentType")), "מסמכים")
+        except (TypeError, ValueError):
+            label = "מסמכים"
+        rows.append(row(label, value))
+    if rows:
+        return rows
+    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
+    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
+    return [row("מסמכים", docs)] if docs else []
+
+
 def _till_section(s: dict) -> dict:
     first, last = s.get("firstShiftSequence"), s.get("lastShiftSequence")
     shifts = _count(s.get("shiftCount"))
     if first is not None and last is not None:
         shifts = f"{shifts} (#{first}–#{last})" if first != last else f"{shifts} (#{first})"
-    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
-    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
     net = _dec(s.get("netSales"))
     if net is None and _dec(s.get("totalSales")) is not None:
         net = _dec(s.get("totalSales")) - (_dec(s.get("totalRefunds")) or ZERO)
@@ -366,12 +527,14 @@ def _till_section(s: dict) -> dict:
         _till_title(s),
         [
             row("משמרות", shifts),
-            row("מסמכים", docs) if docs else None,
+            *_document_rows(s),
             row("סה״כ נטו", money(net), emphasis=True),
             row("מזומן", money(s.get("totalCash"))),
             row("אשראי", money(s.get("totalCard"))),
+            *_movement_rows(ZEC.movements_of_block(s.get(ZEC.BLOCK))),
             row("מזומן צפוי", money(s.get("expectedCash"))),
             row("הפרש", "לא נספר" if uncounted else signed(s.get("overShort"))),
+            *_drawer_tips_rows(_section_drawer_tips(s)),
             row("ממתינות לשידור", str(pending), emphasis=True) if pending else None,
             row("אופליין שנדחה", f"{declined_count} · {money(declined_amount)}", emphasis=True)
             if declined_count
@@ -389,6 +552,54 @@ def _business_name(z: ZReport) -> str:
     return header.get("businessName") or header.get("shopName") or (shop.name if shop is not None else None) or DASH
 
 
+def branch_code_of(z: ZReport) -> Optional[str]:
+    """
+    The shop's branch code ("קוד סניף") on the Z: as frozen in its header, else the shop's
+    now (a Z built before the header carried it). In one branch a shop Z and its tills' own
+    Zs are separate runs — the owner: the branch code is on all of them, and the till number
+    tells them apart (docs/SPEC_INDEPENDENT_TILL.md §11).
+    """
+    code = (getattr(z, "header", None) or {}).get("branchId")
+    shop = getattr(z, "shop", None)
+    if not code and shop is not None:
+        code = getattr(shop, "branch_id", None)
+    code = str(code).strip() if code is not None else ""
+    return code or None
+
+
+def till_number_of(z: ZReport) -> Optional[str]:
+    """A till Z's register number, as frozen in its one section (else its till's now)."""
+    if not getattr(z, "is_till_z", False):
+        return None
+    sections = getattr(z, "per_machine", None) or []
+    pos = sections[0].get("posNumber") if sections and isinstance(sections[0], dict) else None
+    machine = getattr(z, "machine", None)
+    if pos in (None, "") and machine is not None:
+        pos = machine.pos_number
+    return str(pos).strip() if pos not in (None, "") else None
+
+
+def sequence_started_of(z: ZReport) -> Optional[str]:
+    """
+    When a till Z's run began (`header.sequence.startedAt`), for a run that is not the
+    till's first: an independent till starts again at Z 1 (SPEC_INDEPENDENT_TILL §3.1), and
+    the date tells its "Z 1" from an older one. None for a first run or a shop Z.
+    """
+    seq = (getattr(z, "header", None) or {}).get("sequence") or {}
+    if not getattr(z, "is_till_z", False) or not int(getattr(z, "machine_sequence_epoch", 0) or 0):
+        return None
+    return seq.get("startedAt")
+
+
+def sequence_started_label(z: ZReport, tzinfo=None) -> Optional[str]:
+    """ "רצף מ-06/10/2026": a till Z's run, by the day it began (None: the till's first run)."""
+    started = _parse_iso(sequence_started_of(z))
+    if started is None:
+        return None
+    local = _local(started, tzinfo) if tzinfo is not None else started
+    return f"רצף מ-{local.strftime('%d/%m/%Y')}"
+
+
 def _subtitle(z: ZReport, tzinfo) -> List[str]:
     """Who issued it and when: the lines under the title, the same on every part."""
     header = z.header or {}
@@ -399,23 +610,87 @@ def _subtitle(z: ZReport, tzinfo) -> List[str]:
 
     subtitle: List[str] = []
     if reg:
-        subtitle.append(f"ח.פ. {reg}")
+        # "ח.פ." / "עוסק מורשה" / "עוסק פטור" as the Z was built (SPEC_BUSINESS_TYPE.md).
+        from app.services.dealer_types import reg_label
+
+        subtitle.append(f"{reg_label(header.get('dealerType'))} {reg}")
     if shop_name:
         subtitle.append(f"סניף {shop_name}" + (f" #{shop_number}" if shop_number is not None else ""))
+    # The branch code on every Z — shop Z, till Z, independent till Z (§11 of the spec).
+    code = branch_code_of(z)
+    if code:
+        subtitle.append(f"קוד סניף {code}")
     area = header.get("areaName") if z.area_id is not None else None
     if area:
         subtitle.append(f"אזור {area}")
     if z.per_machine is None and z.machine_id is not None and z.machine is not None:
         subtitle.append(f"קופה {z.machine.name}")
+    till = till_number_of(z)
+    if till:
+        # A till Z is told apart from the shop's Z, and from another till's, by its till.
+        independent = (header.get("scope") or {}).get("kind") == "independent_till"
+        line = f"קופה {till}" + (" (עצמאית)" if independent else "")
+        # Made independent, a till starts again at Z 1: the run's first day says which "Z 1".
+        run = sequence_started_label(z, tzinfo)
+        if run:
+            line += f" · {run}"
+        subtitle.append(line)
+    scope = header.get("scope") or {}
+    if scope.get("kind") in ("shop", "area") and scope.get("label"):
+        subtitle.append(str(scope["label"]))
     subtitle.append(f"תאריך עסקים {day(z.business_date)}")
     subtitle.append(f"הופק {stamp(z.closed_at, tzinfo)}")
     return subtitle
 
 
-def _footer_notes(z: ZReport) -> List[str]:
+def _replaced_line(note: dict, tzinfo=None) -> Optional[str]:
+    """"המכשיר הוחלף בתאריך …" — the first Z after a till's device was replaced (§4.6.2)."""
+    raw = note.get("at")
+    if not raw:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    when = day(moment.astimezone(tzinfo).date()) if tzinfo is not None else day(moment.date())
+    till = note.get("posNumber") or note.get("name")
+    return f"המכשיר הוחלף בתאריך {when}" + (f" (קופה {till})" if till else "")
+
+
+def _late_section(late: dict) -> dict:
+    """"מסמכים מאוחרים מתקופה קודמת (קופה N, הופקו לפני Z מס׳ X שהופק ע״י התמיכה)"."""
+    first, last = late.get("firstDocumentNumber"), late.get("lastDocumentNumber")
+    number = late.get("sourceZNumber")
+    # The 80 mm title is short; the rest of the owner's words are the first rows.
+    return section(
+        "מסמכים מאוחרים מתקופה קודמת",
+        [
+            row("קופה", late.get("posNumber")),
+            row("הופקו לפני Z" if late.get("producedBySupport", True) else "הגיעו אחרי Z",
+                f"מס׳ {number if number is not None else DASH}"),
+            row("ה-Z הופק ע״י", "התמיכה") if late.get("producedBySupport", True) else None,
+            row("המשמרת נסגרה ע״י", "התמיכה") if late.get("shiftClosedBySupport") else None,
+            row("מסמכים", _count(late.get("documents"))),
+            row("מס׳", f"{first}–{last}" if first and last and first != last else (first or last)) if (first or last) else None,
+            row("מכירות", money(late.get("totalSales"))),
+            row("זיכויים", credit(late.get("totalRefunds"))) if late.get("totalRefunds") not in (None, "0.00") else None,
+            row("מזומן", money(late.get("totalCash"))),
+            row("אשראי", money(late.get("totalCard"))),
+            row("מע״מ", money(late.get("vatTotal"))) if late.get("vatTotal") is not None else None,
+        ],
+    )
+
+
+def _footer_notes(z: ZReport, tzinfo=None) -> List[str]:
     """What the Z says about itself: reconstructed, remote closes, late documents, tills left out."""
     header = z.header or {}
     footer: List[str] = []
+    for note in header.get("devicesReplaced") or []:
+        line = _replaced_line(note, tzinfo)
+        if line:
+            footer.append(line)
     if z.reconstructed:
         footer.append("כולל משמרת ששוחזרה בענן")
     if z.unattended:
@@ -427,15 +702,80 @@ def _footer_notes(z: ZReport) -> List[str]:
     if z.per_machine is None and z.machine_id is not None:
         footer.append("דו״ח Z ישן שהופק בקופה")
     left_out = header.get("openTillsLeftOut") or {}
-    if left_out.get("tills"):
-        tills = ", ".join(
-            str(t.get("posNumber") or t.get("name") or t.get("id")) for t in left_out["tills"]
-        )
+    listed = [t for t in (left_out.get("tills") or []) if isinstance(t, dict)]
+    # Offline since a report of no shift open ("חסימת Z כשיש משמרות פתוחות"): nobody approved
+    # going without them — their own line, never "אושר ע״י".
+    offline = [t for t in listed if t.get("reason") == "offline_last_closed"]
+    confirmed = [t for t in listed if t.get("reason") != "offline_last_closed"]
+    if confirmed:
+        tills = ", ".join(str(t.get("posNumber") or t.get("name") or t.get("id")) for t in confirmed)
         line = f"הופק ללא קופות: {tills}"
         if left_out.get("confirmedByName"):
             line += f" — אושר ע״י {left_out['confirmedByName']}"
         footer.append(line)
+    if offline:
+        tills = ", ".join(str(t.get("posNumber") or t.get("name") or t.get("id")) for t in offline)
+        footer.append(f"קופות לא מחוברות (משמרת אחרונה סגורה): {tills}")
     return footer
+
+
+# ── "דו״ח Z — גרסה 2": the owner's layout (app/services/z_sections.py) ──────────────
+#
+# A Z that froze its presentation sections (`reportSections`) prints in the owner's order:
+# the period, sales (incl. VAT, without tip), the VAT summary, the payments for the sales,
+# the tips taken at the till, the receipts from sales and tips, the cash drawer reconciliation
+# — then the card transmission, "כמה נמכר", the order types, the card brands and (with
+# `zShowPerEmployee`) each employee. The till prints the same lines (TillZRenderer.kt /
+# ReportRenderer.kt) and the dashboard shows them (z-report-sections.tsx): one computation,
+# pinned by the shared golden fixture. A Z built before them prints as it always did.
+
+#: The period block's title in the owner's layout ("פרטי התקופה").
+PERIOD_TITLE_V2 = "פרטי התקופה"
+
+
+def report_sections_of(z: Any) -> Optional[dict]:
+    """The sections a Z prints in the owner's layout: as frozen, else its tills' merged; None before them."""
+    from app.services import z_sections
+
+    header = getattr(z, "header", None) or {}
+    stored = header.get("reportSections")
+    if isinstance(stored, dict):
+        return stored
+    parts = [s.get("reportSections") for s in _sections_of(z)]
+    if parts and all(isinstance(p, dict) for p in parts):
+        return z_sections.merge(parts)
+    return None
+
+
+def _v2_blocks(sections: dict, dealer_type: Optional[str], tzinfo) -> List[dict]:
+    """The sections' lines (z_sections.lines) as print-document sections, money as the paper writes it."""
+    from app.services import z_sections
+
+    blocks = z_sections.lines(
+        sections,
+        exempt=dealer_type == "exempt",
+        fmt=money,
+        stamp=lambda iso: short_stamp(_parse_iso(iso), tzinfo),
+    )
+    return [section(title, [row(label, value, emphasis=bold) for label, value, bold in rows]) for title, rows in blocks]
+
+
+def _v2_body(z: Any, sections: dict, tzinfo, period_rows: List[Optional[dict]]) -> List[dict]:
+    """The owner's layout: the period, the v2 blocks — the production vouchers' section after the payments."""
+    from app.services import z_sections
+
+    out: List[dict] = [section(PERIOD_TITLE_V2, period_rows)]
+    payments_title = z_sections.LABELS_HE["payments"]
+    for block in _v2_blocks(sections, (getattr(z, "header", None) or {}).get("dealerType"), tzinfo):
+        out.append(block)
+        if block["title"] == payments_title:
+            out += _voucher_sections(z)
+    return out
+
+
+def _acquirer_section(z: Any) -> List[dict]:
+    """"אשראי לפי חברת סליקה" (the card legs per acquirer) — kept beside the v2 brand section."""
+    return [s for s in _card_brand_sections(z) if s["title"] == "אשראי לפי חברת סליקה"]
 
 
 def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] = None) -> Dict[str, Any]:
@@ -445,7 +785,38 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
     shop_name = header.get("shopName") or (shop.name if shop is not None else None)
     subtitle = _subtitle(z, tzinfo)
 
-    sections: List[dict] = [
+    v2 = report_sections_of(z)
+    if v2 is not None:
+        sections: List[dict] = _v2_body(z, v2, tzinfo, [
+            row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
+            row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
+            row("משמרות", _count(z.shift_count)),
+            row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
+        ])
+        sections += _acquirer_section(z)
+        offline = _offline_section(z)
+        if offline is not None:
+            sections.append(offline)
+        for late in (z.header or {}).get("lateFromEarlier") or []:
+            sections.append(_late_section(late))
+        waiters = _waiters_section(z)
+        if waiters is not None:
+            sections.append(waiters)
+        for s in _sections_of(z):
+            sections.append(_till_section(s))
+        footer = _footer_notes(z, tzinfo)
+        footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
+        footer.append(f"סוף {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
+        return {
+            "title": TITLE,
+            "number": z.z_number,
+            "businessName": header.get("businessName") or shop_name or DASH,
+            "subtitle": subtitle,
+            "sections": sections,
+            "footer": footer,
+        }
+
+    sections = [
         section(
             "תקופה",
             [
@@ -458,6 +829,7 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
         section("מכירות", _sales_rows(z)),
         section("מע״מ", _vat_rows(z)),
         section("אמצעי תשלום", _payment_rows(z)),
+        *_voucher_sections(z),
         section("תשר", _tips_rows(z)),
         section("קופה", _cash_rows(z)),
     ]
@@ -468,13 +840,16 @@ def build_print_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime] =
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
+    # Late documents of a support Z, carried into this Z (SPEC_OFFLINE_TILL_Z §4.6.3).
+    for late in (z.header or {}).get("lateFromEarlier") or []:
+        sections.append(_late_section(late))
     waiters = _waiters_section(z)
     if waiters is not None:
         sections.append(waiters)
     for s in _sections_of(z):
         sections.append(_till_section(s))
 
-    footer = _footer_notes(z)
+    footer = _footer_notes(z, tzinfo)
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
     footer.append(f"סוף {TITLE}" + (f" #{z.z_number}" if z.z_number is not None else ""))
 
@@ -545,29 +920,35 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     The shop Z's summary: the shop's totals and one compact line per till (number,
     shifts, net, documents) — no till's detail. `tills` lists them for printing apart.
     """
-    sections: List[dict] = [
-        section(
-            "תקופה",
-            [
-                row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
-                row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
-                row("משמרות", _count(z.shift_count)),
-                row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
-            ],
-        ),
-        section("מכירות", _sales_rows(z)),
-        section("מע״מ", _vat_rows(z)),
-        section("אמצעי תשלום", _payment_rows(z)),
-        section("תשר", _tips_rows(z)),
-        section("קופה", _cash_rows(z)),
+    period_rows = [
+        row("מ-", stamp(z.period_start, tzinfo)) if z.period_start else None,
+        row("עד", stamp(z.period_end, tzinfo)) if z.period_end else None,
+        row("משמרות", _count(z.shift_count)),
+        row("קופות", _count(z.machine_count if z.machine_count is not None else (1 if z.machine_id else None))),
     ]
-    sections += _card_brand_sections(z)
-    transmission = _transmission_section(z, tzinfo)
-    if transmission is not None:
-        sections.append(transmission)
+    v2 = report_sections_of(z)
+    if v2 is not None:
+        sections: List[dict] = _v2_body(z, v2, tzinfo, period_rows) + _acquirer_section(z)
+    else:
+        sections = [
+            section("תקופה", period_rows),
+            section("מכירות", _sales_rows(z)),
+            section("מע״מ", _vat_rows(z)),
+            section("אמצעי תשלום", _payment_rows(z)),
+            *_voucher_sections(z),
+            section("תשר", _tips_rows(z)),
+            section("קופה", _cash_rows(z)),
+        ]
+        sections += _card_brand_sections(z)
+        transmission = _transmission_section(z, tzinfo)
+        if transmission is not None:
+            sections.append(transmission)
     offline = _offline_section(z)
     if offline is not None:
         sections.append(offline)
+    # Late documents of a support Z, carried into this Z (SPEC_OFFLINE_TILL_Z §4.6.3).
+    for late in (z.header or {}).get("lateFromEarlier") or []:
+        sections.append(_late_section(late))
     lines = [_till_line(s) for s in _ordered_sections(z)]
     if lines:
         sections.append(section("קופות", lines))
@@ -575,7 +956,7 @@ def build_summary_document(z: ZReport, tzinfo, *, printed_at: Optional[datetime]
     if waiters is not None:
         sections.append(waiters)
 
-    footer = _footer_notes(z)
+    footer = _footer_notes(z, tzinfo)
     if lines:
         footer.append("פירוט מלא לכל קופה — בהדפסה נפרדת")
     footer.append(f"הודפס {stamp(printed_at or datetime.now(timezone.utc), tzinfo)}")
@@ -599,6 +980,10 @@ class _TillAsZ:
         self.header = {
             "lineDiscountsTotal": s.get("lineDiscountsTotal"),
             "promotionDiscountsTotal": s.get("promotionDiscountsTotal"),
+            "voucherDiscountsTotal": s.get("voucherDiscountsTotal"),
+            "productionVoucherDeductionsTotal": s.get("productionVoucherDeductionsTotal"),
+            # The till's own frozen movements block, read as a Z's header is (None: off).
+            ZEC.BLOCK: s.get(ZEC.BLOCK),
         }
         self.total_sales = _dec(s.get("totalSales"))
         self.total_refunds = _dec(s.get("totalRefunds"))
@@ -630,23 +1015,29 @@ def build_till_document(
         return None
     view = _TillAsZ(s)
     title = _till_title(s)
-    first_doc, last_doc = s.get("firstDocumentNumber"), s.get("lastDocumentNumber")
-    docs = f"{first_doc}–{last_doc}" if first_doc and last_doc and first_doc != last_doc else (last_doc or first_doc)
     shifts = _count(s.get("shiftCount"))
     if _shifts_label(s):
         shifts = f"{shifts} ({_shifts_label(s)})"
-    sections: List[dict] = [
-        section("משמרות", [row("משמרות", shifts), row("מסמכים", docs) if docs else None]),
-        section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
-        section("מע״מ", _vat_rows(view)),  # type: ignore[arg-type]
-        section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
-        section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
-        section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
-    ]
-    sections += _card_brand_sections(view)  # type: ignore[arg-type]
-    transmission = _transmission_section(view, tzinfo)  # type: ignore[arg-type]
-    if transmission is not None:
-        sections.append(transmission)
+    if isinstance(s.get("reportSections"), dict):
+        # The till's own sections, in the owner's layout ("דו״ח Z — גרסה 2").
+        view.header["dealerType"] = (z.header or {}).get("dealerType")
+        sections: List[dict] = [section("משמרות", [row("משמרות", shifts), *_document_rows(s)])]
+        sections += _v2_body(view, s["reportSections"], tzinfo, [])[1:]
+        sections += _acquirer_section(view)
+    else:
+        sections = [
+            section("משמרות", [row("משמרות", shifts), *_document_rows(s)]),
+            section("מכירות", _sales_rows(view)),  # type: ignore[arg-type]
+            section("מע״מ", _vat_rows(view, (z.header or {}).get("dealerType"))),  # type: ignore[arg-type]
+            section("אמצעי תשלום", _payment_rows(view)),  # type: ignore[arg-type]
+            *_voucher_sections(view),  # type: ignore[arg-type]
+            section("תשר", _tips_rows(view)),  # type: ignore[arg-type]
+            section("קופה", _cash_rows(view)),  # type: ignore[arg-type]
+        ]
+        sections += _card_brand_sections(view)  # type: ignore[arg-type]
+        transmission = _transmission_section(view, tzinfo)  # type: ignore[arg-type]
+        if transmission is not None:
+            sections.append(transmission)
     offline = _offline_section(view)  # type: ignore[arg-type]
     if offline is not None:
         sections.append(offline)
@@ -683,4 +1074,10 @@ def list_item(z: ZReport, tzinfo) -> Dict[str, Any]:
         "machineCount": z.machine_count if z.machine_count is not None else (1 if z.machine_id else None),
         # Its tills, in till-number order, for printing a till's detail on its own.
         "tills": z_tills(z),
+        # Two Zs of one branch with the same number are told apart by the till (§11).
+        "branchCode": branch_code_of(z),
+        "posNumber": till_number_of(z),
+        # …and two "Z 1" of one till by its run (SPEC_INDEPENDENT_TILL §3.1).
+        "sequenceEpoch": int(getattr(z, "machine_sequence_epoch", 0) or 0),
+        "sequenceStartedAt": sequence_started_of(z),
     }

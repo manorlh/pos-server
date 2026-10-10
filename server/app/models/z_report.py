@@ -40,6 +40,9 @@ class ZReport(Base):
     __tablename__ = "z_reports"
     __table_args__ = (
         Index("ix_z_reports_shop_business_date", "shop_id", "business_date"),
+        # "תאריך הפקת Z": the Zs a tenant produced in a local day or month, newest first
+        # (GET /z-reports?dateBasis=production, /z-reports/by-date/*) — a range on the instant.
+        Index("ix_z_reports_tenant_closed_at", "tenant_id", "closed_at"),
         # A shop's Z number names one document. Two rows with one number would make the
         # number meaningless, which is the one thing it exists to prevent.
         Index(
@@ -48,10 +51,13 @@ class ZReport(Base):
             "shop_sequence_number",
             unique=True,
         ),
-        # The same for a till's own run. Partial, so the cloud Zs (all NULL) are free.
+        # The same for a till's own run — per run (`machine_sequence_epoch`): an independent
+        # till starts again at 1 (docs/SPEC_INDEPENDENT_TILL.md §3.1). Partial, so the cloud
+        # Zs (all NULL) are free.
         Index(
             "uq_z_reports_machine_sequence",
             "machine_id",
+            "machine_sequence_epoch",
             "machine_sequence_number",
             unique=True,
             postgresql_where=text("machine_sequence_number IS NOT NULL"),
@@ -71,6 +77,9 @@ class ZReport(Base):
     #: A till Z's number in its till's own run — 1, 2, 3 … per till, gapless, never reset
     #: (`machine_z_sequences`). NULL on a cloud Z, whose number is the shop's.
     machine_sequence_number = Column(Integer, nullable=True)
+    #: The till's run this number is in (`machine_z_sequences.epoch`): 0 for its first,
+    #: one more each time it is made independent — which starts its Zs at 1 again.
+    machine_sequence_epoch = Column(Integer, nullable=False, default=0, server_default="0")
     #: The till's idempotency key for a till Z (`clientRequestId`): a retried request
     #: answers this row again instead of numbering a second Z. NULL on a cloud Z.
     client_request_id = Column(UUID(as_uuid=True), nullable=True)
@@ -87,6 +96,18 @@ class ZReport(Base):
     #: A till Z whose `till_totals` disagree with the built figures on a compared key.
     #: Shown, never a refusal: the figures are the cloud's either way.
     totals_mismatch = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: A till Z closed at the till with no connection to the cloud and uploaded later
+    #: (docs/SPEC_OFFLINE_TILL_Z.md): numbered by the till, built here from the documents
+    #: like any till Z, with what the till printed kept beside it (`offline_report`) and
+    #: every figure that differs listed (`offline_discrepancies`, null/empty = none).
+    built_offline = Column(Boolean, nullable=False, default=False, server_default="false")
+    uploaded_at = Column(DateTime(timezone=True), nullable=True)
+    offline_report = Column(JSONB, nullable=True)
+    offline_discrepancies = Column(JSONB, nullable=True)
+    #: The card batch transmission the till ran before this Z (doPeriodic), with the
+    #: terminal's answer — `{outcome, batchNumber, statusMessage, byBrand, …}`. Null when
+    #: the till sent none (a cloud Z, or a till from before it).
+    card_transmission = Column(JSONB, nullable=True)
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id"), nullable=True, index=True)
     #: The area the run that built it was for (`z_runs.area_id`); NULL for a whole-shop or
     #: hand-picked Z. Its name as of the build is frozen in `header.areaName`.

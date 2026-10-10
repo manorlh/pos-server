@@ -14,6 +14,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 import { Clock, Monitor, Receipt } from 'lucide-react';
 import { formatCurrency, formatDateTime } from '@/lib/format';
+import { useShowMoney } from './money-visibility';
 import type { TillNode } from '@/lib/overview';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -63,6 +64,7 @@ export function TillDetails({
   companyId: string;
 }) {
   const t = useTranslations('dashboard.overview.details');
+  const money = useShowMoney();
   const m = till.live;
   const id = till.sales.id;
   const scopeQuery = new URLSearchParams({ company: companyId, shop: shopId, machine: id }).toString();
@@ -85,14 +87,16 @@ export function TillDetails({
         </Section>
       ) : null}
 
-      <Section title={t('salesToday')}>
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-xl font-bold tabular-nums">{formatCurrency(till.sales.salesToday)}</span>
-          <span className="text-xs text-muted-foreground">
-            {t('documentsToday', { count: till.sales.documentsToday })}
-          </span>
-        </div>
-      </Section>
+      {money ? (
+        <Section title={t('salesToday')}>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xl font-bold tabular-nums">{formatCurrency(till.sales.salesToday)}</span>
+            <span className="text-xs text-muted-foreground">
+              {t('documentsToday', { count: till.sales.documentsToday })}
+            </span>
+          </div>
+        </Section>
+      ) : null}
 
       <Section title={t('shift')}>
         {m && m.shiftStatus === 'open' ? (
@@ -102,7 +106,7 @@ export function TillDetails({
             </div>
             {m.openedBy ? <Row label={t('openedBy')}>{m.openedBy}</Row> : null}
             {m.openedAt ? <Row label={t('openedAt')}>{formatDateTime(m.openedAt)}</Row> : null}
-            {till.sales.openShiftSales != null ? (
+            {money && till.sales.openShiftSales != null ? (
               <Row label={t('shiftSales')}>
                 <span className="font-semibold tabular-nums">{formatCurrency(till.sales.openShiftSales)}</span>
                 {till.sales.openShiftDocuments != null ? (

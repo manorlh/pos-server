@@ -1,0 +1,228 @@
+{
+  "status": 200,
+  "body": {
+    "kiosk": true,
+    "serverTime": "2026-10-06T14:06:32.607287+00:00",
+    "machineId": "549e903c-4aba-4528-bc4a-c61b4019a64e",
+    "name": "קיוסק Windows (בדיקת עשן)",
+    "configVersion": "c727da0ef0f5b92e",
+    "config": {
+      "general": {
+        "fulfillmentMode": "BON",
+        "serviceTypes": [
+          "take_away",
+          "eat_in"
+        ],
+        "askTableNumber": false,
+        "languages": [
+          "he"
+        ],
+        "skipCart": "off",
+        "upsellEnabled": true,
+        "servicePlacement": "after_start",
+        "searchEnabled": false,
+        "notesEnabled": true,
+        "quickNotesEnabled": true,
+        "showAllergens": true,
+        "showDietary": true,
+        "reduceMotion": false,
+        "offlineSound": false,
+        "blockWhenOffline": false,
+        "offlineNotice": false,
+        "soldOutMode": "disable"
+      },
+      "theme": {
+        "mode": "light",
+        "font": "system",
+        "primaryColor": "#1F6FEB",
+        "accentColor": "#16A34A",
+        "backgroundColor": null,
+        "surfaceColor": null,
+        "textColor": null,
+        "buttonColor": null,
+        "buttonTextColor": null,
+        "backgroundImage": null,
+        "logo": null,
+        "cornerRadius": 20,
+        "cardStyle": "elevated",
+        "buttonShape": "pill",
+        "gridDensity": "comfortable",
+        "imageRatio": "4:3",
+        "categoryStyle": "chips",
+        "categoryLayout": "side",
+        "uiStyle": "wolt",
+        "typeScale": "normal",
+        "typeWeight": "bold",
+        "cartStyle": "bar",
+        "animation": "lively",
+        "showDescriptions": true
+      },
+      "texts": {},
+      "screenImages": {},
+      "attract": {
+        "sections": [
+          "hero",
+          "promos",
+          "categories"
+        ],
+        "playlist": [],
+        "videoMuted": true,
+        "showHelp": true,
+        "cta": {
+          "size": "l",
+          "widthPct": 80,
+          "heightDp": 88,
+          "position": "bottom_center",
+          "x": 50,
+          "y": 85,
+          "fillColor": null,
+          "textColor": null,
+          "fontSize": 24,
+          "fontWeight": "bold",
+          "radius": null,
+          "borderColor": null,
+          "borderWidth": 0,
+          "shadow": true,
+          "icon": "none",
+          "iconPosition": "end",
+          "animation": "pulse",
+          "subtitle": "",
+          "tapAnywhere": true
+        }
+      },
+      "catalog": {
+        "categoryOrder": [],
+        "hiddenCategories": [],
+        "productOrder": {},
+        "hiddenProducts": [],
+        "categoryImages": {},
+        "featuredProductIds": [],
+        "oneCategory": true
+      },
+      "messages": [],
+      "hours": {
+        "enabled": false,
+        "ranges": [
+          {
+            "days": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "open": "08:00",
+            "close": "23:00"
+          }
+        ]
+      },
+      "payment": {
+        "methods": [
+          "card"
+        ],
+        "tipEnabled": false,
+        "tipPresets": [
+          10,
+          12,
+          15
+        ],
+        "receiptPolicy": "ask",
+        "customerName": "optional",
+        "customerPhone": "off",
+        "tableNumber": "off",
+        "detailsStep": "before_pay",
+        "minOrderAgorot": 0
+      },
+      "upsell": {
+        "rules": [],
+        "when": "add",
+        "maxShown": 1
+      },
+      "success": {
+        "message": "",
+        "image": null
+      },
+      "printing": {
+        "bonMode": "routing",
+        "bonPrinterId": null,
+        "bonCopies": 1,
+        "receiptPrinterId": null,
+        "pickupSlip": true
+      },
+      "pickup": {
+        "scope": "kiosk",
+        "prefix": "",
+        "start": 1,
+        "max": 999
+      },
+      "timers": {
+        "inactivitySec": 60,
+        "warningSec": 20,
+        "successSec": 12,
+        "attractSlideSec": 8
+      },
+      "club": {
+        "enabled": false,
+        "joinUrl": "",
+        "title": "",
+        "body": ""
+      },
+      "operations": {
+        "autoCloseAt": "",
+        "pausedTitle": "",
+        "pausedBody": "",
+        "closeWithShopZ": false
+      },
+      "alerts": {
+        "printer": {
+          "tills": "main",
+          "machineIds": [],
+          "audience": "everyone"
+        },
+        "terminal": {
+          "tills": "main",
+          "machineIds": [],
+          "audience": "everyone"
+        },
+        "help": {
+          "tills": "main",
+          "machineIds": [],
+          "audience": "everyone",
+          "clearAfterMin": 10
+        }
+      }
+    },
+    "font": {
+      "id": "system",
+      "label": "ברירת מחדל של המכשיר",
+      "cssFamily": "system-ui",
+      "regular": null,
+      "bold": null,
+      "variable": false
+    },
+    "media": [],
+    "state": {
+      "paused": false,
+      "message": null,
+      "since": null,
+      "by": null,
+      "until": null,
+      "mode": null
+    },
+    "operator": {
+      "id": "kiosk:549e903c-4aba-4528-bc4a-c61b4019a64e",
+      "name": "קיוסק Windows (בדיקת עשן)"
+    },
+    "kdsAvailable": false,
+    "controls": [],
+    "alerts": {
+      "open": [
+        "terminal"
+      ],
+      "help": null
+    },
+    "closeRequest": null
+  }
+}

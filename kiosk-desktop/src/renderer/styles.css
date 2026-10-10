@@ -1,0 +1,28 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* The shared screens live with the dashboard: Tailwind scans them for their classes too. */
+@source '../../../client/src/components/dashboard/kiosks/preview-screens.tsx';
+@source '../../../client/src/components/dashboard/kiosks/preview-entry.tsx';
+@source '../../../client/src/kiosk-shared';
+
+html,
+body {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+/* Scrolling as smooth as the till's lists: composited, no scrollbars, momentum. */
+.k-root .overflow-y-auto,
+.k-root .overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  will-change: scroll-position;
+}
+
+.k-root img {
+  -webkit-user-drag: none;
+}

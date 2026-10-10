@@ -16,7 +16,9 @@ import type {
   PrinterConnectionType,
   PrinterHostConnection,
   PrinterPurpose,
+  PrintWidthDots,
 } from '@/lib/kitchenPrintersApi';
+import { PRINT_WIDTHS } from '@/lib/kitchenPrintersApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,8 +32,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Radar } from 'lucide-react';
+import { NetworkScanDialog } from './network-scan';
 
 const NONE = 'none';
+const AUTO_WIDTH = 'auto';
 const MAC_RE = /^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$/;
 
 export interface Option {
@@ -87,27 +92,37 @@ interface FormState {
   hostConnection: PrinterHostConnection;
   scope: string; // 'shop' | 'area:<id>' | 'machine:<id>'
   paperWidth: '58' | '80';
+  /** 'auto' — by the paper; else dots. */
+  printWidth: string;
   copies: string;
   cutPaper: boolean;
   beep: boolean;
   isActive: boolean;
 }
 
-function initial(printer: KitchenPrinter | null, purpose: PrinterPurpose): FormState {
+/** A printer the network scan found ("חיפוש ברשת"): fills a new printer's address. */
+export interface PrinterPrefill {
+  host: string;
+  port: number;
+  name?: string | null;
+}
+
+function initial(printer: KitchenPrinter | null, purpose: PrinterPurpose, prefill?: PrinterPrefill | null): FormState {
   if (!printer) {
     return {
-      name: '',
+      name: prefill?.name ?? '',
       purpose,
       cashDrawer: purpose === 'receipt',
       connectionType: 'network',
-      host: '',
-      port: '9100',
+      host: prefill?.host ?? '',
+      port: String(prefill?.port ?? 9100),
       btAddress: '',
       btName: '',
       hostMachineId: NONE,
       hostConnection: 'till',
       scope: 'shop',
       paperWidth: '80',
+      printWidth: AUTO_WIDTH,
       copies: '1',
       cutPaper: true,
       beep: false,
@@ -127,6 +142,7 @@ function initial(printer: KitchenPrinter | null, purpose: PrinterPurpose): FormS
     hostConnection: printer.hostConnection ?? 'till',
     scope: printer.machineId ? `machine:${printer.machineId}` : printer.areaId ? `area:${printer.areaId}` : 'shop',
     paperWidth: printer.paperWidth === 58 ? '58' : '80',
+    printWidth: printer.printWidthDots ? String(printer.printWidthDots) : AUTO_WIDTH,
     copies: String(printer.copies),
     cutPaper: printer.cutPaper,
     beep: printer.beep,
@@ -142,6 +158,7 @@ export function PrinterDialog({
   saving,
   onClose,
   onSave,
+  prefill,
 }: {
   open: boolean;
   printer: KitchenPrinter | null;
@@ -151,10 +168,13 @@ export function PrinterDialog({
   saving: boolean;
   onClose: () => void;
   onSave: (body: KitchenPrinterInput) => void;
+  /** A new printer found by the network scan. */
+  prefill?: PrinterPrefill | null;
 }) {
   const t = useTranslations('kitchenPrinters');
   const tc = useTranslations('common');
-  const [form, setForm] = useState<FormState>(() => initial(printer, purpose));
+  const [form, setForm] = useState<FormState>(() => initial(printer, purpose, prefill));
+  const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
@@ -191,6 +211,8 @@ export function PrinterDialog({
     { value: 'till', label: t('hostConnections.till') },
     { value: 'network', label: t('hostConnections.network') },
     { value: 'bluetooth', label: t('hostConnections.bluetooth') },
+    // A printer on the host till's own USB port (a kiosk's bon on a till's local printer).
+    { value: 'usb', label: t('hostConnections.usb') },
   ];
   const scopeOptions: Option[] = [
     { value: 'shop', label: t('scopeShop') },
@@ -233,6 +255,8 @@ export function PrinterDialog({
       areaId: scopeType === 'area' ? scopeId : null,
       machineId: scopeType === 'machine' ? scopeId : null,
       paperWidth: form.paperWidth === '58' ? 58 : 80,
+      printWidthDots:
+        reach === 'till' || form.printWidth === AUTO_WIDTH ? null : (Number(form.printWidth) as PrintWidthDots),
       copies,
       cutPaper: form.cutPaper,
       beep: form.beep,
@@ -316,6 +340,28 @@ export function PrinterDialog({
           )}
 
           {reach === 'network' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => setScanning(true)}>
+                <Radar className="h-4 w-4" /> {t('scan.button')}
+              </Button>
+              <span className="text-xs text-muted-foreground">{t('scan.dialogHint')}</span>
+            </div>
+          )}
+          {scanning && (
+            <NetworkScanDialog
+              shopId={page.shopId}
+              onClose={() => setScanning(false)}
+              onChoose={(p) =>
+                set({
+                  host: p.host,
+                  port: String(p.port),
+                  name: form.name.trim() ? form.name : (p.name ?? p.model ?? form.name),
+                })
+              }
+            />
+          )}
+
+          {reach === 'network' && (
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2 space-y-1">
                 <Label htmlFor="kp-host">{t('fields.address')}</Label>
@@ -395,6 +441,22 @@ export function PrinterDialog({
               </div>
             )}
           </div>
+
+          {reach !== 'till' && (
+            <div className="space-y-1">
+              <Label>{t('fields.printWidth')}</Label>
+              <SimpleSelect
+                value={form.printWidth}
+                onChange={(v) => set({ printWidth: v })}
+                options={[
+                  { value: AUTO_WIDTH, label: t('printWidths.auto') },
+                  ...PRINT_WIDTHS.map((dots) => ({ value: String(dots), label: t('printWidths.dots', { dots }) })),
+                ]}
+                ariaLabel={t('fields.printWidth')}
+              />
+              <p className="text-xs text-muted-foreground">{t('printWidthHint')}</p>
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-6">
             <label className="flex items-center gap-2 text-sm">

@@ -212,12 +212,34 @@ def company_depth(db: Session, company_id) -> int:
 # cashier are scoped to one shop; their `company_id` only exists so they can read the
 # name and VAT number their receipts are printed with. Handing them a subsidiary's
 # company rows would widen their reach for no use case anybody asked for.
+#
+# "הרשאות דשבורד" (app/services/dashboard_access.py): a company manager's profile may set
+# their org scope — every company of their organizations ("מנהל ארגון"), a list of
+# companies (each with its subsidiaries), and/or only some shops. It is read here, in the
+# helpers every scoped read and every access check already goes through, so the narrowing
+# cannot be skipped by one router. No profile scope = the role's own, exactly as before.
+
+
+def _profile_scope(db: Session, user: User):
+    from app.services.dashboard_access import profile_scope
+
+    return profile_scope(db, user)
 
 
 def company_scope_ids(db: Session, user: User) -> List[uuid.UUID]:
     """Company ids this user's own company-level scope covers (for `IN (...)` filters)."""
     own = getattr(user, "company_id", None)
     if getattr(user, "role", None) == UserRole.COMPANY_MANAGER:
+        scope = _profile_scope(db, user)
+        if scope is not None and scope.org_wide:
+            from app.services.dashboard_access import org_company_ids
+
+            return _dedupe(org_company_ids(db, user))
+        if scope is not None and scope.company_ids:
+            ids: List[uuid.UUID] = []
+            for root in scope.company_ids:
+                ids.extend(descendant_company_ids(db, root))
+            return _dedupe(ids)
         return descendant_company_ids(db, own)
     parsed = _as_uuid(own)
     return [parsed] if parsed is not None else []
@@ -247,6 +269,14 @@ def catalog_company_ids(db: Session, user: User) -> Optional[List[uuid.UUID]]:
         return None
 
     if role == UserRole.COMPANY_MANAGER:
+        scope = _profile_scope(db, user)
+        if scope is not None and (scope.org_wide or scope.company_ids):
+            # Each company of the scope, its subsidiaries and what it inherits from above.
+            out: List[uuid.UUID] = []
+            for cid in company_scope_ids(db, user):
+                out.append(cid)
+                out.extend(ancestor_company_ids(db, cid))
+            return _dedupe(out)
         own = getattr(user, "company_id", None)
         return _dedupe(descendant_company_ids(db, own) + ancestor_company_ids(db, own))
 
@@ -299,14 +329,33 @@ def catalog_visibility_filter(db: Session, user: User, model):
 def user_covers_company(db: Session, user: User, company_id) -> bool:
     """Does this user's company scope reach `company_id`?"""
     own = getattr(user, "company_id", None)
-    if own is not None and company_id is not None and str(own) == str(company_id):
+    scope = _profile_scope(db, user)
+    if scope is None and own is not None and company_id is not None and str(own) == str(company_id):
         return True  # fast path: the common case never touches the database
     if getattr(user, "role", None) != UserRole.COMPANY_MANAGER:
         return False
     target = _as_uuid(company_id)
     if target is None:
         return False
+    if scope is not None:
+        return target in set(company_scope_ids(db, user))
     return target in set(descendant_company_ids(db, own))
+
+
+def user_covers_shop(db: Session, user: User, shop) -> bool:
+    """
+    Does a company-level manager's scope reach this shop (a `Shop`, or anything with
+    `id` and `company_id`)? Their company scope must cover its company and, when their
+    profile lists shops, it must be one of them. The shop-level roles' own rule
+    (`shop.id == user.shop_id`) stays at the call sites.
+    """
+    if shop is None:
+        return False
+    if not user_covers_company(db, user, getattr(shop, "company_id", None)):
+        return False
+    from app.services.dashboard_access import shop_allowed
+
+    return shop_allowed(db, user, getattr(shop, "id", None))
 
 
 def user_may_use_machine(db: Session, user: User, machine) -> bool:
@@ -322,7 +371,7 @@ def user_may_use_machine(db: Session, user: User, machine) -> bool:
         return True
     shop = getattr(machine, "shop", None)
     if role == UserRole.COMPANY_MANAGER and shop is not None:
-        return user_covers_company(db, user, shop.company_id)
+        return user_covers_shop(db, user, shop)
     if role in SHOP_SCOPED_ROLES:
         own_shop = getattr(user, "shop_id", None)
         machine_shop = getattr(machine, "shop_id", None)
@@ -340,4 +389,8 @@ def visible_shop_ids(db: Session, user: User) -> Query:
     Returned as a query, not a list, so callers keep the existing
     `filter(X.shop_id.in_(shop_ids))` shape and Postgres sees one statement.
     """
-    return db.query(Shop.id).filter(Shop.company_id.in_(company_scope_ids(db, user)))
+    query = db.query(Shop.id).filter(Shop.company_id.in_(company_scope_ids(db, user)))
+    scope = _profile_scope(db, user)
+    if scope is not None and scope.shop_ids:
+        query = query.filter(Shop.id.in_(list(scope.shop_ids)))
+    return query

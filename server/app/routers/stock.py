@@ -13,7 +13,7 @@ from app.models.stock_movement import StockMovementReason
 from app.models.user import User, UserRole
 from app.services.permission_matrix import Action, Resource, roles_for
 from app.routers.shops import _check_shop_access
-from app.services.company_hierarchy import user_covers_company
+from app.services.company_hierarchy import user_covers_shop
 from app.schemas.stock import (
     AdjustmentRequest,
     GoodsReceiptRequest,
@@ -37,7 +37,7 @@ _STOCK_WRITE_ROLES = roles_for(Resource.STOCK, Action.WRITE)
 def _check_stock_write(user: User, shop: Shop, db: Session) -> None:
     if user.role not in _STOCK_WRITE_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    if user.role == UserRole.COMPANY_MANAGER and not user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and not user_covers_shop(db, user, shop):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     if user.role == UserRole.SHOP_MANAGER and shop.id != user.shop_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
@@ -76,6 +76,42 @@ def list_shop_stock(
     ]
 
 
+def _update_through_locations(
+    db: Session, user: User, shop: Shop, *, product_id, op: str, quantity: Decimal, note
+) -> StockLevelOut:
+    """
+    The shop page's receipt / adjustment / stocktake, through the stock screens' one write path
+    (app/services/stock_admin.py `update`): the tenant's own product, the location the shop's stock
+    is managed at (with stock locations off: the shop, as always), the user's scope — never a write to
+    a shop row that no longer holds the product's stock.
+    """
+    from app.services import stock_admin
+    from app.services import stock_locations as L
+    from app.services.stock import level_at
+    from app.services.stock_locations import Location
+
+    path = L.path_of(db, "shop", shop.id)
+    out = stock_admin.update(
+        db, user, shop.tenant_id, path, product_id=product_id, op=op, quantity=Decimal(str(quantity)), note=note,
+    )
+    db.commit()
+    notify_machines_for_shop(db, str(shop.id), reason="stock_updated")
+    level = level_at(db, Location(out["location"]["level"], uuid.UUID(out["location"]["targetId"])), uuid.UUID(out["productId"]))
+    if level is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock level not found")
+    db.refresh(level)
+    return StockLevelOut(
+        product_id=level.product_id,
+        product_name=level.product.name if level.product else None,
+        sku=level.product.sku if level.product else None,
+        quantity=level.quantity,
+        reorder_min=level.reorder_min,
+        reorder_max=level.reorder_max,
+        reorder_opt=level.reorder_opt,
+        updated_at=level.updated_at,
+    )
+
+
 @router.post(
     "/shops/{shop_id}/stock/goods-receipt",
     response_model=StockLevelOut,
@@ -91,35 +127,8 @@ def goods_receipt(
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
     _check_stock_write(current_user, shop, db)
-
-    apply_movement(
-        db,
-        movement_id=uuid.uuid4(),
-        tenant_id=shop.tenant_id,
-        shop_id=shop.id,
-        product_id=body.product_id,
-        delta=body.quantity,
-        reason=StockMovementReason.GOODS_RECEIPT,
-        occurred_at=utc_now(),
-        created_by_user_id=current_user.id,
-        note=body.note,
-    )
-    db.commit()
-    notify_machines_for_shop(db, str(shop.id), reason="stock_updated")
-
-    levels = get_levels_for_shop(db, shop.id)
-    match = next((l for l in levels if str(l.product_id) == str(body.product_id)), None)
-    if not match:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock level not found")
-    return StockLevelOut(
-        product_id=match.product_id,
-        product_name=match.product.name if match.product else None,
-        sku=match.product.sku if match.product else None,
-        quantity=match.quantity,
-        reorder_min=match.reorder_min,
-        reorder_max=match.reorder_max,
-        reorder_opt=match.reorder_opt,
-        updated_at=match.updated_at,
+    return _update_through_locations(
+        db, current_user, shop, product_id=body.product_id, op="receive", quantity=body.quantity, note=body.note,
     )
 
 
@@ -141,35 +150,9 @@ def adjustment(
 
     if body.delta == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Delta cannot be zero")
-
-    apply_movement(
-        db,
-        movement_id=uuid.uuid4(),
-        tenant_id=shop.tenant_id,
-        shop_id=shop.id,
-        product_id=body.product_id,
-        delta=body.delta,
-        reason=StockMovementReason.ADJUSTMENT,
-        occurred_at=utc_now(),
-        created_by_user_id=current_user.id,
-        note=body.note,
-    )
-    db.commit()
-    notify_machines_for_shop(db, str(shop.id), reason="stock_updated")
-
-    levels = get_levels_for_shop(db, shop.id)
-    match = next((l for l in levels if str(l.product_id) == str(body.product_id)), None)
-    if not match:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock level not found")
-    return StockLevelOut(
-        product_id=match.product_id,
-        product_name=match.product.name if match.product else None,
-        sku=match.product.sku if match.product else None,
-        quantity=match.quantity,
-        reorder_min=match.reorder_min,
-        reorder_max=match.reorder_max,
-        reorder_opt=match.reorder_opt,
-        updated_at=match.updated_at,
+    delta = Decimal(str(body.delta))
+    return _update_through_locations(
+        db, current_user, shop, product_id=body.product_id, op="add" if delta > 0 else "remove", quantity=abs(delta), note=body.note,
     )
 
 
@@ -188,29 +171,6 @@ def stocktake(
     shop = _get_shop_or_404(db, shop_id, active_tenant_id)
     _check_shop_access(current_user, shop, db)
     _check_stock_write(current_user, shop, db)
-
-    level = set_quantity(
-        db,
-        tenant_id=shop.tenant_id,
-        shop_id=shop.id,
-        product_id=body.product_id,
-        target_quantity=body.quantity,
-        created_by_user_id=current_user.id,
-        note=body.note,
-    )
-    db.commit()
-    notify_machines_for_shop(db, str(shop.id), reason="stock_updated")
-
-    if not level:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stock level not found")
-    db.refresh(level)
-    return StockLevelOut(
-        product_id=level.product_id,
-        product_name=level.product.name if level.product else None,
-        sku=level.product.sku if level.product else None,
-        quantity=level.quantity,
-        reorder_min=level.reorder_min,
-        reorder_max=level.reorder_max,
-        reorder_opt=level.reorder_opt,
-        updated_at=level.updated_at,
+    return _update_through_locations(
+        db, current_user, shop, product_id=body.product_id, op="count", quantity=body.quantity, note=body.note,
     )

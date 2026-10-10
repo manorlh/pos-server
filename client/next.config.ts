@@ -36,6 +36,30 @@ const nextConfig: NextConfig = {
           { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
         ],
       },
+      // The browser kiosk's own worker (scope /k, docs/SPEC_KIOSK.md §27): fresh on every check too.
+      {
+        source: '/kiosk-sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+        ],
+      },
+      {
+        source: '/k.webmanifest',
+        headers: [{ key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' }],
+      },
+      // The browser KDS and board's worker (scopes /kds, /board — docs/SPEC_KDS.md §13) and manifests.
+      {
+        source: '/screens-sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+        ],
+      },
+      {
+        source: '/:screen(kds|board).webmanifest',
+        headers: [{ key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' }],
+      },
     ];
   },
   async redirects() {

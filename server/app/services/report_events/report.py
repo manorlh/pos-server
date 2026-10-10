@@ -142,7 +142,7 @@ def load_docs(db: Session, event: ReportEvent, machine_ids: Sequence[uuid.UUID])
         .filter(
             Transaction.machine_id.in_(list(machine_ids)),
             Transaction.tenant_id == event.tenant_id,
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             Transaction.created_at >= utc(event.starts_at),
             Transaction.created_at < utc(event.ends_at),
         )
@@ -153,7 +153,10 @@ def load_docs(db: Session, event: ReportEvent, machine_ids: Sequence[uuid.UUID])
     for chunk in chunks([t.id for t in txs]):
         for leg in db.query(TransactionPayment).filter(TransactionPayment.transaction_id.in_(list(chunk))).all():
             legs[leg.transaction_id].append(leg)
-    return [make_doc(t, legs.get(t.id, [])) for t in txs]
+    from app.services.shift_totals import production_deductions_of
+
+    deductions = production_deductions_of(db, [t.id for t in txs])
+    return [make_doc(t, legs.get(t.id, []), deductions.get(t.id, Decimal("0"))) for t in txs]
 
 
 def _bucket_start(moment: datetime, minutes: int) -> datetime:
@@ -214,7 +217,10 @@ def build_items(db: Session, docs: Sequence[Doc], machines: Dict[str, POSMachine
             value = -dec(line.total_price)
             qty = -qty
         else:
-            value = dec(line.total_price) - dec(line.discount) - dec(line.promotion_discount)
+            value = (
+                dec(line.total_price) - dec(line.discount) - dec(line.promotion_discount)
+                - dec(getattr(line, "voucher_discount", None))
+            )
         row = acc.setdefault(key, {
             "key": key, "name": name, "categoryId": cat, "categoryName": cats.get(cat) if cat else None,
             "quantity": ZERO, "sold": ZERO, "refunded": ZERO, "revenue": ZERO, "lines": 0,
@@ -347,7 +353,7 @@ def _baseline_avg_ticket(db: Session, event: ReportEvent) -> Optional[float]:
         .filter(
             Transaction.shop_id == event.shop_id,
             Transaction.tenant_id == event.tenant_id,
-            Transaction.status.in_(SALE_STATUSES),
+            Transaction.status.in_(SALE_STATUSES), Transaction.duplicate_copy.is_(False),
             sale_condition(),
             Transaction.created_at >= start - timedelta(days=BASELINE_DAYS),
             Transaction.created_at < start,

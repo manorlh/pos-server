@@ -20,6 +20,9 @@
  *   the person responsible for it is the worse failure.
  * * Within a shop, terminals sort by register number — till 1, 2, 3 — which is how the
  *   shop itself refers to them. The few without a number follow, by name.
+ * * A shop's screens — KDS kitchen screens and "מוכן / לא מוכן" boards — are not tills
+ *   (pos-server docs/SPEC_DEVICE_ROLE_MODEL.md §2.2): they follow the tills in their own
+ *   "מסכים" section and are not counted in the shop's tills or status tallies.
  *
  * Collapsed groups persist per shop in localStorage. The stored value is read while
  * rendering the group rather than pushed in from an effect: the machines query has not
@@ -30,8 +33,9 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Tv } from 'lucide-react';
 import type { Company, PosMachine, Shop } from '@/lib/types';
+import { splitDisplayDevices } from '@/lib/deviceProfile';
 import { buildCompanyTree, companyPathLabel } from '@/lib/companyTree';
 import { findBySameId } from '@/lib/entityLookup';
 import { compareByRegisterNumber } from '@/lib/registerNumber';
@@ -71,6 +75,8 @@ interface MachineGroup {
   shopName: string;
   unassigned: boolean;
   machines: PosMachine[];
+  /** KDS screens and boards: not tills — their own section, never in the tallies. */
+  screens: PosMachine[];
   tallies: Array<[MachineStatusValue, number]>;
 }
 
@@ -86,6 +92,14 @@ export interface MachinesTableProps {
   onAddMachineToShop: (shop: Shop, companyLabel: string) => void;
   /** Opens the terminal number dialog for every till of this shop. */
   onTerminalNumberForShop?: (shop: Shop) => void;
+  /**
+   * "שייך לאירוע" (feat/event-quick-assign): while set, each till (never a screen) gets a
+   * checkbox, and each shop a "all its tills" one.
+   */
+  selection?: {
+    selected: ReadonlySet<string>;
+    onToggle: (ids: string[], on: boolean) => void;
+  };
 }
 
 /**
@@ -131,8 +145,10 @@ export function MachinesTable({
   isDeviceOnline,
   onAddMachineToShop,
   onTerminalNumberForShop,
+  selection,
 }: MachinesTableProps) {
   const t = useTranslations('machines');
+  const tEvent = useTranslations('eventTills.assign');
   // Seeded from storage once, then owned outright — a toggle writes to both, so this
   // map is the only thing render reads.
   const [collapsed, setCollapsed] = useState<Map<string, boolean>>(readCollapsedAll);
@@ -163,6 +179,7 @@ export function MachinesTable({
           shopName: shop ? shop.name : m.shopId ? m.shopId : t('groupUnassigned'),
           unassigned: !m.shopId,
           machines: [],
+          screens: [],
           tallies: [],
         };
         byKey.set(key, group);
@@ -172,6 +189,10 @@ export function MachinesTable({
 
     const list = [...byKey.values()];
     for (const group of list) {
+      // Screens apart from the tills (they are not tills), by name.
+      const { tills, screens } = splitDisplayDevices(group.machines);
+      group.machines = tills;
+      group.screens = screens.sort((a, b) => a.name.localeCompare(b.name, 'he-IL', { sensitivity: 'base' }));
       // Register number first — the shop's tills read 1, 2, 3 — then by name for the
       // few without one.
       group.machines.sort((a, b) =>
@@ -268,9 +289,58 @@ export function MachinesTable({
                 : undefined
             }
           />
+          {selection && !isCollapsed(group.key) && group.shop && group.machines.length > 0 ? (
+            <label className="flex cursor-pointer items-center gap-2 border-b bg-[#007AFF]/5 px-3 py-1.5 text-xs">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-[#007AFF]"
+                checked={group.machines.every((m) => selection.selected.has(m.id))}
+                onChange={(e) => selection.onToggle(group.machines.map((m) => m.id), e.target.checked)}
+              />
+              {tEvent('selectShop')} ({group.machines.length})
+            </label>
+          ) : null}
           {isCollapsed(group.key)
             ? null
-            : group.machines.map((m) => (
+            : group.machines.map((m) => {
+                const row = (
+                  <MachineRow
+                    key={m.id}
+                    m={m}
+                    permissions={permissions}
+                    actions={actions}
+                    isDeviceOnline={isDeviceOnline}
+                    expanded={expandedRows.has(m.id)}
+                    onToggleExpanded={toggleRow}
+                  />
+                );
+                if (!selection || !m.shopId) return row;
+                return (
+                  <div key={m.id} className="flex items-stretch border-b last:border-b-0">
+                    <label className="flex shrink-0 cursor-pointer items-center ps-3 pe-1" aria-label={m.name}>
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[#007AFF]"
+                        checked={selection.selected.has(m.id)}
+                        onChange={(e) => selection.onToggle([m.id], e.target.checked)}
+                      />
+                    </label>
+                    <div className="min-w-0 flex-1">{row}</div>
+                  </div>
+                );
+              })}
+          {!isCollapsed(group.key) && group.screens.length > 0 ? (
+            <div className="border-t border-dashed">
+              <div
+                className="flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-sky-50/60 px-3 py-1.5 text-xs dark:bg-sky-950/30"
+                title={t('deviceRole.screensGroupHint')}
+              >
+                <Tv className="h-3.5 w-3.5 text-sky-700 dark:text-sky-300" aria-hidden />
+                <span className="font-medium">{t('deviceRole.screensGroup')}</span>
+                <span className="text-muted-foreground">({group.screens.length})</span>
+                <span className="text-muted-foreground">· {t('deviceRole.screensGroupHint')}</span>
+              </div>
+              {group.screens.map((m) => (
                 <MachineRow
                   key={m.id}
                   m={m}
@@ -281,6 +351,8 @@ export function MachinesTable({
                   onToggleExpanded={toggleRow}
                 />
               ))}
+            </div>
+          ) : null}
         </section>
       ))}
     </div>

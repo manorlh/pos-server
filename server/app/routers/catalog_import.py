@@ -14,8 +14,13 @@ POST /catalog-import/preview?companyId=              (multipart `file`: xlsx or 
                                                       → row by row: create / update / unchanged
                                                         / error, warnings, a summary and a token
 POST /catalog-import/commit?companyId=               (multipart `file`, `token`, `skipErrors`)
-                                                      → applies it in one transaction and wakes
-                                                        the tills (catalog delta, printers)
+                                                      → downloads the pictures given by link,
+                                                        applies it in one transaction and wakes
+                                                        the tills (catalog delta - with the
+                                                        add-on layer and menus - and printers)
+
+The sheets: הוראות, מחלקות, פריטים, קבוצות תוספות, אפשרויות, הערות מהירות, מדפסות
+(app/services/catalog_sheet.py; the add-on layer: app/services/catalog_import_menu.py).
 POST /catalog-import/share-link?companyId=           → a signed, 7-day link to the blank template
 
 Public, no login - the link's signature is the credential, and it can only download:
@@ -270,8 +275,9 @@ def create_share_link(
 ):
     """
     A link to send the customer: downloads the blank template for 7 days, without a login.
-    It reveals the company's category and printer names and nothing else, and accepts no
-    upload. It stops working when it expires or when the issuer loses access.
+    It reveals the company's category, add-on group, catalog menu and printer names and
+    nothing else (no products, prices or option prices), and accepts no upload. It stops
+    working when it expires or when the issuer loses access.
     """
     company = _company(db, current_user, active_tenant_id, company_id)
     token, expires_at = svc.make_share_token(active_tenant_id, company.id, current_user.id)

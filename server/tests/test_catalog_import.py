@@ -195,9 +195,10 @@ def request(client="1.2.3.4") -> Request:
 
 
 class TestTemplate:
-    def test_four_sheets_right_to_left_with_frozen_styled_headers(self, w):
+    def test_the_sheets_right_to_left_with_frozen_styled_headers(self, w):
         wb = openpyxl.load_workbook(io.BytesIO(template(w)))
-        assert wb.sheetnames[:4] == [S.SHEET_INSTRUCTIONS, S.SHEET_CATEGORIES, S.SHEET_PRODUCTS, S.SHEET_PRINTERS]
+        assert wb.sheetnames[:7] == [S.SHEET_INSTRUCTIONS, S.SHEET_CATEGORIES, S.SHEET_PRODUCTS, S.SHEET_GROUPS,
+                                     S.SHEET_OPTIONS, S.SHEET_NOTES, S.SHEET_PRINTERS]
         assert wb[S.SHEET_LISTS].sheet_state == "hidden"
         for ws in wb.worksheets:
             assert ws.sheet_view.rightToLeft is True
@@ -243,9 +244,10 @@ class TestTemplate:
         assert [products.cell(r, 1).value for r in (2, 3, 4)] == ["דוגמה"] * 3
         assert products["B2"].font.color.rgb.endswith("8E8E93")
         out = preview(w, data)
-        assert out["summary"]["examplesSkipped"] == 6
+        # 3 categories, 3 products, 3 groups, 8 options and 3 quick notes.
+        assert out["summary"]["examplesSkipped"] == 20
         assert out["summary"]["productsNew"] == 0 and out["summary"]["errors"] == 0
-        assert out["products"] == []
+        assert out["products"] == [] and out["groups"] == [] and out["options"] == [] and out["notes"] == []
 
     def test_printers_sheet_lists_each_shops_printers_read_only(self, w):
         ws = openpyxl.load_workbook(io.BytesIO(template(w)))[S.SHEET_PRINTERS]

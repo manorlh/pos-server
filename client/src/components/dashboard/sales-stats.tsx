@@ -46,7 +46,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 
-const POLL_MS = 10_000;
+/**
+ * Today's figures, asked again every 30 s (was 10 s: two aggregations over the day's documents
+ * per open dashboard — P:/specs/performance-review-2026-10.md §5). Paused while the tab is
+ * hidden (React Query's default); on returning to the tab they are read at once.
+ */
+const POLL_MS = 30_000;
 /** Hex fallbacks — Recharts SVG fill is unreliable with bare CSS variables in some browsers. */
 const CHART_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#a855f7'];
 const PAYMENT_COLORS = {

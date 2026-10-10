@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Literal, Optional
 import uuid
 import re
@@ -17,6 +17,9 @@ class CategoryBase(BaseModel):
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
     ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
+    # "מחייב אישור מנהל במכירה": every product here and beneath it needs a manager's code at
+    # the till and is not on a kiosk (app/services/restricted_items.py).
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     is_active: bool = Field(True, alias="isActive")
     sort_order: int = Field(0, alias="sortOrder")
 
@@ -54,6 +57,8 @@ class CategoryUpdate(BaseModel):
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     # Item-ticket ("שובר") mode — see app/services/item_ticket.py. Null is "off".
     ticket_mode: Optional[TicketMode] = Field(None, alias="ticketMode")
+    # "מחייב אישור מנהל במכירה": omitted (or null) — left as it is.
+    requires_manager_approval: Optional[bool] = Field(None, alias="requiresManagerApproval")
     is_active: Optional[bool] = Field(None, alias="isActive")
     sort_order: Optional[int] = Field(None, alias="sortOrder")
     # Kitchen / bar printers ("מדפסות בונים") in the writing till's shop — applied by the
@@ -73,6 +78,13 @@ class CategoryUpdate(BaseModel):
         if v is not None and not re.match(r"^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$", v):
             raise ValueError("Color must be a valid hex color code (e.g., #RRGGBB or #RGB)")
         return v
+
+    @model_validator(mode="after")
+    def _approval_null_is_unchanged(self):
+        # The column is NOT NULL: an explicit null means "leave it", like an omitted key.
+        if self.requires_manager_approval is None:
+            self.__pydantic_fields_set__.discard("requires_manager_approval")
+        return self
 
     class Config:
         populate_by_name = True
@@ -138,6 +150,8 @@ class CategoryResponse(BaseModel):
     parent_id: Optional[uuid.UUID] = Field(None, alias="parentId")
     voucher_id: Optional[uuid.UUID] = Field(None, alias="voucherId")
     ticket_mode: Optional[str] = Field(None, alias="ticketMode")
+    #: The category's own flag (a parent may restrict it too).
+    requires_manager_approval: bool = Field(False, alias="requiresManagerApproval")
     is_active: bool = Field(..., alias="isActive")
     sort_order: int = Field(..., alias="sortOrder")
     created_at: datetime = Field(..., alias="createdAt")
@@ -146,6 +160,11 @@ class CategoryResponse(BaseModel):
     #: Where it is switched off below the tenant — filled by the list only, for the
     #: dashboard's "not active at" badge. Empty when nowhere.
     inactive_at: List[CategoryInactiveAt] = Field(default_factory=list, alias="inactiveAt")
+
+    @field_validator("requires_manager_approval", mode="before")
+    @classmethod
+    def _flag_off(cls, v):
+        return bool(v)
 
     class Config:
         from_attributes = True

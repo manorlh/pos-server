@@ -15,10 +15,13 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, fetchCompanies } from '@/lib/api';
+import { branchCodeError, branchCodeInput, normalizeBranchCode } from '@/lib/branchCode';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
-import { withoutTrainingFields } from '@/lib/trainingMode';
+import { TRAINING_MODE_AVAILABLE, withoutTrainingFields } from '@/lib/trainingMode';
+import type { PaymentIntegration } from '@/lib/paymentIntegration';
 import type { Company, Shop } from '@/lib/types';
+import { ShopPaymentIntegrationSelect } from '@/components/payment-integration-section';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -101,9 +104,15 @@ function ShopForm({
   );
   const isNew = !draft.id;
   const isSuperAdmin = useIsSuperAdmin();
-  // A new shop opens in training mode unless unticked; an existing one changes it on the
+  // A new shop may open in training mode once the devices implement it (off and disabled
+  // until then: a practice sale would be a real document); an existing one changes it on the
   // shop page's "מצב הדרכה" card, never through this form.
-  const [trainingMode, setTrainingMode] = useState(true);
+  const [trainingMode, setTrainingMode] = useState(TRAINING_MODE_AVAILABLE);
+  // "סוג אינטגרציית אשראי" for all the new shop's tills; changed later in its settings.
+  const [paymentIntegration, setPaymentIntegration] = useState<PaymentIntegration>('auto');
+  // "קוד סניף": mandatory, digits 1–7 (the server also checks it is unique in the company).
+  const [branchTouched, setBranchTouched] = useState(false);
+  const branchError = branchCodeError(draft.branchId);
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -117,8 +126,12 @@ function ShopForm({
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
       const payload = {
         ...withoutTrainingFields(withoutLicense(s)),
+        // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts).
+        branchId: normalizeBranchCode(s.branchId),
         ...licensePayload(s, isSuperAdmin),
-        ...(s.id ? {} : { trainingMode }),
+        ...(s.id || !TRAINING_MODE_AVAILABLE ? {} : { trainingMode }),
+        // "אוטומטי" stores nothing, so it is not sent.
+        ...(s.id || paymentIntegration === 'auto' ? {} : { paymentIntegration }),
       };
       const { data } = s.id
         ? await api.put<Shop>(`/shops/${s.id}`, payload)
@@ -183,13 +196,29 @@ function ShopForm({
           </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1">
-            <Label>{t('branchId')}</Label>
+          <div className="col-span-2 space-y-1">
+            <Label htmlFor="shop-branch-id">
+              {t('branchId')} <span className="text-destructive">*</span>
+            </Label>
             <Input
+              id="shop-branch-id"
               value={draft.branchId ?? ''}
+              inputMode="numeric"
+              dir="ltr"
+              required
+              aria-invalid={branchError !== null && branchTouched}
               placeholder={t('branchIdPlaceholder')}
-              onChange={(e) => setDraft((s) => ({ ...s, branchId: e.target.value }))}
+              onChange={(e) => {
+                setBranchTouched(true);
+                setDraft((s) => ({ ...s, branchId: branchCodeInput(e.target.value) }));
+              }}
             />
+            <p className="text-muted-foreground text-xs">{t('branchIdHint')}</p>
+            {branchError && branchTouched ? (
+              <p className="text-destructive text-xs">
+                {branchError === 'required' ? t('branchIdRequired') : t('branchIdInvalid')}
+              </p>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label>{t('city')}</Label>
@@ -212,10 +241,20 @@ function ShopForm({
               <Label htmlFor="shop-training-mode" className="cursor-pointer">
                 {tTraining('createSwitch')}
               </Label>
-              <p className="mt-0.5 text-xs text-muted-foreground">{tTraining('createHint')}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {TRAINING_MODE_AVAILABLE ? tTraining('createHint') : tTraining('createUnavailable')}
+              </p>
             </div>
-            <Switch id="shop-training-mode" checked={trainingMode} onCheckedChange={setTrainingMode} />
+            <Switch
+              id="shop-training-mode"
+              checked={trainingMode}
+              onCheckedChange={setTrainingMode}
+              disabled={!TRAINING_MODE_AVAILABLE}
+            />
           </div>
+        ) : null}
+        {isNew ? (
+          <ShopPaymentIntegrationSelect value={paymentIntegration} onChange={setPaymentIntegration} />
         ) : null}
         <LicenseFields
           idPrefix="shop"
@@ -227,7 +266,10 @@ function ShopForm({
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button onClick={() => save.mutate(draft)} disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin)}>
+        <Button
+          onClick={() => save.mutate(draft)}
+          disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin) || branchError !== null}
+        >
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
       </DialogFooter>

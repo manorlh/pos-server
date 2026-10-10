@@ -41,9 +41,26 @@ export interface TrainingModeStatus {
   endedBy: TrainingUserRef | null;
   /** May turn it on and off (super admin, dealer, or a manager who manages the shop). */
   canManage: boolean;
+  /**
+   * False while no device implements training mode (server `training_mode.AVAILABLE`): it
+   * cannot be turned on — 409 `training_not_available` — since a practice sale would be a
+   * real tax document. Turning it off stays open.
+   */
+  available?: boolean;
   counts: TrainingCounts;
   /** Newest first, at most 20. */
   log: TrainingLogEntry[];
+}
+
+/**
+ * Whether a new shop may open in training mode: false while no device implements it (as the
+ * server's `training_mode.AVAILABLE`, which refuses it with 409 `training_not_available`).
+ */
+export const TRAINING_MODE_AVAILABLE = false;
+
+/** Whether "הפעל מצב הדרכה" may be offered: only a server that says so. */
+export function trainingCanBeEnabled(data: Pick<TrainingModeStatus, 'available'>): boolean {
+  return data.available === true;
 }
 
 export interface TrainingTillRef {

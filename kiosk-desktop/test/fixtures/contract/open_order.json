@@ -1,0 +1,43 @@
+{
+  "localId": "open-order-1",
+  "pickupNumber": 1,
+  "pickupLabel": "K-1",
+  "businessDate": "2026-10-07",
+  "serviceType": "take_away",
+  "tableRef": null,
+  "fulfillmentMode": "BON",
+  "configVersion": "v1",
+  "customerName": "דנה",
+  "customerPhone": null,
+  "itemCount": 3,
+  "totalAgorot": 5200,
+  "tipAgorot": 520,
+  "voucherAgorot": 0,
+  "dueAgorot": 5720,
+  "createdAt": "2026-10-07T09:30:00.000Z",
+  "lines": [
+    {
+      "name": "המבורגר",
+      "quantity": 1,
+      "totalAgorot": 4200,
+      "notes": "בלי בצל"
+    },
+    {
+      "name": "קולה",
+      "quantity": 2,
+      "totalAgorot": 1000
+    }
+  ],
+  "cart": {
+    "codec": "{\"cartId\":\"open-order-1\",\"lines\":[{\"id\":\"L1\",\"quantity\":1,\"unitPrice\":4200,\"discount\":0,\"discountType\":null,\"notes\":null,\"product\":\"{\\\"id\\\":\\\"p-burger\\\",\\\"cloudId\\\":\\\"p-burger\\\",\\\"name\\\":\\\"המבורגר\\\",\\\"sku\\\":\\\"1001\\\",\\\"categoryId\\\":\\\"c-main\\\",\\\"price\\\":4200,\\\"barcode\\\":null,\\\"imageUrl\\\":\\\"https://img.example/b.png\\\",\\\"localImagePath\\\":null,\\\"isAvailable\\\":true,\\\"inStock\\\":true,\\\"trackStock\\\":false,\\\"isOpenPrice\\\":false,\\\"isWeighed\\\":false,\\\"isGeneral\\\":false,\\\"unitLabel\\\":null,\\\"voucherId\\\":null,\\\"noDiscount\\\":false,\\\"allergens\\\":[\\\"gluten\\\"],\\\"courseId\\\":null}\",\"details\":{\"v\":1,\"basePrice\":42,\"modifiers\":[],\"noteText\":\"בלי בצל\"}},{\"id\":\"L2\",\"quantity\":2,\"unitPrice\":1000,\"discount\":0,\"discountType\":null,\"notes\":null,\"product\":\"{\\\"id\\\":\\\"p-cola\\\",\\\"cloudId\\\":\\\"p-cola\\\",\\\"name\\\":\\\"קולה\\\",\\\"sku\\\":\\\"2001\\\",\\\"categoryId\\\":\\\"c-drinks\\\",\\\"price\\\":1000,\\\"barcode\\\":null,\\\"imageUrl\\\":null,\\\"localImagePath\\\":null,\\\"isAvailable\\\":true,\\\"inStock\\\":true,\\\"trackStock\\\":false,\\\"isOpenPrice\\\":false,\\\"isWeighed\\\":false,\\\"isGeneral\\\":false,\\\"unitLabel\\\":null,\\\"voucherId\\\":null,\\\"noDiscount\\\":false,\\\"allergens\\\":[],\\\"courseId\\\":null}\",\"details\":null}]}",
+    "bon": {
+      "mode": "routing",
+      "printerId": null,
+      "copies": 1
+    },
+    "fulfillment": "BON"
+  },
+  "vouchers": [],
+  "kitchenSent": false,
+  "state": "open"
+}

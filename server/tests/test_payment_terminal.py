@@ -181,6 +181,79 @@ def test_a_till_without_a_shop_cannot_set_one(w):
     assert exc.value.status_code == 400
 
 
+# ── "חיבור USB": a Nayax C4 on the till's USB (`connection` "usb") ──────────────
+
+
+def test_usb_puts_the_till_on_its_usb_c4_with_no_address(w):
+    till, other = w.tills
+    out = _put(w, till, host="", connection="usb")  # as the till sends it
+    assert out == {"connection": "usb", "paymentIntegration": "nayax_usb", "usbDevice": None}
+    assert till.settings == {"paymentIntegration": "nayax_usb"}
+    assert till.settings_updated_at is not None
+    assert w.woken == [(str(till.id), "payment_terminal")]
+    pulled = _pulled(w, till)
+    assert pulled["paymentIntegration"] == "nayax_usb"
+    assert "nayaxUsbDevice" not in pulled  # the first CDC-ACM device
+    assert "paymentIntegration" not in _pulled(w, other)
+    # With the C4's ids (no host at all), kept when absent, removed by "".
+    out = _put(w, till, connection="USB", usbDevice="0b00:0080")
+    assert out["usbDevice"] == "0B00:0080"
+    assert _pulled(w, till)["nayaxUsbDevice"] == "0B00:0080"
+    _put(w, till, connection="usb")
+    assert till.settings["nayaxUsbDevice"] == "0B00:0080"
+    _put(w, till, connection="usb", usbDevice="")
+    assert "nayaxUsbDevice" not in till.settings
+
+
+def test_usb_keeps_the_network_address_and_a_p18_asks_for_none(w):
+    p18 = w.tills[0]
+    p18.device_model = "P18"
+    w.db.commit()
+    _put(w, p18, host="192.168.1.20")
+    _put(w, p18, connection="usb")
+    assert p18.settings["nayaxDeviceHost"] == "192.168.1.20"
+    assert p18.settings["paymentIntegration"] == "nayax_usb"
+    row = _row(w, p18)
+    assert (row["paymentIntegration"], row["pinpadRequired"], row["pinpadAddressMissing"]) == ("nayax_usb", False, False)
+
+
+def test_lan_moves_a_till_off_its_usb_c4(w):
+    till, other = w.tills
+    _put(w, till, connection="usb", usbDevice="0B00:0080")
+    out = _put(w, till, host="192.168.1.20", connection="lan")
+    # The answer is today's.
+    assert out == {"nayaxEnabled": True, "host": "192.168.1.20", "port": 8080, "path": "/SPICy"}
+    assert till.settings["paymentIntegration"] == "nayax_lan"
+    assert till.settings["nayaxDeviceHost"] == "192.168.1.20"
+    assert _pulled(w, till)["paymentIntegration"] == "nayax_lan"
+    # A USB C4 inherited from the shop: the till's own layer takes the network.
+    w.shop.settings = {"paymentIntegration": "nayax_usb"}
+    w.db.commit()
+    _put(w, other, host="10.0.0.5")
+    assert other.settings["paymentIntegration"] == "nayax_lan"
+    # A till on another integration keeps it, as before.
+    till.settings = {"paymentIntegration": "zcredit"}
+    w.db.commit()
+    _put(w, till, host="10.0.0.6")
+    assert till.settings["paymentIntegration"] == "zcredit"
+
+
+@pytest.mark.parametrize("body, code", [
+    ({"connection": "usb", "usbDevice": "COM3"}, "usb_device_invalid"),
+    ({"connection": "usb", "usbDevice": "0b00-0080"}, "usb_device_invalid"),
+    ({"connection": "wifi", "host": "10.0.0.5"}, "connection_invalid"),
+    ({"connection": "lan"}, "host_required"),
+    ({"host": ""}, "host_required"),
+])
+def test_usb_and_lan_refusals_write_nothing(w, body, code):
+    till = w.tills[0]
+    with pytest.raises(HTTPException) as exc:
+        _put(w, till, **body)
+    assert (exc.value.status_code, exc.value.detail) == (422, code)
+    assert not till.settings
+    assert w.woken == []
+
+
 # ── The machines list ────────────────────────────────────────────────────────
 
 

@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models.pairing_code import PairingCode
-from app.models.pos_machine import POSMachine, PairingStatus, detect_device_model
+from app.models.pos_machine import POSMachine, PairingStatus, paired_device_model
 from app.models.company import Company
 from app.models.shop import Shop
 from app.models.user import User
@@ -14,6 +14,7 @@ from app.models.tenant_membership import TenantMembership
 from app.models.shift import Shift, ShiftStatus
 from app.services.machine_health import serial_from_device_info
 from app.services.register_number import assign_register_number, set_machine_shop
+from app.services.machine_names import settle_default_name
 from app.services import machine_catalog, transmissions
 from app.services.shop_validation import shop_belongs_to_company
 import uuid
@@ -96,14 +97,28 @@ def create_pairing_code(
     target_machine_id: Optional[uuid.UUID] = None,
     untransmitted_acknowledged_by: Optional[uuid.UUID] = None,
     device_model: Optional[str] = None,
+    device_role: Optional[str] = None,
+    kiosk_options: Optional[dict] = None,
+    platform: Optional[str] = None,
+    kds_options: Optional[dict] = None,
+    work_config: Optional[dict] = None,
+    machine_name: Optional[str] = None,
 ) -> PairingCode:
     """
     Create a new pairing code, optionally with company/shop pre-assignment.
 
     `target_machine_id` makes it a *replacement* code: the device that redeems it adopts
     that existing machine row rather than creating a new one. See `validate_pairing_code`.
-    `device_model` ("N55F" | "MODO" | "P18") is copied onto the machine the code pairs,
-    unless the device names a model of its own (`detect_device_model`).
+    `device_model` (`DEVICE_MODELS`) is copied onto the machine the code pairs, unless the
+    device names a model of its own (`detect_device_model`). `device_role` "kiosk" (with
+    `kiosk_options`, checked by `device_profile.check_pairing_request`) makes the new
+    machine a kiosk as it pairs (docs/SPEC_DEVICE_ROLE_MODEL.md); "kds" /
+    "order_status_board" (with `kds_options`) a display device — not a till
+    (app/services/display_devices.py). `platform` ("android" | "windows") refuses a device
+    of the other platform; None checks nothing. `work_config` ("תצורת עבודה", checked by
+    `work_config.check_pairing_request`) is applied to the new machine right after it pairs.
+    `machine_name` (already cleaned, `machine_names.clean_machine_name`) is the name the new machine
+    gets, over a name the device sends itself; None leaves the default (docs/SPEC_PAIRING_QR.md §4).
     """
     code = generate_pairing_code()
     while db.query(PairingCode).filter(PairingCode.code == code).first():
@@ -127,6 +142,12 @@ def create_pairing_code(
             datetime.now(timezone.utc) if untransmitted_acknowledged_by is not None else None
         ),
         device_model=device_model,
+        device_role=device_role,
+        kiosk_options=kiosk_options,
+        platform=platform,
+        kds_options=kds_options,
+        work_config=work_config,
+        machine_name=machine_name,
         expires_at=expires_at,
         is_used=False,
     )
@@ -154,11 +175,25 @@ def validate_pairing_code(
     if datetime.now(timezone.utc) > pairing_code.expires_at:
         return None
 
+    # "התקנה לווינדוס או לאנדרואיד": a code for one platform refuses a device of the other —
+    # 422 `platform_mismatch` (`display_devices.PlatformMismatch`) before anything is created.
+    from app.services import display_devices
+
+    device_platform = display_devices.check_platform(pairing_code, device_info)
+
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
     )
+    # "שם המכשיר": the name typed in the add-device form wins over one the device sends (an older
+    # till names itself after its model); neither: the default, settled below.
+    machine_name = getattr(pairing_code, "machine_name", None) or machine_name
 
     if pairing_code.target_machine_id is not None:
+        # "הוחלפה קופה" (docs/SPEC_OFFLINE_TILL_Z.md §4.6.2): the old device, before the new
+        # one takes its place.
+        from app.services import till_replacement
+
+        replaced_before = till_replacement.snapshot(db, pairing_code.target_machine_id)
         pos_machine = adopt_machine(
             db,
             pairing_code.target_machine_id,
@@ -170,9 +205,14 @@ def validate_pairing_code(
             return None
         # The replacement unit may be other hardware; a code with no model, from a device
         # that does not name one, keeps the old one.
-        replacement_model = detect_device_model(device_info) or pairing_code.device_model
+        replacement_model = paired_device_model(device_info, pairing_code.device_model)
         if replacement_model:
             pos_machine.device_model = replacement_model
+        if pairing_code.device_model:
+            pos_machine.device_model_chosen = pairing_code.device_model
+        # The new unit's platform; its role and fiscal status are the row's own.
+        pos_machine.platform = device_platform
+        till_replacement.record(db, pos_machine, pairing_code, replaced_before, device_info=device_info)
     else:
         pos_machine = create_pos_machine(
             db,
@@ -181,6 +221,10 @@ def validate_pairing_code(
             device_info=device_info,
             machine_name=machine_name,
             device_model=pairing_code.device_model,
+            # "KDS ומסך מוכן / לא מוכן אינם מערכות קופה וחשבונאיות": a display code makes a
+            # non-fiscal machine from the start, so it never draws a register number.
+            is_fiscal=display_devices.is_fiscal_role(getattr(pairing_code, "device_role", None)),
+            platform=device_platform,
         )
 
     pairing_code.is_used = True
@@ -198,8 +242,38 @@ def validate_pairing_code(
         )
         if assigned:
             pos_machine = assigned
+            # A till that arrived with no name is "קופה N" now it has its number (a replacement keeps
+            # its row's own name; a kiosk or a screen is not a register).
+            if pairing_code.target_machine_id is None and settle_default_name(
+                pos_machine, role=getattr(pairing_code, "device_role", None)
+            ):
+                db.commit()
+                db.refresh(pos_machine)
+
+    # "סוג מכשיר (תפקיד)": a kiosk code makes the machine a kiosk now, in its shop, so the
+    # till's very first sync opens it as one (docs/SPEC_DEVICE_ROLE_MODEL.md). Never fails
+    # the pairing.
+    from app.services import device_profile
+
+    device_profile.apply_on_pairing(db, pairing_code, pos_machine)
+    # A KDS / board code: its screen row and `kdsScreen` (never fails the pairing; the
+    # machine is non-fiscal whatever happens there).
+    display_devices.apply_on_pairing(db, pairing_code, pos_machine)
+    # "תצורת עבודה" chosen in the dialog (docs/SPEC_DEVICE_WORK_CONFIG.md): last, once the
+    # machine is in its shop with its role. Never fails the pairing; the outcome is kept on
+    # the code for the device page.
+    from app.services import work_config
+
+    work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def _serial_source(device_info: Optional[dict]) -> Optional[str]:
+    """`device_info.serial_source`, beside a serial (app/services/device_identity.py)."""
+    from app.services.device_identity import serial_source_from_device_info
+
+    return serial_source_from_device_info(device_info)
 
 
 def create_pos_machine(
@@ -211,8 +285,16 @@ def create_pos_machine(
     machine_name: Optional[str] = None,
     pairing_session_id: Optional[uuid.UUID] = None,
     device_model: Optional[str] = None,
+    is_fiscal: bool = True,
+    platform: Optional[str] = None,
 ) -> POSMachine:
-    """Create a new POS machine row in PAIRED status (not yet assigned to a shop)."""
+    """
+    Create a new POS machine row in PAIRED status (not yet assigned to a shop).
+    `is_fiscal` False: a display device (app/services/display_devices.py). `platform`
+    defaults to what `device_info` says.
+    """
+    from app.services.display_devices import platform_of_device_info
+
     machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
     while db.query(POSMachine).filter(POSMachine.machine_code == machine_code).first():
         machine_code = f"MACHINE-{uuid.uuid4().hex[:8].upper()}"
@@ -233,16 +315,30 @@ def create_pos_machine(
         device_info=device_info,
         # The hardware's own word wins over a model chosen on the dashboard: a tablet
         # paired with a code generated for a 55F is still a tablet.
-        device_model=detect_device_model(device_info) or device_model,
+        device_model=paired_device_model(device_info, device_model),
+        # What the dashboard chose, kept so the machine page can say when the hardware
+        # named another model (docs/SPEC_DEVICE_ROLE_MODEL.md §4).
+        device_model_chosen=device_model,
         # The till already puts its serial in `device_info` at pairing time, on both
         # the code path (POST /pairing/validate) and the QR path (POST
         # /pairing/device/register → claim). Lift it into the column so a machine is
         # identifiable by the number printed on the box from the moment it is paired,
         # rather than only after its first heartbeat. Heartbeats then keep it fresh.
         serial_number=serial_from_device_info(device_info),
+        # Where it came from: the vendor SDK, Android's own, or `ro.serialno` (device_identity).
+        serial_source=_serial_source(device_info),
+        is_fiscal=bool(is_fiscal),
+        platform=platform or platform_of_device_info(device_info),
     )
     db.add(pos_machine)
     db.flush()
+    if pos_machine.is_fiscal:
+        # The same device paired before as another machine (an ordinary code, not a
+        # replacement): linked, so what it still delivers of that machine is filed under
+        # it, and what that machine still owed is kept (docs/SHIFTS_API.md §1.2c-bis).
+        from app.services.document_filing import record_repair_link
+
+        record_repair_link(db, pos_machine, device_info)
     return pos_machine
 
 
@@ -332,6 +428,16 @@ def adopt_machine(
 
     if device_info:
         machine.device_info = device_info
+        # The new unit's serial and its source at once; the old unit's SIMs and addresses go
+        # (app/services/device_identity.py) — its first heartbeat reports its own.
+        if serial_from_device_info(device_info):
+            machine.serial_number = serial_from_device_info(device_info)
+            machine.serial_source = _serial_source(device_info)
+        machine.cellular = None
+        machine.cellular_reported_at = None
+        machine.sim_carriers = None
+        machine.phone_numbers = None
+        machine.lan_ip = None
     if machine_name:
         machine.name = machine_name
     machine.pairing_status = PairingStatus.PAIRED if machine.shop_id is None else PairingStatus.ASSIGNED

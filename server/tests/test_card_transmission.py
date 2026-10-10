@@ -998,6 +998,34 @@ class TestReplacement:
 # ── X and Z ─────────────────────────────────────────────────────────────────
 
 
+class TestCardTips:
+    """A card tip is in the terminal's batch, so it is in our untransmitted figures too."""
+
+    def test_the_tip_is_added_to_the_leg_that_settled_the_document(self, w):
+        till = w.tills[0]
+        track(w, till, w.now - timedelta(days=1))
+        tx, leg = card_doc(w, till, "A", "100.00")
+        tx.tip_amount = Decimal("12.00")
+        tx.tip_payment_method = "card"
+        # A second card leg that settled it: the tip goes there, once.
+        last = TransactionPayment(
+            id=uuid.uuid4(), transaction_id=tx.id, sequence=2, method="card",
+            amount=Decimal("20.00"), nayax_meta={"uid": "B", "result": {"uid": "B"}},
+            terminal_uid="B",
+        )
+        w.db.add(last)
+        # A cash tip is not the terminal's.
+        cash_tx, _ = card_doc(w, till, "C", "30.00")
+        cash_tx.tip_amount = Decimal("5.00")
+        cash_tx.tip_payment_method = "cash"
+        w.db.flush()
+
+        count, amount, _oldest = T.untransmitted_summary(w.db, [till.id])[till.id]
+        assert count == 3 and amount == Decimal("162.00")
+        items = {i["terminalTransactionId"]: i["amount"] for i in T.untransmitted_items(w.db, till)}
+        assert items == {"A": "100.00", "B": "32.00", "C": "30.00"}
+
+
 class TestXAndZ:
     def test_the_x_detail_carries_the_block(self, w):
         till = w.tills[0]

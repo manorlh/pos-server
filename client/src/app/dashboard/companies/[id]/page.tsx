@@ -27,6 +27,8 @@ import { useAuth } from '@/lib/auth';
 import { SalesStats } from '@/components/dashboard/sales-stats';
 import { CompanyFormDialog } from '@/components/dashboard/company-form-dialog';
 import { CompanyMoveDialog } from '@/components/dashboard/company-move-dialog';
+import { DealerTypeBadge, DealerTypeCard } from '@/components/dashboard/dealer-type-card';
+import { numberLabelKey } from '@/lib/dealerType';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { TrainingBadge } from '@/components/dashboard/training-badge';
 import { Badge } from '@/components/ui/badge';
@@ -69,6 +71,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
   const tc = useTranslations('common');
   const tCompanies = useTranslations('companies');
   const tUsers = useTranslations('users');
+  const tBusiness = useTranslations('businessType');
   const canReadUsers = useAuth((s) => s.user?.canReadUsers === true);
 
   // The route is the authority here; the scope bar mirrors it.
@@ -152,6 +155,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
             <Badge variant={company.isActive ? 'outline' : 'destructive'}>
               {company.isActive ? tc('active') : tc('inactive')}
             </Badge>
+            <DealerTypeBadge company={company} />
           </div>
           {parent ? (
             <p className="text-sm text-muted-foreground">
@@ -188,13 +192,16 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-4 pt-4 sm:grid-cols-5">
-          <Field label={t('vat')} value={company.vatNumber ?? '—'} />
+          <Field label={tBusiness(numberLabelKey(company.dealerType))} value={company.vatNumber ?? '—'} />
           <Field label={t('city')} value={company.city ?? '—'} />
           <Field label={t('address')} value={company.address ?? '—'} />
           <Field label={t('shopsCount')} value={subtreeShops.length} />
           <Field label={t('machinesCount')} value={machines.length} />
         </CardContent>
       </Card>
+
+      {/* "סוג עוסק": what the tills issue, who changed it, and an exempt dealer's ceiling. */}
+      <DealerTypeCard company={company} />
 
       {/* Roll-up for this company specifically, not for whatever the bar says. */}
       <SalesStats scope={{ companyId: company.id, shopId: null, machineId: null }} />

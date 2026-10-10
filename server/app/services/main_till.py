@@ -49,6 +49,8 @@ Z_FROM_OPTIONS = (Z_FROM_MAIN, Z_FROM_MAIN_AND_DASHBOARD, Z_FROM_ANY)
 #: The refusals, as `detail` (the till's) or `detail.code` (the dashboard's 409).
 NOT_MASTER = "not_master_till"
 ONLY_FROM_MAIN = "z_only_from_main_till"
+#: An independent till ("קופה עצמאית", app/services/independent_till.py) asked for the shop Z.
+INDEPENDENT = "independent_till"
 
 
 def is_on(value: Any) -> bool:
@@ -71,9 +73,15 @@ def main_till_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     """The shop's active till whose `mainTill` resolves on; several — the lowest number."""
     from app.services.printers import shop_machines
 
+    from app.services.lan_server import server_candidates
+
     if shop_id is None:
         return None
-    marked = [m for m in shop_machines(db, shop_id) if is_on(_params(db, m).get(MAIN_TILL_KEY))]
+    # An independent till ("קופה עצמאית") is never the shop's main till, whatever is set, nor
+    # a device set "לא משמש כשרת מקומי" (app/services/lan_server.py).
+    marked = [
+        m for m in server_candidates(db, shop_machines(db, shop_id)) if is_on(_params(db, m).get(MAIN_TILL_KEY))
+    ]
     return sorted(marked, key=till_order)[0] if marked else None
 
 
@@ -100,9 +108,30 @@ def dashboard_z_refusal(db: Session, shop: Shop) -> Optional[Dict[str, Any]]:
     shop's Z hostage: the dashboard may then produce it, and the main till's shift waits
     for the next Z like any till that did not close.
     """
+    from app.services.local_shop_z import LOCAL, effective_producer
     from app.services.machine_status import is_online
 
     main = main_till_of_shop(db, shop.id)
+    producer = effective_producer(db, shop)
+    if producer.kind == LOCAL or producer.configured_kind == LOCAL:
+        # Local mode (docs/SPEC_INDEPENDENT_TILL.md §8): the main till numbers the shop's Zs
+        # on the LAN, with or without the internet — a Z started here while it is offline
+        # would take a number it may be printing right now. Never here, whatever `shopZFrom`
+        # says, and also not while the production is still on its way to or from a main till
+        # (§8.10); the dashboard asks the main till instead (`/local-shop-z-request`).
+        message = (
+            "הסניף עובד ברשת מקומית: ה-Z הסניפי מופק בקופה הראשית בלבד. "
+            "אפשר לבקש ממנה להפיק אותו (\"בקש מהקופה הראשית\")."
+        )
+        if producer.handover is not None:
+            message = "הפקת ה-Z הסניפי עוברת עכשיו בין הקופה הראשית לענן ולא הושלמה: " + producer.handover["message"]
+        return {
+            "code": ONLY_FROM_MAIN,
+            "localMode": True,
+            "mainTill": till_ref(main),
+            **producer.to_json(db),
+            "message": message,
+        }
     if main is None or z_from_of(db, shop) != Z_FROM_MAIN or not is_online(main.last_heartbeat_at):
         return None
     return {"code": ONLY_FROM_MAIN, "mainTill": till_ref(main)}
@@ -114,7 +143,18 @@ def till_shop_z_refusal(db: Session, machine: POSMachine) -> Optional[str]:
     `z_only_from_main_till` (the shop has a main till, and it is another) or
     `not_master_till` (no main till, and this till is not marked master).
     """
+    from app.services.independent_till import is_independent
+
+    if is_independent(machine):
+        # "קופה עצמאית": not part of the shop Z at all, so it never runs one either.
+        return INDEPENDENT
     shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+    from app.services.local_shop_z import local_mode_of_shop
+
+    if shop is not None and local_mode_of_shop(db, shop):
+        # Local mode: exactly one till serves the LAN close and numbers the Z — the main till.
+        main = main_till_of_shop(db, machine.shop_id)
+        return None if main is not None and main.id == machine.id else ONLY_FROM_MAIN
     if shop is not None and z_from_of(db, shop) == Z_FROM_ANY:
         return None
     main = main_till_of_shop(db, machine.shop_id)
@@ -124,9 +164,45 @@ def till_shop_z_refusal(db: Session, machine: POSMachine) -> Optional[str]:
 
 
 def shop_tills_out(db: Session, shop_id: Any) -> List[Dict[str, Any]]:
+    """
+    The tills that may be the main till: the shop's, but its independent tills and the
+    devices set "לא משמש כשרת מקומי".
+    """
+    from app.services.lan_server import server_candidates
     from app.services.printers import shop_machines
 
-    return [till_ref(m) for m in sorted(shop_machines(db, shop_id), key=till_order)]
+    return [till_ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=till_order)]
+
+
+def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[datetime] = None) -> None:
+    """
+    `machine_id` becomes the shop's main till (`mainTill` on at its own level, off at the
+    shop's other tills); None — no main till. The caller checked the till is the shop's
+    and not independent.
+    """
+    from app.models.till_parameter import TillParameter, TillParameterValue
+    from app.services.printers import shop_machines
+    from app.services.till_parameters import ensure_builtin_parameters
+
+    ensure_builtin_parameters(db)
+    main = db.query(TillParameter).filter(TillParameter.key == MAIN_TILL_KEY).first()
+    if main is None:  # pragma: no cover - created just above
+        return
+    tills = [m.id for m in shop_machines(db, shop.id)]
+    if tills:
+        db.query(TillParameterValue).filter(
+            TillParameterValue.parameter_id == main.id,
+            TillParameterValue.scope_type == "machine",
+            TillParameterValue.scope_id.in_(tills),
+        ).delete(synchronize_session=False)
+    if machine_id is not None:
+        db.add(TillParameterValue(
+            id=uuid.uuid4(), parameter_id=main.id, scope_type="machine",
+            scope_id=machine_id if isinstance(machine_id, uuid.UUID) else uuid.UUID(str(machine_id)), value=True,
+        ))
+    # A removal must move the tills' parameters watermark too.
+    main.updated_at = now or datetime.now(timezone.utc)
+    db.flush()
 
 
 # ── The main till is down: another takes over ───────────────────────────────
@@ -152,8 +228,18 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
     from app.services.tables import MODE_LAN, TABLES_MODE_KEY, mode_of, tables_host_of_shop
     from app.services.till_parameters import ensure_builtin_parameters
 
+    from app.services.independent_till import is_independent
+
     if machine.shop_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="machine_has_no_shop")
+    if is_independent(machine):
+        # "קופה עצמאית": outside the shop's LAN group — it never becomes its server.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INDEPENDENT)
+    from app.services import lan_server
+
+    if lan_server.is_excluded(db, machine):
+        # "לא משמש כשרת מקומי": in the LAN group, but never its server.
+        raise lan_server.take_over_refusal(machine)
     if mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tables_not_lan")
     old = tables_host_of_shop(db, machine.shop_id)
@@ -167,6 +253,13 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
 
     ensure_builtin_parameters(db)
     now = datetime.now(timezone.utc)
+    # The shop's Z producer is pinned as it stands: the tables move now (they cannot wait),
+    # but the Z production moves only once the old main till could hand it over cleanly —
+    # it is offline, so it may still hold shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
+    from app.services.local_shop_z import effective_producer, ensure_pin
+
+    shop = db.get(Shop, machine.shop_id)
+    ensure_pin(db, shop, now=now)
     by_key = {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(HOST_KEYS)).all()}
     moved = []
     for key in HOST_KEYS:
@@ -227,4 +320,12 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
         "shop %s: main till taken over by %s from %s (%s) — %s",
         machine.shop_id, machine.id, old.id if old else None, operator or "?", ", ".join(moved),
     )
-    return {"mainTill": till_ref(machine), "previous": till_ref(old), "moved": moved}
+    producer = effective_producer(db, shop, now=now)
+    return {
+        "mainTill": till_ref(machine),
+        "previous": till_ref(old),
+        "moved": moved,
+        # Waiting: this till serves the tables, but makes no shop Z until the old main till
+        # syncs (or a super admin moves the production on the shop's page).
+        "shopZHandover": producer.to_json(db)["handover"],
+    }

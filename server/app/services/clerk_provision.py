@@ -104,12 +104,43 @@ def _provision_self_service_user(db: Session, clerk_user_id: str, profile: Clerk
                 is_default=True,
             )
         )
+        _grant_new_owner_full_access(db, user)
         db.commit()
         db.refresh(user)
         return user
     except IntegrityError:
         db.rollback()
         return db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+
+
+def _grant_new_owner_full_access(db: Session, user: User) -> None:
+    """
+    "הרשאות דשבורד": whoever signs up and so opens an organization of their own gets "full by
+    role" there (08.10.2026) — the owner of a brand-new tenant has to pair its
+    devices and invite its people, and there is nobody else in it to open those for them.
+
+    Only here: a user created inside an existing organization (the users page, an invitation
+    claimed at sign-in) keeps the default ("מנהל ארגון") until somebody opens more. A profile
+    is per user, not per organization — at sign-up this user belongs to their own tenant only.
+    """
+    from app.services import dashboard_access
+    from app.services.dashboard_sections import FULL_TEMPLATE
+
+    if not dashboard_access.profiles_available(db):
+        return  # a database without profiles: the role decides anyway
+    db.flush()
+    dashboard_access.save_profile(
+        db,
+        user,
+        actor=None,
+        full_access=True,
+        sections={},
+        org_wide=False,
+        company_ids=(),
+        shop_ids=(),
+        template_id=None,
+        builtin_template=FULL_TEMPLATE,
+    )
 
 
 def _tenant_display_name(profile: ClerkProfile) -> str:

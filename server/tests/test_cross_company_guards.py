@@ -86,7 +86,7 @@ class TestCreateShop:
 
     def _create(self, w, company_id, user):
         return shops_router.create_shop(
-            ShopCreate(name="New shop", companyId=company_id), user, w.tenant, w.db
+            ShopCreate(name="New shop", companyId=company_id, branchId="601"), user, w.tenant, w.db
         )
 
     def test_a_manager_opens_a_shop_in_their_own_company(self, world, seeded):

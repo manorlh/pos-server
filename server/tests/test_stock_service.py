@@ -18,13 +18,21 @@ def test_effective_stock_updated_at_uses_max_of_levels_and_movements() -> None:
     db = MagicMock()
     level_max = _ts(2026, 6, 1)
     movement_max = _ts(2026, 6, 15)
-    db.query.return_value.filter.return_value.scalar.side_effect = [level_max, movement_max]
+    # Levels, movements, then the managed-level rules (a switch moves what the tills sell from).
+    db.query.return_value.filter.return_value.scalar.side_effect = [level_max, movement_max, None]
     assert effective_stock_updated_at(db, uuid.uuid4()) == movement_max
+
+
+def test_effective_stock_updated_at_moves_when_the_managed_levels_change() -> None:
+    db = MagicMock()
+    rule_change = _ts(2026, 6, 20)
+    db.query.return_value.filter.return_value.scalar.side_effect = [_ts(2026, 6, 1), _ts(2026, 6, 15), rule_change]
+    assert effective_stock_updated_at(db, uuid.uuid4()) == rule_change
 
 
 def test_effective_stock_updated_at_falls_back_to_now_when_empty() -> None:
     db = MagicMock()
-    db.query.return_value.filter.return_value.scalar.side_effect = [None, None]
+    db.query.return_value.filter.return_value.scalar.side_effect = [None, None, None]
     before = datetime.now(timezone.utc)
     result = effective_stock_updated_at(db, uuid.uuid4())
     after = datetime.now(timezone.utc)

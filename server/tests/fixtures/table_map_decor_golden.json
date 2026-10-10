@@ -1,0 +1,46 @@
+{
+  "zones": [
+    {
+      "id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001",
+      "name": "אולם",
+      "sortOrder": 0,
+      "layout": "map",
+      "backgroundUrl": null,
+      "canvasWidth": 1000,
+      "canvasHeight": 700,
+      "sketch": {
+        "template": null,
+        "background": "clean",
+        "elements": [
+          {"id": "dwal0001", "kind": "wall", "x": 0, "y": 0, "w": 1000, "h": 12, "rotation": 0, "text": null},
+          {"id": "dwal0002", "kind": "wall", "x": 0, "y": 0, "w": 12, "h": 700, "rotation": 0, "text": null},
+          {"id": "dent0001", "kind": "door", "x": 440, "y": 670, "w": 120, "h": 30, "rotation": 0, "text": null},
+          {"id": "dexi0001", "kind": "exit", "x": 12, "y": 420, "w": 120, "h": 36, "rotation": 90, "text": null, "variant": "plain"},
+          {"id": "dexi0002", "kind": "exit", "x": 850, "y": 662, "w": 120, "h": 36, "rotation": 0, "text": null},
+          {"id": "dwc00001", "kind": "restroom", "x": 20, "y": 20, "w": 120, "h": 100, "rotation": 0, "text": null},
+          {"id": "dwc00002", "kind": "restroom", "x": 150, "y": 20, "w": 90, "h": 100, "rotation": 0, "text": null, "variant": "men"},
+          {"id": "dwc00003", "kind": "restroom", "x": 250, "y": 20, "w": 90, "h": 100, "rotation": 0, "text": null, "variant": "women"},
+          {"id": "dwc00004", "kind": "restroom", "x": 350, "y": 20, "w": 90, "h": 100, "rotation": 0, "text": null, "variant": "accessible"},
+          {"id": "dbar0001", "kind": "counter", "x": 620, "y": 30, "w": 320, "h": 200, "rotation": 0, "text": null, "variant": "U", "stools": 5},
+          {"id": "dbar0002", "kind": "counter", "x": 620, "y": 470, "w": 220, "h": 140, "rotation": 180, "text": null, "variant": "L", "stools": 0},
+          {"id": "dkit0001", "kind": "kitchen", "x": 450, "y": 20, "w": 150, "h": 100, "rotation": 0, "text": "מטבח חם"},
+          {"id": "dsta0001", "kind": "stairs", "x": 880, "y": 300, "w": 80, "h": 130, "rotation": 0, "text": null},
+          {"id": "dcsh0001", "kind": "cashier", "x": 300, "y": 600, "w": 110, "h": 70, "rotation": 0, "text": null},
+          {"id": "dpl00001", "kind": "plant", "x": 30, "y": 620, "w": 50, "h": 50, "rotation": 0, "text": null},
+          {"id": "dpl00002", "kind": "plant", "x": 930, "y": 250, "w": 45, "h": 45, "rotation": 0, "text": null},
+          {"id": "dlbl0001", "kind": "label", "x": 380, "y": 180, "w": 200, "h": 40, "rotation": 0, "text": "רחבת ריקודים", "color": "#2563eb"},
+          {"id": "ddj00001", "kind": "dj_booth", "x": 420, "y": 240, "w": 140, "h": 80, "rotation": 0, "text": null},
+          {"id": "ddj00002", "kind": "dj_booth", "x": 160, "y": 300, "w": 120, "h": 70, "rotation": 270, "text": "DJ"}
+        ]
+      }
+    }
+  ],
+  "tables": [
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a001", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 1, "name": null, "seats": 4, "shape": "round", "x": 260, "y": 420, "width": 84, "height": 84, "rotation": 0},
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a002", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 2, "name": null, "seats": 4, "shape": "square", "x": 420, "y": 400, "width": 84, "height": 84, "rotation": 0},
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a003", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 3, "name": "חלון", "seats": 6, "shape": "rect", "x": 560, "y": 300, "width": 126, "height": 67, "rotation": 90},
+    {"id": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0a004", "zoneId": "6d2f0c4e-1a7b-4c3e-9f10-0d3c0de0d001", "number": 4, "name": null, "seats": 2, "shape": "round", "x": 720, "y": 280, "width": 70, "height": 70, "rotation": 0}
+  ],
+  "cancelReasons": [],
+  "lockMinutes": 2
+}

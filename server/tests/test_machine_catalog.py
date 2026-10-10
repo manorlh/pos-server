@@ -316,7 +316,7 @@ class TestSelectedMode:
         assert M.include_product(w.db, w.h1, w.G) is False, "never the general item"
 
     def test_the_till_create_endpoint_calls_it(self):
-        source = pathlib.Path(sync_router.__file__).read_text()
+        source = pathlib.Path(sync_router.__file__).read_text(encoding="utf-8")
         body = source.split("def machine_create_cloud_product", 1)[1].split("@router", 1)[0]
         assert "machine_catalog.include_product(db, machine, product)" in body
 

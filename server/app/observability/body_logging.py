@@ -20,8 +20,25 @@ SENSITIVE_KEYS = frozenset(
         "authorization",
         "clerk_secret_key",
         "ably_api_key",
+        # The card integration's secrets in a settings PATCH (app/services/payment_secrets.py).
+        "zcreditpassword",
+        "zcreditkey",
+        "synqpayapikey",
+        # Notifications / club sign-up (docs/SPEC_NOTIFICATIONS_CLUB.md): the OTP code
+        # (see `_redact_value`), the one-time tokens, the provider token and phone numbers
+        # never reach a log.
+        "otp",
+        "registrationtoken",
+        "clientsession",
+        "membertoken",
+        "phone",
+        "recipient",
+        "testnumbers",
     }
 )
+
+#: Any other key that names a password or a secret ("terminalPassword", "apiSecret"…).
+_SENSITIVE_SUFFIXES = ("password", "secret")
 
 LOGGABLE_CONTENT_PREFIXES = ("application/json", "text/")
 
@@ -58,7 +75,12 @@ def should_log_request_body(method: str, content_type: str | None) -> bool:
 
 
 def _redact_value(key: str, value: Any) -> Any:
-    if key.lower() in SENSITIVE_KEYS:
+    lowered = key.lower()
+    if lowered in SENSITIVE_KEYS or lowered.endswith(_SENSITIVE_SUFFIXES):
+        return "***"
+    if lowered == "code" and isinstance(value, (str, int)) and str(value).strip().isdigit():
+        # A numeric "code" is a one-time code (the club sign-up OTP); an error code
+        # ("wrong_code") stays readable.
         return "***"
     return redact_json(value)
 

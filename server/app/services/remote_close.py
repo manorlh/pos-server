@@ -32,6 +32,9 @@ def apply_close_shift_ack(
     error_code: Optional[str] = None,
     error_message: Optional[str] = None,
 ) -> str:
+    # Expired requests and runs are swept first (as the till Z's ack does): an ack never revives one.
+    close_requests.expire_overdue(db)
+    z_runs.expire_overdue_runs(db)
     req = close_requests.apply_ack(
         db,
         machine,
@@ -93,7 +96,24 @@ def take_pending_close_shift(
     if req.sent_at is None:
         req.sent_at = now
     named = close_requests.named_shift_id(req)
-    return {"requestId": str(req.id), "shiftId": str(named) if named else None}
+    out = {"requestId": str(req.id), "shiftId": str(named) if named else None}
+    # Who asked, as the realtime push says it (`initiatedBy`).
+    from app.models.user import User
+
+    creator = db.get(User, req.created_by_user_id) if req.created_by_user_id else None
+    if creator is not None:
+        out["initiatedBy"] = z_runs._initiator(creator)
+    if getattr(req, "wait_for_rest", False):
+        # Remote control: only at rest — never mid-sale (app/services/remote_till_z.py).
+        out["waitForRest"] = True
+    if getattr(req, "keep_held_sales", False):
+        out["keepHeldSales"] = True
+    if z_runs._cancel_command(req):
+        out["cancelHeldSales"] = z_runs._cancel_command(req)
+    if getattr(req, "remote_force", False):
+        # "כפה סגירה" (app/services/remote_close_force.py), beside `waitForRest`.
+        out["remoteForce"] = True
+    return out
 
 
 def pending_close_sources(db: Session, machine_ids: List[uuid.UUID]) -> Dict[uuid.UUID, Tuple[str, Optional[uuid.UUID]]]:

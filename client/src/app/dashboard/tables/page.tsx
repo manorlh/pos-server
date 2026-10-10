@@ -2,8 +2,9 @@
 
 /**
  * Table management ("ניהול שולחנות") for one shop: the floor editor (zones, map or grid,
- * tables), the open tables now, the tables report, and the cancellation reasons. Whether
- * a till uses tables, and how, is its till parameter "ניהול שולחנות" (`tablesMode`).
+ * tables, their types — staff / managers / a discount), the open tables now, the tables
+ * report, the staff and managers' meals, and the cancellation reasons. Whether a till uses
+ * tables, and how, is its till parameter "ניהול שולחנות" (`tablesMode`).
  */
 
 import { useState } from 'react';
@@ -16,8 +17,9 @@ import { TablesLive } from '@/components/dashboard/tables/tables-live';
 import { TablesReportView } from '@/components/dashboard/tables/tables-report';
 import { CancelReasons } from '@/components/dashboard/tables/cancel-reasons';
 import { TableReservations } from '@/components/dashboard/tables/reservations';
+import { MealsReportView } from '@/components/dashboard/tables/meals-report';
 
-type Section = 'editor' | 'live' | 'reservations' | 'report' | 'reasons';
+type Section = 'editor' | 'live' | 'reservations' | 'report' | 'meals' | 'reasons';
 
 export default function TablesPage() {
   const t = useTranslations('tables');
@@ -49,6 +51,9 @@ export default function TablesPage() {
         <Button size="sm" variant={section === 'report' ? 'default' : 'outline'} onClick={() => setSection('report')}>
           {t('sectionReport')}
         </Button>
+        <Button size="sm" variant={section === 'meals' ? 'default' : 'outline'} onClick={() => setSection('meals')}>
+          {t('sectionMeals')}
+        </Button>
         <Button size="sm" variant={section === 'reasons' ? 'default' : 'outline'} onClick={() => setSection('reasons')}>
           {t('sectionReasons')}
         </Button>
@@ -64,6 +69,8 @@ export default function TablesPage() {
               <TablesLive shopId={shopId} />
             ) : section === 'reservations' ? (
               <TableReservations shopId={shopId} />
+            ) : section === 'meals' ? (
+              <MealsReportView shopId={shopId} />
             ) : (
               <TablesReportView shopId={shopId} />
             )

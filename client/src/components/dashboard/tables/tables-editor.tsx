@@ -4,7 +4,9 @@
  * The floor editor: a shop's zones as tabs; each zone a map (see MapEditor: the floor,
  * a sketch from a template or drawn, tables dragged, resized, duplicated) or a grid
  * (squares by number). Tables are added one by one or as a range ("1–100"); their number
- * is unique in the shop.
+ * is unique in the shop. Each table has a name (shown on the till's map, or its number),
+ * seats (its chairs there) and a policy — "סוג שולחן": regular / staff / managers and a
+ * discount %, or one of the shop's types ("סוגי שולחנות", table-types.tsx).
  */
 
 import { useMemo, useState } from 'react';
@@ -29,6 +31,8 @@ import {
   type ZoneLayout,
 } from '@/lib/tablesApi';
 import { defaultTableSize } from '@/lib/tableSketch';
+import { draftOf, policyBadge, policyBody, validatePolicyDraft, type PolicyDraft } from '@/lib/tablePolicy';
+import { PolicyFields, TableTypesDialog } from '@/components/dashboard/tables/table-types';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
 import { MapEditor } from '@/components/dashboard/tables/map-editor';
 import { Button } from '@/components/ui/button';
@@ -40,6 +44,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 const SHAPES: TableShape[] = ['round', 'square', 'rect'];
 const ALL_SHOP = '__shop__';
+const NO_TYPE = '__none__';
+
+/** "עובדים" / "מנהלים" / "-10%" on a table of the grid, as the till's map shows it. */
+function GridBadge({
+  badge,
+  kindLabel,
+}: {
+  badge: ReturnType<typeof policyBadge>;
+  kindLabel: (kind: 'staff' | 'managers') => string;
+}) {
+  if (!badge) return null;
+  return (
+    <span className="mt-0.5 rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary">
+      {[badge.kind ? kindLabel(badge.kind) : null, badge.discount].filter(Boolean).join(' ')}
+    </span>
+  );
+}
 
 export function TablesEditor({ shopId }: { shopId: string }) {
   const t = useTranslations('tables');
@@ -50,6 +71,8 @@ export function TablesEditor({ shopId }: { shopId: string }) {
   const { data: areas = [] } = useShopAreas(shopId);
 
   const zones = useMemo(() => data?.zones ?? [], [data]);
+  const tableTypes = useMemo(() => data?.tableTypes ?? [], [data]);
+  const [typesOpen, setTypesOpen] = useState(false);
   const [zoneId, setZoneId] = useState<string | null>(null);
   // The map editor has moves or sketch edits not saved yet: asked before leaving the zone.
   const [mapDirty, setMapDirty] = useState(false);
@@ -151,6 +174,9 @@ export function TablesEditor({ shopId }: { shopId: string }) {
   const [tRotation, setTRotation] = useState('0');
   const [bFrom, setBFrom] = useState('1');
   const [bTo, setBTo] = useState('10');
+  // "סוג שולחן": a type, or the table's own kind and discount.
+  const [tPolicy, setTPolicy] = useState<PolicyDraft>(draftOf(null));
+  const policyErrors = validatePolicyDraft(tPolicy, tableTypes);
 
   const openTable = (mode: 'new' | 'edit' | 'bulk', table?: DiningTable) => {
     setTableDialog(mode);
@@ -167,6 +193,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
     setTRotation(String(table?.rotation ?? 0));
     setBFrom(String(next));
     setBTo(String(next + 9));
+    setTPolicy(draftOf(table ?? null));
   };
 
   const tableMut = useMutation({
@@ -179,6 +206,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
         shape: tShape,
         width: Math.max(20, Number(tWidth) || 80),
         height: Math.max(20, Number(tHeight) || 80),
+        ...policyBody(tPolicy),
       };
       if (tableDialog === 'edit' && selected) {
         return updateTable(selected.id, { ...common, rotation: (Number(tRotation) || 0) % 360 });
@@ -196,7 +224,13 @@ export function TablesEditor({ shopId }: { shopId: string }) {
   const bulkMut = useMutation({
     mutationFn: () => {
       if (!zone) throw new Error('no zone');
-      return bulkAddTables(zone.id, { from: Number(bFrom), to: Number(bTo), seats: Number(tSeats) || 4, shape: tShape });
+      return bulkAddTables(zone.id, {
+        from: Number(bFrom),
+        to: Number(bTo),
+        seats: Number(tSeats) || 4,
+        shape: tShape,
+        typeId: tPolicy.typeId || null,
+      });
     },
     onSuccess: (out) => {
       toast.success(t('bulkDone', { created: out.created.length, skipped: out.skipped.length }));
@@ -257,6 +291,9 @@ export function TablesEditor({ shopId }: { shopId: string }) {
             <Button size="sm" variant="outline" onClick={() => openTable('bulk')}>
               {t('bulkAdd')}
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setTypesOpen(true)}>
+              {t('policy.typesButton')}
+            </Button>
             <span className="text-sm text-muted-foreground">
               {t('zoneSummary', {
                 count: tables.length,
@@ -274,6 +311,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
               onSaved={invalidate}
               onError={fail}
               onDirtyChange={setMapDirty}
+              logoUrl={data?.logoUrl ?? null}
             />
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(88px,1fr))] gap-2">
@@ -287,6 +325,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
                   <span className="text-xl font-bold">{tb.number}</span>
                   {tb.name ? <span className="text-xs text-muted-foreground truncate max-w-full px-1">{tb.name}</span> : null}
                   <span className="text-xs text-muted-foreground">{t('seatsShort', { seats: tb.seats })}</span>
+                  <GridBadge badge={policyBadge(tb.policy)} kindLabel={(k) => t(`policy.badge.${k}`)} />
                 </button>
               ))}
               {tables.length === 0 ? (
@@ -296,6 +335,14 @@ export function TablesEditor({ shopId }: { shopId: string }) {
           )}
         </div>
       )}
+
+      <TableTypesDialog
+        open={typesOpen}
+        shopId={shopId}
+        types={tableTypes}
+        onClose={() => setTypesOpen(false)}
+        onSaved={invalidate}
+      />
 
       <Dialog open={zoneDialog !== null} onOpenChange={(o) => !o && setZoneDialog(null)}>
         <DialogContent className="max-w-md">
@@ -473,6 +520,29 @@ export function TablesEditor({ shopId }: { shopId: string }) {
                 ) : null}
               </div>
             ) : null}
+            {tableDialog === 'bulk' ? (
+              tableTypes.length > 0 ? (
+                <div className="space-y-1">
+                  <Label>{t('policy.type')}</Label>
+                  <Select
+                    value={tPolicy.typeId || NO_TYPE}
+                    onValueChange={(v) => v && setTPolicy({ ...tPolicy, typeId: v === NO_TYPE ? '' : v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_TYPE} label={t('policy.kinds.regular')}>{t('policy.kinds.regular')}</SelectItem>
+                      {tableTypes.map((ty) => (
+                        <SelectItem key={ty.id} value={ty.id} label={ty.name}>{ty.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null
+            ) : (
+              <PolicyFields draft={tPolicy} types={tableTypes} onChange={setTPolicy} />
+            )}
           </div>
           <DialogFooter className="gap-2">
             {tableDialog === 'edit' && selected ? (
@@ -498,7 +568,7 @@ export function TablesEditor({ shopId }: { shopId: string }) {
                 {bulkMut.isPending ? tc('saving') : t('bulkAddAction')}
               </Button>
             ) : (
-              <Button onClick={() => tableMut.mutate()} disabled={tableMut.isPending || !tNumber}>
+              <Button onClick={() => tableMut.mutate()} disabled={tableMut.isPending || !tNumber || policyErrors.length > 0}>
                 {tableMut.isPending ? tc('saving') : tc('save')}
               </Button>
             )}

@@ -109,6 +109,10 @@ class ImageUploadResponse(BaseModel):
     # cut can be reverted by saving this URL on the product instead.
     original_url: Optional[str] = Field(None, alias="originalUrl")
     background_removed: bool = Field(False, alias="backgroundRemoved")
+    #: The stored picture is not the bytes uploaded (cut out and/or enhanced): a till fetches it
+    #: once to replace its own; False — the upload itself is the picture.
+    processed: bool = Field(False, alias="processed")
+    enhanced: bool = Field(False, alias="enhanced")
 
     class Config:
         populate_by_name = True
@@ -164,13 +168,13 @@ async def upload_image(
 
 
 async def store_upload(
-    contents: bytes, active_tenant_id, resource: str, keep_background: bool
+    contents: bytes, active_tenant_id, resource: str, keep_background: bool, enhance: bool = False,
 ) -> "ImageUploadResponse":
     """
     Store an image that passed the type and size checks: a product's with its background
-    cut out (unless `keep_background` or PRODUCT_IMAGE_BG_REMOVAL is off) and the upload
-    kept beside it; anything else as it came. Shared by the dashboard's upload and the
-    till's (`POST /sync/{m}/products/{id}/image`).
+    cut out (unless `keep_background` or PRODUCT_IMAGE_BG_REMOVAL is off) and/or enhanced
+    (`enhance`: the till's uploads, "שפר תמונה"), the upload kept beside it; anything else as
+    it came. Shared by the dashboard's upload and the till's (`POST /sync/{m}/products/{id}/image`).
     """
     use_cloudinary = cloudinary_configured()
     if use_cloudinary:
@@ -179,13 +183,12 @@ async def store_upload(
     folder = upload_folder(active_tenant_id, resource)
 
     processed = None
-    if (
-        resource == "products"
-        and get_settings().product_image_bg_removal
-        and not keep_background
-    ):
+    remove_background = resource == "products" and get_settings().product_image_bg_removal and not keep_background
+    if resource == "products" and (remove_background or enhance):
         # Seconds of CPU on a model — never on the event loop.
-        processed = await run_in_threadpool(process_product_image, contents)
+        processed = await run_in_threadpool(
+            process_product_image, contents, remove_background=remove_background, enhance=enhance,
+        )
 
     try:
         if processed is None:
@@ -240,7 +243,9 @@ async def store_upload(
         url=result["secure_url"],
         public_id=result["public_id"],
         original_url=original_url,
-        background_removed=True,
+        background_removed=getattr(processed, "background_removed", True),
+        processed=True,
+        enhanced=getattr(processed, "enhanced", False),
     )
 
 

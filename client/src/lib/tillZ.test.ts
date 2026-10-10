@@ -164,6 +164,21 @@ describe('zNumberOf', () => {
   });
 });
 
+describe('zModeSwitchRefusal — offline Zs', () => {
+  it('a till holding Zs closed offline', () => {
+    assert.deepEqual(
+      zModeSwitchRefusal(refused({ detail: 'till_offline_zs_unsynced', reason: 'pending', pending: 2 })),
+      { code: 'till_offline_zs_unsynced', reason: 'pending', pending: 2 },
+    );
+  });
+  it('a till that may close offline and is not seen', () => {
+    assert.deepEqual(
+      zModeSwitchRefusal(refused({ detail: 'till_offline_zs_unsynced', reason: 'not_seen' })),
+      { code: 'till_offline_zs_unsynced', reason: 'not_seen', pending: null },
+    );
+  });
+});
+
 describe('zModeSwitchRefusal', () => {
   it('unreported shifts, with the count beside detail', () => {
     assert.deepEqual(zModeSwitchRefusal(refused({ detail: 'unreported_shifts', count: 3 })), {

@@ -64,10 +64,14 @@ class PrinterIn(BaseModel):
     bt_address: Optional[str] = Field(None, alias="btAddress")
     bt_name: Optional[str] = Field(None, alias="btName")
     host_machine_id: Optional[uuid.UUID] = Field(None, alias="hostMachineId")
-    host_connection: Optional[Literal["till", "network", "bluetooth"]] = Field(None, alias="hostConnection")
+    #: cloud: how the host till reaches it — its own head (`till`), its own USB port (`usb`),
+    #: or a network / Bluetooth printer only it reaches.
+    host_connection: Optional[Literal["till", "network", "bluetooth", "usb"]] = Field(None, alias="hostConnection")
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     paper_width: Literal[58, 80] = Field(80, alias="paperWidth")
+    #: "רוחב הדפסה" in dots; null — by the paper (58 mm → 384, 80 mm → 576).
+    print_width_dots: Optional[Literal[576, 512, 432, 384]] = Field(None, alias="printWidthDots")
     copies: int = Field(1, ge=1, le=COPIES_MAX)
     cut_paper: bool = Field(True, alias="cutPaper")
     beep: bool = False
@@ -140,6 +144,9 @@ class PrinterIn(BaseModel):
         if reach != "bluetooth":
             self.bt_address = None
             self.bt_name = None
+        # The till's own head prints its own width.
+        if reach == "till":
+            self.print_width_dots = None
         # Narrowed to one till: its area says nothing more.
         if self.machine_id is not None:
             self.area_id = None
@@ -203,10 +210,44 @@ class PrintJobIn(BaseModel):
 
 
 class PrintJobAckIn(BaseModel):
+    """`done` / `failed` end the job; `printing` (with `error`) says why the host still retries it."""
+
     model_config = ConfigDict(populate_by_name=True)
 
-    status: Literal["done", "failed"]
+    status: Literal["done", "failed", "printing"]
     error: Optional[str] = Field(None, max_length=500)
+
+
+class BonAlertIn(BaseModel):
+    """
+    One ticket of a till's print queue that needs a person (app/services/bon_alerts.py). Every
+    field but `id` / `state` optional; long text is clamped by the service, never refused.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str = Field(..., min_length=1, max_length=200)
+    #: failed | retrying | uncertain | unconfirmed | waiting_host | kds_not_taken | handled
+    state: str = Field(..., min_length=1, max_length=40)
+    reason: Optional[str] = Field(None, max_length=80)
+    printer_id: Optional[str] = Field(None, alias="printerId", max_length=100)
+    printer_name: Optional[str] = Field(None, alias="printerName", max_length=300)
+    title: Optional[str] = Field(None, max_length=300)
+    items: Optional[int] = Field(None, ge=0, le=100_000)
+    attempts: Optional[int] = Field(None, ge=0, le=1_000_000)
+    since: Optional[str] = Field(None, max_length=60)
+    error: Optional[str] = Field(None, max_length=2000)
+    handled_by: Optional[str] = Field(None, alias="handledBy", max_length=300)
+    handled_note: Optional[str] = Field(None, alias="handledNote", max_length=2000)
+
+
+class BonAlertsIn(BaseModel):
+    """A till's whole list ([complete]): an open alert of that till it leaves out is resolved."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    bons: List[BonAlertIn] = Field(default_factory=list, max_length=500)
+    complete: bool = True
 
 
 class CategoryRoutesIn(BaseModel):
@@ -271,6 +312,19 @@ class ProductNoTicketIn(BaseModel):
     no_ticket: bool = Field(alias="noTicket")
 
 
+class TillLocalPrinterIn(BaseModel):
+    """
+    "המדפסת המקומית של קופה" (docs/SPEC_KIOSK.md §16.9): a till's own printer picked by name in
+    the kiosk's printing settings — its built-in head (`till`), or the USB / Bluetooth printer
+    attached to it. The cloud makes (or reuses) the hosted printer entry behind it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    machine_id: uuid.UUID = Field(alias="machineId")
+    connection: Literal["till", "usb", "bluetooth"] = "till"
+
+
 class PrintHostIn(BaseModel):
     """The shop's print server, picked on the dashboard: a till of the shop, or null for none."""
 
@@ -320,6 +374,7 @@ __all__ = [
     "TicketLineIn",
     "PrintJobIn",
     "PrintJobAckIn",
+    "TillLocalPrinterIn",
     "CategoryRoutesIn",
     "ProductRouteIn",
     "KitchenPrintersPatch",

@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, CurrentUserResponse
+from app.schemas.user import (
+    CurrentUserResponse,
+    UserCreate,
+    UserPreferencesResponse,
+    UserPreferencesUpdate,
+    UserResponse,
+    UserUpdate,
+)
 from app.schemas.elevation import TillPinAssign, TillPinSet, TillPinState
 from app.services.elevation import PinPolicyError, clear_till_pin, set_till_pin
 from app.services.permission_matrix import Action, Resource, may
@@ -16,6 +23,8 @@ from app.middleware.auth import get_current_user, get_active_tenant_id, ensure_s
 from app.models.shop import Shop
 from app.services.auth import get_password_hash, get_user_by_username
 from app.services.company_hierarchy import company_scope_ids, user_covers_company
+from app.services import dashboard_access
+from app.services import user_preferences
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -31,6 +40,8 @@ ROLE_LEVEL = {
     UserRole.COMPANY_MANAGER: 4,
     UserRole.DISTRIBUTOR: 5,
     UserRole.SUPER_ADMIN: 6,
+    # "עמדת מפיק": outside the staff ladder — invited from an event, never made here.
+    UserRole.PRODUCER_VIEW: 0,
 }
 
 #: Roles that may read the staff list at all. A dashboard cashier is a shop *viewer*
@@ -44,7 +55,7 @@ USER_READ_ROLES = {
 }
 
 CREATABLE_ROLES = {
-    UserRole.SUPER_ADMIN: {r for r in UserRole if r != UserRole.MERCHANT_ADMIN},
+    UserRole.SUPER_ADMIN: {r for r in UserRole if r not in (UserRole.MERCHANT_ADMIN, UserRole.PRODUCER_VIEW)},
     UserRole.DISTRIBUTOR: {
         UserRole.COMPANY_MANAGER,
         UserRole.SHOP_MANAGER, UserRole.SHIFT_SUPERVISOR, UserRole.CASHIER,
@@ -130,7 +141,7 @@ def _apply_scope_filter(query, actor: User, db: Session):
 
 
 @router.get("/me", response_model=CurrentUserResponse, response_model_by_alias=True)
-def get_current_user_info(current_user: User = Depends(get_current_user)):
+def get_current_user_info(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Who is connected, and what they may do.
 
@@ -153,8 +164,43 @@ def get_current_user_info(current_user: User = Depends(get_current_user)):
             "till_scopes": sorted(
                 scope.value for scope in till_grantable_scopes(current_user.role)
             ),
+            # "הרשאות דשבורד": the sections the dashboard shows, the same grant the
+            # routes enforce.
+            "dashboard_access": dashboard_access.summary_for(db, current_user),
+            # "דף פתיחה" and whatever else the user chose for themselves, defaults filled in.
+            "preferences": user_preferences.read_preferences(current_user, db),
         }
     )
+
+
+def _preferences_out(prefs: dict) -> UserPreferencesResponse:
+    return UserPreferencesResponse(
+        home_page=prefs[user_preferences.HOME_PAGE_KEY],
+        home_pages=list(user_preferences.HOME_PAGES),
+        simple_mode=prefs[user_preferences.SIMPLE_MODE_KEY],
+        simple_mode_default=prefs["simpleModeDefault"],
+    )
+
+
+@router.get("/me/preferences", response_model=UserPreferencesResponse, response_model_by_alias=True)
+def get_my_preferences(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The signed-in user's own preferences ("דף פתיחה", "תצוגת מנהל פשוטה"), and the choices offered."""
+    return _preferences_out(user_preferences.read_preferences(current_user, db))
+
+
+@router.put("/me/preferences", response_model=UserPreferencesResponse, response_model_by_alias=True)
+def update_my_preferences(
+    data: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Choose for yourself — the opening page ("דף פתיחה") and the simple manager view ("תצוגת
+    מנהל פשוטה"). Only the keys sent change;
+    null puts one back to its default. About the caller only: nobody sets another's.
+    """
+    patch = data.model_dump(by_alias=True, exclude_unset=True)
+    return _preferences_out(user_preferences.update_preferences(db, current_user, patch))
 
 
 # ── Till PIN ──────────────────────────────────────────────────────────────────
@@ -359,10 +405,54 @@ def create_user(
         company_id=user_data.company_id,
         shop_id=user_data.shop_id,
     )
+    # Decided (and refused, when beyond the creator's own) before anything is written.
+    access_values = _plan_dashboard_access(db, current_user, db_user, user_data.access)
     db.add(db_user)
+    db.flush()
+    _initial_dashboard_access(db, current_user, db_user, access_values)
     db.commit()
     db.refresh(db_user)
     return db_user
+
+
+def _plan_dashboard_access(db: Session, actor: User, user: User, requested) -> Optional[dict]:
+    """
+    "הרשאות דשבורד" for a new user: "מנהל ארגון" — reports (view), products (edit), Z (view);
+    everything else stays closed until it is opened (the owner, 07.10.2026). The creator may
+    ask for something else (`access`): the super admin anything, e.g. the whole organization
+    as the scope of a new "מנהל ארגון"; anyone else only what they hold themselves (the owner,
+    08.10.2026) — the default is capped to that, an explicit grant beyond it is refused (403
+    `grant_exceeds_own`, before the user is written).
+
+    None = the default profile (or, for a super admin, none at all).
+    """
+    if user.role == UserRole.SUPER_ADMIN or requested is None:
+        return None
+    from app.routers.dashboard_access import check_grant, resolve_access
+    from app.services.dashboard_sections import ORG_MANAGER_TEMPLATE
+
+    implicit = requested.template is None and requested.sections is None and requested.full_access is None
+    if implicit:
+        # Only a scope was chosen: the sections are still the default ones.
+        requested = requested.model_copy(update={"template": ORG_MANAGER_TEMPLATE})
+    values = resolve_access(db, user, requested, tenant_ids=dashboard_access.user_tenant_ids(db, user))
+    if implicit and actor.role != UserRole.SUPER_ADMIN:
+        values["sections"] = dashboard_access.cap_sections(
+            values["sections"], dashboard_access.grantable(dashboard_access.effective_access(db, actor))
+        )
+    check_grant(db, actor, values, current=None)
+    user.company_id = values.pop("primary_company_id")
+    return values
+
+
+def _initial_dashboard_access(db: Session, actor: User, user: User, values: Optional[dict]) -> None:
+    """Write what `_plan_dashboard_access` decided, once the user has an id."""
+    if user.role == UserRole.SUPER_ADMIN:
+        return  # never narrowed
+    if values is None:
+        dashboard_access.create_default_profile(db, user, actor=actor)
+        return
+    dashboard_access.save_profile(db, user, actor=actor, **values)
 
 
 @router.get("/{user_id}", response_model=UserResponse, response_model_by_alias=True)

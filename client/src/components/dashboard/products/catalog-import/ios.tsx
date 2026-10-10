@@ -20,6 +20,8 @@ export const IOS = {
   grey: '#8E8E93',
   indigo: '#5856D6',
   teal: '#30B0C7',
+  purple: '#AF52DE',
+  pink: '#FF2D55',
   whatsapp: '#25D366',
 } as const;
 

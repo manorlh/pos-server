@@ -16,10 +16,18 @@ POST   /till-messages/{id}/resume     → … and starts again from its next occ
 `occurrenceTtlMinutes`); local times are the tenant's. Scheduled deliveries are lazy:
 they go out on the first till fetch (or dashboard list) after they come due.
 
+`display` on POST: "fullscreen" (default) or "banner" — the specials strip ("באנר
+מבצעים") on the sell screen and the tables floor, with an optional `productId` (its chip
+adds the product to the order) and `color` (amber / blue / green / red / purple / dark);
+`expiresAt` is its end ("עד מתי"; none: until cancelled). A banner that went out can
+still change its text, product, colour and end (PATCH).
+
 Till (machine JWT only, like the till's other `/sync/{machine_id}/...` writes):
 
 GET    /sync/{machine_id}/messages              → unacknowledged, unexpired, oldest first;
-                                                  the first fetch marks delivery
+                                                  the first fetch marks delivery. Banners
+                                                  under `banners` (live, acknowledged or
+                                                  not), never in `items`
 POST   /sync/{machine_id}/messages/{id}/ack     → "קראתי"; idempotent; 404 when the
                                                   message was not addressed to this till
 
@@ -28,9 +36,9 @@ notify, reason `till_message`), best effort; tills also fetch on their heartbeat
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -60,29 +68,48 @@ def send_till_message(
     current_user: User = Depends(get_current_machine_admin),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
     """
     Send a message every active till in the target must acknowledge. The tills it
     reaches are fixed now: those of the target the sender can see (400
-    `till_message_no_tills` when there are none).
+    `till_message_no_tills` when there are none). Fire-and-forget: the per-till status
+    (sent → delivered → acknowledged) is read from the list. `Idempotency-Key`: a retry
+    never sends the message twice.
     """
-    message = TM.send_message(
-        db, current_user, active_tenant_id,
-        title=body.title, body=body.body,
-        target_level=body.target_level, target_id=body.target_id,
-        expires_at=body.expires_at,
-        schedule_kind=body.schedule_kind,
-        send_at=body.send_at,
-        recur_days=body.recur_days,
-        recur_time=body.recur_time,
-        recur_start_date=body.recur_start_date,
-        recur_end_date=body.recur_end_date,
-        occurrence_ttl_minutes=body.occurrence_ttl_minutes,
+    from app.services import command_idempotency as idem
+
+    made: dict = {}
+
+    def run():
+        message = TM.send_message(
+            db, current_user, active_tenant_id,
+            title=body.title, body=body.body,
+            target_level=body.target_level, target_id=body.target_id,
+            expires_at=body.expires_at,
+            schedule_kind=body.schedule_kind,
+            send_at=body.send_at,
+            recur_days=body.recur_days,
+            recur_time=body.recur_time,
+            recur_start_date=body.recur_start_date,
+            recur_end_date=body.recur_end_date,
+            occurrence_ttl_minutes=body.occurrence_ttl_minutes,
+            display=body.display,
+            product_id=body.product_id,
+            color=body.color,
+        )
+        made["targets"] = TM.notify_targets(TM.unacknowledged_machines(db, message))
+        return {"id": str(message.id)}
+
+    out, replayed = idem.once(
+        db, tenant_id=active_tenant_id, kind="till_message", key=idempotency_key, user=current_user,
+        request=body.model_dump(mode="json", by_alias=True), run=run,
+        after_commit=lambda _out: background_tasks.add_task(TM.publish_message_notify, made["targets"]),
     )
-    targets = TM.notify_targets(TM.unacknowledged_machines(db, message))
-    db.commit()
-    background_tasks.add_task(TM.publish_message_notify, targets)
-    return _one(db, current_user, active_tenant_id, message.id)
+    if replayed and response is not None:
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return _one(db, current_user, active_tenant_id, out["id"])
 
 
 @router.get("/till-messages")
@@ -195,13 +222,15 @@ def get_own_till_messages(
     db: Session = Depends(get_db),
 ):
     """
-    `{"items": [{"id", "title", "body", "sentAt", "senderName"}]}`: this till's
-    unacknowledged, unexpired messages, oldest first. Marks each delivered on its first
-    fetch.
+    `{"items": [{"id", "title", "body", "sentAt", "senderName"}], "banners": [...]}`:
+    this till's unacknowledged, unexpired full-screen messages, oldest first, and its
+    live banners (`… "color", "productId", "productName", "expiresAt"`). Marks each
+    delivered on its first fetch. A till that predates banners reads `items` only.
     """
     items = TM.pending_for_machine(db, machine)
+    banners = TM.banners_for_machine(db, machine, materialize=False)
     db.commit()
-    return {"items": items}
+    return {"items": items, "banners": banners}
 
 
 @router.post("/sync/{machine_id}/messages/{message_id}/ack")

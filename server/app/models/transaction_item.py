@@ -50,12 +50,41 @@ class TransactionItem(Base):
     promotion_discount = Column(Numeric(12, 2), nullable=True)
     #: The promotion that took it (the largest share, when several did). Not a key.
     promotion_id = Column(UUID(as_uuid=True), nullable=True)
+    #: The line's share of what discount vouchers ("שוברי הנחה", prepaid vouchers of a
+    #: discount kind) took off, as an amount — like `promotion_discount`, inside the
+    #: document's `document_discount`, never in `total_price`, never a tender. The
+    #: vouchers themselves: `transaction_voucher_discounts`. Null: none.
+    voucher_discount = Column(Numeric(12, 2), nullable=True)
+    #: Production vouchers (the production vouchers contract §4): a `discount`-mode deduction's
+    #: share of the line (inside `document_discount`), and a `zero`-mode ₪0 line's memo value
+    #: (agorot, the unit's list value × quantity) with its redemption. Null: none.
+    prepaid_deduction = Column(Numeric(12, 2), nullable=True)
+    voucher_memo_value = Column(Integer, nullable=True)
+    voucher_redemption_id = Column(String(100), nullable=True)
     #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md
     #: §3.8): modifiers, notes, allergies, seat, course, a meal's components. Taken apart
     #: for the reports into `transaction_item_parts`. Null: a plain line.
     details = Column(JSON, nullable=True)
     #: The upsell rule ("הגדלת מכירה") the line was added by, when it was. Not a key.
     upsell_rule_id = Column(UUID(as_uuid=True), nullable=True)
+    #: OTH ("על חשבון הבית", till parameter `othEnabled`): the reason the line was given
+    #: free — a 100% line discount, in `discount` like any other. Null: an ordinary line.
+    oth_reason = Column(String(100), nullable=True)
+    #: The till user who gave it, and who approved it (a till user's or a cloud account's
+    #: id, as the till sent them; free text like `transactions.cashier_id`).
+    oth_by = Column(String(100), nullable=True)
+    oth_approved_by = Column(String(100), nullable=True)
+    #: "הודעות לעובד על פריט" (app/services/product_alerts.py): the employee confirmed the
+    #: product's alerts before it was added — `[{at, by, byName, alerts: [{text, kind}]}]`,
+    #: one per confirmed add. Null: nothing had to be confirmed.
+    alerts_ack = Column(JSON, nullable=True)
+    #: "תפריטים" (docs/SPEC_MENUS.md): the menu that was active on the till when the line
+    #: was added, as the till sent it — not a key (a deleted menu stays named) — its name
+    #: then, and where the line's price came from: "menu" (the menu's own price) or
+    #: "catalog". Null: no menu was active, or a till that predates menus.
+    menu_id = Column(UUID(as_uuid=True), nullable=True)
+    menu_name = Column(String(80), nullable=True)
+    price_source = Column(String(16), nullable=True)
 
     transaction = relationship("Transaction", back_populates="items")
     product = relationship("Product")

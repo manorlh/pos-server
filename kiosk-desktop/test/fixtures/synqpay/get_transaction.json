@@ -1,0 +1,31 @@
+{
+    "jsonrpc": "2.0",
+    "id": "1234567890",
+    "result": {
+        "transactionResult": "OK",
+        "transaction": {
+            "transactionStatus": "CAPTURED",
+            "transactionTime": "2024-11-20T17:55:32.968+08:00",
+            "referenceId": "abcdef123456",
+            "terminalId": "0881198",
+            "transactionType": "SALE",
+            "amount": 1000,
+            "totalAmount": 1000,
+            "tipAmount": 0,
+            "currency": 376,
+            "transactionId": "24112017553208811987387",
+            "authorizationNumber": "0792200",
+            "rrn": "957179218   ",
+            "systemTraceNumber": "01001001",
+            "cardName": "ויזה רגיל",
+            "maskedPan": "458008XXXXXX3303",
+            "panSuffix": "3303",
+            "creditTerms": "REGULAR",
+            "panEntryMode": "EMV",
+            "acquirer": 7,
+            "issuer": 2,
+            "brand": 2,
+            "brandName": "ויזה"
+        }
+    }
+}

@@ -6,7 +6,9 @@ rules on top of `app.services.till_z.set_z_mode`:
   reports its takings.
 * **Over a clean break** (`409 till_open`): the till's shift is closed first, so its first
   Z of the new mode starts from nothing. `set_z_mode` adds the rest of the break — no
-  closed shift waiting for a Z of the old mode (`unreported_shifts`), no Z under way.
+  closed shift waiting for a Z of the old mode (`unreported_shifts`), no Z under way. Closed
+  shifts with nothing in them (no document, no money — no Z can ever be made for them) do not
+  count: the first Z of the new mode takes them along (`till_z.waiting_shifts_all_empty`).
 
 A shop or a point of sale is switched as a whole (`PUT /shops/{id}/z-mode`): every till
 of it, all or nothing, each by the same rules.
@@ -31,6 +33,20 @@ def check_switch(db: Session, user: User, machine: POSMachine, mode: Optional[st
         return
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
+    # Up front, so a shop or point of sale switches all or nothing: never while a till may
+    # hold Zs it closed with no connection (docs/SPEC_OFFLINE_TILL_Z.md §4.4).
+    till_z.refuse_while_producing_offline(db, machine)
+    if getattr(machine, "independent_till", False):
+        # "קופה עצמאית" joins the shop Z only through the shop's card "קופות בזד הסניפי"
+        # (app/services/independent_till.py), which also brings it back into the LAN group.
+        raise TillZRefused(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": "independent_till",
+                "machineId": str(machine.id),
+                "message": "הקופה מוגדרת כקופה עצמאית — מצרפים אותה ל-Z הסניפי בכרטיס \"קופות בזד הסניפי\" בדף הסניף.",
+            },
+        )
     open_shift = (
         db.query(Shift)
         .filter(Shift.machine_id == machine.id, Shift.status == ShiftStatus.OPEN)

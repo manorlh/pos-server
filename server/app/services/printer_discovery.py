@@ -394,6 +394,7 @@ def shop_defaults(printers: List[KitchenPrinter], purpose: str) -> Dict[str, Any
         return {"paperWidth": 80, "copies": 1, "cutPaper": True, "beep": False, "cashDrawer": purpose == "receipt"}
     return {
         "paperWidth": model.paper_width if model.paper_width in (58, 80) else 80,
+        "printWidthDots": model.print_width_dots,
         "copies": model.copies or 1,
         "cutPaper": bool(model.cut_paper),
         "beep": bool(model.beep),

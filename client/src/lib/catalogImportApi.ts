@@ -16,9 +16,12 @@ export interface ImportMessage {
   text: string;
   /** Without it, for a row that shows its number itself. */
   message: string;
-  sheet: 'products' | 'categories' | null;
+  sheet: ImportSheet | null;
   row: number | null;
 }
+
+/** The sheet a row message belongs to (pos-server catalog_import / catalog_import_menu). */
+export type ImportSheet = 'products' | 'categories' | 'groups' | 'options' | 'notes';
 
 export interface ImportChange {
   field: string;
@@ -51,6 +54,40 @@ export interface ImportCategoryRow {
   messages: ImportMessage[];
 }
 
+/** A row of the "קבוצות תוספות" sheet (an add-on group). */
+export interface ImportGroupRow {
+  row: number;
+  status: ImportRowStatus;
+  name: string;
+  /** "תוספת" / "בחירה" / "הסרה". */
+  kind: string;
+  groupId: string | null;
+  changes: ImportChange[];
+  messages: ImportMessage[];
+}
+
+/** A row of the "אפשרויות" sheet (one option of a group). */
+export interface ImportOptionRow {
+  row: number;
+  status: ImportRowStatus;
+  group: string;
+  name: string;
+  price: string | null;
+  changes: ImportChange[];
+  messages: ImportMessage[];
+}
+
+/** A row of the "הערות מהירות" sheet. */
+export interface ImportNoteRow {
+  row: number;
+  status: ImportRowStatus;
+  text: string;
+  /** What it applies to, joined: "המבורגרים, קולה". */
+  targets: string;
+  changes: ImportChange[];
+  messages: ImportMessage[];
+}
+
 export interface ImportSummary {
   productsNew: number;
   productsUpdated: number;
@@ -63,6 +100,20 @@ export interface ImportSummary {
   errors: number;
   warnings: number;
   examplesSkipped: number;
+  groupsNew: number;
+  groupsUpdated: number;
+  groupsUnchanged: number;
+  optionsNew: number;
+  optionsUpdated: number;
+  optionsUnchanged: number;
+  notesNew: number;
+  notesUpdated: number;
+  notesUnchanged: number;
+  /** Products / categories whose add-on groups change. */
+  linkChanges: number;
+  /** Pictures to download (or remove). */
+  imageChanges: number;
+  menuPriceChanges: number;
 }
 
 export interface ImportPreview {
@@ -77,7 +128,20 @@ export interface ImportPreview {
   issues: ImportMessage[];
   products: ImportProductRow[];
   categories: ImportCategoryRow[];
+  groups: ImportGroupRow[];
+  options: ImportOptionRow[];
+  notes: ImportNoteRow[];
   canCommit: boolean;
+}
+
+/** A picture that could not be taken (the rest of the import went in). */
+export interface ImportImageFailure {
+  sheet: 'products' | 'categories';
+  row: number | null;
+  name: string;
+  message: string;
+  /** "פריטים, שורה 7 ('המבורגר'): …". */
+  text: string;
 }
 
 export interface ImportResult {
@@ -89,6 +153,17 @@ export interface ImportResult {
   routingChanges: number;
   skippedErrorRows: number;
   machinesNotified: number;
+  groupsCreated: number;
+  groupsUpdated: number;
+  optionsCreated: number;
+  optionsUpdated: number;
+  linksChanged: number;
+  notesCreated: number;
+  notesUpdated: number;
+  imagesStored: number;
+  imagesRemoved: number;
+  imageFailures: ImportImageFailure[];
+  menuPricesChanged: number;
 }
 
 export interface CatalogImportSummary {
@@ -96,6 +171,10 @@ export interface CatalogImportSummary {
   companyName: string;
   products: number;
   categories: number;
+  /** Add-on groups the company's catalog sees. */
+  groups: number;
+  /** Catalog menus: a "מחיר בתפריט" column each. */
+  menus: string[];
   shops: number;
   printers: { name: string; shopName: string; isActive: boolean }[];
 }

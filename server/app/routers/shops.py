@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.services import licenses
+from app.services import branch_code, licenses
 from app.database import get_db
 from app.models.shop import Shop
 from app.models.company import Company
@@ -31,8 +31,9 @@ from app.services import product_availability as availability
 from app.services import general_item
 from app.services.company_hierarchy import (
     ancestor_company_ids,
-    company_scope_ids,
     user_covers_company,
+    user_covers_shop,
+    visible_shop_ids,
 )
 from app.services.product_shop_scope import product_allowed_in_shop, reconcile_shops
 from app.services.pos_user_defaults import ensure_default_pos_user
@@ -66,7 +67,7 @@ def _check_shop_access(user: User, shop: Shop, db: Session):
         return
     if user.role == UserRole.DISTRIBUTOR:
         return
-    if user.role == UserRole.COMPANY_MANAGER and user_covers_company(db, user, shop.company_id):
+    if user.role == UserRole.COMPANY_MANAGER and user_covers_shop(db, user, shop):
         return
     if user.role in SHOP_SCOPED_ROLES and shop.id == user.shop_id:
         return
@@ -411,8 +412,9 @@ def list_shops(
     query = db.query(Shop).filter(Shop.tenant_id == active_tenant_id)
 
     if current_user.role == UserRole.COMPANY_MANAGER:
-        # The group's own shops plus every subsidiary's.
-        query = query.filter(Shop.company_id.in_(company_scope_ids(db, current_user)))
+        # The group's own shops plus every subsidiary's (and only the shops a
+        # "הרשאות דשבורד" profile lists, when it lists some).
+        query = query.filter(Shop.id.in_(visible_shop_ids(db, current_user)))
     elif current_user.role in SHOP_SCOPED_ROLES:
         query = query.filter(Shop.id == current_user.shop_id)
     elif company_id:
@@ -444,11 +446,13 @@ def create_shop(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # "קוד סניף" is mandatory, digits, unique in the company (400 / 409, Hebrew).
+    branch_id = branch_code.check_branch_code(db, company.id, data.branch_id)
     shop = Shop(
         tenant_id=active_tenant_id,
         company_id=data.company_id,
         name=data.name,
-        branch_id=data.branch_id,
+        branch_id=branch_id,
         address=data.address,
         city=data.city,
         is_active=data.is_active,
@@ -467,6 +471,13 @@ def create_shop(
         from app.services import training_mode
 
         training_mode.start(db, shop, current_user, check_shifts=False)
+    if data.payment_integration and data.payment_integration != "auto":
+        # "סוג אינטגרציית אשראי" chosen at creation: the shop's layer, so every till in it
+        # charges there until one is set apart (app/services/payment_integration.py).
+        from app.services.settings_merge import patch_settings_json, utc_now
+
+        shop.settings = patch_settings_json(shop.settings, {"paymentIntegration": data.payment_integration})
+        shop.settings_updated_at = utc_now()
     # A new shop receives every product whose "all shops of company X" rule covers it.
     # No till can be paired to it yet, so there is nobody to notify.
     reconcile_shops(db, [shop])
@@ -537,6 +548,13 @@ def update_shop(
     updates = data.model_dump(exclude_unset=True, by_alias=False)
     # The license fields leave `updates` here: the super admin's only.
     licenses.apply_license(current_user, shop, updates)
+    if "branch_id" in updates:
+        # Never cleared, digits, unique in the company (400 / 409). Once saved it is no
+        # longer the code the migration assigned (`branch_id_auto_assigned`).
+        updates["branch_id"] = branch_code.check_branch_code(
+            db, shop.company_id, updates["branch_id"], shop_id=shop.id
+        )
+        shop.branch_id_auto_assigned = False
     profile_changed = bool(_SHOP_PROFILE_FIELDS & set(updates.keys()))
     was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():
@@ -575,6 +593,22 @@ def delete_shop(
     # A till with an open shift or shifts awaiting a Z keeps its shop (409).
     for machine in list(shop.machines):
         refuse_leaving_shop_with_shifts(db, machine)
+    # A shop with a Z run is never deleted: its counter would go with it, and a shop made
+    # in its place would number its Zs from 1 again (docs/SPEC_OFFLINE_TILL_Z.md §4.7).
+    from app.models.shop_z_sequence import ShopZSequence
+    from app.models.z_report import ZReport
+
+    if (
+        db.query(ZReport.id).filter(ZReport.shop_id == shop.id).first() is not None
+        or db.query(ShopZSequence.shop_id).filter(ShopZSequence.shop_id == shop.id).first() is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "shop_has_z_history",
+                "message": "לסניף יש דוחות Z — לא ניתן למחוק אותו. אפשר להשבית אותו.",
+            },
+        )
     for machine in list(shop.machines):
         set_machine_shop(db, machine, None)
     db.delete(shop)

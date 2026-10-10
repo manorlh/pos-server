@@ -25,6 +25,7 @@ from app.schemas.extra_reports import (
     PaymentMethodsReportResponse,
 )
 from app.services import extra_reports as svc
+from app.services.areas import parse_area_filter
 from app.services.reports import resolve_report_window
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -89,6 +90,14 @@ def get_hourly_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
+    area_id: Optional[str] = Query(
+        None,
+        alias="areaId",
+        description="An area's id, or `none`: the area each document's shift was stamped with.",
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -96,7 +105,10 @@ def get_hourly_report(
     """Net per weekday × hour (מכירות לפי שעה), for a heat map and shift planning."""
     window = _window(db, active_tenant_id, from_date, to_date, None, None, tz)
     return svc.build_hourly_report(
-        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        # A handler called directly sees the `Query(...)` defaults themselves: no filter.
+        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
+        area_filter=parse_area_filter(area_id),
     )
 
 

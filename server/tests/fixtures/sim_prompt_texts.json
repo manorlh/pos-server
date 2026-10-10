@@ -1,0 +1,12 @@
+{
+  "about": "The 'no internet - switch to SIM 2?' line from a kiosk alert's detail. The same file is in pos-server server/tests/fixtures and pos-android app/src/test/resources: both apps compose these exact lines (Kotlin SimPromptText, Python device_identity.sim_prompt_text).",
+  "cases": [
+    {"detail": {"from": "sim", "fromSlot": 1, "fromCarrier": "פרטנר", "toSlot": 2, "toCarrier": "סלקום"}, "text": "אין אינטרנט ברשת פרטנר (סים 1). לעבור לנתונים של סים 2 (סלקום)?"},
+    {"detail": {"from": "sim", "fromSlot": 1, "toSlot": 2, "toCarrier": "גולן טלקום"}, "text": "אין אינטרנט בסים 1. לעבור לנתונים של סים 2 (גולן טלקום)?"},
+    {"detail": {"from": "wifi", "toSlot": 1, "toCarrier": "פרטנר"}, "text": "אין אינטרנט ב-Wi-Fi. לעבור לנתונים ניידים של סים 1 (פרטנר)?"},
+    {"detail": {"from": "ethernet", "toSlot": 2}, "text": "אין אינטרנט ברשת הקווית. לעבור לנתונים ניידים של סים 2?"},
+    {"detail": {"from": "other", "toSlot": 1}, "text": "אין אינטרנט ברשת הנוכחית. לעבור לנתונים ניידים של סים 1?"},
+    {"detail": {"from": "none", "toSlot": 2, "toCarrier": "הוט מובייל"}, "text": "אין אינטרנט. לעבור לנתונים ניידים של סים 2 (הוט מובייל)?"},
+    {"detail": {"from": "none", "fromSlot": 1, "fromCarrier": "פלאפון", "toSlot": 1, "toCarrier": "פלאפון", "turnOnData": true}, "text": "אין אינטרנט — הנתונים הניידים כבויים. להפעיל נתונים בסים 1 (פלאפון)?"}
+  ]
+}

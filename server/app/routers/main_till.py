@@ -6,7 +6,10 @@ GET /shops/{shop_id}/main-till → the main till, `zFrom`, and what each role re
                                  now (tables host, print server, the Z mode) for the card
 PUT /shops/{shop_id}/main-till → `{machineId | null, zFrom}` — the super admin's alone,
                                  like the Z mode; refused while a Z run is under way
-                                 (409 `z_run_in_progress`)
+                                 (409 `z_run_in_progress`), and for a device set "לא משמש
+                                 כשרת מקומי" (409 `main_till_not_server`, docs/SPEC_LAN_MODE.md §3)
+
+The card's switch "רשת מקומית" is `PUT /shops/{shop_id}/local-network` (app/routers/lan_server.py).
 
 The main till is `mainTill` on at that till's own level and off at the shop's others;
 `zFrom` is the shop's own `shopZFrom`. The shop's tills are told (parameters and the
@@ -19,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -29,6 +33,8 @@ from app.models.tenant import Tenant
 from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.models.z_run import ZRun, ZRunStatus
+from app.services import lan_server as LS
+from app.services import local_shop_z as LZ
 from app.services import main_till as MT
 from app.services import printers as K
 from app.services import till_parameters as TP
@@ -42,6 +48,9 @@ class MainTillIn(BaseModel):
 
     machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
     z_from: Optional[str] = Field(None, alias="zFrom")
+    #: The super admin moves the shop's Z production although the main till holding it may
+    #: still have shop Zs the cloud does not (docs/SPEC_INDEPENDENT_TILL.md §8.10).
+    force_producer_switch: bool = Field(False, alias="forceProducerSwitch")
 
 
 def _shop(db: Session, shop_id: uuid.UUID, user: User, tenant_id) -> Shop:
@@ -82,6 +91,13 @@ def _out(db: Session, shop: Shop, user: User) -> dict:
         "printHost": MT.till_ref(K.print_host_of_shop(db, shop.id)),
         "tills": MT.shop_tills_out(db, shop.id),
         "canEdit": user.role == UserRole.SUPER_ADMIN,
+        # "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the switch as stored, whether the shop is in
+        # local mode now (the switch and a main till), and a row per system.
+        "localNetwork": bool(getattr(shop, "local_network", False)),
+        "localMode": LZ.local_mode_of_shop(db, shop),
+        "lanHealth": LS.health(db, shop),
+        # "סנכרון רשת מקומית" (§6): what the local server holds that the cloud copy lacks.
+        "lanSync": LS.sync_state(db, shop),
     }
 
 
@@ -130,9 +146,36 @@ def put_main_till(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="z_run_in_progress")
 
     tills = K.shop_machines(db, shop.id)
+    previous_main = MT.main_till_of_shop(db, shop.id)
     if body.machine_id is not None and str(body.machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
+    chosen = next((m for m in tills if body.machine_id is not None and str(m.id) == str(body.machine_id)), None)
+    if chosen is not None and getattr(chosen, "independent_till", False):
+        # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): outside the shop's LAN group.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "main_till_independent",
+                "message": "קופה עצמאית לא יכולה להיות הקופה הראשית של הסניף. בחרו קופה מבין הקופות שבזד הסניפי.",
+            },
+        )
+    from app.services import lan_server
+
+    if chosen is not None and lan_server.is_excluded(db, chosen):
+        # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): in the LAN group, never its server.
+        raise lan_server.main_till_refusal(chosen)
+    if chosen is not None and getattr(chosen, "is_fiscal", True) is False:
+        # A display device (a KDS / the board) is no till (app/services/display_devices.py).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "device_not_fiscal",
+                "message": "מסך מטבח או מסך מוכן / לא מוכן אינו קופה, ולכן לא יכול להיות הקופה הראשית של הסניף.",
+            },
+        )
     now = datetime.now(timezone.utc)
+    # Exactly one producer of the shop's Z sequence: pinned before, checked after.
+    guard = LZ.ProducerGuard(db, [shop], now=now)
 
     main = _parameter(db, MT.MAIN_TILL_KEY)
     db.query(TillParameterValue).filter(
@@ -159,6 +202,23 @@ def put_main_till(
         ))
         z_from.updated_at = now
     db.flush()
+    try:
+        guard.check(force=body.force_producer_switch, user=current_user)
+    except LZ.LocalShopZRefused as refused:
+        db.rollback()
+        return JSONResponse(
+            status_code=refused.status_code,
+            # The card's refusals are `{detail: {code, message}}`.
+            content={"detail": {"code": refused.body.get("detail"), **{k: v for k, v in refused.body.items() if k != "detail"}}},
+        )
+    if previous_main is not None and chosen is not None and str(previous_main.id) != str(chosen.id):
+        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
+        from app.services.till_messages import send_server_switch_notice
+
+        send_server_switch_notice(
+            db, shop.id, MT.till_ref(chosen), MT.till_ref(previous_main),
+            getattr(current_user, "username", None) or getattr(current_user, "email", None),
+        )
     out = _out(db, shop, current_user)
     targets = TP.notify_targets_for_scope(db, "shop", shop.id)
     db.commit()

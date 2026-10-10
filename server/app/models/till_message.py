@@ -25,6 +25,14 @@ TILL_MESSAGE_LEVELS = ("company", "shop", "area", "machine")
 #: When a message goes out: at once, once at `send_at`, or on a weekly schedule.
 TILL_MESSAGE_SCHEDULES = ("now", "scheduled", "recurring")
 
+#: How a till shows it: full-screen until "קראתי" (the default, and every message sent
+#: before banners existed), or a slim strip over the sell screen and the tables floor
+#: ("באנר מבצעים") that never stops the work.
+TILL_MESSAGE_DISPLAYS = ("fullscreen", "banner")
+
+#: A banner's colour, from a few presets the till knows (null: the till's default).
+TILL_MESSAGE_COLORS = ("amber", "blue", "green", "red", "purple", "dark")
+
 
 class TillMessage(Base):
     """
@@ -56,6 +64,10 @@ class TillMessage(Base):
         CheckConstraint(
             "schedule_kind IN ('now', 'scheduled', 'recurring')",
             name="ck_till_messages_schedule_kind",
+        ),
+        CheckConstraint(
+            "display IN ('fullscreen', 'banner')",
+            name="ck_till_messages_display",
         ),
     )
 
@@ -92,6 +104,16 @@ class TillMessage(Base):
     #: "recurring": the latest occurrence handled (delivered, or skipped as already
     #: started when the message was created, edited or resumed).
     last_occurrence_date = Column(Date, nullable=True)
+
+    #: "fullscreen" (default) or "banner" — see TILL_MESSAGE_DISPLAYS. A banner is shown
+    #: until `expires_at` (or its occurrence's end), whether or not it was acknowledged:
+    #: the till lets the employee hide it for the rest of the shift.
+    display = Column(String(16), nullable=False, default="fullscreen", server_default="fullscreen")
+    #: A banner's product ("push a message about a product"): its chip adds it to the
+    #: order on the till. Null: no product.
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    #: A banner's colour preset (TILL_MESSAGE_COLORS); null: the till's default.
+    color = Column(String(16), nullable=True)
 
     sender = relationship("User")
     receipts = relationship(

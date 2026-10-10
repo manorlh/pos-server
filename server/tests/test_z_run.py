@@ -354,6 +354,9 @@ class TestRemoteClose:
         assert r.status == ZRunStatus.WAITING
         assert item.status == ZRunItemStatus.WAITING_CLOSE
         assert item.close_shift_id == open_shift.id
+        # The push goes only once the run is committed: a till hearing it first would find nothing.
+        assert not w.sent
+        w.db.commit()
         assert w.sent and w.sent[0][2] == str(item.id) and w.sent[0][3] == str(open_shift.id)
         assert w.db.get(Shift, older.id).z_report_id is None
 
@@ -366,7 +369,8 @@ class TestRemoteClose:
 
         assert w.sent == []
         handed = ZR.take_pending_close_shift(w.db, till, now=NOW)
-        assert handed == {"requestId": str(r.items[0].id), "shiftId": str(open_shift.id)}
+        # Who asked, as the realtime push says it.
+        assert handed == {"requestId": str(r.items[0].id), "shiftId": str(open_shift.id), "initiatedBy": "admin"}
 
     def test_acks_move_the_item_but_never_make_it_ready(self, w):
         till = w.tills[0]
@@ -759,7 +763,11 @@ class TestTheRouter:
         w.db.commit()
 
         created = router.post_z_run(
-            ZRunCreateIn.model_validate({"shopId": str(w.shop.id), "machines": [{"machineId": str(w.tills[0].id)}]}),
+            ZRunCreateIn.model_validate({
+                "shopId": str(w.shop.id), "machines": [{"machineId": str(w.tills[0].id)}],
+                # Not seen "now" in this world: the state is confirmed (offline till Z §4.6.1).
+                "confirmCloudData": True,
+            }),
             current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
         )
         assert created["status"] == "completed" and created["zNumber"] == 1

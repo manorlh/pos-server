@@ -14,7 +14,7 @@
 import { useTranslations } from 'next-intl';
 import { CalendarRange, Clock, Globe, Info, Scissors } from 'lucide-react';
 import type { ReportWindowOut } from '@/lib/types';
-import { formatDateTime, formatDateTimeInZone, formatHour, formatQuantity } from '@/lib/format';
+import { formatDate, formatDateTime, formatDateTimeInZone, formatHour, formatQuantity } from '@/lib/format';
 import { dayCount } from '@/lib/reportWindow';
 import { Badge } from '@/components/ui/badge';
 
@@ -41,7 +41,7 @@ export function ReportWindowSummary({
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary" className="gap-1">
           <CalendarRange aria-hidden />
-          {t('dayRange', { from: w.from, to: w.to, days })}
+          {t('dayRange', { from: formatDate(w.from), to: formatDate(w.to), days })}
         </Badge>
         <Badge variant={hourly ? 'default' : 'outline'} className="gap-1">
           <Clock aria-hidden />

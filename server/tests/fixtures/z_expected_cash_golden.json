@@ -1,0 +1,535 @@
+{
+ "version": 1,
+ "about": "The Z's expected cash with and without the movements — \"Z — מזומן צפוי כולל הפקדות ותנועות מזומן\" (till parameter cashDrawer.zExpectedCashMovements, off by default; pos-server app/services/z_expected_cash.py and z_builder.till_cash_summary / z_cash_summary, pos-android domain/ZExpectedCash.kt). Each case: tills, each with the parameter's value for it and its shifts oldest first (float, cash takings net of cash refunds, cash tips, card tips paid from the drawer, and the Cash In / Cash Out / deposits the shift's close froze; counted null = not counted) → the till's drawer and the Z's (the sum of the tills; counted and over/short null if null for any till). Money plain, two decimals; cashMovements null when the parameter was off. The same bytes in pos-server tests/fixtures and pos-android app/src/test/resources; both tests pin its LF-normalised SHA-256.",
+ "cases": [
+  {
+   "name": "off: a cash in, a cash out and a deposit happened — the Z does not move",
+   "about": "Float 200, cash sales 100, Cash In 30, Cash Out 20, a safe deposit of 150; counted 160. Parameter off (the default): the expected cash is 200 + 100 = 300 as it always was, so the count reads a shortage of 140.",
+   "tills": [
+    {
+     "withMovements": false,
+     "shifts": [
+      {
+       "opening": "200.00",
+       "cash": "100.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": "30.00",
+       "cashOut": "20.00",
+       "deposits": "150.00",
+       "counted": "160.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "200.00",
+      "expected": "300.00",
+      "counted": "160.00",
+      "overShort": "-140.00",
+      "betweenShifts": "0.00",
+      "cashMovements": null
+     }
+    ],
+    "z": {
+     "opening": "200.00",
+     "expected": "300.00",
+     "counted": "160.00",
+     "overShort": "-140.00",
+     "betweenShifts": "0.00",
+     "cashMovements": null
+    }
+   }
+  },
+  {
+   "name": "on: the same shift — the expected cash takes the movements",
+   "about": "The same shift with the parameter on: 200 + 100 + 30 − 20 − 150 = 160; the count of 160 is no gap.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "200.00",
+       "cash": "100.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": "30.00",
+       "cashOut": "20.00",
+       "deposits": "150.00",
+       "counted": "160.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "200.00",
+      "expected": "160.00",
+      "counted": "160.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "30.00",
+       "cashOut": "20.00",
+       "deposits": "150.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "200.00",
+     "expected": "160.00",
+     "counted": "160.00",
+     "overShort": "0.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "30.00",
+      "cashOut": "20.00",
+      "deposits": "150.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "on: a close that carries no movements is none — as off, but it says the parameter applied",
+   "about": "An older till, a kiosk or a reconstructed shift froze no movements: nothing to take, the expected cash is 200 + 100 = 300 and the block is there with zeros.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "200.00",
+       "cash": "100.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": null,
+       "counted": "300.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "200.00",
+      "expected": "300.00",
+      "counted": "300.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "0.00",
+       "cashOut": "0.00",
+       "deposits": "0.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "200.00",
+     "expected": "300.00",
+     "counted": "300.00",
+     "overShort": "0.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "0.00",
+      "cashOut": "0.00",
+      "deposits": "0.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "on: two counted shifts, the deposit in the first",
+   "about": "Shift 1: float 100, cash 80, deposit 100, counted 80; shift 2 opens on 80, cash 20, counted 100. Expected 1 = 80 (gap 0), expected 2 = 100 (gap 0); the period's expected = 100 + 100 − 100 + 0 = 100, no gap.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "80.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": "100.00",
+       "counted": "80.00"
+      },
+      {
+       "opening": "80.00",
+       "cash": "20.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": null,
+       "counted": "100.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "100.00",
+      "expected": "100.00",
+      "counted": "100.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "0.00",
+       "cashOut": "0.00",
+       "deposits": "100.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "100.00",
+     "expected": "100.00",
+     "counted": "100.00",
+     "overShort": "0.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "0.00",
+      "cashOut": "0.00",
+      "deposits": "100.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "off: the same two shifts — the deposit reads as a shortage of 100 inside the Z",
+   "about": "Expected 1 = 180 against a count of 80 (−100), expected 2 = 100 (0): the period's expected is 100 + 100 + 0 = 200 against the last count of 100, over/short −100.",
+   "tills": [
+    {
+     "withMovements": false,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "80.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": "100.00",
+       "counted": "80.00"
+      },
+      {
+       "opening": "80.00",
+       "cash": "20.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": null,
+       "counted": "100.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "100.00",
+      "expected": "200.00",
+      "counted": "100.00",
+      "overShort": "-100.00",
+      "betweenShifts": "0.00",
+      "cashMovements": null
+     }
+    ],
+    "z": {
+     "opening": "100.00",
+     "expected": "200.00",
+     "counted": "100.00",
+     "overShort": "-100.00",
+     "betweenShifts": "0.00",
+     "cashMovements": null
+    }
+   }
+  },
+  {
+   "name": "on: an uncounted shift closes at its expected, movements included",
+   "about": "Shift 1 (not counted): float 100, cash 50, deposit 100 → closes at 50, and shift 2 opens on 50: nothing was moved between the shifts (0). Shift 2: cash 20, counted 70. Expected 100 + 70 − 100 = 70; over/short withheld (a shift was not counted).",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "50.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": "100.00",
+       "counted": null
+      },
+      {
+       "opening": "50.00",
+       "cash": "20.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": null,
+       "counted": "70.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "100.00",
+      "expected": "70.00",
+      "counted": "70.00",
+      "overShort": null,
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "0.00",
+       "cashOut": "0.00",
+       "deposits": "100.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "100.00",
+     "expected": "70.00",
+     "counted": "70.00",
+     "overShort": null,
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "0.00",
+      "cashOut": "0.00",
+      "deposits": "100.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "off: the same uncounted shifts — the deposit lands in the cash moved between shifts",
+   "about": "Shift 1 closes at its expected 150, shift 2 opens on 50: 100 moved out between the shifts. Expected 100 + 70 + 0 − 100 = 70, the same figure; the line it is under differs.",
+   "tills": [
+    {
+     "withMovements": false,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "50.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": "100.00",
+       "counted": null
+      },
+      {
+       "opening": "50.00",
+       "cash": "20.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": null,
+       "counted": "70.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "100.00",
+      "expected": "70.00",
+      "counted": "70.00",
+      "overShort": null,
+      "betweenShifts": "-100.00",
+      "cashMovements": null
+     }
+    ],
+    "z": {
+     "opening": "100.00",
+     "expected": "70.00",
+     "counted": "70.00",
+     "overShort": null,
+     "betweenShifts": "-100.00",
+     "cashMovements": null
+    }
+   }
+  },
+  {
+   "name": "on: card tips paid from the drawer and a cash in, together",
+   "about": "Cash 50 and a card tip of 10 handed out of the drawer, Cash In 5: 0 + 50 − 10 + 5 = 45; counted 45.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "0.00",
+       "cash": "50.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": "10.00",
+       "cashIn": "5.00",
+       "cashOut": null,
+       "deposits": null,
+       "counted": "45.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "0.00",
+      "expected": "45.00",
+      "counted": "45.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "5.00",
+       "cashOut": "0.00",
+       "deposits": "0.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "0.00",
+     "expected": "45.00",
+     "counted": "45.00",
+     "overShort": "0.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "5.00",
+      "cashOut": "0.00",
+      "deposits": "0.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "on: cash tips are in the expected cash, a deposit takes them off",
+   "about": "Float 50, cash 100, cash tips 10, deposit 60: 50 + 100 + 10 − 60 = 100; counted 100.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "50.00",
+       "cash": "100.00",
+       "cashTips": "10.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": null,
+       "cashOut": null,
+       "deposits": "60.00",
+       "counted": "100.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "50.00",
+      "expected": "100.00",
+      "counted": "100.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "0.00",
+       "cashOut": "0.00",
+       "deposits": "60.00"
+      }
+     }
+    ],
+    "z": {
+     "opening": "50.00",
+     "expected": "100.00",
+     "counted": "100.00",
+     "overShort": "0.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "0.00",
+      "cashOut": "0.00",
+      "deposits": "60.00"
+     }
+    }
+   }
+  },
+  {
+   "name": "a shop Z: one till on, one off (a till parameter)",
+   "about": "Till A (on): 100 + 40 + 20 − 10 − 90 = 60, counted 60. Till B (off, the same frozen movements are ignored): 100 + 40 = 140, counted 60 (−80). The Z sums the tills; its movements are A's alone.",
+   "tills": [
+    {
+     "withMovements": true,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "40.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": "20.00",
+       "cashOut": "10.00",
+       "deposits": "90.00",
+       "counted": "60.00"
+      }
+     ]
+    },
+    {
+     "withMovements": false,
+     "shifts": [
+      {
+       "opening": "100.00",
+       "cash": "40.00",
+       "cashTips": "0.00",
+       "cardTipsFromDrawer": null,
+       "cashIn": "20.00",
+       "cashOut": "10.00",
+       "deposits": "90.00",
+       "counted": "60.00"
+      }
+     ]
+    }
+   ],
+   "expected": {
+    "tills": [
+     {
+      "opening": "100.00",
+      "expected": "60.00",
+      "counted": "60.00",
+      "overShort": "0.00",
+      "betweenShifts": "0.00",
+      "cashMovements": {
+       "cashIn": "20.00",
+       "cashOut": "10.00",
+       "deposits": "90.00"
+      }
+     },
+     {
+      "opening": "100.00",
+      "expected": "140.00",
+      "counted": "60.00",
+      "overShort": "-80.00",
+      "betweenShifts": "0.00",
+      "cashMovements": null
+     }
+    ],
+    "z": {
+     "opening": "200.00",
+     "expected": "200.00",
+     "counted": "120.00",
+     "overShort": "-80.00",
+     "betweenShifts": "0.00",
+     "cashMovements": {
+      "cashIn": "20.00",
+      "cashOut": "10.00",
+      "deposits": "90.00"
+     }
+    }
+   }
+  }
+ ]
+}

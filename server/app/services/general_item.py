@@ -58,6 +58,8 @@ LOCKED_FIELDS: Mapping[str, Any] = {
     "is_weighed": False,
     "track_stock": False,
     "voucher_id": None,
+    # The calculator sells through it: a manager's code per amount would stop the till.
+    "requires_manager_approval": False,
 }
 
 _LOCKED_REASON = {
@@ -67,6 +69,7 @@ _LOCKED_REASON = {
     "is_weighed": "the general item is sold by amount, never by weight",
     "track_stock": "the general item has no stock to track",
     "voucher_id": "the general item cannot issue a voucher",
+    "requires_manager_approval": "the general item is the calculator's: it never needs a manager's code",
 }
 
 

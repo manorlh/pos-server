@@ -31,6 +31,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useScope } from '@/lib/scope';
 import { GroupEditorDialog } from '@/components/dashboard/menu/group-editor';
+import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
 import {
   IosCanvas,
   IosCard,
@@ -58,6 +59,7 @@ export default function ModifiersPage() {
 
   return (
     <div className="space-y-4">
+      <MenuBroadcastBanner />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
         <h1 className="text-2xl font-bold">{t('title')}</h1>

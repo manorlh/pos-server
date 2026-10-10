@@ -30,7 +30,7 @@ settings as a flat string key/value table.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -145,3 +145,65 @@ def legacy_tip_flags(resolved: Mapping[str, bool]) -> Dict[str, bool]:
 
 def any_allowed(merged: Mapping[str, Any]) -> bool:
     return any(is_allowed(merged, o) for o in PAYMENT_OPTIONS)
+
+
+# ── "סדר אמצעי התשלום": the order the till lists its payment buttons in ───────────
+
+#: The settings key: a list of the ids in DEFAULT_PAY_ORDER, the first shown first. Set
+#: at any level (company, shop, point of sale, till) like the switches above; the deepest
+#: level that sets it wins whole — a list is never merged with its parent's. It only
+#: sorts: a method switched off is not shown because the order names it.
+PAY_ORDER_KEY = "payOrder"
+
+#: Every id `payOrder` may name, in the order a till shows them when no level sets one:
+#: the payment screen as it is drawn — the big buttons "אשראי מהיר", "מזומן עם עודף",
+#: "מזומן מהיר", then the rows under them, instalments, keyed card and "שובר". The five
+#: options above plus the voucher, which has no switch (a till offers it wherever a
+#: voucher can pay) but has a row of its own to place. The Android till carries the same
+#: list (domain/PayOrder.kt).
+DEFAULT_PAY_ORDER: Tuple[str, ...] = ("fastCard", "cash", "fastCash", "card", "manualCard", "voucher")
+
+#: The ids drawn as the big buttons at the top of the payment screen ("מהיר"); the rest
+#: are rows in the list under them. The order sorts within each group and never moves a
+#: method from one to the other.
+PAY_ORDER_BIG_BUTTONS: Tuple[str, ...] = ("fastCard", "cash", "fastCash")
+
+
+def validate_pay_order(value: Sequence[Any]) -> List[str]:
+    """A `payOrder` as a layer may store it: known ids only, each once, at least one.
+
+    It need not name every id: those it leaves out follow in the default order
+    (complete_pay_order), so a list saved before a method existed still shows it.
+    """
+    ids = list(value)
+    if not ids:
+        raise ValueError("payOrder must name at least one payment method (null resets to inherit)")
+    unknown = [i for i in ids if i not in DEFAULT_PAY_ORDER]
+    if unknown:
+        raise ValueError(
+            f"unknown payment method {unknown[0]!r}; known: {', '.join(DEFAULT_PAY_ORDER)}"
+        )
+    if len(set(ids)) != len(ids):
+        raise ValueError("payment methods in payOrder must not repeat")
+    return ids
+
+
+def complete_pay_order(ids: Sequence[Any]) -> List[str]:
+    """The known ids of `ids` as listed, each once, then every id missing, in default order."""
+    out: List[str] = []
+    for i in ids:
+        if isinstance(i, str) and i in DEFAULT_PAY_ORDER and i not in out:
+            out.append(i)
+    return out + [i for i in DEFAULT_PAY_ORDER if i not in out]
+
+
+def resolve_pay_order(merged: Mapping[str, Any]) -> Optional[List[str]]:
+    """The merged `payOrder`, completed; None where no level sets one (= the default order).
+
+    A view, like resolve_payment_options: never write it back into a layer. Anything but
+    a list in the JSON (a hand edit) reads as unset.
+    """
+    stored = merged.get(PAY_ORDER_KEY)
+    if not isinstance(stored, list):
+        return None
+    return complete_pay_order(stored)

@@ -70,6 +70,7 @@ def build_feed(ctx: S.InsightsContext) -> dict:
         ("tablesLive", S.tables_live),
         ("tables", S.tables),
         ("customers", S.customers),
+        ("anomalies", S.anomalies),
     ):
         sections[name] = _safe(builder, ctx)
     kpis = S.kpis(ctx)
@@ -88,6 +89,7 @@ def build_feed(ctx: S.InsightsContext) -> dict:
     cards += _table_cards(sections.get("tablesLive"), sections.get("tables"))
     cards += _forecast_cards(sections.get("forecast"))
     cards += _customer_cards(sections.get("customers"))
+    cards += _anomaly_cards(sections.get("anomalies"))
 
     cards.sort(key=lambda c: (SEVERITY_ORDER.index(c["severity"]), -c["score"]))
     counts = {s: sum(1 for c in cards if c["severity"] == s) for s in SEVERITY_ORDER}
@@ -185,7 +187,7 @@ def _slow_cards(sl: Optional[dict]) -> List[dict]:
     dead = sl.get("dead", [])
     for r in dead[:3]:
         out.append(card("product_dead", "warning", "slow", (r["stockValue"] or 0) + (r["onHand"] or 0) * 100 + (r["daysSinceSale"] or 365),
-                        key=r["key"], name=r["name"], days=r["daysSinceSale"], never=r["never"],
+                        key=r["key"], productId=r.get("productId"), name=r["name"], days=r["daysSinceSale"], never=r["never"],
                         lookbackDays=r["lookbackDays"], onHand=r["onHand"], stockValue=r["stockValue"], action=r["action"]))
     if len(dead) > 3:
         out.append(card("products_dead_more", "info", "slow", len(dead), count=len(dead) - 3, total=len(dead),
@@ -196,7 +198,7 @@ def _slow_cards(sl: Optional[dict]) -> List[dict]:
                         names=[r["name"] for r in slow[:3]], fairShare=slow[0]["fairShare"]))
     for r in sl.get("declining", [])[:2]:
         out.append(card("product_declining", "warning", "slow", r["unitsPrev"] - r["units"], key=r["key"],
-                        name=r["name"], units=r["units"], unitsPrev=r["unitsPrev"], changePct=r["changePct"]))
+                        productId=r.get("productId"), name=r["name"], units=r["units"], unitsPrev=r["unitsPrev"], changePct=r["changePct"]))
     return out
 
 
@@ -209,7 +211,8 @@ def _product_trend_cards(tr: Optional[dict]) -> List[dict]:
         out.append(card("product_rising", "positive", "trends", r["netChange"], key=r["key"], name=r["name"],
                         changePct=r["changePct"], units=r["units"], unitsPrev=r["unitsPrev"]))
     for r in products.get("falling", [])[:2]:
-        out.append(card("product_falling", "warning", "trends", -r["netChange"], key=r["key"], name=r["name"],
+        out.append(card("product_falling", "warning", "trends", -r["netChange"], key=r["key"],
+                        productId=r.get("productId"), name=r["name"],
                         changePct=r["changePct"], units=r["units"], unitsPrev=r["unitsPrev"]))
     return out
 
@@ -372,3 +375,12 @@ def _customer_cards(cu: Optional[dict]) -> List[dict]:
         return []
     return [card("repeat_customers", "info", "customers", 0, repeatPct=summary["repeatPct"],
                  repeatNetPct=summary["repeatNetPct"], customers=summary["customers"])]
+
+
+#: The feed shows the most urgent till anomalies; the section lists them all.
+MAX_ANOMALY_CARDS = 4
+
+
+def _anomaly_cards(an: Optional[dict]) -> List[dict]:
+    """The till anomalies are cards already (app/services/insights/anomalies.py)."""
+    return list((an or {}).get("cards") or [])[:MAX_ANOMALY_CARDS]

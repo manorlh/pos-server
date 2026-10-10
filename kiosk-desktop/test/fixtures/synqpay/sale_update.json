@@ -1,0 +1,28 @@
+{
+    "jsonrpc": "2.0",
+    "id": "1234567890",
+    "result": {
+        "result": "OK",
+        "commandStatus": "UPDATE",
+        "transaction": {
+            "transactionTime": "2024-11-20T18:17:02.44+08:00",
+            "referenceId": "abcdef123456",
+            "terminalId": "0881198",
+            "transactionType": "SALE",
+            "amount": 1000,
+            "totalAmount": 1000,
+            "tipAmount": 0,
+            "currency": 376,
+            "transactionId": "24112018170208811986255",
+            "systemTraceNumber": "01001002",
+            "maskedPan": "458008XXXXXX3303",
+            "panSuffix": "3303",
+            "allowedCreditTerms": ["REGULAR", "SPECIAL", "CREDIT", "INSTALLMENTS"],
+            "maxNumberInstallmentPayments": 12,
+            "creditTerms": "REGULAR",
+            "panEntryMode": "EMV",
+            "issuer": 2,
+            "brand": 2
+        }
+    }
+}

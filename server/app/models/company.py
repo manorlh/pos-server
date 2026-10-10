@@ -35,6 +35,16 @@ class Company(Base):
     #: the super admin only.
     license_type = Column(String(16), nullable=False, default="permanent", server_default="permanent")
     license_expires_on = Column(Date, nullable=True)
+    #: "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md, app/services/dealer_types.py):
+    #: "company" (חברה בע״מ, the default — today's behaviour), "licensed" (עוסק מורשה)
+    #: or "exempt" (עוסק פטור: receipts only, no VAT). Reaches the till as
+    #: `businessInfo.dealerType` and `settings.dealerType`. A change applies to new
+    #: documents only; who changed it and when is kept below.
+    dealer_type = Column(String(16), nullable=False, default="company", server_default="company")
+    dealer_type_changed_at = Column(DateTime(timezone=True), nullable=True)
+    dealer_type_changed_by = Column(UUID(as_uuid=True), nullable=True)
+    #: Every change, oldest first: `{from, to, at, by, byName}`. Appended, never rewritten.
+    dealer_type_history = Column(JSONB, nullable=False, default=list, server_default="[]")
     settings = Column(JSONB, nullable=False, server_default="{}")
     settings_updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

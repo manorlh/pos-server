@@ -4,8 +4,52 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-import { CHAIR, CHAIR_REACH, chairLayout, chairSides, uniqueElements, type SketchElement } from './tableSketch';
+import {
+  CHAIR,
+  CHAIR_REACH,
+  SKETCH_BACKGROUNDS,
+  SKETCH_KINDS,
+  SKETCH_SCHEMA,
+  SKETCH_STRUCTURE_KINDS,
+  SKETCH_SYMBOL_KINDS,
+  SKETCH_VARIANTS,
+  backgroundOf,
+  chairLayout,
+  chairSides,
+  counterGeometry,
+  defaultText,
+  newElement,
+  styleOf,
+  templateSketch,
+  uniqueElements,
+  variantOf,
+  type Sketch,
+  type SketchElement,
+} from './tableSketch';
+
+describe('the logo and the clean floor', () => {
+  it('offers a logo, sized from the canvas, with no picture of its own', () => {
+    assert.ok(SKETCH_KINDS.includes('logo'));
+    const logo = newElement('logo', 1000, 700);
+    assert.equal(logo.kind, 'logo');
+    assert.deepEqual([logo.w, logo.h], [140, 84]);
+    assert.equal(logo.src ?? null, null);
+    assert.equal(logo.text, null);
+  });
+
+  it('draws the clean floor when nothing was chosen, and keeps what was', () => {
+    assert.equal(SKETCH_BACKGROUNDS[0], 'clean');
+    assert.equal(backgroundOf(null, false), 'clean');
+    assert.equal(backgroundOf({ elements: [] }, true), 'image');
+    assert.equal(backgroundOf({ background: 'wood', elements: [] }, false), 'wood');
+    assert.equal(backgroundOf({ background: 'image', elements: [] }, false), 'clean');
+    // A template draws no floor of its own.
+    assert.equal(templateSketch('cafeBar', 1000, 700).background, null);
+  });
+});
 
 describe('chairSides', () => {
   it('shares a square table round its four sides', () => {
@@ -63,5 +107,84 @@ describe('uniqueElements', () => {
     const els = [line('a', 1), line('b', 2)];
     assert.deepEqual(uniqueElements(els), els);
     assert.deepEqual(uniqueElements([]), []);
+  });
+});
+
+// ── The decor symbols ("סמלים", specs/table-map-decor.md) ─────────────────────
+
+describe('the decor symbols', () => {
+  it('offers the symbols first and the room itself after, every kind once', () => {
+    assert.deepEqual(SKETCH_SYMBOL_KINDS, [
+      'restroom', 'door', 'exit', 'counter', 'dj_booth', 'plant', 'kitchen', 'stairs', 'cashier', 'label',
+    ]);
+    assert.ok(SKETCH_STRUCTURE_KINDS.includes('wall'));
+    assert.equal(new Set(SKETCH_KINDS).size, SKETCH_KINDS.length);
+    assert.equal(SKETCH_KINDS.length, SKETCH_SYMBOL_KINDS.length + SKETCH_STRUCTURE_KINDS.length);
+    assert.equal(SKETCH_SCHEMA, 2);
+  });
+
+  it('keeps a variant only on its own kind, as the server and the till do', () => {
+    assert.equal(variantOf('counter', 'U'), 'U');
+    assert.equal(variantOf('counter', 'men'), 'straight');
+    assert.equal(variantOf('counter', null), 'straight');
+    assert.equal(variantOf('restroom', 'accessible'), 'accessible');
+    assert.equal(variantOf('restroom', 'U'), null);
+    assert.equal(variantOf('exit', 'plain'), 'plain');
+    assert.equal(variantOf('exit', 'L'), null);
+    assert.equal(variantOf('wall', 'L'), null);
+    assert.deepEqual(Object.keys(SKETCH_VARIANTS).sort(), ['counter', 'exit', 'restroom']);
+  });
+
+  it('says whose restrooms and which exit, and draws a plain exit in slate', () => {
+    assert.equal(defaultText({ kind: 'restroom' }), 'שירותים');
+    assert.equal(defaultText({ kind: 'restroom', variant: 'men' }), 'גברים');
+    assert.equal(defaultText({ kind: 'restroom', variant: 'women' }), 'נשים');
+    assert.equal(defaultText({ kind: 'restroom', variant: 'accessible' }), 'נגיש');
+    assert.equal(defaultText({ kind: 'exit', variant: 'plain' }), 'יציאה');
+    assert.equal(defaultText({ kind: 'exit' }), 'יציאת חירום');
+    assert.equal(defaultText({ kind: 'door' }), 'כניסה');
+    assert.equal(defaultText({ kind: 'dj_booth' }), "עמדת די־ג'יי");
+    assert.equal(defaultText({ kind: 'plant' }), null);
+    assert.notEqual(styleOf({ kind: 'exit', variant: 'plain' }).fill, styleOf({ kind: 'exit' }).fill);
+    assert.ok(styleOf({ kind: 'dj_booth' }).fill);
+  });
+
+  it('adds a DJ booth sized from the canvas, and a plain exit', () => {
+    const dj = newElement('dj_booth', 1000, 700);
+    assert.deepEqual([dj.w, dj.h], [112, 70]);
+    assert.equal(newElement('exit', 1000, 700).variant, 'plain');
+    assert.equal(newElement('restroom', 1000, 700).variant ?? null, null);
+  });
+
+  it('runs a U bar along the bottom and up both sides, its stools inside', () => {
+    const el: SketchElement = {
+      id: 'u', kind: 'counter', x: 620, y: 30, w: 320, h: 200, rotation: 0, text: null, variant: 'U', stools: 5,
+    };
+    const { bars, stools } = counterGeometry(el);
+    assert.equal(bars.length, 3);
+    assert.equal(stools.length, 5);
+    const [bottom, left, right] = bars;
+    assert.equal(bottom.y + bottom.h, el.y + el.h);
+    assert.equal(left.x, el.x);
+    assert.equal(right.x + right.w, el.x + el.w);
+    for (const s of stools) {
+      assert.ok(s.cx - s.r >= left.x + left.w - 0.01 && s.cx + s.r <= right.x + 0.01);
+      assert.ok(s.cy + s.r <= bottom.y + 0.01);
+    }
+  });
+
+  it('knows every kind and variant of the golden layout the till reads too', () => {
+    // pos-server's tests/fixtures/table_map_decor_golden.json (the same bytes in pos-android).
+    const file = path.join(__dirname, '..', '..', 'server', 'tests', 'fixtures', 'table_map_decor_golden.json');
+    if (!fs.existsSync(file)) return;
+    const golden = JSON.parse(fs.readFileSync(file, 'utf8')) as { zones: { sketch: Sketch }[] };
+    const elements = golden.zones[0].sketch.elements;
+    assert.equal(elements.length, 19);
+    for (const el of elements) {
+      assert.ok(SKETCH_KINDS.includes(el.kind), el.kind);
+      if (el.variant != null) assert.equal(variantOf(el.kind, el.variant), el.variant, `${el.id} ${el.variant}`);
+    }
+    const kinds = new Set(elements.map((e) => e.kind));
+    for (const k of SKETCH_SYMBOL_KINDS) assert.ok(kinds.has(k), k);
   });
 });

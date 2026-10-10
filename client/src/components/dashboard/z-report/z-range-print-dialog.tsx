@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { ZPrintViewToggle, type ZPrintView } from '@/components/dashboard/z-report/z-print-view-toggle';
 
@@ -121,11 +122,19 @@ export function ZRangePrintDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">{t('fromDate')}</Label>
-                  <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+                  <DatePicker
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                  />
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">{t('toDate')}</Label>
-                  <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+                  <DatePicker
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
+                  />
                 </div>
               </div>
             )}

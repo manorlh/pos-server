@@ -25,7 +25,7 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -39,7 +39,9 @@ import {
 } from '@/components/ui/table';
 import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
-const MONEY_COLS = ['gross', 'discounts', 'net', 'refunds', 'cash', 'card', 'other', 'tips'] as const;
+const MONEY_COLS = [
+  'gross', 'discounts', 'productionVoucherDeductions', 'net', 'refunds', 'cash', 'card', 'productionVoucher', 'other', 'tips',
+] as const;
 const COLS = 2 + MONEY_COLS.length;
 
 export default function SalesByAreaPage() {
@@ -108,26 +110,26 @@ export default function SalesByAreaPage() {
               <Label htmlFor="area-sales-from" className="text-xs">
                 {t('from')}
               </Label>
-              <Input
+              <DatePicker
                 id="area-sales-from"
-                type="date"
                 value={from}
                 max={to || undefined}
                 aria-invalid={rangeInvalid || undefined}
                 onChange={(e) => setFrom(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="area-sales-to" className="text-xs">
                 {t('to')}
               </Label>
-              <Input
+              <DatePicker
                 id="area-sales-to"
-                type="date"
                 value={to}
                 min={from || undefined}
                 aria-invalid={rangeInvalid || undefined}
                 onChange={(e) => setTo(e.target.value)}
+                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
               />
             </div>
             <Button disabled={rangeInvalid || isFetching} onClick={() => setApplied({ from, to })}>

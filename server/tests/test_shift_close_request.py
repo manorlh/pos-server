@@ -127,7 +127,8 @@ class TestTheTillGetsAZRunsInstruction:
 
         assert w.sent == []
         handed = remote_close.take_pending_close_shift(w.db, till)
-        assert handed == {"requestId": str(out["id"]), "shiftId": str(shift.id)}
+        # Who asked, as the realtime push says it.
+        assert handed == {"requestId": str(out["id"]), "shiftId": str(shift.id), "initiatedBy": "admin"}
         # Repeated on every beat until the close is accepted (the till dedupes).
         assert remote_close.take_pending_close_shift(w.db, till) == handed
 
@@ -138,7 +139,7 @@ class TestTheTillGetsAZRunsInstruction:
 
         beat = machines_router.post_my_heartbeat(body=None, machine=till, db=w.db)
 
-        assert beat["pendingCloseShift"] == {"requestId": str(out["id"]), "shiftId": str(shift.id)}
+        assert beat["pendingCloseShift"] == {"requestId": str(out["id"]), "shiftId": str(shift.id), "initiatedBy": "admin"}
 
     def test_a_second_click_returns_the_pending_request(self, w):
         till = w.tills[0]

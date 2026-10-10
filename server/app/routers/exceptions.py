@@ -195,6 +195,7 @@ def _out(row: AuditException, labels: Dict[str, Dict[Any, Any]]) -> ExceptionOut
         shift_number=labels["shifts"].get(row.shift_id),
         transaction_id=row.transaction_id,
         transaction_number=labels["documents"].get(row.transaction_id),
+        document_type=labels.get("documentTypes", {}).get(row.transaction_id),
         pos_user_id=row.pos_user_id,
         pos_user_name=row.pos_user_name,
         amount=float(row.amount) if row.amount is not None else None,

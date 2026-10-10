@@ -1,0 +1,334 @@
+{
+  "description": "שליחת לוגים לענן §4 — golden cases of the scrubber. pos-server app/services/log_scrub.py and pos-android mirror it; this file is the same bytes in both repos. For every case: scrub(input) == expected and scrub(expected) == expected.",
+  "version": 2,
+  "rules": [
+    "1 track2: ;? 13-19 digits, = or D, 4+ digits, optional F and ? -> ***",
+    "2 secrets: the value of a key (the whole run of [A-Za-z0-9_.-] before [ \\t]*[:=][ \\t]*) -> *** (quotes kept; an unterminated quote runs to the end of the line; a bare value runs to whitespace or one of ,;&\"'(){}[]<>\\ and includes a Bearer/Basic/Token scheme) when the key is secret: split at _ - . and camelCase (aB, 1B, the end of an acronym ABc) and letter/digit boundaries, lower-cased, a token is one of pin|pincode|password|passwd|secret|token|cvv|authorization|apikey, or two tokens in a row are api,key; or the whole key lower-cased is one of token|secret|password|passwd|pin|pincode|cvv|authorization|api_key|apikey|terminal_password. By token, never by substring (pinpadHost, mapping stay). A key that is not secret hides nothing and the search goes on right after it",
+    "3 Bearer <token> -> Bearer ***",
+    "4 cards: digit groups separated by single spaces or dashes; the leftmost, then longest, window of whole groups that is a card -> ************ + last 4. A card: Luhn, and 13 digits starting with 4; 14 starting with 30|36|38; 15 starting with 34|37; 16-19 any",
+    "5 Israeli mobiles: (+972|00972|972|0)[ -]?5X[ -]?XXX[ -]?XX[ -]?XX -> 05X-***-XX + last 2",
+    "6 emails: first character + *** + @domain"
+  ],
+  "cases": [
+    {
+      "name": "card_contiguous_visa",
+      "input": "paid with 4111111111111111 ok",
+      "expected": "paid with ************1111 ok"
+    },
+    {
+      "name": "card_spaces",
+      "input": "card 5555 5555 5555 4444 approved",
+      "expected": "card ************4444 approved"
+    },
+    {
+      "name": "card_dashes",
+      "input": "card 4111-1111-1111-1111 approved",
+      "expected": "card ************1111 approved"
+    },
+    {
+      "name": "card_amex_15",
+      "input": "amex 378282246310005",
+      "expected": "amex ************0005"
+    },
+    {
+      "name": "card_13_digits",
+      "input": "old visa 4222222222222",
+      "expected": "old visa ************2222"
+    },
+    {
+      "name": "card_19_digits",
+      "input": "unionpay 6221260000000000001 end",
+      "expected": "unionpay ************0001 end"
+    },
+    {
+      "name": "card_luhn_fails_kept",
+      "input": "ref 4111111111111112 kept",
+      "expected": "ref 4111111111111112 kept"
+    },
+    {
+      "name": "card_12_digits_kept",
+      "input": "ref 411111111111 kept",
+      "expected": "ref 411111111111 kept"
+    },
+    {
+      "name": "card_20_contiguous_kept",
+      "input": "order 41111111111111111111 kept",
+      "expected": "order 41111111111111111111 kept"
+    },
+    {
+      "name": "card_then_year_group",
+      "input": "4111 1111 1111 1111 2026 exp",
+      "expected": "************1111 2026 exp"
+    },
+    {
+      "name": "card_after_short_group",
+      "input": "x 12 4111 1111 1111 1111",
+      "expected": "x 12 ************1111"
+    },
+    {
+      "name": "card_glued_to_letters",
+      "input": "PAN:4111111111111111;",
+      "expected": "PAN:************1111;"
+    },
+    {
+      "name": "two_cards_one_run",
+      "input": "4111 1111 1111 1111 5555 5555 5555 4444",
+      "expected": "************1111 ************4444"
+    },
+    {
+      "name": "card_in_json",
+      "input": "{\"pan\":\"5555555555554444\",\"amount\":12.5}",
+      "expected": "{\"pan\":\"************4444\",\"amount\":12.5}"
+    },
+    {
+      "name": "epoch_ms_luhn_fails_kept",
+      "input": "ts=1760000000000",
+      "expected": "ts=1760000000000"
+    },
+    {
+      "name": "epoch_ms_luhn_valid_kept",
+      "input": "ts=1760000000008",
+      "expected": "ts=1760000000008"
+    },
+    {
+      "name": "epoch_ms_kept",
+      "input": "from_ms 1760000000000 to_ms 1760003600000",
+      "expected": "from_ms 1760000000000 to_ms 1760003600000"
+    },
+    {
+      "name": "card_13_not_starting_with_4_kept",
+      "input": "ref 5123456789010",
+      "expected": "ref 5123456789010"
+    },
+    {
+      "name": "card_14_diners_masked",
+      "input": "diners 3056 930902 5904",
+      "expected": "diners ************5904"
+    },
+    {
+      "name": "card_14_other_prefix_kept",
+      "input": "ref 12345678901237",
+      "expected": "ref 12345678901237"
+    },
+    {
+      "name": "card_15_not_amex_prefix_kept",
+      "input": "ref 412345678901233",
+      "expected": "ref 412345678901233"
+    },
+    {
+      "name": "track2_sentinels",
+      "input": "t2=;4580123456789012=25121010000000000000? done",
+      "expected": "t2=*** done"
+    },
+    {
+      "name": "track2_emv_tag57",
+      "input": "57: 4111111111111111D25122010000000000F",
+      "expected": "57: ***"
+    },
+    {
+      "name": "kv_equals",
+      "input": "login user=dana password=hunter2 ok",
+      "expected": "login user=dana password=*** ok"
+    },
+    {
+      "name": "kv_colon",
+      "input": "PIN: 1234",
+      "expected": "PIN: ***"
+    },
+    {
+      "name": "kv_json",
+      "input": "{\"terminalPassword\":\"Zx9-ab\",\"terminalNumber\":\"0882016\"}",
+      "expected": "{\"terminalPassword\":\"***\",\"terminalNumber\":\"0882016\"}"
+    },
+    {
+      "name": "kv_json_spaces",
+      "input": "{\"api_key\" : \"k-123\", \"name\": \"קופה 2\"}",
+      "expected": "{\"api_key\" : \"***\", \"name\": \"קופה 2\"}"
+    },
+    {
+      "name": "kv_escaped_json",
+      "input": "body={\\\"apiKey\\\":\\\"abc123\\\",\\\"x\\\":1}",
+      "expected": "body={\\\"apiKey\\\":\\\"***\\\",\\\"x\\\":1}"
+    },
+    {
+      "name": "kv_single_quotes",
+      "input": "cfg secret='s3cr' next",
+      "expected": "cfg secret='***' next"
+    },
+    {
+      "name": "kv_kotlin_tostring",
+      "input": "ZCreditConfig(terminalNumber=0882016, terminalPassword=Zx9ab, useSandbox=false)",
+      "expected": "ZCreditConfig(terminalNumber=0882016, terminalPassword=***, useSandbox=false)"
+    },
+    {
+      "name": "kv_synqpay",
+      "input": "SynqPayConfig(apiKey=sp_live_x1, secret=abc, merchant=12)",
+      "expected": "SynqPayConfig(apiKey=***, secret=***, merchant=12)"
+    },
+    {
+      "name": "kv_query_string",
+      "input": "GET /api/x?token=abc.def&page=2",
+      "expected": "GET /api/x?token=***&page=2"
+    },
+    {
+      "name": "kv_authorization_header",
+      "input": "Authorization: Bearer abc.def-123",
+      "expected": "Authorization: ***"
+    },
+    {
+      "name": "kv_basic_auth",
+      "input": "authorization=Basic dXNlcjpw",
+      "expected": "authorization=***"
+    },
+    {
+      "name": "kv_cvv",
+      "input": "cvv=123 cvv2: 456 CVV=789",
+      "expected": "cvv=*** cvv2: *** CVV=***"
+    },
+    {
+      "name": "kv_passwd_apikey",
+      "input": "passwd=qq APIKEY=zz access_token=tt",
+      "expected": "passwd=*** APIKEY=*** access_token=***"
+    },
+    {
+      "name": "kv_pinpad_host_stays",
+      "input": "pinpadHost=192.168.0.10",
+      "expected": "pinpadHost=192.168.0.10"
+    },
+    {
+      "name": "kv_mapping_stays",
+      "input": "mapping=x",
+      "expected": "mapping=x"
+    },
+    {
+      "name": "kv_typing_shipping_spinner_stay",
+      "input": "typing=fast shipping: 2 days spinner=on",
+      "expected": "typing=fast shipping: 2 days spinner=on"
+    },
+    {
+      "name": "kv_manager_pin",
+      "input": "managerPin=1234",
+      "expected": "managerPin=***"
+    },
+    {
+      "name": "kv_pin_variants",
+      "input": "pin=11 userPin=22 pin_code=33 PIN=44 pincode=55 PINCode=66 pin-code: 77",
+      "expected": "pin=*** userPin=*** pin_code=*** PIN=*** pincode=*** PINCode=*** pin-code: ***"
+    },
+    {
+      "name": "kv_api_key_variants",
+      "input": "x-api-key: k1 X-API-Key=k2 apiKey=k3 api.key=k4 APIKEY=k5",
+      "expected": "x-api-key: *** X-API-Key=*** apiKey=*** api.key=*** APIKEY=***"
+    },
+    {
+      "name": "kv_token_is_a_whole_token",
+      "input": "access_token=t1 refreshToken=t2 tokenizer=bpe",
+      "expected": "access_token=*** refreshToken=*** tokenizer=bpe"
+    },
+    {
+      "name": "kv_secret_inside_a_plain_keys_value",
+      "input": "mapping=token=abc",
+      "expected": "mapping=token=***"
+    },
+    {
+      "name": "kv_unterminated_quote",
+      "input": "password: \"abc",
+      "expected": "password: \"***\""
+    },
+    {
+      "name": "kv_empty_quoted",
+      "input": "token=\"\"",
+      "expected": "token=\"***\""
+    },
+    {
+      "name": "kv_no_value_kept",
+      "input": "token= ",
+      "expected": "token= "
+    },
+    {
+      "name": "kv_prose_without_separator_kept",
+      "input": "my pin is secret",
+      "expected": "my pin is secret"
+    },
+    {
+      "name": "bearer_standalone",
+      "input": "sent bearer abc.def~1/2+3== to host",
+      "expected": "sent bearer *** to host"
+    },
+    {
+      "name": "phone_dash",
+      "input": "call 052-1234567 now",
+      "expected": "call 052-***-XX67 now"
+    },
+    {
+      "name": "phone_plain",
+      "input": "0541234589",
+      "expected": "054-***-XX89"
+    },
+    {
+      "name": "phone_groups",
+      "input": "050 123 45 67",
+      "expected": "050-***-XX67"
+    },
+    {
+      "name": "phone_intl",
+      "input": "+972-52-123-4567",
+      "expected": "052-***-XX67"
+    },
+    {
+      "name": "phone_intl_plain",
+      "input": "972521234567",
+      "expected": "052-***-XX67"
+    },
+    {
+      "name": "phone_00972",
+      "input": "00972501234567",
+      "expected": "050-***-XX67"
+    },
+    {
+      "name": "phone_landline_kept",
+      "input": "03-1234567",
+      "expected": "03-1234567"
+    },
+    {
+      "name": "phone_inside_longer_number_kept",
+      "input": "id 10521234567 kept",
+      "expected": "id 10521234567 kept"
+    },
+    {
+      "name": "email",
+      "input": "mail dana.levi+pos@example.co.il please",
+      "expected": "mail d***@example.co.il please"
+    },
+    {
+      "name": "email_single_char",
+      "input": "a@b.io",
+      "expected": "a***@b.io"
+    },
+    {
+      "name": "email_trailing_dot",
+      "input": "write to ops@runner.test.",
+      "expected": "write to o***@runner.test."
+    },
+    {
+      "name": "hebrew_note",
+      "input": "הקופה נתקעה אחרי עסקה בכרטיס 4580 1234 5678 9015, לקוח 054-7654321, dana@shop.co.il",
+      "expected": "הקופה נתקעה אחרי עסקה בכרטיס ************9015, לקוח 054-***-XX21, d***@shop.co.il"
+    },
+    {
+      "name": "multiline",
+      "input": "line1 token=a1\nline2 4111111111111111\nline3 phone 0521112233",
+      "expected": "line1 token=***\nline2 ************1111\nline3 phone 052-***-XX33"
+    },
+    {
+      "name": "already_scrubbed_is_stable",
+      "input": "************1111 052-***-XX67 d***@example.com password=*** Bearer ***",
+      "expected": "************1111 052-***-XX67 d***@example.com password=*** Bearer ***"
+    },
+    {
+      "name": "nothing_to_hide",
+      "input": "Sync OK in 120 ms, 3 docs, shift #12",
+      "expected": "Sync OK in 120 ms, 3 docs, shift #12"
+    }
+  ]
+}

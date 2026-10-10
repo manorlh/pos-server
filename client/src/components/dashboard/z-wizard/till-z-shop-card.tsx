@@ -20,12 +20,14 @@ import { useMutation } from '@tanstack/react-query';
 import { Info, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { requestShopTillZ } from '@/lib/api';
+import { ForceCloseOption } from './force-close-option';
 import { formatDateTime } from '@/lib/format';
 import { canAskTillForZ } from '@/lib/tillZ';
 import type { PosMachine, TillZRequest, ZCandidateMachine } from '@/lib/types';
 import { MachineStatusDot } from '@/components/dashboard/machine-status';
 import { useShiftLabel, useTillHeading } from '@/components/dashboard/shifts/shift-parts';
 import { TillZRequestLive, useRefreshAfterTillZ } from '@/components/dashboard/till-z/till-z-request';
+import { trackTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { hasOpenShift, hasSomethingToReport } from './shop-candidates';
@@ -128,7 +130,6 @@ export function TillZShopCard({
   onSent: (requests: TillZRequest[]) => void;
 }) {
   const t = useTranslations('tillZ.wizard');
-  const tr = useTranslations('tillZ.request');
   const errors = useZErrorText();
   const refresh = useRefreshAfterTillZ();
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
@@ -138,10 +139,15 @@ export function TillZShopCard({
   const chosen = tills.filter(isChecked).map((m) => m.machineId);
   const sentFor = (machineId: string) => sent.find((r) => r.machineId === machineId) ?? null;
 
+  const [force, setForce] = useState(false);
   const send = useMutation({
-    mutationFn: () => requestShopTillZ(shopId, chosen),
+    mutationFn: () => requestShopTillZ(shopId, chosen, force),
     onSuccess: (requests) => {
-      toast.success(tr('sentMany', { count: requests.length }));
+      // "פקודות שנשלחו" (lib/deviceCommandsStore.ts): each till's request is also followed in
+      // the background (its popup, the tray, the till's chip) — nothing here waits for a till.
+      for (const r of requests) {
+        trackTillZ(r, r.machineName ?? tills.find((m) => m.machineId === r.machineId)?.machineName ?? null);
+      }
       setOverrides({});
       refresh();
       onSent(requests);
@@ -174,6 +180,7 @@ export function TillZShopCard({
             sent={sentFor(m.machineId)}
           />
         ))}
+        <ForceCloseOption checked={force} onChange={setForce} className="border-t pt-3" />
         <div className="flex flex-wrap items-center gap-3 border-t pt-3">
           <Button disabled={chosen.length === 0 || send.isPending} onClick={() => send.mutate()}>
             {send.isPending ? (

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { fetchAllPages } from '@/lib/fetchAllPages';
 import { usePageScope } from '@/lib/scope';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
 import { Voucher, PaginatedResponse } from '@/lib/types';
@@ -32,6 +33,9 @@ const EMPTY: Partial<Voucher> = {
 export default function VouchersPage() {
   const t = useTranslations('vouchers');
   const tc = useTranslations('common');
+  // The page's own title is its sidebar label ("שוברים"); `vouchers.title` is the voucher's print title ("כותרת להדפסה"),
+  // the column and the field below — not the heading.
+  const tn = useTranslations('nav');
   // Vouchers are tenant-level print templates (`Voucher.tenantId`); a company or
   // shop in scope does not narrow the list.
   const { resolution } = usePageScope({ maxLevel: 'tenant' });
@@ -71,7 +75,7 @@ export default function VouchersPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div>
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
+          <h1 className="text-2xl font-bold">{tn('vouchers')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
         <Button onClick={() => { setEditing(EMPTY); setOpen(true); }} size="sm">
@@ -84,17 +88,23 @@ export default function VouchersPage() {
       ) : null}
 
       <ReportExportToolbar
-        title={t('title')}
+        title={tn('vouchers')}
         disabled={vouchers.length === 0}
-        getSheets={() => ({
-          name: t('title'),
+        // Every voucher, past the 200 the list loads (the endpoint's largest page).
+        getSheets={async () => ({
+          name: tn('vouchers'),
           columns: [
             { header: t('name'), width: 26 },
             { header: t('title'), width: 26 },
             { header: t('valueMode'), width: 16 },
             { header: tc('status'), width: 10 },
           ],
-          rows: vouchers.map((v) => [
+          rows: (
+            await fetchAllPages<Voucher>(
+              (page, pageSize) => api.get('/vouchers', { params: { page, pageSize } }).then((r) => r.data),
+              { pageSize: 200 },
+            )
+          ).map((v) => [
             v.name, v.title ?? v.name, t(`valueMode_${v.valueDisplayMode}`), v.isActive ? tc('active') : tc('inactive'),
           ]),
         })}

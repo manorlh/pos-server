@@ -1,0 +1,32 @@
+{
+  "closedAt": "2026-10-06T21:00:03.120Z",
+  "closedByName": "קיוסק · קיוסק Windows",
+  "unattended": false,
+  "countedCash": 0,
+  "expectedCash": 0,
+  "transactionIds": [
+    "c1a8f0e2-5b7d-4a1e-9f3c-6d2e8b1a4c77"
+  ],
+  "lastTransactionNumber": "57",
+  "till": {
+    "openingCash": 0,
+    "expectedCash": 0,
+    "totalSales": 89,
+    "totalDiscounts": 0,
+    "totalRefunds": 0,
+    "totalCash": 0,
+    "totalCard": 89,
+    "totalTips": 0,
+    "totalCashTips": 0,
+    "totalCardTips": 0,
+    "transactionsCount": 1,
+    "itemsCount": 3,
+    "vatTotal": 13.58
+  },
+  "businessDate": "2026-10-06",
+  "sequenceNumber": 12,
+  "openedAt": "2026-10-06T05:01:12.000Z",
+  "openingCash": 0,
+  "openedByUserId": "kiosk:549e903c-4aba-4528-bc4a-c61b4019a64e",
+  "openedByName": "קיוסק Windows"
+}

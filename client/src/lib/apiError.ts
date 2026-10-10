@@ -25,6 +25,11 @@ export function formatApiErrorDetail(detail: unknown): string | null {
     const m = (detail as { msg?: unknown }).msg;
     if (typeof m === 'string') return m;
   }
+  // `{code, message}`: the server's own (Hebrew) text, never the JSON of it.
+  if (typeof detail === 'object' && detail !== null && 'message' in detail) {
+    const m = (detail as { message?: unknown }).message;
+    if (typeof m === 'string' && m.trim()) return m;
+  }
   try {
     return JSON.stringify(detail);
   } catch {
@@ -33,7 +38,10 @@ export function formatApiErrorDetail(detail: unknown): string | null {
 }
 
 export function axiosErrorToToastMessage(err: unknown, fallback: string): string {
-  const e = err as { response?: { data?: { detail?: unknown } }; message?: string };
+  const e = err as { response?: { data?: { detail?: unknown; message?: unknown } }; message?: string };
+  // `{detail: "<code>", message: "<Hebrew>"}` (e.g. 409 `shop_z_producer_busy`): the text, not the code.
+  const beside = e?.response?.data?.message;
+  if (typeof e?.response?.data?.detail === 'string' && typeof beside === 'string' && beside.trim()) return beside;
   const fromDetail = formatApiErrorDetail(e?.response?.data?.detail);
   if (fromDetail) return fromDetail;
   if (typeof e?.message === 'string' && e.message.trim()) return e.message;

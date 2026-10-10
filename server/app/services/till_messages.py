@@ -24,6 +24,14 @@ Four rules hold the feature up:
   first fetch marks delivery; an ack is idempotent and 404s for a message not addressed
   to that till. A recurring occurrence is listed under its receipt's id, so each day's
   copy is a distinct message to the till.
+
+**Banners** ("באנר מבצעים", `display = "banner"`) ride the same machinery — levels,
+schedules, receipts — but are listed apart, under `banners` in the till's fetch, so a till
+that predates them never shows one full-screen. A banner is listed while it is live,
+acknowledged or not: the till hides it for the rest of the shift when the employee closes
+it (and says who, through the same ack), and shows it again the next shift. It may name a
+product (its chip adds it to the order) and a colour preset; while it shows, its text,
+product, colour and end can still be changed.
 """
 from __future__ import annotations
 
@@ -38,6 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.models.company import Company
 from app.models.pos_machine import POSMachine
+from app.models.product import Product
 from app.models.shop import Shop
 from app.models.shop_area import ShopArea
 from app.models.till_message import TILL_MESSAGE_LEVELS, TillMessage, TillMessageReceipt
@@ -66,6 +75,8 @@ EXPIRY_BEFORE_SEND = "till_message_expiry_before_send"
 NO_OCCURRENCE = "till_message_no_occurrence"
 NOT_EDITABLE = "till_message_not_editable"
 NOT_RECURRING = "till_message_not_recurring"
+PRODUCT_NOT_FOUND = "till_message_product_not_found"
+BANNER_ONLY = "till_message_banner_only"
 
 NotifyTarget = Tuple[str, str]
 
@@ -430,6 +441,17 @@ def materialize_due(db: Session, tenant_id, now: Optional[datetime] = None) -> N
 # ── Dashboard writes ──────────────────────────────────────────────────────────
 
 
+def _check_product(db: Session, tenant_id, product_id) -> Optional[uuid.UUID]:
+    """A banner's product: one of the tenant's (404 otherwise). None stays None."""
+    if product_id is None:
+        return None
+    wanted = _as_uuid(product_id)
+    row = db.query(Product.id, Product.tenant_id).filter(Product.id == wanted).first() if wanted else None
+    if row is None or str(row[1]) != str(tenant_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=PRODUCT_NOT_FOUND)
+    return wanted
+
+
 def send_message(
     db: Session,
     user: User,
@@ -447,8 +469,15 @@ def send_message(
     recur_start_date: Optional[date] = None,
     recur_end_date: Optional[date] = None,
     occurrence_ttl_minutes: Optional[int] = None,
+    display: str = "fullscreen",
+    product_id=None,
+    color: Optional[str] = None,
 ) -> TillMessage:
     now = _now()
+    banner = display == "banner"
+    if not banner and (product_id is not None or color is not None):
+        raise _bad(BANNER_ONLY)
+    product = _check_product(db, tenant_id, product_id) if banner else None
     tz_name = tenant_timezone(db, tenant_id)
     expires_at = _to_utc(expires_at, tz_name)
     if expires_at is not None and expires_at <= now:
@@ -468,6 +497,9 @@ def send_message(
         expires_at=expires_at,
         schedule_kind=schedule_kind or "now",
         timezone=tz_name,
+        display="banner" if banner else "fullscreen",
+        product_id=product,
+        color=color if banner else None,
     )
     if message.schedule_kind == "scheduled":
         message.send_at = _to_utc(send_at, tz_name)
@@ -571,18 +603,47 @@ def update_message(
     Edit a scheduled message before it goes out, or a recurring one at any time (a
     schedule change takes effect from the next occurrence; text changes show at once on
     an occurrence still showing). `changes` holds only the fields the caller sent.
+
+    A banner that has gone out can still change its text, product, colour and end (the
+    tills pick it up on their next fetch) — never when or how it went out.
     """
     _require_open(db, user, tenant_id, message)
-    if message.schedule_kind == "now" or (
+    sent = message.schedule_kind == "now" or (
         message.schedule_kind == "scheduled" and message.sent_at is not None
+    )
+    if sent and message.display != "banner":
+        raise _bad(NOT_EDITABLE, status.HTTP_409_CONFLICT)
+    if sent and (
+        changes.get("display") not in (None, message.display)
+        or any(changes.get(f) is not None for f in ("send_at", *_SCHEDULE_FIELDS))
     ):
         raise _bad(NOT_EDITABLE, status.HTTP_409_CONFLICT)
     now = _now()
     tz_name = message.timezone
+    if changes.get("display"):
+        message.display = changes["display"]
+    if message.display == "banner":
+        if "product_id" in changes:
+            message.product_id = _check_product(db, tenant_id, changes["product_id"])
+        if "color" in changes:
+            message.color = changes["color"]
+    else:
+        if changes.get("product_id") is not None or changes.get("color") is not None:
+            raise _bad(BANNER_ONLY)
+        message.product_id = None
+        message.color = None
     if "title" in changes:
         message.title = changes["title"] or None
     if changes.get("body"):
         message.body = changes["body"]
+    if sent:
+        if "expires_at" in changes:
+            expires = _to_utc(changes["expires_at"], tz_name)
+            if expires is not None and expires <= now:
+                raise _bad(EXPIRY_IN_PAST)
+            message.expires_at = expires
+        db.flush()
+        return message
     if message.schedule_kind == "scheduled":
         if changes.get("send_at") is not None:
             message.send_at = _to_utc(changes["send_at"], tz_name)
@@ -737,6 +798,13 @@ def _target_names(db: Session, messages: Sequence[TillMessage]) -> Dict[Tuple[st
     return names
 
 
+def _product_names(db: Session, ids: Iterable) -> Dict[uuid.UUID, str]:
+    wanted = {i for i in ids if i is not None}
+    if not wanted:
+        return {}
+    return dict(db.query(Product.id, Product.name).filter(Product.id.in_(list(wanted))).all())
+
+
 def _pending_schedule_filter(db: Session, visible):
     """
     Scheduled / recurring messages whose target holds a till the reader can see: they
@@ -858,6 +926,7 @@ def list_messages(
         else {}
     )
     names = _target_names(db, messages)
+    product_names = _product_names(db, [m.product_id for m in messages])
     status_order = {"sent": 0, "delivered": 1, "acknowledged": 2}
 
     items = []
@@ -873,6 +942,7 @@ def list_messages(
         )
         state = _message_status(m, now)
         manage = state in ("active", "scheduled", "paused") and may_manage(db, user, tenant_id, m)
+        banner = (m.display or "fullscreen") == "banner"
         item = {
             "id": m.id,
             "title": m.title,
@@ -891,8 +961,12 @@ def list_messages(
                 "acknowledged": sum(1 for r in tills if r["status"] == "acknowledged"),
             },
             "canManage": manage,
-            "canEdit": manage and (m.schedule_kind == "recurring" or state == "scheduled"),
+            "canEdit": manage and (m.schedule_kind == "recurring" or state == "scheduled" or banner),
             "tills": tills,
+            "display": "banner" if banner else "fullscreen",
+            "productId": m.product_id if banner else None,
+            "productName": product_names.get(m.product_id) if banner else None,
+            "color": m.color if banner else None,
         }
         item.update(_schedule_out(m, now, latest.get(m.id)))
         items.append(item)
@@ -907,36 +981,51 @@ def _till_id(receipt: TillMessageReceipt, message: TillMessage) -> str:
     return str(receipt.id) if receipt.occurrence_date is not None else str(message.id)
 
 
-def pending_for_machine(db: Session, machine: POSMachine) -> List[dict]:
+def _live_for_machine(db: Session, machine: POSMachine, now: datetime, *, banners: bool):
     """
-    This till's unacknowledged, unexpired messages, oldest first, after sending what
-    has come due. The first fetch of each marks it delivered.
+    This till's live copies, oldest first: the full-screen messages it has not
+    acknowledged, or ([banners]) its banners, acknowledged or not.
     """
-    now = _now()
-    materialize_due(db, machine.tenant_id, now)
-    rows = (
+    query = (
         db.query(TillMessageReceipt, TillMessage)
         .join(TillMessage, TillMessage.id == TillMessageReceipt.message_id)
         .filter(
             TillMessageReceipt.machine_id == machine.id,
-            TillMessageReceipt.acknowledged_at.is_(None),
             TillMessage.tenant_id == machine.tenant_id,
         )
-        .all()
     )
+    if banners:
+        query = query.filter(TillMessage.display == "banner")
+    else:
+        query = query.filter(
+            TillMessageReceipt.acknowledged_at.is_(None),
+            or_(TillMessage.display.is_(None), TillMessage.display != "banner"),
+        )
     live = [
         (r, m)
-        for r, m in rows
+        for r, m in query.all()
         if is_live(m, now)
         and _receipt_live(r, now)
         and (_utc(m.send_at) is None or _utc(m.send_at) <= now)
     ]
+    live.sort(key=lambda pair: (_sent_at(pair), str(pair[1].id)))
+    return live
 
-    def sent(pair) -> datetime:
-        r, m = pair
-        return _utc(r.occurs_at) or _utc(m.send_at) or _utc(m.created_at)
 
-    live.sort(key=lambda pair: (sent(pair), str(pair[1].id)))
+def _sent_at(pair) -> datetime:
+    r, m = pair
+    return _utc(r.occurs_at) or _utc(m.send_at) or _utc(m.created_at)
+
+
+def pending_for_machine(db: Session, machine: POSMachine) -> List[dict]:
+    """
+    This till's unacknowledged, unexpired full-screen messages, oldest first, after
+    sending what has come due. The first fetch of each marks it delivered.
+    """
+    now = _now()
+    materialize_due(db, machine.tenant_id, now)
+    live = _live_for_machine(db, machine, now, banners=False)
+    sent = _sent_at
     sender_ids = {m.created_by for _, m in live if m.created_by is not None}
     senders = (
         dict(db.query(User.id, User.username).filter(User.id.in_(list(sender_ids))))
@@ -954,6 +1043,47 @@ def pending_for_machine(db: Session, machine: POSMachine) -> List[dict]:
                 "body": message.body,
                 "sentAt": sent((receipt, message)).isoformat(),
                 "senderName": senders.get(message.created_by),
+            }
+        )
+    db.flush()
+    return items
+
+
+def banners_for_machine(db: Session, machine: POSMachine, *, materialize: bool = True) -> List[dict]:
+    """
+    This till's live banners, oldest first — whether or not an employee closed them (the
+    till hides a closed one for the rest of its shift). Marks each delivered on its first
+    fetch. `productId` is the cloud's product id (the till's `cloudId`); `expiresAt` when
+    it stops (null: until cancelled).
+    """
+    now = _now()
+    if materialize:
+        materialize_due(db, machine.tenant_id, now)
+    live = _live_for_machine(db, machine, now, banners=True)
+    senders_ids = {m.created_by for _, m in live if m.created_by is not None}
+    senders = (
+        dict(db.query(User.id, User.username).filter(User.id.in_(list(senders_ids))))
+        if senders_ids
+        else {}
+    )
+    names = _product_names(db, [m.product_id for _, m in live])
+    items = []
+    for receipt, message in live:
+        if receipt.delivered_at is None:
+            receipt.delivered_at = now
+        ends = [e for e in (_utc(receipt.expires_at), _utc(message.expires_at)) if e is not None]
+        items.append(
+            {
+                "id": _till_id(receipt, message),
+                "title": message.title,
+                "body": message.body,
+                "sentAt": _sent_at((receipt, message)).isoformat(),
+                "senderName": senders.get(message.created_by),
+                "display": "banner",
+                "color": message.color,
+                "productId": str(message.product_id) if message.product_id else None,
+                "productName": names.get(message.product_id),
+                "expiresAt": min(ends).isoformat() if ends else None,
             }
         )
     db.flush()
@@ -1008,3 +1138,83 @@ def acknowledge(
         receipt.acknowledged_by_pos_user_name = (pos_user_name or "").strip()[:200] or None
         db.flush()
     return receipt
+
+
+# ── "השרת הוחלף": the system's own notice ─────────────────────────────────────
+
+#: How long the notice waits for a till that is off (a till switched on later still gets it).
+SERVER_SWITCH_TTL = timedelta(days=3)
+
+SERVER_SWITCH_TITLE = "השרת הוחלף — יש לבדוק תקינות נתונים"
+
+
+def server_switch_body(new_till: Optional[Dict], old_till: Optional[Dict], by: Optional[str]) -> str:
+    """The notice's text (the owner: "שיקפוץ ללקוח הודעה שרת הוחלף, יש לבדוק תקינות נתונים")."""
+
+    def name(t: Optional[Dict]) -> Optional[str]:
+        if not t:
+            return None
+        label = (t.get("name") or "").strip()
+        number = (t.get("posNumber") or "").strip() if isinstance(t.get("posNumber"), str) else t.get("posNumber")
+        return f"{label} (#{number})" if label and number else (label or (f"#{number}" if number else None))
+
+    new_name, old_name = name(new_till), name(old_till)
+    who = f" על ידי {by.strip()}" if by and by.strip() else ""
+    moved = f"מ{old_name} ל{new_name}" if old_name and new_name else (f"ל{new_name}" if new_name else "")
+    head = f"הקופה הראשית (שרת הסניף) הוחלפה {moved}{who}.".replace("  ", " ")
+    return (
+        f"{head}\n"
+        "יש לבדוק תקינות נתונים: שולחנות והזמנות פתוחים, בונים שלא הודפסו, "
+        "ובדשבורד את שורת \"סנכרון רשת מקומית\" בכרטיס הקופה הראשית."
+    )
+
+
+def send_server_switch_notice(
+    db: Session,
+    shop_id,
+    new_till: Optional[Dict],
+    old_till: Optional[Dict],
+    by: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Optional[TillMessage]:
+    """
+    Every till of the shop shows "השרת הוחלף" full-screen until its employee taps "קראתי"
+    (the ordinary till message: its receipts, its "who acknowledged"). Sent by the system
+    (no sender), to the shop's active fiscal tills — not its kiosks (a customer stands
+    there) nor its kitchen / ready screens (no employee to acknowledge). None: no such till.
+    """
+    shop = db.get(Shop, _as_uuid(shop_id)) if shop_id is not None else None
+    if shop is None:
+        return None
+    now = now or _now()
+    tills = [
+        m for m in db.query(POSMachine).filter(
+            POSMachine.shop_id == shop.id,
+            POSMachine.is_active.is_(True),
+            POSMachine.is_fiscal.isnot(False),
+        ).all()
+        if not m.is_kiosk
+    ]
+    if not tills:
+        return None
+    message = TillMessage(
+        id=uuid.uuid4(),
+        tenant_id=shop.tenant_id,
+        created_by=None,
+        created_at=now,
+        title=SERVER_SWITCH_TITLE,
+        body=server_switch_body(new_till, old_till, by),
+        target_level="shop",
+        target_id=shop.id,
+        expires_at=now + SERVER_SWITCH_TTL,
+        schedule_kind="now",
+        sent_at=now,
+        timezone=tenant_timezone(db, shop.tenant_id),
+        display="fullscreen",
+    )
+    db.add(message)
+    db.flush()
+    for machine in tills:
+        db.add(TillMessageReceipt(id=uuid.uuid4(), message_id=message.id, machine_id=machine.id))
+    db.flush()
+    return message

@@ -1,0 +1,5357 @@
+{
+  "_about": "Shared by pos-server (tests/fixtures) and pos-android (app/src/test/resources): the prepaid voucher rules (docs/SPEC_VOUCHER_PRODUCTION.md §7). Same bytes in both repos.",
+  "stacking": [
+    {
+      "name": "nothing else in the sale",
+      "existing": [],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "order_discount",
+        "stacking": "single"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "single: no other voucher",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "items",
+        "stacking": "single"
+      },
+      "refusal": "prepaid_voucher_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
+    },
+    {
+      "name": "another one is single",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "single"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "order_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_other_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
+    },
+    {
+      "name": "two discount vouchers of one batch, never",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "order_discount",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "B",
+        "kind": "order_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "goods of one batch, unlimited",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v4",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "distinct batches: the one in the sale says so",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v4",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "distinct batches: the new one says so",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v4",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "distinct batches, other batches",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "order_discount",
+        "stacking": "distinct_batches"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a discount voucher again in the same sale",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "item_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_already_applied",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a goods voucher again (the rest of its goods)",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "single"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v1",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "single"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "one single among several",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        },
+        {
+          "voucherId": "v5",
+          "batchId": "C",
+          "kind": "order_discount",
+          "stacking": "single"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v6",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_other_not_stackable",
+      "limit": null,
+      "text": "ניתן לממש שובר אחד בלבד בעסקה"
+    },
+    {
+      "name": "a maximum of 2: the second fits",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum of 2: the third is refused",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the new one's maximum counts too",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the smallest maximum wins",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 3
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 5
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "a maximum of 3 with two in the sale",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 3
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a goods voucher again does not count twice",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v1",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum of 1",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 1
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "B",
+        "kind": "items",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 1,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (1)"
+    },
+    {
+      "name": "distinct batches with a maximum",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "items",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "items",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    },
+    {
+      "name": "the same batch is refused before the maximum",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "distinct_batches",
+          "maxVouchersPerSale": 1
+        }
+      ],
+      "incoming": {
+        "voucherId": "v2",
+        "batchId": "A",
+        "kind": "items",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "a maximum counts discount vouchers too",
+      "existing": [
+        {
+          "voucherId": "v1",
+          "batchId": "A",
+          "kind": "items",
+          "stacking": "unlimited"
+        },
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "order_discount",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "C",
+        "kind": "item_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
+    }
+  ],
+  "discount": [
+    {
+      "name": "order fixed ₪30 shared by value",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 3000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 3000,
+        "shares": {
+          "L1": 1125,
+          "L2": 1875
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order 20%: exclude leaves the promoted line out of the base",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1200,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 800,
+        "shares": {
+          "L2": 800
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promoted"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order minimum checked on the same base (without promoted lines)",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": 5000,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1200,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promoted"
+          }
+        ],
+        "refusal": "prepaid_voucher_min_purchase"
+      }
+    },
+    {
+      "name": "order 10% capped at ₪5, combine: largest remainder",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": 500,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "combine"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1200,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 500,
+        "shares": {
+          "L1": 115,
+          "L2": 385
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "best: the voucher beats the promotion on the line",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 3000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1200,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 3000,
+        "shares": {
+          "L1": 1421,
+          "L2": 1579
+        },
+        "dropPromotion": [
+          "L1"
+        ],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "best: the promotion wins, the fixed voucher moves to the other lines",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 3000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 2000,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 3000,
+        "shares": {
+          "L2": 3000
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promotion_better"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "best: without the losing line the minimum is not met",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": 3000,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1500,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promotion_better"
+          }
+        ],
+        "refusal": "prepaid_voucher_min_purchase"
+      }
+    },
+    {
+      "name": "order: never more than the base (after an earlier voucher)",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 5000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 5000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 1000,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 4000,
+        "shares": {
+          "L1": 4000
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order fixed, two uses",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 2,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 4000,
+        "shares": {
+          "L1": 1500,
+          "L2": 2500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order percent after the cashier's line discount",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 500,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 250,
+        "shares": {
+          "L1": 250
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order: a no-discount product is left out",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": false
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 100,
+        "shares": {
+          "L2": 100
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "no_discount"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item ₪5 a unit, one unit",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 500,
+        "shares": {
+          "L1": 500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item 20% on a category, two units a use, two uses; promoted line out",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 2,
+        "productIds": [],
+        "categoryIds": [
+          "c-hot"
+        ],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 2,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [
+            "c-hot"
+          ],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-tea"
+          ],
+          "categoryIds": [
+            "c-hot"
+          ],
+          "quantity": 2,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L3",
+          "productIds": [
+            "p-latte"
+          ],
+          "categoryIds": [
+            "c-hot"
+          ],
+          "quantity": 1,
+          "grossAgorot": 1600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 400,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 920,
+        "shares": {
+          "L1": 720,
+          "L2": 200
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L3",
+            "reason": "promoted"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: the only target takes no discount",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": false
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "no_discount"
+          }
+        ],
+        "refusal": "prepaid_voucher_no_eligible_items"
+      }
+    },
+    {
+      "name": "item best: the voucher wins on the line",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 5000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 300,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 600,
+        "shares": {
+          "L1": 600
+        },
+        "dropPromotion": [
+          "L1"
+        ],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item best: the promotion wins, the unit goes to the next line",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 1100,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1100,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1000,
+        "shares": {
+          "L2": 1000
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promotion_better"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item best: the promotion wins everywhere",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 300,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "best"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 600,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "promotion_better"
+          }
+        ],
+        "refusal": "prepaid_voucher_promotion_better"
+      }
+    },
+    {
+      "name": "item: the most valuable units first; the rest over the limit",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L3",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 200,
+        "shares": {
+          "L3": 200
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "max_units"
+          },
+          {
+            "lineId": "L2",
+            "reason": "max_units"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a fixed discount never more than the unit",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1200,
+        "shares": {
+          "L1": 1200
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a fraction of a product sold by the piece has no unit",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 0.75,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": "prepaid_voucher_no_eligible_items"
+      }
+    },
+    {
+      "name": "item: matched by the till's own id",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "till-77"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "till-77",
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 500,
+        "shares": {
+          "L1": 500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: nothing in the basket is a target",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": "prepaid_voucher_no_eligible_items"
+      }
+    },
+    {
+      "name": "item: max units unlimited",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 100,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 300,
+        "shares": {
+          "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed line is discounted per kg, pro rata",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.75,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 300,
+        "shares": {
+          "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item fixed ₪5 a kg: 0.75 kg takes 0.75 of it",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.75,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 375,
+        "shares": {
+          "L1": 375
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed product's units are its kg — 2.5 kg, one unit a use",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 2.5,
+          "grossAgorot": 10000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 500,
+        "shares": {
+          "L1": 500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: two units on 1.4 kg — a kg and 0.4 of one",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 2,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 1.4,
+          "grossAgorot": 7000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1400,
+        "shares": {
+          "L1": 1400
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: the most valuable first — a whole unit before a weighed fraction",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives",
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.4,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1000,
+        "shares": {
+          "L2": 1000
+        },
+        "dropPromotion": [],
+        "skipped": [
+          {
+            "lineId": "L1",
+            "reason": "max_units"
+          }
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a weighed slot takes what room is left, pro rata",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives",
+          "p-cheese"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 0.6,
+          "grossAgorot": 3000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-cheese"
+          ],
+          "categoryIds": [],
+          "quantity": 0.7,
+          "grossAgorot": 2800,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1000,
+        "shares": {
+          "L2": 700,
+          "L1": 300
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: the general item is never an item discount's, even by its category",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [
+          "c-misc"
+        ],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-general"
+          ],
+          "categoryIds": [
+            "c-misc"
+          ],
+          "quantity": 1,
+          "grossAgorot": 5000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "general": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-pen"
+          ],
+          "categoryIds": [
+            "c-misc"
+          ],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 100,
+        "shares": {
+          "L2": 100
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "order: the general item is in the base like any line",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 1200,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-general"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 5000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "general": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-pen"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1200,
+        "shares": {
+          "L1": 1000,
+          "L2": 200
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: an open-price line — a fixed discount never more than the line",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-open"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-open"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1500,
+        "shares": {
+          "L1": 1500
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: a dish at its actual price — its paid options in",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 2,
+        "productIds": [
+          "p-burger"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-burger"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 11400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 1140,
+        "shares": {
+          "L1": 1140
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    }
+  ],
+  "usesWanted": [
+    {
+      "name": "fixed order: as many uses as still add (capped by the base)",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "fixed",
+        "value": 2000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 5,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "uses": 4
+    },
+    {
+      "name": "percent order: one use",
+      "benefit": {
+        "kind": "order_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": null,
+        "productIds": [],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 5,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 2400,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-sandwich"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "uses": 1
+    },
+    {
+      "name": "item: a use per eligible unit",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 5,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "uses": 3
+    },
+    {
+      "name": "only one allowed",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 1000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-coffee"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-coffee"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 3600,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "uses": 1
+    },
+    {
+      "name": "item weighed: a use a kg until the weight is covered",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "fixed",
+        "value": 500,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-olives"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "allowed": 5,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 2.5,
+          "grossAgorot": 10000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "uses": 3
+    }
+  ],
+  "benefitText": [
+    {
+      "name": "order fixed",
+      "kind": "order_discount",
+      "discountType": "fixed",
+      "value": 3000,
+      "text": "₪30 הנחה על כל ההזמנה"
+    },
+    {
+      "name": "order fixed with agorot",
+      "kind": "order_discount",
+      "discountType": "fixed",
+      "value": 1250,
+      "text": "₪12.50 הנחה על כל ההזמנה"
+    },
+    {
+      "name": "order percent, cap and minimum",
+      "kind": "order_discount",
+      "discountType": "percent",
+      "value": 2000,
+      "maxDiscountAgorot": 5000,
+      "minPurchaseAgorot": 10000,
+      "text": "20% הנחה על כל ההזמנה (עד ₪50) בקנייה מעל ₪100"
+    },
+    {
+      "name": "item percent",
+      "kind": "item_discount",
+      "discountType": "percent",
+      "value": 2000,
+      "names": [
+        "קפה"
+      ],
+      "text": "20% הנחה על קפה"
+    },
+    {
+      "name": "item fixed, two units",
+      "kind": "item_discount",
+      "discountType": "fixed",
+      "value": 500,
+      "names": [
+        "קפה",
+        "מאפה"
+      ],
+      "maxUnits": 2,
+      "text": "₪5 הנחה על קפה, מאפה (עד 2 יחידות)"
+    },
+    {
+      "name": "item, many names",
+      "kind": "item_discount",
+      "discountType": "percent",
+      "value": 1250,
+      "names": [
+        "א",
+        "ב",
+        "ג",
+        "ד"
+      ],
+      "text": "12.5% הנחה על א, ב, ג ועוד"
+    },
+    {
+      "name": "goods",
+      "kind": "items",
+      "text": null
+    }
+  ],
+  "eligibility": [
+    {
+      "name": "a category with its sub-categories",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "lager",
+          "ipa"
+        ]
+      }
+    },
+    {
+      "name": "without sub-categories a parent takes only its own products",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": false,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": []
+      }
+    },
+    {
+      "name": "categories and products together, each product once",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "water",
+          "burger"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "burger"
+        ]
+      }
+    },
+    {
+      "name": "an exclusion wins over a product chosen by name",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "cola"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [
+          "cola"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "water",
+          "sprite"
+        ]
+      }
+    },
+    {
+      "name": "an excluded category takes its sub-categories",
+      "mode": "live",
+      "selection": {
+        "allItems": true,
+        "productIds": [],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": [
+          "drinks"
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "burger",
+          "schnitzel",
+          "fries",
+          "rings",
+          "cake"
+        ]
+      }
+    },
+    {
+      "name": "everything but one",
+      "mode": "live",
+      "selection": {
+        "allItems": true,
+        "productIds": [],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [
+          "cake"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite",
+          "lager",
+          "ipa",
+          "burger",
+          "schnitzel",
+          "fries",
+          "rings"
+        ]
+      }
+    },
+    {
+      "name": "a product the catalog does not have is not taken",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "nope",
+          "fries"
+        ],
+        "categoryIds": [],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "fries"
+        ]
+      }
+    },
+    {
+      "name": "frozen at issue: a new product does not join, a moved one stays, a deleted one goes",
+      "mode": "frozen",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "rings"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogAtIssue": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ],
+          [
+            "sprite",
+            "sides"
+          ],
+          [
+            "zero",
+            "soft"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "sprite"
+        ]
+      }
+    },
+    {
+      "name": "updating: the categories as they are now",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [
+          "rings"
+        ],
+        "categoryIds": [
+          "soft"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogAtIssue": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "sprite",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "rings",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ]
+        ]
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "soft",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ],
+          [
+            "burgers",
+            "food"
+          ],
+          [
+            "sides",
+            "food"
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "soft"
+          ],
+          [
+            "water",
+            "soft"
+          ],
+          [
+            "lager",
+            "beer"
+          ],
+          [
+            "ipa",
+            "beer"
+          ],
+          [
+            "burger",
+            "burgers"
+          ],
+          [
+            "schnitzel",
+            "burgers"
+          ],
+          [
+            "fries",
+            "sides"
+          ],
+          [
+            "cake",
+            null
+          ],
+          [
+            "sprite",
+            "sides"
+          ],
+          [
+            "zero",
+            "soft"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "zero"
+        ]
+      }
+    }
+  ],
+  "assignment": [
+    {
+      "name": "one of each: every match is clear",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "burger"
+        ],
+        [
+          "u2",
+          "fries"
+        ],
+        [
+          "u3",
+          "cola"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "main",
+          "u2": "side",
+          "u3": "drink"
+        },
+        "unassigned": [],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "three drinks: one is the drink, two have no room",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "cola"
+        ],
+        [
+          "u2",
+          "water"
+        ],
+        [
+          "u3",
+          "sprite"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          },
+          {
+            "ref": "u3",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "a line of three is three units",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "burger"
+        ],
+        [
+          "u2",
+          "burger"
+        ],
+        [
+          "u3",
+          "burger"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "main"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          },
+          {
+            "ref": "u3",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "not on the voucher",
+      "groups": [
+        {
+          "key": "main",
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "side",
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 3,
+      "units": [
+        [
+          "u1",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {},
+        "unassigned": [
+          {
+            "ref": "u1",
+            "reason": "not_eligible"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "a product two groups take is the cashier's choice",
+      "totalRemaining": 3,
+      "groups": [
+        {
+          "key": "a",
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "b",
+          "productIds": [
+            "water",
+            "cake"
+          ],
+          "remaining": 1
+        }
+      ],
+      "units": [
+        [
+          "u1",
+          "water"
+        ],
+        [
+          "u2",
+          "cola"
+        ],
+        [
+          "u3",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u2": "a",
+          "u3": "b"
+        },
+        "unassigned": [],
+        "ambiguous": [
+          {
+            "ref": "u1",
+            "groupKeys": [
+              "a",
+              "b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "one of several: the first takes the voucher",
+      "totalRemaining": 1,
+      "groups": [
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "dessert",
+          "productIds": [
+            "cake"
+          ],
+          "remaining": 1
+        }
+      ],
+      "units": [
+        [
+          "u1",
+          "cola"
+        ],
+        [
+          "u2",
+          "cake"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "total_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    }
+  ],
+  "selection": [
+    {
+      "name": "a whole meal",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "cola",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "three drinks instead of a meal",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ],
+        [
+          "water",
+          "drink",
+          1
+        ],
+        [
+          "sprite",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "ניתן לבחור פריט אחד בלבד מ\"משקה\"",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "a meal without its drink",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_package_incomplete",
+          "text": "חסר משקה להשלמת שובר ארוחה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "part of a meal when the type allows parts",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "a side as the drink",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "rings",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_item_not_on_voucher",
+          "text": "הפריט אינו כלול בשובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "an excluded product",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": "שובר ארוחה",
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ],
+        [
+          "fries",
+          "side",
+          1
+        ],
+        [
+          "ipa",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_item_excluded",
+          "text": "הפריט הוחרג משובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "one of several: two chosen",
+      "groups": [
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cake"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "totalMax": 1,
+      "totalRemaining": 1,
+      "wholeAtOnce": false,
+      "typeName": "שובר משקה או קינוח",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ],
+        [
+          "cake",
+          "dessert",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_total_over",
+          "text": "ניתן לבחור פריט אחד בלבד בשובר זה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "one of several: one chosen",
+      "groups": [
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cake"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "totalMax": 1,
+      "totalRemaining": 1,
+      "wholeAtOnce": true,
+      "typeName": "שובר משקה או קינוח",
+      "chosen": [
+        [
+          "cake",
+          "dessert",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "the same drink twice where it is not allowed",
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": null,
+      "groups": [
+        {
+          "key": "drinks",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 3,
+          "remaining": 3,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": false,
+          "excludedIds": []
+        }
+      ],
+      "chosen": [
+        [
+          "cola",
+          "drinks",
+          2
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_repeat_not_allowed",
+          "text": "אי אפשר לבחור את אותו פריט פעמיים בשתייה",
+          "groupKey": "drinks"
+        }
+      }
+    },
+    {
+      "name": "two of a group with room for two",
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": false,
+      "typeName": null,
+      "groups": [
+        {
+          "key": "drinks",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 3,
+          "remaining": 2,
+          "productIds": [
+            "cola",
+            "water"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "chosen": [
+        [
+          "cola",
+          "drinks",
+          3
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "ניתן לבחור עד 2 פריטים מ\"שתייה\"",
+          "groupKey": "drinks"
+        }
+      }
+    },
+    {
+      "name": "nothing chosen",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": null,
+      "chosen": [],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_nothing_chosen",
+          "text": "לא נבחר פריט למימוש",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "a package without a type name",
+      "groups": [
+        {
+          "key": "main",
+          "name": "מנה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "burger",
+            "schnitzel"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "side",
+          "name": "תוספת",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "fries",
+            "rings"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "משקה",
+          "minQty": 1,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "sprite"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "ipa"
+          ]
+        }
+      ],
+      "totalMax": 3,
+      "totalRemaining": 3,
+      "wholeAtOnce": true,
+      "typeName": null,
+      "chosen": [
+        [
+          "burger",
+          "main",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_package_incomplete",
+          "text": "חסר תוספת להשלמת השובר",
+          "groupKey": "side"
+        }
+      }
+    }
+  ],
+  "splitValue": [
+    {
+      "name": "by list price, exactly",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          5000,
+          null
+        ],
+        [
+          1500,
+          null
+        ],
+        [
+          1500,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1500,
+          1500
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "by list price, rounded to the agora",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          null
+        ],
+        [
+          1290,
+          null
+        ],
+        [
+          1190,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5194,
+          1460,
+          1346
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "every component with its value",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          5000
+        ],
+        [
+          1290,
+          1500
+        ],
+        [
+          1190,
+          1500
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1500,
+          1500
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "one component fixed, the rest by price",
+      "totalAgorot": 8000,
+      "units": [
+        [
+          4590,
+          5000
+        ],
+        [
+          1290,
+          null
+        ],
+        [
+          1190,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          5000,
+          1560,
+          1440
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "a ₪0 unit beside priced ones takes nothing",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          null
+        ],
+        [
+          500,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          0,
+          1000
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "all ₪0: equally",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          null
+        ],
+        [
+          0,
+          null
+        ],
+        [
+          0,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          334,
+          333,
+          333
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "components above the value",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          500,
+          800
+        ],
+        [
+          500,
+          800
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": null,
+        "refusal": "prepaid_voucher_value_mismatch"
+      }
+    },
+    {
+      "name": "every unit fixed below the value: the rest by the fixed values",
+      "totalAgorot": 1000,
+      "units": [
+        [
+          0,
+          300
+        ],
+        [
+          0,
+          200
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          600,
+          400
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "ties go to the first",
+      "totalAgorot": 100,
+      "units": [
+        [
+          100,
+          null
+        ],
+        [
+          100,
+          null
+        ],
+        [
+          100,
+          null
+        ]
+      ],
+      "expect": {
+        "valuesAgorot": [
+          34,
+          33,
+          33
+        ],
+        "refusal": null
+      }
+    },
+    {
+      "name": "nothing to split",
+      "totalAgorot": 500,
+      "units": [],
+      "expect": {
+        "valuesAgorot": [],
+        "refusal": null
+      }
+    }
+  ],
+  "fixedShare": [
+    {
+      "name": "a third of a meal",
+      "valueLeftAgorot": 8000,
+      "unitsNow": 1,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 2667
+      }
+    },
+    {
+      "name": "the last part takes the rest",
+      "valueLeftAgorot": 8000,
+      "unitsNow": 3,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 8000
+      }
+    },
+    {
+      "name": "half up",
+      "valueLeftAgorot": 1001,
+      "unitsNow": 1,
+      "unitsLeft": 2,
+      "expect": {
+        "shareAgorot": 501
+      }
+    },
+    {
+      "name": "small",
+      "valueLeftAgorot": 5,
+      "unitsNow": 1,
+      "unitsLeft": 3,
+      "expect": {
+        "shareAgorot": 2
+      }
+    }
+  ],
+  "cover": [
+    {
+      "name": "up to the value, the rest a top-up",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        4590,
+        4590
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 8000,
+        "topUpAgorot": 1180,
+        "perUnitAgorot": [
+          4000,
+          4000
+        ],
+        "note": "נדרשת השלמה של ₪11.80",
+        "refusal": null
+      }
+    },
+    {
+      "name": "a top-up the type does not allow",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        4590,
+        4590
+      ],
+      "allowTopUp": false,
+      "expect": {
+        "coveredAgorot": 8000,
+        "topUpAgorot": 1180,
+        "perUnitAgorot": [
+          4000,
+          4000
+        ],
+        "note": null,
+        "refusal": {
+          "code": "prepaid_voucher_top_up_not_allowed",
+          "text": "נדרשת השלמה של ₪11.80 — סוג השובר אינו מאפשר השלמה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "less than the value: nothing left for later",
+      "valueLeftAgorot": 8000,
+      "unitsNetAgorot": [
+        3000,
+        2000
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 5000,
+        "topUpAgorot": 0,
+        "perUnitAgorot": [
+          3000,
+          2000
+        ],
+        "note": null,
+        "refusal": null
+      }
+    },
+    {
+      "name": "no value: the goods whatever they cost",
+      "valueLeftAgorot": null,
+      "unitsNetAgorot": [
+        3000,
+        2000
+      ],
+      "allowTopUp": false,
+      "expect": {
+        "coveredAgorot": 5000,
+        "topUpAgorot": 0,
+        "perUnitAgorot": [
+          3000,
+          2000
+        ],
+        "note": null,
+        "refusal": null
+      }
+    },
+    {
+      "name": "covered by price, to the agora",
+      "valueLeftAgorot": 999,
+      "unitsNetAgorot": [
+        500,
+        500,
+        500
+      ],
+      "allowTopUp": true,
+      "expect": {
+        "coveredAgorot": 999,
+        "topUpAgorot": 501,
+        "perUnitAgorot": [
+          333,
+          333,
+          333
+        ],
+        "note": "נדרשת השלמה של ₪5.01",
+        "refusal": null
+      }
+    }
+  ],
+  "override": [
+    {
+      "name": "a product that takes discounts is no override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": false,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "honour: a product that takes no discounts is not lowered",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_discount_blocked",
+          "text": "הפריט חסום להנחות וסוג השובר אינו מאפשר כפייה",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "at its list price: nothing to override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 3000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "above its list price: nothing to override",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 3000,
+          "valueAgorot": 3500
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: forced",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: over the per-unit amount",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": 500,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: over the per-unit percent",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": 2000,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: at the per-unit percent",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": 2500,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "auto: over the voucher's total",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": 1500,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        },
+        {
+          "ref": "u2",
+          "productId": "schnitzel",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          },
+          {
+            "ref": "u2",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: outside its scope",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": {
+          "productIds": [],
+          "categoryIds": [
+            "beer"
+          ]
+        }
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_discount_blocked",
+          "text": "הפריט חסום להנחות ואינו בהיקף הכפייה של סוג השובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "auto: in its scope by a parent category",
+      "policy": {
+        "mode": "auto",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": {
+          "productIds": [],
+          "categoryIds": [
+            "food"
+          ]
+        }
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "manager: asked for",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": true,
+        "refusal": {
+          "code": "prepaid_voucher_approval_needed",
+          "text": "נדרש אישור מנהל להנחה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "manager: approved",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": true,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "manager: a cap before the approval",
+      "policy": {
+        "mode": "manager",
+        "maxAmountAgorot": 100,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "burger",
+          "categoryIds": [
+            "burgers",
+            "food"
+          ],
+          "noDiscount": true,
+          "listPriceAgorot": 4000,
+          "valueAgorot": 3000
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 1000,
+            "forced": true
+          }
+        ],
+        "needsApproval": false,
+        "refusal": {
+          "code": "prepaid_voucher_override_cap",
+          "text": "ההפחתה חורגת מתקרת הכפייה שהוגדרה בשובר",
+          "groupKey": null
+        }
+      }
+    },
+    {
+      "name": "a free product",
+      "policy": {
+        "mode": "honour",
+        "maxAmountAgorot": null,
+        "maxPercentBp": null,
+        "maxTotalAgorot": null,
+        "scope": null
+      },
+      "approved": false,
+      "units": [
+        {
+          "ref": "u1",
+          "productId": "cake",
+          "categoryIds": [],
+          "noDiscount": true,
+          "listPriceAgorot": 0,
+          "valueAgorot": 0
+        }
+      ],
+      "expect": {
+        "units": [
+          {
+            "ref": "u1",
+            "reductionAgorot": 0,
+            "forced": false
+          }
+        ],
+        "needsApproval": false,
+        "refusal": null
+      }
+    }
+  ]
+}

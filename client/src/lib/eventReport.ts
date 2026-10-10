@@ -7,6 +7,7 @@
  * their own (src/lib/eventReport.test.ts).
  */
 
+import { formatShortDateTime, formatTime } from './format';
 import type {
   BucketMinutes,
   EventFormValues,
@@ -83,23 +84,9 @@ export function timelineRows(
   });
 }
 
-/** "18:30" — or "27/9 18:30" for an event over several days — in the event's timezone. */
+/** "18:30" — or "27/09 18:30" for an event over several days — in the event's timezone. */
 export function clockLabel(iso: string | null | undefined, timeZone: string, withDate = false): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone,
-    day: 'numeric',
-    month: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  const time = `${get('hour')}:${get('minute')}`;
-  // Numbers, not the parts as written: some ICU builds pad a "numeric" month ("09").
-  return withDate ? `${Number(get('day'))}/${Number(get('month'))} ${time}` : time;
+  return withDate ? formatShortDateTime(iso, timeZone) : formatTime(iso, { timeZone });
 }
 
 /** Minutes as "45 דק׳" / "2:05 שע׳". */

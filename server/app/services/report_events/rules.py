@@ -42,6 +42,12 @@ _LIMITS = {
     "minActiveMinutes": (0, 24 * 60, True),
 }
 
+# The insights' till-anomaly rules read their own thresholds from an event too, under
+# `anomaly…` keys (app/services/insights/anomalies.py) — kept only when set, never defaulted.
+from app.services.insights.anomalies import EVENT_LIMITS as _ANOMALY_LIMITS  # noqa: E402
+
+_LIMITS.update(_ANOMALY_LIMITS)
+
 #: A till or a cashier whose tip / refund rate is this many times the event's is flagged.
 OUTLIER_FACTOR = 2.0
 #: …and only above these, so one ₪5 tip on a quiet till is not "far above".
@@ -74,6 +80,9 @@ def normalize_thresholds(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         value = raw[key]
         if value is None or value == "":
+            if key in _ANOMALY_LIMITS:
+                out.pop(key, None)
+                continue
             if key == "highTipAmount":
                 out[key] = None
                 continue

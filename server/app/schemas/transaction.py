@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional, Union
 import uuid
@@ -15,6 +15,14 @@ from app.schemas.stock import StockMovementIn
 #: this is not one, and is kept cut, as text, rather than parsed.
 META_MAX_CHARS = 16 * 1024
 
+#: What a document's basket discount can be (`basketDiscountKind`): the club button
+#: ("הנחת מועדון", till parameter `clubButtonEnabled`), the cashier's own, or a table's
+#: policy (app/services/table_policies.py): "הנחת שולחן", a staff meal, a managers' meal.
+BASKET_DISCOUNT_KINDS = ("club", "manual", "table", "staff", "managers")
+
+#: A meal at a staff or managers' table (`mealKind`); anything else is no meal.
+MEAL_KINDS = ("staff", "managers")
+
 
 def cut_text(value, limit: int):
     """
@@ -28,6 +36,18 @@ def cut_text(value, limit: int):
     text = value if isinstance(value, str) else str(value)
     text = text.strip()
     return text[:limit] or None
+
+
+def customer_vat_text(value):
+    """
+    The buyer's ח.פ. / ע.מ. as sent ("פרטי לקוח לחשבונית"): trimmed, with the spaces and dashes
+    a person types between digit groups taken out, and cut to the column. Never a validation
+    error — the till already checked the number and printed it; a foreign or odd one is kept.
+    """
+    text = cut_text(value, 40)
+    if text is None:
+        return None
+    return text.replace(" ", "").replace("-", "")[:20] or None
 
 
 def _reject_constant(name):
@@ -133,6 +153,12 @@ class TransactionPaymentIn(BaseModel):
     card_brand: Optional[str] = Field(None, alias="cardBrand", max_length=32)
     card_acquirer: Optional[str] = Field(None, alias="cardAcquirer", max_length=32)
     card_issuer: Optional[str] = Field(None, alias="cardIssuer", max_length=32)
+    #: "ללא החזר כספי — עסקה שלא בוצעה" (docs/SPEC_REMOTE_CREDIT.md): a credit's leg for a
+    #: sale that never really happened — the original's method, no money moved.
+    no_money_movement: Optional[bool] = Field(None, alias="noMoneyMovement")
+    #: A `production_voucher` leg names the goods hold it pays (the production vouchers contract
+    #: §4.2): the document confirms it. Optional; an unreadable id is a warning, never a refusal.
+    reservation_id: Optional[str] = Field(None, alias="reservationId", max_length=100)
 
     class Config:
         populate_by_name = True
@@ -188,15 +214,56 @@ class TransactionItemIn(BaseModel):
     promotion_discount: Optional[Decimal] = Field(None, alias="promotionDiscount")
     #: The promotion that took it. Optional; an unreadable id is dropped, not refused.
     promotion_id: Optional[str] = Field(None, alias="promotionId")
+    #: The line's share of what discount vouchers took off (docs/SPEC_VOUCHER_PRODUCTION.md
+    #: §7), an amount; inside `documentDiscount` like `promotionDiscount`, never in
+    #: `totalPrice`, never a tender. Optional.
+    voucher_discount: Optional[Decimal] = Field(None, alias="voucherDiscount")
+    #: Production vouchers: a deduction's share of the line (inside `documentDiscount`), and a
+    #: ₪0 memo line's value (agorot) with its redemption (the contract's §4.1 / §4.3). Optional.
+    prepaid_deduction: Optional[Decimal] = Field(None, alias="prepaidDeduction")
+    voucher_memo_value_agorot: Optional[int] = Field(None, alias="voucherMemoValueAgorot", ge=0)
+    voucher_redemption_id: Optional[str] = Field(None, alias="voucherRedemptionId", max_length=100)
+    #: A memo line's goods hold (§4.3): the document confirms it (amount 0). Optional.
+    voucher_reservation_id: Optional[str] = Field(None, alias="voucherReservationId", max_length=100)
     #: What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md §3.8): modifiers, notes,
     #: allergies, seat, course, a meal's components. Optional; never checked against the
     #: menu — anything that is not an object, or too big, is dropped and the line kept.
     details: Optional[Any] = None
     #: The upsell rule the line was added by. Optional; an unreadable id is dropped.
     upsell_rule_id: Optional[str] = Field(None, alias="upsellRuleId")
+    #: OTH ("על חשבון הבית"): the reason the line was given free (its 100% discount is in
+    #: `discount`), who gave it and who approved it. Optional; cut to the column, never
+    #: a reason to refuse the document.
+    oth_reason: Optional[str] = Field(None, alias="othReason")
+    oth_by: Optional[str] = Field(None, alias="othBy")
+    oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
+    #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when. Optional — the
+    #: till sends it inside `details` too; cleaned, never a reason to refuse the document.
+    alerts_ack: Optional[Any] = Field(None, alias="alertsAck")
+    #: "תפריטים" (docs/SPEC_MENUS.md): the menu active when the line was added, its name,
+    #: and where the price came from ("menu" | "catalog"). Optional; an unreadable id is
+    #: dropped and text cut — never a reason to refuse the document.
+    menu_id: Optional[str] = Field(None, alias="menuId")
+    menu_name: Optional[str] = Field(None, alias="menuName")
+    price_source: Optional[str] = Field(None, alias="priceSource")
 
     class Config:
         populate_by_name = True
+
+    @field_validator("oth_reason", "oth_by", "oth_approved_by", mode="before")
+    @classmethod
+    def _cut_oth(cls, value):
+        return cut_text(value, 100)
+
+    @field_validator("menu_name", mode="before")
+    @classmethod
+    def _cut_menu_name(cls, value):
+        return cut_text(value, 80)
+
+    @field_validator("price_source", mode="before")
+    @classmethod
+    def _cut_price_source(cls, value):
+        return cut_text(value, 16)
 
 
 class TransactionPromotionIn(BaseModel):
@@ -212,11 +279,74 @@ class TransactionPromotionIn(BaseModel):
         populate_by_name = True
 
 
+class TransactionVoucherDiscountIn(BaseModel):
+    """
+    One discount voucher on a sale ("שובר #12 — פסטיבל הקיץ"): what it took off (inside
+    `documentDiscount`), and the reservation it confirms — the document reaching the cloud
+    confirms it even when the till's own confirm call never landed. Never a reason to
+    refuse the document: what cannot be read or linked is dropped with a warning.
+    """
+
+    reservation_id: Optional[str] = Field(None, alias="reservationId")
+    voucher_id: Optional[str] = Field(None, alias="voucherId")
+    batch_id: Optional[str] = Field(None, alias="batchId")
+    serial: Optional[int] = None
+    batch_name: Optional[str] = Field(None, alias="batchName")
+    #: `order_discount` / `item_discount`, or `production_voucher` — a production voucher booked
+    #: as a document deduction (the production vouchers contract §4.1).
+    kind: Optional[str] = None
+    uses: int = Field(1, ge=1, le=1000)
+    amount: Decimal = Decimal("0")
+    #: [{"itemId", "amount"}] — the lines it took its discount from.
+    lines: Optional[List[Any]] = None
+    #: A production voucher's: its redemption, its type's name, the units it covered
+    #: ([{"productName", "groupName", "quantity"}], as the receipt lists them).
+    redemption_id: Optional[str] = Field(None, alias="redemptionId")
+    type_name: Optional[str] = Field(None, alias="typeName")
+    units: Optional[List[Any]] = None
+
+    class Config:
+        populate_by_name = True
+
+    @field_validator("batch_name", mode="before")
+    @classmethod
+    def _cut_name(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _cut_kind(cls, value):
+        return cut_text(value, 32)
+
+    @field_validator("type_name", mode="before")
+    @classmethod
+    def _cut_type(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _units(cls, value):
+        if not isinstance(value, list):
+            return None
+        return [v for v in value if isinstance(v, dict)][:200]
+
+    @field_validator("lines", mode="before")
+    @classmethod
+    def _lines(cls, value):
+        if not isinstance(value, list):
+            return None
+        return [v for v in value if isinstance(v, dict)][:500]
+
+
 class TransactionIn(BaseModel):
     """Single transaction incoming from POS. id is client-generated UUID."""
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: The till's "קידומת מסמכים" the document was issued under (`2` of `20000057`), frozen
+    #: by the till (docs/SPEC_DOCUMENT_PREFIX.md). Optional: an older till sends none.
+    #: Trimmed and cut to the column, never a reason to refuse the document.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
     status: Literal["pending", "completed", "cancelled", "refunded", "partial_refund"] = "completed"
 
     document_type: Optional[int] = Field(None, alias="documentType")
@@ -236,14 +366,32 @@ class TransactionIn(BaseModel):
     tip_payment_method: Optional[Literal["cash", "card"]] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
+    #: The basket discount on its own (inside `documentDiscount`), its rate when it was
+    #: given as one, and its kind: `club` (the club button) or `manual`. Optional; an
+    #: older till sends none, and an unknown kind is stored as `manual`.
+    basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
+    basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent", ge=0, le=100)
+    basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A meal at a staff or managers' table: `staff` / `managers`, whose meal it was (the
+    #: employee the till picked) and why (a managers' table's reason). Optional; free text
+    #: is cut to the columns, an unknown kind is no meal — never a reason to refuse.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_id: Optional[str] = Field(None, alias="mealEmployeeId")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
+    #: The club membership the till looked up for this sale (docs/SPEC_NOTIFICATIONS_CLUB.md
+    #: §26). Optional; linked server-side only when it belongs to the till's club.
+    club_membership_id: Optional[uuid.UUID] = Field(None, alias="clubMembershipId")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     branch_id: Optional[str] = Field(None, alias="branchId")
     notes: Optional[str] = None
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the dashboard request this credit answers.
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
 
     #: The till basket this document was committed in: the documents of one basket that
@@ -254,6 +402,13 @@ class TransactionIn(BaseModel):
     customer_name: Optional[str] = Field(None, alias="customerName")
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     customer_address: Optional[str] = Field(None, alias="customerAddress")
+    #: "פרטי לקוח לחשבונית" (docs/SPEC_CUSTOMER_INVOICE.md): the buyer's ח.פ. / ע.מ. and email as
+    #: printed on the invoice. Optional; trimmed and cut, never a reason to refuse.
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    #: "הפק חשבונית על שם לקוח": the original sale this document re-issues in a customer's
+    #: name — on the credit note that cancels it and on the new invoice. Optional.
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
 
     #: The cloud `users` row the till says authorised this document — the person who
     #: typed a PIN for the refund or the discount. Optional, and absent is the ordinary
@@ -286,6 +441,10 @@ class TransactionIn(BaseModel):
     #: The promotions ("מבצעים") the till applied to this sale. Optional; an older
     #: till sends none.
     promotions: List[TransactionPromotionIn] = Field(default_factory=list)
+    #: The discount vouchers on this sale (docs/SPEC_VOUCHER_PRODUCTION.md §7). Optional.
+    voucher_discounts: List[TransactionVoucherDiscountIn] = Field(default_factory=list, alias="voucherDiscounts")
+    #: A document made only of production vouchers' ₪0 memo lines (§4.3).
+    voucher_memo: bool = Field(False, alias="voucherMemo")
 
     class Config:
         populate_by_name = True
@@ -295,10 +454,44 @@ class TransactionIn(BaseModel):
     def _meta_as_dict(cls, value):
         return meta_as_dict(value)
 
+    @field_validator("basket_discount_kind", mode="before")
+    @classmethod
+    def _discount_kind(cls, value):
+        kind = cut_text(value, 16)
+        if kind is None:
+            return None
+        return kind.lower() if kind.lower() in BASKET_DISCOUNT_KINDS else "manual"
+
+    @field_validator("meal_kind", mode="before")
+    @classmethod
+    def _meal_kind(cls, value):
+        kind = cut_text(value, 16)
+        return kind.lower() if kind and kind.lower() in MEAL_KINDS else None
+
+    @field_validator("meal_employee_id", mode="before")
+    @classmethod
+    def _cut_meal_employee_id(cls, value):
+        return cut_text(value, 100)
+
+    @field_validator("meal_employee_name", mode="before")
+    @classmethod
+    def _cut_meal_employee_name(cls, value):
+        return cut_text(value, 200)
+
+    @field_validator("meal_reason", mode="before")
+    @classmethod
+    def _cut_meal_reason(cls, value):
+        return cut_text(value, 300)
+
     @field_validator("customer_name", mode="before")
     @classmethod
     def _cut_name(cls, value):
         return cut_text(value, 255)
+
+    @field_validator("document_prefix", mode="before")
+    @classmethod
+    def _cut_prefix(cls, value):
+        return cut_text(value, 10)
 
     @field_validator("customer_phone", mode="before")
     @classmethod
@@ -309,6 +502,16 @@ class TransactionIn(BaseModel):
     @classmethod
     def _cut_address(cls, value):
         return cut_text(value, 500)
+
+    @field_validator("customer_vat_number", mode="before")
+    @classmethod
+    def _cut_vat_number(cls, value):
+        return customer_vat_text(value)
+
+    @field_validator("customer_email", mode="before")
+    @classmethod
+    def _cut_email(cls, value):
+        return cut_text(value, 255)
 
 
 class TransactionsBatchRequest(BaseModel):
@@ -385,6 +588,16 @@ class TransactionItemOut(BaseModel):
     #: What the dish was ordered with, as the till sent it (docs/SPEC_MENU_MODIFIERS.md).
     details: Optional[Dict[str, Any]] = None
     upsell_rule_id: Optional[uuid.UUID] = Field(None, alias="upsellRuleId")
+    #: OTH ("על חשבון הבית"): the reason, who gave it and who approved it.
+    oth_reason: Optional[str] = Field(None, alias="othReason")
+    oth_by: Optional[str] = Field(None, alias="othBy")
+    oth_approved_by: Optional[str] = Field(None, alias="othApprovedBy")
+    #: "הודעות לעובד על פריט": who confirmed the product's alerts, and when.
+    alerts_ack: Optional[List[Dict[str, Any]]] = Field(None, alias="alertsAck")
+    #: "תפריטים": the menu active when the line was added, and where its price came from.
+    menu_id: Optional[uuid.UUID] = Field(None, alias="menuId")
+    menu_name: Optional[str] = Field(None, alias="menuName")
+    price_source: Optional[str] = Field(None, alias="priceSource")
 
     class Config:
         from_attributes = True
@@ -400,6 +613,8 @@ class TransactionPaymentOut(BaseModel):
     card_brand: Optional[str] = Field(None, alias="cardBrand")
     card_acquirer: Optional[str] = Field(None, alias="cardAcquirer")
     card_issuer: Optional[str] = Field(None, alias="cardIssuer")
+    #: "ללא החזר כספי" (docs/SPEC_REMOTE_CREDIT.md): no money moved on this leg.
+    no_money_movement: bool = Field(False, alias="noMoneyMovement")
 
     class Config:
         from_attributes = True
@@ -438,6 +653,12 @@ class TransactionOut(BaseModel):
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
 
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     status: str
 
     document_type: Optional[int] = Field(None, alias="documentType")
@@ -451,6 +672,14 @@ class TransactionOut(BaseModel):
     tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     total_discount: Optional[Decimal] = Field(None, alias="totalDiscount")
     document_discount: Optional[Decimal] = Field(None, alias="documentDiscount")
+    #: The basket discount on its own, its rate and its kind (`club` | `manual` | a table's).
+    basket_discount: Optional[Decimal] = Field(None, alias="basketDiscount")
+    basket_discount_percent: Optional[Decimal] = Field(None, alias="basketDiscountPercent")
+    basket_discount_kind: Optional[str] = Field(None, alias="basketDiscountKind")
+    #: A staff / managers' table meal: its kind, whose meal, why.
+    meal_kind: Optional[str] = Field(None, alias="mealKind")
+    meal_employee_name: Optional[str] = Field(None, alias="mealEmployeeName")
+    meal_reason: Optional[str] = Field(None, alias="mealReason")
     wht_deduction: Optional[Decimal] = Field(None, alias="whtDeduction")
 
     customer_id: Optional[str] = Field(None, alias="customerId")
@@ -460,19 +689,38 @@ class TransactionOut(BaseModel):
     notes: Optional[str]
 
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
-    #: The original's document number, when the cloud holds it (same tenant). Filled on
-    #: the dashboard detail read only.
+    #: The original's document number as printed (`20000057`), when the cloud holds it (same
+    #: tenant). Filled on the dashboard detail read only.
     refund_of_transaction_number: Optional[str] = Field(None, alias="refundOfTransactionNumber")
     #: A credit note that took its original's credited total past what it collected.
     over_credited: Optional[bool] = Field(False, alias="overCredited")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): the request this credit answered, and
+    #: whether it moved no money ("ללא החזר כספי — עסקה שלא בוצעה").
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
+    no_money_movement: Optional[bool] = Field(False, alias="noMoneyMovement")
     nayax_meta: Optional[dict] = Field(None, alias="nayaxMeta")
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
     customer_name: Optional[str] = Field(None, alias="customerName")
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     customer_address: Optional[str] = Field(None, alias="customerAddress")
-    #: Verified at ingest, so what comes back out is a name the server stood behind.
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    #: "הפק חשבונית על שם לקוח": the original this document re-issues, its number as printed
+    #: (detail read only), and — on the original — the documents that re-issued it.
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
+    reissue_of_transaction_number: Optional[str] = Field(None, alias="reissueOfTransactionNumber")
+    reissue_documents: List["BasketDocumentOut"] = Field(default_factory=list, alias="reissueDocuments")
+    #: "הדפס העתק עם פרטי לקוח": the details added to a copy after issue, oldest first (detail read only).
+    customer_details_added: List["CustomerDetailsAddedOut"] = Field(default_factory=list, alias="customerDetailsAdded")
+    #: The approver linked when they are a person of this business (informational since
+    #: 2026-10-07 — never a reason to refuse a document; docs/SHIFTS_API.md §1.2b).
     approved_by_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByUserId")
     approved_by_pos_user_id: Optional[uuid.UUID] = Field(None, alias="approvedByPosUserId")
+    #: The approver exactly as the till sent it, even when it names nobody known here.
+    claimed_approver_user_id: Optional[uuid.UUID] = Field(None, alias="claimedApproverUserId")
+    claimed_approver_pos_user_id: Optional[uuid.UUID] = Field(None, alias="claimedApproverPosUserId")
+    #: Quiet notes of ingest (`[{"code", "text", "detail"?}]`) — shown in the detail, never an alarm.
+    ingest_notes: Optional[List[dict]] = Field(None, alias="ingestNotes")
 
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
@@ -493,16 +741,46 @@ class TransactionOut(BaseModel):
         populate_by_name = True
 
 
+class CustomerDetailsAddedOut(BaseModel):
+    """
+    "הדפס העתק עם פרטי לקוח" (docs/SPEC_CUSTOMER_INVOICE.md §3.5): the customer's details a till added to
+    a COPY of this document after it was issued — who, when. Never part of the recorded document: the
+    dashboard shows them labelled as added after issue.
+    """
+
+    id: uuid.UUID
+    customer_name: str = Field(..., alias="customerName")
+    customer_vat_number: str = Field(..., alias="customerVatNumber")
+    customer_address: Optional[str] = Field(None, alias="customerAddress")
+    customer_phone: Optional[str] = Field(None, alias="customerPhone")
+    customer_email: Optional[str] = Field(None, alias="customerEmail")
+    added_by_id: Optional[str] = Field(None, alias="addedById")
+    added_by_name: Optional[str] = Field(None, alias="addedByName")
+    added_at: datetime = Field(..., alias="addedAt")
+    received_at: datetime = Field(..., alias="receivedAt")
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
+
+
 class BasketDocumentOut(BaseModel):
     """One sibling document of a mixed basket, as the detail view links it."""
 
     id: uuid.UUID
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     document_type: Optional[int] = Field(None, alias="documentType")
     status: str
     total_amount: Decimal = Field(..., alias="totalAmount")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
     created_at: datetime = Field(..., alias="createdAt")
 
     class Config:
@@ -513,6 +791,20 @@ class BasketDocumentOut(BaseModel):
 TransactionOut.model_rebuild()
 
 
+class KioskPickupRef(BaseModel):
+    """
+    The kiosk order a document paid: its pickup label as the slip printed it ("A-17", or "17"
+    with "מספר בלבד"), the number, and its business date — the same number comes back every day.
+    """
+
+    label: str
+    number: int
+    business_date: Optional[date] = Field(None, alias="businessDate")
+
+    class Config:
+        populate_by_name = True
+
+
 class TransactionListItem(BaseModel):
     """Lighter row for list views (no items)."""
 
@@ -521,6 +813,12 @@ class TransactionListItem(BaseModel):
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
     shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
     transaction_number: str = Field(..., alias="transactionNumber")
+    #: As printed: the prefix and the number padded to 7 digits (`20000057`) — docs/SPEC_DOCUMENT_PREFIX.md. The prefix
+    #: is the one frozen on the document, else (an older document) its register number.
+    document_number: Optional[str] = Field(None, alias="documentNumber")
+    #: The prefix frozen at issue; null on a document from before the prefix.
+    document_prefix: Optional[str] = Field(None, alias="documentPrefix")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
     status: str
     document_type: Optional[int] = Field(None, alias="documentType")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
@@ -529,6 +827,13 @@ class TransactionListItem(BaseModel):
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")
+    #: "זיכוי מרחוק" (docs/SPEC_REMOTE_CREDIT.md): see `TransactionOut`.
+    remote_credit_request_id: Optional[uuid.UUID] = Field(None, alias="remoteCreditRequestId")
+    no_money_movement: Optional[bool] = Field(False, alias="noMoneyMovement")
+    #: "פרטי לקוח לחשבונית": who the invoice is made out to, when it names someone.
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    customer_vat_number: Optional[str] = Field(None, alias="customerVatNumber")
+    reissue_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="reissueOfTransactionId")
     created_at: datetime = Field(..., alias="createdAt")
     server_received_at: datetime = Field(..., alias="serverReceivedAt")
     #: `declined` / `approved` when an offline authorization run of its till answered one
@@ -536,6 +841,12 @@ class TransactionListItem(BaseModel):
     offline_outcome: Optional[Literal["approved", "declined"]] = Field(None, alias="offlineOutcome")
     #: The brands (מותג) of its card legs, in leg order; filled on dashboard reads only.
     card_brands: List[str] = Field(default_factory=list, alias="cardBrands")
+    #: The kiosk order this document paid (its own kiosk's sale, or a till's for a pay-at-till
+    #: order); null for any other document. Filled on dashboard reads only.
+    kiosk_pickup: Optional[KioskPickupRef] = Field(None, alias="kioskPickup")
+    #: Why the free search (`q`) found it: "document" (its number or amount) and / or "pickup"
+    #: (its kiosk order's pickup number). Null without a search.
+    matched_by: Optional[List[Literal["document", "pickup"]]] = Field(None, alias="matchedBy")
 
     class Config:
         from_attributes = True

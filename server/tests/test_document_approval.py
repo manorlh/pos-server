@@ -246,45 +246,64 @@ class TestVerifyingTheClaim:
         assert Scope.REFUND.value in str(exc.value)
 
 
-# ── The upsert refuses the whole document ────────────────────────────────────
+# ── The upsert never refuses over an approver (2026-10-07) ───────────────────
+#
+# The owner: "כרגע אין הרשאות, כולם יכולים לעשות הכל. כל מסמך שבוצע במכשירים חייב לעלות
+# לענן". The strict checks above stay (`verify_document_approver`), but the document path
+# keeps the claim as sent and goes on; tests/test_document_pos_approver.py and
+# tests/test_cross_tenant_links.py push real documents through the router.
 
 
-class TestTheUpsertRefusesTheDocument:
-    def _upsert(self, reason):
+class TestTheUpsertNeverRefusesOverAnApprover:
+    def _upsert(self, claim):
         import app.services.transactions as T
 
         machine = _machine()
         document = MagicMock()
         document.id = uuid.uuid4()
         document.shift_id = None
+        document.business_date = None
 
         with patch.object(T, "_tender_rejection_reason", return_value=None), patch.object(
             T, "_refund_of_other_tenant", return_value=False
         ), patch.object(
-            T, "verify_document_approvers", side_effect=ApprovalRejected(reason)
-        ), patch.object(T, "resolve_shift_for_document") as opened_day:
+            T, "verify_document_approvers", side_effect=AssertionError("the strict check is not on the path")
+        ) as strict, patch.object(
+            T, "resolve_document_approver_claim", return_value=claim
+        ), patch.object(T, "resolve_shift_for_document", return_value=None) as opened_day:
             db = MagicMock()
             db.query.return_value.filter.return_value.all.return_value = []
             results = T.upsert_transactions(db, machine, [document])
-        return results, opened_day
+        return results, opened_day, strict
 
-    def test_a_false_claim_is_rejected_rather_than_quietly_dropped(self):
-        """
-        Storing the document with the claim stripped out is the worst outcome: the lie
-        becomes an ordinary-looking sale, and nothing anywhere says it was ever made.
-        """
-        results, _opened_day = self._upsert("approver_lacks_scope:refund")
+    def test_a_claim_nobody_here_knows_goes_on_to_be_stored(self):
+        claim = approvals.ApproverClaim(
+            claimed_user_id=uuid.uuid4(),
+            notes=({"code": approvals.APPROVER_NOT_KNOWN, "text": approvals.APPROVER_NOT_KNOWN_TEXT},),
+        )
+        results, opened_day, strict = self._upsert(claim)
 
-        assert [r.status for r in results] == ["rejected"]
-        assert results[0].reason == "approver_lacks_scope:refund"
+        strict.assert_not_called()
+        # Went on to be filed and stored (no shift named: rule 2 of docs/SHIFTS_API.md
+        # §1.2c-bis, never `resolve_shift_for_document`) — never refused over the claim.
+        assert [r.status for r in results] == ["accepted"]
+        assert all(r.reason != "approver_unknown_or_inactive" for r in results)
 
-    def test_a_rejected_document_leaves_no_trace_behind_it(self):
-        """Not even an auto-opened shift, exactly as for a bad tender array."""
-        _results, opened_day = self._upsert("approver_unknown_or_inactive")
+    def test_the_claim_as_sent_and_its_note_reach_the_stored_row(self):
+        import app.services.transactions as T
 
-        opened_day.assert_not_called()
+        claimed = uuid.uuid4()
+        note = {"code": approvals.APPROVER_NOT_KNOWN, "text": approvals.APPROVER_NOT_KNOWN_TEXT}
+        row = T._serialize_tx_for_upsert(
+            MagicMock(), _machine(), uuid.uuid4(),
+            claimed_approver_pos_user_id=claimed, ingest_notes=[note],
+        )
 
-    def test_a_verified_approver_reaches_the_stored_row(self):
+        assert row["approved_by_pos_user_id"] is None
+        assert row["claimed_approver_pos_user_id"] == claimed
+        assert row["ingest_notes"] == [note]
+
+    def test_a_linked_approver_reaches_the_stored_row(self):
         import app.services.transactions as T
 
         approver_id = uuid.uuid4()
@@ -300,6 +319,37 @@ class TestTheUpsertRefusesTheDocument:
         row = T._serialize_tx_for_upsert(MagicMock(), _machine(), uuid.uuid4())
 
         assert row["approved_by_user_id"] is None
+        assert row["claimed_approver_user_id"] is None
+        assert row["ingest_notes"] is None
+
+
+class TestResolvingTheClaim:
+    """`resolve_document_approver_claim`: kept as sent, linked only to this business's people."""
+
+    def test_nothing_claimed_is_nothing_stored(self):
+        assert approvals.resolve_document_approver_claim(_Db(), _machine(), _tx()) == approvals.ApproverClaim()
+
+    def test_a_person_of_this_business_is_linked_whatever_their_role_or_state(self):
+        approver = _user(role=UserRole.CASHIER, is_active=False)
+        claim = approvals.resolve_document_approver_claim(
+            _Db(approver), _machine(), _tx(document_type=CREDIT_NOTE, approved_by_user_id=approver.id)
+        )
+        assert (claim.user_id, claim.claimed_user_id, claim.notes) == (approver.id, approver.id, ())
+
+    def test_an_id_naming_nobody_is_kept_unlinked_with_a_quiet_note(self):
+        claimed = uuid.uuid4()
+        claim = approvals.resolve_document_approver_claim(_Db(None), _machine(), _tx(approved_by_user_id=claimed))
+        assert claim.user_id is None and claim.claimed_user_id == claimed
+        assert [n["code"] for n in claim.notes] == [approvals.APPROVER_NOT_KNOWN]
+
+    def test_another_tenants_person_is_never_linked(self, monkeypatch):
+        monkeypatch.setattr(approvals, "_user_in_tenant", lambda *a, **k: False)
+        approver = _user()
+        claim = approvals.resolve_document_approver_claim(
+            _Db(approver), _machine(), _tx(approved_by_user_id=approver.id)
+        )
+        assert claim.user_id is None and claim.claimed_user_id == approver.id
+        assert [n["code"] for n in claim.notes] == [approvals.APPROVER_NOT_KNOWN]
 
 
 # ── Closing a shift ──────────────────────────────────────────────────────────

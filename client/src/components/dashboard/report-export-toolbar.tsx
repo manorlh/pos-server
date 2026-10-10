@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { useScope } from '@/lib/scope';
 import { formatDateTime } from '@/lib/format';
 import { downloadExcel, safeFileName, type ExcelSheet } from '@/lib/excelExport';
+import { axiosErrorToToastMessage } from '@/lib/apiError';
 
 export interface ReportExportToolbarProps {
   /** The report's name, as its page heading says it. */
@@ -30,11 +31,20 @@ export interface ReportExportToolbarProps {
   to?: string;
   /** Free text under the title in print and Excel (e.g. "סניף מרכז · קופה 2"). Defaults to the scope. */
   scopeLabel?: string;
-  /** The sheet(s) to write; called on click so it reads the rows as shown. */
-  getSheets: () => ExcelSheet | ExcelSheet[];
+  /**
+   * The sheet(s) to write; called on click so it reads the rows as shown. May be async:
+   * a paged list fetches every row the current filters match first (`lib/fetchAllPages.ts`,
+   * or the page's export endpoint) — an export is never just the page on screen.
+   */
+  getSheets: () => ExcelSheet | ExcelSheet[] | Promise<ExcelSheet | ExcelSheet[]>;
   /** No data yet: the buttons are disabled. */
   disabled?: boolean;
   className?: string;
+  /**
+   * Excel only — no Print / PDF buttons and no print header: for a page that prints its own
+   * documents (the Z list's A4 / 80 mm sequence, the Z page).
+   */
+  excelOnly?: boolean;
 }
 
 function dmy(iso?: string): string {
@@ -51,6 +61,7 @@ export function ReportExportToolbar({
   getSheets,
   disabled,
   className = '',
+  excelOnly = false,
 }: ReportExportToolbarProps) {
   const t = useTranslations('reportExport');
   const scope = useScope();
@@ -82,14 +93,15 @@ export function ReportExportToolbar({
   const onExcel = async () => {
     setBusy(true);
     try {
-      const sheets = getSheets();
+      const sheets = await getSheets();
       const list = Array.isArray(sheets) ? sheets : [sheets];
       await downloadExcel(
         list.map((s, i) => ({ ...s, heading: i === 0 ? heading() : s.heading })),
         [title, from, to].filter(Boolean).join('_'),
       );
-    } catch {
-      toast.error(t('excelFailed'));
+    } catch (err) {
+      // A list too long to export says so (the server's own words), never just "failed".
+      toast.error(axiosErrorToToastMessage(err, t('excelFailed')));
     } finally {
       setBusy(false);
     }
@@ -119,24 +131,28 @@ export function ReportExportToolbar({
           )}
           {t('excel')}
         </Button>
-        <Button variant="outline" size="sm" onClick={() => print(false)} disabled={disabled}>
-          <Printer className="h-4 w-4" aria-hidden />
-          {t('print')}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => print(true)}
-          disabled={disabled}
-          title={t('pdfHint')}
-        >
-          <FileDown className="h-4 w-4" aria-hidden />
-          {t('pdf')}
-        </Button>
+        {excelOnly ? null : (
+          <>
+            <Button variant="outline" size="sm" onClick={() => print(false)} disabled={disabled}>
+              <Printer className="h-4 w-4" aria-hidden />
+              {t('print')}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => print(true)}
+              disabled={disabled}
+              title={t('pdfHint')}
+            >
+              <FileDown className="h-4 w-4" aria-hidden />
+              {t('pdf')}
+            </Button>
+          </>
+        )}
       </div>
 
       {/* The print template's header. Never on screen. */}
-      <div className="report-print-header hidden print:block" dir="rtl">
+      <div className={`report-print-header hidden ${excelOnly ? '' : 'print:block'}`} dir="rtl">
         <div className="text-lg font-bold">{title}</div>
         <div className="text-sm">
           {[business, where].filter(Boolean).join(' · ')}

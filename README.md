@@ -273,6 +273,40 @@ poetry run alembic upgrade head
 poetry run alembic downgrade -1
 ```
 
+### Demo company (Income Tax simulation)
+
+`server/scripts/seed_demo_company.py` creates the tenant "חברת הדגמה — סימולציה למס הכנסה": one
+עוסק מורשה company (a free, checksum-valid ח.פ. starting 51), branch "סניף 1", five points of sale
+"בר 1" … "בר 5" (areas) with two virtual tills each, 32 employees, a bar menu, and every night of
+September 2026 — sales, cash and card tips (card tips asked on the terminal), discounts and
+manager approvals, credit notes, failed card attempts, voids, attendance, shift closes with counts,
+the terminal's daily batch, and an area Z per bar per night.
+
+Everything goes through the API in process (FastAPI TestClient) as the tills and the dashboard
+would send it; the product reads "now" from a simulation clock (`scripts/demo_company/clock.py`)
+and nothing leaves the machine (`scripts/demo_company/quiet.py` blocks any non-local socket).
+
+```bash
+cd server
+# DATABASE_URL names the target; --db-name must repeat its database name.
+python -m scripts.seed_demo_company --db-name demo_seed_test --dry-run
+# The codes file and the output go OUTSIDE the repository.
+python -m scripts.seed_demo_company --db-name demo_seed_test \
+    --codes-file ../../demo-company-codes.md --out ../../demo-company
+python -m scripts.seed_demo_company --db-name demo_seed_test --verify-only --out ../../demo-company
+```
+
+- Refuses a database that is not at this code's alembic head (never migrates), and stops without
+  changing anything when the demo tenant already exists.
+- The employees' PINs are written only to `--codes-file` (keep it out of git).
+- `--out` receives `verification.json` (counts per bar, fiscal invariants, the product's
+  reconciliation, reports against documents) and `uniform-2026-09/` (INI.TXT, BKMVDATA.TXT, the
+  dashboard's zip and the 1.31 folder layout) from the product's own exporter.
+- A rehearsal database needs one super admin and the built-in till parameters (the API creates
+  those at start-up; `python -m scripts.seed_till_parameters`).
+- A bar's Z is the product's area Z (`POST /z-runs` with `areaId`): it takes the shop's one
+  gapless Z number (docs/AREAS_API.md §0), so each bar's Zs rise but are not 1, 2, 3 of their own.
+
 ## API Endpoints
 
 ### Authentication

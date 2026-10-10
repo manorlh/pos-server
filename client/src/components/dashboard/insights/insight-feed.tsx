@@ -11,9 +11,10 @@ import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertOctagon, AlertTriangle, ArrowLeft, Info, Lightbulb, TrendingUp } from 'lucide-react';
 import { agorot, type InsightCard, type InsightsFeed, type Severity } from '@/lib/insightsApi';
-import { formatQuantity } from '@/lib/format';
+import { formatQuantity, formatShortDate, toDate } from '@/lib/format';
 import { Card, Chip, IOS, Muted, Segmented, hh } from './ios';
 import { useDuration } from './open-tables-widget';
+import { useAnomalyText } from '@/components/dashboard/insights-actions/anomaly-text';
 
 export const SEVERITY_STYLE: Record<Severity, { color: string; icon: React.ReactNode }> = {
   critical: { color: IOS.red, icon: <AlertOctagon className="h-4 w-4" /> },
@@ -49,13 +50,11 @@ export function useCardText() {
   const t = useTranslations('insights.cards');
   const tr = useTranslations('insights');
   const duration = useDuration();
+  const anomaly = useAnomalyText();
   const weekdays = tr.raw('weekdayNames') as string[];
   const wd = (v: unknown) => weekdays[num(v)] ?? '';
   const names = (v: unknown) => (Array.isArray(v) ? v.map(String).join(', ') : '');
-  const day = (v: unknown) => {
-    const [, m, d] = str(v).split('-').map(Number);
-    return d && m ? `${d}/${m}` : '';
-  };
+  const day = (v: unknown) => (toDate(str(v)) ? formatShortDate(str(v)) : '');
 
   return (card: InsightCard): CardText => {
     const p = card.params;
@@ -325,13 +324,30 @@ export function useCardText() {
           body: t('repeat_customers.body', { netPct: pct(p.repeatNetPct), count: num(p.customers) }),
           action: t('repeat_customers.action'),
         };
+      // Till anomalies (components/dashboard/insights-actions): their words live with them.
+      case 'till_low_sales':
+      case 'till_avg_ticket':
+      case 'till_cash': {
+        const a = anomaly(card);
+        return { title: a.title, body: [a.body, a.evidence].filter(Boolean).join(' ') };
+      }
       default:
         return { title: t('unknown.title'), body: card.type };
     }
   };
 }
 
-function FeedCard({ card, text, onOpen }: { card: InsightCard; text: CardText; onOpen: (section: string) => void }) {
+function FeedCard({
+  card,
+  text,
+  onOpen,
+  actions,
+}: {
+  card: InsightCard;
+  text: CardText;
+  onOpen: (section: string) => void;
+  actions?: React.ReactNode;
+}) {
   const t = useTranslations('insights');
   const style = SEVERITY_STYLE[card.severity];
   const severityLabel =
@@ -365,6 +381,7 @@ function FeedCard({ card, text, onOpen }: { card: InsightCard; text: CardText; o
             {text.action}
           </p>
         ) : null}
+        {actions ? <div className="pt-1">{actions}</div> : null}
         <button
           type="button"
           onClick={() => onOpen(card.section)}
@@ -378,7 +395,16 @@ function FeedCard({ card, text, onOpen }: { card: InsightCard; text: CardText; o
   );
 }
 
-export function InsightFeed({ feed, onOpen }: { feed: InsightsFeed; onOpen: (section: string) => void }) {
+export function InsightFeed({
+  feed,
+  onOpen,
+  renderActions,
+}: {
+  feed: InsightsFeed;
+  onOpen: (section: string) => void;
+  /** One-tap actions under a card (a product's quick message / promotion, a till's). */
+  renderActions?: (card: InsightCard) => React.ReactNode;
+}) {
   const t = useTranslations('insights.feed');
   const text = useCardText();
   const [filter, setFilter] = useState<Filter>('all');
@@ -412,7 +438,7 @@ export function InsightFeed({ feed, onOpen }: { feed: InsightsFeed; onOpen: (sec
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
           {cards.map((card) => (
-            <FeedCard key={card.id} card={card} text={text(card)} onOpen={onOpen} />
+            <FeedCard key={card.id} card={card} text={text(card)} onOpen={onOpen} actions={renderActions?.(card)} />
           ))}
         </div>
       )}

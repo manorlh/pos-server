@@ -27,6 +27,8 @@ from decimal import Decimal
 
 import pytest
 
+from app.services.document_prefix import format_document_number
+
 from app.models.shift import Shift, ShiftStatus
 from app.models.transaction import Transaction, TransactionStatus
 from app.models.transaction_item import TransactionItem
@@ -165,7 +167,9 @@ class TestTheExchangeTender:
     def test_it_is_a_bucket_of_its_own(self):
         assert normalize_tender("exchange") == "exchange"
         assert normalize_tender(" Exchange ") == "exchange"
-        assert normalize_tender("voucher") == "other"
+        # A production voucher is a bucket of its own too ("שוברי הפקה"), whichever code the till wrote.
+        assert normalize_tender("voucher") == normalize_tender("production_voucher") == "production_voucher"
+        assert normalize_tender("bit") == "other"
 
     @pytest.mark.parametrize(
         "methods,summary",
@@ -185,7 +189,8 @@ class TestTheExchangeTender:
         assert payment_type_code("exchange") == 6
         assert payment_type_code("card") == 3
         assert payment_type_code("cash") == 1
-        assert payment_type_code("voucher") == 1
+        # A prepaid / production voucher is תווי קנייה (test_open_format_vouchers.py).
+        assert payment_type_code("voucher") == 5
 
 
 # ── Baskets on the X and the Z ────────────────────────────────────────────────
@@ -529,7 +534,9 @@ class TestOpenFormat:
         records, _ = _export(w, [_get(w, sale), _get(w, credit)])
 
         types = [(r[22:25], r[49]) for r in records["D120"]]
-        assert types == [("320", "1"), ("320", "6"), ("330", "6")]
+        # The sale's legs only: a 330 carries no payment records (D120 is "פרטי קבלה",
+        # 1.31 §4.5; the simulator rejects one under a 330 header).
+        assert types == [("320", "1"), ("320", "6")]
 
     def test_a_single_exchange_leg_document_is_type_6_too(self):
         tx = {"documentType": 330, "paymentMethod": "exchange", "transactionNumber": "1",
@@ -556,9 +563,11 @@ class TestOpenFormat:
         # Only the credit notes are exported: their originals are 40 days older.
         records, _ = _export(w, [_get(w, credit_first), _get(w, credit_second), _get(w, catalogue)])
 
+        # Named as printed, `<prefix>-<number>` (docs/SPEC_DOCUMENT_PREFIX.md): these were
+        # pushed without a prefix, so they read as their register, the till's number.
         assert [_d110_base(r) for r in records["D110"]] == [
-            ("320", first["transactionNumber"]),
-            ("320", second["transactionNumber"]),
+            ("320", format_document_number(till.pos_number, first["transactionNumber"])),
+            ("320", format_document_number(till.pos_number, second["transactionNumber"])),
             ("000", ""),
         ]
 
@@ -572,7 +581,7 @@ class TestOpenFormat:
 
         records, _ = _export(w, [_get(w, credit)])
 
-        assert _d110_base(records["D110"][0]) == ("320", original["transactionNumber"])
+        assert _d110_base(records["D110"][0]) == ("320", format_document_number(till.pos_number, original["transactionNumber"]))
 
     def test_another_tenants_original_is_never_named(self, w):
         till = w.tills[0]
@@ -597,7 +606,7 @@ class TestOpenFormat:
 
         assert records["C100"][0][22:25] == "330"
         assert records["D110"][0][22:25] == "330"
-        assert records["D120"][0][22:25] == "330"
+        assert "D120" not in records  # no payment records under a credit note
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -675,7 +684,8 @@ class TestTheDashboard:
 
         assert out.basket_id == basket
         assert [(d.id, d.document_type) for d in out.basket_documents] == [(uuid.UUID(sale["id"]), 320)]
-        assert out.refund_of_transaction_number == original["transactionNumber"]
+        # As printed on the original (docs/SPEC_DOCUMENT_PREFIX.md).
+        assert out.refund_of_transaction_number == format_document_number(till.pos_number, original["transactionNumber"])
         assert out.items[0].refund_of_item_id == uuid.UUID(original["items"][0]["id"])
         body = out.model_dump(by_alias=True, mode="json")
         assert body["basketDocuments"][0]["transactionNumber"] == sale["transactionNumber"]
