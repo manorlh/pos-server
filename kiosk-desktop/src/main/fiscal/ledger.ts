@@ -498,6 +498,12 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
       item.promotionDiscount = r2(l.promotionAgorot!);
       if (l.promotionId) item.promotionId = l.promotionId;
     }
+    // "תפריטים": the menu active when the line was added and where its price came from — the sales-by-menu report (SPEC_MENUS §6).
+    if (l.menuId) {
+      item.menuId = l.menuId;
+      if (l.menuName) item.menuName = l.menuName;
+      item.priceSource = l.priceSource ?? 'catalog';
+    }
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });

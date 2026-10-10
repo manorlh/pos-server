@@ -14,6 +14,12 @@
  *  - pictures from the network (the kiosk's service worker keeps them), a Cloudinary picture asked
  *    at the card's / the sheet's size.
  *
+ * "תפריטים" (lib/kioskMenus.ts, docs/SPEC_MENUS.md): the `catalogMenus` block of the pull decides, by this
+ * kiosk's own clock, which menu is active ("היכן": kiosk / both) — then ITS products, categories, order and prices
+ * are the kiosk's, over the machine's own list; none active: the fallback ("הקטלוג המלא" / "לא למכור"). Blocks
+ * and "אזל" stay in force; what a menu does not place is kept apart (`held`) for an open basket and for a meal's
+ * components. The Android kiosk's rules (CatalogMenus.kt `present`), pinned by catalog_menus_golden.json.
+ *
  * The kiosk's own order / hidden / featured rules are applied by the screens with the shared
  * `kioskCatalogView` (lib/kioskConfig.ts), exactly as the dashboard preview does.
  *
@@ -21,6 +27,8 @@
  */
 
 import { agorotOfShekels, mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes } from './kioskMoney';
+import { layMenu, menuInputsOf, type KioskMenuState } from './kioskMenus';
+import type { MenuBlock } from './menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from './kioskUpsellRules';
 import { kioskSoldOut, rowAvailable, type SaleState } from './kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from './restrictedItems';
@@ -81,8 +89,14 @@ export interface WebProduct {
   name: string;
   /** Shekels (display). */
   price: number;
-  /** The exact price, agorot. */
+  /** The exact price, agorot — the active menu's while one prices it. */
   priceAgorot: number;
+  /** The catalog's own price when a menu set `priceAgorot`; absent: no menu is on it (lib/kioskMenus.ts `basePriceOf`). */
+  catalogPriceAgorot?: number;
+  /** The active menu that placed it ("תפריטים"), with where its price came from: `menu` / `catalog`. */
+  menuId?: string | null;
+  menuName?: string | null;
+  priceSource?: 'menu' | 'catalog' | null;
   /** "לא מקבל הנחות": no promotion discounts it (it still counts towards a spend threshold). */
   noDiscount: boolean;
   imageUrl: string | null;
@@ -115,6 +129,13 @@ export interface WebUpsell {
 export interface WebCatalog {
   categories: WebCategory[];
   products: WebProduct[];
+  /** "תפריטים": the menu active now — its order for the screens (`withMenuOrder`), its name for the title. */
+  menu: KioskMenuState;
+  /**
+   * What the kiosk sells by its catalog but the active menu does not place (or "לא למכור" holds back): not on the
+   * screens, kept for an open basket's lines and a meal's components (CatalogMenus.present: not on this till).
+   */
+  held: WebProduct[];
   groups: Record<string, WebGroup[]>;
   /** The meals' slots by meal product id (menu.meals). */
   meals: Record<string, MealSlot[]>;
@@ -129,8 +150,6 @@ type Row = Record<string, unknown>;
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() && Number.isFinite(Number(v)) ? Number(v) : null;
-/** Shekels from the catalog, to the agora as the till reads them (Agorot.ofShekels). */
-const money = (v: unknown) => agorotOfShekels(num(v) ?? 0) / 100;
 
 /**
  * A Cloudinary picture asked at `width` (auto format and quality); any other URL as it is.
@@ -146,14 +165,17 @@ export function sizedImage(url: string | null, width: number): string | null {
   return `${m[1]}c_limit,w_${width},f_auto,q_auto/${m[2]}`;
 }
 
-/** Is this product sold on a kiosk at all. */
-export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | undefined): boolean {
+/**
+ * Is this product sold on a kiosk at all. `menuActive`: a menu places it, and a menu beats the machine's own
+ * list ("גובר על הכל", SPEC_MENUS §3.3) — everything else (delisted, "קופות בלבד", "מחייב אישור מנהל") stays.
+ */
+export function sellableOnKiosk(p: Row, machineCatalogMode: string | null | undefined, menuActive = false): boolean {
   if (p.deleted === true) return false;
   if (p.inStock === false) return false;
   if (p.salesChannel === 'pos_only') return false;
   // "מחייב אישור מנהל במכירה": nobody at a kiosk can type a manager's code (its category: buildWebCatalog).
   if (p.requiresManagerApproval === true) return false;
-  if (machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
+  if (!menuActive && machineCatalogMode === 'selected' && p.inMachineCatalog === false) return false;
   return true;
 }
 
@@ -162,6 +184,11 @@ export interface CatalogIn {
   categories: Row[];
   menu: Row | null;
   machineCatalog: { mode?: string } | null;
+  /**
+   * "תפריטים": the `catalogMenus` block as the pull carried it (whole when sent, a delta that carries none keeps it);
+   * undefined: none ever pulled, null: pulled and none.
+   */
+  catalogMenus?: MenuBlock | null;
 }
 
 export function buildWebCatalog(
@@ -179,6 +206,11 @@ export function buildWebCatalog(
     (c) => c.isActive !== false && c.deleted !== true && !restricted.has(String(c.id)),
   );
   const catIds = new Set(activeCats.map((c) => String(c.id)));
+  // "תפריטים": the menu active on this kiosk's own clock, laid over what the shop lists (lib/kioskMenus.ts).
+  const lay = layMenu(catalog.catalogMenus, sale.nowMs, menuInputsOf(catalog.products));
+  const menuOn = lay.state.mode === 'menu';
+  const menuCats = menuOn ? new Set(lay.state.categories ?? []) : null;
+  const menuRank = new Map((lay.state.categoryOrder ?? []).map((id, i) => [id, i]));
   const order = (list: unknown): string[] => (Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : []);
   const catOrder = order(settings.categoryOrder);
   const prodOrder = order(settings.productOrder);
@@ -187,9 +219,12 @@ export function buildWebCatalog(
     return i < 0 ? Number.MAX_SAFE_INTEGER : i;
   };
   const categories: WebCategory[] = activeCats
+    // A menu shows its own categories only, in its order; "לא למכור": none.
+    .filter((c) => lay.state.mode !== 'none' && (!menuCats || menuCats.has(String(c.id))))
     .slice()
     .sort(
       (a, b) =>
+        (menuOn ? (menuRank.get(String(a.id)) ?? 0) - (menuRank.get(String(b.id)) ?? 0) : 0) ||
         rank(catOrder, String(a.id)) - rank(catOrder, String(b.id)) ||
         (num(a.sortOrder) ?? 0) - (num(b.sortOrder) ?? 0) ||
         String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'),
@@ -198,45 +233,54 @@ export function buildWebCatalog(
 
   const menu = catalog.menu ?? {};
   const mealIds = new Set(Object.keys(((menu as { meals?: Record<string, unknown> }).meals ?? {}) as Record<string, unknown>));
-  const products: WebProduct[] = catalog.products
-    .filter(
-      (p) =>
-        sellableOnKiosk(p, mode) &&
-        typeof p.categoryId === 'string' &&
-        catIds.has(p.categoryId) &&
-        !isRestrictedProduct({ categoryId: p.categoryId, requiresManagerApproval: p.requiresManagerApproval === true }, restricted),
-    )
+  const restrictedOrNot = (p: Row) =>
+    isRestrictedProduct({ categoryId: typeof p.categoryId === 'string' ? p.categoryId : null, requiresManagerApproval: p.requiresManagerApproval === true }, restricted);
+  const inActiveCategory = (p: Row) => typeof p.categoryId === 'string' && catIds.has(p.categoryId);
+  /** What the kiosk sells by the catalog's own rules (no menu): its list, its channel, an active category. */
+  const byCatalog = (p: Row) => sellableOnKiosk(p, mode) && inActiveCategory(p) && !restrictedOrNot(p);
+  /** What an active menu places: over the machine's list; the channel, the manager's approval and delisting stay. */
+  const byMenu = (p: Row) => !!lay.placed?.has(String(p.id)) && sellableOnKiosk(p, mode, true) && inActiveCategory(p) && !restrictedOrNot(p);
+  const ordered = catalog.products
     .slice()
-    .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'))
-    .map((p) => {
-      const url = str(p.imageUrl);
-      // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
-      // delisted, the stock it tracks here, a block in force by the kiosk's clock.
-      const available = rowAvailable(p);
-      const tags = new Set(Array.isArray(p.dietaryTags) ? (p.dietaryTags as string[]) : []);
-      const allergens = Array.isArray(p.allergens) ? (p.allergens as unknown[]).filter((a): a is string => typeof a === 'string') : [];
-      return {
-        id: String(p.id),
-        name: String(p.name ?? ''),
-        price: money(p.price),
-        priceAgorot: agorotOfShekels(num(p.price) ?? 0),
-        noDiscount: p.noDiscount === true,
-        imageUrl: sizedImage(url, 480),
-        imageLarge: sizedImage(url, 960),
-        soldOut: kioskSoldOut(p, sale.stock[String(p.id)], sale.nowMs),
-        available,
-        kioskDisplay: p.kioskDisplay === 'hide' ? 'hide' : p.kioskDisplay === 'grey' ? 'grey' : null,
-        description: str(p.description),
-        categoryId: (p.categoryId as string) ?? null,
-        dietaryTags: DIETARY.filter((t) => tags.has(t)),
-        allergens: allergens.map((a) => ALLERGEN_HE[a] ?? a),
-        allergenCodes: allergens,
-        sku: str(p.sku),
-        barcode: str(p.barcode),
-        trackStock: p.trackStock === true,
-        meal: mealIds.has(String(p.id)),
-      };
-    });
+    .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'));
+  const onKiosk = lay.state.mode === 'menu' ? ordered.filter(byMenu) : lay.state.mode === 'none' ? [] : ordered.filter(byCatalog);
+  const onKioskIds = new Set(onKiosk.map((p) => String(p.id)));
+  const keptRows = lay.state.mode === 'catalog' ? [] : ordered.filter((p) => byCatalog(p) && !onKioskIds.has(String(p.id)));
+  const productOf = (p: Row): WebProduct => {
+    const url = str(p.imageUrl);
+    // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
+    // delisted, the stock it tracks here, a block in force by the kiosk's clock.
+    const available = rowAvailable(p);
+    const tags = new Set(Array.isArray(p.dietaryTags) ? (p.dietaryTags as string[]) : []);
+    const allergens = Array.isArray(p.allergens) ? (p.allergens as unknown[]).filter((a): a is string => typeof a === 'string') : [];
+    const place = lay.state.mode === 'menu' ? lay.placed?.get(String(p.id)) : undefined;
+    const catalogAgorot = agorotOfShekels(num(p.price) ?? 0);
+    const priceAgorot = place ? place.priceAgorot : catalogAgorot;
+    return {
+      id: String(p.id),
+      name: String(p.name ?? ''),
+      price: priceAgorot / 100,
+      priceAgorot,
+      ...(place ? { catalogPriceAgorot: catalogAgorot, menuId: lay.state.menuId, menuName: lay.state.menuName, priceSource: place.source } : {}),
+      noDiscount: p.noDiscount === true,
+      imageUrl: sizedImage(url, 480),
+      imageLarge: sizedImage(url, 960),
+      soldOut: kioskSoldOut(p, sale.stock[String(p.id)], sale.nowMs),
+      available,
+      kioskDisplay: p.kioskDisplay === 'hide' ? 'hide' : p.kioskDisplay === 'grey' ? 'grey' : null,
+      description: str(p.description),
+      categoryId: (p.categoryId as string) ?? null,
+      dietaryTags: DIETARY.filter((t) => tags.has(t)),
+      allergens: allergens.map((a) => ALLERGEN_HE[a] ?? a),
+      allergenCodes: allergens,
+      sku: str(p.sku),
+      barcode: str(p.barcode),
+      trackStock: p.trackStock === true,
+      meal: mealIds.has(String(p.id)),
+    };
+  };
+  const products: WebProduct[] = onKiosk.map(productOf);
+  const held: WebProduct[] = keptRows.map(productOf);
 
   const groupsById = new Map<string, WebGroup>();
   for (const row of Array.isArray(menu.groups) ? (menu.groups as Row[]) : []) {
@@ -259,7 +303,8 @@ export function buildWebCatalog(
   const notes = (menu.notes ?? {}) as MenuNotes;
   const groups: Record<string, WebGroup[]> = {};
   const quickNotes: Record<string, string[]> = {};
-  for (const p of products) {
+  // The groups and notes of what is held too: a line already in the basket is priced and checked by them.
+  for (const p of [...products, ...held]) {
     // Menu.groupsFor: the product's own list, else the nearest category up its tree that has one.
     const ids = menuGroupIdsFor(links, [p.id], p.categoryId, parentOf);
     const list = ids.map((id) => groupsById.get(id)).filter((g): g is WebGroup => !!g && g.options.length > 0);
@@ -278,15 +323,16 @@ export function buildWebCatalog(
       prompt: str(u.prompt) ?? str(u.message),
     };
   });
-  // The meals of what the kiosk sells, each slot's choices among what it sells.
-  const sold = new Set(products.map((p) => p.id));
+  // The meals of what the kiosk sells, each slot's choices among what it sells (a component the menu does not
+  // place is still sold by the catalog: it stays a choice, as on the Android kiosk).
+  const sold = new Set([...products, ...held].map((p) => p.id));
   const meals: Record<string, MealSlot[]> = {};
   for (const [id, slots] of Object.entries(mealsOf(menu))) {
-    if (!sold.has(id)) continue;
+    if (!onKioskIds.has(id)) continue;
     const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
     if (usable.length > 0) meals[id] = usable;
   }
-  return { categories, products, groups, meals, quickNotes, upsells, upsellRules: upsellRulesOf(menu) };
+  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, upsells, upsellRules: upsellRulesOf(menu) };
 }
 
 /** A full pull replaces; a delta upserts by id (the menu only when sent). A full pull of nothing never empties the kiosk. */
@@ -302,9 +348,12 @@ export function applyCatalogPull(prev: CatalogIn & { serverTime: string | null }
   const products = rows(body.products);
   const categories = rows(body.categories);
   const menu = body.menu && typeof body.menu === 'object' ? (body.menu as Row) : null;
+  // "תפריטים": whole when sent (a full pull always sends it, even empty, so the kiosk clears); a delta that carries none keeps it.
+  const catalogMenus = body.catalogMenus && typeof body.catalogMenus === 'object' && !Array.isArray(body.catalogMenus) ? (body.catalogMenus as MenuBlock) : (prev.catalogMenus ?? null);
   return {
     products: full ? (products.length === 0 && prev.products.length > 0 ? prev.products : products) : upsert(prev.products, products),
     categories: full ? (categories.length === 0 && prev.categories.length > 0 ? prev.categories : categories) : upsert(prev.categories, categories),
+    catalogMenus,
     menu: menu ?? prev.menu,
     machineCatalog: (body.machineCatalog as CatalogIn['machineCatalog']) ?? prev.machineCatalog,
     serverTime: typeof body.serverTime === 'string' ? body.serverTime : prev.serverTime,
