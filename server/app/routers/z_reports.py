@@ -521,6 +521,10 @@ def z_detail_out(db: Session, z: ZReport) -> ZReportDetailOut:
         for s in shifts
     ]
     out.business = _business_of(z)
+    # "מתוך ה-Z: …": its documents per calendar month (app/services/z_document_months.py).
+    from app.services.z_document_months import months_of_z
+
+    out.document_months, out.document_months_source = months_of_z(db, z)
     sections = [s for s in (z.per_machine or []) if isinstance(s, dict)]
     if any("cardBrands" in s for s in sections):
         out.card_brands = card_brands.merge_breakdowns(s.get("cardBrands") for s in sections)

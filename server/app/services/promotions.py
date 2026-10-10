@@ -664,7 +664,8 @@ def build_promotions_report(
         if name:
             names[key] = (name, ptype or names[key][1])
         moment = created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
-        day = moment.astimezone(zone).date().isoformat()
+        # The window's day: its till's business day ("שעת סיום יום עסקי"), or the calendar's.
+        day = (window.day_of(moment, till) if hasattr(window, "day_of") else moment.astimezone(zone).date()).isoformat()
         targets = [
             totals,
             by_promo.setdefault(key, bucket()),

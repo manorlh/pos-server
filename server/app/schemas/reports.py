@@ -33,6 +33,11 @@ class ReportWindowOut(BaseModel):
     # filter the covered set is a subset of this span, not the whole of it.
     window_start: datetime = Field(..., alias="windowStart")
     window_end: datetime = Field(..., alias="windowEnd")
+    #: "business" — each document on its till's business day ("שעת סיום יום עסקי");
+    #: "document" — on its calendar date (VAT and the uniform file are always this).
+    day_basis: str = Field("document", alias="dayBasis")
+    #: The report scope's business day end hour (0–12) on the business basis; null otherwise.
+    business_day_end_hour: Optional[int] = Field(None, alias="businessDayEndHour")
 
 
 # ── 2a. Product sales ─────────────────────────────────────────────────────────

@@ -370,11 +370,22 @@ def _new_shift(
         # moved later takes its new area from its next shift and past totals stay put
         # (docs/AREAS_API.md §0). Every cloud shift is created through this function.
         area_id=getattr(machine, "area_id", None),
-        business_date=business_date or datetime.now(timezone.utc).date(),
+        # The till's own business date; else the business day it opened on ("שעת סיום יום
+        # עסקי", app/services/business_day.py) — not the UTC date.
+        business_date=business_date or _fallback_business_date(machine, opened_at),
         opened_at=opened_at or datetime.now(timezone.utc),
         status=status_,
         **extra,
     )
+
+
+def _fallback_business_date(machine: POSMachine, opened_at: Optional[datetime]):
+    """A shift the till sent no business date for: the business day it opened on, at its till."""
+    from sqlalchemy.orm import object_session
+
+    from app.services.business_day import machine_business_day
+
+    return machine_business_day(object_session(machine), machine, opened_at or datetime.now(timezone.utc))
 
 
 def precheck_document_shifts(

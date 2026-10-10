@@ -340,6 +340,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines", REFERENCE),
     (_GET, "/machines/search", REFERENCE),
     (_GET, "/machines/{}", REFERENCE),
+    # "שעת סיום יום עסקי" of a scope and its business "today" — every management page opens on it.
+    (_GET, "/reports/business-day", REFERENCE),
     (_GET, "/system/dealer-types", REFERENCE),
     (_GET, "/system/open-format", REFERENCE),
     # ── Accounting ──

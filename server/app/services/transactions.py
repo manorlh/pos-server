@@ -1068,9 +1068,13 @@ def upsert_transactions(
                 try:
                     business_date_value = date.fromisoformat(tx.business_date)
                 except ValueError:
-                    business_date_value = tx.created_at.date() if tx.created_at else None
-            else:
-                business_date_value = tx.created_at.date() if tx.created_at else None
+                    business_date_value = None
+            if business_date_value is None and tx.created_at:
+                # None sent: the business day it was issued on at its till ("שעת סיום יום עסקי",
+                # app/services/business_day.py) — not the UTC date.
+                from app.services.business_day import machine_business_day
+
+                business_date_value = machine_business_day(db, issuer, tx.created_at)
 
             # Rule 2: the shift (docs/SHIFTS_API.md §1.2c-bis, `document_filing`).
             named: Optional[Shift] = None

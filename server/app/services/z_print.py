@@ -641,7 +641,11 @@ def _late_section(late: dict) -> dict:
 def _footer_notes(z: ZReport, tzinfo=None) -> List[str]:
     """What the Z says about itself: reconstructed, remote closes, late documents, tills left out."""
     header = z.header or {}
-    footer: List[str] = []
+    # "מתוך ה-Z: ₪X מסמכי ספטמבר · ₪Y מסמכי אוקטובר" — only a Z with documents of two months
+    # (app/services/z_document_months.py).
+    from app.services.z_document_months import footer_lines
+
+    footer: List[str] = footer_lines(z)
     for note in header.get("devicesReplaced") or []:
         line = _replaced_line(note, tzinfo)
         if line:

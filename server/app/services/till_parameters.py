@@ -1540,11 +1540,24 @@ from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _HELD_SALES_SPECS)
 
+# "שעת סיום יום עסקי" (app/services/business_day.py): when a business day ends, 0–12 (04:00).
+from app.services.business_day import PARAMETER_SPECS as _BUSINESS_DAY_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _BUSINESS_DAY_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
-    from app.services import kiosk_technician
+    from app.services import business_day, kiosk_technician
 
+    if key == business_day.PARAMETER_KEY and value is not None:
+        if isinstance(value, bool) or not isinstance(value, int) or not (
+            business_day.MIN_END_HOUR <= value <= business_day.MAX_END_HOUR
+        ):
+            raise TillParameterValueError(
+                f"{business_day.LABEL}: a whole hour {business_day.MIN_END_HOUR}–{business_day.MAX_END_HOUR}"
+            )
+        return value
     if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:
         try:
             return kiosk_technician.clean_code(value)

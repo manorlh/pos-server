@@ -55,6 +55,20 @@ def _local_day(moment: datetime, zone) -> str:
     return moment.astimezone(zone).date().isoformat()
 
 
+def _window_day(window, moment: datetime, till) -> str:
+    """The report window's day of a document — the business day of its till, or the calendar's."""
+    day_of = getattr(window, "day_of", None)
+    if day_of is None:  # a plain window without a basis
+        return _local_day(moment, _zone_of(window))
+    return day_of(moment, till).isoformat()
+
+
+def _zone_of(window):
+    from app.services.reports import _load_zoneinfo
+
+    return _load_zoneinfo(window.tz_name)
+
+
 def _uuid(value: Any) -> Optional[uuid.UUID]:
     if value is None:
         return None
@@ -188,7 +202,7 @@ def build_discounts_report(
             by_employee.setdefault(employee, oth_bucket()),
             by_reason.setdefault((reason or "").strip(), oth_bucket()),
             by_till.setdefault(str(till) if till else None, oth_bucket()),
-            by_day.setdefault(_local_day(created_at, zone), oth_bucket()),
+            by_day.setdefault(_window_day(window, created_at, till), oth_bucket()),
         ):
             b["count"] += 1
             b["quantity"] += quantity
@@ -230,7 +244,7 @@ def build_discounts_report(
             targets += [
                 club_totals,
                 club_by_till.setdefault(str(till) if till else None, club_bucket()),
-                club_by_day.setdefault(_local_day(created_at, zone), club_bucket()),
+                club_by_day.setdefault(_window_day(window, created_at, till), club_bucket()),
             ]
         for b in targets:
             b["count"] += 1
@@ -282,7 +296,7 @@ def build_discounts_report(
             v_totals,
             v_by_batch.setdefault(batch_key, voucher_bucket()),
             v_by_till.setdefault(str(till) if till else None, voucher_bucket()),
-            v_by_day.setdefault(_local_day(created_at, zone), voucher_bucket()),
+            v_by_day.setdefault(_window_day(window, created_at, till), voucher_bucket()),
         ):
             b["count"] += 1
             b["uses"] += int(uses or 1)

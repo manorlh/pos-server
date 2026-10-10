@@ -26,6 +26,7 @@ from app.schemas.extra_reports import (
 )
 from app.services import extra_reports as svc
 from app.services.areas import parse_area_filter
+from app.services.business_day import BASIS_QUERY_DESCRIPTION, basis_of, scope_of
 from app.services.reports import resolve_report_window
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -34,9 +35,14 @@ _FROM = "Start day (inclusive), in the report timezone. Defaults to 30 days back
 _TO = "End day (inclusive), in the report timezone. Defaults to today."
 
 
-def _window(db, tenant_id, from_date, to_date, from_hour, to_hour, tz):
+def _window(db, tenant_id, from_date, to_date, from_hour, to_hour, tz, day_basis=None, scope=None):
+    """
+    The report's window. With `day_basis` (the sales reports): the business day by default
+    ("שעת סיום יום עסקי"); without (document sequence, cash variance): the calendar, as before.
+    """
     return resolve_report_window(
-        db, tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+        db, tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=day_basis, scope=scope,
     )
 
 
@@ -50,12 +56,16 @@ def get_payment_methods_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """Net takings per tender method, per local day, shop and till (מכירות לפי אמצעי תשלום)."""
-    window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
+    window = _window(
+        db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz,
+        basis_of(day_basis), scope_of(shop_id=shop_id, machine_id=machine_id),
+    )
     return svc.build_payment_methods_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
     )
@@ -71,12 +81,16 @@ def get_card_brands_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """Card legs per brand (מותג) and acquirer (חברת סליקה), refunds apart (דוח סליקה)."""
-    window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
+    window = _window(
+        db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz,
+        basis_of(day_basis), scope_of(shop_id=shop_id, machine_id=machine_id),
+    )
     return svc.build_card_brands_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
     )
@@ -98,12 +112,19 @@ def get_hourly_report(
         alias="areaId",
         description="An area's id, or `none`: the area each document's shift was stamped with.",
     ),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Net per weekday × hour (מכירות לפי שעה), for a heat map and shift planning."""
-    window = _window(db, active_tenant_id, from_date, to_date, None, None, tz)
+    """
+    Net per weekday × hour (מכירות לפי שעה), for a heat map and shift planning. On the business
+    day (the default) a Saturday 01:00 sale is in Friday's column: the night it was part of.
+    """
+    window = _window(
+        db, active_tenant_id, from_date, to_date, None, None, tz, basis_of(day_basis),
+        scope_of(company_id=company_id, shop_id=shop_id, machine_id=machine_id, area_id=area_id),
+    )
     return svc.build_hourly_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
         # A handler called directly sees the `Query(...)` defaults themselves: no filter.
@@ -122,12 +143,16 @@ def get_department_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """Units and money per product category, with each one's share of the net (מכירות לפי מחלקה)."""
-    window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
+    window = _window(
+        db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz,
+        basis_of(day_basis), scope_of(shop_id=shop_id, machine_id=machine_id),
+    )
     return svc.build_department_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
     )

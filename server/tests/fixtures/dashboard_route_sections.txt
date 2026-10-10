@@ -499,6 +499,7 @@ GET /report-events/{event_id}/readiness -> reports|live_event:view
 GET /report-events/{event_id}/report -> reports|live_event:view
 GET /report-events/{event_id}/till-changes -> reports|live_event:view
 POST /report-events/{event_id}/tills -> reports:edit
+GET /reports/business-day -> reference
 GET /reports/card-brands -> reports:view
 GET /reports/cash-variance -> reports:view
 GET /reports/cashiers -> reports:view

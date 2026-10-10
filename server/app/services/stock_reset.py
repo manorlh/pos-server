@@ -89,9 +89,13 @@ def business_day(now: datetime, clock: Clock) -> Tuple[date, datetime]:
 
 
 def clock_for(db: Session, loc: Location) -> Clock:
-    """The location's report zone and the system's one business-day start (04:00, as insights)."""
+    """
+    The location's report zone and its business-day start — "שעת סיום יום עסקי" of its shop
+    (app/services/business_day.py, 04:00 unless set), as its blocks, targets and reports.
+    """
     from app.models.company import Company
     from app.models.shop import Shop
+    from app.services.business_day import end_hour_for
     from app.services.reports import resolve_report_timezone
 
     day_start = block_durations.business_day_start()
@@ -99,6 +103,8 @@ def clock_for(db: Session, loc: Location) -> Clock:
         path = L.location_path(db, loc)
     except LookupError:
         return Clock(block_durations.DEFAULT_ZONE, day_start)
+    if path.shop_id or path.company_id:
+        day_start = f"{end_hour_for(db, shop_id=path.shop_id, company_id=path.company_id, area_id=path.area_id):02d}:00"
     shop = db.get(Shop, path.shop_id) if path.shop_id else None
     company = db.get(Company, path.company_id) if path.company_id else None
     tenant_id = shop.tenant_id if shop is not None else (company.tenant_id if company is not None else None)

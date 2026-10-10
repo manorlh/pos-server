@@ -32,6 +32,7 @@ from app.middleware.auth import (
 )
 from app.routers.shops import _check_shop_access
 from app.services.areas import parse_area_filter
+from app.services.business_day import BASIS_QUERY_DESCRIPTION, basis_of, scope_of
 from app.models.pos_machine import POSMachine
 from app.models.shop import Shop
 from app.models.user import User
@@ -116,6 +117,7 @@ def get_product_sales_report(
     from_hour: Optional[int] = Query(None, alias="fromHour", description=_FROM_HOUR_DESC),
     to_hour: Optional[int] = Query(None, alias="toHour", description=_TO_HOUR_DESC),
     tz: Optional[str] = Query(None, description=_TZ_DESC),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
@@ -138,6 +140,7 @@ def get_product_sales_report(
         db, active_tenant_id,
         from_date=from_date, to_date=to_date,
         from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id, area_id=area_id),
     )
     return build_product_sales_report(
         db, current_user, active_tenant_id, window,
@@ -157,6 +160,7 @@ def get_cashier_sales_report(
     from_hour: Optional[int] = Query(None, alias="fromHour", description=_FROM_HOUR_DESC),
     to_hour: Optional[int] = Query(None, alias="toHour", description=_TO_HOUR_DESC),
     tz: Optional[str] = Query(None, description=_TZ_DESC),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
@@ -172,6 +176,7 @@ def get_cashier_sales_report(
         db, active_tenant_id,
         from_date=from_date, to_date=to_date,
         from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id, area_id=area_id),
     )
     return build_cashier_sales_report(
         db, current_user, active_tenant_id, window,
@@ -195,6 +200,7 @@ def get_sales_by_area_report(
     from_hour: Optional[int] = Query(None, alias="fromHour", description=_FROM_HOUR_DESC),
     to_hour: Optional[int] = Query(None, alias="toHour", description=_TO_HOUR_DESC),
     tz: Optional[str] = Query(None, description=_TZ_DESC),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -217,6 +223,7 @@ def get_sales_by_area_report(
         db, active_tenant_id,
         from_date=date_from or from_date, to_date=date_to or to_date,
         from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop.id),
     )
     return build_sales_by_area_report(db, current_user, active_tenant_id, window, shop=shop)
 
@@ -232,6 +239,7 @@ def get_tips_range_report(
     from_hour: Optional[int] = Query(None, alias="fromHour", description=_FROM_HOUR_DESC),
     to_hour: Optional[int] = Query(None, alias="toHour", description=_TO_HOUR_DESC),
     tz: Optional[str] = Query(None, description=_TZ_DESC),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
@@ -251,6 +259,7 @@ def get_tips_range_report(
         db, active_tenant_id,
         from_date=from_date, to_date=to_date,
         from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id, area_id=area_id),
     )
     return build_tips_range_report(
         db, current_user, active_tenant_id, window,
@@ -407,6 +416,7 @@ def get_overview_report(
     to_date: Optional[date] = Query(
         None, alias="to", description="End day of a range (inclusive); `from` defaults to it."
     ),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -423,14 +433,16 @@ def get_overview_report(
     Sales only: whether a till is online, its open shift and its alerts are the
     machines list's (`GET /machines`); the dashboard joins the two on the till's id.
     """
+    # The cockpit's day is the business day ("שעת סיום יום עסקי") unless asked otherwise.
+    basis = dict(day_basis=basis_of(day_basis), scope=scope_of(company_id=company_id, shop_id=shop_id, machine_id=machine_id))
     # A handler called directly sees the `Query(...)` defaults themselves: no range.
     if isinstance(from_date, date) or isinstance(to_date, date):
-        window = _day_range(db, active_tenant_id, from_date, to_date, tz)
+        window = _day_range(db, active_tenant_id, from_date, to_date, tz, **basis)
     else:
         if not isinstance(day, date):
-            # "Today" is the report timezone's today, not the server's.
-            day = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz).to_date
-        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
+            # "Today" is the report timezone's (business) today, not the server's.
+            day = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz, **basis).to_date
+        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz, **basis)
     return build_overview(
         db, current_user, active_tenant_id, window,
         company_id=company_id, shop_id=shop_id, machine_id=machine_id,
@@ -461,6 +473,7 @@ def get_live_items_report(
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     limit: int = Query(LIVE_ITEMS_DEFAULT, ge=1, le=LIVE_ITEMS_MAX),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -473,11 +486,15 @@ def get_live_items_report(
     scoped like every report; `companyId` / `shopId` / `areaId` / `machineId` only
     narrow. The period is `date` (default today), or `from`–`to`, or `shift=open`.
     """
+    basis = dict(
+        day_basis=basis_of(day_basis),
+        scope=scope_of(company_id=company_id, shop_id=shop_id, area_id=area_id, machine_id=machine_id),
+    )
     if isinstance(shift, str) and shift.strip().lower() == "open":
         period = PERIOD_SHIFT
-        window = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz)
+        window = resolve_report_window(db, active_tenant_id, from_date=None, to_date=None, tz=tz, **basis)
         window = resolve_report_window(
-            db, active_tenant_id, from_date=window.to_date, to_date=window.to_date, tz=tz
+            db, active_tenant_id, from_date=window.to_date, to_date=window.to_date, tz=tz, **basis
         )
     elif isinstance(from_date, date) or isinstance(to_date, date):
         period = PERIOD_RANGE
@@ -485,15 +502,15 @@ def get_live_items_report(
             db, active_tenant_id,
             from_date=from_date if isinstance(from_date, date) else None,
             to_date=to_date if isinstance(to_date, date) else None,
-            tz=tz,
+            tz=tz, **basis,
         )
     else:
         period = PERIOD_DAY
         if not isinstance(day, date):
             day = resolve_report_window(
-                db, active_tenant_id, from_date=None, to_date=None, tz=tz
+                db, active_tenant_id, from_date=None, to_date=None, tz=tz, **basis
             ).to_date
-        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz)
+        window = resolve_report_window(db, active_tenant_id, from_date=day, to_date=day, tz=tz, **basis)
     return build_live_items(
         db, current_user, active_tenant_id, window,
         period=period, company_id=company_id, shop_id=shop_id, machine_id=machine_id,
@@ -502,16 +519,20 @@ def get_live_items_report(
 
 
 
-def _day_range(db, tenant_id, from_date, to_date, tz):
+def _day_range(db, tenant_id, from_date, to_date, tz, day_basis=None, scope=None):
     """`from`–`to` as a window: `to` defaults to today, `from` to `to` (one day)."""
+    basis = dict(day_basis=day_basis, scope=scope)
     end = to_date if isinstance(to_date, date) else None
     if end is None:
-        end = resolve_report_window(db, tenant_id, from_date=None, to_date=None, tz=tz).to_date
+        end = resolve_report_window(db, tenant_id, from_date=None, to_date=None, tz=tz, **basis).to_date
     start = from_date if isinstance(from_date, date) else end
-    return resolve_report_window(db, tenant_id, from_date=start, to_date=end, tz=tz)
+    return resolve_report_window(db, tenant_id, from_date=start, to_date=end, tz=tz, **basis)
 
 
-def _periods(db, user, tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz):
+def _periods(
+    db, user, tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+    day_basis=None, scope=None,
+):
     """
     The two periods of a comparison: each days (`from`–`to`, `cmpFrom`–`cmpTo`) or an event
     (`eventId`, `cmpEventId`), which wins over days. No compared period: None.
@@ -525,12 +546,14 @@ def _periods(db, user, tenant_id, from_date, to_date, cmp_from, cmp_to, event_id
     if isinstance(event_id, uuid.UUID):
         current = Period.of_event(load_event_lens(db, user, tenant_id, event_id))
     else:
-        current = Period(_day_range(db, tenant_id, from_date, to_date, tz))
+        current = Period(_day_range(db, tenant_id, from_date, to_date, tz, day_basis, scope))
     previous = None
     if isinstance(cmp_event_id, uuid.UUID):
         previous = Period.of_event(load_event_lens(db, user, tenant_id, cmp_event_id))
     elif has_from:
-        previous = Period(resolve_report_window(db, tenant_id, from_date=cmp_from, to_date=cmp_to, tz=tz))
+        previous = Period(resolve_report_window(
+            db, tenant_id, from_date=cmp_from, to_date=cmp_to, tz=tz, day_basis=day_basis, scope=scope,
+        ))
     return current, previous
 
 
@@ -565,6 +588,7 @@ def get_period_compare_report(
         None, alias="cmpEventId", description="Compare with this event instead of cmpFrom–cmpTo."
     ),
     items: int = Query(0, ge=0, le=ITEMS_MAX, description="The best sellers to return (0: none)."),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -585,6 +609,7 @@ def get_period_compare_report(
     """
     current, previous = _periods(
         db, current_user, active_tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+        basis_of(day_basis), scope_of(company_id=company_id, shop_id=shop_id, area_id=area_id, machine_id=machine_id),
     )
     return build_period_compare(
         db, current_user, active_tenant_id, current, previous,
@@ -618,6 +643,7 @@ def get_side_by_side_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId", description="Within this shop (the board's scope)."),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId", description="Within this till."),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -634,6 +660,7 @@ def get_side_by_side_report(
     """
     current, _ = _periods(
         db, current_user, active_tenant_id, from_date, to_date, None, None, event_id, None, tz,
+        basis_of(day_basis), scope_of(company_id=company_id, shop_id=shop_id, area_id=area_id, machine_id=machine_id),
     )
     return build_side_by_side(
         db, current_user, active_tenant_id, current,
@@ -671,6 +698,7 @@ def get_voucher_board_report(
         None, alias="eventId", description="The period is this event (its window and tills)."
     ),
     cmp_event_id: Optional[uuid.UUID] = Query(None, alias="cmpEventId", description="Compare with this event."),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -685,6 +713,7 @@ def get_voucher_board_report(
     """
     current, previous = _periods(
         db, current_user, active_tenant_id, from_date, to_date, cmp_from, cmp_to, event_id, cmp_event_id, tz,
+        basis_of(day_basis), scope_of(company_id=company_id, shop_id=shop_id, area_id=area_id, machine_id=machine_id),
     )
     return build_voucher_board(
         db, current_user, active_tenant_id, current, previous,
@@ -723,3 +752,28 @@ def get_event_options(
             ids=[i for i in ids if isinstance(i, uuid.UUID)] if isinstance(ids, list) else [],
         )
     )
+
+
+@router.get("/business-day")
+def get_business_day(
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId"),
+    shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
+    area_id: Optional[str] = Query(None, alias="areaId"),
+    machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    tz: Optional[str] = Query(None, description=_TZ_DESC),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שעת סיום יום עסקי" of a scope (app/services/business_day.py) and the business day it is now:
+    `{endHour, today, timezone}`. The dashboard's management reports open on this "today" — at
+    01:00 it is still yesterday's business day. The most specific level named wins; none — the
+    parameter's default (04:00 unless a super admin changed it). Management only.
+    """
+    from app.services import business_day as BD
+    from app.services.reports import resolve_report_timezone
+
+    tz_name = resolve_report_timezone(db, active_tenant_id, tz if isinstance(tz, str) else None)
+    hour = BD.end_hour_for(db, **BD.scope_of(company_id=company_id, shop_id=shop_id, area_id=area_id, machine_id=machine_id))
+    return {"endHour": hour, "today": BD.today(tz_name, hour).isoformat(), "timezone": tz_name}

@@ -236,6 +236,13 @@ def _open_bucket(db: Session, machine: POSMachine, mode: str) -> Optional[Shift]
     return None
 
 
+def _business_day(db: Session, machine: POSMachine, issued: datetime):
+    """A bucket's business date: the business day it was issued on ("שעת סיום יום עסקי"), not the UTC date."""
+    from app.services.business_day import machine_business_day
+
+    return machine_business_day(db, machine, issued)
+
+
 def waiting_shift(
     db: Session, machine: POSMachine, *, business_date: Optional[date], issued_at: Optional[datetime],
     reason: str, now: Optional[datetime] = None,
@@ -257,7 +264,7 @@ def waiting_shift(
             machine_id=machine.id,
             shop_id=machine.shop_id,
             area_id=getattr(machine, "area_id", None),
-            business_date=business_date or issued.date(),
+            business_date=business_date or _business_day(db, machine, issued),
             sequence_number=None,
             opened_at=issued,
             closed_at=issued,
@@ -667,7 +674,7 @@ def refile_document(
         target = covering_shift(db, issuer.id, doc.created_at)
     if target is None:
         target = waiting_shift(
-            db, issuer, business_date=doc.created_at.date() if doc.created_at else None,
+            db, issuer, business_date=None,
             issued_at=doc.created_at, reason="no_covering_shift", now=now,
         )
     old_bucket = db.get(Shift, doc.shift_id) if doc.shift_id is not None else None

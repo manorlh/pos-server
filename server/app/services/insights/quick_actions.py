@@ -217,7 +217,10 @@ class Window:
 
 
 def _business_day(local: datetime, day_start_hour: int) -> date:
-    return (local - timedelta(hours=day_start_hour)).date()
+    """The shared rule ("שעת סיום יום עסקי", app/services/business_day.py)."""
+    from app.services.business_day import business_day_of_local
+
+    return business_day_of_local(local, day_start_hour)
 
 
 def resolve_window(
@@ -792,7 +795,7 @@ def send_quick_message(db: Session, user: User, tenant_id, body: Dict[str, Any])
         raise _bad(NO_TILLS)
     now = _now()
     tz_name, tz = _zone(db, tenant_id)
-    window = resolve_window(now, tz, body.get("duration") or {}, day_start_hour=_day_start_hour(body))
+    window = resolve_window(now, tz, body.get("duration") or {}, day_start_hour=_day_start_hour(body, db, target))
     banner = display == "banner"
     color = (body.get("color") or DEFAULT_COLOR) if banner else None
 
@@ -816,9 +819,22 @@ def send_quick_message(db: Session, user: User, tenant_id, body: Dict[str, Any])
     return action, target.machines
 
 
-def _day_start_hour(body: Dict[str, Any]) -> int:
+def _day_start_hour(body: Dict[str, Any], db: Optional[Session] = None, target: Optional["Target"] = None) -> int:
+    """
+    When "עד סוף היום" ends: the request's `dayStartHour`, else the target's "שעת סיום יום עסקי"
+    (`businessDayEndHour`, app/services/business_day.py), else 04:00.
+    """
+    from app.services import business_day as BD
+
     value = body.get("dayStartHour")
-    return value if isinstance(value, int) and 0 <= value <= 8 else 4
+    if isinstance(value, int) and not isinstance(value, bool) and BD.MIN_END_HOUR <= value <= BD.MAX_END_HOUR:
+        return value
+    if db is None or target is None:
+        return BD.DEFAULT_END_HOUR
+    if target.level in ("company", "shop", "area", "machine"):
+        return BD.end_hour_for(db, **{f"{target.level}_id": target.id})
+    shops = list(target.shop_ids or ())
+    return BD.end_hour_for(db, shop_id=shops[0]) if len(shops) == 1 else BD.DEFAULT_END_HOUR
 
 
 BAD_PROMOTION = "quick_promo_invalid"
@@ -862,7 +878,7 @@ def create_quick_promotion(db: Session, user: User, tenant_id, body: Dict[str, A
         raise _below_cost(offer)
     now = _now()
     _tz_name, tz = _zone(db, tenant_id)
-    window = resolve_window(now, tz, body.get("duration") or {}, day_start_hour=_day_start_hour(body))
+    window = resolve_window(now, tz, body.get("duration") or {}, day_start_hour=_day_start_hour(body, db, target))
     promo_type, config = promotion_body(subject, offer, items)
     label = offer_label(offer) if subject.product is not None or offer["kind"] != "fixed_price" else ""
     title = "מבצע מהיר" if body.get("source") in ("slow", "dead", "declining") else "מבצע מזדמן"

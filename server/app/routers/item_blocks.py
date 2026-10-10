@@ -180,11 +180,14 @@ def _check_mark(db: Session, user: User, mark: SoldOutMark, tenant_id) -> None:
 
 
 def _zone_and_day_start(db: Session, tenant_id, shop_id) -> tuple:
-    """The tenant's report zone and the system's one business-day start (04:00): no setting of a
-    shop, point of sale or company can make blocks end at another hour than the reset and targets."""
+    """The tenant's report zone and the shop's business-day start — "שעת סיום יום עסקי"
+    (app/services/business_day.py, 04:00 unless set), the same hour as its reset and targets."""
+    from app.services.business_day import end_hour_for
     from app.services.reports import resolve_report_timezone
 
-    return resolve_report_timezone(db, tenant_id, None), block_durations.business_day_start()
+    hour = end_hour_for(db, shop_id=shop_id) if shop_id is not None else None
+    day_start = f"{hour:02d}:00" if hour is not None else block_durations.business_day_start()
+    return resolve_report_timezone(db, tenant_id, None), day_start
 
 
 def _end(db: Session, tenant_id, shop_id, duration, now: datetime) -> block_durations.End:

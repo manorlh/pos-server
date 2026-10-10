@@ -128,8 +128,9 @@ def build_payment_methods_report(
         return PaymentMethodsReportResponse(window=window.to_schema(), generated_at=now, rows=[], totals=[], total=0.0)
 
     method = func.lower(tender_method_expr())
+    # The window's day: the business day ("שעת סיום יום עסקי", each till's own) or the calendar.
     day = (
-        func.date(func.timezone(window.tz_name, Transaction.created_at))
+        window.day_sql(Transaction.created_at, Transaction.machine_id)
         if _pg(db)
         else Transaction.created_at
     )
@@ -153,7 +154,7 @@ def build_payment_methods_report(
         if isinstance(d, str):
             d = datetime.fromisoformat(d)
         if isinstance(d, datetime):
-            d = _local(window, d).date()
+            d = window.day_of(d, r.machine_id)
         key = (d, r.shop_id, r.machine_id, (r.method or "other").strip() or "other")
         bucket = agg.setdefault(key, [0.0, 0])
         bucket[0] += _to_float(r.amount)
@@ -321,12 +322,13 @@ def build_hourly_report(
         is_sale = case((_is_refund_condition(), 0), else_=1)
         if _pg(db):
             local = func.timezone(window.tz_name, Transaction.created_at)
-            # Postgres dow: 0 = Sunday, the Israeli week's first day.
-            dow = cast(func.extract("dow", local), Integer)
+            # Postgres dow: 0 = Sunday, the Israeli week's first day — of the window's day: on
+            # the business day a Saturday 01:00 sale is Friday night's.
+            dow = cast(func.extract("dow", window.day_sql(Transaction.created_at, Transaction.machine_id)), Integer)
             hour = cast(func.extract("hour", local), Integer)
             keys = (dow, hour)
         else:
-            keys = (Transaction.created_at,)
+            keys = (Transaction.created_at, Transaction.machine_id)
         rows = (
             tx_q.with_entities(
                 *[k.label(f"k{i}") for i, k in enumerate(keys)],
@@ -343,7 +345,7 @@ def build_hourly_report(
             else:
                 moment = r.k0 if isinstance(r.k0, datetime) else datetime.fromisoformat(str(r.k0))
                 local_dt = _local(window, moment)
-                weekday, hour = (local_dt.weekday() + 1) % 7, local_dt.hour
+                weekday, hour = (window.day_of(moment, r.k1).weekday() + 1) % 7, local_dt.hour
             cell = grid[(weekday, hour)]
             cell[0] += _to_float(r.net)
             cell[1] += int(r.documents or 0)

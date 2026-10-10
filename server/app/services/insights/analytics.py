@@ -98,7 +98,10 @@ class BusinessClock:
         return moment.astimezone(self.tzinfo)
 
     def business_date(self, moment: datetime) -> date:
-        return (self.local(moment) - timedelta(hours=self.day_start_hour)).date()
+        """The shared rule ("שעת סיום יום עסקי", app/services/business_day.py)."""
+        from app.services.business_day import business_day_of_local
+
+        return business_day_of_local(self.local(moment), self.day_start_hour)
 
     def hour(self, moment: datetime) -> int:
         return self.local(moment).hour
@@ -108,9 +111,10 @@ class BusinessClock:
         return self.business_date(self.now)
 
     def day_start(self, day: date) -> datetime:
-        """The UTC instant business day `day` begins."""
-        local = datetime.combine(day, time(hour=self.day_start_hour), tzinfo=self.tzinfo)
-        return local.astimezone(timezone.utc)
+        """The UTC instant business day `day` begins (the shared rule, app/services/business_day.py)."""
+        from app.services.business_day import business_day_start
+
+        return business_day_start(day, self.tz_name, self.day_start_hour)
 
     def slot(self, hour: int) -> int:
         """An hour's position inside the business day (the start hour is 0)."""

@@ -174,12 +174,21 @@ class TestPeriodCompare:
         assert e.value.status_code == 400
 
     def test_days_are_aligned_by_the_hour(self, w, trading):
+        # The business day ("שעת סיום יום עסקי", 04:00 by default): the axis runs 04:00 … 03:00.
         out = compare(w, cmp_from=YESTERDAY, cmp_to=YESTERDAY)
         assert [p.index for p in out.series] == list(range(24))
-        at21, at20 = out.series[21], out.series[20]
+        assert (out.series[0].label, out.series[23].label) == ("04:00", "03:00")
+        at21, at20 = out.series[17], out.series[16]
         assert at21.label == "21:00" and at21.current == 193.33 and at21.previous == 0.0
         assert at20.current == 0.0 and at20.previous == 60.0
         assert (at21.current_documents, at20.previous_documents) == (5, 1)
+
+    def test_on_the_document_date_the_hours_run_from_midnight(self, w, trading):
+        out = compare(w, cmp_from=YESTERDAY, cmp_to=YESTERDAY, day_basis="document")
+        at21, at20 = out.series[21], out.series[20]
+        assert at21.label == "21:00" and at21.current == 193.33 and at21.previous == 0.0
+        assert at20.current == 0.0 and at20.previous == 60.0
+        assert out.window.day_basis == "document" and out.window.business_day_end_hour is None
 
     def test_longer_periods_are_aligned_by_the_nth_day(self, w, trading):
         week = (TODAY - timedelta(days=6), TODAY)
@@ -273,7 +282,9 @@ class TestSideBySide:
         assert (b.figures.sales, b.figures.cash, b.figures.card, b.figures.items) == (33.33, 13.33, 20.0, 3.0)
         assert a.figures.average_ticket == 65.0  # (100 + 40 - 10) / 2
         assert out.granularity == "hour" and len(out.buckets) == 24 == len(a.series)
-        assert a.series[21] == 110.0 and b.series[21] == 33.33
+        # The business day's axis starts at 04:00: 21:00 is its 17th hour.
+        assert out.buckets[17] == "21:00"
+        assert a.series[17] == 110.0 and b.series[17] == 33.33
 
     def test_shops_by_the_day_over_a_week(self, w, trading):
         out = side(w, "shop", [w.shop.id, w.other_shop.id], frm=LAST_WEEK, to=TODAY)

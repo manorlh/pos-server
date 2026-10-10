@@ -191,6 +191,9 @@ def _local_day(window: ReportWindow, moment: Any) -> Optional[str]:
         return moment.isoformat()
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
+    if hasattr(window, "day_of"):
+        # The window's day: the business day ("שעת סיום יום עסקי") or the calendar's.
+        return window.day_of(moment).isoformat()
     return moment.astimezone(_load_zoneinfo(window.tz_name)).date().isoformat()
 
 
@@ -237,8 +240,16 @@ def by_employee(db: Session, tx_q) -> List[Dict[str, Any]]:
 
 
 def by_day(window: ReportWindow, tx_q) -> List[Dict[str, Any]]:
-    """Per local day: grouped by the document's time, then folded into the shop's days."""
-    agg = _sales_buckets(tx_q, Transaction.created_at)
+    """
+    Per local day: grouped by the document's time, then folded into the shop's days — the
+    business days (the default) or the calendar's. Tills on different end hours: grouped by
+    each document's own till's business day in the database.
+    """
+    hours = getattr(window, "hours", None)
+    if hours is not None and not hours.uniform:
+        agg = _sales_buckets(tx_q, window.day_sql(Transaction.created_at, Transaction.machine_id))
+    else:
+        agg = _sales_buckets(tx_q, Transaction.created_at)
     days: Dict[str, Dict[str, float]] = {}
     for moment, bucket in agg.items():
         day = _local_day(window, moment)
@@ -589,6 +600,20 @@ def kiosk_section(db: Session, tx_q, till_rows: Sequence[Dict[str, Any]]) -> Dic
 # ── The report ───────────────────────────────────────────────────────────────
 
 
+def _document_date_query(db: Session, user, tenant_id, window: ReportWindow, shop_ids, machine_ids):
+    """The window's documents by calendar date — None when the window already is (VAT's basis)."""
+    if getattr(window, "basis", "document") == "document":
+        return None
+    from dataclasses import replace
+
+    from app.services.business_day import EndHours
+
+    calendar = EndHours.calendar()
+    start, end = calendar.bounds(window.from_date, window.to_date, window.tz_name)
+    by_document = replace(window, basis="document", hours=calendar, start=start, end=end)
+    return documents_query(db, user, tenant_id, by_document, shop_ids=shop_ids, machine_ids=machine_ids)
+
+
 def build_all_in_one(
     db: Session,
     user: User,
@@ -614,7 +639,10 @@ def build_all_in_one(
     tills = by_till(db, tx_q)
     employees = by_employee(db, tx_q)
     summary = _totals_of(tills)
-    vat = by_vat_rate(tx_q)
+    # VAT is reported by the document's date, always — whatever days the rest of the report is
+    # on ("שעת סיום יום עסקי" is management only): its own documents of the same calendar days.
+    vat = by_vat_rate(_document_date_query(db, user, tenant_id, window, shop_ids, machine_ids) or tx_q)
+    vat["dayBasis"] = "document"
     summary["vat"] = vat["totals"]["vat"]
     summary["netOfVat"] = vat["totals"]["netOfVat"]
 

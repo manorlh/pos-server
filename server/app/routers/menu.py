@@ -291,9 +291,27 @@ def put_courses(
 # ── Reports ───────────────────────────────────────────────────────────────────
 
 
-def _window(db, tenant_id, from_date, to_date, from_hour, to_hour, tz):
+#: "שעת סיום יום עסקי" (app/services/business_day.py): the sales reports' day basis.
+_BASIS_DESC = (
+    "`business` (default): each sale on its till's business day (\"שעת סיום יום עסקי\"); "
+    "`document`: on the document's calendar date."
+)
+
+
+def _window(db, tenant_id, from_date, to_date, from_hour, to_hour, tz, *, day_basis=None, shop_id=None, machine_id=None):
+    """
+    The report's window — with `day_basis` given (the sales reports), the business day by default;
+    without (the upsell report: the till's own days), the calendar, as before.
+    """
+    if day_basis is None:
+        return resolve_report_window(
+            db, tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+        )
+    from app.services.business_day import basis_of, scope_of
+
     return resolve_report_window(
-        db, tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+        db, tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id),
     )
 
 
@@ -306,12 +324,16 @@ def get_modifier_sales_report(
     tz: Optional[str] = Query(None),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=_BASIS_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """דוח מכירות תוספות: per option — units sold and refunded, revenue, removals counted apart."""
-    window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
+    window = _window(
+        db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz,
+        day_basis=day_basis, shop_id=shop_id, machine_id=machine_id,
+    )
     return M.build_modifier_sales_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id
     )
@@ -326,12 +348,16 @@ def get_meal_sales_report(
     tz: Optional[str] = Query(None),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=_BASIS_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """דוח ארוחות: per meal — units and money, and its components with the money allocated."""
-    window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
+    window = _window(
+        db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz,
+        day_basis=day_basis, shop_id=shop_id, machine_id=machine_id,
+    )
     return M.build_meal_sales_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id
     )

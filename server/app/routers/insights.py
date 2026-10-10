@@ -96,7 +96,10 @@ def insight_params(
     to_date: Optional[date] = Query(None, alias="to", description="Last business day (inclusive); at most today."),
     days: Optional[int] = Query(None, ge=1, le=366, description="Without from/to: the complete days ending yesterday (28)."),
     tz: Optional[str] = Query(None, description="IANA timezone; the tenant's, else Asia/Jerusalem."),
-    day_start_hour: Optional[int] = Query(None, alias="dayStartHour", ge=0, le=8, description="When a business day starts (04:00)."),
+    day_start_hour: Optional[int] = Query(
+        None, alias="dayStartHour", ge=0, le=12,
+        description="When a business day ends/starts; default: the scope's \"שעת סיום יום עסקי\" (04:00 unless set).",
+    ),
     event_id: Optional[uuid.UUID] = Query(None, alias="eventId", description="A report event: its tills, window and days (the period is ignored)."),
 ) -> InsightParams:
     return InsightParams(company_id, shop_id, area_id, machine_id, from_date, to_date, days, tz, day_start_hour, event_id)
@@ -104,6 +107,13 @@ def insight_params(
 
 def _uuid(value: Any) -> Optional[uuid.UUID]:
     return value if isinstance(value, uuid.UUID) else None
+
+
+def _clock_scope(p: "InsightParams") -> dict:
+    """The level whose "שעת סיום יום עסקי" the insights' days end at (app/services/business_day.py)."""
+    from app.services.business_day import scope_of
+
+    return scope_of(company_id=p.company_id, shop_id=p.shop_id, area_id=p.area_id, machine_id=p.machine_id)
 
 
 def _event_context(db: Session, user: User, tenant_id, p: InsightParams, clock) -> S.InsightsContext:
@@ -130,7 +140,7 @@ def _event_context(db: Session, user: User, tenant_id, p: InsightParams, clock) 
 
 
 def build_context(db: Session, user: User, tenant_id, p: InsightParams) -> S.InsightsContext:
-    clock = S.make_clock(db, tenant_id, tz=p.tz, day_start_hour=p.day_start_hour)
+    clock = S.make_clock(db, tenant_id, tz=p.tz, day_start_hour=p.day_start_hour, scope=_clock_scope(p))
     if _uuid(p.event_id) is not None:
         return _event_context(db, user, tenant_id, p, clock)
     period = S.resolve_period(clock, p.from_date, p.to_date, p.days)

@@ -785,6 +785,11 @@ def build_z(
     from app.services.till_replacement import note_on_z
 
     note_on_z(z, [m for m, _s in per_machine])
+    # "מתוך ה-Z: …" (app/services/z_document_months.py): its documents per calendar month of
+    # their document date, frozen like the other breakdowns. Presentation only.
+    from app.services.z_document_months import freeze_on_z
+
+    freeze_on_z(db, z, all_shifts)
     # Late documents of a support Z, carried into this Z: their own section (§4.6.3).
     from app.services import late_documents
 

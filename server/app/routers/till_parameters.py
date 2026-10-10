@@ -208,6 +208,9 @@ def update_till_parameter(
             default_value = TP.validate_value(value_type, default_value, enum_options)
             if TP.image_kind(key, value_type):
                 default_value = TP.validate_image_url(default_value)
+            # "שעת סיום יום עסקי": its default too is a whole hour 0–12 (app/services/business_day.py).
+            if key == "businessDayEndHour":
+                default_value = TP.validate_keyed_value(key, default_value)
     except TP.TillParameterValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 

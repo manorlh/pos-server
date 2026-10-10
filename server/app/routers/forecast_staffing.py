@@ -31,7 +31,9 @@ def get_forecast_staffing(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    clock = S.make_clock(db, active_tenant_id, tz=p.tz, day_start_hour=p.day_start_hour)
+    from app.routers.insights import _clock_scope
+
+    clock = S.make_clock(db, active_tenant_id, tz=p.tz, day_start_hour=p.day_start_hour, scope=_clock_scope(p))
     scope = InsightScope(
         user=current_user, tenant_id=active_tenant_id, company_id=_uuid(p.company_id), shop_id=_uuid(p.shop_id),
         area_filter=parse_area_filter(p.area_id), machine_id=_uuid(p.machine_id),

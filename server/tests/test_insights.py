@@ -761,8 +761,9 @@ class TestEndpoints:
         with pytest.raises(HTTPException) as e:
             R.get_insights_kpis(p=params(to_date=TODAY + timedelta(days=1)), **ctx(w))
         assert e.value.status_code == 400
+        # "שעת סיום יום עסקי" is 0–12 (app/services/business_day.py).
         with pytest.raises(HTTPException) as e:
-            R.get_insights_kpis(p=params(day_start_hour=9), **ctx(w))
+            R.get_insights_kpis(p=params(day_start_hour=13), **ctx(w))
         assert e.value.status_code == 400
         out = R.get_insights_kpis(p=params(from_date=date(2026, 9, 20), to_date=TODAY), **ctx(w))
         assert out["period"]["days"] == 8 and out["period"]["prevFrom"] == "2026-09-12"

@@ -36,7 +36,7 @@ note's `total_amount` is the net sum, i.e. exactly the money handed back.
 from __future__ import annotations
 
 import uuid as uuid_mod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -76,6 +76,14 @@ from app.schemas.reports import (
     TipsRangeReportResponse,
 )
 from app.services.areas import transaction_area_predicate
+from app.services.business_day import (
+    BASIS_BUSINESS,
+    BASIS_DOCUMENT,
+    EndHours,
+    business_day,
+    business_day_start,
+    end_hours_for_scope,
+)
 from app.services.offline_authorizations import section_declined
 from app.services.dashboard_stats import SALE_STATUSES
 from app.services.scoping import scope_query_by_user, scope_transactions_by_user
@@ -143,6 +151,35 @@ class ReportWindow:
     #: Absolute UTC bounds of the outer day range. `end` is exclusive.
     start: datetime
     end: datetime
+    #: "business" — days end at the business day's end hour ("שעת סיום יום עסקי",
+    #: app/services/business_day.py), each till's own; "document" — the document's calendar
+    #: date (midnight). A window made without a basis is the calendar's, as it always was.
+    basis: str = "document"
+    hours: EndHours = field(default_factory=EndHours.calendar)
+
+    def day_of(self, moment: datetime, machine_id=None) -> date:
+        """The day a document stamped `moment` (by till `machine_id`) is filed under."""
+        return self.hours.day_of(moment, self.tz_name, machine_id)
+
+    def day_sql(self, column=None, machine_column=None):
+        """That day as Postgres computes it (the same rule, per till when their hours differ)."""
+        return self.hours.day_sql(
+            Transaction.created_at if column is None else column, self.tz_name, machine_column
+        )
+
+    def day_start(self, day: date) -> datetime:
+        """The UTC instant day `day` of this window begins (the scope's end hour)."""
+        return business_day_start(day, self.tz_name, self.hours.default)
+
+    def exact_predicate(self, column=None, machine_column=None):
+        """
+        None, or — when the window's tills end their days at different hours — the per-till
+        "its own business day is in range" predicate beyond `start`/`end`.
+        """
+        if self.hours.uniform or machine_column is None:
+            return None
+        day = self.day_sql(column, machine_column)
+        return and_(day >= self.from_date, day <= self.to_date)
 
     @property
     def wraps_midnight(self) -> bool:
@@ -162,6 +199,8 @@ class ReportWindow:
             timezone=self.tz_name,
             window_start=self.start,
             window_end=self.end,
+            day_basis=self.basis,
+            business_day_end_hour=self.hours.default if self.basis == BASIS_BUSINESS else None,
         )
 
 
@@ -213,12 +252,28 @@ def resolve_report_window(
     from_hour: Optional[int] = None,
     to_hour: Optional[int] = None,
     tz: Optional[str] = None,
+    day_basis: Optional[str] = None,
+    scope: Optional[Dict[str, Any]] = None,
 ) -> ReportWindow:
-    """Validate the range and turn local day boundaries into absolute UTC bounds."""
+    """
+    Validate the range and turn local day boundaries into absolute UTC bounds.
+
+    `day_basis` "business" files every document under its till's business day
+    ("שעת סיום יום עסקי", app/services/business_day.py; `scope` — company_id / shop_id /
+    area_id / machine_id / machine_ids — names the report's own level and its tills);
+    "document" or None, under its calendar date. Never a fiscal date: VAT and the uniform
+    file stay on the document's date whatever a management report shows.
+    """
     tz_name = resolve_report_timezone(db, tenant_id, tz)
     tzinfo = _load_zoneinfo(tz_name)
+    basis = BASIS_BUSINESS if day_basis == BASIS_BUSINESS else BASIS_DOCUMENT
+    hours = (
+        end_hours_for_scope(db, tenant_id=tenant_id, **(scope or {}))
+        if basis == BASIS_BUSINESS
+        else EndHours.calendar()
+    )
 
-    today_local = datetime.now(timezone.utc).astimezone(tzinfo).date()
+    today_local = business_day(datetime.now(timezone.utc), tz_name, hours.default)
     if to_date is None:
         to_date = today_local
     if from_date is None:
@@ -261,14 +316,11 @@ def resolve_report_window(
             # A whole day — drop the filter rather than make Postgres evaluate it.
             from_hour = to_hour = None
 
-    # Local midnight → the actual UTC instant, via zoneinfo so DST transitions are
-    # handled. Israel's clocks move; a fixed +02:00/+03:00 offset would silently
-    # shift a whole report by an hour for part of the year.
-    start = datetime.combine(from_date, time.min, tzinfo=tzinfo).astimezone(timezone.utc)
-    end = (
-        datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=tzinfo)
-        .astimezone(timezone.utc)
-    )
+    # The day's start (local midnight, or the business day's end hour) → the actual UTC
+    # instant, via zoneinfo so DST transitions are handled. Israel's clocks move; a fixed
+    # +02:00/+03:00 offset would silently shift a whole report by an hour for part of the
+    # year. With tills on different hours, the bounds hold every till's days.
+    start, end = hours.bounds(from_date, to_date, tz_name)
 
     return ReportWindow(
         from_date=from_date,
@@ -278,6 +330,8 @@ def resolve_report_window(
         tz_name=tz_name,
         start=start,
         end=end,
+        basis=basis,
+        hours=hours,
     )
 
 
@@ -369,6 +423,10 @@ def build_scoped_transaction_query(
     hour_pred = hour_window_predicate(window)
     if hour_pred is not None:
         query = query.filter(hour_pred)
+    # Tills ending their business days at different hours: each document on its own till's.
+    exact = window.exact_predicate(Transaction.created_at, Transaction.machine_id)
+    if exact is not None:
+        query = query.filter(exact)
 
     if shop_id is not None:
         query = query.filter(Transaction.shop_id == shop_id)

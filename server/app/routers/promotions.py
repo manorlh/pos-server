@@ -47,6 +47,7 @@ from app.schemas.promotion import PromotionIn, PromotionPauseIn
 from app.services import promotion_announcements as PA
 from app.services import promotions as P
 from app.services import till_messages as TM
+from app.services.business_day import BASIS_QUERY_DESCRIPTION
 from app.services.reports import resolve_report_window
 
 router = APIRouter(tags=["promotions"])
@@ -175,13 +176,17 @@ def get_promotions_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     promotion_id: Optional[uuid.UUID] = Query(None, alias="promotionId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """דוח מבצעים: per promotion, shop, till and day — applications, documents, discount."""
+    from app.services.business_day import basis_of, scope_of
+
     window = resolve_report_window(
-        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id),
     )
     return P.build_promotions_report(
         db, current_user, active_tenant_id, window,
@@ -198,15 +203,18 @@ def get_discounts_report(
     tz: Optional[str] = Query(None),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """OTH ("על חשבון הבית") and club discounts ("הנחת מועדון") over the window's sales."""
+    from app.services.business_day import basis_of, scope_of
     from app.services.discounts_report import build_discounts_report
 
     window = resolve_report_window(
-        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz
+        db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id),
     )
     return build_discounts_report(db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id)
 

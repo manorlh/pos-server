@@ -181,12 +181,19 @@ def get_menu_sales_report(
     tz: Optional[str] = Query(None),
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
+    day_basis: Optional[str] = Query(
+        None, alias="dayBasis",
+        description="`business` (default): the business day (\"שעת סיום יום עסקי\"); `document`: the calendar date.",
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """דוח מכירות לפי תפריט: per menu active when the lines were added — units, money, menu-priced share."""
+    from app.services.business_day import basis_of, scope_of
+
     window = resolve_report_window(
         db, active_tenant_id, from_date=from_date, to_date=to_date, from_hour=from_hour, to_hour=to_hour, tz=tz,
+        day_basis=basis_of(day_basis), scope=scope_of(shop_id=shop_id, machine_id=machine_id),
     )
     return CM.menu_sales_report(db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id)

@@ -36,6 +36,7 @@ from . import till_stats as TS
 
 DEFAULT_DAYS = 28
 MAX_DAYS = 366
+#: "שעת סיום יום עסקי" when the parameter is unset (app/services/business_day.py) — the one default.
 DEFAULT_DAY_START_HOUR = 4
 #: How far back "when did it last sell" looks.
 LOOKBACK_DAYS = 120
@@ -79,12 +80,25 @@ class Period:
         }
 
 
-def make_clock(db: Session, tenant_id, *, tz: Optional[str], day_start_hour: Optional[int], now: Optional[datetime] = None) -> A.BusinessClock:
+def make_clock(
+    db: Session, tenant_id, *, tz: Optional[str], day_start_hour: Optional[int], now: Optional[datetime] = None,
+    scope: Optional[dict] = None,
+) -> A.BusinessClock:
+    """
+    The insights' clock. Its business day ends at "שעת סיום יום עסקי" (`businessDayEndHour`,
+    app/services/business_day.py) of the scope — company, shop, area or till, the most specific
+    named — unless the request says `dayStartHour` itself.
+    """
+    from app.services import business_day as BD
+
     tz_name = resolve_report_timezone(db, tenant_id, tz if isinstance(tz, str) else None)
     _load_zoneinfo(tz_name)  # 400 on an unknown zone
-    hour = DEFAULT_DAY_START_HOUR if not isinstance(day_start_hour, int) else day_start_hour
-    if not 0 <= hour <= 8:
-        raise _bad("dayStartHour must be between 0 and 8")
+    if isinstance(day_start_hour, int) and not isinstance(day_start_hour, bool):
+        hour = day_start_hour
+    else:
+        hour = BD.end_hour_for(db, **(scope or {}))
+    if not BD.MIN_END_HOUR <= hour <= BD.MAX_END_HOUR:
+        raise _bad(f"dayStartHour must be between {BD.MIN_END_HOUR} and {BD.MAX_END_HOUR}")
     return A.BusinessClock(tz_name=tz_name, day_start_hour=hour, now=now or _now())
 
 

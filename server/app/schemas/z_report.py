@@ -195,6 +195,11 @@ class ZReportDetailOut(ZReportOut):
     offline_report: Optional[Dict[str, Any]] = Field(None, alias="offlineReport")
     shifts: List[ShiftOut] = Field(default_factory=list)
     business: Optional[ZReportBusinessOut] = None
+    #: "מתוך ה-Z" (app/services/z_document_months.py): its documents per calendar month of
+    #: their document date, [{month: "YYYY-MM", total}] oldest first. Two or more = the Z spans
+    #: months and shows the line. "stored" — frozen at build; "documents" — read now.
+    document_months: List[Dict[str, str]] = Field(default_factory=list, alias="documentMonths")
+    document_months_source: Optional[str] = Field(None, alias="documentMonthsSource")
     #: Card legs per brand (מותג) × acquirer (חברת סליקה), summed over the sections:
     #: {brand, acquirer, salesCount, salesAmount, refundsCount, refundsAmount, net}.
     card_brands: List[Dict[str, Any]] = Field(default_factory=list, alias="cardBrands")

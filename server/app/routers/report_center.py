@@ -101,6 +101,10 @@ def get_z_table(
     return {"window": window, **z_table.build_z_table(db, rows, tzinfo)}
 
 
+# "שעת סיום יום עסקי" (app/services/business_day.py) — the all-in-one report's `dayBasis`.
+from app.services.business_day import BASIS_QUERY_DESCRIPTION, basis_of, scope_of  # noqa: E402
+
+
 @router.get("/all-in-one")
 def get_all_in_one(
     from_date: Optional[date] = Query(None, alias="from", description=_FROM),
@@ -112,11 +116,15 @@ def get_all_in_one(
     shop_ids: Optional[List[uuid.UUID]] = Query(None, alias="shopIds"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     machine_ids: Optional[List[uuid.UUID]] = Query(None, alias="machineIds"),
+    day_basis: Optional[str] = Query(None, alias="dayBasis", description=BASIS_QUERY_DESCRIPTION),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """"דוח שמכיל הכל" over local days (and hours) and the shops / tills chosen (§5)."""
+    """
+    "דוח שמכיל הכל" over local days (and hours) and the shops / tills chosen (§5): on the
+    business day by default ("שעת סיום יום עסקי"); its VAT always by the document's date.
+    """
     from app.services.all_in_one import build_all_in_one
 
     window = resolve_report_window(
@@ -124,6 +132,8 @@ def get_all_in_one(
         from_hour=from_hour if isinstance(from_hour, int) else None,
         to_hour=to_hour if isinstance(to_hour, int) else None,
         tz=tz if isinstance(tz, str) else None,
+        day_basis=basis_of(day_basis),
+        scope=scope_of(machine_ids=_ids(machine_id, machine_ids), shop_ids=_ids(shop_id, shop_ids)),
     )
     return build_all_in_one(
         db, current_user, active_tenant_id, window,

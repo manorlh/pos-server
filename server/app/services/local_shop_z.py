@@ -480,7 +480,7 @@ def _z_as_printed(
         created_by_name=body.created_by_name,
         created_by_pos_user_id=body.created_by_user_id,
         client_request_id=body.client_request_id,
-        business_date=body.business_date or closed_at.date(),
+        business_date=body.business_date or _shop_business_day(db, shop, closed_at),
         period_start=closed_at,
         period_end=closed_at,
         shift_count=0,
@@ -1123,6 +1123,13 @@ def _sum_sections(sections: Sequence[dict], key: str, *, all_or_none: bool = Fal
     if all_or_none and any(v is None for v in values):
         return None
     return sum((v or _ZERO for v in values), _ZERO)
+
+
+def _shop_business_day(db: Session, shop: Any, closed_at: datetime):
+    """A local shop Z sent without a business date: the shop's business day it closed on."""
+    from app.services.business_day import shop_business_day
+
+    return shop_business_day(db, shop.tenant_id, shop.id, closed_at)
 
 
 def apply_printed(z: ZReport, body: LocalShopZIn, producer: POSMachine) -> None:

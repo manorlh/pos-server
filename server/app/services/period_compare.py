@@ -446,6 +446,15 @@ def _step(granularity: str) -> timedelta:
     return timedelta(hours=1) if granularity == GRANULARITY_HOUR else timedelta(days=1)
 
 
+def _end_hour(period: Period) -> int:
+    """
+    When the period's days end ("שעת סיום יום עסקי", app/services/business_day.py): the hour
+    axis then starts there (04:00 … 03:00), and a 01:00 sale is the night before's. 0 — midnight.
+    """
+    hours = getattr(period.window, "hours", None)
+    return int(hours.default) if hours is not None else 0
+
+
 def _bucket_expr(db: Session, period: Period, granularity: str, alignment: str):
     if not _pg(db):
         # SQLite (the tests): the instant, binned below.
@@ -458,6 +467,9 @@ def _bucket_expr(db: Session, period: Period, granularity: str, alignment: str):
     local = func.timezone(period.window.tz_name, Transaction.created_at)
     if granularity == GRANULARITY_HOUR:
         return cast(func.extract("hour", local), Integer)
+    if hasattr(period.window, "day_sql"):
+        # The window's day: each till's business day, or the calendar date.
+        return period.window.day_sql(Transaction.created_at, Transaction.machine_id)
     return cast(local, Date)
 
 
@@ -465,8 +477,11 @@ def _bucket_index(db: Session, period: Period, granularity: str, alignment: str,
     if raw is None:
         return None
     if _pg(db):
-        if alignment == ALIGN_ELAPSED or granularity == GRANULARITY_HOUR:
+        if alignment == ALIGN_ELAPSED:
             return int(raw)
+        if granularity == GRANULARITY_HOUR:
+            # The hour's place on the day's axis, which starts at the end hour.
+            return (int(raw) - _end_hour(period)) % 24
         day = raw.date() if isinstance(raw, datetime) else raw if isinstance(raw, date) else date.fromisoformat(str(raw)[:10])
         return (day - period.window.from_date).days
     moment = raw if isinstance(raw, datetime) else datetime.fromisoformat(str(raw))
@@ -474,7 +489,10 @@ def _bucket_index(db: Session, period: Period, granularity: str, alignment: str,
     if alignment == ALIGN_ELAPSED:
         return int((moment - period.start).total_seconds() // _step(granularity).total_seconds())
     local = moment.astimezone(_load_zoneinfo(period.window.tz_name))
-    return local.hour if granularity == GRANULARITY_HOUR else (local.date() - period.window.from_date).days
+    if granularity == GRANULARITY_HOUR:
+        return (local.hour - _end_hour(period)) % 24
+    day = period.window.day_of(moment) if hasattr(period.window, "day_of") else local.date()
+    return (day - period.window.from_date).days
 
 
 def _series_by(
@@ -515,10 +533,13 @@ def _bucket_start(period: Period, granularity: str, alignment: str, index: int) 
     if alignment == ALIGN_ELAPSED:
         return period.start + _step(granularity) * index
     zone = _load_zoneinfo(period.window.tz_name)
+    start_hour = _end_hour(period)
     if granularity == GRANULARITY_HOUR:
-        # Only a one-day period can be in the future hour by hour (several days add up).
-        return datetime.combine(period.window.from_date, time(index), tzinfo=zone)
-    return datetime.combine(period.window.from_date + timedelta(days=index), time.min, tzinfo=zone)
+        # Only a one-day period can be in the future hour by hour (several days add up). The
+        # axis starts at the day's end hour: index 0 is 04:00, index 23 the next day's 03:00.
+        day = period.window.from_date + timedelta(days=(index + start_hour) // 24)
+        return datetime.combine(day, time((index + start_hour) % 24), tzinfo=zone)
+    return datetime.combine(period.window.from_date + timedelta(days=index), time(start_hour), tzinfo=zone)
 
 
 def _is_future(period: Period, granularity: str, alignment: str, index: int, now: datetime) -> bool:
@@ -538,7 +559,7 @@ def _value_at(series, key, index: int, period: Period, granularity: str, alignme
 def _bucket_label(period: Period, granularity: str, alignment: str, index: int) -> str:
     if alignment == ALIGN_CLOCK:
         if granularity == GRANULARITY_HOUR:
-            return f"{index:02d}:00"
+            return f"{(index + _end_hour(period)) % 24:02d}:00"
         return (period.window.from_date + timedelta(days=index)).isoformat()
     local = _bucket_start(period, granularity, alignment, index).astimezone(_load_zoneinfo(period.window.tz_name))
     return local.strftime("%H:%M") if granularity == GRANULARITY_HOUR else local.date().isoformat()
