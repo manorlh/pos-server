@@ -1323,4 +1323,11 @@ def save_settings(
     row.updated_at = _now(now)
     row.updated_by_user_id = getattr(user, "id", None)
     db.flush()
+    # "סדר תצוגה" (app/services/display_ordering.py): a bound level's ordering follows the kiosk
+    # catalog keys just saved, and the levels linked to it (a till's, the web's) get them too.
+    from app.services import display_ordering
+
+    display_ordering.wake_after_commit(
+        db, display_ordering.after_kiosk_write(db, scope.tenant_id, [(scope.level, scope.entity_id)]),
+    )
     return row

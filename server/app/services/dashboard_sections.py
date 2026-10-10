@@ -76,7 +76,7 @@ SECTIONS: Tuple[Section, ...] = (
         "מוצרים, קטגוריות, תוספות, אפסייל, תפריטים, מבחר לסניף, ייבוא ושידור תפריט לקופות.",
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
-            "/dashboard/menus", "/dashboard/assortment",
+            "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
         ),
     ),
     # ── The manager's own (the cockpit, "הניהול שלי") — the owner, 09.10.2026: "תבנה קבוצת הרשאות
@@ -381,6 +381,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/products*", S("products")),
     # "מופיע ב": a product's four channels, their exceptions and the bulk screen.
     (_ALL, "/product-channels*", S("products")),
+    # "סדר תצוגה": the one ordering of the tills, the kiosks and the web (the router checks the target).
+    (_ALL, "/display-orderings*", S("products", "kiosks", "till_design")),
     (_GET, "/vouchers*", S("vouchers", "products", level=VIEW)),
     (_ALL, "/vouchers*", S("vouchers")),
     # "הפצה בוואטסאפ": recipients' phone numbers — managing the batch (edit), reading included.

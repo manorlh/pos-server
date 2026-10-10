@@ -141,6 +141,10 @@ app.include_router(products.router, prefix=_prefix)
 from app.routers import product_channels as product_channels_router  # noqa: E402
 
 app.include_router(product_channels_router.router, prefix=_prefix)
+# "סדר תצוגה" — one ordering model for the tills, the kiosks, online ordering and the digital menu.
+from app.routers import display_orderings as display_orderings_router  # noqa: E402
+
+app.include_router(display_orderings_router.router, prefix=_prefix)
 app.include_router(product_availability.router, prefix=_prefix)
 app.include_router(availability_reopen_router.router, prefix=_prefix)
 app.include_router(machine_catalog.router, prefix=_prefix)

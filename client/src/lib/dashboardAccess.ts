@@ -76,7 +76,7 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     id: 'products',
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
-      '/dashboard/menus', '/dashboard/assortment',
+      '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
     ],
   },
   // The manager's own ("הניהול שלי"): they gate what the cockpit (the home page) offers.

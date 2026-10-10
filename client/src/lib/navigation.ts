@@ -158,6 +158,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/upsells', labelKey: 'upsells', icon: Sparkles },
       // "תפריטים": sales menus by schedule (בוקר, צהריים, הפי האוור…) and where they apply.
       { href: '/dashboard/menus', labelKey: 'catalogMenus', icon: BookOpenText },
+      // "סדר תצוגה": one order for the tills, the kiosks, online ordering and the digital menu —
+      // linked, independent or copied once (lib/displayOrdering.ts).
+      { href: '/dashboard/display-order', labelKey: 'displayOrder', icon: ListOrdered },
       // Both of these used to live at /dashboard/shops/… while being shown as
       // top-level items, and would now collide with the /dashboard/shops/[id]
       // drill-down. They are top-level routes to match where they appear.

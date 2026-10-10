@@ -137,6 +137,13 @@ def save_from_kiosk(
         row.overrides = overrides
         row.updated_at = now
         cleared += 1
+        # "סדר תצוגה": that kiosk's own level inherits the shop's order now.
+        from app.services import display_ordering
+
+        db.flush()
+        display_ordering.wake_after_commit(
+            db, display_ordering.after_kiosk_write(db, machine.tenant_id, [("machine", k.machine_id)]),
+        )
 
     name = (
         " ".join(p for p in (manager.first_name or "", manager.last_name or "") if p).strip() or manager.username or "מנהל"

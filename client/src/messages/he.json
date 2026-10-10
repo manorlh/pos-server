@@ -144,7 +144,8 @@
     "catalogMenus": "תפריטים",
     "menuReports": "דוחות תפריט",
     "tenantLicense": "רישיון הארגון — לקוח קבוע או זמני",
-    "accessSettings": "הרשאות"
+    "accessSettings": "הרשאות",
+    "displayOrder": "סדר תצוגה"
   },
   "notificationsClub": {
     "common": {
@@ -17143,5 +17144,48 @@
     "pageOf": "עמוד {page} מתוך {pages} · {total} מוצרים",
     "prev": "הקודם",
     "next": "הבא"
+  },
+  "displayOrdering": {
+    "title": "סדר תצוגה",
+    "hint": "סדר אחד לקופה, לקיוסק, להזמנות אונליין ולתפריט הדיגיטלי. כל ערוץ יכול להיות מקושר לאחר (זזים יחד), עצמאי, או מועתק פעם אחת. פריטים מוסתרים או חסומים שומרים על מקומם.",
+    "where": "ערוץ ויעד",
+    "channel": "ערוץ",
+    "level": "רמה",
+    "choose": "בחרו",
+    "pickTarget": "בחרו יעד כדי לראות ולערוך את הסדר.",
+    "level_tenant": "ארגון",
+    "level_company": "חברה",
+    "level_shop": "סניף",
+    "level_area": "נקודת מכירה",
+    "level_machine": "מכשיר",
+    "level_profile": "פרופיל",
+    "loading": "טוען…",
+    "sourceCatalog": "סדר הקטלוג (אין סדר מוגדר)",
+    "sourceHere": "סדר ברמה הזו",
+    "sourceLegacyHere": "סדר ברמה הזו (כפי שהמכשירים קוראים היום)",
+    "sourceInherited": "בירושה מ{level}",
+    "independent": "עצמאי",
+    "copiedOnce": "הועתק פעם אחת",
+    "diverged": "הסדר במכשירים שונה ממה שנשמר כאן — שמירה תכתוב את הסדר מחדש.",
+    "unlink": "נתק",
+    "otherChannel": "ערוץ אחר",
+    "linkTo": "קשר לערוץ הזה",
+    "copyFrom": "העתק ממנו פעם אחת",
+    "backToInherit": "חזרה לירושה",
+    "categories": "מחלקות",
+    "products": "מוצרים",
+    "productsOf": "מוצרים ב{name}",
+    "noCategories": "אין מחלקות להצגה",
+    "pinned": "נעוץ",
+    "pin": "נעץ ראשון",
+    "unpin": "בטל נעיצה",
+    "moveUp": "הזז למעלה: {name}",
+    "moveDown": "הזז למטה: {name}",
+    "positionOf": "מיקום של {name}",
+    "save": "שמור סדר",
+    "discard": "בטל שינויים",
+    "saved": "הסדר נשמר",
+    "saveFailed": "השמירה נכשלה",
+    "savesLinked": "השמירה תחול גם על הערוצים המקושרים."
   }
 }

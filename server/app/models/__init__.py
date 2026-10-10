@@ -181,6 +181,8 @@ from app.models.stock_setting import StockAlert, StockLevelSetting, StockReset, 
 from app.models.sales_target import SalesTarget, SalesTargetHit
 # "מופיע ב" — a shop's / point of sale's exception to a product's channels (app/services/product_channels.py).
 from app.models.product_channel_override import ProductChannelOverride
+# "סדר תצוגה" — orderings and which channel uses which at a level (app/services/display_ordering.py).
+from app.models.display_ordering import DisplayOrdering, DisplayOrderingBinding
 
 __all__ = [
     "User", "UserRole",
@@ -273,4 +275,5 @@ __all__ = [
     "StockAlert", "StockLevelSetting", "StockReset", "StockResetItem",
     "SalesTarget", "SalesTargetHit",
     "ProductChannelOverride",
+    "DisplayOrdering", "DisplayOrderingBinding",
 ]

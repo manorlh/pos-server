@@ -144,6 +144,13 @@ GET /device-commands/status -> device_control:view
 POST /device-commands/{command_id}/cancel -> device_control:edit
 GET /device-commands/{machine_id}/close-preview -> device_control:view
 POST /device-management/provisioning-qr -> devices:edit
+GET /display-orderings/catalog -> products|kiosks|till_design:view
+POST /display-orderings/copy -> products|kiosks|till_design:edit
+POST /display-orderings/link -> products|kiosks|till_design:edit
+POST /display-orderings/unlink -> products|kiosks|till_design:edit
+DELETE /display-orderings/view -> products|kiosks|till_design:edit
+GET /display-orderings/view -> products|kiosks|till_design:view
+PUT /display-orderings/view -> products|kiosks|till_design:edit
 GET /exception-alerts/dispatches -> exception_alerts:view
 GET /exception-alerts/provider -> exception_alerts:view
 GET /exception-alerts/rules -> exception_alerts:view
