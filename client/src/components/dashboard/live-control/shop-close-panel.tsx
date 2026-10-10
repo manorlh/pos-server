@@ -29,9 +29,11 @@ import {
   fetchShopClosePreview,
   fetchShopCloseRun,
   forceShopClose,
+  forceShopCloseCloudRefunds,
   proceedShopClose,
   requestShopClose,
 } from '@/lib/liveControlApi';
+import type { CloudRefundPending } from '@/lib/types';
 import { money, tenderLabel } from '@/lib/remoteTillZ';
 import {
   closePanels,
@@ -90,7 +92,37 @@ function DeviceLine({ row, showAction }: { row: ShopCloseRow; showAction: boolea
 }
 
 /** The confirmation: every till's figures, the shop total and the next number. Sends and closes. */
-function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onClose: () => void; forceReason?: string }) {
+/**
+ * "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": each credit note a till of the Z still owes, on its line —
+ * one the close issues into the closing shift is said so; any other holds the Z.
+ */
+function CloudRefundLines({ pending }: { pending: CloudRefundPending[] }) {
+  if (pending.length === 0) return null;
+  return (
+    <ul className="space-y-0.5 text-sm">
+      {pending.map((r) => (
+        <li key={r.refundId} className={r.landsInThisZ ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}>
+          <span className="font-medium">{r.words}</span>
+          {' · '}
+          {r.landsInThisZ ? `יופק במשמרת שנסגרת בקופה ${r.machineName ?? '—'}` : r.message}
+          {r.warning ? <span className="block text-xs">{r.warning}</span> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ShopCloseDialog({
+  p,
+  onClose,
+  forceReason,
+  forceCloudRefundReason,
+}: {
+  p: ShopClosePreview;
+  onClose: () => void;
+  forceReason?: string;
+  forceCloudRefundReason?: string;
+}) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState<string | null>(null);
   const [asked, setAsked] = useState<{ flag: 'confirmCloudData' | 'confirmOpenTills'; text: string; message?: string } | null>(null);
@@ -103,6 +135,7 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
         totalsKey: p.totalsKey,
         ...extra,
         ...(forceReason ? { forceReason } : {}),
+        ...(forceCloudRefundReason ? { forceCloudRefundReason } : {}),
         ...(p.areaId ? { areaId: p.areaId } : {}),
       }),
     onSuccess: () => {
@@ -179,6 +212,12 @@ function ShopCloseDialog({ p, onClose, forceReason }: { p: ShopClosePreview; onC
           {forceReason ? (
             <p className="rounded-lg bg-amber-50 p-2 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
               כפיית התחלה (תמיכה): {forceReason}
+            </p>
+          ) : null}
+          <CloudRefundLines pending={p.cloudRefundGuard?.pending ?? []} />
+          {forceCloudRefundReason ? (
+            <p className="rounded-lg bg-amber-50 p-2 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
+              כפייה (תמיכה) — ה-Z יופק בלי מסמכי הזיכוי שעוד לא הופקו, והם ייכנסו ל-Z הבא: {forceCloudRefundReason}
             </p>
           ) : null}
           <label className="flex min-h-11 items-start gap-2">
@@ -282,6 +321,17 @@ export function ShopClosePanel({ shopId, areaId }: { shopId: string; areaId?: st
   });
   const [forceReason, setForceReason] = useState('');
   const [startReason, setStartReason] = useState('');
+  const [refundStartReason, setRefundStartReason] = useState('');
+  const [refundForceReason, setRefundForceReason] = useState('');
+  const forceRefunds = useMutation({
+    mutationFn: ({ runId, reason }: { runId: string; reason: string }) => forceShopCloseCloudRefunds(runId, reason),
+    onSuccess: () => {
+      toast.success('ה-Z הופק בכפייה — זיכויי האשראי מהענן ייכנסו ל-Z הבא');
+      setRefundForceReason('');
+      refresh();
+    },
+    onError: (e) => toast.error(errorDetail(e)?.message ?? axiosErrorToToastMessage(e, 'הכפייה נכשלה')),
+  });
   const [heldFor, setHeldFor] = useState<string | null>(null);
   const force = useMutation({
     mutationFn: ({ runId, ids, reason }: { runId: string; ids: string[]; reason: string }) => forceShopClose(runId, ids, reason),
@@ -340,6 +390,24 @@ export function ShopClosePanel({ shopId, areaId }: { shopId: string; areaId?: st
           </Button>
         </div>
       ) : null}
+      {!run && !p.shopClose.available && p.shopClose.forceCloudRefundAllowed ? (
+        <div className="space-y-2 rounded-lg border border-destructive/40 p-2">
+          <p className="text-xs font-medium">
+            התחלה בכפייה (תמיכה) — ה-Z יופק בלי מסמכי הזיכוי שעוד לא הופקו, והם ייכנסו ל-Z הבא (נרשם כחריגה)
+          </p>
+          <Input
+            value={refundStartReason}
+            onChange={(e) => setRefundStartReason(e.target.value)}
+            placeholder="סיבת הכפייה (חובה)"
+            maxLength={300}
+            className="min-h-10"
+          />
+          <Button size="sm" variant="destructive" className="min-h-10" disabled={!forceReasonOk(refundStartReason)} onClick={() => setConfirming(true)}>
+            {p.shopClose.label} בכפייה…
+          </Button>
+        </div>
+      ) : null}
+      {!run ? <CloudRefundLines pending={[...(p.cloudRefundGuard?.pending ?? []), ...(p.cloudRefundGuard?.warnings ?? [])]} /> : null}
       {p.shiftGuard.required && p.shiftGuard.blockers.length > 0 ? (
         <div className="space-y-1 text-sm">
           <p className="text-amber-700 dark:text-amber-400">{p.shiftGuard.label}: ה-Z ימתין לכל הקופות האלה</p>
@@ -374,6 +442,28 @@ export function ShopClosePanel({ shopId, areaId }: { shopId: string; areaId?: st
           {(run.warnings ?? []).map((w) => (
             <p key={w} className="text-xs text-amber-700 dark:text-amber-400">{w}</p>
           ))}
+          <CloudRefundLines pending={run.pendingCloudRefunds ?? []} />
+          {run.status === 'waiting' && run.forceCloudRefundsAllowed ? (
+            <div className="w-full space-y-2 rounded-lg border border-destructive/40 p-2">
+              <p className="text-xs font-medium">כפיית הפקה (תמיכה) — הזיכויים ייכנסו ל-Z הבא</p>
+              <Input
+                value={refundForceReason}
+                onChange={(e) => setRefundForceReason(e.target.value)}
+                placeholder="סיבת הכפייה (חובה)"
+                maxLength={300}
+                className="min-h-10"
+              />
+              <Button
+                size="sm"
+                variant="destructive"
+                className="min-h-10"
+                disabled={!forceReasonOk(refundForceReason) || forceRefunds.isPending}
+                onClick={() => forceRefunds.mutate({ runId: run.id, reason: refundForceReason.trim() })}
+              >
+                כפה Z בלי הזיכויים
+              </Button>
+            </div>
+          ) : null}
           <ul className="space-y-1">
             {run.items.map((i) => (
               <li key={i.id} className="flex flex-wrap items-center gap-1.5">
@@ -480,6 +570,9 @@ export function ShopClosePanel({ shopId, areaId }: { shopId: string; areaId?: st
         <ShopCloseDialog
           p={p}
           forceReason={!p.shopClose.available && p.shopClose.forceStartAllowed ? startReason.trim() : undefined}
+          forceCloudRefundReason={
+            !p.shopClose.available && p.shopClose.forceCloudRefundAllowed ? refundStartReason.trim() : undefined
+          }
           onClose={() => setConfirming(false)}
         />
       ) : null}

@@ -37,6 +37,9 @@ class ZRunCreateIn(BaseModel):
     #: "חסימת Z כשיש משמרות פתוחות": a super admin starts past tills in "מצב לא ידוע", with a typed
     #: reason (app/services/z_shift_guard.py). Anyone else: 403.
     force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
+    #: "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a super admin starts past cloud card refunds whose
+    #: credit note this Z would go without, with a typed reason (app/services/cloud_refund_z_gate.py).
+    force_cloud_refund_reason: Optional[str] = Field(None, alias="forceCloudRefundReason", max_length=300)
     #: "אני מאשר שהנתונים בענן הם הנתונים הקיימים": required while a till the run takes
     #: shows a warning — open shifts it cannot close, not seen, unsent documents or Zs
     #: (docs/SPEC_OFFLINE_TILL_Z.md §4.6.1). Else `409 cloud_data_confirmation_required`.
@@ -111,6 +114,12 @@ class ZRunOut(BaseModel):
     force: bool = False
     #: The cloud's clock when this was read (a till times its waits against it).
     server_time: Optional[datetime] = Field(None, alias="serverTime")
+    #: "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" while the run waits: the credit notes its tills still
+    #: owe — `{refundId, amount, originalDocumentNumber, machineId, machineName, landsInThisZ,
+    #: words, message}`; `cloudRefundsHold` when one holds the Z (`cloudRefundsMessage` why).
+    pending_cloud_refunds: List[Dict[str, Any]] = Field(default_factory=list, alias="pendingCloudRefunds")
+    cloud_refunds_hold: bool = Field(False, alias="cloudRefundsHold")
+    cloud_refunds_message: Optional[str] = Field(None, alias="cloudRefundsMessage")
     items: List[ZRunItemOut] = Field(default_factory=list)
 
 

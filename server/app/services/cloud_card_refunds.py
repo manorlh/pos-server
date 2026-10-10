@@ -29,13 +29,19 @@ retry after a lost answer); the same id with other content is a 409.
 
 **The document, by a till.** The cloud never issues a fiscal document (§1): numbers are per
 till series. A refunded row asks a till for the credit note through the remote-credit path —
-mode `card_refunded`, by default to the sale's own till when it has an open shift (any eligible
-till of the same business otherwise) — and the till issues it at once, in its own series, in
-its open shift (so in that shift's X and the Z its Z mode puts it in), its tender the card leg
-the request carries (the refund's reference, approval, the card's last digits), never touching
-a pinpad or the drawer. A till that refuses it (no open shift, an old version) fails the
+mode `card_refunded` — and the till issues it in its own series, its tender the card leg the
+request carries (the refund's reference, approval, the card's last digits), never touching a
+pinpad or the drawer: at once in its open shift, or — when the till's `cloudCardRefundLanding`
+is `open_or_next_shift` and it has none — automatically as the FIRST document of its next shift
+(§11.8, app/services/cloud_refund_z_gate.py). Which till the dialog proposes: `default_target`
+(the sale's own first; with a terminal its branch shares, an open till of the branch before the
+sale's till's next shift). A till that refuses it (an old version, `amount_mismatch`) fails the
 request; the dashboard sends it to another till. Until the note reaches the cloud the refund
-keeps holding its lines and its money, so nothing is refunded twice meanwhile.
+keeps holding its lines and its money, so nothing is refunded twice meanwhile — and, by
+`cloudCardRefundBlocksNextZ`, it holds the next Z of its till's scope.
+
+**Offered** only when the server's switch AND the till parameter `cloudCardRefundsEnabled` of
+the sale's till are on (`enabled_for`).
 
 **Credentials:** the Z-Credit terminal number and password of the sale's till, resolved on its
 settings layers (tenant → company → shop → area → till, the most specific winning) — the same
@@ -128,6 +134,33 @@ DISABLED_MESSAGE = (
     "זיכוי באשראי מהענן כבוי בשרת הזה (ZCREDIT_CLOUD_REFUNDS_ENABLED). "
     "הוא יופעל כשהקופות יתמכו בהפקת מסמך הזיכוי שלו. בינתיים — זיכוי מרחוק להשלמה בקופה."
 )
+DISABLED_HERE_MESSAGE = (
+    "זיכוי באשראי מהענן לא הופעל לקופה של העסקה (פרמטר הקופות \"זיכוי באשראי מהענן (Z-Credit) — הפעלה\"). "
+    "בינתיים — זיכוי מרחוק להשלמה בקופה."
+)
+
+
+def enabled_for(db: Session, original: Transaction) -> bool:
+    """
+    Offered for this sale: the server's switch AND the till parameter `cloudCardRefundsEnabled`
+    of the sale's till (company → shop → area → till; its shop's when the till is gone).
+    """
+    if not enabled():
+        return False
+    from app.models.shop import Shop
+    from app.services import cloud_refund_z_gate as G
+
+    machine = _original_machine(db, original)
+    shop = db.get(Shop, original.shop_id) if machine is None and original.shop_id is not None else None
+    return G.refunds_on_for(db, machine, shop=shop)
+
+
+def disabled_message_for(db: Session, original: Transaction) -> Optional[str]:
+    if not enabled():
+        return DISABLED_MESSAGE
+    if not enabled_for(db, original):
+        return DISABLED_HERE_MESSAGE
+    return None
 
 
 # ── Small things ──────────────────────────────────────────────────────────────
@@ -311,6 +344,124 @@ def version_refusal(target) -> Optional[HTTPException]:
     return None
 
 
+#: Where the credit note lands: the till's open shift, or its next one (§11.8).
+LANDS_OPEN_SHIFT = "open_shift"
+LANDS_NEXT_SHIFT = "next_shift"
+
+
+def target_landing(db: Session, target: POSMachine) -> Optional[str]:
+    """
+    `open_shift` — the till has a shift open now; `next_shift` — it has none, and its
+    `cloudCardRefundLanding` is `open_or_next_shift` and its build holds the note for its next
+    shift (`card_refund_next_shift`); None — it cannot take the note now.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    if rc.open_shift_of(db, target) is not None:
+        return LANDS_OPEN_SHIFT
+    if G.landing_of(db, target) == G.LANDING_NEXT_SHIFT and G.holds_next_shift(target):
+        return LANDS_NEXT_SHIFT
+    return None
+
+
+def card_target_refusal(db: Session, original: Transaction, target: POSMachine) -> Optional[HTTPException]:
+    """
+    Why `target` cannot issue the credit note of a cloud card refund of `original`: every rule of a
+    remote credit (§3.5: the same business, a real till, no kiosk / KDS, not in training) — and an
+    open shift unless the till's `cloudCardRefundLanding` lets the note wait for its next one.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    refusal = rc.target_refusal(db, original, target, require_open_shift=False)
+    if refusal is not None:
+        return refusal
+    if rc.open_shift_of(db, target) is not None:
+        return None
+    if G.landing_of(db, target) != G.LANDING_NEXT_SHIFT:
+        return _refuse("target_no_open_shift", rc.NO_OPEN_SHIFT_MESSAGE)
+    if not G.holds_next_shift(target):
+        return _refuse(
+            "target_no_next_shift",
+            "אין בקופה משמרת פתוחה, וגרסת הקופה לא מחזיקה זיכוי למשמרת הבאה — עדכנו את הקופה, "
+            "פתחו בה משמרת או בחרו קופה אחרת.",
+        )
+    return None
+
+
+def _shared_scope(original: Transaction, original_machine: Optional[POSMachine], terminal_source: Optional[str]):
+    """
+    The tills sharing the sale's Z-Credit terminal: `(shop_id, area_id)` — the branch for a terminal
+    set on the shop (or above), the point of sale for one set on the area; None for a till's own.
+    """
+    if terminal_source in (None, "machine"):
+        return None
+    shop_id = original.shop_id or (original_machine.shop_id if original_machine is not None else None)
+    if terminal_source == "area":
+        return (shop_id, getattr(original_machine, "area_id", None))
+    return (shop_id, None)
+
+
+def card_targets(
+    db: Session, original: Transaction, may_use, *, terminal_source: Optional[str] = None, now: Optional[datetime] = None
+) -> List[dict]:
+    """
+    The tills that may issue the note (`card_target_refusal`, the version, the user's scope), each
+    with where it would land (`landing`, `landingWords`) and whether it holds the next Z
+    (`blocksNextZ`). The sale's till first, then — for a terminal its branch shares — the branch's.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    targets = rc.eligible_targets(
+        db, original, may_use, now=now,
+        refusal=lambda m: card_target_refusal(db, original, m) or version_refusal(m),
+    )
+    if not targets:
+        return []
+    machines = {
+        str(m.id): m
+        for m in db.query(POSMachine).filter(POSMachine.id.in_([uuid.UUID(t["machineId"]) for t in targets])).all()
+    }
+    scope = _shared_scope(original, _original_machine(db, original), terminal_source)
+    for t in targets:
+        m = machines.get(t["machineId"])
+        landing = target_landing(db, m) if m is not None else None
+        blocks = G.blocks_next_z(db, m)
+        t["landing"] = landing
+        t["landingWords"] = G.landing_words(landing, G.till_name(m), blocks=blocks) if landing else None
+        t["blocksNextZ"] = blocks
+        t["sameBranch"] = scope is None or (
+            str(t["shopId"]) == str(scope[0]) and (scope[1] is None or str(t.get("areaId")) == str(scope[1]))
+        )
+    targets.sort(key=lambda t: (not t["isOriginalTill"], not t["sameBranch"]))
+    return targets
+
+
+def default_target(targets: List[dict], *, terminal_source: Optional[str] = None) -> Optional[str]:
+    """
+    The till the dialog proposes for the note (the user may pick another eligible till):
+
+    * the terminal is the till's own (or unknown): the sale's till — in its open shift, else (the
+      landing allowing) its next one; else any eligible till with an open shift;
+    * a terminal the branch (or the point of sale) shares: 1. the sale's till if its shift is
+      open; 2. a till of the same branch with an open shift; 3. the landing allowing, the sale's
+      till's next shift; 4. none — the refund is refused, as before.
+    """
+    own = next((t for t in targets if t.get("isOriginalTill")), None)
+    if own is not None and own.get("landing") == LANDS_OPEN_SHIFT:
+        return own["machineId"]
+    if terminal_source in (None, "machine"):
+        if own is not None and own.get("landing") == LANDS_NEXT_SHIFT:
+            return own["machineId"]
+        opened = [t for t in targets if t.get("landing") == LANDS_OPEN_SHIFT]
+        return opened[0]["machineId"] if opened else None
+    same = [t for t in targets if t.get("sameBranch") and t.get("landing") == LANDS_OPEN_SHIFT]
+    if same:
+        return same[0]["machineId"]
+    if own is not None and own.get("landing") == LANDS_NEXT_SHIFT:
+        return own["machineId"]
+    return None
+
+
 def till_card_credits(db: Session, original: Transaction) -> int:
     """
     Agorot the tills already gave back on a card for `original` — the card legs (money that
@@ -426,9 +577,12 @@ def credentials_for(db: Session, machine: Optional[POSMachine], original: Option
         area = None
     layers = PI.settings_layers(tenant, company, shop, area, machine)
     merged: Dict[str, Any] = {}
-    for _, settings in layers:
+    terminal_source: Optional[str] = None
+    for level, settings in layers:
         if isinstance(settings, dict):
             merged.update(settings)
+            if settings.get(TERMINAL_KEY) not in (None, ""):
+                terminal_source = level
     try:
         terminal = PI.validate_terminal_number(merged.get(TERMINAL_KEY))
     except ValueError:
@@ -440,7 +594,7 @@ def credentials_for(db: Session, machine: Optional[POSMachine], original: Option
     password = PS.decrypt(hit[1].ciphertext) if hit else None
     if not password:
         return None, ("zcredit_password_missing", "לא שמורה סיסמת מסוף Z-Credit לקופה של העסקה — אי אפשר לזכות מהענן.")
-    return zg.Credentials(terminal_number=terminal, password=password, source=hit[0]), None
+    return zg.Credentials(terminal_number=terminal, password=password, source=hit[0], terminal_source=terminal_source), None
 
 
 def _original_machine(db: Session, original: Transaction) -> Optional[POSMachine]:
@@ -584,6 +738,8 @@ def _start(
         db.query(Transaction).filter(Transaction.id == original.id).with_for_update().populate_existing().first()
     )
     original = locked or original
+    if not enabled_for(db, original):
+        raise _refuse("cloud_refunds_disabled_here", DISABLED_HERE_MESSAGE)
     refusal = rc.original_refusal(original)
     if refusal is not None:
         raise refusal
@@ -597,7 +753,9 @@ def _start(
     why = leg_refusal(leg)
     if why is not None:
         raise _refuse(*why)
-    refusal = rc.target_refusal(db, original, target)
+    # Every §3.5 rule; an open shift unless the till's `cloudCardRefundLanding` lets the note wait
+    # for its next shift (checked BEFORE the card is refunded: no till able to take it, no refund).
+    refusal = card_target_refusal(db, original, target)
     if refusal is not None:
         raise refusal
     refusal = version_refusal(target)
@@ -668,6 +826,7 @@ def _start(
         data={
             "amount": _money(amount), "paymentId": str(leg.id), "machineId": str(target.id),
             "full": bool(new.full), "terminal": creds.masked_terminal, "credentialSource": creds.source,
+            "terminalSource": creds.terminal_source, "landing": target_landing(db, target),
         },
         now=now,
     )
@@ -1055,7 +1214,8 @@ def _request_document(db: Session, row: CloudCardRefund, *, user: Optional[User]
     row.target_machine_id = machine.id
     _event(
         db, row, "document_requested", actor="system" if user is None else "user", user=user,
-        detail=machine.name, data={"requestId": str(req.id), "machineId": str(machine.id)},
+        detail=machine.name,
+        data={"requestId": str(req.id), "machineId": str(machine.id), "landing": target_landing(db, machine)},
     )
     db.flush()
     return req
@@ -1078,7 +1238,7 @@ def resend(
     original = db.query(Transaction).filter(Transaction.id == row.original_transaction_id).first()
     if original is None:
         raise _refuse("original_unknown", "המסמך המקורי לא נמצא.", status.HTTP_404_NOT_FOUND)
-    refusal = rc.target_refusal(db, original, target)
+    refusal = card_target_refusal(db, original, target)
     if refusal is not None:
         raise refusal
     refusal = version_refusal(target)
@@ -1192,6 +1352,49 @@ def attention_of(db: Session, row: CloudCardRefund, req: Optional[RemoteCreditRe
     return "document_missing"
 
 
+def document_gate_out(
+    db: Session, row: CloudCardRefund, req: Optional[RemoteCreditRequest], target: Optional[POSMachine]
+) -> dict:
+    """
+    Where the credit note stands against the shifts and the Z (§11.8–§11.10): waiting for the
+    till's open shift or its next one ("ממתין למשמרת הבאה בקופה X"), whether it holds the next Z,
+    the warning when it does not, and whether a super admin released it from the next Z.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    owed = row.status == CS.REFUNDED and row.credit_transaction_id is None and not G.landed(db, row)
+    name = G.till_name(target)
+    landing = None
+    if owed and req is not None and req.status in PENDING_REMOTE_CREDIT_STATUSES:
+        waiting = req.error_code == G.WAITING_CODE or (target is not None and rc.open_shift_of(db, target) is None)
+        landing = LANDS_NEXT_SHIFT if waiting else LANDS_OPEN_SHIFT
+    blocks = G.blocks_next_z(db, target) if target is not None else True
+    return {
+        "documentLanding": landing,
+        "documentLandingWords": (
+            G.waiting_words(name) if landing == LANDS_NEXT_SHIFT
+            else f"ממתין להפקה במשמרת הפתוחה בקופה {name}" if landing == LANDS_OPEN_SHIFT
+            else None
+        ),
+        "blocksNextZ": blocks,
+        "zGateWarning": G.not_blocking_warning(name) if owed and not blocks else None,
+        "zGateReleased": bool(owed and blocks and G.released(db, row)),
+        "pendingWords": G.pending_words(row.amount) if owed else None,
+    }
+
+
+def release_z(db: Session, row: CloudCardRefund, user: User, reason: Optional[str], *, now: Optional[datetime] = None) -> bool:
+    """
+    "כפה Z בלי הזיכוי": a super admin lets the next Z of the note's till go without it (typed
+    reason; on the refund's trail and an exception) — the note then goes into the Z after.
+    """
+    from app.services import cloud_refund_z_gate as G
+
+    if row.status != CS.REFUNDED or row.credit_transaction_id is not None or G.landed(db, row):
+        raise _refuse("nothing_to_release", "מסמך הזיכוי כבר הופק (או שהכרטיס לא זוכה) — אין מה לשחרר מה-Z.")
+    return G.release(db, row, user, reason, where="refund", now=now)
+
+
 def refund_to_out(db: Session, row: CloudCardRefund, *, events: bool = False, now: Optional[datetime] = None) -> dict:
     from app.services.machine_status import is_online
 
@@ -1206,6 +1409,7 @@ def refund_to_out(db: Session, row: CloudCardRefund, *, events: bool = False, no
     target = machines.get(row.target_machine_id)
     original_machine = machines.get(row.original_machine_id)
     attention = attention_of(db, row, req, now)
+    gate = document_gate_out(db, row, req, target)
     out = {
         "id": str(row.id),
         "transactionId": str(row.original_transaction_id),
@@ -1249,7 +1453,11 @@ def refund_to_out(db: Session, row: CloudCardRefund, *, events: bool = False, no
         "targetMachineName": target.name if target is not None else None,
         "targetOnline": is_online(target.last_heartbeat_at, now=now) if target is not None else False,
         "attention": attention,
-        "attentionLabel": ATTENTION.get(attention) if attention else None,
+        "attentionLabel": (
+            gate["documentLandingWords"] if attention == "document_pending" and gate["documentLanding"] == LANDS_NEXT_SHIFT
+            else ATTENTION.get(attention) if attention else None
+        ),
+        **gate,
         "document": {
             "requestId": str(req.id) if req is not None else None,
             "requestStatus": req.status if req is not None else None,
@@ -1318,8 +1526,11 @@ def leg_out(db: Session, original: Transaction, leg: TransactionPayment) -> dict
     return out
 
 
-def prepare_out(db: Session, original: Transaction, targets: List[dict], *, now: Optional[datetime] = None) -> dict:
-    """What the dialog needs: the switch, the legs, the credentials' state, the lines and the tills."""
+def prepare_out(db: Session, original: Transaction, may_use, *, now: Optional[datetime] = None) -> dict:
+    """
+    What the dialog needs: the switch, the legs, the credentials' state, the lines, the tills
+    (each with where its note would land) and the till proposed for the note (`defaultTargetId`).
+    """
     now = _now(now)
     legs = (
         db.query(TransactionPayment)
@@ -1331,23 +1542,30 @@ def prepare_out(db: Session, original: Transaction, targets: List[dict], *, now:
     creds, missing = (None, None)
     if any(l["zcredit"] for l in legs_out):
         creds, missing = credentials_for(db, _original_machine(db, original), original)
+    terminal_source = creds.terminal_source if creds is not None else None
+    targets = card_targets(db, original, may_use, terminal_source=terminal_source, now=now)
     document = rc.prepare_out(db, original, targets)
     document["reasons"] = [{"code": c, "label": l} for c, l in REASONS]
+    document["defaultTargetId"] = default_target(targets, terminal_source=terminal_source)
     rows = (
         db.query(CloudCardRefund)
         .filter(CloudCardRefund.original_transaction_id == original.id)
         .order_by(CloudCardRefund.created_at.desc())
         .all()
     )
+    disabled = disabled_message_for(db, original)
     return {
-        "enabled": enabled(),
-        "disabledMessage": None if enabled() else DISABLED_MESSAGE,
+        "enabled": disabled is None,
+        "disabledMessage": disabled,
         "label": LABEL,
         "legs": legs_out,
         "credentials": {
             "available": creds is not None,
             "terminal": creds.masked_terminal if creds is not None else None,
             "source": creds.source if creds is not None else None,
+            #: The layer of the terminal number: `machine` — the till's own; else shared by its
+            #: point of sale / branch, and the note goes to a till there first (`defaultTargetId`).
+            "terminalSource": terminal_source,
             "refusal": {"code": missing[0], "message": missing[1]} if missing else None,
         },
         "document": document,

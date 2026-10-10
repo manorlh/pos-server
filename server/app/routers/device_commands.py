@@ -249,6 +249,9 @@ class ShopCloseIn(BaseModel):
     confirm_cloud_data: bool = Field(False, alias="confirmCloudData")
     #: A super admin starting past tills in "מצב לא ידוע" ("חסימת Z כשיש משמרות פתוחות").
     force_reason: Optional[str] = Field(None, alias="forceReason", max_length=300)
+    #: A super admin starting past cloud card refunds whose credit note the Z would go without
+    #: ("זיכוי באשראי מהענן — חובה לפני ה-Z הבא", app/services/cloud_refund_z_gate.py).
+    force_cloud_refund_reason: Optional[str] = Field(None, alias="forceCloudRefundReason", max_length=300)
     #: "סגירת יום לנקודת מכירה": the area Z of that point of sale (z_runs `area_id`).
     area_id: Optional[uuid.UUID] = Field(None, alias="areaId")
 
@@ -372,6 +375,7 @@ def post_shop_close(
             confirm_open_tills=body.confirm_open_tills,
             confirm_cloud_data=body.confirm_cloud_data,
             force_reason=body.force_reason,
+            force_cloud_refund_reason=body.force_cloud_refund_reason,
             area_id=body.area_id,
         )
     except HTTPException:
@@ -449,6 +453,32 @@ def post_shop_close_force(
     remote_till_z.require_enabled()
     run = _shop_close_run(db, current_user, active_tenant_id, run_id)
     z_shift_guard.force_without(db, run, current_user, body.exclude_machine_ids, body.reason)
+    db.commit()
+    db.refresh(run)
+    return remote_till_z.run_progress(db, run, user=current_user)
+
+
+class ShopCloseForceCloudRefundsIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    reason: str = Field(..., max_length=300)
+
+
+@router.post("/shop-close/{run_id}/force-cloud-refunds")
+def post_shop_close_force_cloud_refunds(
+    run_id: uuid.UUID,
+    body: ShopCloseForceCloudRefundsIn,
+    current_user: User = Depends(get_current_machine_admin),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a super admin, a typed reason."""
+    from app.services import remote_till_z
+    from app.services import z_runs as ZR
+
+    remote_till_z.require_enabled()
+    run = _shop_close_run(db, current_user, active_tenant_id, run_id)
+    ZR.force_cloud_refunds(db, run, current_user, body.reason)
     db.commit()
     db.refresh(run)
     return remote_till_z.run_progress(db, run, user=current_user)

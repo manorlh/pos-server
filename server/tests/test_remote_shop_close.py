@@ -137,7 +137,8 @@ def test_cloud_source_one_action_each_till_at_rest_and_the_next_number(z):
     assert out["totals"]["totalSales"] == 200.0 and out["totals"]["transactions"] == 3
     assert [r["net"] for r in out["inShopZ"]] == [140.0, 60.0]
     assert out["nextShopZNumber"] == before + 1
-    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None, "forceStartAllowed": False}
+    assert out["shopClose"] == {"label": "סגירת יום סניפית", "available": True, "whyNot": None, "forceStartAllowed": False,
+                                "forceCloudRefundAllowed": False}
 
     run = start(z)
     assert run.wait_for_rest is True and run.force_close is False

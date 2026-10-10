@@ -160,6 +160,14 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None,
         why = TOO_OLD_TEXT
     elif kind == KIND_TILL_Z and _forced_pending(db, machine):
         why = FORCED_PENDING_TEXT
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a credit note this till still owes. A close issues
+    # it into the closing shift first (`landsInThisZ`); a Z with no shift to close cannot have it.
+    from app.services import cloud_refund_z_gate as CRG
+
+    cloud_refunds = CRG.pending(db, [machine.id], closing=[machine.id] if CRG.closes_open_shift(db, machine) else [])
+    held = [r for r in cloud_refunds if not r["landsInThisZ"]]
+    if why is None and kind == KIND_TILL_Z and held:
+        why = CRG.message_of(held)
     return {
         "machineId": str(machine.id),
         "name": machine.name,
@@ -181,6 +189,7 @@ def preview(db: Session, machine: POSMachine, *, now: Optional[datetime] = None,
         "totalsKey": _key(kind, [s.id for s in shifts], totals),
         "canRequest": why is None,
         "whyNot": why,
+        "pendingCloudRefunds": cloud_refunds,
     }
 
 
@@ -544,6 +553,8 @@ def run_progress(db: Session, run: Any, *, now: Optional[datetime] = None, user:
         and ZR._all_tills_required(db, run, guard=False) is None
         and _super_admin(user)
     )
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": support may release the refunds holding the run.
+    out["forceCloudRefundsAllowed"] = bool(out.get("cloudRefundsHold")) and _super_admin(user)
     st = out["status"]
     out["words"] = (
         f"הושלם — Z סניפי מס' {out['zNumber']}" if st == ZRunStatus.COMPLETED and out.get("zNumber") is not None
@@ -747,6 +758,12 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
     force_start = bool(why is None and unknown and _super_admin(user))
     if why is None and unknown:
         why = "ממתין לקופות במצב לא ידוע: " + ", ".join(b["name"] or "" for b in unknown)
+    # "זיכוי באשראי מהענן — חובה לפני ה-Z הבא": a credit note a till of this Z still owes (and will
+    # not issue into the shift this close closes) holds it; a super admin may start with a reason.
+    cloud_refunds = cloud_refund_guard_out(db, shop, area_id=area_id)
+    force_cloud_refund = bool(why is None and cloud_refunds["hold"] and _super_admin(user))
+    if why is None and cloud_refunds["hold"]:
+        why = cloud_refunds["message"]
     raw = "|".join([str(shop.id), str(area_id or ""), ",".join(sorted(str(x) for x in shop_shift_ids)), str(totals["transactions"]),
                     f'{totals["totalSales"]:.2f}', f'{totals["totalRefunds"]:.2f}', str(totals["lastDocument"] or "")])
     area_name = None
@@ -773,9 +790,37 @@ def shop_preview(db: Session, shop: Any, *, now: Optional[datetime] = None, user
         # "חסימת Z כשיש משמרות פתוחות": on here? and which tills hold the Z now (the close waits
         # for every one of them; only a super admin forces past one that never comes back).
         "shiftGuard": guard,
+        # Cloud card refunds whose credit note a till of this Z still owes: each with its line
+        # ("זיכוי אשראי מהענן ממתין להפקה (₪X)"); `hold` when one holds the close.
+        "cloudRefundGuard": cloud_refunds,
         "shopClose": {"label": AREA_CLOSE_LABEL if area_id is not None else SHOP_CLOSE_LABEL,
-                      "available": why is None, "whyNot": why, "forceStartAllowed": force_start},
+                      "available": why is None, "whyNot": why, "forceStartAllowed": force_start,
+                      "forceCloudRefundAllowed": force_cloud_refund},
         "totalsKey": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20],
+    }
+
+
+def cloud_refund_guard_out(db: Session, shop: Any, *, area_id: Any = None) -> Dict[str, Any]:
+    """
+    "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" for a day close of the shop (or area): the credit notes
+    its tills still owe. A till whose open shift the close closes issues its notes into it first
+    (`landsInThisZ`, shown only); any other holds the Z. `warnings`: notes that do not hold it
+    (their till's `cloudCardRefundBlocksNextZ` is off).
+    """
+    from app.services import cloud_refund_z_gate as CRG
+    from app.services import z_runs as ZR
+
+    if not CRG.enabled():
+        return {"pending": [], "hold": False, "message": None, "warnings": []}
+    scope = CRG.shop_scope(db, shop, area_id)
+    closing = [m.id for m in scope if ZR.is_seated_in(m, shop.id) and CRG.closes_open_shift(db, m)]
+    pending = CRG.pending(db, [m.id for m in scope], closing=closing)
+    held = [p for p in pending if not p["landsInThisZ"]]
+    return {
+        "pending": pending,
+        "hold": bool(held),
+        "message": CRG.message_of(held) if held else None,
+        "warnings": CRG.not_blocking(db, [m.id for m in scope]),
     }
 
 
@@ -802,6 +847,7 @@ def shop_request(
     confirm_open_tills: bool = False,
     confirm_cloud_data: bool = False,
     force_reason: Optional[str] = None,
+    force_cloud_refund_reason: Optional[str] = None,
     area_id: Any = None,
     now: Optional[datetime] = None,
 ):
@@ -810,13 +856,20 @@ def shop_request(
     the wizard's own path (the same refusals and confirmations), every till of the shop Z asked to
     close at rest (`wait_for_rest`, never forced). The Z is built by the run as always — numbered
     by z_sequence, strictly next. The caller commits. Returns the run or a refusal response.
+
+    A cloud card refund whose credit note the Z would go without ("זיכוי באשראי מהענן — חובה לפני
+    ה-Z הבא") refuses it (409 `pending_cloud_card_refund`, the run's own start check) — a super admin
+    passes `force_cloud_refund_reason`.
     """
     from app.routers.z_runs import create_run_from_body
     from app.schemas.z_run import ZRunCreateIn, ZRunMachineIn
     from app.services import z_runs as ZR
 
     current = shop_preview(db, shop, now=now, user=user, area_id=area_id)
-    if not current["shopClose"]["available"] and not (force_reason and current["shopClose"].get("forceStartAllowed")):
+    forced_ok = (force_reason and current["shopClose"].get("forceStartAllowed")) or (
+        force_cloud_refund_reason and current["shopClose"].get("forceCloudRefundAllowed")
+    )
+    if not current["shopClose"]["available"] and not forced_ok:
         raise HTTPException(status_code=409, detail={"code": "shop_close_unavailable",
                                                      "message": current["shopClose"]["whyNot"], "preview": current})
     if not totals_key or totals_key != current["totalsKey"]:
@@ -832,6 +885,7 @@ def shop_request(
         confirmOpenTills=confirm_open_tills,
         confirmCloudData=confirm_cloud_data,
         forceReason=force_reason,
+        forceCloudRefundReason=force_cloud_refund_reason,
     )
     return create_run_from_body(db, user, tenant_id, body, wait_for_rest=True)
 

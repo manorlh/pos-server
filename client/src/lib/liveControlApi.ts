@@ -119,6 +119,8 @@ export async function requestShopClose(body: {
   confirmCloudData?: boolean;
   /** A super admin starting past tills in "מצב לא ידוע". */
   forceReason?: string;
+  /** A super admin starting past cloud card refunds whose credit note the Z would go without. */
+  forceCloudRefundReason?: string;
   /** "סגירת יום לנקודת מכירה": that point of sale's area Z. */
   areaId?: string;
 }) {
@@ -142,6 +144,11 @@ export async function proceedShopClose(runId: string, excludeMachineIds: string[
 /** Support's force past "חסימת Z כשיש משמרות פתוחות": a super admin, a typed reason (403 / 422 otherwise). */
 export async function forceShopClose(runId: string, excludeMachineIds: string[], reason: string) {
   return (await api.post(`/device-commands/shop-close/${runId}/force`, { excludeMachineIds, reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
+}
+
+/** Support's force past "זיכוי באשראי מהענן — חובה לפני ה-Z הבא" while the day close waits (a typed reason). */
+export async function forceShopCloseCloudRefunds(runId: string, reason: string) {
+  return (await api.post(`/device-commands/shop-close/${runId}/force-cloud-refunds`, { reason })).data as import('@/lib/remoteShopClose').ShopCloseRun;
 }
 
 /** "סגור והשאר מושהות" (pos-server held_sales_close.py): the shop's parameter, or support with a reason. */
