@@ -13,7 +13,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { createAdjustment, fetchShift } from '@/lib/attendanceApi';
-import { formatHours, isoToLocalInput, localInputToIso } from '@/lib/attendance';
+import { actionLog, formatHours, isoToLocalInput, localInputToIso, verifiedByKey } from '@/lib/attendance';
 import { formatDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -116,6 +116,36 @@ export function ShiftDetailDialog({
                   </ul>
                 </div>
               ) : null}
+              {(() => {
+                // "קוד עובד בכל פעולה": how each till action was confirmed (never the code itself).
+                const log = actionLog(s.details);
+                if (!log.length) return null;
+                return (
+                  <div>
+                    <p className="mb-1 font-medium">{t('detail.actionLog')}</p>
+                    <ul className="space-y-0.5">
+                      {log.map((e) => (
+                        <li key={e.id}>
+                          <span className="tabular-nums">
+                            {t('detail.actionLine', {
+                              action: t(`actions.${e.type}`),
+                              at: e.at ? formatDateTime(e.at) : '—',
+                              origin: e.origin === 'clock' || e.origin === 'session' ? t(`origin.${e.origin}`) : '—',
+                              verified: t(`verifiedBy.${verifiedByKey(e)}`),
+                            })}
+                          </span>
+                          {e.onBehalf ? (
+                            <span className="text-muted-foreground">
+                              {' · '}{t('detail.onBehalfBy', { name: e.onBehalf.name ?? '—' })}
+                              {e.onBehalf.verified ? null : <> {t('detail.onBehalfUnverified')}</>}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })()}
 
               <div>
                 <p className="mb-1 font-medium">{t('detail.audit')}</p>

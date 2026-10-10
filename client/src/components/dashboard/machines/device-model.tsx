@@ -12,19 +12,20 @@
  * `GET /machines/me`; a till whose model was never recorded is treated as a 55F.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { updateMachineDeviceModel } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { deviceProfileErrorMessage } from '@/lib/deviceProfile';
-import { DEVICE_MODELS, type DeviceModel, type PosMachine } from '@/lib/types';
+import { deviceModelOptions } from '@/lib/deviceModelSearch';
+import type { DeviceModel, PosMachine } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 /** The small model tag on a row. Nothing for a till whose model was never recorded. */
 export function DeviceModelBadge({ m }: { m: Pick<PosMachine, 'deviceModel'> }) {
@@ -41,35 +42,35 @@ export function DeviceModelBadge({ m }: { m: Pick<PosMachine, 'deviceModel'> }) 
   );
 }
 
-/** The model picker the add-terminal and edit dialogs share. */
+/**
+ * The model picker the add-terminal, pairing, edit and device-profile dialogs share: a
+ * combobox searched by the Hebrew label, the model's name, maker (also in Hebrew letters),
+ * aliases and code (lib/deviceModelSearch.ts) — "t2", "a920pro", "סאנמי". The value is the
+ * model id, as before; ✕ clears it back to "not chosen".
+ */
 export function DeviceModelSelect({
   value,
   onChange,
   id,
 }: {
   value: DeviceModel | '';
-  onChange: (next: DeviceModel) => void;
+  onChange: (next: DeviceModel | '') => void;
   id?: string;
 }) {
   const t = useTranslations('machines.deviceModel');
-  const items = DEVICE_MODELS.map((model) => ({ value: model, label: t(model) }));
+  const tc = useTranslations('combobox.deviceModel');
+  const options = useMemo(() => deviceModelOptions((model) => t(model)), [t]);
   return (
-    <Select
+    <Combobox
+      id={id}
+      aria-label={t('label')}
+      options={options}
       value={value}
-      onValueChange={(v) => (v ? onChange(v as DeviceModel) : undefined)}
-      items={items}
-    >
-      <SelectTrigger id={id} aria-label={t('label')}>
-        <SelectValue placeholder={t('placeholder')} />
-      </SelectTrigger>
-      <SelectContent>
-        {items.map((i) => (
-          <SelectItem key={i.value} value={i.value} label={i.label}>
-            {i.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      onValueChange={(next) => onChange(next ?? '')}
+      placeholder={tc('placeholder')}
+      emptyText={tc('noResults')}
+      clearable
+    />
   );
 }
 
