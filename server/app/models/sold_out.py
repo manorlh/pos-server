@@ -16,13 +16,21 @@ The kiosks grey it out or hide it (`general.soldOutMode`) either way. A block en
 Rows are never deleted: removing stamps `cleared_at` (and `updated_at`), so a till that pulls
 deltas sees the product change, and the screen can say who did what.
 
-`scope` / `scope_id`: `company` · `shop` · `kiosks` (every kiosk of the shop, `scope_id` = the shop)
-· `area` · `group` · `event` · `machine` (a till or a kiosk) · `kiosk` (that device while it is a
-kiosk). An automatic block's scope is the stock location that reached 0.
+Two axes (specs/item-blocks-targets.md): the **level** — `scope` / `scope_id`: `company` · `shop` ·
+`area` · `group` · `event` · `machine` (a till or a kiosk) — and the **target** — `all` ("קופות
+וקיוסקים", the default) · `kiosks` ("קיוסקים בלבד") · `tills` ("קופות בלבד"). The two older scopes
+stay readable: `kiosks` (every kiosk of the shop, `scope_id` = the shop) = `shop` + kiosks, `kiosk`
+(that device while it is a kiosk) = `machine` + kiosks; new blocks are written as level + target.
+An automatic block's scope is the stock location that reached 0 (target `all`).
+
+**What**: a product (`product_id`, the global one) or a category (`category_id`: every product in
+it or below it) — exactly one. `kiosk_display` is the kiosks' look for this block ("hide" /
+"grey"; NULL = `general.soldOutMode`). `origin` says from where it was set (dashboard, a till, a
+kiosk, a controlling till, a migrated "מוסתר בקיוסקים" row, the stock).
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String
+from sqlalchemy import JSON, CheckConstraint, Column, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -33,6 +41,15 @@ SOLD_OUT_SCOPES = ("company", "shop", "kiosks", "event", "group", "area", "kiosk
 SOLD_OUT_KINDS = ("sold_out", "blocked")
 #: Who set it: a person, or the stock reaching 0.
 SOLD_OUT_SOURCES = ("manual", "auto")
+#: Whom at the level, before channels: "קופות וקיוסקים" / "קיוסקים בלבד" / "קופות בלבד" (and "none":
+#: neither — online ordering / the digital menu only).
+SOLD_OUT_TARGETS = ("all", "kiosks", "tills", "none")
+#: The channels a block stops an item on (app/services/sold_out_rules.py `CHANNELS`).
+SOLD_OUT_CHANNELS = ("pos", "kiosk", "online", "menu")
+#: The kiosks' look for one block: "הסתר" / "הצג כאזל" (NULL = `general.soldOutMode`).
+SOLD_OUT_DISPLAYS = ("hide", "grey")
+#: Where a block was set from.
+SOLD_OUT_ORIGINS = ("dashboard", "till", "kiosk", "controller", "kiosk_hide", "stock")
 
 
 class SoldOutMark(Base):
@@ -40,6 +57,9 @@ class SoldOutMark(Base):
     __table_args__ = (
         Index("ix_sold_out_marks_shop_product", "shop_id", "product_id"),
         Index("ix_sold_out_marks_scope", "scope", "scope_id"),
+        Index("ix_sold_out_marks_shop_category", "shop_id", "category_id"),
+        # A product or a category — exactly one.
+        CheckConstraint("(product_id IS NULL) <> (category_id IS NULL)", name="ck_sold_out_marks_item"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -47,10 +67,21 @@ class SoldOutMark(Base):
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=True, index=True)
     #: The scope's shop; NULL for a company-wide block.
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="CASCADE"), nullable=True)
-    #: The global product.
-    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    #: The global product — or NULL for a category block.
+    product_id = Column(UUID(as_uuid=True), ForeignKey("products.id", ondelete="CASCADE"), nullable=True)
+    #: The category (every product in it or below it) — or NULL for a product block.
+    category_id = Column(UUID(as_uuid=True), ForeignKey("categories.id", ondelete="CASCADE"), nullable=True)
     scope = Column(String(16), nullable=False)
     scope_id = Column(UUID(as_uuid=True), nullable=False)
+    #: "all" | "kiosks" | "tills" | "none" — what `channels` mean for the devices (a device that
+    #: predates channels reads only this).
+    target = Column(String(8), nullable=False, default="all", server_default="all")
+    #: ["pos", "kiosk", "online", "menu"] — where the block stops the item; NULL: what `target` meant.
+    channels = Column(JSON, nullable=True)
+    #: The kiosks' look: "hide" | "grey"; NULL = `general.soldOutMode`.
+    kiosk_display = Column(String(8), nullable=True)
+    #: Where it was set from (SOLD_OUT_ORIGINS); NULL before origins were kept.
+    origin = Column(String(16), nullable=True)
     #: "sold_out" | "blocked".
     kind = Column(String(16), nullable=False, default="sold_out", server_default="sold_out")
     #: Ends by itself then; NULL = until removed.

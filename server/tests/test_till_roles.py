@@ -229,7 +229,8 @@ class TestLegacy:
         eff = TP.legacy_effective("cashier")
         # Plus what was added after roles and asks a manager of a cashier (SELL_RESTRICTED_ITEMS:
         # "מחייב אישור מנהל במכירה", HELD_SALE_CANCEL: "ביטול מכירה מושהית" — neither existed before roles).
-        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL"}
+        # ITEM_BLOCK: "חסימת פריט / אזל" (specs/item-blocks-targets.md) — a cashier on a manager's code.
+        assert {c for c, s in eff.states.items() if s == P} == self.SENIOR | {"SELL_RESTRICTED_ITEMS", "HELD_SALE_CANCEL", "ITEM_BLOCK"}
         # Everything else was open to everyone ("כרגע אין הרשאות, כולם יכולים לעשות הכל"),
         # except approving others, leaving the Windows kiosk and switching a kiosk to the till, which were a
         # manager's alone (the kiosk's admin opened for a manager's code only).

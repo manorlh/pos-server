@@ -48,7 +48,7 @@ from test_product_availability import OLD, world  # noqa: F401
 
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "sold_out_golden.json"
 #: The LF-normalised bytes' SHA-256 — pos-android's SoldOutRulesTest pins the same value.
-GOLDEN_SHA256 = "164f2d9558d33584b3e6c52364e5f678c4760d83ffc91e5040bad2c584caf230"
+GOLDEN_SHA256 = "8374d04ae20b6bda9f142db0de7efc3886bbd3f2711b1b323dcd52c48ba3657b"
 
 NOW = datetime(2026, 10, 9, 9, 0, tzinfo=timezone.utc)  # 12:00 in Israel
 
@@ -72,16 +72,20 @@ def test_the_shared_rule_gives_each_golden_answer(case):
         company_id=t.get("companyId"), shop_id=t.get("shopId"), area_id=t.get("areaId"),
         machine_id=t.get("machineId"), is_kiosk=bool(t.get("isKiosk")),
         event_ids=tuple(t.get("eventIds") or ()), group_ids=tuple(t.get("groupIds") or ()),
+        channel=t.get("channel"),
     )
+    item = case.get("item")
     got = rules.decide(
         case["blocks"], rules.parse_time(case["now"]), till=till, setting=case["setting"],
         track_stock=case["trackStock"], stock=case["stock"],
+        item=rules.Item(item.get("productId"), tuple(item.get("categoryIds") or ())) if item else None,
     )
     expect = case["expect"]
     assert got.state == expect["state"]
     assert got.reason == expect["reason"]
     assert (got.block or {}).get("id") == expect["block"]
     assert got.overridable is expect["overridable"]
+    assert got.display == expect["kioskDisplay"]
 
 
 # ── Durations ────────────────────────────────────────────────────────────────
@@ -514,3 +518,416 @@ def test_the_migrations_chain_on_one_head():
     # Written on 6b1e9d4f2a87; re-chained after device groups' e8b3f5a1c7d2 at the integration merge.
     assert script.get_revision("8d5f3b0e2a74").down_revision == "e8b3f5a1c7d2"
     assert script.get_revision("9e6a4c1f3b85").down_revision == "8d5f3b0e2a74"
+    # specs/item-blocks-targets.md: targets, category blocks, the quick hides folded in.
+    # Re-chained at the integration (10.10.2026) after kiosk-landscape's b7d3f1a9c5e8; written on b8e2d4f6a1c3.
+    assert script.get_revision("c7d1a9e4f2b6").down_revision == "b7d3f1a9c5e8"
+
+
+# ── Targets, categories, the kiosks' look, devices (specs/item-blocks-targets.md) ──
+
+
+def _kiosk_in_bar(w):
+    """h2 (the kiosk) stands in the point of sale "Bar" with h1 (a till)."""
+    w.h2.area_id = w.bar.id
+    w.db.commit()
+
+
+def _sub_category(w, name="Soft"):
+    """A category under the product's, holding the second product Q."""
+    from app.models.category import Category
+
+    parent = w.db.get(Category, w.P.category_id)
+    child = Category(id=uuid.uuid4(), tenant_id=w.tid, name=name, parent_id=parent.id, updated_at=OLD)
+    w.db.add(child)
+    w.db.flush()
+    w.Q.category_id = child.id
+    w.db.commit()
+    return parent, child
+
+
+def _tblock(w, scope, scope_id, *, reach="all", kind="sold_out", product=None, category=None, display=None, until=None):
+    target = svc.resolve_target(w.db, scope, scope_id, w.tid)
+    mark = svc.block(
+        w.db, tenant_id=w.tid, product=None if category is not None else (product or w.P), category=category,
+        target=target, kind=kind, until=until, user=w.users.admin, reach=reach, display=display,
+    )
+    w.db.commit()
+    return mark
+
+
+class TestTargets:
+    def test_kiosks_only_at_a_point_of_sale_stops_its_kiosk_and_its_till_keeps_selling(self, b):
+        _kiosk_in_bar(b)
+        _tblock(b, "area", b.bar.id, reach="kiosks", kind="blocked")
+        assert (_sells(b, b.h1), _sells(b, b.h2)) == (True, False)
+        assert _row(b, b.h1)["blocks"] == [], "a till is never sent a kiosks-only block"
+        assert [x["target"] for x in _row(b, b.h2)["blocks"]] == ["kiosks"]
+
+    def test_tills_only_at_the_shop_stops_the_tills_and_the_kiosk_keeps_selling(self, b):
+        _tblock(b, "shop", b.h_shop.id, reach="tills")
+        assert (_sells(b, b.h1), _sells(b, b.h2), _sells(b, b.a1)) == (False, True, True)
+        assert _row(b, b.h2)["blocks"] == []
+
+    def test_a_kiosk_of_another_point_of_sale_is_not_reached(self, b):
+        _tblock(b, "area", b.bar.id, reach="kiosks")
+        assert _sells(b, b.h2) is True, "the kiosk stands in no point of sale"
+
+    def test_the_older_kiosks_scope_is_written_as_the_shop_for_kiosks(self, b):
+        mark = _block(b, "kiosks", b.h_shop.id)
+        assert (mark.scope, mark.target) == ("shop", "kiosks")
+        assert (_sells(b, b.h1), _sells(b, b.h2)) == (True, False)
+        one = _block(b, "kiosk", b.h2.id)
+        assert (one.scope, one.target) == ("machine", "kiosks")
+
+    def test_an_older_kiosks_row_stays_readable_and_is_the_same_block(self, b):
+        old = SoldOutMark(
+            id=uuid.uuid4(), tenant_id=b.tid, company_id=b.H.id, shop_id=b.h_shop.id, product_id=b.P.id,
+            scope="kiosks", scope_id=b.h_shop.id, target="kiosks", kind="sold_out", source="manual",
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        )
+        b.db.add(old)
+        b.db.commit()
+        assert (_sells(b, b.h1), _sells(b, b.h2)) == (True, False)
+        again = _tblock(b, "shop", b.h_shop.id, reach="kiosks", until=datetime.now(timezone.utc) + timedelta(hours=1))
+        assert again.id == old.id, "updated, not doubled"
+        assert svc.target_of(old) == "kiosks" and svc.level_of(old) == "shop"
+
+    def test_all_kiosks_for_the_tills_only_is_refused(self, b):
+        target = svc.resolve_target(b.db, "kiosks", b.h_shop.id, b.tid)
+        with pytest.raises(HTTPException) as refused:
+            svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, reach="tills", user=b.users.admin)
+        assert refused.value.detail["code"] == "target_conflict"
+
+    def test_only_the_reached_devices_wake(self, b):
+        _kiosk_in_bar(b)
+        _tblock(b, "area", b.bar.id, reach="tills")
+        assert {m for m, _ in b.signals} == {str(b.h1.id)}
+        b.signals.clear()
+        _tblock(b, "area", b.bar.id, reach="kiosks")
+        assert {m for m, _ in b.signals} == {str(b.h2.id)}
+
+
+class TestCategories:
+    def test_a_category_block_stops_every_product_in_it_and_below_it(self, b):
+        parent, child = _sub_category(b)
+        _tblock(b, "shop", b.h_shop.id, category=parent, kind="blocked")
+        assert _row(b, b.h1)["isAvailable"] is False
+        assert _row(b, b.h1, product=b.Q)["isAvailable"] is False, "a product of a sub-category"
+        sent = _row(b, b.h1, product=b.Q)["blocks"][0]
+        assert (sent["categoryId"], sent["productId"]) == (str(parent.id), None)
+
+    def test_a_sub_category_block_leaves_the_parent_category_selling(self, b):
+        parent, child = _sub_category(b)
+        _tblock(b, "shop", b.h_shop.id, category=child)
+        assert (_row(b, b.h1)["isAvailable"], _row(b, b.h1, product=b.Q)["isAvailable"]) == (True, False)
+
+    def test_a_category_block_and_its_removal_reach_a_delta_pull(self, b):
+        parent, _child = _sub_category(b)
+        since = datetime.now(timezone.utc) - timedelta(seconds=1)
+        mark = _tblock(b, "shop", b.h_shop.id, category=parent)
+        assert _row(b, b.h1, product=b.Q, since=since)["isAvailable"] is False
+        later = datetime.now(timezone.utc)
+        svc.clear(b.db, mark, user=b.users.admin, now=later + timedelta(seconds=1))
+        b.db.commit()
+        row = _row(b, b.h1, product=b.Q, since=later)
+        assert row is not None and row["isAvailable"] is True
+
+    def test_the_list_finds_a_products_category_blocks(self, b):
+        parent, _child = _sub_category(b)
+        _tblock(b, "shop", b.h_shop.id, category=parent)
+        rows = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], product_id=b.Q.id)
+        assert [(r["itemType"], r["itemName"]) for r in rows] == [("category", parent.name)]
+
+    def test_neither_or_both_is_refused(self, b):
+        from app.models.category import Category
+
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        cat = b.db.get(Category, b.P.category_id)
+        for kw in ({}, {"product": b.P, "category": cat}):
+            with pytest.raises(HTTPException) as refused:
+                svc.block(b.db, tenant_id=b.tid, target=target, user=b.users.admin, **kw)
+            assert refused.value.detail["code"] == "item_required"
+
+
+class TestKioskLook:
+    def test_hide_rides_on_the_kiosk_config(self, b):
+        from app.models.category import Category
+        from app.services import kiosk_config as cfgsvc
+
+        if not b.db.get_bind().dialect.has_table(b.db.connection(), "kiosk_settings"):
+            Base.metadata.tables["kiosk_settings"].create(b.db.get_bind())
+        _tblock(b, "shop", b.h_shop.id, reach="kiosks", display="hide")
+        cat = b.db.get(Category, b.P.category_id)
+        _tblock(b, "shop", b.h_shop.id, reach="kiosks", category=cat, display="hide", kind="blocked")
+        cfg = cfgsvc.effective_config(b.db, b.h2)
+        assert str(b.P.id) in cfg["catalog"]["hiddenProducts"]
+        assert str(cat.id) in cfg["catalog"]["hiddenCategories"]
+        assert svc.kiosk_hidden(b.db, b.h1) == ([], []), "a till has no kiosk config to hide in"
+
+    def test_grey_is_sent_on_the_row(self, b):
+        _tblock(b, "shop", b.h_shop.id, display="grey")
+        assert _row(b, b.h2)["kioskDisplay"] == "grey"
+        assert _row(b, b.h2, product=b.Q)["kioskDisplay"] is None
+
+
+class TestListFilters:
+    def test_by_point_of_sale_and_by_target(self, b):
+        lobby = ShopArea(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, name="Lobby")
+        b.db.add(lobby)
+        b.db.commit()
+        _tblock(b, "shop", b.h_shop.id, reach="kiosks")
+        _tblock(b, "area", b.bar.id, reach="tills", product=b.Q)
+        _tblock(b, "area", lobby.id)
+        _tblock(b, "machine", b.h1.id, kind="blocked")
+        bar = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], area_id=b.bar.id)
+        assert sorted(r["level"] for r in bar) == ["area", "machine", "shop"], "not the lobby's"
+        kiosks = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], target="kiosks")
+        assert [(r["level"], r["target"]) for r in kiosks] == [("shop", "kiosks")]
+        tills = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], target="tills")
+        assert [r["level"] for r in tills] == ["area"]
+
+
+@pytest.fixture
+def dev(b):
+    """The world with till users: a manager (legacy: everything), a cashier (asks a manager), another shop's manager."""
+    from app.models.pos_user import PosUser, PosUserRole
+
+    # till_parameters / values: a controlling till is checked against areaScopeLock (feat/area-lock, merged
+    # beside this branch at the integration; app/services/area_lock.py reads the parameter).
+    for name in ("employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values"):
+        if name in Base.metadata.tables and not b.db.get_bind().dialect.has_table(b.db.connection(), name):
+            Base.metadata.tables[name].create(b.db.get_bind())
+    b.mgr = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, username="mgr", first_name="Dana",
+                    pin_hash="x", role=PosUserRole.SHOP_MANAGER, is_active=True)
+    b.cashier = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, username="cash", pin_hash="x",
+                        role=PosUserRole.CASHIER, is_active=True)
+    b.other_mgr = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.a_shop.id, username="far", pin_hash="x",
+                          role=PosUserRole.SHOP_MANAGER, is_active=True)
+    b.db.add_all([b.mgr, b.cashier, b.other_mgr])
+    b.db.commit()
+    return b
+
+
+def _dev_block(w, machine, approver, **body):
+    payload = {"productId": w.P.id, **body}
+    return R.device_block(
+        str(machine.id), R.DeviceBlockIn(**payload), pos_user_id=str(approver.id) if approver else None,
+        machine=machine, db=w.db,
+    )
+
+
+def _refusal(out):
+    assert hasattr(out, "status_code"), out
+    return out.status_code, json.loads(out.body)["detail"]["code"]
+
+
+class TestDevices:
+    def test_a_till_blocks_for_its_own_point_of_sale_by_default(self, dev):
+        out = _dev_block(dev, dev.h1, dev.mgr, kind="blocked", note="נגמר")
+        block = out["block"]
+        assert (block["level"], block["scopeId"], block["target"], block["origin"]) == ("area", str(dev.bar.id), "all", "till")
+        assert block["by"].startswith("h1") and block["removable"] is True
+        assert _sells(dev, dev.h1) is False
+
+    def test_a_cashier_alone_or_a_manager_of_another_shop_is_refused(self, dev):
+        for who in (dev.cashier, dev.other_mgr, None):
+            assert _refusal(_dev_block(dev, dev.h1, who)) == (403, "item_block_requires_manager")
+        assert dev.db.query(SoldOutMark).count() == 0
+
+    def test_a_till_never_blocks_another_point_of_sale_or_shop(self, dev):
+        lobby = ShopArea(id=uuid.uuid4(), tenant_id=dev.tid, shop_id=dev.h_shop.id, name="Lobby")
+        dev.db.add(lobby)
+        dev.db.commit()
+        assert _refusal(_dev_block(dev, dev.h1, dev.mgr, level="area", levelId=lobby.id))[0] == 403
+        assert _refusal(_dev_block(dev, dev.h1, dev.mgr, level="machine", levelId=dev.a1.id))[0] == 404
+        assert _refusal(_dev_block(dev, dev.h1, dev.mgr, level="machine", levelId=dev.h2.id))[0] == 403, "not in its point of sale"
+
+    def test_a_till_blocks_the_shop_for_the_kiosks_only(self, dev):
+        out = _dev_block(dev, dev.h1, dev.mgr, level="shop", target="kiosks", kioskDisplay="hide")
+        assert (out["block"]["level"], out["block"]["target"], out["block"]["kioskDisplay"]) == ("shop", "kiosks", "hide")
+        assert (_sells(dev, dev.h1), _sells(dev, dev.h2)) == (True, False)
+
+    def test_a_kiosk_blocks_for_kiosks_whatever_it_asks(self, dev):
+        out = _dev_block(dev, dev.h2, dev.mgr, level="shop", target="all")
+        assert (out["block"]["target"], out["block"]["origin"]) == ("kiosks", "kiosk")
+        assert (_sells(dev, dev.h1), _sells(dev, dev.h2)) == (True, False)
+
+    def test_a_controlling_till_blocks_on_its_kiosk(self, dev):
+        device = dev.db.get(KioskDevice, dev.h2.id)
+        device.controller_machine_ids = [str(dev.h1.id)]
+        dev.db.commit()
+        out = _dev_block(dev, dev.h1, dev.mgr, level="machine", kioskId=dev.h2.id)
+        assert (out["block"]["level"], out["block"]["scopeId"], out["block"]["target"], out["block"]["origin"]) == (
+            "machine", str(dev.h2.id), "kiosks", "controller",
+        )
+        assert (_sells(dev, dev.h1), _sells(dev, dev.h2)) == (True, False)
+        device.controller_machine_ids = []
+        dev.db.commit()
+        with pytest.raises(HTTPException):
+            R.device_blocks(str(dev.h1.id), kiosk_id=dev.h2.id, machine=dev.h1, db=dev.db)
+
+    def test_now_blocked_for_the_point_of_sale_and_one_tap_unblock(self, dev):
+        _block(dev, "company", dev.H.id)
+        mine = _dev_block(dev, dev.h1, dev.mgr, productId=None, categoryId=dev.P.category_id)
+        listed = R.device_blocks(str(dev.h1.id), kiosk_id=None, machine=dev.h1, db=dev.db)
+        assert listed["context"]["areaName"] == "Bar" and listed["context"]["isKiosk"] is False
+        by_level = {r["level"]: r for r in listed["blocks"]}
+        assert by_level["company"]["removable"] is False and by_level["area"]["removable"] is True
+        assert by_level["area"]["itemType"] == "category"
+        refused = R.device_clear(
+            str(dev.h1.id), uuid.UUID(by_level["company"]["id"]), pos_user_id=str(dev.mgr.id), machine=dev.h1, db=dev.db,
+        )
+        assert _refusal(refused) == (403, "not_from_here")
+        cleared = R.device_clear(
+            str(dev.h1.id), uuid.UUID(mine["block"]["id"]), pos_user_id=str(dev.mgr.id), machine=dev.h1, db=dev.db,
+        )
+        assert cleared["inForce"] is False and cleared["clearedBy"].startswith("h1")
+
+
+class TestQuickHidesAreBlocks:
+    def test_the_migration_copies_the_quick_hides_in_force_under_their_ids(self, b):
+        import importlib.util
+
+        from sqlalchemy import text
+
+        from app.models.kiosk_live import KioskQuickHide
+
+        if not b.db.get_bind().dialect.has_table(b.db.connection(), "kiosk_quick_hides"):
+            Base.metadata.tables["kiosk_quick_hides"].create(b.db.get_bind())
+        # Not resolve(): P: would turn into the long path the loader cannot open.
+        path = pathlib.Path(__file__).parent.parent / "alembic" / "versions" / "c7d1a9e4f2b6_item_block_targets.py"
+        spec = importlib.util.spec_from_file_location("ib_migration", path)
+        mig = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mig)
+        now = datetime.now(timezone.utc)
+
+        def hide(kind, item, until=None, cleared=None):
+            row = KioskQuickHide(
+                id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, kind=kind, item_id=item, until=until,
+                cleared_at=cleared, note="הגריל סגור", created_by_name="dana",
+                created_at=now - timedelta(minutes=5), updated_at=now - timedelta(minutes=5),
+            )
+            b.db.add(row)
+            return row
+
+        live = hide("product", b.P.id, until=now + timedelta(hours=2))
+        cat = hide("category", b.P.category_id)
+        hide("product", b.Q.id, until=now - timedelta(minutes=1))
+        hide("product", b.Q.id, cleared=now - timedelta(minutes=1))
+        older = SoldOutMark(
+            id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, product_id=b.Q.id, scope="kiosks",
+            scope_id=b.h_shop.id, kind="sold_out", source="manual", created_at=now, updated_at=now,
+        )
+        b.db.add(older)
+        b.db.commit()
+        b.db.execute(text(mig.BACKFILL_TARGET))
+        for statement in mig.BACKFILL_CHANNELS:
+            b.db.execute(text(statement))
+        b.db.execute(text(mig.COPY_HIDES))
+        b.db.execute(text(mig.COPY_HIDES))  # idempotent
+        b.db.commit()
+        b.db.expire_all()
+        copied = {m.id: m for m in b.db.query(SoldOutMark).filter(SoldOutMark.origin == "kiosk_hide").all()}
+        assert set(copied) == {live.id, cat.id}, "only those in force, under their own ids"
+        p = copied[live.id]
+        assert (p.scope, p.scope_id, p.target, p.kind, p.kiosk_display, p.product_id, p.note) == (
+            "shop", b.h_shop.id, "kiosks", "blocked", "hide", b.P.id, "הגריל סגור",
+        )
+        assert (copied[cat.id].category_id, copied[cat.id].product_id) == (b.P.category_id, None)
+        assert b.db.get(SoldOutMark, older.id).target == "kiosks", "the older kiosks scope backfilled"
+        assert b.db.get(SoldOutMark, older.id).channels == ["kiosk"] and p.channels == ["kiosk"]
+        assert b.db.query(KioskQuickHide).count() == 4, "the old rows stay as they were"
+        assert (_sells(b, b.h1), _sells(b, b.h2)) == (True, False)
+
+
+# ── Channels: pos / kiosk / online / menu, and "מופיע ב" (the owner, 10.10) ──
+
+
+class TestChannels:
+    def _create(self, w, **kw):
+        body = R.BlockIn(productId=w.P.id, targets=[R.TargetIn(scope="shop", scopeId=w.h_shop.id)], **kw)
+        return R.create_blocks(body, current_user=w.users.admin, active_tenant_id=w.tid, db=w.db)["blocks"][0]
+
+    def test_a_new_block_names_all_four_and_an_older_clients_target_keeps_its_meaning(self, b):
+        fresh = self._create(b)
+        assert (fresh["channels"], fresh["target"]) == (["pos", "kiosk", "online", "menu"], "all")
+        older = self._create(b, target="kiosks", kind="blocked")
+        assert (older["channels"], older["target"]) == (["kiosk"], "kiosks")
+
+    def test_online_or_menu_only_reaches_no_device(self, b):
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        mark = svc.block(b.db, tenant_id=b.tid, product=b.Q, target=target, kind="blocked", channels=["online", "menu"], user=b.users.admin)
+        b.db.commit()
+        assert (mark.target, mark.channels) == ("none", ["online", "menu"])
+        assert b.signals == [], "no device to wake"
+        assert _row(b, b.h1, product=b.Q)["blocks"] == [] and _row(b, b.h2, product=b.Q)["blocks"] == []
+        assert (_row(b, b.h1, product=b.Q)["isAvailable"], _row(b, b.h2, product=b.Q)["isAvailable"]) == (True, True)
+
+    def test_the_resolver_answers_online_and_the_menu(self, b):
+        from app.services import product_channels
+
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, kind="sold_out", channels=["online"], user=b.users.admin)
+        b.db.commit()
+        online = svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="online", product_ids=[b.P.id, b.Q.id])
+        assert (online[str(b.P.id)]["state"], online[str(b.Q.id)]["state"]) == ("sold_out", "available")
+        assert online[str(b.P.id)]["appears"] is False, "online starts off until published"
+        menu = svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="menu", product_ids=[b.P.id])
+        assert menu[str(b.P.id)]["state"] == "available"
+        product_channels.apply(b.P, appears=("pos", "kiosk", "online"))
+        b.db.commit()
+        assert svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="online", product_ids=[b.P.id])[str(b.P.id)]["appears"] is True
+        with pytest.raises(HTTPException):
+            svc.resolve_channel(b.db, tenant_id=b.tid, shop_id=b.h_shop.id, channel="fax", product_ids=[b.P.id])
+
+    def test_the_list_filters_by_channel(self, b):
+        target = svc.resolve_target(b.db, "shop", b.h_shop.id, b.tid)
+        svc.block(b.db, tenant_id=b.tid, product=b.P, target=target, channels=["menu"], user=b.users.admin)
+        svc.block(b.db, tenant_id=b.tid, product=b.Q, target=target, channels=["pos"], user=b.users.admin)
+        b.db.commit()
+        menu = svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], channel="menu")
+        assert [r["productId"] for r in menu] == [str(b.P.id)]
+        assert [r["productId"] for r in svc.list_blocks(b.db, tenant_id=b.tid, shop_ids=[b.h_shop.id], target="none")] == [str(b.P.id)]
+
+    def test_no_channel_at_all_is_refused(self, b):
+        with pytest.raises(Exception):
+            R.BlockIn(productId=b.P.id, targets=[R.TargetIn(scope="shop", scopeId=b.h_shop.id)], channels=[])
+
+
+class TestAppearsIn:
+    def test_until_set_it_is_what_the_sales_channel_said(self, b):
+        from app.services import product_channels as PC
+
+        assert PC.appears_in(b.P) == ("pos", "kiosk")
+        b.P.sales_channel = "pos_only"
+        assert PC.appears_in(b.P) == ("pos",)
+        assert not PC.appears(b.P, "online") and not PC.appears(b.P, "menu")
+
+    def test_set_it_moves_the_sales_channel_and_a_product_in_neither_leaves_every_device(self, b):
+        from app.services import product_channels as PC
+
+        PC.apply(b.P, appears=PC.clean(["kiosk", "pos", "menu"]))
+        b.db.commit()
+        assert (b.P.appears_in, b.P.sales_channel) == (["pos", "kiosk", "menu"], "all")
+        till_row, kiosk_row = _row(b, b.h1), _row(b, b.h2)
+        assert till_row["appearsIn"] == ["pos", "kiosk", "menu"] and till_row["salesChannel"] == "all"
+        PC.apply(b.P, appears=("online",))
+        b.db.commit()
+        # Neither the tills nor the kiosk: each device kind is told the other one's only.
+        assert (_row(b, b.h1)["salesChannel"], _row(b, b.h2)["salesChannel"]) == ("kiosk_only", "pos_only")
+
+    def test_a_sales_channel_alone_keeps_online_and_the_menu(self, b):
+        from app.services import product_channels as PC
+
+        PC.apply(b.P, appears=("pos", "kiosk", "online", "menu"))
+        b.P.sales_channel = "pos_only"
+        PC.apply(b.P, sales_channel_changed=True)
+        assert b.P.appears_in == ["pos", "online", "menu"]
+        with pytest.raises(PC.ChannelsInvalid):
+            PC.clean(["pos", "fax"])
+
+    def test_the_response_resolves_it(self, b):
+        from app.schemas.product import ProductUpdate
+
+        update = ProductUpdate.model_validate({"appearsIn": ["menu", "pos"]})
+        assert update.appears_in == ["menu", "pos"] and "appears_in" not in update.model_dump(exclude_unset=True)

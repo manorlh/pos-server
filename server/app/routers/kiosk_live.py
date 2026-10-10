@@ -10,6 +10,10 @@ DELETE /kiosks/{machine_id}/banner      → KioskSummary
 POST   /kiosks/live/hides               {shopId, kind, itemId, duration, note?} → Hide
 POST   /kiosks/live/hides/{id}/extend   {minutes} → Hide
 DELETE /kiosks/live/hides/{id}          → Hide ("הצג שוב")
+
+A "Hide" is a block (app/services/sold_out.py, specs/item-blocks-targets.md): the list holds every
+hand block in force of the shop that reaches its kiosks, a new hide is a shop-level kiosks-only
+"חסום" that hides, and extend / remove act on any of them by its id.
 """
 from __future__ import annotations
 
@@ -23,11 +27,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.middleware.auth import get_active_tenant_id, get_current_user
-from app.models.kiosk_live import KioskQuickHide
+from app.models.sold_out import SoldOutMark
 from app.models.shop import Shop
 from app.models.user import User
 from app.routers.item_blocks import DurationIn, ExtendIn, _end
-from app.services import block_durations
 from app.services import kiosk_control
 from app.services import kiosk_live as svc
 
@@ -85,10 +88,15 @@ def live_panel(
             raise HTTPException(status_code=404, detail="Shop not found")
         kiosk_control.check_shop_scope(db, current_user, shop, active_tenant_id)
         shop_ids.add(str(shop_id))
-    hides = svc.active_hides(db, [uuid.UUID(s) for s in shop_ids])
-    db.commit()
     now = _now()
-    return {"kiosks": kiosks, "hides": [svc.hide_out(h, now) for h in hides], "serverTime": now.isoformat()}
+    hides = svc.active_hides(db, [uuid.UUID(s) for s in shop_ids], now)
+    if narrow is not None:
+        from app.routers.item_blocks import _covers
+
+        hides = [h for h in hides if _covers(db, narrow, h.scope, h.scope_id)]
+    out = svc.hides_out(db, hides, now)
+    db.commit()
+    return {"kiosks": kiosks, "hides": out, "serverTime": now.isoformat()}
 
 
 @router.put("/{machine_id}/banner")
@@ -174,14 +182,17 @@ def create_hide(
     )
     db.commit()
     _wake_shop_kiosks(db, shop.id)
-    return {**svc.hide_out(row, now), "rolled": end.rolled}
+    return {**svc.hide_out(db, row, now), "rolled": end.rolled}
 
 
-def _hide_or_404(db: Session, user: User, hide_id: uuid.UUID, tenant_id) -> KioskQuickHide:
-    row = db.get(KioskQuickHide, hide_id)
-    if row is None or str(row.tenant_id) != str(tenant_id):
+def _hide_or_404(db: Session, user: User, hide_id: uuid.UUID, tenant_id) -> SoldOutMark:
+    """A block of a shop, in the user's scope (a manager of points of sale: one of theirs)."""
+    from app.routers.item_blocks import _check_mark
+
+    row = db.get(SoldOutMark, hide_id)
+    if row is None or str(row.tenant_id) != str(tenant_id) or row.shop_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="hide_not_found")
-    _shop_checked(db, user, row.shop_id, tenant_id)
+    _check_mark(db, user, row, tenant_id)
     return row
 
 
@@ -193,17 +204,14 @@ def extend_hide(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
+    from app.services import sold_out
+
     row = _hide_or_404(db, current_user, hide_id, active_tenant_id)
     now = _now()
-    try:
-        until = row.until if row.until is None or row.until.tzinfo else row.until.replace(tzinfo=timezone.utc)
-        row.until = block_durations.extend(until, now, body.minutes)
-    except block_durations.DurationRefused as refused:
-        raise HTTPException(status_code=422, detail={"code": refused.code, "message": refused.message}) from refused
-    row.updated_at = now
+    sold_out.extend(db, row, body.minutes, now=now)
     db.commit()
     _wake_shop_kiosks(db, row.shop_id)
-    return svc.hide_out(row, now)
+    return svc.hide_out(db, row, now)
 
 
 @router.delete("/live/hides/{hide_id}")
@@ -214,7 +222,8 @@ def delete_hide(
     db: Session = Depends(get_db),
 ):
     row = _hide_or_404(db, current_user, hide_id, active_tenant_id)
-    svc.show(db, row, user=current_user)
+    now = _now()
+    svc.show(db, row, user=current_user, now=now)
     db.commit()
     _wake_shop_kiosks(db, row.shop_id)
-    return svc.hide_out(row)
+    return svc.hide_out(db, row, now)

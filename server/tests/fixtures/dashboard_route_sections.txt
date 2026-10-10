@@ -215,6 +215,7 @@ GET /item-blocks -> item_blocks:view
 POST /item-blocks -> item_blocks:edit
 POST /item-blocks/clear -> item_blocks:edit
 POST /item-blocks/end-preview -> item_blocks:view
+GET /item-blocks/resolve -> item_blocks:view
 GET /item-blocks/targets -> item_blocks:view
 DELETE /item-blocks/{block_id} -> item_blocks:edit
 POST /item-blocks/{block_id}/extend -> item_blocks:edit
@@ -645,6 +646,9 @@ POST /sync/{machine_id}/close-day/ack -> till
 GET /sync/{machine_id}/device-commands -> till
 POST /sync/{machine_id}/device-commands/unlocked -> till
 POST /sync/{machine_id}/device-commands/{command_id}/ack -> till
+GET /sync/{machine_id}/item-blocks -> till
+POST /sync/{machine_id}/item-blocks -> till
+POST /sync/{machine_id}/item-blocks/{block_id}/clear -> till
 POST /sync/{machine_id}/kds/actions -> till
 GET /sync/{machine_id}/kds/board -> till
 GET /sync/{machine_id}/kds/device -> till

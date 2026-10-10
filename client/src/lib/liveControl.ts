@@ -8,6 +8,22 @@
 
 export type BlockScope = 'company' | 'shop' | 'kiosks' | 'area' | 'group' | 'event' | 'machine' | 'kiosk';
 export type BlockKind = 'sold_out' | 'blocked';
+/**
+ * Where a block stops the item (specs/item-blocks-targets.md §11): "קופה", "קיוסק", "הזמנות אונליין",
+ * "תפריט דיגיטלי" — any of the four; a new block: all four.
+ */
+export type BlockChannel = 'pos' | 'kiosk' | 'online' | 'menu';
+/**
+ * What the channels mean for the devices (§2, kept for older devices): "all" = קופה + קיוסק ·
+ * "kiosks" = קיוסק · "tills" = קופה · "none" = neither (online ordering / the digital menu only).
+ */
+export type BlockTarget = 'all' | 'kiosks' | 'tills' | 'none';
+/** The kiosks' look for one block; null = the kiosk's own `general.soldOutMode`. */
+export type KioskDisplay = 'hide' | 'grey';
+/** The level a block is at (the older scopes `kiosks` / `kiosk` read as shop / machine). */
+export type BlockLevel = 'company' | 'shop' | 'area' | 'group' | 'event' | 'machine';
+/** Where it was set from. */
+export type BlockOrigin = 'dashboard' | 'till' | 'kiosk' | 'controller' | 'kiosk_hide' | 'stock';
 
 export interface ItemBlock {
   id: string;
@@ -20,7 +36,8 @@ export interface ItemBlock {
   createdAt: string | null;
   by: string | null;
   note: string | null;
-  productId: string;
+  /** Null for a block of a whole category. */
+  productId: string | null;
   productName: string | null;
   imageUrl?: string | null;
   shopId: string | null;
@@ -28,6 +45,19 @@ export interface ItemBlock {
   scopeName: string | null;
   secondsLeft: number | null;
   inForce: boolean;
+  /** Derived by the server from `channels`, for older devices. */
+  target?: BlockTarget;
+  /** The channels it stops the item on; absent on a block from an older server (read by its target). */
+  channels?: BlockChannel[];
+  level?: BlockLevel;
+  itemType?: 'product' | 'category';
+  /** The product's name, or the category's. */
+  itemName?: string | null;
+  /** A category block: the category; a product block: the product's category. */
+  categoryId?: string | null;
+  categoryName?: string | null;
+  kioskDisplay?: KioskDisplay | null;
+  origin?: BlockOrigin | null;
 }
 
 export type DurationMode = 'none' | 'minutes' | 'time' | 'end_of_day';
@@ -39,7 +69,10 @@ export interface DurationChoice {
   at?: string;
 }
 
-/** The quick presets: 15 דק׳, 30 דק׳, שעה, שעתיים, 4 שעות. */
+/**
+ * The quick presets: 15 דק׳, 30 דק׳, שעה, שעתיים, 4 שעות — next to "עד שעה…", "עד סוף היום" and
+ * "עד ביטול" in the duration picker.
+ */
 export const DURATION_PRESETS = [15, 30, 60, 120, 240] as const;
 /** "הארך". */
 export const EXTEND_BY = [15, 30, 60] as const;
@@ -82,7 +115,7 @@ export function secondsLeft(until: string | null | undefined, nowMs: number): nu
   return Math.floor((end - nowMs) / 1000);
 }
 
-/** "עוד 47 דק׳", "עוד 2 ש׳ 5 דק׳", "עוד פחות מדקה", "הסתיים"; null with no end ("עד שאבטל"). */
+/** "עוד 47 דק׳", "עוד 2 ש׳ 5 דק׳", "עוד פחות מדקה", "הסתיים"; null with no end ("עד ביטול"). */
 export function formatLeft(seconds: number | null): string | null {
   if (seconds == null) return null;
   if (seconds <= 0) return 'הסתיים';
@@ -132,12 +165,176 @@ export function kindLabel(kind: BlockKind): string {
   return kind === 'blocked' ? 'חסום' : 'אזל';
 }
 
-/** One line about a block: "אזל · נקודת מכירה · בר · עד 14:35 (עוד 47 דק׳)". */
-export function blockSummary(b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'>, nowMs: number, timeZone?: string): string {
-  const parts = [kindLabel(b.kind), scopeLabel(b.scope, b.scopeName)];
+export const LEVEL_LABELS: Record<BlockLevel, string> = {
+  company: 'חברה',
+  shop: 'סניף',
+  area: 'נקודת מכירה',
+  group: 'קבוצת מכשירים',
+  event: 'אירוע',
+  machine: 'מכשיר',
+};
+
+export const TARGET_LABELS: Record<BlockTarget, string> = {
+  all: 'קופות וקיוסקים',
+  kiosks: 'קיוסקים בלבד',
+  tills: 'קופות בלבד',
+  none: 'אונליין ותפריט בלבד',
+};
+
+/** The four channels, in their order (the dialog's checkboxes, the labels' order). */
+export const BLOCK_CHANNELS: readonly BlockChannel[] = ['pos', 'kiosk', 'online', 'menu'];
+
+export const CHANNEL_LABELS: Record<BlockChannel, string> = {
+  pos: 'קופה',
+  kiosk: 'קיוסק',
+  online: 'הזמנות אונליין',
+  menu: 'תפריט דיגיטלי',
+};
+
+/** "תצוגה בקיוסק" — the key `null` is the kiosk's own setting. */
+export const KIOSK_DISPLAY_LABELS: Record<'null' | KioskDisplay, string> = {
+  null: 'לפי הגדרת הקיוסק',
+  hide: 'הסתר',
+  grey: 'הצג כאזל',
+};
+
+/** The row's badge for a block's own kiosk look. */
+export const KIOSK_LOOK_BADGES: Record<KioskDisplay, string> = {
+  hide: 'מוסתר בקיוסק',
+  grey: 'באפור בקיוסק',
+};
+
+export const ORIGIN_LABELS: Record<BlockOrigin, string> = {
+  dashboard: 'דשבורד',
+  till: 'קופה',
+  kiosk: 'קיוסק',
+  controller: 'קופה שולטת',
+  kiosk_hide: 'מוסתר בקיוסקים',
+  stock: 'מלאי',
+};
+
+export function kioskDisplayLabel(d: KioskDisplay | null | undefined): string {
+  return KIOSK_DISPLAY_LABELS[d ?? 'null'];
+}
+
+export function originLabel(origin: string | null | undefined): string | null {
+  if (!origin) return null;
+  return ORIGIN_LABELS[origin as BlockOrigin] ?? origin;
+}
+
+const LEGACY_KIOSK_SCOPES: readonly BlockScope[] = ['kiosks', 'kiosk'];
+
+/** What each target meant, as channels (a block written before channels). */
+const TARGET_CHANNELS: Record<BlockTarget, readonly BlockChannel[]> = {
+  all: ['pos', 'kiosk'],
+  kiosks: ['kiosk'],
+  tills: ['pos'],
+  none: [],
+};
+
+type ChannelsOfInput = Pick<ItemBlock, 'scope'> & { target?: BlockTarget | null; channels?: readonly string[] | null };
+
+/** Known channels only, each once, in the channels' order. */
+export function orderedChannels(list: Iterable<string>): BlockChannel[] {
+  const named = new Set(list);
+  return BLOCK_CHANNELS.filter((c) => named.has(c));
+}
+
+/**
+ * The channels a block stops the item on, as pos-server sold_out_rules.py `channels_of` reads them:
+ * its own `channels`; one without (an older server / row), what its target meant — "all" (or none)
+ * = קופה + קיוסק, never online nor the menu. An older kiosks / kiosk scope is for kiosks only.
+ */
+export function channelsOf(b: ChannelsOfInput): BlockChannel[] {
+  const legacy = LEGACY_KIOSK_SCOPES.includes(b.scope);
+  if (Array.isArray(b.channels)) {
+    const own = orderedChannels(b.channels);
+    return legacy ? own.filter((c) => c === 'kiosk') : own;
+  }
+  const target = b.target ?? 'all';
+  // "All the shop's kiosks" for the tills only contradicts itself: nothing, never wider.
+  if (legacy) return target === 'all' || target === 'kiosks' ? ['kiosk'] : [];
+  return [...(TARGET_CHANNELS[target] ?? TARGET_CHANNELS.all)];
+}
+
+/** What the channels mean for the devices (pos-server `target_for`). */
+export function targetForChannels(channels: readonly BlockChannel[]): BlockTarget {
+  const pos = channels.includes('pos');
+  const kiosk = channels.includes('kiosk');
+  if (pos && kiosk) return 'all';
+  if (kiosk) return 'kiosks';
+  if (pos) return 'tills';
+  return 'none';
+}
+
+/** Whom of the devices the block reaches: from its channels (an older kiosks / kiosk scope: the kiosks). */
+export function targetOf(b: ChannelsOfInput): BlockTarget {
+  return targetForChannels(channelsOf(b));
+}
+
+/** Every one of the four. */
+export function isAllChannels(channels: readonly BlockChannel[]): boolean {
+  return BLOCK_CHANNELS.every((c) => channels.includes(c));
+}
+
+/** "כל הערוצים" for all four, else "קיוסק · תפריט דיגיטלי" (in the channels' order); "אף ערוץ" for none. */
+export function channelsLabel(channels: readonly BlockChannel[]): string {
+  const named = orderedChannels(channels);
+  if (named.length === 0) return 'אף ערוץ';
+  if (named.length === BLOCK_CHANNELS.length) return 'כל הערוצים';
+  return named.map((c) => CHANNEL_LABELS[c]).join(' · ');
+}
+
+/** The summary's words for channels that are not all four: "רק קיוסק", "רק קופה, קיוסק ותפריט דיגיטלי". */
+function onlyChannelsPhrase(channels: readonly BlockChannel[]): string {
+  const labels = orderedChannels(channels).map((c) => CHANNEL_LABELS[c]);
+  if (labels.length === 0) return 'אף ערוץ';
+  if (labels.length === 1) return `רק ${labels[0]}`;
+  return `רק ${labels.slice(0, -1).join(', ')} ו${labels[labels.length - 1]}`;
+}
+
+/** The level the block is at: its `level`, an older kiosks / kiosk scope as shop / machine. */
+export function levelOf(b: Pick<ItemBlock, 'scope'> & { level?: BlockLevel | null }): BlockLevel {
+  if (b.level) return b.level;
+  if (b.scope === 'kiosks') return 'shop';
+  if (b.scope === 'kiosk') return 'machine';
+  return b.scope;
+}
+
+/** "סניף · הרצליה", "נקודת מכירה · בר", "קיוסק · קיוסק 2" (an older kiosk scope), "מכשיר · קופה 3". */
+export function levelLabel(b: Pick<ItemBlock, 'scope' | 'scopeName'> & { level?: BlockLevel | null }): string {
+  const base = b.scope === 'kiosk' ? 'קיוסק' : LEVEL_LABELS[levelOf(b)] ?? b.scope;
+  return b.scopeName ? `${base} · ${b.scopeName}` : base;
+}
+
+/** The product's name, or "מחלקה · שתייה" for a block of a whole category. */
+export function itemLabel(
+  b: Pick<ItemBlock, 'productId' | 'productName'> & { itemType?: 'product' | 'category'; itemName?: string | null; categoryName?: string | null },
+): string {
+  const isCategory = b.itemType === 'category' || (b.itemType == null && !b.productId);
+  if (isCategory) return `מחלקה · ${b.itemName ?? b.categoryName ?? ''}`.trim();
+  return b.itemName ?? b.productName ?? '';
+}
+
+/**
+ * One line about a block: "אזל · נקודת מכירה · בר · רק קיוסק ותפריט דיגיטלי · עד 14:35 (עוד 47 דק׳)"
+ * (the channels only when not all four).
+ */
+export function blockSummary(
+  b: Pick<ItemBlock, 'kind' | 'scope' | 'scopeName' | 'until'> & {
+    target?: BlockTarget | null;
+    channels?: readonly string[] | null;
+    level?: BlockLevel | null;
+  },
+  nowMs: number,
+  timeZone?: string,
+): string {
+  const parts = [kindLabel(b.kind), levelLabel(b)];
+  const channels = channelsOf(b);
+  if (!isAllChannels(channels)) parts.push(onlyChannelsPhrase(channels));
   const until = formatUntil(b.until, nowMs, timeZone);
   const left = formatLeft(secondsLeft(b.until, nowMs));
-  parts.push(until ? `עד ${until}${left ? ` (${left})` : ''}` : 'עד שאבטל');
+  parts.push(until ? `עד ${until}${left ? ` (${left})` : ''}` : 'עד ביטול');
   return parts.join(' · ');
 }
 
@@ -253,7 +450,7 @@ export function liveItemsFrom(blocks: ItemBlock[], devices: DeviceRow[], nowMs: 
     out.push({
       id: `block:${b.id}`,
       severity: b.kind === 'blocked' ? 'warning' : 'info',
-      title: `${kindLabel(b.kind)} · ${b.productName ?? ''}`.trim(),
+      title: `${kindLabel(b.kind)} · ${itemLabel(b)}`.trim(),
       body: blockSummary(b, nowMs),
       actions: [
         ...(b.until ? EXTEND_BY.map((m) => ({ labelKey: `liveControl.extend${m}`, actionId: 'block.extend', context: { blockId: b.id, minutes: m } })) : []),
