@@ -633,7 +633,8 @@ def devices_of(db: Session, wake: Wake) -> List[Tuple[str, str]]:
         from app.models.kiosk import KioskDevice
 
         for level, ident in wake.kiosks:
-            q = db.query(KioskDevice.tenant_id, KioskDevice.machine_id)
+            # A till's kiosk-mode row (home_role "till") is no kiosk: the tills are woken by their own layers.
+            q = db.query(KioskDevice.tenant_id, KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
             if level == "machine":
                 q = q.filter(KioskDevice.machine_id == _uuid(ident))
             elif level == "shop":
