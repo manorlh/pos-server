@@ -321,7 +321,9 @@ def build_snapshot(db: Session, shop: Shop) -> Dict[str, Any]:
     exactly what they were getting:
 
     * `products` — `{global_id: row}` for every global product assigned to the shop (its
-      price and listing), as `_serialize_merged_product` makes it with no till of its own;
+      price and listing), as `_serialize_merged_product` makes it with no till of its own (its
+      `salesChannel` is a till's; each device is served the one its kind reads, from the row's
+      `appearsIn` — `_sales_channel_for_device`);
     * `productGates` — the gated availability inputs: the product's own flag, its company
       level and (for a product the shop later drops) the shop level as it stood;
     * `categories` — `{id: row}` the shop's tills get (`_categories_for_shop`), with the
@@ -641,6 +643,36 @@ def catalog_pull(db: Session, machine: POSMachine, since: Optional[datetime]) ->
     return Pull(serve(db, machine, shop, publication, since), since)
 
 
+def _device_is_kiosk(db: Session, machine: POSMachine) -> bool:
+    """
+    Whether this device reads the catalog as a kiosk — exactly as the live pull asks it
+    (`sold_out.is_kiosk`: an enabled kiosk row, never a till in kiosk mode — `home_role` "till").
+    """
+    from app.services import sold_out
+
+    try:
+        return bool(sold_out.is_kiosk(db, machine))
+    except Exception:  # noqa: BLE001 - a world without the kiosk tables: a till, as the live pull says
+        return False
+
+
+def _sales_channel_for_device(published: Dict[str, Any], is_kiosk: bool) -> Any:
+    """
+    "מופיע ב" as this device kind reads it, from the publication's own `appearsIn` — the same
+    `product_channels.device_sales_channel` the live pull uses (`_serialize_merged_product`). The
+    snapshot is built with no device of its own, so its `salesChannel` is a till's: a product on
+    neither the tills nor the kiosks would reach a kiosk as "kiosk_only" — shown. A row published
+    before "מופיע ב" (no `appearsIn`) carries the stored code, the same for both kinds: kept.
+    """
+    from app.services import product_channels
+
+    appears = published.get("appearsIn")
+    if not isinstance(appears, list):
+        return published.get("salesChannel")
+    product = SimpleNamespace(appears_in=appears, sales_channel=published.get("salesChannel"))
+    return product_channels.device_sales_channel(product, is_kiosk)
+
+
 def _products_for_till(
     db: Session, machine: POSMachine, shop: Shop, snapshot: Dict[str, Any], since: Optional[datetime]
 ) -> List[Dict[str, Any]]:
@@ -690,6 +722,8 @@ def _products_for_till(
     from app.services import sold_out
 
     blocks_by = sold_out.blocks_for_machine(db, machine, ids, since=since) if ids else {}
+    # A till or a kiosk: "מופיע ב" is sent as the `salesChannel` its kind reads, as live.
+    device_is_kiosk = _device_is_kiosk(db, machine) if rows else False
 
     out: List[Dict[str, Any]] = []
     for key, published in sorted(rows.items(), key=lambda kv: ((kv[1].get("name") or ""), kv[0])):
@@ -736,6 +770,7 @@ def _products_for_till(
             base_in_stock = bool(published.get("inStock", True))
 
         row = dict(published)
+        row["salesChannel"] = _sales_channel_for_device(published, device_is_kiosk)
         row["id"] = str(loc.id) if loc is not None else key
         row["posMachineId"] = str(loc.pos_machine_id) if loc is not None and loc.pos_machine_id else None
         level = loc.catalog_level if loc is not None else (g.catalog_level if g is not None else None)
@@ -898,8 +933,10 @@ def _dropped(
             )
         }
         items = machine_catalog.catalog_items(db, machine.id, ids)
+        device_is_kiosk = _device_is_kiosk(db, machine)
         for key in gone:
             row = dict(old["products"][key])
+            row["salesChannel"] = _sales_channel_for_device(old["products"][key], device_is_kiosk)
             loc = locals_by_global.get(key)
             item = items.get(key)
             row["id"] = str(loc.id) if loc is not None else key
