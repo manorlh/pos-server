@@ -41,6 +41,8 @@ import {
   Search,
   Settings2,
   CalendarClock,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -74,6 +76,7 @@ import {
 import { entitySelectItems } from '@/lib/selectItems';
 import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
 import { toast } from 'sonner';
+import { setTheme, useTheme } from '@/lib/theme';
 
 /**
  * `className` sizes the panel for where it sits (the fixed column on a wide screen, the
@@ -81,6 +84,7 @@ import { toast } from 'sonner';
  */
 export function Sidebar({ className, onNavigate }: { className?: string; onNavigate?: () => void } = {}) {
   const t = useTranslations('nav');
+  const theme = useTheme();
   const tc = useTranslations('common');
   const tps = useTranslations('posSettings');
   // Same list the staff table renders, so the footer never disagrees with it.
@@ -259,7 +263,20 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
     <>
       <aside className={cn('flex flex-col w-60 border-s bg-card h-full print:hidden', className)}>
         <div className="px-4 py-5">
-          <span className="text-lg font-bold tracking-tight">POS Cloud</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-lg font-bold tracking-tight whitespace-nowrap">POS Cloud</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              title={theme === 'dark' ? t('themeLight') : t('themeDark')}
+              aria-label={theme === 'dark' ? t('themeLight') : t('themeDark')}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </Button>
+          </div>
           <div className="mt-3 space-y-2">
             <Select
               value={activeTenantId ?? ''}

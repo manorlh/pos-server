@@ -93,7 +93,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { OverviewTree } from '@/components/dashboard/overview/overview-tree';
 import { TillDetails, TillDetailsTitle } from '@/components/dashboard/overview/till-details';
-import { Wordmark, boardSurface, useSystemDark } from '@/components/dashboard/control-board/board-ui';
+import { Wordmark, boardSurface } from '@/components/dashboard/control-board/board-ui';
 import { useDayNames } from '@/components/dashboard/control-board/board-filters';
 import { BoardKpis } from '@/components/dashboard/control-board/board-kpis';
 import { BoardHourly } from '@/components/dashboard/control-board/board-hourly';
@@ -258,7 +258,6 @@ export default function DashboardPage() {
   const { dayA, dayB } = boardDays(board, today);
   const isToday = dayA === today;
   const names = useDayNames(today);
-  const dark = useSystemDark();
   const isWide = useIsWide();
   const scopeQuery = useScopeQuery((s) => s.query);
   // The machine-admin roles: the ones the till-messages endpoints admit.
@@ -569,7 +568,6 @@ export default function DashboardPage() {
         onChange={pickEvent}
         label={tEvent('label')}
         title={tEvent('pick')}
-        dark={dark}
       />
       {eventId ? (
         <EventPicker
@@ -580,7 +578,6 @@ export default function DashboardPage() {
           label={t('filters.compare')}
           title={tEvent('pickCompare')}
           excludeId={eventId}
-          dark={dark}
         />
       ) : null}
     </>
@@ -641,10 +638,10 @@ export default function DashboardPage() {
     'inline-flex min-h-11 items-center gap-1.5 rounded-full border border-cb-line bg-cb-card px-3 text-sm text-cb-ink hover:bg-cb-soft';
 
   return (
-    // The board's own surface, edge to edge over the shell's padding; `.dark` follows the system.
+    // The board's own surface, edge to edge over the shell's padding; light or dark is the app's (lib/theme).
     <div
       className={cn(
-        boardSurface(dark),
+        boardSurface(),
         '-m-3 min-h-[calc(100dvh-3rem)] bg-cb-page px-3 pt-3 pb-28 sm:-m-4 sm:px-4 sm:pt-4 md:-m-6 md:min-h-dvh md:p-6 lg:p-8',
       )}
     >
@@ -729,7 +726,6 @@ export default function DashboardPage() {
               scopeParams={narrow}
               areas={areas}
               areaId={areaId}
-              dark={dark}
               canSeeVouchers={vouchersAllowed}
               canOpenVouchers={vouchersModule}
               now={now}
@@ -737,7 +733,7 @@ export default function DashboardPage() {
               eventsLoading={eventsLoading}
             />
           ) : (
-          <CockpitProvider scope={cockpitScope} dark={dark} onOpenTill={setSelectedId}>
+          <CockpitProvider scope={cockpitScope} onOpenTill={setSelectedId}>
           {!salesAllowed ? (
             /* ── Without "דוחות": the tills' state only ── */
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-cb-line bg-cb-card p-4 text-sm shadow-[var(--cb-shadow)]">
@@ -932,7 +928,7 @@ export default function DashboardPage() {
           >
             <DialogContent
               className={cn(
-                boardSurface(dark),
+                boardSurface(),
                 'bg-cb-card text-cb-ink',
                 isWide &&
                   'top-0 left-0 h-dvh max-h-dvh w-[26rem] max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 content-start rounded-none rounded-s-2xl data-open:zoom-in-100 data-open:slide-in-from-left-10 data-closed:zoom-out-100 data-closed:slide-out-to-left-10 sm:max-w-[26rem]',

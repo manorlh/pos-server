@@ -116,7 +116,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           open={navOpenAt === pathname}
           onOpenChange={(open) => setNavOpenAt(open ? pathname : null)}
         />
-        <main className="ios-safe-main min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 p-3 sm:p-4 md:p-6 print:overflow-visible print:bg-transparent print:p-0">
+        {/* `relative`: the scroll box is the containing block of anything absolutely positioned
+            inside it (sr-only labels, icons), so none of it escapes and scrolls the whole page. */}
+        <main className="ios-safe-main relative min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 p-3 sm:p-4 md:p-6 print:overflow-visible print:bg-transparent print:p-0">
           {!isLoaded ? (
             <ShellSkeleton />
           ) : !isSignedIn ? null : isSignedIn && !authHydrated ? (

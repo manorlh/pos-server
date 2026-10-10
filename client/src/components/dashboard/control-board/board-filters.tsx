@@ -398,14 +398,12 @@ export function PhoneFilterBar({
   dayB,
   areas,
   areaId,
-  dark,
   eventLine,
   eventSlot,
 }: ScopeFilterProps & {
   today: string;
   dayA: string;
   dayB: string | null;
-  dark: boolean;
   /** With an event chosen: what the bar says instead of the days ("אירוע: …"). */
   eventLine?: string | null;
   /** The event filter, in the sheet; with an event chosen it replaces the days. */
@@ -444,7 +442,7 @@ export function PhoneFilterBar({
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className={cn(boardSurface(dark), 'bg-cb-card text-cb-ink sm:max-w-md')}>
+        <DialogContent className={cn(boardSurface(), 'bg-cb-card text-cb-ink sm:max-w-md')}>
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold">{t('filters.title')}</DialogTitle>
           </DialogHeader>

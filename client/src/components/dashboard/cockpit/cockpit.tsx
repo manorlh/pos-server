@@ -65,12 +65,10 @@ export function useAllowedActions(barOnly: boolean): CockpitAction[] {
 
 export function CockpitProvider({
   scope,
-  dark,
   onOpenTill,
   children,
 }: {
   scope: CockpitScope;
-  dark: boolean;
   /** The till's own sheet (its details and remote actions) — the page's. */
   onOpenTill: (machineId: string) => void;
   children: React.ReactNode;
@@ -104,7 +102,7 @@ export function CockpitProvider({
         <Sheet scope={scope} context={opened?.context} onDone={() => setOpened(null)} />
       ) : null}
       <Dialog open={hosted} onOpenChange={(o) => (o ? null : setOpened(null))}>
-        <DialogContent className={cn(boardSurface(dark), 'bg-cb-card text-cb-ink sm:max-w-lg')}>
+        <DialogContent className={cn(boardSurface(), 'bg-cb-card text-cb-ink sm:max-w-lg')}>
           {hosted && action && Sheet ? (
             <>
               <DialogHeader>
