@@ -82,6 +82,48 @@ describe('the receipt (ReceiptRenderer, 320)', () => {
   });
 });
 
+describe('the receipt with vouchers (as the till: a discount is part of the discount, a goods voucher is a payment)', () => {
+  const base: Parameters<typeof receiptDoc>[0] = {
+    documentType: 320,
+    number: '40000058',
+    copy: 'original',
+    issuedAt: new Date(2026, 9, 10, 12, 0),
+    printedAt: new Date(2026, 9, 10, 12, 1),
+    cashierName: 'קיוסק Windows',
+    business,
+    lines: [{ name: 'המבורגר', qty: 1, unitAgorot: 4200, totalAgorot: 4200, paid: [] }, { name: 'קולה', qty: 2, unitAgorot: 1000, totalAgorot: 2000, paid: [] }],
+    totalAgorot: 5200,
+    netAgorot: 4407,
+    vatAgorot: 793,
+    vatRate: 0.18,
+    tipAgorot: 520,
+    card: { brand: 'visa', last4: '1234', authNum: '0123456', payments: null, firstPaymentAgorot: null },
+    footer: [null, ''],
+    logoUrl: null,
+  };
+  const texts = (r: Parameters<typeof receiptDoc>[0]) => receiptDoc(r).ops.map((o) => ('text' in o ? o.text : 'label' in o ? `${o.label}|${o.value}` : o.t));
+
+  it('a discount voucher is a row of the discount, never a payment: the card pays the goods after it and the tip', () => {
+    const t = texts({ ...base, voucherDiscounts: [{ label: 'שובר #12 — פסטיבל הקיץ', amountAgorot: 1000 }] });
+    expect(t).toContain('שובר #12 — פסטיבל הקיץ|-10.00');
+    expect(t.indexOf('שובר #12 — פסטיבל הקיץ|-10.00')).toBeLessThan(t.indexOf('סה"כ פריטים לתשלום|52.00'));
+    expect(t).toContain('כרטיס אשראי|57.20');
+    expect(t).not.toContain('שובר הפקה|10.00');
+  });
+
+  it('a goods voucher is a payment before the card, which pays what it left (and the tip)', () => {
+    const t = texts({ ...base, voucherLegs: [{ amountAgorot: 1000 }] });
+    expect(t).toContain('שובר הפקה|10.00');
+    expect(t.indexOf('שובר הפקה|10.00')).toBeLessThan(t.indexOf('כרטיס אשראי|47.20'));
+  });
+
+  it('vouchers that paid it all and no card: only their legs', () => {
+    const t = texts({ ...base, tipAgorot: 0, voucherLegs: [{ amountAgorot: 5200 }], card: null });
+    expect(t).toContain('שובר הפקה|52.00');
+    expect(t.some((x) => x.startsWith('כרטיס אשראי'))).toBe(false);
+  });
+});
+
 describe('the kiosk bon and the pickup slip', () => {
   it('"הזמנה A-17 · דנה · שולחן 5", the sale number, the service band, removals apart', () => {
     const b = bonDoc({
