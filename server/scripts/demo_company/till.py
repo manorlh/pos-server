@@ -133,6 +133,10 @@ class VirtualTill:
         self.dealer_type = "licensed"
         self.products: List[Product] = []
         self.counters: Dict[int, int] = {320: 0, 330: 0, 400: 0}
+        #: What this till issues, by the company's "סוג עוסק" (`FiscalDocuments`): a tax invoice-receipt 320
+        #: and a credit note 330 — or, for an exempt dealer, a receipt 400 and a receipt refund -400.
+        self.sale_type = 320
+        self.credit_type = 330
         self.shift_seq = 0
         self.shift: Optional[Shift] = None
         self.outbox: List[dict] = []
@@ -156,6 +160,9 @@ class VirtualTill:
         self.branch_id = bi.get("branchId")
         self.dealer_type = bi.get("dealerType") or merged.get("dealerType") or "company"
         rate = merged.get("globalTaxRate")
+        exempt = self.dealer_type == "exempt"
+        self.sale_type = 400 if exempt else 320
+        self.credit_type = -400 if exempt else 330
         self.vat_rate = 0.0 if self.dealer_type == "exempt" else (float(rate) / 100.0 if rate is not None else 0.18)
         catalog = self.api.till(self.token, "GET", f"/sync/{self.id}/catalog")
         by_name = {it.name: (key, it) for key, _n, _c, items in P.CATEGORIES for it in items}
@@ -277,10 +284,10 @@ class VirtualTill:
             items.append(item)
         doc = {
             "id": str(uuid.uuid4()),
-            "transactionNumber": number or self.next_number(320),
+            "transactionNumber": number or self.next_number(self.sale_type),
             "documentPrefix": self.prefix,
             "status": status,
-            "documentType": 320,
+            "documentType": self.sale_type,
             "documentProductionDate": created,
             "paymentMethod": "cash" if payment == "cash" else "card",
             "tipAmount": sh(tip),
@@ -374,10 +381,10 @@ class VirtualTill:
             self.card_legs.append((uid, -credited))
         doc = {
             "id": str(uuid.uuid4()),
-            "transactionNumber": self.next_number(330),
+            "transactionNumber": self.next_number(self.credit_type),
             "documentPrefix": self.prefix,
             "status": "completed",
-            "documentType": 330,
+            "documentType": self.credit_type,
             "documentProductionDate": created,
             "paymentMethod": orig.method,
             "amountTendered": sh(credited),
@@ -461,8 +468,8 @@ class VirtualTill:
     def till_x(self) -> dict:
         """XReport: the till's own figures over the shift's documents."""
         docs = self.shift.docs
-        sales = [d for d in docs if d["documentType"] == 320]
-        credits = [d for d in docs if d["documentType"] == 330]
+        sales = [d for d in docs if d["documentType"] in (320, 400)]
+        credits = [d for d in docs if d["documentType"] in (330, -400)]
         a = lambda v: jround((v or 0) * 100)  # noqa: E731
 
         def legs(d, method):

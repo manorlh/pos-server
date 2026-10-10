@@ -78,13 +78,13 @@ def build(api, db_factory, vat_number: str, log) -> World:
     # 2. Company: עוסק מורשה with its ח.פ. and address.
     company = api.admin("POST", "/companies", {"name": P.COMPANY_NAME, "vatNumber": vat_number,
                                                "address": P.ADDRESS_STREET, "city": P.ADDRESS_CITY,
-                                               "dealerType": "licensed"})
+                                               "dealerType": P.DEALER_TYPE})
     company_id = str(company["id"])
     api.admin("PATCH", f"/companies/{company_id}/settings", {
         "globalTaxRate": P.GLOBAL_TAX_RATE,
         "businessInfo": {"companyAddressNumber": P.ADDRESS_NUMBER, "companyZip": P.ADDRESS_ZIP},
     })
-    log(f"company {company_id} ח.פ. {vat_number} (licensed)")
+    log(f"company {company_id} ח.פ. {vat_number} ({P.DEALER_TYPE})")
 
     # 3. Branch and its five points of sale.
     shop = api.admin("POST", "/shops", {"name": P.SHOP_NAME, "companyId": company_id, "branchId": P.BRANCH_CODE,
