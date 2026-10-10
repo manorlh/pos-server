@@ -61,7 +61,7 @@ export function postConsentLog(entry: ConsentLogEntry): void {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     credentials: 'omit',
-    keepalive: true,
+    // No `keepalive`: a JSON POST needs a CORS preflight, which keepalive requests may not get.
     body: JSON.stringify(entry),
   }).catch(() => undefined);
 }

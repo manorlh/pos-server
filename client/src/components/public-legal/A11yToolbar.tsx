@@ -145,15 +145,25 @@ export function A11yToolbar({ lang = 'he', statementHref, defaultOpen = false }:
             </button>
           </div>
           <div className="mt-3 flex flex-col gap-2">
-            <button type="button" className={BTN} aria-pressed={prefs.contrast} onClick={() => setA11yPrefs({ contrast: !prefs.contrast })}>
-              {t.a11yContrast}
-            </button>
-            <button type="button" className={BTN} aria-pressed={prefs.links} onClick={() => setA11yPrefs({ links: !prefs.links })}>
-              {t.a11yLinks}
-            </button>
-            <button type="button" className={BTN} aria-pressed={prefs.still} onClick={() => setA11yPrefs({ still: !prefs.still })}>
-              {t.a11yStill}
-            </button>
+            {(
+              [
+                ['contrast', t.a11yContrast],
+                ['links', t.a11yLinks],
+                ['still', t.a11yStill],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={BTN}
+                aria-pressed={prefs[key]}
+                onClick={() => setA11yPrefs({ [key]: !prefs[key] })}
+              >
+                {/* The state in text too (a forced high-contrast palette hides the pressed colour). */}
+                <span aria-hidden="true">{prefs[key] ? '✓' : '○'}</span>
+                {label}
+              </button>
+            ))}
             <button type="button" className={BTN} onClick={() => setA11yPrefs(DEFAULT_A11Y_PREFS)}>
               {t.a11yReset}
             </button>

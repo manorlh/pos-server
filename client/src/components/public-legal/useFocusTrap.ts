@@ -13,7 +13,16 @@ export function focusableIn(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => !el.closest('[aria-hidden="true"]'));
 }
 
-export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean, onEscape?: () => void): void {
+/**
+ * `fallbackId`: where focus goes on close when the element that opened the modal is gone (e.g. the
+ * cookie banner, which closes as its settings open) — the page's main region, never `<body>`.
+ */
+export function useFocusTrap(
+  ref: RefObject<HTMLElement | null>,
+  active: boolean,
+  onEscape?: () => void,
+  fallbackId = 'public-main',
+): void {
   const escapeRef = useRef(onEscape);
   useEffect(() => {
     escapeRef.current = onEscape;
@@ -55,7 +64,11 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean
     root.addEventListener('keydown', onKey);
     return () => {
       root.removeEventListener('keydown', onKey);
-      if (previous && typeof previous.focus === 'function' && document.contains(previous)) previous.focus();
+      if (previous && previous !== document.body && typeof previous.focus === 'function' && document.contains(previous)) {
+        previous.focus();
+      } else {
+        document.getElementById(fallbackId)?.focus();
+      }
     };
-  }, [active, ref]);
+  }, [active, ref, fallbackId]);
 }
