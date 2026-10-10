@@ -132,7 +132,7 @@ def build_discounts_report(
     machine_id=None,
 ) -> Dict[str, Any]:
     """`{window, generatedAt, oth: {...}, club: {...}, basketByKind: [...]}` — see the module."""
-    from app.services.reports import _is_refund_condition, _load_zoneinfo, build_scoped_transaction_query
+    from app.services.reports import _is_refund_condition, build_scoped_transaction_query
 
     out: Dict[str, Any] = {
         "window": window.to_schema().model_dump(by_alias=True, mode="json"),
@@ -155,7 +155,6 @@ def build_discounts_report(
     if tx_q is None:
         return out
     sales = tx_q.filter(~_is_refund_condition())
-    zone = _load_zoneinfo(window.tz_name)
     names = _Names(db)
 
     # ── OTH ──

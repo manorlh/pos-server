@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import uuid as uuid_mod
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -265,7 +265,7 @@ def resolve_report_window(
     file stay on the document's date whatever a management report shows.
     """
     tz_name = resolve_report_timezone(db, tenant_id, tz)
-    tzinfo = _load_zoneinfo(tz_name)
+    _load_zoneinfo(tz_name)  # 400 on an unknown zone
     basis = BASIS_BUSINESS if day_basis == BASIS_BUSINESS else BASIS_DOCUMENT
     hours = (
         end_hours_for_scope(db, tenant_id=tenant_id, **(scope or {}))

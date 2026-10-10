@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
