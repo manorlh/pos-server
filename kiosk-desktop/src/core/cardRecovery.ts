@@ -55,8 +55,12 @@ export function cardBlocked(attempts: ReadonlyArray<Pick<CardAttempt, 'state' | 
   return attempts.some(blocksCard);
 }
 
-/** A frame sent and its answer (or why there is none). */
-export type CallResult = { ok: true; body: string } | { ok: false; error: string };
+/**
+ * A frame sent and its answer (or why there is none). `notSent`: the frame certainly never left —
+ * the link never opened, or nothing was written — so the terminal never saw it (never "unknown").
+ * Without it, a failure may have come after the frame left (a lost reply): unknown.
+ */
+export type CallResult = { ok: true; body: string } | { ok: false; error: string; notSent?: true };
 export type CallFn = (frame: string, timeoutMs: number) => Promise<CallResult>;
 
 export type Settlement =

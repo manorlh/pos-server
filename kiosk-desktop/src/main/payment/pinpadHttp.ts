@@ -7,7 +7,8 @@
  *    DER, "AB:CD:…") after the first good exchange; afterwards only that certificate is accepted;
  *  - the request bytes leave only after the TLS handshake and the pin check — a frame never
  *    reaches a pinpad that is not the pinned one;
- *  - plain HTTP only to an RFC 1918 address with the till parameter `pinpadAllowHttp`.
+ *  - plain HTTP only to an RFC 1918 address with the till parameter `pinpadAllowHttp`;
+ *  - a failure before the request was written (requestNotWritten) is told apart from one after it.
  *
  * A raw HTTP/1.1 client over net/tls (not fetch), so the pin is checked before anything is written.
  */
@@ -51,11 +52,25 @@ export interface RawReply {
   body: string;
 }
 
+/** Failures of [postFrame] that came before a byte of the request was written. */
+const failedBeforeWrite = new WeakSet<Error>();
+
+/**
+ * [e] is a [postFrame] failure from before the request was written — no connection (refused, no
+ * such host, no route, the connect timed out), or the TLS handshake or the pin refused: the pinpad
+ * cannot have seen the frame. A failure after the write (a reply lost or late) is never one.
+ */
+export function requestNotWritten(e: unknown): boolean {
+  return e instanceof Error && failedBeforeWrite.has(e);
+}
+
 /** POST `body` to the pinpad; resolves with the reply (any status), rejects on transport failure. */
 export function postFrame(addr: PinpadAddress, body: string, timeoutMs: number, pins: PinStore | null): Promise<RawReply> {
   return new Promise<RawReply>((resolve, reject) => {
     const hostPort = `${addr.host}:${addr.port}`;
     let settled = false;
+    /** The request handed to the socket: from here on a failure may come after the pinpad read it. */
+    let written = false;
     const chunks: Buffer[] = [];
     let total = 0;
     let socket: net.Socket;
@@ -64,6 +79,7 @@ export function postFrame(addr: PinpadAddress, body: string, timeoutMs: number, 
       settled = true;
       clearTimeout(overall);
       socket?.destroy();
+      if (!written) failedBeforeWrite.add(e);
       reject(e);
     };
     const overall = setTimeout(() => fail(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs);
@@ -80,6 +96,7 @@ export function postFrame(addr: PinpadAddress, body: string, timeoutMs: number, 
         'Accept: application/json\r\n' +
         'Connection: close\r\n' +
         `Content-Length: ${payload.length}\r\n\r\n`;
+      written = true;
       socket.write(Buffer.concat([Buffer.from(head, 'latin1'), payload]));
     };
 

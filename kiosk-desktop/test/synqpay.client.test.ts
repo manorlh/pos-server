@@ -322,6 +322,35 @@ describe('SynqPay transports', () => {
     await expect(serialChannel(null, async () => null)).rejects.toBeInstanceOf(SynqNotSentError);
   });
 
+  it('USB without the serialport package: declined as not sent — never unknown, nothing looked up', async () => {
+    const settings = synqpaySettingsOf({ ...lanSettings, synqpayConnection: 'usb', synqpayHost: null }).settings!;
+    const over = () => {
+      const methods: string[] = [];
+      const link = new LinkTransport('USB auto', () => '1234abcd', () => serialChannel(null, async () => null));
+      const t: SynqTransport = {
+        label: link.label,
+        call: (id, json, timeoutMs, unauthenticated) => {
+          methods.push((JSON.parse(json) as { method: string }).method);
+          return link.call(id, json, timeoutMs, unauthenticated);
+        },
+        close: () => link.close(),
+      };
+      return { t, methods };
+    };
+    // The terminal number is read first: it cannot be, so the card is locked — nothing sent.
+    const a = over();
+    const locked = await new SynqPayProvider(settings, ctx(), a.t).sale({ amountAgorot: 1000, reference: 'v40', payments: 1 });
+    expect(locked.answer).toBe('DECLINED');
+    expect(a.methods).toEqual(['getTerminalStatus']);
+    // The number check bypassed: the sale itself is not sent, its reason said; no lookup, no cancel.
+    const b = over();
+    const c = { ...ctx(), parameter: (k: string) => (k === 'terminalNumberCheckBypass' ? true : undefined) };
+    const r = await new SynqPayProvider(settings, c, b.t).sale({ amountAgorot: 1000, reference: 'v41', payments: 1 });
+    expect(r.answer).toBe('DECLINED');
+    if (r.answer === 'DECLINED') expect(r.message).toContain('חבילת serialport אינה מותקנת בקיוסק');
+    expect(b.methods).toEqual(['startTransaction']);
+  });
+
   it('http: the key in its header, 401 is the key refused', async () => {
     const text = httpRequest('192.168.1.40', 8000, '1234abcd', '{"a":"ש"}').toString('utf8');
     expect(text.startsWith('POST /synqpay HTTP/1.1\r\n')).toBe(true);
