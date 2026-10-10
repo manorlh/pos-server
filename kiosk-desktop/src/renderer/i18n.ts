@@ -7,6 +7,7 @@
 
 import strings from 'virtual:kiosk-strings';
 import type { KioskTextKey } from '@dash-lib/kioskConfig';
+import { VOUCHER_REASON_TEXT } from '@dash-lib/kioskVouchers';
 
 const builtin = strings.builtin as Record<string, string>;
 const preview = strings.preview as Record<string, unknown>;
@@ -54,9 +55,9 @@ export const LIVE: Record<string, string> = {
   // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).
   placing: 'שולחים את ההזמנה לקופה…',
   placeFailed: 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.',
-  cardWithVoucher: 'אשראי לא משולב עם שובר — היתרה בקופה',
   voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
   voucherAppliedNote: 'השובר נקלט · {amount}',
+  voucherDiscountApplied: 'שובר #{serial}: הנחה של {amount}',
   voucherChecking: 'בודקים את השובר…',
   voucherNoAnswer: 'לא הצלחנו לבדוק את השובר כרגע. נסו שוב או פנו לצוות.',
   voucherForfeitYes: 'לממש בכל זאת',
@@ -80,6 +81,9 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_in_use': 'השובר בשימוש בעסקה אחרת',
   'voucher.prepaid_voucher_item_unusable': 'הפריט שבשובר אינו זמין כעת — יש להציג את השובר בקופה',
   'voucher.other': 'השובר לא נקלט. אפשר לנסות שוב או לשלם בקופה.',
+  // "שוברי הנחה" (lib/kioskVouchers.ts): the Android kiosk's words for what the rules and the cloud refuse — one table for both TypeScript kiosks.
+  ...Object.fromEntries(Object.entries(VOUCHER_REASON_TEXT).map(([code, words]) => [`voucher.${code}`, words])),
+  'voucher.prepaid_kiosk_show_at_till': 'יש להציג את השובר בקופה',
 };
 
 /**

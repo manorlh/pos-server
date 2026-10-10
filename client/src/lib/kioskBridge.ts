@@ -19,6 +19,8 @@
  * Pure of React and of `@/` imports (the node tests compile it on its own).
  */
 
+import type { StartVouchers } from './kioskVoucherClient';
+
 export const BRIDGE_API = 1;
 export const BRIDGE_PORT = 47615;
 export const BRIDGE_BASE = `http://127.0.0.1:${BRIDGE_PORT}`;
@@ -102,6 +104,8 @@ export interface BridgeBasketLine {
 
 export interface BridgeStartPayment {
   lines: BridgeBasketLine[];
+  /** The order's vouchers (lib/kioskVoucherClient.ts StartVouchers): the sale is priced with the discount ones, the goods ones are legs beside the card. */
+  vouchers?: StartVouchers;
   /** Null: "ללא סוג שירות" — the order has none. */
   service: 'take_away' | 'eat_in' | null;
   customerName: string | null;

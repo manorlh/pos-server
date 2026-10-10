@@ -21,6 +21,7 @@ const api: KioskBridge = {
   placeOpenOrder: (input) => ipcRenderer.invoke('kiosk:placeOpenOrder', input),
   redeemVoucher: (input) => ipcRenderer.invoke('kiosk:redeemVoucher', input),
   reverseVoucher: (id) => ipcRenderer.invoke('kiosk:reverseVoucher', id),
+  releaseDiscounts: (vouchers) => ipcRenderer.invoke('kiosk:releaseDiscounts', vouchers),
   cancelPayment: () => ipcRenderer.invoke('kiosk:cancelPayment'),
   receiptChoice: (orderId, print) => ipcRenderer.invoke('kiosk:receiptChoice', orderId, print),
   helpRequest: () => ipcRenderer.invoke('kiosk:helpRequest'),

@@ -10,7 +10,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  coveredUnits,
+  coverLegs,
+  legMarks,
+  recountLegs,
+  timesHalfUp,
   dueAgorot,
   goodsAgorot,
   heldSaleCodec,
@@ -172,9 +175,11 @@ describe('vouchers', () => {
       { productId: 'p-fries', tillProductId: null, name: 'צ׳יפס', quantity: 1, remaining: 1 },
     ];
     assert.deepEqual([...voucherTake(items, [burger, cola], [])], [['p-burger', 2]]);
-    const earlier = [{ redeemed: [{ productId: 'p-burger', tillProductId: null, name: null, quantity: 1 }] }];
-    assert.deepEqual([...coveredUnits([burger, cola], earlier)], [['l1', 1]]);
-    assert.deepEqual([...voucherTake(items, [burger, cola], earlier)], [['p-burger', 1]]);
+    // A line an earlier voucher took from is that voucher's whole, as on the Android kiosk and till (coverByVoucher marks it):
+    // the second voucher for the other unit of the same line finds nothing to take.
+    const earlier = [{ serial: 1, redeemed: [{ productId: 'p-burger', tillProductId: null, name: null, quantity: 1 }] }];
+    assert.deepEqual([...coverLegs([burger, cola], earlier).marks], [['l1', 'כלול בשובר #1 (1)']]);
+    assert.equal(voucherTake(items, [burger, cola], earlier).size, 0);
     assert.equal(voucherTake([{ ...items[1] }], [burger, cola], []).size, 0);
   });
 
@@ -189,8 +194,8 @@ describe('vouchers', () => {
     const one = [{ productId: 'p-burger', tillProductId: null, name: null, quantity: 1 }];
     assert.equal(voucherAmount([burger, cola], [], one), 5400);
     const first = { redemptionId: 'r1', serial: 1, amountAgorot: 5400, eventName: null, redeemed: one };
-    assert.equal(voucherAmount([burger, cola], [first], one), 5400);
-    // The same burger cannot be paid twice: two units only.
+    // The line the first voucher took from is marked: the second covers nothing of it.
+    assert.equal(voucherAmount([burger, cola], [first], one), 0);
     assert.equal(voucherAmount([burger, cola], [first, { ...first, redemptionId: 'r2' }], one), 0);
     assert.equal(dueAgorot(13000, 1300, [first]), 8900);
     assert.equal(dueAgorot(1000, 0, [first]), 0);
@@ -202,6 +207,44 @@ describe('vouchers', () => {
     assert.equal(voucherCodeOf('abcd efgh jkmn pqrs'), 'ABCDEFGHJKMNPQRS');
     assert.equal(voucherCodeOf('ab'), null);
     assert.equal(voucherCodeOf('ABCD/EFGH'), null);
+  });
+});
+
+describe('goods vouchers: the coverage as the Android payment counts it', () => {
+  const one = (productId: string, quantity = 1) => [{ productId, tillProductId: null, name: null, quantity }];
+
+  it('marks each covered line "כלול בשובר #N" — with the units taken when it is only part of the line', () => {
+    const legs = [{ serial: 7, redeemed: one('p-burger') }, { serial: 8, redeemed: one('p-cola') }];
+    assert.deepEqual([...legMarks([burger, cola], legs)], [['l1', 'כלול בשובר #7 (1)'], ['l2', 'כלול בשובר #8']]);
+  });
+
+  it("a voucher that includes the extras covers the whole line, the others the dish's own price", () => {
+    const own = coverLegs([burger], [{ serial: 1, redeemed: one('p-burger', 2) }]);
+    const all = coverLegs([burger], [{ serial: 1, redeemed: one('p-burger', 2), includeExtras: true }]);
+    assert.deepEqual(own.values, [10800]);
+    assert.deepEqual(all.values, [11800]);
+  });
+
+  it('recounts the legs from the basket as it stands: in order, never more than the goods left', () => {
+    const legs = [
+      { redemptionId: 'r1', serial: 1, amountAgorot: 99999, eventName: null, redeemed: one('p-burger', 2) },
+      { redemptionId: 'r2', serial: 2, amountAgorot: 99999, eventName: null, redeemed: one('p-cola') },
+    ];
+    const done = recountLegs([burger, cola], legs);
+    assert.deepEqual(done.map((l) => l.amountAgorot), [10800, 1200]);
+    // The promotion's share is out of what a voucher covers: the burgers cost 118 − 10 = 108, their own price's share of it 98.85.
+    assert.deepEqual(recountLegs([{ ...burger, promotionAgorot: 1000 }, cola], legs).map((l) => l.amountAgorot), [9885, 1200]);
+    assert.deepEqual(recountLegs([burger, cola], []), []);
+  });
+
+  it('rounds what a part of a line covers as the till does: once, HALF_UP, from the exact factor', () => {
+    assert.equal(timesHalfUp(1001, 0.5), 501);
+    assert.equal(timesHalfUp(1000, 1 / 3), 333);
+    assert.equal(timesHalfUp(2000, 2 / 3), 1333);
+    // A factor a hair under the half (the double of 1/6 times 3) rounds down, as BigDecimal does — Math.round(3 * (1/6)) would say 1.
+    assert.equal(timesHalfUp(3, 1 / 6), 0);
+    assert.equal(timesHalfUp(5400, 1), 5400);
+    assert.equal(timesHalfUp(0, 0.5), 0);
   });
 });
 

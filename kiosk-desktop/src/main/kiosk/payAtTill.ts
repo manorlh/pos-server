@@ -5,30 +5,22 @@
  *  - an order the customer pays at the till is an OPEN order (`POST /sync/{m}/kiosk/open-orders`):
  *    no tax document here — the till that takes the money writes it; written here first and sent
  *    again on every beat until the cloud takes it (offline too: the till may still see it later);
- *  - a prepaid voucher is looked up and redeemed online (`prepaid-vouchers/lookup` / `redeem`, one
+ *  - a prepaid voucher is looked up and — by what it is — redeemed online (`prepaid-vouchers/lookup` / `redeem`, one
  *    client request id per attempt so a retry never redeems twice), for the basket's goods it covers
  *    at the dish's own price net of its promotions; it rides on the open order (pending until paid);
- *    one the order no longer needs goes back (`…/reverse`), kept and retried until the cloud answers;
- *  - a voucher never mixes with the card here (one tender per document): the rest is paid at the till.
+ *    one the order no longer needs goes back (`…/reverse`), kept and retried until the cloud answers —
+ *    or held in the cloud as a discount on the order (`…/reserve`, "שוברי הנחה"), paid here by the card, never taken
+ *    to a till (lib/kioskVoucherClient.ts, the browser kiosk's own flow: one copy for both);
+ *  - a goods voucher is a leg of the kiosk's own payment too (service.startPayment: the document carries it and the
+ *    card pays the rest); on this path — the order to the till — the till takes what it leaves.
  *
  * The order's shape and the voucher's arithmetic are the browser kiosk's own pure helpers
  * (client/src/lib/kioskWebOrders.ts): one rule for both kiosks.
  */
 
-import {
-  answeredOrder,
-  openOrderWire,
-  orderNeedsUpload,
-  voucherAmount,
-  voucherForfeits,
-  voucherTake,
-  type OpenOrder,
-  type OpenOrdersAnswer,
-  type VoucherItem,
-  type VoucherLeg,
-  type VoucherTaken,
-  type WebOrderLine,
-} from '@dash-lib/kioskWebOrders';
+import { answeredOrder, newId, openOrderWire, orderNeedsUpload, type OpenOrder, type OpenOrdersAnswer, type VoucherLeg, type WebOrderLine } from '@dash-lib/kioskWebOrders';
+import { confirmDiscount, redeemVoucherCode, releaseDiscount, type VoucherPost, type VoucherResult } from '@dash-lib/kioskVoucherClient';
+import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { Kv } from '../db/schema';
 import type { Api } from '../sync/api';
 
@@ -37,13 +29,7 @@ const REVERSALS = 'payAtTill.reversals';
 /** An order the cloud took (or refused for good) is kept this long, for the admin's list. */
 const KEEP_MS = 2 * 86_400_000;
 
-export type VoucherResult =
-  | { kind: 'ok'; leg: VoucherLeg }
-  | { kind: 'forfeit' }
-  | { kind: 'no_match' }
-  | { kind: 'offline' }
-  /** [message]: the cloud's own Hebrew for the refusal (which till used it, when it expired), when it sent one. */
-  | { kind: 'refused'; reason: string; message?: string };
+export type { VoucherResult };
 
 export interface PayAtTillDeps {
   kv: Kv;
@@ -93,70 +79,64 @@ export class PayAtTill {
     return this.orders().filter(orderNeedsUpload).length;
   }
 
+  /** The cloud's voucher calls for the shared voucher flow (lib/kioskVoucherClient.ts): this kiosk's machine path. */
+  private readonly post: VoucherPost = async (rest, body, timeoutMs) => {
+    const p = this.path(rest);
+    if (!p) return { kind: 'offline' };
+    const r = await this.d.api.post<Record<string, unknown>>(p, body, { timeoutMs });
+    if (r.kind === 'ok') return { kind: 'ok', body: r.body as never };
+    if (r.kind === 'refused') return { kind: 'refused', status: r.status, body: r.body, detail: r.detail };
+    return { kind: 'offline' };
+  };
+
   /**
-   * A voucher scanned or typed: looked up, then redeemed online against what the basket holds that
-   * earlier vouchers did not take (kioskWebService.redeemVoucher).
+   * A voucher scanned or typed: looked up (this kiosk applies goods and both discount kinds), then — by what it is —
+   * redeemed online against what the basket holds that earlier vouchers did not take (kioskWebService.redeemVoucher,
+   * the same code), or held in the cloud as a discount on this order.
    */
-  async redeem(input: { code: string; lines: readonly WebOrderLine[]; earlier: readonly VoucherLeg[]; forfeitRest?: boolean; clientRequestId: string }): Promise<VoucherResult> {
-    const lookup = this.path('prepaid-vouchers/lookup');
-    const redeem = this.path('prepaid-vouchers/redeem');
-    if (!lookup || !redeem) return { kind: 'offline' };
-    const looked = await this.d.api.post<Record<string, unknown>>(lookup, { code: input.code }, { timeoutMs: 12_000 });
-    if (looked.kind === 'offline') return { kind: 'offline' };
-    if (looked.kind === 'refused') return { kind: 'refused', reason: looked.detail ?? (looked.status === 404 ? 'prepaid_voucher_not_found' : `http_${looked.status}`) };
-    const dto = looked.body ?? {};
-    if (dto.redeemable === false) {
-      const reason = typeof dto.reason === 'string' ? dto.reason : typeof dto.status === 'string' ? `prepaid_voucher_${dto.status}` : 'not_redeemable';
-      // A voucher whose terms need a till that books them (a deduction, a fixed value, a forced discount —
-      // pos-server production-vouchers contract §2 `features`): this kiosk books nothing itself, so the
-      // customer is sent to the till; the cloud's words ("update the till") are the cashier's, not theirs.
-      const message = reason !== 'prepaid_voucher_update_required' && typeof dto.message === 'string' && dto.message ? dto.message : undefined;
-      return message ? { kind: 'refused', reason, message } : { kind: 'refused', reason };
-    }
-    const items: VoucherItem[] = (Array.isArray(dto.items) ? (dto.items as Array<Record<string, unknown>>) : [])
-      .filter((it) => typeof it.productId === 'string')
-      .map((it) => ({
-        productId: String(it.productId),
-        tillProductId: typeof it.tillProductId === 'string' ? it.tillProductId : null,
-        name: String(it.name ?? ''),
-        quantity: Number(it.quantity) || 0,
-        remaining: Number(it.remaining) || 0,
-      }));
-    const take = voucherTake(items, input.lines, input.earlier);
-    if (take.size === 0) return { kind: 'no_match' };
-    if (!input.forfeitRest && voucherForfeits(dto.splitAllowed === true, items, take)) return { kind: 'forfeit' };
-    const op = this.d.operator();
-    const r = await this.d.api.post<Record<string, unknown>>(
-      redeem,
-      {
-        code: input.code,
-        items: [...take.entries()].map(([productId, quantity]) => ({ productId, quantity })),
-        clientRequestId: input.clientRequestId,
-        forfeitRest: input.forfeitRest === true,
-        posUserId: op.id,
-        posUserName: op.name,
-      },
-      { timeoutMs: 15_000 },
-    );
-    if (r.kind === 'offline') return { kind: 'offline' };
-    if (r.kind === 'refused') return { kind: 'refused', reason: r.detail ?? `http_${r.status}` };
-    const res = r.body ?? {};
-    const redemptionId = typeof res.redemptionId === 'string' ? res.redemptionId : null;
-    if (!redemptionId) return { kind: 'refused', reason: 'bad_answer' };
-    const redeemed: VoucherTaken[] = (Array.isArray(res.redeemed) ? (res.redeemed as Array<Record<string, unknown>>) : [])
-      .filter((x) => typeof x.productId === 'string')
-      .map((x) => ({ productId: String(x.productId), tillProductId: typeof x.tillProductId === 'string' ? x.tillProductId : null, name: typeof x.name === 'string' ? x.name : null, quantity: Number(x.quantity) || 0 }));
-    const amount = voucherAmount([...input.lines], [...input.earlier], redeemed);
-    if (amount <= 0) {
-      // Nothing of the basket it could pay: never kept for nothing.
-      await this.reverse(redemptionId);
-      return { kind: 'no_match' };
-    }
-    const voucher = (res.voucher ?? dto) as { serial?: unknown; eventName?: unknown };
-    return {
-      kind: 'ok',
-      leg: { redemptionId, serial: typeof voucher.serial === 'number' ? voucher.serial : 0, amountAgorot: amount, eventName: typeof voucher.eventName === 'string' ? voucher.eventName : null, redeemed },
-    };
+  async redeem(input: {
+    code: string;
+    lines: readonly WebOrderLine[];
+    earlier: readonly VoucherLeg[];
+    discounts?: readonly AppliedDiscountVoucher[];
+    forfeitRest?: boolean;
+    clientRequestId: string;
+    saleRef?: string;
+  }): Promise<VoucherResult> {
+    if (!this.path('prepaid-vouchers/lookup')) return { kind: 'offline' };
+    return redeemVoucherCode(this.post, {
+      code: input.code,
+      lines: input.lines,
+      earlier: input.earlier,
+      discounts: input.discounts ?? [],
+      forfeitRest: input.forfeitRest,
+      clientRequestId: input.clientRequestId,
+      saleRef: input.saleRef ?? input.clientRequestId,
+      operator: this.d.operator(),
+      newId,
+      reverse: (id) => this.reverse(id),
+    });
+  }
+
+  /** Discount vouchers given back (removed, the order left): the cloud lets the hold go; best effort, retried. */
+  releaseDiscounts(vouchers: ReadonlyArray<{ reservationId: string }>): void {
+    for (const v of vouchers) void releaseDiscount(this.post, v);
+  }
+
+  /**
+   * The sale [transactionId] was written (PrepaidVoucherRepository.settleSale): each discount voucher that took something
+   * off is confirmed (its uses taken), each that took nothing is given back, each goods voucher is linked to the document
+   * (`…/attach`). Best effort, retried a few times: the document itself confirms the discount vouchers in the cloud too.
+   */
+  async settle(
+    transactionId: string,
+    discounts: ReadonlyArray<{ reservationId: string; uses: number; amountAgorot: number }>,
+    releases: readonly string[],
+    legs: ReadonlyArray<{ redemptionId: string }>,
+  ): Promise<void> {
+    for (const v of discounts) await confirmDiscount(this.post, v, { transactionId, amountAgorot: v.amountAgorot });
+    for (const reservationId of releases) await releaseDiscount(this.post, { reservationId });
+    for (const l of legs) await this.post(`prepaid-vouchers/redemptions/${encodeURIComponent(l.redemptionId)}/attach`, { transactionId }, 12_000);
   }
 
   /** The voucher goes back on itself (removed, the order left, the kiosk reset); kept until the cloud answers. */

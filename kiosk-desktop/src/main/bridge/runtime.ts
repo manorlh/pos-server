@@ -30,6 +30,7 @@ import {
   type BridgeHealth,
   type BridgeRole,
 } from '../../core/bridgeProtocol';
+import { startVouchersOf } from '@dash-lib/kioskVoucherClient';
 import { checkCode, codeRefusalText, expired, newCode, secondsLeft, type PairingCode } from '../../core/bridgePairing';
 import { DEFAULT_LAUNCHER, LAUNCHER_TEXT, launchable, parseDashboardLink, urlForRole, type LauncherPhase, type LauncherSettings } from '../../core/bridgeLauncher';
 import { DRAWER_KICK } from '../../core/escpos';
@@ -191,6 +192,9 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
   const tipPct = typeof b.tipPct === 'number' && Number.isFinite(b.tipPct) && b.tipPct >= 0 && b.tipPct <= 100 ? b.tipPct : null;
   const tipAgorot = typeof b.tipAgorot === 'number' && Number.isFinite(b.tipAgorot) && b.tipAgorot >= 0 ? Math.round(b.tipAgorot) : null;
   const expected = typeof b.expectedTotalAgorot === 'number' && Number.isFinite(b.expectedTotalAgorot) ? Math.round(b.expectedTotalAgorot) : undefined;
+  // The order's vouchers, read field by field (goods ones as legs, discount ones held for the order): anything unreadable is no payment.
+  const vouchers = b.vouchers === undefined ? undefined : startVouchersOf(b.vouchers);
+  if (b.vouchers !== undefined && !vouchers) return null;
   return {
     lines,
     service,
@@ -200,6 +204,7 @@ export function startPaymentInput(raw: unknown): StartPaymentIn | null {
     tipPct,
     tipAgorot,
     ...(expected !== undefined ? { expectedTotalAgorot: expected } : {}),
+    ...(vouchers ? { vouchers } : {}),
   };
 }
 
