@@ -293,7 +293,7 @@ export class SyncEngine {
     const reply = await this.api.get<Record<string, unknown>>(this.machinePath(`catalog${since}`), { timeoutMs: 60_000 });
     if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return;
     const b = reply.body;
-    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu;
+    const changed = b.syncType === 'full' || (Array.isArray(b.products) && b.products.length > 0) || (Array.isArray(b.categories) && b.categories.length > 0) || !!b.menu || (!!b.catalogMenus && typeof b.catalogMenus === 'object');
     this.cloud.applyCatalog(b);
     this.status.lastCatalogAt = Date.now();
     if (changed) this.hooks.onCatalog();

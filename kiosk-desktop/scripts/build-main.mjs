@@ -41,4 +41,6 @@ if (smoke) {
 } else {
   await build({ ...common, entryPoints: [path.join(root, 'src/main/index.ts')], outfile: path.join(root, 'dist/main/index.js') });
   await build({ ...common, entryPoints: [path.join(root, 'src/preload/index.ts')], outfile: path.join(root, 'dist/preload/index.js') });
+  // The till role's view (main/roles/tillElectron.ts): `window.r2mApp` only.
+  await build({ ...common, entryPoints: [path.join(root, 'src/preload/app.ts')], outfile: path.join(root, 'dist/preload/app.js') });
 }

@@ -1,7 +1,8 @@
 /**
- * A role the cloud gave this device that this version does not run yet (a Windows till, a
- * customer display): the module boundary is in place (main/roles/types.ts), the screen says so.
- * Nothing fiscal happens here — no shift, no document, no payment.
+ * A role the cloud gave this device that this version does not run yet (a customer display): the module
+ * boundary is in place (main/roles/types.ts), the screen says so. For the TILL it is only what sits BEHIND the
+ * till's screens (the till view is laid over this window, main/roles/tillElectron.ts): "the till is loading", and —
+ * if the screens never come (no verified bundle in the installer) — why. Nothing fiscal happens here.
  */
 
 import { useState } from 'react';
@@ -19,14 +20,20 @@ export function RolePlaceholder({ role, shellView }: { role: AppRole; shellView:
       <div className="text-3xl font-black tracking-tight">
         R2M <span className="font-bold text-blue-600">POS</span>
       </div>
-      <h1 className="text-2xl font-extrabold">תפקיד זה יגיע בגרסה הבאה</h1>
-      <p className="max-w-md text-neutral-600">
-        המכשיר הוגדר בענן כ<b>{ROLE_INFO[role].label}</b>. בגרסה הזו של R2M POS ל-Windows פועלים הקיוסק, מסך המטבח ומסך מוכן / לא מוכן; המכשיר
-        יתעדכן לבד כשהתפקיד יהיה זמין.
-      </p>
       {role === 'till' ? (
-        <p className="max-w-md text-sm text-neutral-500">אם המכשיר אמור להיות קיוסק — הפכו אותו לקיוסק בדשבורד (קיוסקים ← &quot;הפוך קופה לקיוסק&quot;).</p>
-      ) : null}
+        <>
+          <h1 className="text-2xl font-extrabold">הקופה נטענת…</h1>
+          <p className="max-w-md text-sm text-neutral-500">אם המסך לא נטען תוך רגעים, חבילת מסכי הקופה לא נמצאה במכשיר — עדכנו את האפליקציה או פנו לתמיכה.</p>
+        </>
+      ) : (
+        <>
+          <h1 className="text-2xl font-extrabold">תפקיד זה יגיע בגרסה הבאה</h1>
+          <p className="max-w-md text-neutral-600">
+            המכשיר הוגדר בענן כ<b>{ROLE_INFO[role].label}</b>. בגרסה הזו של R2M POS ל-Windows פועלים הקיוסק, הקופה, מסך המטבח ומסך מוכן / לא מוכן; המכשיר
+            יתעדכן לבד כשהתפקיד יהיה זמין.
+          </p>
+        </>
+      )}
       <p className="text-xs text-neutral-400">
         {shellView.machineName ?? ''} {shellView.shopName ? `· ${shellView.shopName}` : ''} · גרסה {shellView.appVersion} · {updateLine(shellView.update)}
       </p>

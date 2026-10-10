@@ -30,6 +30,34 @@ describe('the role comes from the cloud', () => {
     expect(resolveRole({ ...paired, deviceRole: null, kioskActive: true })).toBe('kiosk');
   });
 
+  it('a device whose cloud role is till (no kiosk row) opens straight as the till', () => {
+    expect(resolveRole({ ...paired, deviceRole: 'till', kioskActive: false })).toBe('till');
+    expect(resolveRole({ ...paired, deviceRole: 'pos', kioskActive: false })).toBe('till');
+  });
+
+  it('"מצב עבודה": a kiosk by role in its till session opens as the till; out of it, as the kiosk', () => {
+    expect(resolveRole({ ...paired, deviceRole: 'kiosk', kioskActive: true, tillSession: true })).toBe('till');
+    expect(resolveRole({ ...paired, deviceRole: 'kiosk', kioskActive: true, tillSession: false })).toBe('kiosk');
+    expect(resolveRole({ ...paired, deviceRole: 'kiosk', kioskActive: true })).toBe('kiosk');
+    // The cloud's role is never changed by the day's choice: a till session needs the kiosk to be active (the effective word).
+    expect(resolveRole({ ...paired, deviceRole: 'kiosk', kioskActive: false, tillSession: true })).toBe('kiosk');
+    expect(resolveRole({ ...paired, deviceRole: null, kioskActive: true, tillSession: true })).toBe('till');
+  });
+
+  it('"מצב עבודה": a till by role is a till at home (its kiosk row is no kiosk) and the kiosk while away in its kiosk mode', () => {
+    // At home the effective kiosk word is false (core/workMode.ts effectiveSnapshot): the cloud's role decides.
+    expect(resolveRole({ ...paired, deviceRole: 'till', kioskActive: false })).toBe('till');
+    // Away: the kiosk is active, and the kiosk always wins over the cloud's till role.
+    expect(resolveRole({ ...paired, deviceRole: 'till', kioskActive: true })).toBe('kiosk');
+    // A device not paired is nothing, whatever the sessions say.
+    expect(resolveRole({ ...paired, paired: false, deviceRole: 'kiosk', kioskActive: true, tillSession: true })).toBe(null);
+  });
+
+  it('"מצב עבודה": a KDS or a board is never moved by it', () => {
+    expect(resolveRole({ ...paired, deviceRole: 'kds', kioskActive: false, tillSession: true })).toBe('kds');
+    expect(resolveRole({ ...paired, deviceRole: 'order_status_board', kioskActive: false, tillSession: true })).toBe('order_status_board');
+  });
+
   it('a KDS device made on the KDS page; its pickup role is the board', () => {
     expect(resolveRole({ ...paired, deviceRole: 'till', kdsDevice: { role: 'expo' } })).toBe('kds');
     expect(resolveRole({ ...paired, deviceRole: 'till', kdsDevice: { role: 'pickup' } })).toBe('order_status_board');
@@ -46,7 +74,9 @@ describe('the role comes from the cloud', () => {
     expect(normalizeRole('Order-Status-Board')).toBe('order_status_board');
     expect(normalizeRole('pickup')).toBe('order_status_board');
     expect(normalizeRole('robot')).toBe(null);
-    expect(ROLE_INFO.till.ready).toBe(false);
+    // The till is built now (renderer/roles/till, the engine): a paired till opens as one, no placeholder.
+    expect(ROLE_INFO.till.ready).toBe(true);
+    expect(ROLE_INFO.customer_display.ready).toBe(false);
   });
 
   it('asks kds/device only for a screen or a till flagged kdsScreen (as the Android till)', () => {

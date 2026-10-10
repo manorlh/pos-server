@@ -30,6 +30,29 @@ export interface UpdateView {
   installWindow: { start: string; end: string } | null;
 }
 
+/**
+ * "מצב עבודה: קיוסק / קופה" as the screens read it (main/workMode.ts `WorkModeRuntime.view()`, the rules in
+ * core/workMode.ts): the mode now, which menu entry exists, the idle return's notice, the held-sales notice, and
+ * what holds a pending dashboard switch back. Everything is off where the owner's gate is closed.
+ */
+export interface WorkModeView {
+  /** The owner's gate (`kioskTillModeEnabled`) is open and the device can use it. */
+  enabled: boolean;
+  mode: 'kiosk' | 'till';
+  /** A till by role (its kiosk mode is its second mode), as against a kiosk by role (the till is its second). */
+  homeTill: boolean;
+  /** The "קופה" entry exists (in kiosk mode: "ניהול הקיוסק"). */
+  toTill: boolean;
+  /** The "קיוסק" entry exists ("חזרה למצב קיוסק" in the till's banner / menu, "מעבר לקיוסק" on a till by role). */
+  toKiosk: boolean;
+  /** Seconds until the idle return ("חוזר לקיוסק בעוד…"), within its 30 s notice; null otherwise. */
+  countdownSec: number | null;
+  /** "יש N מכירות מושהות — יחכו במצב קופה": said once on the way back to the kiosk. */
+  heldNotice: number | null;
+  /** The wire code of what holds a pending dashboard switch back (core/workMode.ts `TillModeRefusal`). */
+  blocked: string | null;
+}
+
 export interface ShellView {
   /** null while the role is not known yet (just paired, machines/me not read). */
   role: AppRole | null;
@@ -40,6 +63,8 @@ export interface ShellView {
   shopName: string | null;
   online: boolean;
   update: UpdateView;
+  /** "מצב עבודה: קיוסק / קופה"; absent / null before the runtime is up. */
+  workMode?: WorkModeView | null;
 }
 
 /* ------------------------------------------------- the KDS and the order status board */

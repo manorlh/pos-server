@@ -8,6 +8,10 @@
  *  - six taps in the top-left corner + the technician code (1995 unless the cloud set one) →
  *    "בדיקות ומידע קיוסק": assignment, network, printer test and choice, a read-only pinpad check,
  *    updates, remote support (TeamViewer QuickSupport when installed);
+ *  - "מצב עבודה: קיוסק / קופה" at the top of "ניהול הקיוסק", only where the owner allowed it
+ *    (core/workMode.ts): the device works as a till until it is switched back; refused over a customer's
+ *    order or payment; always a manager's code with KIOSK_TILL_MODE (the one that opened the menu counts
+ *    when it holds it);
  *  - a small red label in the corner when something needs staff (no internet, the pinpad, a bon
  *    that did not print, a payment to check) — no internet never blocks a sale;
  *  - "יציאה לשולחן העבודה" (desktop/DesktopExit.tsx): a quiet icon in the bottom-right corner of the
@@ -17,13 +21,15 @@
 import { useEffect, useState } from 'react';
 import { Delete, X } from 'lucide-react';
 import { cardStyle, type PreviewModel } from '@kiosk-shared/index';
-import type { AdminInfo, KioskView, SynqpayAdminInfo, SynqpayPairingView, TechnicianInfo } from '../../shared/bridge';
+import type { AdminActionResult, AdminInfo, KioskView, SynqpayAdminInfo, SynqpayPairingView, TechnicianInfo } from '../../shared/bridge';
 import { TERMINAL_CHECK_BYPASS_WARNING } from '../../core/terminalCheckBypass';
 import { kiosk } from '../bridge';
 import { t } from '../i18n';
 import { updateLine } from '../roles/updateText';
 import { DESKTOP_EXIT_LABEL, DesktopExitButton, DesktopExitMenuButton, DesktopExitPad } from '../desktop/DesktopExit';
 import { PERMISSION_LABEL } from '../../core/desktopExit';
+import { WORK_TEXT } from '../../core/workMode';
+import { WorkModePanel } from './WorkModePanel';
 
 export function StaffLayer({
   m,
@@ -31,6 +37,7 @@ export function StaffLayer({
   open,
   onClose,
   home = false,
+  onResetCustomer,
 }: {
   m: PreviewModel;
   view: KioskView;
@@ -38,6 +45,8 @@ export function StaffLayer({
   onClose: () => void;
   /** A resting screen (attract, closed, paused…) with nothing in flight: the desktop-exit icon shows. */
   home?: boolean;
+  /** "איפוס מסך הלקוח": the customer's order started over (never over a payment) — the way past "לקוח באמצע הזמנה" on the way to the till. */
+  onResetCustomer?: () => void;
 }) {
   const [unlocked, setUnlocked] = useState(false);
   const [exitOpen, setExitOpen] = useState(false);
@@ -79,7 +88,7 @@ export function StaffLayer({
           }}
         />
       ) : null}
-      {open === 'admin' && unlocked ? <AdminScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
+      {open === 'admin' && unlocked ? <AdminScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} onResetCustomer={onResetCustomer} /> : null}
       {open === 'technician' && unlocked ? <TechnicianScreen m={m} onClose={onClose} onDesktopExit={() => setExitOpen(true)} /> : null}
       {home && open === 'none' && !exitOpen ? <DesktopExitButton onOpen={() => setExitOpen(true)} /> : null}
       {exitOpen ? (
@@ -188,10 +197,13 @@ function useNote(): [string | null, (r: { ok: boolean; message?: string }) => vo
   return [note, (r) => setNote(r.message ?? (r.ok ? 'בוצע' : 'לא בוצע'))];
 }
 
-function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void }) {
+function AdminScreen({ m, onClose, onDesktopExit, onResetCustomer }: { m: PreviewModel; onClose: () => void; onDesktopExit: () => void; onResetCustomer?: () => void }) {
   const [info, setInfo] = useState<AdminInfo | null>(null);
   const [note, show] = useNote();
   const [exiting, setExiting] = useState(false);
+  /** "מצב עבודה": the manager's code pad, when the switch needs one. */
+  const [workPad, setWorkPad] = useState(false);
+  const [workRefusal, setWorkRefusal] = useState<{ code: string; text: string } | null>(null);
   const refresh = () => void kiosk.adminInfo().then(setInfo).catch(() => undefined);
   useEffect(refresh, []);
   const act = async (a: Parameters<typeof kiosk.adminAction>[0]) => {
@@ -199,9 +211,43 @@ function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: 
     refresh();
   };
   if (!info) return <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>…</Shell>;
+  /** To the till: refused → its words; a code is needed → the pad; done → this menu closes (the screen is the till's now). */
+  const goTill = async (code?: string): Promise<string | null> => {
+    const r: AdminActionResult = await kiosk.adminAction({ type: 'workMode', mode: 'till', ...(code ? { code } : {}) }).catch((e: unknown) => ({ ok: false, message: String(e) }));
+    if (r.ok) {
+      setWorkPad(false);
+      onClose();
+      return null;
+    }
+    if (r.needsCode) {
+      setWorkRefusal(null);
+      setWorkPad(true);
+      // Asked for the first time: the pad says it; a code that was refused: why.
+      return code ? (r.message ?? 'קוד שגוי') : null;
+    }
+    setWorkPad(false);
+    setWorkRefusal({ code: r.refusal ?? '', text: r.message ?? 'המעבר נכשל' });
+    return null;
+  };
   return (
     <Shell m={m} title="ניהול הקיוסק" onClose={onClose}>
       {note ? <div className="rounded-lg bg-black/5 p-2 text-center text-xs font-semibold">{note}</div> : null}
+      {info.workMode ? (
+        <WorkModePanel
+          m={m}
+          info={info.workMode}
+          refusal={workRefusal}
+          onTill={() => void goTill()}
+          onResetCustomer={
+            onResetCustomer
+              ? () => {
+                  onResetCustomer();
+                  setWorkRefusal(null);
+                }
+              : undefined
+          }
+        />
+      ) : null}
       <Panel m={m} title="מצב">
         <div>פועל בשם: {info.operator?.name ?? '—'} (הקיוסק עצמו — בלי עובד אחראי)</div>
         <div>{info.shift.open ? `משמרת פתוחה #${info.shift.number}` : 'אין משמרת פתוחה'}</div>
@@ -333,6 +379,12 @@ function AdminScreen({ m, onClose, onDesktopExit }: { m: PreviewModel; onClose: 
           <DesktopExitMenuButton onOpen={onDesktopExit} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold" style={{ background: `${m.c.button}1A`, color: m.c.button, borderRadius: 8 }} />
         </div>
       )}
+      {/* "מצב עבודה": always a manager's code with KIOSK_TILL_MODE (checked on the device, five wrong codes lock it for a minute). */}
+      {workPad ? (
+        <div className="contents">
+          <PinPad m={m} title={`${WORK_TEXT.approve} — קוד מנהל`} onCancel={() => setWorkPad(false)} onSubmit={(code) => goTill(code)} />
+        </div>
+      ) : null}
     </Shell>
   );
 }

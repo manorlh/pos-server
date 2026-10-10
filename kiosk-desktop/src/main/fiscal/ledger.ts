@@ -58,6 +58,48 @@ export interface DocDraft {
   paymentId: string;
   /** The lookup's evidence on a voided document. */
   voidMeta: Record<string, unknown> | null;
+  /**
+   * A till sale's tenders, in the order taken (cash legs, then the card leg last) — their amounts add up
+   * to the document's total. Absent: the kiosk's one card leg for the whole total.
+   */
+  payments?: DocLeg[];
+  /** A cash sale: what was handed over and the change given back (agorot) — `amountTendered` / `changeAmount` on the wire. */
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  /** Where it was rung: absent = a kiosk order; `till` = a staff sale (the cashier's own PIN session). */
+  channel?: 'till';
+}
+
+/** One tender of a document: the money that moved (a cash leg is the goods it settled, never the note handed over). */
+export interface DocLeg {
+  method: 'cash' | 'card';
+  amountAgorot: number;
+}
+
+/** The legs of a document as the X and the wire read them: its own, or — a kiosk's — the one card leg. */
+export function legsOf(d: Pick<DocDraft, 'payments' | 'card' | 'status' | 'totals'>): DocLeg[] {
+  if (d.status !== 'completed') return [];
+  if (d.payments && d.payments.length > 0) return d.payments;
+  return d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [];
+}
+
+/** What a sale document is written from (a kiosk's card sale, a till's cash or card-last sale). */
+export interface SaleInput {
+  documentType: number;
+  prefix: string | null;
+  branchId: string | null;
+  operator: { id: string; name: string };
+  orderId: string | null;
+  lines: SaleLine[];
+  tracked: string[];
+  totals: SaleTotals;
+  promotions?: AppliedPromotionRow[];
+  /** A till sale's tenders (see DocDraft.payments), the cash handed over and the change. */
+  payments?: DocLeg[];
+  tenderedAgorot?: number;
+  changeAgorot?: number;
+  channel?: 'till';
+  now?: Date;
 }
 
 export interface ShiftRow {
@@ -132,11 +174,15 @@ export class Ledger {
     this.kv.setNumber(SHIFT_SEQ_KEY, atLeast);
   }
 
-  /** The open shift, or a new one as the kiosk itself (float 0). */
-  openShift(operator: { id: string; name: string }, now = new Date()): ShiftRow {
+  /**
+   * The open shift, or a new one: as the kiosk itself (float 0), or — at a till — as the employee signed in,
+   * with the float counted into the drawer (`openingCashAgorot`).
+   */
+  openShift(operator: { id: string; name: string }, now = new Date(), openingCashAgorot = 0): ShiftRow {
     return this.db.tx(() => {
       const open = this.currentShift();
       if (open) return open;
+      const opening = Number.isInteger(openingCashAgorot) && openingCashAgorot > 0 ? openingCashAgorot : 0;
       const row: ShiftRow = {
         id: randomUUID(),
         sequence_number: this.nextShiftNumber(),
@@ -144,7 +190,7 @@ export class Ledger {
         opened_at: now.toISOString(),
         opened_by_id: operator.id,
         opened_by_name: operator.name,
-        opening_cash: 0,
+        opening_cash: opening,
         status: 'open',
         closed_at: null,
         close_payload: null,
@@ -160,7 +206,7 @@ export class Ledger {
         row.opened_at,
         row.opened_by_id,
         row.opened_by_name,
-        0,
+        row.opening_cash,
         'open',
       );
       this.outbox.enqueue('shift_open', row.id);
@@ -190,7 +236,7 @@ export class Ledger {
    * (a card-only kiosk: 0), in one transaction with its outbox row. Refused while a payment is
    * pending in it.
    */
-  closeShift(input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now?: Date }):
+  closeShift(input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now?: Date; countedCashAgorot?: number | null }):
     | { kind: 'closed'; shift: ShiftRow; payload: Record<string, unknown> }
     | { kind: 'none' }
     | { kind: 'pending'; count: number } {
@@ -258,64 +304,73 @@ export class Ledger {
    * The pending card sale, numbered in its series (the counter saved first), BEFORE the terminal
    * is touched. Refused (null) without an open shift.
    */
-  openCardSale(input: {
-    documentType: number;
-    prefix: string | null;
-    branchId: string | null;
-    operator: { id: string; name: string };
-    orderId: string | null;
-    lines: SaleLine[];
-    tracked: string[];
-    totals: SaleTotals;
-    promotions?: AppliedPromotionRow[];
-    now?: Date;
-  }): DocDraft | null {
+  openCardSale(input: SaleInput): DocDraft | null {
+    return this.db.tx(() => this.insertSale(input, 'pending'));
+  }
+
+  /**
+   * A till's cash sale (and a cash-only settle): the document numbered in its series (the counter saved first) and
+   * written `completed` with its legs and the cash handed over, in ONE transaction with its outbox row — there is no
+   * terminal to wait for, so there is no pending state. Refused (null) without an open shift.
+   */
+  recordCashSale(input: SaleInput): DocDraft | null {
     return this.db.tx(() => {
-      const shift = this.currentShift();
-      if (!shift) return null;
-      const now = (input.now ?? new Date()).toISOString();
-      const number = this.counters.next(input.documentType);
-      const draft: DocDraft = {
-        id: randomUUID(),
-        documentType: input.documentType,
-        number,
-        prefix: input.prefix,
-        status: 'pending',
-        createdAt: now,
-        updatedAt: now,
-        shiftId: shift.id,
-        businessDate: shift.business_date,
-        cashierId: input.operator.id,
-        cashierName: input.operator.name,
-        branchId: input.branchId,
-        orderId: input.orderId,
-        lines: input.lines,
-        itemIds: input.lines.map(() => randomUUID()),
-        tracked: input.tracked,
-        totals: input.totals,
-        ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
-        card: null,
-        paymentId: randomUUID(),
-        voidMeta: null,
-      };
-      this.db.run(
-        'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        draft.id,
-        draft.documentType,
-        seriesOf(draft.documentType),
-        number,
-        draft.prefix,
-        'pending',
-        shift.id,
-        draft.orderId,
-        now,
-        now,
-        draft.totals.totalAgorot,
-        draft.totals.tipAgorot,
-        JSON.stringify(draft),
-      );
-      return draft;
+      const doc = this.insertSale(input, 'completed');
+      if (doc) this.outbox.enqueue('transaction', doc.id);
+      return doc;
     });
+  }
+
+  /** The one write of a new sale document (inside the caller's transaction). */
+  private insertSale(input: SaleInput, status: 'pending' | 'completed'): DocDraft | null {
+    const shift = this.currentShift();
+    if (!shift) return null;
+    const now = (input.now ?? new Date()).toISOString();
+    const number = this.counters.next(input.documentType);
+    const draft: DocDraft = {
+      id: randomUUID(),
+      documentType: input.documentType,
+      number,
+      prefix: input.prefix,
+      status,
+      createdAt: now,
+      updatedAt: now,
+      shiftId: shift.id,
+      businessDate: shift.business_date,
+      cashierId: input.operator.id,
+      cashierName: input.operator.name,
+      branchId: input.branchId,
+      orderId: input.orderId,
+      lines: input.lines,
+      itemIds: input.lines.map(() => randomUUID()),
+      tracked: input.tracked,
+      totals: input.totals,
+      ...(input.promotions && input.promotions.length > 0 ? { promotions: input.promotions } : {}),
+      card: null,
+      paymentId: randomUUID(),
+      voidMeta: null,
+      ...(input.payments && input.payments.length > 0 ? { payments: input.payments } : {}),
+      ...(typeof input.tenderedAgorot === 'number' ? { tenderedAgorot: input.tenderedAgorot } : {}),
+      ...(typeof input.changeAgorot === 'number' ? { changeAgorot: input.changeAgorot } : {}),
+      ...(input.channel ? { channel: input.channel } : {}),
+    };
+    this.db.run(
+      'INSERT INTO documents (id, document_type, series, number, prefix, status, shift_id, order_id, created_at, updated_at, total_agorot, tip_agorot, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      draft.id,
+      draft.documentType,
+      seriesOf(draft.documentType),
+      number,
+      draft.prefix,
+      status,
+      shift.id,
+      draft.orderId,
+      now,
+      now,
+      draft.totals.totalAgorot,
+      draft.totals.tipAgorot,
+      JSON.stringify(draft),
+    );
+    return draft;
   }
 
   doc(id: string): DocDraft | null {
@@ -376,7 +431,7 @@ export class Ledger {
 export function shiftCloseWire(
   shift: ShiftRow,
   docs: readonly DocDraft[],
-  input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now: string },
+  input: { closedByName: string; closedByUserId?: string | null; unattended?: boolean; closeRequestId?: string | null; vatRate: number; now: string; countedCashAgorot?: number | null },
 ): Record<string, unknown> {
   const { till, reportableIds } = buildXTill(docs.map(xDocOf), shift.opening_cash, input.vatRate);
   const unattended = input.unattended ?? false;
@@ -385,7 +440,8 @@ export function shiftCloseWire(
     ...(input.closedByUserId ? { closedByUserId: input.closedByUserId } : {}),
     closedByName: input.closedByName,
     unattended,
-    ...(unattended ? {} : { countedCash: till.expectedCash }),
+    // A till's close names what was counted in the drawer; the kiosk's automatic one counts what was expected.
+    ...(unattended ? {} : { countedCash: typeof input.countedCashAgorot === 'number' && input.countedCashAgorot >= 0 ? toShekels(input.countedCashAgorot) : till.expectedCash }),
     expectedCash: till.expectedCash,
     transactionIds: reportableIds,
     lastTransactionNumber: lastTransactionNumberOf(docs.map((d) => ({ status: d.status, transactionNumber: d.number }))),
@@ -412,8 +468,8 @@ export function xDocOf(d: DocDraft): XDoc {
     grossAgorot: d.totals.grossAgorot,
     itemsQty: d.lines.reduce((s, l) => s + l.qty, 0),
     documentDiscountAgorot: d.totals.discountAgorot,
-    payments: d.status === 'completed' && d.card ? [{ method: 'card', amountAgorot: d.totals.totalAgorot }] : [],
-    paymentMethod: 'card',
+    payments: legsOf(d),
+    paymentMethod: d.payments && d.payments.length > 0 ? d.payments[d.payments.length - 1].method : 'card',
     vatAgorot: d.totals.vatAgorot,
     vatRate: d.totals.vatRate,
     tipAgorot: d.totals.tipAgorot,
@@ -498,6 +554,13 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
       item.promotionDiscount = r2(l.promotionAgorot!);
       if (l.promotionId) item.promotionId = l.promotionId;
     }
+    // "תפריטים": the menu active when the line was priced, its name and where the price came from (PriceSource.of) — a till
+    // line priced with no menu active carries none of them; the kiosk's lines never do.
+    if (l.menuId) {
+      item.menuId = l.menuId;
+      if (l.menuName) item.menuName = l.menuName;
+      item.priceSource = l.priceSource ?? 'catalog';
+    }
     for (const k of Object.keys(item)) if (item[k] === undefined) delete item[k];
     return item;
   });
@@ -509,7 +572,11 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
     status: d.status,
     documentType: d.documentType,
     documentProductionDate: d.createdAt,
-    paymentMethod: 'card',
+    // The summary column names the money that moved: the last tender (Basket.kt base()), the kiosk's is the card.
+    paymentMethod: d.payments && d.payments.length > 0 ? d.payments[d.payments.length - 1].method : 'card',
+    // A cash sale: what the customer handed over and the change given back.
+    amountTendered: typeof d.tenderedAgorot === 'number' ? r2(d.tenderedAgorot) : undefined,
+    changeAmount: typeof d.changeAgorot === 'number' ? r2(d.changeAgorot) : undefined,
     tipAmount: r2(d.totals.tipAgorot),
     tipPaymentMethod: d.totals.tipAgorot > 0 ? 'card' : undefined,
     totalAmount: r2(d.totals.grossAgorot),
@@ -530,19 +597,22 @@ export function documentWire(d: DocDraft): Record<string, unknown> {
       ? { promotions: d.promotions.map((p) => ({ promotionId: p.promotionId, name: p.name, type: p.type, applications: p.applications, discount: r2(p.discountAgorot) })) }
       : {}),
   };
-  if (d.status === 'completed' && d.card) {
-    wire.payments = [
-      {
-        id: d.paymentId,
-        sequence: 1,
-        method: 'card',
-        amount: r2(d.totals.totalAgorot),
-        nayaxMeta: flattenMeta(d.card.meta),
-        creditPayments: d.card.payments ?? undefined,
-        cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
-        createdAt: d.updatedAt,
-      },
-    ];
+  if (d.status === 'completed' && (d.card || (d.payments && d.payments.length > 0))) {
+    wire.payments = legsOf(d).map((leg, i) => {
+      if (leg.method === 'card' && d.card) {
+        return {
+          id: d.paymentId,
+          sequence: i + 1,
+          method: 'card',
+          amount: r2(leg.amountAgorot),
+          nayaxMeta: flattenMeta(d.card.meta),
+          creditPayments: d.card.payments ?? undefined,
+          cardBrand: d.card.brand !== 'other' ? d.card.brand : undefined,
+          createdAt: d.updatedAt,
+        };
+      }
+      return { id: stableUuid(`${d.id}:pay:${i}`), sequence: i + 1, method: leg.method, amount: r2(leg.amountAgorot), createdAt: d.updatedAt };
+    });
     const moves = d.lines
       .map((l, i) => ({ l, i }))
       .filter(({ l }) => d.tracked.includes(l.productId))

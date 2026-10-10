@@ -71,6 +71,14 @@ export interface ReceiptInput {
   /** The promotions the sale was priced with: "הנחת מבצע: <שם>" (the total is after them). */
   promotions?: Array<{ name: string; discountAgorot: number }>;
   card: { brand: CardBrand; last4: string | null; authNum: string | null; payments: number | null; firstPaymentAgorot: number | null } | null;
+  /**
+   * A till sale's tenders, in the order taken, with what the customer handed over and the change (ReceiptRenderer:
+   * one cash tender prints "מזומן" with the note handed over and "עודף"; several print every leg, then the change).
+   * Absent: the kiosk's one card payment.
+   */
+  tenders?: Array<{ method: 'cash' | 'card'; amountAgorot: number }>;
+  tenderedAgorot?: number | null;
+  changeAgorot?: number | null;
   footer: [string | null, string | null];
   logoUrl: string | null;
   /** Where it was issued — the shop, the till's number and name ([placeLine]); absent: no line. */
@@ -191,8 +199,21 @@ export function receiptDoc(r: ReceiptInput): ReceiptDoc {
   const grand = r.totalAgorot + r.tipAgorot;
   ops.push({ t: 'row', label: 'סה"כ לתשלום', value: formatShekelSign(grand), style: 'grand' });
   ops.push({ t: 'divider', gap: 8 });
+  const tenders = r.tenders ?? [];
+  if (tenders.length > 1) {
+    // A split: every leg on the paper, in the order handed over, then the change.
+    const masked = r.card?.last4 ? `**** ${r.card.last4}` : '';
+    for (const t of tenders) {
+      const label = t.method === 'cash' ? 'מזומן' : masked ? `כרטיס אשראי ⁦${masked}⁩` : 'כרטיס אשראי';
+      ops.push({ t: 'row', label, value: formatAgorot(t.amountAgorot), style: 'body' });
+    }
+    if ((r.changeAgorot ?? 0) > 0) ops.push({ t: 'row', label: 'עודף', value: formatAgorot(r.changeAgorot!), style: 'bodyBold' });
+  } else if (tenders.length === 1 && tenders[0].method === 'cash') {
+    ops.push({ t: 'row', label: 'מזומן', value: formatAgorot(r.tenderedAgorot ?? grand), style: 'body' });
+    if ((r.changeAgorot ?? 0) > 0) ops.push({ t: 'row', label: 'עודף', value: formatAgorot(r.changeAgorot!), style: 'bodyBold' });
+  }
   if (r.card) {
-    ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand), style: 'body' });
+    if (tenders.length <= 1) ops.push({ t: 'row', label: 'כרטיס אשראי', value: formatAgorot(grand), style: 'body' });
     const brand = BRAND_LABEL_HE[r.card.brand];
     const masked = r.card.last4 ? `**** ${r.card.last4}` : '';
     const cardText = [brand, masked].filter(Boolean).join(' ');
@@ -444,6 +465,90 @@ export function zDoc(z: Record<string, unknown>, opts: { business: BusinessInfo;
   d();
   c(`הופק ע״י ${typeof z.createdByName === 'string' ? z.createdByName : 'הקיוסק'}`);
   return { kind: 'z', logoUrl: opts.logoUrl, ops };
+}
+
+/** What an X report is drawn from: the shift, its figures (core/sale.ts buildXTill) and who took it. */
+export interface XInput {
+  business: BusinessInfo;
+  shopName: string | null;
+  posNumber: string | null;
+  machineName: string | null;
+  cashierName: string;
+  shiftNumber: number | null;
+  businessDate: string | null;
+  openedAt: Date;
+  /** The close, or null on an interim X (the window has no end yet: "נכון לשעה"). */
+  closedAt: Date | null;
+  printedAt: Date;
+  copy: boolean;
+  logoUrl: string | null;
+  /** buildXTill's figures, in shekels. */
+  till: {
+    openingCash: number;
+    expectedCash: number;
+    totalSales: number;
+    totalDiscounts: number;
+    totalRefunds: number;
+    totalCash: number;
+    totalCard: number;
+    totalTips: number;
+    vatTotal?: number;
+    transactionsCount: number;
+    itemsCount: number;
+  };
+  /** Counted cash on the close (shekels), null on an interim X or an uncounted close. */
+  countedCash: number | null;
+}
+
+/**
+ * The X report on paper — the Android till's ReportRenderer in the Z's own ops (centred / row / divider): who issued it,
+ * the title ("דו״ח X ביניים" or "דו״ח X – סגירת משמרת #N"), the window, the takings (gross, discounts, refunds, net),
+ * cash / card / VAT / tips, the counts and the drawer (opening float, expected, counted, variance).
+ */
+export function xDoc(x: XInput): ZDoc {
+  const ops: ZOp[] = [];
+  const c = (text: string, size = 18, bold = false) => ops.push({ t: 'centred', text, size, bold });
+  const r = (label: string, value: string, bold = false) => ops.push({ t: 'row', label, value, bold });
+  const d = () => ops.push({ t: 'divider' });
+  const b = x.business;
+  const t = x.till;
+  c(nonBlank(b.companyName) ?? 'POS', 24, true);
+  c(`${regLabel(320, b.dealerType)} ${nonBlank(b.companyRegNumber) ?? nonBlank(b.vatNumber) ?? '—'}`);
+  if (x.shopName) c(`סניף: ${x.shopName}`, 20, true);
+  const tillLine = [x.posNumber ? `קופה ${x.posNumber.trim()}` : null, nonBlank(x.machineName)].filter((v): v is string => !!v).filter((v, i, a) => a.indexOf(v) === i).join(' · ');
+  if (tillLine) c(tillLine, 20, true);
+  c(x.closedAt ? `דו״ח X – סגירת משמרת #${x.shiftNumber ?? ''}`.trim() : 'דו״ח X ביניים', 26, true);
+  if (x.copy) c('העתק', 22, true);
+  d();
+  r('תאריך הנפקה:', stamp(x.printedAt));
+  if (x.businessDate) r('תאריך עסקים:', x.businessDate);
+  r('מלצר/ית', x.cashierName);
+  r('תחילת משמרת:', stamp(x.openedAt));
+  r(x.closedAt ? 'סיום משמרת:' : 'נכון לשעה:', stamp(x.closedAt ?? x.printedAt));
+  d();
+  r('מכירות ברוטו', money(t.totalSales));
+  r('הנחות', neg(t.totalDiscounts));
+  r('זיכויים', neg(t.totalRefunds));
+  r('סה"כ נטו', money(t.totalSales - t.totalDiscounts - t.totalRefunds), true);
+  d();
+  r('מזומן', money(t.totalCash));
+  r('כרטיס אשראי', money(t.totalCard));
+  if (b.dealerType === 'exempt') r('מע"מ', 'עוסק פטור — ללא מע״מ');
+  else r('מע"מ', money(t.vatTotal ?? 0));
+  if (t.totalTips !== 0) r('תשר', money(t.totalTips));
+  r('סה"כ פריטים', String(t.itemsCount));
+  r('מסמכים', String(t.transactionsCount));
+  d();
+  r('קופה פותחת', money(t.openingCash));
+  r('מזומן צפוי', money(t.expectedCash), true);
+  if (x.closedAt) {
+    if (x.countedCash === null) r('מזומן שנספר', 'לא נספר');
+    else {
+      r('מזומן שנספר', money(x.countedCash));
+      r('הפרש', money(Math.round((x.countedCash - t.expectedCash) * 100) / 100), true);
+    }
+  }
+  return { kind: 'z', logoUrl: x.logoUrl, ops };
 }
 
 export type PrintDoc = ReceiptDoc | BonDoc | SlipDoc | ZDoc | TicketDoc;
