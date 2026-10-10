@@ -1209,6 +1209,22 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "וההפניה נרשמת. כבוי — כמו קודם: הבון ממתין בתור ומנסה שוב, עם ההתראה האדומה."
         ),
     ),
+    # Read by the till's kitchen print queue (pos-android hardware/kitchen KitchenPrintService
+    # `PARAM_STATUS_CHECK`, KitchenDelivery): on unless this says false.
+    BuiltinParameter(
+        key="kitchenPrinterStatusCheck",
+        label="בדיקת מצב מדפסת בונים (DLE EOT)",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל (ברירת מחדל): סביב כל בון שנשלח למדפסת רשת או Bluetooth הקופה קוראת את מצב המדפסת "
+            "(פקודת הסטטוס DLE EOT) — לפני ההדפסה, כדי לא לשלוח למדפסת בלי נייר או עם מכסה פתוח, ואחריה, "
+            "כדי לדעת שהבון אכן יצא. כך תקלה מוצגת מיד (נגמר הנייר, המכסה פתוח) והבון ממתין בתור במקום "
+            "ללכת לאיבוד. כבוי — הבון נשלח בלי לקרוא את מצב המדפסת, ללא אישור שיצא: רק למדפסת שמתנהגת "
+            "לא טוב כשהיא נשאלת על מצבה (מתנתקת, קופאת או מדפיסה תווים מוזרים). ניתן לקבוע לפי חברה, "
+            "סניף, נקודת מכירה או קופה."
+        ),
+    ),
     # The menu layer ("תוספות ושינויים", docs/SPEC_MENU_MODIFIERS.md) — read by the till.
     BuiltinParameter(
         key="upsellEnabled",

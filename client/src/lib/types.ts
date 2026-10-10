@@ -1004,7 +1004,8 @@ export interface Category {
   description?: string;
   color?: string;
   imageUrl?: string;
-  parentId?: string;
+  /** "קטגוריית אב": null / absent is a top category; `null` sent on a save clears it. */
+  parentId?: string | null;
   voucherId?: string;
   /** Null/absent is "off". */
   ticketMode?: TicketMode | null;

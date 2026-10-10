@@ -3,6 +3,7 @@
  * The screens never reach the network: everything they show comes from here, from local data.
  */
 
+import type { KioskMenuState } from '@dash-lib/kioskMenus';
 import type { KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
 import type { MealSlot } from '@dash-lib/kioskMoney';
 import type { PaymentMethod } from '@dash-lib/kioskConfig';
@@ -36,6 +37,13 @@ export interface KioskView {
   catalog: {
     categories: KCategory[];
     products: KProduct[];
+    /**
+     * "תפריטים": the menu active now by this kiosk's own clock — the screens order by it and name it in the title
+     * (client lib/kioskMenus.ts `withMenuOrder`, `titleWithMenu`). Absent (the Android bundle's bridge): no menu.
+     */
+    menu?: KioskMenuState;
+    /** What the active menu holds back (still sold by the catalog): known to a basket line already in, and to a meal's components. */
+    held?: KProduct[];
     groups: Record<string, KGroup[]>;
     quickNotes: Record<string, string[]>;
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
@@ -97,6 +105,15 @@ export interface OrderLineIn {
   notes: string[];
   /** The unit price (with its options, agorot) the screen showed: the pre-payment check compares it (core/basketCheck.ts). */
   unitAgorot?: number;
+  /**
+   * "תפריטים" (client lib/kioskMenus.ts `menuMemoryOf`): the dish's own price as the line was added at — the active menu's
+   * while one priced it — the catalog's price then, the menu and where the price came from. An open basket keeps its
+   * prices when the menu changes under it: the check keeps `listAgorot` while the catalog's price has not moved.
+   */
+  listAgorot?: number;
+  catalogAgorot?: number;
+  menuId?: string;
+  priceSource?: 'menu' | 'catalog';
   /**
    * A meal: the product chosen in each slot with its choices (its defaults, or a required choice answered in
    * the meal window; absent: its defaults) — priced here from the catalog.
