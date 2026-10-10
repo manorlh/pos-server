@@ -7,7 +7,7 @@
   "author": "Runner Systems",
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "npm run build:renderer && npm run build:main",
+    "build": "npm run build:renderer && npm run build:main && npm run build:app-bundle",
     "build:renderer": "vite build",
     "build:main": "node scripts/build-main.mjs",
     "start": "electron .",
@@ -68,6 +68,12 @@
       "dist/preload/**",
       "dist/renderer/**",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/app-bundle",
+        "to": "app-bundle"
+      }
     ],
     "asarUnpack": [
       "node_modules/sharp/**",

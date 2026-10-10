@@ -69,6 +69,21 @@ for (const f of files.filter((x) => x.path.endsWith('.css'))) {
   }
 }
 
+// The bundle stands on its own (the Windows installer ships it as resources/app-bundle, the APK in its assets):
+// nothing may point at the kiosk window's public pictures (`/kiosk/card_terminals.png`... copied into dist/renderer
+// by vite.config.mts's kiosk-public plugin, which this build leaves out) or at the bridge's tray.png.
+const NOT_IN_THIS_BUNDLE = [/["'`(=]\.?\/kiosk\/[\w./-]+\.(?:png|webp|jpe?g|gif|svg)/i, /tray\.png/i];
+for (const f of files.filter((x) => /\.(?:js|css|html)$/.test(x.path))) {
+  const text = new TextDecoder().decode(f.bytes);
+  for (const re of NOT_IN_THIS_BUNDLE) {
+    const m = re.exec(text);
+    if (m) {
+      console.error(`${f.path}: refers to ${m[0].slice(0, 80)} - a file that is not part of the app bundle (kiosk public pictures / tray icon)`);
+      process.exit(3);
+    }
+  }
+}
+
 const manifest = buildAppManifest(files, {
   version,
   versionCode,
