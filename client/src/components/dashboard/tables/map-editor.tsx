@@ -43,10 +43,14 @@ import {
   PLAIN,
   rotatePoint,
   SKETCH_BACKGROUNDS,
-  SKETCH_DEFAULT_TEXT,
-  SKETCH_KINDS,
+  SKETCH_STRUCTURE_KINDS,
   SKETCH_STYLE,
+  SKETCH_SYMBOL_KINDS,
   SKETCH_TEMPLATES,
+  defaultText,
+  styleOf,
+  variantOf,
+  type SketchVariant,
   CHAIR_LOOK,
   CLEAN,
   chairLayout,
@@ -77,6 +81,12 @@ type Drag =
 
 const GRID = 10;
 const SHAPES: TableShape[] = ['round', 'square', 'rect'];
+/** The variants offered for a selected shape, in this order (null: the kind's default). */
+const VARIANT_CHOICES: Partial<Record<SketchKind, (SketchVariant | null)[]>> = {
+  restroom: [null, 'men', 'women', 'accessible'],
+  exit: ['plain', null],
+  counter: ['straight', 'L', 'U'],
+};
 
 export function MapEditor({
   zone,
@@ -588,35 +598,50 @@ export function MapEditor({
               {t('sketch.clear')}
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-xs text-muted-foreground me-1">{t('sketch.add')}</span>
-            {SKETCH_KINDS.map((kind) => (
-              <Button key={kind} size="sm" variant="secondary" onClick={() => addElement(kind)}>
-                <span
-                  className="me-1 inline-block h-3 w-3 rounded-sm border"
-                  style={{ background: SKETCH_STYLE[kind].fill, borderColor: SKETCH_STYLE[kind].stroke }}
-                />
-                {t(`sketch.kind.${kind}`)}
-              </Button>
-            ))}
-          </div>
+          {(
+            [
+              ['symbols', SKETCH_SYMBOL_KINDS],
+              ['structure', SKETCH_STRUCTURE_KINDS],
+            ] as const
+          ).map(([row, kinds]) => (
+            // "סמלים" — what guests and staff find their way by; "מבנה" — the room itself.
+            <div key={row} className="flex flex-wrap items-center gap-1">
+              <span className="text-xs text-muted-foreground me-1">{t(`sketch.palette.${row}`)}</span>
+              {kinds.map((kind) => {
+                // The swatch in the colours a new one gets (an exit from here is the plain one).
+                const look = styleOf({ kind, variant: kind === 'exit' ? 'plain' : null });
+                return (
+                  <Button key={kind} size="sm" variant="secondary" onClick={() => addElement(kind)}>
+                    <span
+                      className="me-1 inline-block h-3 w-3 rounded-sm border"
+                      style={{ background: look.fill, borderColor: look.stroke }}
+                    />
+                    {t(`sketch.kind.${kind}`)}
+                  </Button>
+                );
+              })}
+            </div>
+          ))}
           {element ? (
             <div className="flex flex-wrap items-end gap-2 border-t pt-2">
               <span className="text-sm font-medium">{t(`sketch.kind.${element.kind}`)}</span>
+              {VARIANT_CHOICES[element.kind] ? (
+                // Restrooms: whose; an exit: plain or the emergency one; a bar: its shape.
+                <div className="flex gap-1">
+                  {VARIANT_CHOICES[element.kind]!.map((v) => (
+                    <Button
+                      key={v ?? 'none'}
+                      size="sm"
+                      variant={variantOf(element.kind, element.variant) === v ? 'default' : 'outline'}
+                      onClick={() => patchElement({ variant: v })}
+                    >
+                      {t(`sketch.variant.${element.kind}.${v ?? 'none'}`)}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
               {element.kind === 'counter' ? (
                 <>
-                  <div className="flex gap-1">
-                    {(['straight', 'L'] as const).map((v) => (
-                      <Button
-                        key={v}
-                        size="sm"
-                        variant={(element.variant ?? 'straight') === v ? 'default' : 'outline'}
-                        onClick={() => patchElement({ variant: v })}
-                      >
-                        {t(`sketch.counter.${v}`)}
-                      </Button>
-                    ))}
-                  </div>
                   <NumberField
                     label={t('sketch.stools')}
                     value={element.stools ?? 0}
@@ -651,7 +676,7 @@ export function MapEditor({
                   <Input
                     className="h-8 w-40"
                     value={element.text ?? ''}
-                    placeholder={SKETCH_DEFAULT_TEXT[element.kind] ?? ''}
+                    placeholder={defaultText(element) ?? ''}
                     maxLength={60}
                     onChange={(e) => patchElement({ text: e.target.value || null })}
                   />
@@ -664,9 +689,26 @@ export function MapEditor({
                 </>
               ) : null}
               {!isDrawn(element.kind) ? (
-                <Button size="sm" variant="outline" onClick={() => patchElement({ rotation: (element.rotation + 45) % 360 })}>
-                  <RotateCw className="h-4 w-4" />
-                </Button>
+                // A quarter turn each click (the symbols stand square to the walls); 45° for a slant.
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title={t('sketch.rotate90')}
+                    onClick={() => patchElement({ rotation: ((Math.floor(element.rotation / 90) + 1) * 90) % 360 })}
+                  >
+                    <RotateCw className="h-4 w-4 me-1" />
+                    90°
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={t('sketch.rotate45')}
+                    onClick={() => patchElement({ rotation: (element.rotation + 45) % 360 })}
+                  >
+                    45°
+                  </Button>
+                </div>
               ) : null}
               <Button
                 size="sm"
@@ -1111,10 +1153,10 @@ export function SketchShape({
   onDown?: (e: React.PointerEvent) => void;
   onResize?: (e: React.PointerEvent) => void;
 }) {
-  const st = SKETCH_STYLE[el.kind];
+  const st = styleOf(el);
   const cx = el.x + el.w / 2;
   const cy = el.y + el.h / 2;
-  const text = el.text ?? SKETCH_DEFAULT_TEXT[el.kind] ?? null;
+  const text = el.text ?? defaultText(el);
   const long = Math.max(el.w, el.h);
   const short = Math.min(el.w, el.h);
   const fs = text ? Math.max(9 * perPx, Math.min(short * 0.55, (long * 1.6) / Math.max(2, text.length))) : 0;
@@ -1122,8 +1164,11 @@ export function SketchShape({
   const handle = 12 * perPx;
   // A fixture with a symbol: the symbol, and the word under it, when both fit.
   const iconSize = SYMBOLS[el.kind] ? Math.min(short * 0.55, long * 0.4) : 0;
-  const stacked = !!text && iconSize >= 14 * perPx && short >= iconSize + fs * 0.9 * 1.3;
-  const textFs = stacked ? Math.min(fs, short * 0.24) : fs;
+  // Stacked, the word is drawn smaller (at most a quarter of the short side): it is that size
+  // that has to fit under the symbol — so a short word ("נשים", "כניסה") keeps its symbol too.
+  const stackedFs = Math.min(fs, short * 0.24);
+  const stacked = !!text && iconSize >= 14 * perPx && short >= iconSize + stackedFs * 0.9 * 1.3;
+  const textFs = stacked ? stackedFs : fs;
   if (hasPoints(el.kind)) {
     // A drawn line, wall or stroke: its points, its colour and width — with a wider,
     // invisible line over it so a finger can pick it.
@@ -1184,7 +1229,7 @@ export function SketchShape({
         ) : (
           <rect
             x={el.x} y={el.y} width={el.w} height={el.h}
-            rx={el.kind === 'bar' ? Math.min(12, short / 3) : 2}
+            rx={el.kind === 'bar' || el.kind === 'dj_booth' ? Math.min(12, short / 3) : 2}
             fill={st.fill}
             stroke={selected ? '#2563eb' : st.stroke}
             strokeWidth={(selected ? 3 : 1.5) * perPx}
@@ -1198,6 +1243,7 @@ export function SketchShape({
           // The symbol above the word, when there is room for both.
           <FixtureSymbol
             kind={el.kind}
+            variant={el.variant ?? null}
             cx={cx}
             cy={cy - (iconSize + textFs * 1.25) / 2 + iconSize / 2}
             size={iconSize}
@@ -1234,8 +1280,10 @@ export function SketchShape({
   );
 }
 
-/** The fixtures drawn with a symbol in them (the till draws the same). */
-const SYMBOLS: Partial<Record<SketchKind, true>> = { restroom: true, cashier: true, host: true, exit: true };
+/** The fixtures drawn with a symbol in them (the till draws the same: TableVisuals.kt, drawSymbol). */
+const SYMBOLS: Partial<Record<SketchKind, true>> = {
+  restroom: true, cashier: true, host: true, exit: true, door: true, kitchen: true, dj_booth: true, bar: true, stage: true,
+};
 
 /** A figure of the WC sign: a head and a body — a dress for `dress`. */
 function Figure({ cx, cy, size, color, dress }: { cx: number; cy: number; size: number; color: string; dress: boolean }) {
@@ -1252,10 +1300,84 @@ function Figure({ cx, cy, size, color, dress }: { cx: number; cy: number; size: 
   );
 }
 
-function FixtureSymbol({ kind, cx, cy, size, color, transform }: { kind: SketchKind; cx: number; cy: number; size: number; color: string; transform?: string }) {
+function FixtureSymbol({
+  kind,
+  variant = null,
+  cx,
+  cy,
+  size,
+  color,
+  transform,
+}: {
+  kind: SketchKind;
+  variant?: SketchVariant | null;
+  cx: number;
+  cy: number;
+  size: number;
+  color: string;
+  transform?: string;
+}) {
+  const s = size;
+  const line = { stroke: color, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, fill: 'none' };
   return (
     <g transform={transform} pointerEvents="none">
-      {kind === 'restroom' ? (
+      {kind === 'restroom' && variant === 'men' ? (
+        <Figure cx={cx} cy={cy} size={s * 0.85} color={color} dress={false} />
+      ) : kind === 'restroom' && variant === 'women' ? (
+        <Figure cx={cx} cy={cy} size={s * 0.85} color={color} dress />
+      ) : kind === 'restroom' && variant === 'accessible' ? (
+        // The wheelchair sign: a head, the seated body, the wheel.
+        <g>
+          <circle cx={cx - s * 0.04} cy={cy - s * 0.36} r={s * 0.09} fill={color} />
+          <path
+            d={`M ${cx - s * 0.06} ${cy - s * 0.22} L ${cx - s * 0.06} ${cy + s * 0.02} L ${cx + s * 0.2} ${cy + s * 0.02} L ${cx + s * 0.3} ${cy + s * 0.3}`}
+            {...line} strokeWidth={s * 0.08}
+          />
+          <circle cx={cx - s * 0.08} cy={cy + s * 0.16} r={s * 0.24} {...line} strokeWidth={s * 0.08} />
+        </g>
+      ) : kind === 'door' ? (
+        // The entrance: an arrow in, through the door's frame.
+        <g>
+          <path
+            d={`M ${cx - s * 0.4} ${cy} L ${cx + s * 0.12} ${cy} M ${cx - s * 0.08} ${cy - s * 0.2} L ${cx + s * 0.12} ${cy} L ${cx - s * 0.08} ${cy + s * 0.2}`}
+            {...line} strokeWidth={s * 0.08}
+          />
+          <rect x={cx + s * 0.2} y={cy - s * 0.38} width={s * 0.2} height={s * 0.76} rx={s * 0.03} {...line} strokeWidth={s * 0.064} />
+        </g>
+      ) : kind === 'kitchen' ? (
+        // A pot: its lid and knob, its body, its handles.
+        <g>
+          <circle cx={cx} cy={cy - s * 0.26} r={s * 0.06} fill={color} />
+          <path
+            d={`M ${cx - s * 0.36} ${cy - s * 0.15} L ${cx + s * 0.36} ${cy - s * 0.15} M ${cx - s * 0.42} ${cy + s * 0.02} L ${cx + s * 0.42} ${cy + s * 0.02}`}
+            {...line} strokeWidth={s * 0.07}
+          />
+          <rect x={cx - s * 0.3} y={cy - s * 0.08} width={s * 0.6} height={s * 0.42} rx={s * 0.08} fill={color} />
+        </g>
+      ) : kind === 'dj_booth' ? (
+        // A record on the deck, and the tone arm across it.
+        <g>
+          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.34} {...line} strokeWidth={s * 0.07} />
+          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.2} {...line} strokeWidth={s * 0.035} />
+          <circle cx={cx - s * 0.06} cy={cy + s * 0.04} r={s * 0.07} fill={color} />
+          <path d={`M ${cx + s * 0.38} ${cy - s * 0.38} L ${cx + s * 0.38} ${cy - s * 0.02} L ${cx + s * 0.14} ${cy + s * 0.14}`} {...line} strokeWidth={s * 0.07} />
+        </g>
+      ) : kind === 'bar' ? (
+        // A cocktail glass.
+        <g>
+          <path d={`M ${cx - s * 0.3} ${cy - s * 0.34} L ${cx + s * 0.3} ${cy - s * 0.34} L ${cx} ${cy + s * 0.02} Z`} fill={color} />
+          <path d={`M ${cx} ${cy} L ${cx} ${cy + s * 0.32} M ${cx - s * 0.16} ${cy + s * 0.34} L ${cx + s * 0.16} ${cy + s * 0.34}`} {...line} strokeWidth={s * 0.07} />
+        </g>
+      ) : kind === 'stage' ? (
+        // A microphone on its stand.
+        <g>
+          <rect x={cx - s * 0.11} y={cy - s * 0.4} width={s * 0.22} height={s * 0.34} rx={s * 0.11} fill={color} />
+          <path
+            d={`M ${cx - s * 0.2} ${cy - s * 0.16} A ${s * 0.2} ${s * 0.22} 0 0 0 ${cx + s * 0.2} ${cy - s * 0.16} M ${cx} ${cy + s * 0.06} L ${cx} ${cy + s * 0.34} M ${cx - s * 0.16} ${cy + s * 0.36} L ${cx + s * 0.16} ${cy + s * 0.36}`}
+            {...line} strokeWidth={s * 0.07}
+          />
+        </g>
+      ) : kind === 'restroom' ? (
         <>
           <Figure cx={cx - size * 0.28} cy={cy} size={size * 0.62} color={color} dress={false} />
           <line x1={cx} y1={cy - size * 0.32} x2={cx} y2={cy + size * 0.32} stroke={color} strokeOpacity={0.5} strokeWidth={size * 0.04} />

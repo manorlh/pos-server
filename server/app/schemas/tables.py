@@ -287,7 +287,32 @@ SKETCH_KINDS = (
     "line", "polyline", "freehand", "rect",
     # The business's logo, placed on the floor: its own picture (`src`), else the business's.
     "logo",
+    # Sketch schema 2 ("סמלים", docs: specs/table-map-decor.md): the DJ booth.
+    "dj_booth",
 )
+#: What a variant means on each kind that takes one; any other kind keeps none.
+#: counter — the bar's shape; restroom — whose (none: the both-sexes sign); exit — a plain
+#: exit ("יציאה"; none: the emergency exit, "יציאת חירום").
+SKETCH_VARIANTS = {
+    "counter": ("straight", "L", "U"),
+    "restroom": ("men", "women", "accessible"),
+    "exit": ("plain",),
+}
+#: The sketch schema this server speaks. A till that sends a lower one (or none — every
+#: till before the decor symbols) cannot keep what came with schema 2: its map designer
+#: drops kinds and variants it does not know when it saves. Those are kept for it
+#: (app/services/tables.py, keep_decor_unknown_to_till). A new kind or variant: add it
+#: here with the schema it comes with, and raise SKETCH_SCHEMA (the till's too).
+SKETCH_SCHEMA = 2
+#: The schema each kind / variant came with (absent: 1, every till knows it).
+SKETCH_KIND_SINCE = {"dj_booth": 2}
+SKETCH_VARIANT_SINCE = {
+    ("counter", "U"): 2,
+    ("restroom", "men"): 2,
+    ("restroom", "women"): 2,
+    ("restroom", "accessible"): 2,
+    ("exit", "plain"): 2,
+}
 #: `clean` — the flat, neutral floor (the default when nothing is chosen).
 SKETCH_BACKGROUNDS = ("clean", "wood", "tiles", "light", "dark", "image")
 SketchBackground = Literal["clean", "wood", "tiles", "light", "dark", "image"]
@@ -303,7 +328,7 @@ class SketchElementIn(_Camel):
     kind: Literal[
         "wall", "bar", "door", "kitchen", "window", "restroom", "plant", "column", "label", "counter",
         "stairs", "cashier", "host", "exit", "stage", "sofa",
-        "line", "polyline", "freehand", "rect", "logo",
+        "line", "polyline", "freehand", "rect", "logo", "dj_booth",
     ]
     x: float = Field(..., ge=-100, le=5100)
     y: float = Field(..., ge=-100, le=5100)
@@ -311,8 +336,10 @@ class SketchElementIn(_Camel):
     h: float = Field(..., ge=0, le=5200)
     rotation: int = Field(0, ge=0, le=359)
     text: Optional[str] = Field(None, max_length=60)
-    #: A bar counter ("counter"): straight or L-shaped, with this many stools in front.
-    variant: Optional[Literal["straight", "L"]] = None
+    #: A bar counter ("counter"): straight, L- or U-shaped, with this many stools in front.
+    #: Restrooms: "men" / "women" / "accessible" (none: both). An exit: "plain" (none: the
+    #: emergency exit). See SKETCH_VARIANTS; on any other kind it is not kept.
+    variant: Optional[Literal["straight", "L", "U", "men", "women", "accessible", "plain"]] = None
     stools: int = Field(0, ge=0, le=40)
     #: A drawn line, polyline or freehand stroke: its points as x, y, x, y… (canvas units).
     points: Optional[List[float]] = Field(None, max_length=SKETCH_POINTS_MAX)
@@ -358,6 +385,9 @@ class SketchElementIn(_Camel):
     def _drawn_need_points(self):
         if self.kind in ("line", "polyline", "freehand") and not self.points:
             raise ValueError(f"a {self.kind} needs points")
+        allowed = SKETCH_VARIANTS.get(self.kind)
+        if allowed is not None and self.variant is not None and self.variant not in allowed:
+            raise ValueError(f"a {self.kind} is {', '.join(allowed)}, not {self.variant}")
         return self
 
 
@@ -576,6 +606,9 @@ class TillLayoutIn(PosUserRef):
 
     zones: List[TillZoneIn] = Field(default_factory=list, max_length=50)
     tables: List[TillTableIn] = Field(default_factory=list, max_length=1000)
+    #: The sketch schema the till's map designer knows (SKETCH_SCHEMA). None: a till from
+    #: before the decor symbols — what it cannot know is kept when it saves a plan.
+    sketch_schema: Optional[int] = Field(None, alias="sketchSchema", ge=1, le=1000)
 
 
 class ReasonCreate(_Camel):

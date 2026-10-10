@@ -58,6 +58,7 @@ from app.models.tables import (
     TableZone,
 )
 from app.models.user import User
+from app.schemas.tables import SKETCH_KIND_SINCE, SKETCH_SCHEMA, SKETCH_VARIANT_SINCE, SKETCH_VARIANTS
 from app.services.areas import as_utc
 
 logger = logging.getLogger(__name__)
@@ -2018,6 +2019,9 @@ def sketch_json(sketch: Any) -> Optional[dict]:
         if e.kind == "counter":
             out["variant"] = e.variant or "straight"
             out["stools"] = e.stools
+        elif e.kind in SKETCH_VARIANTS and e.variant:
+            # Restrooms (men / women / accessible) and a plain exit; none — the default.
+            out["variant"] = e.variant
         if e.points:
             out["points"] = e.points
         if e.color:
@@ -2315,6 +2319,41 @@ def table_in_use(db: Session, table: DiningTable, now: datetime) -> bool:
     )
 
 
+def keep_decor_unknown_to_till(before: Any, saved: Optional[dict], till_schema: int = 1) -> Optional[dict]:
+    """
+    A plan saved by a till whose map designer speaks an older sketch schema than this
+    server ([till_schema]; a till that sends no `sketchSchema` speaks 1): what that till
+    could not know is kept from the plan as it was. Its designer drops shapes of kinds it
+    does not know (a DJ booth) and turns variants it does not know into its own (a U bar
+    into a straight one, restrooms for men / women / accessible into the plain sign, a
+    plain exit into the emergency one) — the till never showed them, so it cannot have
+    meant to change them. Kept: every such shape it left out (after its own, in their
+    order), and such a variant on a shape it kept. A plan it cleared (null) stays cleared
+    — "ניקוי הסקיצה" is meant whole.
+    """
+    if saved is None or not isinstance(before, dict):
+        return saved
+    old = [e for e in (before.get("elements") or []) if isinstance(e, dict) and e.get("id")]
+    if not old:
+        return saved
+    elements = [dict(e) for e in (saved.get("elements") or [])]
+    by_id = {e.get("id"): e for e in elements}
+    for o in old:
+        kind = o.get("kind")
+        variant = o.get("variant")
+        mine = by_id.get(o.get("id"))
+        if mine is None:
+            if SKETCH_KIND_SINCE.get(kind, 1) > till_schema:
+                elements.append(dict(o))
+            continue
+        if SKETCH_VARIANT_SINCE.get((kind, variant), 1) > till_schema and mine.get("kind") == kind:
+            # The old designer's own word for it: "straight" for a counter, none otherwise.
+            coerced = "straight" if kind == "counter" else None
+            if mine.get("variant") == coerced:
+                mine["variant"] = variant
+    return {**saved, "elements": elements}
+
+
 def _merged_sketch(zone: TableZone, background: str) -> dict:
     """The zone's sketch with another floor: its drawn shapes (and anything else in it) kept."""
     sketch = dict(zone.sketch) if isinstance(zone.sketch, dict) else {"template": None, "elements": []}
@@ -2327,8 +2366,9 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
     """
     "שמור" in a till's edit mode: zones and tables added, changed and removed — all of it,
     or (on any refusal) none of it. A zone may carry its whole floor plan (`sketch`, from
-    the till's map designer — the dashboard's shape and validation). Only the zones and
-    tables this till sees. Refused:
+    the till's map designer — the dashboard's shape and validation; from a till that sends
+    no `sketchSchema` ≥ 2, the decor symbols it cannot know are kept,
+    keep_decor_unknown_to_till). Only the zones and tables this till sees. Refused:
     a table someone is at that would move, change its number or go (409 `table_in_use`);
     a number another live table of the shop has once the batch is applied (409
     `table_number_taken`); a zone removed with tables still in it (409 `zone_not_empty`).
@@ -2382,7 +2422,11 @@ def apply_till_layout(db: Session, machine: POSMachine, body, *, now: Optional[d
         # The plan drawn on the till's map designer: the whole sketch, as the dashboard
         # saves it (null clears it); a floor sent beside it is laid under it.
         if "sketch" in fields:
-            zone.sketch = sketch_json(item.sketch)
+            saved = sketch_json(item.sketch)
+            till_schema = getattr(body, "sketch_schema", None) or 1
+            if till_schema < SKETCH_SCHEMA:
+                saved = keep_decor_unknown_to_till(zone.sketch, saved, till_schema)
+            zone.sketch = saved
         if item.background is not None:
             zone.sketch = _merged_sketch(zone, item.background)
         if item.canvas_width is not None:

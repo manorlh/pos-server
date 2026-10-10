@@ -55,6 +55,8 @@ SKETCH_KINDS = (
     "line", "polyline", "freehand", "rect",
     # The business's logo (its own picture, or src).
     "logo",
+    # Sketch schema 2 — the decor symbols (specs/table-map-decor.md): the DJ booth.
+    "dj_booth",
 )
 TABLE_ORDER_SOURCES = ("synced", "local")
 #: What a table is for (app/services/table_policies.py): an ordinary table, the staff's

@@ -11833,6 +11833,12 @@
       "enlargeSaveFirst": "שמרו קודם את השינויים, ואז הרחיבו",
       "clearConfirm": "למחוק את כל הצורות מהסקיצה?",
       "add": "הוסף:",
+      "palette": {
+        "symbols": "סמלים:",
+        "structure": "מבנה:"
+      },
+      "rotate90": "סיבוב ברבע (90°)",
+      "rotate45": "סיבוב ב־45°",
       "kind": {
         "wall": "קיר",
         "door": "כניסה",
@@ -11851,10 +11857,11 @@
         "stairs": "מדרגות",
         "cashier": "קופה",
         "host": "עמדת מארחת",
-        "exit": "יציאת חירום",
+        "exit": "יציאה",
         "stage": "במה",
         "sofa": "ספה",
-        "logo": "לוגו"
+        "logo": "לוגו",
+        "dj_booth": "עמדת די־ג'יי"
       },
       "logoBusiness": "הלוגו של העסק",
       "logoOwn": "תמונה שהועלתה",
@@ -11862,9 +11869,22 @@
       "logoUpload": "העלאת תמונה",
       "logoUseBusiness": "חזרה ללוגו העסק",
       "text": "טקסט",
-      "counter": {
-        "straight": "ישר",
-        "L": "בצורת L"
+      "variant": {
+        "counter": {
+          "straight": "ישר",
+          "L": "בצורת L",
+          "U": "בצורת U"
+        },
+        "restroom": {
+          "none": "לכולם",
+          "men": "גברים",
+          "women": "נשים",
+          "accessible": "נגיש"
+        },
+        "exit": {
+          "plain": "יציאה",
+          "none": "יציאת חירום"
+        }
       },
       "stools": "כיסאות",
       "stoolsToTables": "הפוך כיסאות לשולחנות",
