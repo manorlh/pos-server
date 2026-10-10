@@ -191,6 +191,8 @@ class TableOrder(Base):
         ),
         Index("ix_table_orders_shop_opened", "shop_id", "opened_at"),
         Index("ix_table_orders_shop_status", "shop_id", "status"),
+        # "נסגרו היום": the shop's orders closed in the last day.
+        Index("ix_table_orders_shop_closed", "shop_id", "closed_at"),
         CheckConstraint(
             "status IN ('open', 'paid', 'cancelled', 'void', 'merged')", name="ck_table_orders_status"
         ),

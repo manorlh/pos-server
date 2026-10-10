@@ -87,6 +87,7 @@ from app.models.prepaid_voucher import (
 from app.models import prepaid_voucher_extras  # noqa: F401,E402
 from app.models.promotion import Promotion, TransactionPromotion
 from app.models.tables import DiningTable, TableCancelReason, TableEvent, TableOrder, TableReservation, TableType, TableZone
+from app.models.tables_state import TablesStateVersion  # noqa: F401
 from app.models.platform_setting import PlatformSetting
 from app.models.printers import KitchenPrinter, KitchenPrinterRoute, KitchenPrintJob
 from app.models.menu import (

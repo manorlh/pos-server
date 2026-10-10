@@ -141,6 +141,8 @@ class KioskOrder(Base):
         Index("ix_kiosk_orders_shop_date", "shop_id", "business_date"),
         # "תשלום בקופה": the shop's orders waiting at the tills.
         Index("ix_kiosk_orders_shop_open", "shop_id", "open_state"),
+        # ... and those closed a moment ago, which the tills still show.
+        Index("ix_kiosk_orders_shop_closed", "shop_id", "closed_at"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

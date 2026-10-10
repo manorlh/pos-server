@@ -193,6 +193,23 @@ export function isPendingRemoteCredit(status: RemoteCreditStatus | null | undefi
   return !!status && PENDING_REMOTE_CREDIT.has(status);
 }
 
+/**
+ * How often the dialog asks for a request it follows: every 2 s for its first half minute (a
+ * till online answers within seconds), every 5 s up to three minutes, then every 15 s (a till
+ * offline — it is handed the request on its next beat). `false`: not pending, no more polling.
+ */
+export function remoteCreditPollMs(
+  req: Pick<RemoteCreditRequest, 'status' | 'createdAt'> | null | undefined,
+  nowMs: number,
+): number | false {
+  if (req && !isPendingRemoteCredit(req.status)) return false;
+  const created = req ? Date.parse(req.createdAt) : NaN;
+  const age = Number.isNaN(created) ? 0 : Math.max(0, nowMs - created);
+  if (age < 30_000) return 2000;
+  if (age < 180_000) return 5000;
+  return 15_000;
+}
+
 export function remoteCreditStatusVariant(
   status: RemoteCreditStatus,
 ): 'default' | 'secondary' | 'destructive' | 'outline' {

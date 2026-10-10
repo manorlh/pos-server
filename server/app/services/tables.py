@@ -534,7 +534,10 @@ NotifyTarget = Tuple[str, str]
 
 
 def notify_targets(db: Session, shop_id: Any, *, except_machine_id: Any = None) -> List[NotifyTarget]:
-    """The shop's active tills, but the one that made the change."""
+    """
+    The shop's active tills, but the one that made the change. Not a display device (a KDS
+    screen, the "מוכן / לא מוכן" board): it never shows tables.
+    """
     if shop_id is None:
         return []
     machines = (
@@ -545,46 +548,115 @@ def notify_targets(db: Session, shop_id: Any, *, except_machine_id: Any = None) 
     return [
         (str(m.tenant_id), str(m.id))
         for m in machines
-        if m.tenant_id and (except_machine_id is None or str(m.id) != str(except_machine_id))
+        if m.tenant_id
+        and getattr(m, "is_fiscal", True) is not False
+        and (except_machine_id is None or str(m.id) != str(except_machine_id))
     ]
 
 
 def publish_tables_notify(targets: Iterable[NotifyTarget], table_id: Optional[str] = None) -> None:
-    """Best effort: a till that misses it sees the change at its next poll."""
-    from app.services.ably_notify import _notify_base, publish_notify
+    """
+    Best effort: a till that misses it sees the change at its next poll. One Ably request
+    for every till (batch publish), not one per till.
+    """
+    from app.services import ably_notify
+    from app.services.tables_state import signal_body
 
-    for tenant_id, machine_id in targets:
-        body = _notify_base()
-        if table_id:
-            body["tableId"] = table_id
-        try:
-            publish_notify(tenant_id, machine_id, NOTIFY_EVENT, body)
-        except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
-            logger.exception("tables notify failed for %s", machine_id)
+    channels = [ably_notify.machine_channel(str(t), str(m)) for t, m in targets]
+    if not channels:
+        return
+    try:
+        ably_notify.publish_batch(channels, NOTIFY_EVENT, signal_body(None, None, [table_id]))
+    except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
+        logger.exception("tables notify failed for %d till(s)", len(channels))
+
+
+def tables_changed(
+    db: Session,
+    shop_id: Any,
+    *,
+    tenant_id: Any,
+    table_id: Optional[str] = None,
+    origin: Any = None,
+    wake: bool = True,
+) -> Optional[int]:
+    """
+    After a committed write that changes the tills' tables state: the shop's version is
+    raised (app/services/tables_state.py) and committed, and — `wake` — the change joins the
+    shop's next coalesced "tables" signal. `origin`: the till that made it (not woken by its
+    own change on its own channel). Never fails the write it follows: returns None then.
+    """
+    from app.services import tables_state as TS
+
+    if shop_id is None:
+        return None
+    version: Optional[int] = None
+    try:
+        version = TS.bump(db, shop_id)
+        db.commit()
+    except Exception:  # noqa: BLE001 - the write is committed; the tag's age bounds the rest
+        db.rollback()
+        logger.exception("tables version not raised for shop %s", shop_id)
+    if not wake:
+        return version
+    try:
+        targets = notify_targets(db, shop_id) if TS.NOTIFY_DEVICE_CHANNELS else []
+        TS.NOTIFIER.changed(
+            tenant_id=tenant_id, shop_id=shop_id, version=version, table_id=table_id,
+            origin=str(origin) if origin is not None else None, targets=targets,
+        )
+    except Exception:  # noqa: BLE001 - a wake-up is never worth failing anything
+        logger.exception("tables signal not queued for shop %s", shop_id)
+    return version
 
 
 # ── The till's view ──────────────────────────────────────────────────────────
 
 
-def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> dict:
+@dataclass(frozen=True)
+class _TableRow:
+    zone_id: str
+    table_id: str
+    base: dict
+    order: Optional[dict]
+    #: `table_state` without the lock: free / occupied / sent / awaiting_payment.
+    order_state: str
+    #: `lock_out` as any till reads it (`mine` false); None when not locked.
+    lock: Optional[dict]
+    lock_machine_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class ShopTables:
     """
-    Everything the tables screen draws: the zones and tables this till sees, each with
-    its open order's summary and its lock, the cancellation reasons, the lock time.
+    The shop-wide part of the tills' state, as plain values: every live zone (with its point
+    of sale), every live table with its open synced order and its lock, the bookings around
+    the build time, the tenant's reasons. Never changed once built (shared between requests).
     """
-    now = now or _now()
-    params = machine_params(db, machine)
-    out: Dict[str, Any] = {
-        "serverTime": now.isoformat(),
-        "mode": mode_of(params.get(TABLES_MODE_KEY)),
-        "lockMinutes": lock_minutes_of(params),
-        "blockCloseWithOpenTables": blocks_close(params),
-        "zones": [],
-        "tables": [],
-        "cancelReasons": [reason_out(r) for r in reasons_for(db, machine.tenant_id)] if machine.tenant_id else [],
-    }
-    if machine.shop_id is None:
-        return out
-    zones = zones_for(db, machine.shop_id, machine.area_id)
+
+    reasons: Tuple[dict, ...]
+    zones: Tuple[Tuple[Optional[str], str, dict], ...]
+    tables: Tuple[_TableRow, ...]
+    reservations: Tuple[Tuple[datetime, Optional[str], dict], ...]
+
+
+#: The bookings a till shows, from `RESERVATION_GRACE` ago to this far ahead.
+RESERVATIONS_AHEAD = timedelta(hours=36)
+RESERVATIONS_LIMIT = 200
+
+
+def build_shop_tables(db: Session, machine: POSMachine, now: datetime) -> Tuple[ShopTables, datetime]:
+    """
+    The shop-wide state at `now`, and until when it holds with no write: the first live lock
+    to run out (a lock ends by time alone), or the tag's maximal age.
+    """
+    import copy
+
+    from app.services.table_policies import types_by_id
+    from app.services.tables_state import MAX_AGE
+
+    reasons = tuple(reason_out(r) for r in reasons_for(db, machine.tenant_id)) if machine.tenant_id else ()
+    zones = zones_for(db, machine.shop_id, all_areas=True)
     tables = tables_in(db, [z.id for z in zones])
     orders = {}
     if tables:
@@ -598,22 +670,116 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
             .all()
         ):
             orders[order.table_id] = order
-    out["zones"] = [zone_out(z) for z in zones]
-    from app.services.table_policies import types_by_id
-
     types = types_by_id(db, machine.shop_id) if tables else {}
+    valid_until = now + MAX_AGE
+    rows = []
     for table in tables:
         order = orders.get(table.id)
-        lock = lock_out(db, table, now, viewer=machine)
-        row = table_out(table, types)
-        row["order"] = order_summary(order) if order is not None else None
-        row["lock"] = lock
-        row["state"] = table_state(order, lock)
-        out["tables"].append(row)
+        lock = lock_out(db, table, now)
+        if lock is not None:
+            expires = as_utc(table.lock_expires_at)
+            if expires is not None and expires < valid_until:
+                valid_until = expires
+        rows.append(_TableRow(
+            zone_id=str(table.zone_id),
+            table_id=str(table.id),
+            base=copy.deepcopy(table_out(table, types)),
+            order=order_summary(order) if order is not None else None,
+            order_state=table_state(order, None),
+            lock=lock,
+            lock_machine_id=str(table.lock_machine_id) if lock is not None else None,
+        ))
+    # Wider than any one till's window (it moves with the clock until the next build); each
+    # request cuts its own (`_compose`).
+    bookings = (
+        db.query(TableReservation)
+        .filter(
+            TableReservation.shop_id == machine.shop_id,
+            TableReservation.status == "booked",
+            TableReservation.reserved_at >= now - RESERVATION_GRACE,
+            TableReservation.reserved_at < now + RESERVATIONS_AHEAD + MAX_AGE,
+        )
+        .order_by(TableReservation.reserved_at.asc())
+        .limit(RESERVATIONS_LIMIT * 2)
+        .all()
+    )
+    shop = ShopTables(
+        reasons=reasons,
+        zones=tuple(
+            (str(z.area_id) if z.area_id else None, str(z.id), copy.deepcopy(zone_out(z))) for z in zones
+        ),
+        tables=tuple(rows),
+        reservations=tuple(
+            (as_utc(r.reserved_at), str(r.table_id) if r.table_id else None, reservation_out(r)) for r in bookings
+        ),
+    )
+    return shop, valid_until
+
+
+def _compose(shop: ShopTables, machine: POSMachine, now: datetime, out: Dict[str, Any]) -> Dict[str, Any]:
+    """The till's own view of the shop state: its point of sale's zones, its own lock, its bookings."""
+    area = str(machine.area_id) if machine.area_id else None
+    me = str(machine.id)
+    visible = set()
+    for zone_area, zone_id, zone in shop.zones:
+        if zone_area is None or (area is not None and zone_area == area):
+            visible.add(zone_id)
+            out["zones"].append(zone)
+    seen = set()
+    for row in shop.tables:
+        if row.zone_id not in visible:
+            continue
+        seen.add(row.table_id)
+        lock = row.lock
+        if lock is not None:
+            lock = {**lock, "mine": row.lock_machine_id == me}
+        out["tables"].append({
+            **row.base,
+            "order": row.order,
+            "lock": lock,
+            "state": "locked" if lock is not None and not lock["mine"] else row.order_state,
+        })
     # "הזמנות": the day's bookings still to come (and those due a while ago, not seated yet).
+    low, high = now - RESERVATION_GRACE, now + RESERVATIONS_AHEAD
+    window = [(table_id, r) for at, table_id, r in shop.reservations if at is not None and low <= at < high]
     out["reservations"] = [
-        reservation_out(r) for r in upcoming_reservations(db, machine, now, {t.id for t in tables})
+        r for table_id, r in window[:RESERVATIONS_LIMIT] if table_id is None or table_id in seen
     ]
+    return out
+
+
+def till_state(
+    db: Session,
+    machine: POSMachine,
+    *,
+    now: Optional[datetime] = None,
+    shop: Optional[ShopTables] = None,
+) -> dict:
+    """
+    Everything the tables screen draws: the zones and tables this till sees, each with
+    its open order's summary and its lock, the cancellation reasons, the lock time.
+
+    [shop]: the shop-wide part already built (`till_state_cached`); built here otherwise.
+    """
+    now = now or _now()
+    params = machine_params(db, machine)
+    out: Dict[str, Any] = {
+        "serverTime": now.isoformat(),
+        "mode": mode_of(params.get(TABLES_MODE_KEY)),
+        "lockMinutes": lock_minutes_of(params),
+        "blockCloseWithOpenTables": blocks_close(params),
+        "zones": [],
+        "tables": [],
+    }
+    if machine.shop_id is None:
+        out["cancelReasons"] = (
+            [reason_out(r) for r in reasons_for(db, machine.tenant_id)] if machine.tenant_id else []
+        )
+        return out
+    if shop is None:
+        shop, _ = build_shop_tables(db, machine, now)
+    out["cancelReasons"] = list(shop.reasons) if machine.tenant_id else []
+    _compose(shop, machine, now, out)
     if out["mode"] == MODE_LAN:
         # Who holds the shop's tables on the LAN, and the secret the tills present to it.
         from app.services.printers import print_secret
@@ -621,6 +787,26 @@ def till_state(db: Session, machine: POSMachine, *, now: Optional[datetime] = No
         out["lanHost"] = lan_host_block(db, machine)
         out["lanSecret"] = print_secret(machine.shop_id)
     return out
+
+
+def till_state_cached(db: Session, machine: POSMachine, *, version: int, now: Optional[datetime] = None) -> Tuple[dict, str]:
+    """
+    `till_state` from the shop's snapshot for `version` (built once per shop and version, per
+    process — app/services/tables_state.py), and the tag that describes it.
+    """
+    from app.services import tables_state as TS
+
+    now = now or _now()
+    if machine.shop_id is None:
+        return till_state(db, machine, now=now), TS.make_tag(version, now + TS.MAX_AGE, machine)
+
+    def build() -> "TS.Snapshot":
+        data, valid_until = build_shop_tables(db, machine, now)
+        return TS.Snapshot(version=version, built_at=now, valid_until=valid_until, data=data)
+
+    snap = TS.SNAPSHOTS.get((str(machine.shop_id), str(machine.tenant_id)), version, now, build)
+    out = till_state(db, machine, now=now, shop=snap.data)
+    return out, TS.make_tag(version, snap.valid_until, machine)
 
 
 def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
