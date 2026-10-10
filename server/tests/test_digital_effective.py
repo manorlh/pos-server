@@ -176,6 +176,10 @@ class TestProfiles:
         assert json.dumps(PP.revision(dw.db, p.published_revision_id).content, sort_keys=True) == frozen
         assert PP.draft_of(dw.db, p).number == 2
 
+    def test_a_priority_sent_on_create_is_kept(self, dw):
+        p = _create(dw, priority=3)
+        assert p.priority == 3
+
     def test_two_editors_one_is_told(self, dw):
         p = _create(dw)
         d = PP.draft_of(dw.db, p)

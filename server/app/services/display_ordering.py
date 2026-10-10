@@ -809,6 +809,9 @@ def _after_device_write(db: Session, tenant_id: Any, channel: str, level: str, t
         db.delete(b)
         db.flush()
         return Wake(pos=[], kiosks=[])
+    if b.legacy_hash is not None and keys_hash(keys) == b.legacy_hash:
+        # The keys are as the ordering last wrote / read them (a save of other settings): nothing moves.
+        return Wake(pos=[], kiosks=[])
     content = legacy_content(db, channel, level, target_id) or R.empty()
     ordering = db.get(DisplayOrdering, b.ordering_id)
     previous = content_of(ordering)

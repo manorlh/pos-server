@@ -703,10 +703,11 @@ def create(db: Session, user: User, tenant_id: Any, kind: str, body: Mapping[str
     if mode not in ("new", "match_kiosk", "copy"):
         raise _bad("invalid_start", "דרך התחלה לא מוכרת")
     now = _now()
+    meta.setdefault("priority", 0)
     profile = PresentationProfile(
         id=uuid.uuid4(), tenant_id=_uuid(tenant_id), kind=kind, slug=new_slug(db, kind, body.get("slug")),
         target_level=target.level, target_id=target.id, company_id=target.company_id, shop_id=target.shop_id,
-        area_id=target.area_id, priority=int(body.get("priority") or 0) if str(body.get("priority") or "0").lstrip("-").isdigit() else 0,
+        area_id=target.area_id,
         status="draft", parent_profile_id=parent.id if parent is not None else None,
         public_title=meta.pop("public_title", {}) or {}, created_by_user_id=getattr(user, "id", None),
         created_by_name=_name(user), updated_by_name=_name(user), version=1, created_at=now, updated_at=now,
