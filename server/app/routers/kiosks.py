@@ -193,6 +193,23 @@ def put_kiosk_menu(
     return out
 
 
+@till_router.get("/{machine_id}/kiosks/{kiosk_machine_id}/orders")
+def get_till_kiosk_orders(
+    machine_id: str,
+    kiosk_machine_id: str,
+    days: int = Query(1, ge=1, le=7),
+    machine: POSMachine = Depends(get_pos_machine_for_sync_path),
+    db: Session = Depends(get_db),
+):
+    """
+    "היסטוריית עסקאות" of a kiosk on its controlling till (P:/specs/kiosk-landscape-till-mode.md §5.12): today and
+    the days before it (at most a week), newest first, the phone masked. 403 `not_kiosk_controller` unless
+    this till is one of the kiosk's controllers; 404 `kiosk_not_found`. The reprints go as kiosk commands.
+    """
+    kiosk_machine, _device = svc.controller_target(db, machine, kiosk_machine_id)
+    return svc.till_order_history(db, kiosk_machine, days)
+
+
 @till_router.post("/{machine_id}/kiosks/{kiosk_machine_id}/commands", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
 def post_till_kiosk_command(
     machine_id: str,
@@ -524,6 +541,20 @@ def post_kiosk_command(
     check_kiosk_action(db, current_user, body.action)
     # A manager of points of sale: one of their kiosks only (app/routers/kiosk_live.py).
     from app.routers.kiosk_live import _kiosk_checked
+
+    if body.action == "return_kiosk" and svc.get_device(db, machine_id) is None:
+        # "מצב עבודה" of a till (P:/specs/kiosk-landscape-till-mode.md §5.10): its first kiosk mode asked from the
+        # dashboard makes its kiosk-mode row — a till in this user's scope, its owner's gate open; else as before.
+        from app.services import kiosk_till_mode
+
+        target = db.get(POSMachine, machine_id)
+        if target is not None:
+            svc.check_machine_scope(db, current_user, target, active_tenant_id)
+            if kiosk_till_mode.ensure_home_till_row(db, target) is None:
+                return JSONResponse(
+                    status_code=status.HTTP_409_CONFLICT,
+                    content={"detail": "till_mode_disabled", "message": "מצב קיוסק אינו מופעל לקופה הזו"},
+                )
 
     machine, device = _kiosk_checked(db, current_user, machine_id, active_tenant_id)
     result = svc.run_command(

@@ -221,7 +221,7 @@ def _shop_tills(db: Session, shop_id: Any, tenant_id: Any) -> List[POSMachine]:
         .filter(POSMachine.shop_id == shop_id, POSMachine.is_active.is_(True))
         .all()
     )
-    kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.shop_id == shop_id).all()}
+    kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.shop_id == shop_id).all()}
     return [m for m in rows if m.id not in kiosks and (tenant_id is None or m.tenant_id == tenant_id)]
 
 
@@ -246,7 +246,7 @@ def targets(db: Session, kiosk: POSMachine, cfg: Dict[str, Any], kind: str) -> L
             except ValueError:
                 continue
         if ids:
-            kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+            kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
             chosen = [
                 m for m in db.query(POSMachine).filter(POSMachine.id.in_(ids), POSMachine.is_active.is_(True)).all()
                 if m.tenant_id == kiosk.tenant_id and m.id not in kiosks and m.id != kiosk.id
@@ -285,7 +285,7 @@ def check_alert_tills(db: Session, tenant_id: Any, layer: Dict[str, Any]) -> Lis
             except ValueError:
                 continue  # the schema already said so
             machine = db.query(POSMachine).filter(POSMachine.id == mid).first()
-            is_kiosk = db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id == mid).first() is not None
+            is_kiosk = db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id == mid).first() is not None
             if machine is None or not machine.is_active or (tenant_id is not None and machine.tenant_id != tenant_id):
                 errors.append(Issue(f"alerts.{kind}.machineIds[{i}]", "unknown_till", "not an active till of this business"))
             elif is_kiosk:
@@ -669,7 +669,12 @@ def request_shop_z_close(
         return []
     skip = {str(x) for x in skip_machine_ids}
     made: List[KioskCloseRequest] = []
-    devices = db.query(KioskDevice).filter(KioskDevice.shop_id == shop_id, KioskDevice.enabled.is_(True)).all()
+    # Kiosks by role only: a till's kiosk-mode row is closed by the shop's Z as the till it is.
+    devices = (
+        db.query(KioskDevice)
+        .filter(KioskDevice.shop_id == shop_id, KioskDevice.enabled.is_(True), KioskDevice.home_role.is_(None))
+        .all()
+    )
     for device in devices:
         if str(device.machine_id) in skip:
             continue

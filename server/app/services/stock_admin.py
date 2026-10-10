@@ -74,7 +74,7 @@ def tree(db: Session, user: Any, tenant_id: Any, path: Path) -> Dict[str, Any]:
         )
         machines = [m for m in machines if getattr(m, "is_fiscal", True) is not False]
         kiosks = {
-            r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()
+            r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()
         } if machines else set()
 
         def area_ok(a: ShopArea) -> bool:

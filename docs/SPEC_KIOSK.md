@@ -1698,7 +1698,19 @@ server). X / Z ושוברי פריט כבר נושאים סניף וקופה.
 - **כלי מנהל:**
   - "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" בניהול הקיוסק ובקופה השולטת (`reprint_bon` / `reprint_receipt`).
   - היסטוריית עסקאות של שבוע עם חיפוש.
+- **שני הכיוונים לפי התפקיד** (10.10):
+  - קופה שהבעלים התיר לה מקבלת שורת `kiosk_devices` עם `home_role = 'till'` — לפי בקשה בלבד: `kiosk/sync` עם `requestKioskMode`, או `return_kiosk` מהדשבורד.
+  - כל שאילתת "האם קיוסק" קוראת `home_role IS NULL`, ולכן היא נשארת קופה בכל מקום.
+  - `kiosk/sync` עונה `homeRole`.
+  - מיגרציה `b7d3f1a9c5e8`.
+- **היסטוריית עסקאות בקופה השולטת:**
+  - `GET /sync/{m}/kiosks/{k}/orders?days=1..7`, עם הדפסה חוזרת לכל הזמנה (`reprint_bon` / `reprint_receipt`).
+- **Web ו-Windows:**
+  - `zoom` במסך 4K ב-DPR 1;
+  - שני טורים ב-`kiosk-shared` (`ScreenBody`);
+  - מסגרת "קיוסק לרוחב" בתצוגה המקדימה;
+  - Windows מדווח `status.display`.
 - **קבצים:**
-  - ענן: `app/services/kiosk_till_mode.py`, מיגרציה `a6c2e8f4b0d7`.
+  - ענן: `app/services/kiosk_till_mode.py`, מיגרציות `a6c2e8f4b0d7` ו-`b7d3f1a9c5e8`.
   - בדיקות: `tests/test_kiosk_till_mode.py`.
   - דשבורד: `components/dashboard/kiosks/kiosk-work-mode.tsx`, `lib/displayProfile.ts`.

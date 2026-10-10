@@ -399,7 +399,7 @@ def health(db: Session, shop) -> List[Dict[str, Any]]:
 
     machines = shop_machines(db, shop.id)
     kiosks = (
-        db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_([m.id for m in machines])).count()
+        db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_([m.id for m in machines])).count()
         if machines else 0
     )
     # A kiosk's tickets print on the LAN and its pay-at-till orders reach the main till with

@@ -39,7 +39,7 @@ from app.services import kiosk_control as S
 from app.services import kiosk_health
 from app.services import kiosk_till_mode as KTM
 from app.services import till_parameters as TP
-from test_kiosks import _user, convert, dashboard_command, out_of, sync, till_command, w  # noqa: F401 - the fixture
+from test_kiosks import _user, convert, dashboard_command, out_of, put, sync, till_command, w  # noqa: F401 - the fixture
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -277,3 +277,96 @@ def test_the_quick_reprints_from_a_controlling_till(w):
 def test_the_display_profile_fixture_is_pinned():
     data = (FIXTURES / "display_profiles_golden.json").read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(data).hexdigest() == "1beefb2a4720c099a55c60f9c0e1e386b4b56052f52e419c3a476f085eb44d6a"
+
+
+# ── A till that may work as a kiosk (§5.10): both directions by the role given ─────
+
+
+def test_a_till_asks_for_the_kiosk_mode_only_where_the_owner_allowed_it(w):
+    from app.services import device_profile as DP
+
+    # The gate closed: nothing is made, the till hears it is no kiosk.
+    out = sync(w, w.kiosk, {"requestKioskMode": True})
+    assert out["kiosk"] is False and w.db.get(KioskDevice, w.kiosk.id) is None
+    _enable(w)
+    out = sync(w, w.kiosk, {"requestKioskMode": True})
+    assert out["kiosk"] is True and out["homeRole"] == "till" and out["config"]
+    row = w.db.get(KioskDevice, w.kiosk.id)
+    assert row.home_role == "till" and row.enabled and row.controller_machine_ids == []
+    # It stays a till everywhere a role is asked — its built-in terminal, its role, the kiosk checks.
+    w.db.expire_all()
+    machine = w.db.get(type(w.kiosk), w.kiosk.id)
+    assert machine.is_kiosk is False
+    assert DP.current_role(w.db, machine) == "till" and DP.effective_role(w.db, machine) == "till"
+    assert S.is_kiosk(w.db, machine) is False
+    # A plain sync keeps answering it (the kiosk mode's config and commands), never a second row.
+    assert sync(w, w.kiosk)["homeRole"] == "till"
+    assert w.db.query(KioskDevice).count() == 1
+
+
+def test_a_kiosk_by_role_says_so_and_a_till_s_row_is_promoted_when_it_becomes_one(w):
+    convert(w)
+    assert sync(w, w.kiosk)["homeRole"] == "kiosk"
+    # Another till of the shop works as a kiosk some days, then is made a kiosk: the same row, promoted.
+    _enable(w, machine=w.till)
+    sync(w, w.till, {"requestKioskMode": True})
+    assert w.db.get(KioskDevice, w.till.id).home_role == "till"
+    S.convert(w.db, w.admin, w.till, controller_ids=[], name="קיוסק ערב")
+    row = w.db.get(KioskDevice, w.till.id)
+    assert row.home_role is None and row.name == "קיוסק ערב"
+    assert sync(w, w.till)["homeRole"] == "kiosk"
+
+
+def test_both_directions_from_the_dashboard_for_a_till(w, monkeypatch):
+    # The till's first kiosk mode asked from the dashboard makes its row; then both ways as a kiosk's.
+    out, _ = dashboard_command(w, w.kiosk, "return_kiosk")
+    assert isinstance(out, JSONResponse) and out.status_code == 409 and b"till_mode_disabled" in out.body
+    _enable(w)
+    out, code = dashboard_command(w, w.kiosk, "return_kiosk")
+    assert code == 201 and out["status"] == "requested"
+    assert w.db.get(KioskDevice, w.kiosk.id).home_role == "till"
+    pending = sync(w, w.kiosk)["workMode"]
+    assert pending["mode"] == "kiosk"
+    sync(w, w.kiosk, {"flowState": "attract", "commandsDone": [pending["id"]]})
+    back, code = dashboard_command(w, w.kiosk, "enter_till")
+    assert code == 201
+    assert sync(w, w.kiosk)["workMode"] == {"id": back["id"], "mode": "till", "by": "admin"}
+    # The summary says the role it was given, and the mode the till reports.
+    sync(w, w.kiosk, {"flowState": "till_mode", "tillMode": {"employee": "דנה"}})
+    summary = S.summary(w.db, w.db.get(KioskDevice, w.kiosk.id))
+    assert summary["homeRole"] == "till" and summary["tillMode"]["mode"] == "till"
+
+
+def test_a_till_s_kiosk_mode_row_is_never_a_kiosk_of_the_shop_z(w):
+    """The shop's Z closes a till as the till it is: no kiosk close request for its kiosk-mode row."""
+    from app.services import kiosk_ops
+
+    _enable(w, scope="shop")
+    sync(w, w.kiosk, {"requestKioskMode": True})
+    convert(w, w.till, controllers=[])
+    for machine in (w.kiosk, w.till):
+        put(w, "machine", machine.id, {"operations": {"closeWithShopZ": True}})
+    made = kiosk_ops.request_shop_z_close(w.db, w.shop.id, source="z_run")
+    assert [r.kiosk_machine_id for r in made] == [w.till.id]
+
+
+# ── "היסטוריית עסקאות" on the controlling till (§5.12) ─────────────────────────
+
+
+def test_the_controlling_till_reads_the_kiosk_s_history(w):
+    from test_kiosks import order, post_orders
+
+    convert(w)
+    today = S.business_today(w.db, w.tenant.id)
+    post_orders(w, w.kiosk, order("o1", businessDate=today.isoformat(), pickupLabel="A-17"))
+    post_orders(w, w.kiosk, order("o0", businessDate=(today - timedelta(days=3)).isoformat(), pickupLabel="A-12"))
+    one = R.get_till_kiosk_orders(machine_id=str(w.till.id), kiosk_machine_id=str(w.kiosk.id), days=1, machine=w.till, db=w.db)
+    assert [o["localId"] for o in one] == ["o1"]
+    week = R.get_till_kiosk_orders(machine_id=str(w.till.id), kiosk_machine_id=str(w.kiosk.id), days=7, machine=w.till, db=w.db)
+    assert [o["localId"] for o in week] == ["o1", "o0"]
+    # The phone is masked: a till is no dashboard user.
+    assert all(o["customerPhone"] != "0501234567" for o in week)
+    # A till that does not control the kiosk is refused.
+    with pytest.raises(HTTPException) as caught:
+        R.get_till_kiosk_orders(machine_id=str(w.other_till.id), kiosk_machine_id=str(w.kiosk.id), days=1, machine=w.other_till, db=w.db)
+    assert caught.value.status_code == 403

@@ -215,7 +215,7 @@ def create(
         # A kiosk is paused from the kiosks' tab, never locked or signed out (a batch skips them).
         from app.models.kiosk import KioskDevice
 
-        kiosks = {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()}
+        kiosks = {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_([m.id for m in machines])).all()}
         machines = [m for m in machines if m.id not in kiosks]
         if not machines:
             raise _bad("kiosk_use_pause", "קיוסק לא ננעל ולא מנותק מרחוק — עוצרים אותו בלשונית הקיוסקים")
@@ -437,7 +437,7 @@ def devices_status(db: Session, machines: Sequence[POSMachine], *, now: Optional
         return []
     expire_old(db, now=now)
     states = {s.machine_id: s for s in db.query(DeviceRemoteState).filter(DeviceRemoteState.machine_id.in_(ids)).all()}
-    kiosks = {k.machine_id for k in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+    kiosks = {k.machine_id for k in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
     recent = (
         db.query(DeviceCommand)
         .filter(DeviceCommand.machine_id.in_(ids), DeviceCommand.created_at > now - timedelta(days=2))

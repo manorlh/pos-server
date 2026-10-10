@@ -334,3 +334,53 @@ def clean_display(raw: Any) -> Optional[Dict[str, Any]]:
         if isinstance(v, int) and not isinstance(v, bool) and 0 < v < 20000:
             out[key] = v
     return out or None
+
+
+# ── A till that may work as a kiosk (§5.10) ──────────────────────────────────
+
+HOME_TILL = "till"
+
+
+def ensure_home_till_row(db: Session, machine: Any, *, now: Optional[datetime] = None) -> Optional[Any]:
+    """
+    The kiosk-mode row of a till whose owner allowed it (`kioskTillModeEnabled`), made when the till (or the
+    dashboard's `return_kiosk`) first asks for the kiosk mode; None when it may not — the gate is closed, the
+    machine is not an assigned fiscal till of a shop, or it is a kiosk already (its row is returned as is).
+
+    Why a row and not a config resolved without one: everything a kiosk does in the cloud — its status,
+    its orders, its pickup numbers, its alerts, its commands — hangs on the row. The row is marked
+    `home_role = "till"`, and every "is it a kiosk?" decision (role, built-in terminal, remote Z, device
+    commands, catalogs, insights…) reads `home_role IS NULL`, so the machine stays a till everywhere a role
+    is asked, and nothing changes for any existing row (all NULL). It is made on demand only, never for
+    every till the gate covers. The fiscal identity never moves: the same machine, series and Z.
+    """
+    from app.models.kiosk import KioskDevice
+    from app.models.pos_machine import PairingStatus, set_kiosk_cache
+    from app.services import display_devices as DD
+    from app.services.kiosk_control import _company_of, _clean_name
+
+    existing = db.get(KioskDevice, machine.id)
+    if existing is not None:
+        return existing
+    if not DD.is_fiscal(machine) or not machine.is_active or machine.shop_id is None:
+        return None
+    if machine.pairing_status != PairingStatus.ASSIGNED:
+        return None
+    if not effective(db, machine)["enabled"]:
+        return None
+    row = KioskDevice(
+        machine_id=machine.id,
+        tenant_id=machine.tenant_id,
+        shop_id=machine.shop_id,
+        company_id=_company_of(db, machine),
+        name=_clean_name(None, machine.name),
+        enabled=True,
+        paused=False,
+        controller_machine_ids=[],
+        created_at=now or datetime.now(timezone.utc),
+        home_role=HOME_TILL,
+    )
+    db.add(row)
+    db.flush()
+    set_kiosk_cache(machine, False)
+    return row

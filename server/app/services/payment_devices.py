@@ -516,7 +516,7 @@ def _kiosk_ids(db: Session, machine_ids: Sequence[Any]) -> set:
         return set()
     from app.models.kiosk import KioskDevice
 
-    return {_uuid(row[0]) for row in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+    return {_uuid(row[0]) for row in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
 
 
 # ── Devices ──────────────────────────────────────────────────────────────────
