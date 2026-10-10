@@ -624,7 +624,9 @@ class POSMachine(Base):
             from app.models.kiosk import KioskDevice
 
             with session.no_autoflush:
-                found = session.get(KioskDevice, self.id) is not None
+                row = session.get(KioskDevice, self.id)
+                # A till's kiosk-mode row (home_role "till") never makes it a kiosk: its terminal stays on.
+                found = row is not None and getattr(row, "home_role", None) is None
         self.__dict__[_KIOSK_CACHE] = found
         return found
 

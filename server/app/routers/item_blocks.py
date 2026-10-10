@@ -254,7 +254,7 @@ def list_targets(
     )
     machines = [m for m in machines if getattr(m, "is_fiscal", True) is not False]
     kiosk_ids = {
-        r[0] for r in db.query(KioskDevice.machine_id)
+        r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None))
         .filter(KioskDevice.machine_id.in_([m.id for m in machines]), KioskDevice.enabled.is_(True)).all()
     } if machines else set()
     areas = (

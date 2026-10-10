@@ -56,6 +56,7 @@
 | | `CASH_DRAWER.VIEW_LOG` / `VIEW_CASH_MOVEMENTS` | לוג פתיחות / תנועות מזומן | |
 | ניהול | `CATALOG_WRITE`, `ATTENDANCE_MANAGE`, `USER_SESSION_RELEASE`, `CARD_UNRESOLVED`, `KIOSK_CONTROL`, `KIOSK_UNLOCK` | | ה-scopes הקיימים של `TillAuthority` |
 | | `DESKTOP_EXIT` | יציאה לשולחן העבודה (Windows) | מנהל בלבד (מלצר / קופאי / אחמ״ש: אסור; "קופאי — הרשאות קודמות": אסור, כמו קודם). נבדק במחשב עצמו, גם בלי אינטרנט (kiosk-desktop `core/desktopExit.ts`); בלי scope. תפריט המנהל של קיוסק Windows נפתח לפי `KIOSK_UNLOCK` (כמו פינת המנהל באנדרואיד), ו"יציאה לשולחן העבודה" / "יציאה מהתוכנה" בו — רק למנהל שנכנס ויש לו `DESKTOP_EXIT`. החזרה האוטומטית מהשולחן — הגדרת POS `desktopIdleReturnMinutes` (ברירת מחדל 10, 0 = כבוי) |
+| | `KIOSK_TILL_MODE` | מעבר למצב קופה בקיוסק | מנהל בלבד (מלצר / קופאי / אחמ״ש: אסור; "קופאי — הרשאות קודמות": אסור). "מצב עבודה: קיוסק / קופה" — תמיד קוד מנהל עם ההרשאה, במכשיר ובשני הכיוונים, גם בלי אינטרנט; בלי scope. רק כשהבעלים פתח `kioskTillModeEnabled` (מנהל-על / מפיץ בלבד). P:/specs/kiosk-landscape-till-mode.md §5 |
 
 לכל הרשאה בקטלוג: קוד, שם עברי, קבוצה, תיאור, **סוגי מכשיר** (`till` / `tablet` / `mobile` — הרשאות המגירה
 רק לקופה ולטאבלט; `windows` — R2M POS ל-Windows), ספים, וה-scope של elevation שהיא עונה עליו. **קודים הם חוזה** (בשרת, בקופה, בשורות

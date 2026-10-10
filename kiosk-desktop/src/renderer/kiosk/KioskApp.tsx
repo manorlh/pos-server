@@ -7,6 +7,7 @@
  */
 
 import { layoutOf, productColumns } from '@dash-lib/kioskLayout';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@dash-lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -169,8 +170,34 @@ function useWindowSize() {
   return size;
 }
 
+/**
+ * "שיתאים את עצמו" (P:/specs/kiosk-landscape-till-mode.md §2, §4): the window in device-independent pixels — the
+ * Windows screen as its own scaling gives it, unaffected by this app's page zoom (outerWidth), which is what the
+ * layout's decisions read (the side cart, the rail or the tabs, two columns). In a WebView the window as it is.
+ */
+function useKioskDisplay() {
+  const read = () => {
+    const w = window.outerWidth || window.innerWidth;
+    const h = window.outerHeight || window.innerHeight;
+    return { display: kioskDisplay(displayProfile(browserFacts(w, h, 1))), cssPerDip: w > 0 ? window.innerWidth / w : 1 };
+  };
+  const [state, setState] = useState(read);
+  useEffect(() => {
+    const on = () => setState(read());
+    window.addEventListener('resize', on);
+    return () => window.removeEventListener('resize', on);
+  }, []);
+  return state;
+}
+
 export function KioskApp({ view }: { view: KioskView }) {
-  const cfg = view.config as unknown as KioskConfig;
+  const screenDisplay = useKioskDisplay();
+  const cfg = useMemo(() => {
+    const base = view.config as unknown as KioskConfig;
+    if (!screenDisplay.display.landscape) return base;
+    const theme = kioskDisplayTheme(base.theme, screenDisplay.display);
+    return theme === base.theme ? base : { ...base, theme };
+  }, [view.config, screenDisplay.display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // "איך תרצו לשלם?" (payment.methods, stepModes.payMethod — payMethodAsk): what this kiosk can take now
   // (the card through its terminal, a voucher online, cash at the till), asked by the step's mode.
@@ -668,6 +695,9 @@ export function KioskApp({ view }: { view: KioskView }) {
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    // Landscape: the cart and the checkout's steps in two columns, a readable width (kiosk-shared ScreenBody).
+    twoColumns: screenDisplay.display.twoColumns,
+    contentMaxWidth: screenDisplay.display.contentMaxWidthDp ? Math.round(screenDisplay.display.contentMaxWidthDp * screenDisplay.cssPerDip) : null,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),

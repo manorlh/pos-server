@@ -17,6 +17,7 @@
  */
 
 import { layoutOf, productColumns } from '@/lib/kioskLayout';
+import { browserFacts, displayProfile, kioskDisplay, kioskDisplayTheme } from '@/lib/displayProfile';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { Pencil } from 'lucide-react';
 import {
@@ -180,7 +181,25 @@ interface PayState {
 const NO_PAY: PayState = { vouchers: [], busy: false, note: null, error: null, entry: false, camera: false, forfeit: null, placed: null };
 
 export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: WebKioskService; words: KioskWords }) {
-  const cfg = view.config as KioskConfig;
+  // "שיתאים את עצמו" (P:/specs/kiosk-landscape-till-mode.md §2, §4): the window read again at every resize or
+  // turn; in landscape the side cart where there is room and the rail or the top tabs (lib/displayProfile.ts,
+  // the same rules as the Android kiosk). Portrait: the config exactly as it is. The cart and the flow are
+  // state, never the layout's — a resize keeps them.
+  const raw = useWindowSize();
+  const screenProfile = useMemo(
+    () => displayProfile(browserFacts(raw.w, raw.h, typeof window !== 'undefined' ? window.devicePixelRatio : 1)),
+    [raw.w, raw.h],
+  );
+  // The screen in its effective dp: a 4K screen at ratio 1 is laid out as full HD and drawn at twice the size
+  // (the root's zoom, below); every other screen exactly as its window says.
+  const size = useMemo(() => ({ w: screenProfile.widthDp, h: screenProfile.heightDp }), [screenProfile.widthDp, screenProfile.heightDp]);
+  const display = useMemo(() => kioskDisplay(screenProfile), [screenProfile]);
+  const cfg = useMemo(() => {
+    const base = view.config as KioskConfig;
+    if (!display.landscape) return base;
+    const theme = kioskDisplayTheme(base.theme, display);
+    return theme === base.theme ? base : { ...base, theme };
+  }, [view.config, display]);
   const cfgIn = cfg as unknown as FlowConfigIn;
   // The card only through a paired Windows bridge (§28, lib/kioskBridge.ts).
   const cardReady = view.pay.usable.includes('card');
@@ -296,7 +315,6 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const longPress = useRef<number | null>(null);
   const swallowClick = useRef(false);
   const voucherAttempt = useRef<{ code: string; id: string } | null>(null);
-  const size = useWindowSize();
 
   /* ---------------------------------------------------------- the catalog */
 
@@ -767,6 +785,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const ctaOnScreen = band.top > 0 ? { ...attractBox, y: attractBox.y + band.top } : attractBox;
   const m: PreviewModel = {
     cfg,
+    // Landscape (lib/displayProfile.ts): the cart and the checkout's steps in two columns, a readable width.
+    twoColumns: display.twoColumns,
+    contentMaxWidth: display.contentMaxWidthDp,
     c: colors,
     radius: cfg.theme.cornerRadius,
     btnRadius: buttonRadius(cfg.theme),
@@ -997,7 +1018,16 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       ref={screenRef}
       dir="rtl"
       className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
-      style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font, touchAction: 'manipulation' }}
+      style={{
+        ...rootVars,
+        ...chrome.style,
+        background: colors.background,
+        color: colors.text,
+        fontFamily: m.font,
+        touchAction: 'manipulation',
+        // A 4K screen at ratio 1: laid out in its effective size and drawn at the profile's scale.
+        ...(screenProfile.scale !== 1 ? { zoom: screenProfile.scale, width: size.w, height: size.h } : {}),
+      }}
       onPointerDownCapture={(e) => {
         setLastTouch(Date.now());
         // "ניהול הקיוסק": a 2 s press in the physical top-right corner.

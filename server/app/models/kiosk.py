@@ -99,6 +99,11 @@ class KioskDevice(Base):
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"), nullable=True, index=True)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
     name = Column(String(100), nullable=False)
+    #: "מצב עבודה" of a till (P:/specs/kiosk-landscape-till-mode.md §5.10): NULL — a kiosk (its role, as
+    #: always); "till" — a till whose owner allowed the kiosk mode (`kioskTillModeEnabled`): the row holds
+    #: its kiosk config and state, but the machine stays a till everywhere a role is asked (every role query
+    #: filters `home_role IS NULL`), and kiosk/sync tells it `homeRole: "till"` (it opens as a till).
+    home_role = Column(String(16), nullable=True)
     enabled = Column(Boolean, nullable=False, default=True, server_default="true")
     paused = Column(Boolean, nullable=False, default=False, server_default="false")
     pause_message = Column(String(300), nullable=True)
@@ -244,7 +249,8 @@ class KioskCommand(Base):
     __tablename__ = "kiosk_commands"
     __table_args__ = (
         CheckConstraint(
-            "action IN ('pause', 'resume', 'close_shift', 'till_z', 'schedule', 'bon_print', 'bon_handled', 'menu')",
+            "action IN ('pause', 'resume', 'close_shift', 'till_z', 'schedule', 'bon_print', 'bon_handled', 'menu', "
+            "'enter_till', 'return_kiosk', 'reprint_bon', 'reprint_receipt')",
             name="ck_kiosk_commands_action",
         ),
         CheckConstraint("source IN ('dashboard', 'till', 'schedule')", name="ck_kiosk_commands_source"),

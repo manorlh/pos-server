@@ -421,7 +421,7 @@ def _mark_paid_row(
 
 
 def _require_till(db: Session, till: POSMachine) -> None:
-    if db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id == till.id).first() is not None:
+    if db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id == till.id).first() is not None:
         raise OpenOrderRefused(403, NOT_A_TILL)
 
 

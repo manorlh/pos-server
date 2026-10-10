@@ -211,7 +211,10 @@ TILL_EVENT_TYPES = ("drawer_open", "line_void", "basket_cancel", "basket_complet
                     "held_sale_cancelled",
                     # An open basket parked as a held sale by a remote close ("remoteCloseParkOpenBasket"):
                     # who asked, when, its items and total. Recorded, feeds no rule.
-                    "held_sale_parked")
+                    "held_sale_parked",
+                    # "מצב עבודה: קיוסק / קופה" (app/services/kiosk_till_mode.py): a kiosk device switched to the
+                    # till or back — who, why (manual / idle / remote / cloud), the held sales left. Feeds no rule.
+                    "kiosk_till_mode")
 
 
 class RuleValueError(ValueError):

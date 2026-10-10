@@ -52,6 +52,7 @@ import { controllerOptions } from './convert-dialog';
 import { KioskLockControls, KioskScheduleControls } from './kiosk-lock-schedule';
 import { KioskOpsNotes, KioskTerminalIdentityNote } from './kiosk-ops-notes';
 import { KioskZActions, KioskZBadge, KioskZModeSwitch } from './kiosk-z-actions';
+import { KioskWorkModeCard } from './kiosk-work-mode';
 
 const BON_TONE: Record<KioskBonStatus, string> = {
   printed: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
@@ -329,6 +330,9 @@ export function KioskDetailDialog({
           {/* "נעילה למכירה" and "פתיחה אוטומטית" (docs/SPEC_KIOSK.md §15) */}
           <KioskLockControls kiosk={kiosk} canWrite={canWrite} busy={busy('pause', 'resume')} send={send} />
           <KioskScheduleControls kiosk={kiosk} canWrite={canWrite} busy={busy('schedule')} send={send} />
+
+          {/* "מצב עבודה: קיוסק / קופה" — only where the owner allowed it (kiosk-work-mode.tsx). */}
+          <KioskWorkModeCard kiosk={kiosk} canWrite={canWrite} busy={busy('enter_till', 'return_kiosk')} send={send} />
 
           {/* The shift / Z by the kiosk's Z mode — "סגירת משמרת" in the shop Z, "הפקת Z" with its
               own, never both — and its own "Z עצמאי" switch (kiosk-z-actions.tsx). */}

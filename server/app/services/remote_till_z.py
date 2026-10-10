@@ -68,7 +68,7 @@ def _refuse_device(db: Session, machine: POSMachine) -> None:
 
     if getattr(machine, "is_fiscal", True) is False:
         raise HTTPException(status_code=422, detail={"code": "not_fiscal", "message": "מכשיר תצוגה אינו מפיק Z"})
-    if db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id == machine.id).first() is not None:
+    if db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id == machine.id).first() is not None:
         raise HTTPException(status_code=422, detail={"code": "kiosk_use_kiosks", "message": "קיוסק נסגר מלשונית הקיוסקים"})
 
 
@@ -409,7 +409,7 @@ def _kiosk_ids(db: Session, machines: List[POSMachine]) -> set:
     ids = [m.id for m in machines]
     if not ids:
         return set()
-    return {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+    return {r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
 
 
 def _open_basket_words(db: Session, machine: POSMachine, kiosk: bool) -> str:

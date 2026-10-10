@@ -60,6 +60,8 @@ PRINTER_REASONS = {
 }
 #: The command actions a kiosk carries out for an unprinted bon (docs/SPEC_KIOSK.md §16.8).
 BON_ACTIONS = ("bon_print", "bon_handled")
+#: "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" from a controlling till: carried out with the bon commands.
+REPRINT_ACTIONS = ("reprint_bon", "reprint_receipt")
 BON_COMMAND_TTL = timedelta(hours=24)
 TERMINAL_REASONS = {
     "unreachable": "אין תקשורת למסופון האשראי",
@@ -219,7 +221,7 @@ def _shop_tills(db: Session, shop_id: Any, tenant_id: Any) -> List[POSMachine]:
         .filter(POSMachine.shop_id == shop_id, POSMachine.is_active.is_(True))
         .all()
     )
-    kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.shop_id == shop_id).all()}
+    kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.shop_id == shop_id).all()}
     return [m for m in rows if m.id not in kiosks and (tenant_id is None or m.tenant_id == tenant_id)]
 
 
@@ -244,7 +246,7 @@ def targets(db: Session, kiosk: POSMachine, cfg: Dict[str, Any], kind: str) -> L
             except ValueError:
                 continue
         if ids:
-            kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id.in_(ids)).all()}
+            kiosks = {d.machine_id for d in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id.in_(ids)).all()}
             chosen = [
                 m for m in db.query(POSMachine).filter(POSMachine.id.in_(ids), POSMachine.is_active.is_(True)).all()
                 if m.tenant_id == kiosk.tenant_id and m.id not in kiosks and m.id != kiosk.id
@@ -283,7 +285,7 @@ def check_alert_tills(db: Session, tenant_id: Any, layer: Dict[str, Any]) -> Lis
             except ValueError:
                 continue  # the schema already said so
             machine = db.query(POSMachine).filter(POSMachine.id == mid).first()
-            is_kiosk = db.query(KioskDevice.machine_id).filter(KioskDevice.machine_id == mid).first() is not None
+            is_kiosk = db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.machine_id == mid).first() is not None
             if machine is None or not machine.is_active or (tenant_id is not None and machine.tenant_id != tenant_id):
                 errors.append(Issue(f"alerts.{kind}.machineIds[{i}]", "unknown_till", "not an active till of this business"))
             elif is_kiosk:
@@ -671,7 +673,12 @@ def request_shop_z_close(
         return []
     skip = {str(x) for x in skip_machine_ids}
     made: List[KioskCloseRequest] = []
-    devices = db.query(KioskDevice).filter(KioskDevice.shop_id == shop_id, KioskDevice.enabled.is_(True)).all()
+    # Kiosks by role only: a till's kiosk-mode row is closed by the shop's Z as the till it is.
+    devices = (
+        db.query(KioskDevice)
+        .filter(KioskDevice.shop_id == shop_id, KioskDevice.enabled.is_(True), KioskDevice.home_role.is_(None))
+        .all()
+    )
     for device in devices:
         if str(device.machine_id) in skip:
             continue
@@ -868,7 +875,7 @@ def pending_bon_commands(db: Session, kiosk: POSMachine, *, now: Optional[dateti
         db.query(KioskCommand)
         .filter(
             KioskCommand.kiosk_machine_id == kiosk.id,
-            KioskCommand.action.in_(BON_ACTIONS),
+            KioskCommand.action.in_(BON_ACTIONS + REPRINT_ACTIONS),
             KioskCommand.status == "requested",
         )
         .order_by(KioskCommand.created_at)
@@ -942,7 +949,7 @@ def on_kiosk_sync(
     fails the sync: errors are logged and the fields come back empty.
     """
     now = _now(now)
-    out: Dict[str, Any] = {"alerts": {"open": [], "help": None}, "closeRequest": None, "bonCommands": []}
+    out: Dict[str, Any] = {"alerts": {"open": [], "help": None}, "closeRequest": None, "bonCommands": [], "workMode": None}
     try:
         with db.begin_nested():
             if isinstance(raw_status, dict):
@@ -955,6 +962,10 @@ def on_kiosk_sync(
             out["alerts"] = kiosk_view(db, kiosk, now=now)
             out["closeRequest"] = pending_close_for_kiosk(db, kiosk, now=now)
             out["bonCommands"] = pending_bon_commands(db, kiosk, now=now)
+            # "מצב עבודה" from the dashboard (kiosk_till_mode.py): the latest switch still to carry out.
+            from app.services import kiosk_till_mode
+
+            out["workMode"] = kiosk_till_mode.pending_work_mode(db, kiosk, now=now)
     except Exception:  # noqa: BLE001 - an alert never fails the kiosk's sync
         logger.exception("kiosk alerts / close request failed for %s", kiosk.id)
     return out

@@ -144,6 +144,8 @@ class TillParameterOut(BaseModel):
     #: The dashboard tab that edits this parameter instead of the till parameters page
     #: ("printers" for the printing settings, `PRINTERS_PAGE_KEYS`); null otherwise.
     managed_on: Optional[str] = Field(None, alias="managedOn")
+    #: Changed by a super admin or a distributor only (`kioskTillModeEnabled`): the page says so.
+    admin_only: bool = Field(False, alias="adminOnly")
     created_at: Optional[datetime] = Field(None, alias="createdAt")
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
 

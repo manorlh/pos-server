@@ -99,7 +99,7 @@ def prime_kiosks(db: Session, machines: Iterable[POSMachine]) -> Dict[Any, Kiosk
     machines = list(machines)
     kiosks = kiosk_devices_by_machine(db, [m.id for m in machines])
     for m in machines:
-        set_kiosk_cache(m, m.id in kiosks)
+        set_kiosk_cache(m, m.id in kiosks and getattr(kiosks[m.id], "home_role", None) is None)
     # And their KDS screen rows: a display device's role, a till's legacy screen.
     DD.prime_kds(db, machines)
     return kiosks
@@ -113,7 +113,8 @@ def role_of(device: Optional[KioskDevice], machine: Optional[POSMachine] = None)
     """
     if machine is not None and not DD.is_fiscal(machine):
         return DD.role_of_display(None, machine)
-    return ROLE_KIOSK if device is not None else ROLE_TILL
+    # A till's kiosk-mode row ("מצב עבודה", home_role "till") leaves it a till.
+    return ROLE_KIOSK if device is not None and getattr(device, "home_role", None) is None else ROLE_TILL
 
 
 def current_role(db: Session, machine: POSMachine) -> str:
@@ -134,7 +135,7 @@ def effective_role(db: Optional[Session], machine: POSMachine) -> str:
     if db is None:
         return ROLE_TILL
     device = kiosk_device(db, machine.id)
-    return ROLE_KIOSK if device is not None and device.enabled else ROLE_TILL
+    return ROLE_KIOSK if device is not None and device.enabled and getattr(device, "home_role", None) is None else ROLE_TILL
 
 
 def machine_fields(machine: POSMachine, device: Optional[KioskDevice]) -> Dict[str, Any]:

@@ -29,7 +29,37 @@ export type KioskFlowState =
   /** Waiting to be set up on the device. */
   | 'setup'
   /** The external pinpad is not configured or not reachable. */
-  | 'no_payment';
+  | 'no_payment'
+  /** "מצב עבודה: קופה" — the device works as a till today (pos-server app/services/kiosk_till_mode.py). */
+  | 'till_mode';
+
+/**
+ * "מצב עבודה: קיוסק / קופה" of one kiosk (pos-server kiosk_till_mode.summary_part): the owner's gate
+ * (`kioskTillModeEnabled` — a super admin or a distributor sets it), the mode now, who is on it, and
+ * what holds a switch sent from here (the kiosk's own refusal code and its Hebrew words).
+ */
+export interface KioskTillMode {
+  enabled: boolean;
+  idleReturnMinutes: number;
+  orientation: 'auto' | 'portrait' | 'landscape';
+  mode: 'kiosk' | 'till';
+  since: string | null;
+  enteredBy: string | null;
+  employee: string | null;
+  blocked: string | null;
+  blockedText: string | null;
+}
+
+/** The screen the kiosk lays itself out on (P:/specs/kiosk-landscape-till-mode.md §2), as it reported it. */
+export interface KioskDisplayReport {
+  orientation?: 'portrait' | 'landscape';
+  sizeClass?: 'handheld' | '11' | '13' | '15' | '21' | '27' | '32';
+  diagonalInches?: number;
+  physical?: boolean;
+  scale?: number;
+  widthDp?: number;
+  heightDp?: number;
+}
 export type KioskPrinterHealth = 'ok' | 'warn' | 'error' | 'none';
 
 export interface KioskControllerRef {
@@ -72,6 +102,11 @@ export interface KioskSummary {
     autoCloseAt: string;
   } | null;
   flowState: KioskFlowState | null;
+  /** "מצב עבודה: קיוסק / קופה" — absent from an older server. */
+  tillMode?: KioskTillMode | null;
+  /** The role it was given: a kiosk, or a till its owner lets work as a kiosk (P:/specs/kiosk-landscape-till-mode.md §5.10). */
+  homeRole?: 'kiosk' | 'till';
+  display?: KioskDisplayReport | null;
   shiftOpen: boolean | null;
   /** Who produces this till's Z: "till" (it does, on request) or "cloud" (the shop Z). */
   zMode: 'till' | 'cloud' | null;
@@ -183,7 +218,18 @@ export interface KioskEffective {
   media: MediaRef[];
 }
 
-export type KioskCommandAction = 'pause' | 'resume' | 'close_shift' | 'till_z' | 'schedule';
+export type KioskCommandAction =
+  | 'pause'
+  | 'resume'
+  | 'close_shift'
+  | 'till_z'
+  | 'schedule'
+  /** "מצב עבודה": the dashboard's switch, both ways — done by the kiosk when no sale holds it. */
+  | 'enter_till'
+  | 'return_kiosk'
+  /** "הדפס שוב את הבון האחרון" / "הדפס עסקה אחרונה" (the order's local id or "last" in `message`). */
+  | 'reprint_bon'
+  | 'reprint_receipt';
 
 export interface KioskCommandIn {
   action: KioskCommandAction;
@@ -340,6 +386,12 @@ export function kioskConfigErrors(err: unknown): KioskServerError[] | null {
 
 export async function sendKioskCommand(machineId: string, body: KioskCommandIn): Promise<KioskCommandOut> {
   const { data } = await api.post<KioskCommandOut>(`/kiosks/${machineId}/commands`, body);
+  return data;
+}
+
+/** "קיוסק — מצב קופה" at this kiosk's own level: on, off, or null (inherit). A super admin or a distributor only. */
+export async function setKioskTillModeGate(machineId: string, enabled: boolean | null): Promise<KioskSummary> {
+  const { data } = await api.put<KioskSummary>(`/kiosks/${machineId}/till-mode`, { enabled });
   return data;
 }
 

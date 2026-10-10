@@ -175,6 +175,10 @@ def app_part(summary: Dict[str, Any], health: Dict[str, Any], online: bool, now:
         return _part("app", "error", "offline", since=seen)
     if summary.get("paused"):
         return _part("app", "warn", "paused", until=summary.get("pausedUntil"), message=summary.get("pauseMessage"))
+    if flow == "till_mode":
+        # "מצב עבודה: קופה" (kiosk_till_mode.py): the device works as a till today — not a fault.
+        till = summary.get("tillMode") or {}
+        return _part("app", "info", "till_mode", employee=till.get("employee"), since=till.get("since"))
     if flow == "closed":
         return _part("app", "info", "closed")
     if flow in ("setup", "no_payment"):

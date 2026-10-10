@@ -347,7 +347,7 @@ def build(db: Session, scope: D.InsightScope, clock: A.BusinessClock) -> Dict[st
     shops = D.scope_shops(db, scope)[:MAX_SHOPS]
     today = clock.today
     shop_ids = [s.id for s in shops]
-    kiosk_ids = [r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.shop_id.in_(shop_ids)).all()] if shop_ids else []
+    kiosk_ids = [r[0] for r in db.query(KioskDevice.machine_id).filter(KioskDevice.home_role.is_(None)).filter(KioskDevice.shop_id.in_(shop_ids)).all()] if shop_ids else []
     cells, slots, share = load_shop_cells(db, scope, clock, today - timedelta(days=HISTORY_DAYS), today, kiosk_ids)
     available = _available_tills(db, shop_ids, kiosk_ids)
     out = [

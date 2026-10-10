@@ -513,6 +513,9 @@ class BuiltinParameter:
     description: str
     default_value: Any
     enum_options: Optional[Tuple[str, ...]] = None
+    #: Changed by a super admin or a distributor only, whatever route writes it
+    #: (`kioskTillModeEnabled` — app/services/kiosk_till_mode.py ADMIN_ONLY_KEYS).
+    admin_only: bool = False
 
 
 #: Parameters the cloud itself reads or the dashboard edits specially. Created once if
@@ -1572,9 +1575,25 @@ from app.services.area_lock import AREA_LOCK_PARAMETER_SPECS as _AREA_LOCK_SPECS
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AREA_LOCK_SPECS)
 
 
+# "מצב עבודה: קיוסק / קופה" and "כיוון מסך" (app/services/kiosk_till_mode.py): the owner's gate (admin
+# only), the idle return, the manager's code, the kiosk's orientation lock.
+from app.services.kiosk_till_mode import PARAMETER_SPECS as _KIOSK_TILL_MODE_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _KIOSK_TILL_MODE_SPECS)
+
+#: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
+ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
+
+
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""
-    from app.services import kiosk_technician
+    from app.services import kiosk_technician, kiosk_till_mode
+
+    if key in (kiosk_till_mode.IDLE_KEY, kiosk_till_mode.ORIENTATION_KEY):
+        try:
+            return kiosk_till_mode.clean_value(key, value)
+        except ValueError as exc:
+            raise TillParameterValueError(str(exc)) from exc
 
     if key == kiosk_technician.TECHNICIAN_CODE_KEY and value is not None:
         try:
