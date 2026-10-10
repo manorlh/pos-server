@@ -3635,6 +3635,9 @@
     "reissueDocuments": "הפקה על שם לקוח (זיכוי וחשבונית חדשה)",
     "reissueBadge": "על שם לקוח",
     "reissueNoMoney": "ללא תנועת כסף — כמו במסמך המקורי",
+    "customerDetailsAdded": "פרטי לקוח שנוספו אחרי ההנפקה",
+    "customerDetailsAddedNote": "נוספו להעתק בלבד, בנפרד מהמסמך. המסמך הרשום, סכומיו והקובץ במבנה האחיד לא השתנו.",
+    "customerDetailsAddedBy": "נוסף ב-{date} ע״י {name}",
     "documentTypes": {
       "320": "חשבונית מס קבלה",
       "330": "חשבונית זיכוי"

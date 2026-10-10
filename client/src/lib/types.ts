@@ -1460,6 +1460,23 @@ export interface TransactionPayment {
   nayaxMeta?: Record<string, unknown> | null;
 }
 
+/**
+ * "הדפס העתק עם פרטי לקוח": the customer's details a till added to a COPY of the document after it was
+ * issued — who and when. Never part of the recorded document: shown apart, labelled as added after issue.
+ */
+export interface CustomerDetailsAdded {
+  id: string;
+  customerName: string;
+  customerVatNumber: string;
+  customerAddress?: string | null;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
+  addedById?: string | null;
+  addedByName?: string | null;
+  addedAt: string;
+  receivedAt: string;
+}
+
 /** Another document of the same mixed basket (same `basketId`). */
 export interface BasketDocument {
   id: string;
@@ -1526,6 +1543,8 @@ export interface Transaction {
   reissueOfTransactionId?: string | null;
   reissueOfTransactionNumber?: string | null;
   reissueDocuments?: BasketDocument[];
+  /** "הדפס העתק עם פרטי לקוח": added to a copy after issue, oldest first (detail read only). */
+  customerDetailsAdded?: CustomerDetailsAdded[];
   createdAt: string;
   updatedAt: string;
   serverReceivedAt: string;

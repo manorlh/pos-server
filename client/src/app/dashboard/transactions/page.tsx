@@ -699,6 +699,31 @@ function TransactionDetailsDialog({
                   )}
                 </div>
               )}
+              {(data.customerDetailsAdded ?? []).length > 0 && (
+                <div className="col-span-2 rounded border border-dashed p-3 space-y-2" data-testid="customer-details-added">
+                  <Label className="text-xs">{t('customerDetailsAdded')}</Label>
+                  <div className="text-xs text-muted-foreground">{t('customerDetailsAddedNote')}</div>
+                  {(data.customerDetailsAdded ?? []).map((d) => (
+                    <div key={d.id} className="space-y-0.5">
+                      <div>{[d.customerName, d.customerPhone, d.customerAddress].filter(Boolean).join(' · ')}</div>
+                      <div>
+                        {t('customerVatNumber')}: <span className="font-mono">{d.customerVatNumber}</span>
+                      </div>
+                      {d.customerEmail && (
+                        <div>
+                          {t('customerEmail')}: <span dir="ltr">{d.customerEmail}</span>
+                        </div>
+                      )}
+                      <div className="text-xs text-muted-foreground">
+                        {t('customerDetailsAddedBy', {
+                          date: formatDateTime(d.addedAt),
+                          name: d.addedByName ?? d.addedById ?? '—',
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               {(data.claimedApproverPosUserId || data.claimedApproverUserId) && (
                 <div className="col-span-2">
                   <Label className="text-xs">{t('claimedApprover')}</Label>
