@@ -145,7 +145,7 @@ describe.runIf(existsSync(FIXTURE))('the golden (catalog_menus_golden.json), thr
 const noPrinter: Transport = { send: async () => undefined, status: async () => ({ health: 'ok', detail: null }), list: async () => [], dispose: () => undefined };
 
 /** A kiosk with a cloud catalog: a burger (54), a pasta (46) and a drink (8); lunch 11:00-14:00 lists the burger at 40. */
-function kiosk(block: Record<string, unknown> | null = lunchBlock()) {
+function kiosk(block: Record<string, unknown> | null = lunchBlock(), over: Record<string, unknown> = {}) {
   const svc = new KioskService({ dataDir: mkdtempSync(path.join(os.tmpdir(), 'kd-menus-')), appVersion: '0.4.1', deviceInfo: {}, transport: noPrinter, downloader: async () => { throw new Error('no media'); } });
   const body: Record<string, unknown> = {
     syncType: 'full',
@@ -158,9 +158,16 @@ function kiosk(block: Record<string, unknown> | null = lunchBlock()) {
     ],
     menu: null,
     machineCatalog: { mode: 'all' },
+    ...over,
   };
   if (block) body.catalogMenus = block;
   svc.cloud.applyCatalog(body);
+  return svc;
+}
+
+/** The kiosk's own settings as the snapshot carries them: what its "קטגוריות ומוצרים" hides. */
+function hiding(svc: KioskService, catalog: Record<string, unknown>) {
+  svc.cloud.setKioskSnapshot({ kiosk: true, configVersion: 'v1', operator: { id: 'kiosk:m1', name: 'קיוסק' }, config: { catalog } });
   return svc;
 }
 
@@ -402,6 +409,112 @@ describe('the Windows kiosk\'s service and "תפריטים"', () => {
     ]);
     // What the cloud says moved is shown, as before: 50 → 54 and the lunch line (52 then) → the catalog's 54.
     expect(priceOf(svc, input).changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key]))).toEqual([['a', 5000, 5400], ['b', 4000, 5400]]);
+    svc.stop();
+  });
+
+  it('the kiosk\'s hidden-product settings reach the basket check — as the Android kiosk applies them: a hidden product goes, a menu line included', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const svc = hiding(kiosk(), { hiddenProducts: ['p1', 'p2'] });
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    expect(dataOf(svc).products.map((p) => p.id)).toEqual(['p1']); // lunch places the burger (the service catalog keeps what the screens hide)
+    const r = priceOf(
+      svc,
+      basket([
+        line({ key: 'burger', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch' }), // on the screens, hidden for the kiosk
+        line({ key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast' }), // held by lunch, hidden
+        line({ key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast' }), // held by lunch, not hidden: stays
+        line({ key: 'plain', productId: 'p1', unitAgorot: 5400, listAgorot: 5400 }), // no menu, hidden
+      ]),
+    );
+    expect(r.changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'burger'], ['removed', 'pasta'], ['removed', 'plain']]);
+    expect(r.lines.map((l) => l.key)).toEqual(['drink']);
+    svc.stop();
+  });
+
+  it('a hidden category takes the lines of its products — held ones too', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const svc = hiding(kiosk(), { hiddenCategories: ['c2'] });
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    const r = priceOf(
+      svc,
+      basket([
+        line({ key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast' }),
+        line({ key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast' }),
+      ]),
+    );
+    expect(r.changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'drink']]);
+    svc.stop();
+  });
+
+  /** A catalog with a meal (p5: its drink p4 a component), under a lunch menu that places the whole of "מנות" (p4 is held). */
+  const mealBody = (drink: Row = {}): Record<string, unknown> => ({
+    products: [
+      { id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 54 },
+      { id: 'p5', categoryId: 'c1', name: 'ארוחה', price: 60 },
+      { id: 'p4', categoryId: 'c2', name: 'קולה', price: 8, ...drink },
+    ],
+    menu: { meals: { p5: [{ id: 's1', name: 'שתייה', minSelect: 1, maxSelect: 1, options: [{ productId: 'p4', upcharge: 0, isDefault: true }] }] } },
+  });
+  const allOfMains = (): Record<string, unknown> => ({
+    ...lunchBlock(),
+    menus: [{ ...(lunchBlock().menus as Array<Record<string, unknown>>)[0], categories: [{ id: 'c1', all: true }], products: [] }],
+  });
+  const mealLine = () => line({ key: 'meal', productId: 'p5', unitAgorot: 6000, listAgorot: 6000, catalogAgorot: 6000, menuId: 'lunch', meal: { components: [{ slotId: 's1', productId: 'p4', options: [] }] } });
+
+  it('a meal\'s component is found though no screen shows it — held by the menu, or hidden for the kiosk — but blocks and "אזל" still take the meal whole', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    // Lunch places the meal; its drink is held by the menu AND hidden for the kiosk: the meal stays, as the customer built it.
+    const kept = hiding(kiosk(allOfMains(), mealBody()), { hiddenProducts: ['p4'] });
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    expect(dataOf(kept).products.map((p) => p.id).sort()).toEqual(['p1', 'p5']);
+    expect(dataOf(kept).held.map((p) => p.id)).toEqual(['p4']);
+    expect(priceOf(kept, basket([mealLine()])).changes).toEqual([]);
+    kept.stop();
+    // The drink is locked ("אזל"): the meal goes whole, the customer chooses again.
+    const locked = kiosk(allOfMains(), mealBody({ isAvailable: false, lockAvailable: false }));
+    expect(priceOf(locked, basket([mealLine()])).changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'meal']]);
+    locked.stop();
+    // The cloud says the drink is gone (a block, a channel...): the same.
+    const gone = paired(kiosk(allOfMains(), mealBody()));
+    vi.spyOn(gone.sync, 'pullCatalog').mockResolvedValue(undefined as never);
+    vi.spyOn(gone.api, 'post').mockImplementation(
+      async () => ({ kind: 'ok', status: 200, headers: new Headers(), body: { ok: false, lines: [{ productId: 'p4', available: false, reason: 'not_on_kiosk', priceAgorot: null, priceChanged: false }] } }) as never,
+    );
+    await (gone as unknown as { cloudBasketCheck(i: StartPaymentIn): Promise<void> }).cloudBasketCheck(basket([mealLine()]));
+    expect(priceOf(gone, basket([mealLine()])).changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'meal']]);
+    gone.stop();
+  });
+
+  it('a product kept only while another menu is on — off the machine\'s list, sold by the first menu — goes when that menu is over, and when another is on (as the Android kiosk)', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const day = (id: string, name: string, range: [string, string], lists: Record<string, unknown>) => ({
+      id, name, channel: 'kiosk', schedule: { always: false, days: null, ranges: [range], from: null, to: null }, categories: [{ id: 'c1', all: false }], products: [lists],
+    });
+    const block = {
+      updatedAt: '2026-10-07T00:00:00+00:00',
+      fallback: 'catalog',
+      menus: [day('breakfast', 'בוקר', ['07:00', '11:00'], { id: 'p2', price: 40 }), day('lunch', 'צהריים', ['11:00', '14:00'], { id: 'p1' })],
+      assignments: [{ menuId: 'breakfast', level: 'shop', depth: 0, priority: 0 }, { menuId: 'lunch', level: 'shop', depth: 0, priority: 0 }],
+    };
+    const svc = kiosk(block, {
+      products: [
+        { id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 54, inMachineCatalog: true },
+        { id: 'p2', categoryId: 'c1', name: 'פסטה', price: 46, inMachineCatalog: false },
+      ],
+      machineCatalog: { mode: 'selected' },
+    });
+    const pasta = () => basket([line({ key: 'pasta', productId: 'p2', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 4600, menuId: 'breakfast' })]);
+    // 10:00, breakfast: the menu beats the machine's list — the pasta is on the screens, the line stays.
+    vi.setSystemTime(localMs('2026-10-07T10:00:00'));
+    expect(dataOf(svc).products.map((p) => p.id)).toEqual(['p2']);
+    expect(priceOf(svc, pasta()).changes).toEqual([]);
+    // 12:00, lunch: off the machine's list and not placed — not sold here, not held: the line goes.
+    vi.setSystemTime(localMs('2026-10-07T12:00:00'));
+    expect(dataOf(svc).held.map((p) => p.id)).toEqual([]);
+    expect(priceOf(svc, pasta()).changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'pasta']]);
+    // 15:00, no menu: the machine's list again — the same.
+    vi.setSystemTime(localMs('2026-10-07T15:00:00'));
+    expect(priceOf(svc, pasta()).changes.map((c) => [c.kind, c.key])).toEqual([['removed', 'pasta']]);
     svc.stop();
   });
 

@@ -90,6 +90,7 @@ import {
 import type { FunnelEvent } from '../core/kioskFunnel';
 import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
+import { basketSold } from '@dash-lib/kioskBasketSold';
 import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from '@dash-lib/kioskMenus';
 import type { MenuBlock } from '@dash-lib/menuSchedule';
 import type {
@@ -1142,12 +1143,10 @@ export class KioskService extends EventEmitter {
   private priceBasket(input: StartPaymentIn, now = new Date()): { lines: SaleLine[]; changes: BasketChange[]; tracked: string[]; promotions: AppliedPromotionRow[] } {
     const cat = this.catalogData();
     const byId = new Map<string, KProduct>(cat.products.map((p) => [p.id, p]));
-    // "תפריטים": what the active menu does not place is held, not gone — a line added under a menu that has since left its
-    // product out stays while it is still sold here (KioskBasketCheck.of's `outsideMenu`), a meal's component too.
-    // "Still sold here" is the kiosk's own catalog rules (`held` / `products`: channel, manager's code, category, delisting,
-    // the products no kiosk sells) and the cloud's word — NOT the Android kiosk's `anyProduct` (every product the till lists,
-    // never patched by the cloud), which keeps and charges such a line after the product turned "קופות בלבד" etc.
-    // Deliberately stricter than Android: docs/SPEC_MENUS.md §5.1, pinned in test/kioskMenus.test.ts.
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in test/kioskMenus.test.ts.
     const heldById = new Map<string, KProduct>(cat.held.map((p) => [p.id, p]));
     const block = this.menuBlock;
     const menuPrices = menuPriceSets(block);
@@ -1156,19 +1155,22 @@ export class KioskService extends EventEmitter {
     const tracked = new Set<string>();
     // What the cloud said a moment ago wins over a catalog that has not caught up yet.
     const cloud = overridesLive(this.cloudBasket, Date.now());
-    const gone = (id: string, p: KProduct | undefined) => !p || p.soldOut || !!cloud?.gone.has(id);
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (client lib/kioskBasketSold.ts, the Android kiosk's
+    // KioskBasketLookup). A meal's component: found even when no screen shows it (hidden, not placed), but never blocked,
+    // sold out or gone.
+    const lookup = basketSold({ products: cat.products, categories: cat.categories, held: cat.held, cfg: this.config(), gone: cloud?.gone });
     for (const l of input.lines) {
-      // A dish: on the kiosk now, or — only for a line added under a menu — held.
-      const p = byId.get(l.productId) ?? (l.menuId ? heldById.get(l.productId) : undefined);
+      const p = lookup.dish(l.productId, !!l.menuId);
       // A meal whose chosen component is no longer sold goes as a whole: the customer chooses again.
       const parts = l.meal?.components ?? [];
       const slots = cat.meals[l.productId] ?? [];
       const brokenMeal = parts.some((c) => {
         const slot = slots.find((s) => s.id === c.slotId);
-        return !slot || !slot.choices.some((x) => x.productId === c.productId) || gone(c.productId, byId.get(c.productId) ?? heldById.get(c.productId));
+        return !slot || !slot.choices.some((x) => x.productId === c.productId) || !lookup.component(c.productId);
       });
-      if (!p || gone(l.productId, p) || brokenMeal) {
-        changes.push({ kind: 'removed', productId: l.productId, name: p?.name ?? '', key: l.key });
+      if (!p || brokenMeal) {
+        changes.push({ kind: 'removed', productId: l.productId, name: (byId.get(l.productId) ?? heldById.get(l.productId))?.name ?? '', key: l.key });
         continue;
       }
       // The dish's own price: as the line was added while the catalog's price has not moved (a menu switching under the basket is

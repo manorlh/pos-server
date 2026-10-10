@@ -24,6 +24,7 @@ import { kioskOfflineBlocks, resolveKioskConfig, tsKioskPayMethods, voucherCanFi
 import { KioskApi, pairWithCode, tokenRevoked, type ApiReply, type FetchFn, type KioskCredentials } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage, type CatalogIn, type WebCatalog, type WebGroup } from './kioskWebCatalog';
 import { catalogNextChangeMs, stockLevelsOf } from './kioskSoldOut';
+import { basketSold } from './kioskBasketSold';
 import { basePriceOf, keptListPrice, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from './kioskMenus';
 import { chosenOptions, defaultPicks, localDateTimeOf, priceKioskBasket, promotionsOf, type MenuGroup, type OptionPick } from './kioskMoney';
 import {
@@ -966,18 +967,17 @@ export class WebKioskService {
     const cloud = overridesLive(this.cloudBasket, this.now());
     const v = this.view();
     const byId = new Map(v.catalog.products.map((p) => [p.id, p]));
-    // "תפריטים": what the active menu does not place is held, not gone — a line added under a menu that has ended
-    // stays while its product is still sold here (KioskBasketCheck.of's `outsideMenu`); a meal's components too.
-    // "Still sold here" is the kiosk's own catalog rules (`held` / `products`: channel, manager's code, category, delisting,
-    // the products no kiosk sells) and the cloud's word — NOT the Android kiosk's `anyProduct` (every product the till lists,
-    // never patched by the cloud), which keeps and charges such a line after the product turned "קופות בלבד" etc.
-    // Deliberately stricter than Android: docs/SPEC_MENUS.md §5.1, pinned in kioskWebService.test.ts.
-    const heldById = new Map(v.catalog.held.map((p) => [p.id, p]));
+    // "תפריטים" (docs/SPEC_MENUS.md §5.1): what the active menu does not place is held, not gone — a line added under a menu
+    // stays across a switch only while its product is still sold here: the kiosk's own catalog rules (`held` / `products`:
+    // channel, manager's code, category, delisting, the products no kiosk sells), its hidden-product settings, blocks and
+    // "אזל", and the cloud's word all win. The Android kiosk's KioskBasketLookup is the same rule; pinned in kioskWebService.test.ts.
     const menuPrices = menuPriceSets(this.catalog.catalogMenus);
-    const live = (p: WebCatalog['products'][number] | undefined) => (p && !p.soldOut && !cloud?.gone.has(p.id) ? p : null);
-    // A dish: on the kiosk now, or — only for a line added under a menu — held. A meal's component: either.
-    const sold = (id: string, addedUnderMenu = false) => live(byId.get(id)) ?? (addedUnderMenu ? live(heldById.get(id)) : null);
-    const component = (id: string) => live(byId.get(id)) ?? live(heldById.get(id));
+    // A dish: on the kiosk's screens now — through its own settings: hidden products and categories included — or, only for a
+    // line added under a menu, held and shown by the same rules (lib/kioskBasketSold.ts, the Android kiosk's KioskBasketLookup).
+    // A meal's component: found even when no screen shows it (hidden, not placed), but never blocked, sold out or gone.
+    const lookup = basketSold({ products: v.catalog.products, categories: v.catalog.categories, held: v.catalog.held, cfg: this.config(), gone: cloud?.gone });
+    const sold = (id: string, addedUnderMenu = false) => lookup.dish(id, addedUnderMenu);
+    const component = (id: string) => lookup.component(id);
     const changes: BasketChange[] = [];
     const priced: Array<{ key: string; productId: string; categoryId: string | null; unitAgorot: number; qty: number; noDiscount: boolean }> = [];
     for (const l of lines) {
