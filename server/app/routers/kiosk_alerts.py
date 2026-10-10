@@ -40,6 +40,14 @@ def till_kiosk_alerts(
     db: Session = Depends(get_db),
 ):
     out = kiosk_ops.alerts_for_till(db, machine)
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till keeps the alerts
+    # of its area's devices and of the shop's area-less ones.
+    from app.services import area_lock
+
+    areas = area_lock.areas_of_machines(db, [a.get("kioskMachineId") for a in out])
+    out = area_lock.keep_shared_devices(
+        db, machine, out, lambda a: areas.get(area_lock._as_uuid(a.get("kioskMachineId")))
+    )
     db.commit()
     return {"alerts": out, "serverTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
 

@@ -274,7 +274,9 @@ def get_shop_transactions(
     db: Session = Depends(get_db),
 ):
     """
-    Recent documents across every terminal in the shop this machine belongs to.
+    Recent documents across every terminal in the shop this machine belongs to — or, for a
+    till locked to its point of sale (`areaScopeLock`, app/services/area_lock.py), across the
+    terminals of its area, with `area: {areaId, areaName}` saying so.
 
     Fixed contract — the shipped Android till calls this. Do not rename fields.
 
@@ -286,10 +288,15 @@ def get_shop_transactions(
 
     Capped at 200 rows, newest first.
     """
+    from app.services import area_lock
+
     rows, _truncated = load_shop_transactions_for_machine(db, machine, hours=hours, q=q)
     return ShopTransactionsResponse(
         server_time=datetime.now(timezone.utc).isoformat(),
         transactions=rows,
+        # Locked to its point of sale (app/services/area_lock.py): the till captions the list
+        # "נקודת מכירה: <name>" instead of "גם של כל החנות".
+        area=area_lock.scope_for(db, machine).as_json(),
     )
 
 

@@ -1565,6 +1565,12 @@ from app.services.cloud_refund_z_gate import PARAMETER_SPECS as _CLOUD_REFUND_SP
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _CLOUD_REFUND_SPECS)
 
+# "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py, docs/SPEC_AREA_LOCK.md): a till in an
+# area sees and acts on its area's data only. Default on; no effect on a till without an area.
+from app.services.area_lock import AREA_LOCK_PARAMETER_SPECS as _AREA_LOCK_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _AREA_LOCK_SPECS)
+
 
 def validate_keyed_value(key: str, value: Any) -> Any:
     """A value checked for what its key needs beyond its type (`technicianCode`: 4–8 digits)."""

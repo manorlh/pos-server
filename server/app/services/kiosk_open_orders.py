@@ -425,8 +425,11 @@ def _require_till(db: Session, till: POSMachine) -> None:
         raise OpenOrderRefused(403, NOT_A_TILL)
 
 
-def _find(db: Session, till: POSMachine, ref: str) -> KioskOrder:
-    """By the cloud's id or the kiosk's local id (the slip's code), in the till's own shop."""
+def _find(db: Session, till: POSMachine, ref: str, *, area_check: bool = True) -> KioskOrder:
+    """
+    By the cloud's id or the kiosk's local id (the slip's code), in the till's own shop.
+    `area_check` False for "paid": the money already moved, so it is recorded whatever the lock.
+    """
     text = (ref or "").strip()
     if text.upper().startswith("KO:"):
         text = text[3:].strip()
@@ -446,6 +449,13 @@ def _find(db: Session, till: POSMachine, ref: str) -> KioskOrder:
         or (row.tenant_id is not None and row.tenant_id != till.tenant_id)
     ):
         raise OpenOrderRefused(404, NOT_FOUND)
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): another point of sale's kiosk's
+    # order is refused (403 `area_locked`); an area-less kiosk serves the whole shop. One this till
+    # already holds stays its own to finish (pay / release), whatever changed since it took it.
+    from app.services import area_lock
+
+    if area_check and row.locked_by_machine_id != till.id:
+        area_lock.require_shared_device(db, till, db.get(POSMachine, row.machine_id), "order")
     return row
 
 
@@ -504,6 +514,11 @@ def list_for_till(db: Session, till: POSMachine, *, now: Optional[datetime] = No
         .all()
     )
     rows = [r for r in rows if r.tenant_id is None or r.tenant_id == till.tenant_id]
+    # Locked to its point of sale: that area's kiosks' orders and the area-less kiosks' (area_lock.py).
+    from app.services import area_lock
+
+    areas = area_lock.areas_of_machines(db, [r.machine_id for r in rows])
+    rows = area_lock.keep_shared_devices(db, till, rows, lambda r: areas.get(r.machine_id))
     names = _kiosk_names(db, [r.machine_id for r in rows])
     return [order_out(r, till, now, names.get(r.machine_id)) for r in rows]
 
@@ -561,7 +576,7 @@ def mark_paid(
     """
     now = _now(now)
     _require_till(db, till)
-    row = _find(db, till, ref)
+    row = _find(db, till, ref, area_check=False)
     if row.open_state == PAID:
         if row.transaction_id == transaction_id:
             return order_out(row, till, now, _kiosk_names(db, [row.machine_id]).get(row.machine_id))

@@ -6,7 +6,7 @@ schemas (`app/schemas/dashboard.py`) so the UI gets one number format across eve
 report surface. The fiscal export path keeps Decimal; these are management reports.
 """
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -262,6 +262,10 @@ class ShopTransactionsResponse(BaseModel):
 
     server_time: str = Field(..., alias="serverTime")
     transactions: List[ShopTransactionRow]
+    # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): `{areaId, areaName}` when the
+    # list is narrowed to the till's point of sale; null = the whole shop (as before). Additive —
+    # older tills ignore it.
+    area: Optional[Dict[str, Optional[str]]] = None
 
 
 # ── 2f. Day summary — several tills' Z reports rolled into one day ────────────

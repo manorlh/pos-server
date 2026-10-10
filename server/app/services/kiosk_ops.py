@@ -610,6 +610,10 @@ def acknowledge(
     device = db.query(KioskDevice).filter(KioskDevice.machine_id == row.kiosk_machine_id).first()
     if kiosk is None or device is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")
+    # Another point of sale's kiosk, while this till is locked to its own (app/services/area_lock.py).
+    from app.services import area_lock
+
+    area_lock.require_shared_device(db, till, kiosk, "kiosk")
     cfg = KC.effective_config(db, kiosk)
     if till.id not in {m.id for m in targets(db, kiosk, cfg, row.kind)}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="alert_not_found")
