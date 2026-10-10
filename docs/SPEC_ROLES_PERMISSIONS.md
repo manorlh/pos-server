@@ -263,6 +263,14 @@ Offline" שמדלג על בדיקה.
   מהמגירה; לדוגמה 50 במזומן ו-50 באשראי עם טיפ 10 ⇒ 40). הקופה מקפיאה את הסכום בסגירת המשמרת
   (`till.cardTipsFromDrawer`, ‏docs/SHIFTS_API.md §1.3) והענן מחשב ממנו בלבד — לא מהפרמטר החי. הטיפים אינם
   הכנסה: המכירות, המע״מ, ה-Z הפיסקלי, תקבולי מזומן/אשראי וסיכומי הטיפים לא משתנים. לא חל על קיוסקים.
+* **Z — מזומן צפוי כולל הפקדות ותנועות מזומן** (`cashDrawer.zExpectedCashMovements`, כבוי כברירת מחדל;
+  ההחלטה של הבעלים, 10.10.2026): ה"מזומן הצפוי" ב-Z מופחתות בו הפקדות לכספת ומחושבות בו Cash In / Cash Out,
+  כמו שה-X כבר מחשב. בשורות המגירה של ה-Z (הכנסות מזומן, הוצאות, הפקדה לכספת) כל שורה מסתכמת במזומן הצפוי,
+  וההפרש נמדד מולו. נתון ניהולי בלבד: מספרי ה-Z, המסמכים, המע״מ והקובץ האחיד לא משתנים. הפרמטר נקרא ברגע
+  שה-Z מופק (לכל קופה לפי חברה → סניף → נקודת מכירה → קופה) ונשמר על ה-Z (`cashMovements` בכותרת ובקטע של
+  כל קופה; היעדרו = כבוי): Z שכבר הופק לא מחושב מחדש, וההפעלה חלה על Z שיופק אחריה. הקופה מקפיאה את
+  סכומי התנועות בסגירת כל משמרת (`till.cashIn` / `cashOut` / `deposits`, ‏docs/SHIFTS_API.md §1.3). לא חל על
+  קיוסקים; סגירה שלא נשאו בה התנועות (קופה בגרסה ישנה) נחשבת בלי תנועות.
 * **ספירה**: "ספירת מגירה" פותחת את המגירה (COUNT / BLIND_COUNT), מקבלת את הסכום, מציגה צפוי / נספר / פער.
   **Blind Count** (פרמטר): היתרה הצפויה לא מוצגת לפני הזנת הסכום — במסך הספירה, ב-X הביניים (במסך
   ובנייר), בכרטיס סגירת המשמרת ובשלב הספירה של "הפק Z"; כל ספירה בסגירת משמרת / Z נרשמת כתנועת `count`
@@ -296,7 +304,7 @@ Offline" שמדלג על בדיקה.
 הפרמטר הקיים `cashDrawer` (כבוי / בתשלום מזומן / + כפתור פתיחה). השאר: `cashDrawer.requireReason`,
 `requireNoteForOther`, `requireManagerApproval`, `cashMovementsEnabled`, `cashOutApprovalAmount`,
 `allowOpenAfterClose`, `blindCount`, `maxManualOpensPerShift`, `alertOpensCount`, `alertOpensWithinMinutes`,
-`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, `cardTipsFromDrawer` (§6.5), ו-`permissionsDeniedUi`.
+`cashOutAlertAmount`, `varianceAlertAmount`, `nearVarianceMinutes`, `cardTipsFromDrawer` (§6.5), `zExpectedCashMovements` (§6.5), ו-`permissionsDeniedUi`.
 
 ## 7. מיפוי לאפיון המגירה, סעיף אחר סעיף
 
