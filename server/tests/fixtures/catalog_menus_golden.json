@@ -1224,6 +1224,132 @@
      "name": "עמדות אירוע"
     }
    ]
+  },
+  "tillsOnly": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-tills",
+     "name": "רק קופות",
+     "channel": "pos",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-cola",
+       "price": 7
+      }
+     ]
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-tills",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    }
+   ]
+  },
+  "tillsOnlyNone": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "none",
+   "menus": [
+    {
+     "id": "m-tills",
+     "name": "רק קופות",
+     "channel": "pos",
+     "schedule": {
+      "always": true,
+      "days": null,
+      "ranges": [],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-cola",
+       "price": 7
+      }
+     ]
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-tills",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    }
+   ]
+  },
+  "kioskHours": {
+   "updatedAt": "2026-10-06T08:00:00+00:00",
+   "fallback": "catalog",
+   "menus": [
+    {
+     "id": "m-kiosk-lunch",
+     "name": "צהריים בקיוסק",
+     "channel": "kiosk",
+     "schedule": {
+      "always": false,
+      "days": null,
+      "ranges": [
+       [
+        "11:00",
+        "14:00"
+       ]
+      ],
+      "from": null,
+      "to": null
+     },
+     "categories": [
+      {
+       "id": "c-mains",
+       "all": false
+      },
+      {
+       "id": "c-drinks",
+       "all": true
+      }
+     ],
+     "products": [
+      {
+       "id": "p-pasta",
+       "price": 39.9
+      },
+      {
+       "id": "p-burger"
+      }
+     ]
+    }
+   ],
+   "assignments": [
+    {
+     "menuId": "m-kiosk-lunch",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    }
+   ]
   }
  },
  "cases": [
@@ -2509,6 +2635,261 @@
       }
      ]
     }
+   }
+  },
+  {
+   "name": "a menu for the tills only does not touch the kiosk: the full catalog",
+   "at": "2026-10-06T12:00",
+   "surface": "kiosk",
+   "block": "tillsOnly",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "the same tills-only menu on the till itself: its cola at 7",
+   "at": "2026-10-06T12:00",
+   "surface": "pos",
+   "block": "tillsOnly",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-tills",
+     "menuName": "רק קופות",
+     "level": "machine",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "7.00",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "a tills-only menu and the fallback 'don't sell': the kiosk has no menu, so it sells nothing",
+   "at": "2026-10-06T12:00",
+   "surface": "kiosk",
+   "block": "tillsOnlyNone",
+   "expected": {
+    "resolution": {
+     "mode": "none",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": {
+     "categories": [],
+     "products": []
+    }
+   }
+  },
+  {
+   "name": "kiosk lunch 10:59 - not yet: the full catalog",
+   "at": "2026-10-06T10:59",
+   "surface": "kiosk",
+   "block": "kioskHours",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "kiosk lunch 11:00 - starts on the minute: the listed pasta at 39.90, then burger at the catalog price, then the drinks",
+   "at": "2026-10-06T11:00",
+   "surface": "kiosk",
+   "block": "kioskHours",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-kiosk-lunch",
+     "menuName": "צהריים בקיוסק",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-pasta",
+       "categoryId": "c-mains",
+       "price": "39.90",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "52.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "kiosk lunch 13:59 - the last minute",
+   "at": "2026-10-06T13:59",
+   "surface": "kiosk",
+   "block": "kioskHours",
+   "expected": {
+    "resolution": {
+     "mode": "menu",
+     "menuId": "m-kiosk-lunch",
+     "menuName": "צהריים בקיוסק",
+     "level": "shop",
+     "depth": 0,
+     "priority": 0
+    },
+    "applied": {
+     "categories": [
+      "c-mains",
+      "c-drinks"
+     ],
+     "products": [
+      {
+       "id": "p-pasta",
+       "categoryId": "c-mains",
+       "price": "39.90",
+       "priceSource": "menu"
+      },
+      {
+       "id": "p-burger",
+       "categoryId": "c-mains",
+       "price": "52.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-coffee",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-cola",
+       "categoryId": "c-drinks",
+       "price": "12.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-water",
+       "categoryId": "c-drinks",
+       "price": "8.00",
+       "priceSource": "catalog"
+      },
+      {
+       "id": "p-beer",
+       "categoryId": "c-drinks",
+       "price": "28.00",
+       "priceSource": "catalog"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "kiosk lunch 14:00 - over: the full catalog again",
+   "at": "2026-10-06T14:00",
+   "surface": "kiosk",
+   "block": "kioskHours",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
+   }
+  },
+  {
+   "name": "a kiosk-only menu is not on the till at lunch time",
+   "at": "2026-10-06T12:00",
+   "surface": "pos",
+   "block": "kioskHours",
+   "expected": {
+    "resolution": {
+     "mode": "catalog",
+     "menuId": null,
+     "menuName": null,
+     "level": null,
+     "depth": null,
+     "priority": null
+    },
+    "applied": null
    }
   }
  ]

@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { WebKioskService, usableMethods, webSells, type WebKioskDeps } from './kioskWebService';
+import { KIOSK_SYNC_MS, WebKioskService, usableMethods, webSells, type WebKioskDeps } from './kioskWebService';
 import { KV, LocalStore, MemoryStore, openKioskStore, type StorageLike } from './kioskWebStore';
 import { apiBase, describeBrowser, detailOf, messageOf, normalizePairingCode, webDeviceInfo, type FetchFn } from './kioskWebApi';
 import { applyCatalogPull, buildWebCatalog, configMediaUrls, sizedImage } from './kioskWebCatalog';
@@ -602,5 +602,478 @@ describe('the API and the catalog', () => {
   it('lists the media a config holds for the service worker', () => {
     const urls = configMediaUrls({ theme: { logo: { url: 'https://x/l.png', kind: 'image' } }, attract: { slides: [{ media: { url: 'https://x/v.mp4', kind: 'video' } }, { media: { url: 'blob:x', kind: 'image' } }] } });
     assert.deepEqual(urls.sort(), ['https://x/l.png', 'https://x/v.mp4']);
+  });
+});
+
+describe('"תפריטים" on the browser kiosk (docs/SPEC_MENUS.md, lib/kioskMenus.ts)', () => {
+  /** A cloud whose catalog carries a kiosk menu: lunch 11:00-14:00, its burger at 40, nothing else from the drinks. */
+  function menuCloud() {
+    const lunch = {
+      updatedAt: '2026-10-07T00:00:00+00:00',
+      fallback: 'catalog',
+      menus: [
+        {
+          id: 'lunch',
+          name: 'צהריים',
+          channel: 'kiosk',
+          schedule: { always: false, days: null, ranges: [['11:00', '14:00']], from: null, to: null },
+          categories: [{ id: 'c1', all: false }],
+          products: [{ id: 'p1', price: 40 }],
+        },
+      ],
+      assignments: [{ menuId: 'lunch', level: 'shop', depth: 0, priority: 0 }],
+    };
+    const cloud = fakeCloud({
+      'GET sync/m1/catalog': () => ({
+        status: 200,
+        body: {
+          syncType: 'full',
+          serverTime: '2026-10-07T00:00:00Z',
+          categories: [
+            { id: 'c1', name: 'מנות', isActive: true },
+            { id: 'c2', name: 'שתייה', isActive: true },
+          ],
+          products: [
+            { id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 54 },
+            { id: 'p2', categoryId: 'c1', name: 'פסטה', price: 46 },
+            { id: 'p4', categoryId: 'c2', name: 'קולה', price: 8 },
+          ],
+          menu: null,
+          machineCatalog: { mode: 'all' },
+          catalogMenus: lunch,
+        },
+      }),
+    });
+    return { cloud, lunch };
+  }
+
+  const localMs = (local: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/.exec(local)!;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6])).getTime();
+  };
+
+  /** A kiosk whose own clock reads `local` ("YYYY-MM-DDTHH:MM:SS"), with timers it can fire by hand. */
+  function clocked(cloud: ReturnType<typeof fakeCloud>, local: string, store = new MemoryStore()) {
+    let now = localMs(local);
+    const timers: Array<{ id: number; fn: () => void; ms: number }> = [];
+    let seq = 0;
+    const svc = new WebKioskService({
+      store,
+      fetchFn: cloud.fetchFn,
+      defaultServer: SERVER,
+      appVersion: 'web-test',
+      deviceInfo: () => webDeviceInfo({ userAgent: 'Mozilla/5.0 (Linux; Android 13; SM-T220) AppleWebKit/537.36 Chrome/130.0 Safari/537.36' }, 'test'),
+      now: () => now,
+      timers: {
+        set: (fn, ms) => {
+          seq += 1;
+          timers.push({ id: seq, fn, ms });
+          return seq;
+        },
+        clear: (id) => {
+          const i = timers.findIndex((t) => t.id === id);
+          if (i >= 0) timers.splice(i, 1);
+        },
+      },
+    });
+    return {
+      svc,
+      store,
+      timers,
+      /** The kiosk's clock moves to `to`. */
+      at: (to: string) => {
+        now = localMs(to);
+      },
+      /** The menu's look at the minute boundary fires (as the browser's timer would) — not the sync's own cycle (0 / 15 s). */
+      fire: () => {
+        const due = [...timers].filter((t) => t.ms > 0 && t.ms !== KIOSK_SYNC_MS && t.ms <= 60_025);
+        for (const t of due) {
+          timers.splice(timers.indexOf(t), 1);
+          t.fn();
+        }
+        return due.length;
+      },
+    };
+  }
+
+  async function started(local: string, store?: MemoryStore, tweak?: (cloud: ReturnType<typeof fakeCloud>) => void) {
+    const { cloud, lunch } = menuCloud();
+    tweak?.(cloud);
+    const k = clocked(cloud, local, store);
+    await k.svc.init();
+    const r = await k.svc.pair({ code: 'ab12-cd34', machineName: 'טאבלט' });
+    assert.deepEqual(r, { ok: true });
+    return { cloud, lunch, ...k };
+  }
+
+  it('the pull carries the block, kept with the catalog; no menu is active outside its hours — the full catalog', async () => {
+    const { svc, store } = await started('2026-10-07T10:30:00');
+    const v = svc.view();
+    assert.equal(v.catalog.menu.mode, 'catalog');
+    assert.equal(v.catalog.menu.hasMenus, true);
+    assert.deepEqual(v.catalog.products.map((p) => [p.id, p.priceAgorot]), [['p1', 5400], ['p2', 4600], ['p4', 800]]);
+    const kept = await store.get<{ catalogMenus: { menus: unknown[] } }>(KV.catalog);
+    assert.equal(kept?.catalogMenus?.menus.length, 1);
+  });
+
+  it('while its hours run the menu is the kiosk: its category, its dish at its price (the catalog\'s kept beside it)', async () => {
+    const { svc } = await started('2026-10-07T12:00:00');
+    const v = svc.view();
+    assert.equal(v.catalog.menu.mode, 'menu');
+    assert.equal(v.catalog.menu.menuName, 'צהריים');
+    assert.deepEqual(v.catalog.categories.map((c) => c.id), ['c1']);
+    assert.deepEqual(v.catalog.products.map((p) => [p.id, p.priceAgorot, p.catalogPriceAgorot, p.priceSource]), [['p1', 4000, 5400, 'menu']]);
+    // The pasta and the drink are not on the menu ("רק נבחרים"): not on the screens, but held for a basket and a meal.
+    assert.deepEqual(v.catalog.held.map((p) => [p.id, p.priceAgorot]), [['p2', 4600], ['p4', 800]]);
+  });
+
+  it('the menu changes at the minute boundary on the kiosk\'s own clock — with no network at all', async () => {
+    const { cloud, svc, at, fire, timers } = await started('2026-10-07T10:59:35');
+    cloud.setOnline(false);
+    assert.equal(svc.view().catalog.menu.mode, 'catalog');
+    // One look per minute boundary is waiting, 25 ms past the minute.
+    const next = timers.map((t) => t.ms).filter((ms) => ms <= 60_025);
+    assert.ok(next.some((ms) => ms > 24_000 && ms <= 25_025), JSON.stringify(next));
+    let rebuilt = 0;
+    svc.on(() => {
+      rebuilt += 1;
+    });
+    // Still 10:59: a look finds the same answer — nothing is rebuilt, and the next look is arranged.
+    at('2026-10-07T10:59:59');
+    fire();
+    assert.equal(rebuilt, 0);
+    assert.ok(timers.some((t) => t.ms <= 60_025));
+    // 11:00: the menu starts, by the clock alone.
+    at('2026-10-07T11:00:00');
+    fire();
+    assert.equal(rebuilt, 1);
+    assert.equal(svc.view().catalog.menu.menuId, 'lunch');
+    assert.deepEqual(svc.view().catalog.products.map((p) => p.id), ['p1']);
+    // 14:00: it ends.
+    at('2026-10-07T14:00:00');
+    fire();
+    assert.equal(svc.view().catalog.menu.mode, 'catalog');
+    assert.equal(svc.view().catalog.products.length, 3);
+    assert.equal(svc.view().state.offline, false, 'the clock alone moved the menu; no call was needed');
+  });
+
+  it('a reload with no network shows the menu its clock says, from the block it kept', async () => {
+    const { store } = await started('2026-10-07T10:30:00');
+    const cloud = fakeCloud();
+    cloud.setOnline(false);
+    const again = clocked(cloud, '2026-10-07T13:00:00', store);
+    const view = await again.svc.init();
+    assert.equal(view.catalog.menu.menuId, 'lunch');
+    assert.equal(view.catalog.products.find((p) => p.id === 'p1')?.priceAgorot, 4000);
+  });
+
+  it('a delta that carries no block keeps the one the kiosk has; the cloud is asked the CATALOG\'s base price', async () => {
+    const { cloud, svc, at } = await started('2026-10-07T12:00:00');
+    cloud.handlers['GET sync/m1/catalog'] = () => ({
+      status: 200,
+      body: { syncType: 'delta', serverTime: '2026-10-07T09:00:01Z', products: [{ id: 'p2', categoryId: 'c1', name: 'פסטה', price: 48 }], categories: [] },
+    });
+    at('2026-10-07T12:01:00');
+    await svc.syncNow();
+    assert.equal(svc.view().catalog.menu.mode, 'menu');
+    assert.equal(svc.view().catalog.held.find((p) => p.id === 'p2')?.priceAgorot, 4800);
+    // The menu's 40 is not what the cloud knows of the burger: it is asked its base price.
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    await svc.checkBasket([{ key: 'a', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', options: [] }]);
+    const ask = cloud.calls.filter((c) => c.path === 'sync/m1/kiosk/basket-check').pop()!;
+    assert.deepEqual(ask.body?.lines, [{ productId: 'p1', quantity: 1, unitPriceAgorot: 5400 }]);
+  });
+
+  it('an open basket keeps its prices when the menu changes under it — no "price changed"', async () => {
+    const { cloud, svc, at, fire } = await started('2026-10-07T13:30:00');
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    // Added at 13:30 under lunch: the burger at 40 (the catalog's 54 remembered).
+    const lunchLine = { key: 'a', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', options: [] };
+    const first = await svc.checkBasket([lunchLine]);
+    assert.deepEqual([first.changes, first.totalAgorot], [[], 4000]);
+    // 14:00: lunch ends, the burger is 54 again for a new line — the old line stays at 40.
+    at('2026-10-07T14:00:00');
+    fire();
+    assert.equal(svc.view().catalog.products.find((p) => p.id === 'p1')?.priceAgorot, 5400);
+    const after = await svc.checkBasket([lunchLine]);
+    assert.deepEqual([after.changes, after.totalAgorot], [[], 4000]);
+    // A real change of the catalog's price is a change: 54 became 60 in the cloud meanwhile.
+    cloud.handlers['GET sync/m1/catalog'] = () => ({
+      status: 200,
+      body: { syncType: 'delta', serverTime: '2026-10-07T11:00:01Z', products: [{ id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 60 }], categories: [] },
+    });
+    await svc.syncNow();
+    const moved = await svc.checkBasket([lunchLine]);
+    assert.deepEqual(moved.changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key])), [['a', 4000, 6000]]);
+  });
+
+  it('a line added under a menu that left its product out stays while it is still sold; one added with no menu goes', async () => {
+    const { cloud, svc, at, fire } = await started('2026-10-07T10:30:00');
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    // 10:30, no menu: a drink and a burger go into the basket at the catalog's prices.
+    const drink = { key: 'd', productId: 'p4', unitAgorot: 800, listAgorot: 800, options: [] };
+    const burger = { key: 'b', productId: 'p1', unitAgorot: 5400, listAgorot: 5400, options: [] };
+    at('2026-10-07T11:00:00');
+    fire();
+    assert.equal(svc.view().catalog.menu.mode, 'menu');
+    const r = await svc.checkBasket([drink, burger]);
+    // The burger is on the menu at 40 and its catalog price has not moved: the line keeps its 54 and stays.
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'd']]);
+    assert.equal(r.totalAgorot, 5400);
+    // The same drink added under ANOTHER menu stays when the menu now on leaves it out (still sold here).
+    const under = await svc.checkBasket([{ ...drink, menuId: 'breakfast', catalogAgorot: 800 }]);
+    assert.deepEqual([under.changes, under.totalAgorot], [[], 800]);
+  });
+
+  it('a line added under a menu goes once its product is no longer sold on the kiosk at all — the Android kiosk keeps it (anyProduct), this one must not', async () => {
+    // docs/SPEC_MENUS.md: a line added under a menu stays "as long as the product is still sold here". Android's `outsideMenu`
+    // is every product the till lists, so it keeps a "קופות בלבד" / manager's-code / delisted line and PAYS it; here the line
+    // stays only while the kiosk's own catalog rules (not the menu's placing) still sell the product.
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    const pull = async (products: Array<Record<string, unknown>>, categories: Array<Record<string, unknown>> = []) => {
+      cloud.handlers['GET sync/m1/catalog'] = () => ({ status: 200, body: { syncType: 'delta', serverTime: '2026-10-07T09:00:01Z', products, categories } });
+      await svc.syncNow();
+    };
+    const dish = (id: string, over: Record<string, unknown> = {}, categoryId = 'c2') => ({ id, categoryId, name: id, price: 10, ...over });
+    const ids = ['x-pos', 'x-mgr', 'x-cat', 'x-mgrcat', 'x-out', 'x-open', 'x-weigh', 'x-general'];
+    // Lunch is on (it lists only the burger): these are sold by the catalog, held, and a line added under lunch stays.
+    await pull(ids.map((id) => dish(id, {}, id === 'x-cat' ? 'c3' : id === 'x-mgrcat' ? 'c4' : 'c2')), [{ id: 'c3', name: 'ג', isActive: true }, { id: 'c4', name: 'ד', isActive: true }]);
+    const lines = ids.map((id) => ({ key: id, productId: id, unitAgorot: 1000, listAgorot: 1000, catalogAgorot: 1000, menuId: 'lunch', options: [] }));
+    assert.deepEqual((await svc.checkBasket(lines)).changes, []);
+    // Then the shop stops selling each at a kiosk — one way each.
+    await pull(
+      [
+        dish('x-pos', { salesChannel: 'pos_only' }),
+        dish('x-mgr', { requiresManagerApproval: true }),
+        dish('x-cat', {}, 'c3'),
+        dish('x-mgrcat', {}, 'c4'),
+        dish('x-out', { inStock: false }),
+        dish('x-open', { isOpenPrice: true }),
+        dish('x-weigh', { isWeighed: true }),
+        dish('x-general', { isGeneral: true }),
+      ],
+      [{ id: 'c3', name: 'ג', isActive: false }, { id: 'c4', name: 'ד', isActive: true, requiresManagerApproval: true }],
+    );
+    const r = await svc.checkBasket(lines);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), ids.map((id) => ['removed', id]));
+    assert.equal(r.totalAgorot, 0);
+    // The same lines added with no menu go too: no way back for them.
+    const plain = await svc.checkBasket(lines.map((l) => ({ ...l, menuId: null })));
+    assert.deepEqual(plain.changes.map((c) => [c.kind, c.key]), ids.map((id) => ['removed', id]));
+  });
+
+  it('the cloud\'s word beats a held line: the pasta is held by the menu, the cloud says it is gone — removed (Android\'s outsideMenu lookup ignores the cloud)', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    assert.deepEqual(svc.view().catalog.held.map((p) => p.id), ['p2', 'p4']);
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({
+      status: 200,
+      body: { ok: false, lines: [{ productId: 'p2', available: false, reason: 'not_on_kiosk', priceAgorot: null, priceChanged: false }, { productId: 'p4', available: true, reason: null, priceAgorot: 800, priceChanged: false }] },
+    });
+    const r = await svc.checkBasket([
+      { key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast', options: [] },
+      { key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast', options: [] },
+    ]);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'pasta']]);
+    assert.equal(r.totalAgorot, 800);
+  });
+
+  it('the cloud is asked the catalog price each LINE remembers — what the customer saw — not the catalog\'s now (Android: line.product.basePrice)', async () => {
+    const { cloud, svc } = await started('2026-10-07T10:30:00');
+    const asked: unknown[] = [];
+    // The cloud as it is: the burger is 54 now; a line is "changed" when the price it was sent differs.
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = (c) => {
+      const lines = c.body?.lines as Array<{ productId: string; unitPriceAgorot?: number }>;
+      asked.push(lines);
+      return { status: 200, body: { ok: false, lines: lines.map((l) => ({ productId: l.productId, available: true, reason: null, priceAgorot: 5400, priceChanged: l.unitPriceAgorot !== 5400 })) } };
+    };
+    const r = await svc.checkBasket([
+      // Added when the burger was 50, with no menu: it remembers 50.
+      { key: 'a', productId: 'p1', unitAgorot: 5000, listAgorot: 5000, options: [] },
+      // Added under lunch at the menu's 40, the catalog's 52 then: it remembers 52 — not the menu's 40.
+      { key: 'b', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5200, menuId: 'lunch', options: [] },
+      // A line of an older screen remembers nothing: the catalog the kiosk holds stands in.
+      { key: 'c', productId: 'p1', unitAgorot: 5400, options: [] },
+      // Two units of the same dish: one line, its quantity.
+      { key: 'd', productId: 'p1', unitAgorot: 5400, listAgorot: 5400, qty: 2, options: [] },
+    ]);
+    assert.deepEqual(asked, [[
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5000 },
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5200 },
+      { productId: 'p1', quantity: 1, unitPriceAgorot: 5400 },
+      { productId: 'p1', quantity: 2, unitPriceAgorot: 5400 },
+    ]]);
+    // What the cloud says moved is shown, as before: 50 → 54 and the lunch line (52 then) → the catalog's 54.
+    assert.deepEqual(r.changes.map((c) => (c.kind === 'repriced' ? [c.key, c.from, c.to] : [c.key])), [['a', 5000, 5400], ['b', 4000, 5400]]);
+  });
+
+  /** The kiosk's own settings as `kiosk/sync` carries them: what the catalog hides ("קטגוריות ומוצרים"). */
+  const withCatalogSettings = (catalog: Record<string, unknown>) => (cloud: ReturnType<typeof fakeCloud>) => {
+    cloud.handlers['POST sync/m1/kiosk/sync'] = () => ({
+      status: 200,
+      body: {
+        kiosk: true,
+        name: 'קיוסק דפדפן',
+        configVersion: 'v1',
+        config: { payment: { methods: ['card', 'voucher', 'cash_at_till'] }, pickup: { scope: 'kiosk', prefix: 'W', start: 1, max: 999 }, catalog },
+        state: { paused: false },
+        operator: { id: 'kiosk:m1', name: 'קיוסק דפדפן' },
+        alerts: { open: [], help: null },
+        closeRequest: null,
+      },
+    });
+  };
+
+  it('the kiosk\'s hidden-product settings reach the basket check — as the Android kiosk applies them: a hidden product goes, a menu line included', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00', undefined, withCatalogSettings({ hiddenProducts: ['p1', 'p2'] }));
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    assert.deepEqual(svc.view().catalog.products.map((p) => p.id), ['p1'], 'lunch is on: the burger is placed (the service catalog keeps what the screens hide)');
+    const line = (key: string, productId: string, price: number, menuId?: string) => ({ key, productId, unitAgorot: price, listAgorot: price, catalogAgorot: price, ...(menuId ? { menuId } : {}), options: [] });
+    const r = await svc.checkBasket([
+      line('burger', 'p1', 4000, 'lunch'), // on the screens, hidden for the kiosk
+      line('pasta', 'p2', 4600, 'breakfast'), // held by lunch, hidden for the kiosk
+      line('drink', 'p4', 800, 'breakfast'), // held by lunch, not hidden: stays
+      line('plain', 'p1', 5400), // no menu, hidden
+    ]);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'burger'], ['removed', 'pasta'], ['removed', 'plain']]);
+    assert.equal(r.totalAgorot, 800);
+  });
+
+  it('a hidden category takes the lines of its products — held ones too', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00', undefined, withCatalogSettings({ hiddenCategories: ['c2'] }));
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    const r = await svc.checkBasket([
+      { key: 'pasta', productId: 'p2', unitAgorot: 4600, listAgorot: 4600, catalogAgorot: 4600, menuId: 'breakfast', options: [] },
+      { key: 'drink', productId: 'p4', unitAgorot: 800, listAgorot: 800, catalogAgorot: 800, menuId: 'breakfast', options: [] },
+    ]);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'drink']]);
+  });
+
+  /** A catalog with a meal (p5: its drink p4 a component), under a lunch menu that places the whole of "מנות" (p4 is held). */
+  const mealCatalog = (cloud: ReturnType<typeof fakeCloud>, over: { drink?: Record<string, unknown> } = {}) => {
+    cloud.handlers['GET sync/m1/catalog'] = () => ({
+      status: 200,
+      body: {
+        syncType: 'full',
+        serverTime: '2026-10-07T00:00:00Z',
+        categories: [
+          { id: 'c1', name: 'מנות', isActive: true },
+          { id: 'c2', name: 'שתייה', isActive: true },
+        ],
+        products: [
+          { id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 54 },
+          { id: 'p5', categoryId: 'c1', name: 'ארוחה', price: 60 },
+          { id: 'p4', categoryId: 'c2', name: 'קולה', price: 8, ...(over.drink ?? {}) },
+        ],
+        menu: { meals: { p5: [{ id: 's1', name: 'שתייה', minSelect: 1, maxSelect: 1, options: [{ productId: 'p4', upcharge: 0, isDefault: true }] }] } },
+        machineCatalog: { mode: 'all' },
+        catalogMenus: {
+          updatedAt: '2026-10-07T00:00:00+00:00',
+          fallback: 'catalog',
+          menus: [{ id: 'lunch', name: 'צהריים', channel: 'kiosk', schedule: { always: false, days: null, ranges: [['11:00', '14:00']], from: null, to: null }, categories: [{ id: 'c1', all: true }], products: [] }],
+          assignments: [{ menuId: 'lunch', level: 'shop', depth: 0, priority: 0 }],
+        },
+      },
+    });
+  };
+  const mealLine = { key: 'meal', productId: 'p5', unitAgorot: 6000, listAgorot: 6000, catalogAgorot: 6000, menuId: 'lunch', options: [], meal: { components: [{ slotId: 's1', productId: 'p4', options: [] }] } };
+
+  it('a meal\'s component is found though no screen shows it — held by the menu, or hidden for the kiosk — but blocks and "אזל" still take the meal whole', async () => {
+    const kept = await started('2026-10-07T12:00:00', undefined, (c) => {
+      mealCatalog(c);
+      withCatalogSettings({ hiddenProducts: ['p4'] })(c);
+    });
+    kept.cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    // Lunch places the meal; its drink is held by the menu AND hidden for the kiosk: the meal stays, as the customer built it.
+    assert.deepEqual(kept.svc.view().catalog.products.map((p) => p.id).sort(), ['p1', 'p5']);
+    assert.deepEqual(kept.svc.view().catalog.held.map((p) => p.id), ['p4']);
+    assert.deepEqual((await kept.svc.checkBasket([mealLine])).changes, []);
+    // The drink is locked ("אזל"): the meal goes whole, the customer chooses again.
+    const locked = await started('2026-10-07T12:00:00', undefined, (c) => mealCatalog(c, { drink: { isAvailable: false, lockAvailable: false } }));
+    locked.cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    assert.deepEqual((await locked.svc.checkBasket([mealLine])).changes.map((c) => [c.kind, c.key]), [['removed', 'meal']]);
+    // The cloud says the drink is gone (a block, a channel...): the same.
+    const gone = await started('2026-10-07T12:00:00', undefined, mealCatalog);
+    gone.cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({ status: 200, body: { ok: false, lines: [{ productId: 'p5', available: true, reason: null, priceAgorot: 6000, priceChanged: false }] } });
+    assert.deepEqual((await gone.svc.checkBasket([mealLine])).changes, []);
+    gone.cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({ status: 200, body: { ok: false, lines: [{ productId: 'p4', available: false, reason: 'not_on_kiosk', priceAgorot: null, priceChanged: false }] } });
+    assert.deepEqual((await gone.svc.checkBasket([mealLine])).changes.map((c) => [c.kind, c.key]), [['removed', 'meal']]);
+  });
+
+  it('a product kept only while another menu is on — off the machine\'s list, sold by the first menu — goes when that menu is over, and when another is on (as the Android kiosk)', async () => {
+    const { cloud, svc, at, fire } = await started('2026-10-07T10:00:00', undefined, (c) => {
+      c.handlers['GET sync/m1/catalog'] = () => ({
+        status: 200,
+        body: {
+          syncType: 'full',
+          serverTime: '2026-10-07T00:00:00Z',
+          categories: [{ id: 'c1', name: 'מנות', isActive: true }],
+          products: [
+            { id: 'p1', categoryId: 'c1', name: 'המבורגר', price: 54, inMachineCatalog: true },
+            { id: 'p2', categoryId: 'c1', name: 'פסטה', price: 46, inMachineCatalog: false },
+          ],
+          menu: null,
+          machineCatalog: { mode: 'selected' },
+          catalogMenus: {
+            updatedAt: '2026-10-07T00:00:00+00:00',
+            fallback: 'catalog',
+            menus: [
+              { id: 'breakfast', name: 'בוקר', channel: 'kiosk', schedule: { always: false, days: null, ranges: [['07:00', '11:00']], from: null, to: null }, categories: [{ id: 'c1', all: false }], products: [{ id: 'p2', price: 40 }] },
+              { id: 'lunch', name: 'צהריים', channel: 'kiosk', schedule: { always: false, days: null, ranges: [['11:00', '14:00']], from: null, to: null }, categories: [{ id: 'c1', all: false }], products: [{ id: 'p1' }] },
+            ],
+            assignments: [
+              { menuId: 'breakfast', level: 'shop', depth: 0, priority: 0 },
+              { menuId: 'lunch', level: 'shop', depth: 0, priority: 0 },
+            ],
+          },
+        },
+      });
+    });
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => 'offline';
+    const pasta = { key: 'pasta', productId: 'p2', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 4600, menuId: 'breakfast', options: [] };
+    // 10:00, breakfast: the menu beats the machine's list — the pasta is on the screens, the line stays.
+    assert.deepEqual(svc.view().catalog.products.map((p) => p.id), ['p2']);
+    assert.deepEqual((await svc.checkBasket([pasta])).changes, []);
+    // 12:00, lunch: the pasta is off the machine's list and the menu does not place it — not sold here, not held: the line goes.
+    at('2026-10-07T12:00:00');
+    fire();
+    assert.equal(svc.view().catalog.menu.menuId, 'lunch');
+    assert.deepEqual(svc.view().catalog.held.map((p) => p.id), [], 'only what the machine\'s own list sells is held');
+    assert.deepEqual((await svc.checkBasket([pasta])).changes.map((c) => [c.kind, c.key]), [['removed', 'pasta']]);
+    // 15:00, no menu: the machine's list again — the same.
+    at('2026-10-07T15:00:00');
+    fire();
+    assert.equal(svc.view().catalog.menu.mode, 'catalog');
+    assert.deepEqual((await svc.checkBasket([pasta])).changes.map((c) => [c.kind, c.key]), [['removed', 'pasta']]);
+  });
+
+  it('"אזל" still removes a line inside a menu', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    cloud.handlers['POST sync/m1/kiosk/basket-check'] = () => ({
+      status: 200,
+      body: { ok: false, lines: [{ productId: 'p1', available: false, reason: 'out_of_stock', priceAgorot: 5400, priceChanged: false }] },
+    });
+    const r = await svc.checkBasket([{ key: 'a', productId: 'p1', unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', options: [] }]);
+    assert.deepEqual(r.changes.map((c) => [c.kind, c.key]), [['removed', 'a']]);
+  });
+
+  it('the placed order carries the menu the line was added under (the till\'s held sale)', async () => {
+    const { cloud, svc } = await started('2026-10-07T12:00:00');
+    const r = await svc.placeOpenOrder({
+      lines: [line({ unitAgorot: 4000, baseAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', menuName: 'צהריים', priceSource: 'menu' })],
+      service: 'take_away',
+      tableRef: null,
+      customerName: null,
+      customerPhone: null,
+      tipAgorot: 0,
+      vouchers: [],
+    });
+    assert.equal(r.ok, true);
+    const sent = cloud.calls.find((c) => c.path === 'sync/m1/kiosk/open-orders')!;
+    const order = (sent.body?.orders as Array<Record<string, unknown>>)[0];
+    const held = JSON.parse(String((order.cart as { codec: string }).codec)) as { lines: Array<{ unitPrice: number; product: string }> };
+    const product = JSON.parse(held.lines[0].product) as Record<string, unknown>;
+    assert.equal(held.lines[0].unitPrice, 4000);
+    assert.deepEqual([product.price, product.menuId, product.menuName, product.priceSource, product.catalogPrice], [4000, 'lunch', 'צהריים', 'menu', 5400]);
   });
 });
