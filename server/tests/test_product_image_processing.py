@@ -189,7 +189,15 @@ def _upload(**kwargs):
     )
 
 
-def test_product_upload_stores_the_cut_out_and_keeps_the_original(cloud) -> None:
+@pytest.fixture()
+def removal_on():
+    """The background removal is off by default: the tests of the cut-out itself turn it on."""
+    real = R.get_settings()
+    with patch.object(R, "get_settings", return_value=real.model_copy(update={"product_image_bg_removal": True})):
+        yield
+
+
+def test_product_upload_stores_the_cut_out_and_keeps_the_original(cloud, removal_on) -> None:
     data = _png(_outlined_product())
     out = _upload(file=_file(data))
     assert out.background_removed is True
@@ -275,3 +283,25 @@ def test_without_cloudinary_the_image_is_stored_on_the_server(tmp_path, monkeypa
     assert result["secure_url"].startswith("http://localhost:8001/media/pos/t/products/")
     assert (tmp_path / f"{result['public_id']}.png").exists()
     assert (result["width"], result["height"]) == (40, 20)
+
+
+def test_background_removal_is_off_by_default() -> None:
+    """A fresh settings object, with no environment override, does not cut backgrounds out."""
+    from app.config import Settings
+
+    assert Settings.model_fields["product_image_bg_removal"].default is False
+
+
+def test_a_default_product_upload_never_loads_the_model(cloud, monkeypatch) -> None:
+    """Off: the upload is stored as is, and neither rembg nor onnxruntime is imported or loaded."""
+    monkeypatch.setattr(P, "_get_session", lambda: pytest.fail("the model must not be loaded"))
+    out = _upload(file=_file(_png(_outlined_product())))
+    assert out.background_removed is False
+    assert cloud.call_count == 1
+
+
+def test_enhance_only_never_loads_the_model(monkeypatch) -> None:
+    """Enhancing a photo (no cut-out) is PIL and numpy only."""
+    monkeypatch.setattr(P, "_get_session", lambda: pytest.fail("the model must not be loaded"))
+    out = P.process_product_image(_png(_outlined_product()), remove_background=False, enhance=True)
+    assert out is not None and out.enhanced is True and out.background_removed is False
