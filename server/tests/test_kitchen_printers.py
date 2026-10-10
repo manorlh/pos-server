@@ -12,7 +12,8 @@ What each class pins:
   out, routes narrowed to the till's printers, a local copy of a routed product, the
   options from the till parameters, a host's own cloud printer, the ETag answer.
 * **The relay** — create (idempotent) → handed to the host → leased → acknowledged;
-  expiry after 30 minutes; only the host acknowledges, only the sender reads statuses.
+  a job no till took expires in minutes, one its host took only after hours (it prints there
+  when it can, saying why it waits); only the host acknowledges, only the sender reads statuses.
 * **Test prints** — to the host of a cloud printer, to every till of a local one.
 * **Scope** — only the shop's managers read or write.
 
@@ -489,6 +490,47 @@ class TestRelay:
         k.db.commit()
         assert pending(k, t2) == []
         assert statuses(k, t1, job_id)[job_id]["status"] == "expired"
+        # A late print still counts.
+        assert ack(k, t2, job_id)["status"] == "done"
+
+    def test_a_job_its_host_took_never_expires_by_the_clock(self, relay):
+        """The host's own queue retries it (out of paper): failing it for the sender invites a second ticket."""
+        k = relay
+        t1, t2 = k.tills
+        job_id = send_job(k, t1, k.cloud["id"])["id"]
+        assert [j["id"] for j in pending(k, t2)] == [job_id]
+        row = k.db.get(KitchenPrintJob, uuid.UUID(job_id))
+        row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+        k.db.commit()
+        status = statuses(k, t1, job_id)[job_id]
+        assert (status["status"], status["taken"]) == ("printing", True)
+        # While it retries there, the host says why — the sender's cashier sees it.
+        assert ack(k, t2, job_id, "printing", "no paper")["status"] == "printing"
+        status = statuses(k, t1, job_id)[job_id]
+        assert (status["status"], status["error"]) == ("printing", "no paper")
+        # Re-handed after its lease (the host knows it by id: printed once there).
+        row = k.db.get(KitchenPrintJob, uuid.UUID(job_id))
+        row.delivered_at = datetime.now(timezone.utc) - K.JOB_LEASE - timedelta(seconds=1)
+        k.db.commit()
+        assert [j["id"] for j in pending(k, t2)] == [job_id]
+        # It cannot be taken back (it may still print there).
+        assert R.cancel_print_job(str(t1.id), job_id, machine=t1, db=k.db)["cancelled"] is False
+        # Printed at last: done, the note gone.
+        out = ack(k, t2, job_id)
+        assert (out["status"], out["error"]) == ("done", None)
+        # A progress note after the answer changes nothing.
+        assert ack(k, t2, job_id, "printing", "late")["status"] == "done"
+
+    def test_a_taken_job_nobody_ever_answered_is_given_up_after_hours(self, relay):
+        k = relay
+        t1, t2 = k.tills
+        job_id = send_job(k, t1, k.cloud["id"])["id"]
+        pending(k, t2)
+        row = k.db.get(KitchenPrintJob, uuid.UUID(job_id))
+        row.created_at = datetime.now(timezone.utc) - K.TAKEN_JOB_TTL - timedelta(minutes=1)
+        k.db.commit()
+        assert statuses(k, t1, job_id)[job_id]["status"] == "expired"
+        assert pending(k, t2) == []
         # A late print still counts.
         assert ack(k, t2, job_id)["status"] == "done"
 

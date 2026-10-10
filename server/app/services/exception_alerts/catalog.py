@@ -96,6 +96,9 @@ KINDS: Tuple[Kind, ...] = (
     Kind("terminal_mismatch", "מסוף אשראי לא תואם", "high", "kiosk_alert"),
     Kind("kiosk_terminal", "תקלת מסוף אשראי בקיוסק", "medium", "kiosk_alert"),
     Kind("kiosk_printer", "תקלת מדפסת בקיוסק", "low", "kiosk_alert"),
+    # "בון לא הודפס" (app/services/bon_alerts.py): a ticket of any till's or kiosk's print queue
+    # that needs a person — not printed, cut short, a round in doubt, not taken by the KDS.
+    Kind("bon_unprinted", "בון לא הודפס", "high", "kitchen_bon"),
     Kind("device_battery", "סוללה חלשה במכשיר", "low", "battery"),
     Kind("training_mode", "מצב הדרכה הופעל / כובה", "medium", "training"),
     Kind("training_dropped", "מסמכי הדרכה מקופה שלא במצב הדרכה", "high", "training"),
@@ -127,7 +130,7 @@ KINDS_BY_KEY: Dict[str, Kind] = {k.key: k for k in KINDS}
 #: Kinds an SMS rule fires on only when it names them — an "every kind" rule written before they
 #: existed does not start texting them (feat/event-live: a till outage, a till barely selling,
 #: a target reached; the phone alerts carry them).
-OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon"})
+OPT_IN_KINDS = frozenset({"till_offline", "till_low_sales", "target_reached", "zcredit_recon", "bon_unprinted"})
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 SEVERITY_LABELS = {"low": "נמוכה", "medium": "בינונית", "high": "גבוהה"}
 COUNT_SCOPES = ("machine", "employee", "shop")

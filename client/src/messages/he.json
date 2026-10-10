@@ -17004,7 +17004,8 @@
       "drawer_no_sale": "מגירה נפתחה ללא מכירה",
       "till_low_sales": "קופה כמעט לא מוכרת",
       "target_reached": "יעד הושג",
-      "card_reconcile": "אי-התאמה מול Z-Credit"
+      "card_reconcile": "אי-התאמה מול Z-Credit",
+      "bon_unprinted": "בון לא הודפס"
     },
     "minAmount": "מסכום",
     "where": "סניפים ואירועים",

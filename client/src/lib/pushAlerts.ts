@@ -16,7 +16,9 @@ export type AlertCategory =
   | 'drawer_no_sale'
   | 'till_low_sales'
   | 'target_reached'
-  | 'card_reconcile';
+  | 'card_reconcile'
+  // "בון לא הודפס" — a kitchen / bar ticket of any till or kiosk that did not print (pos-server app/services/bon_alerts.py).
+  | 'bon_unprinted';
 
 export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_offline',
@@ -26,6 +28,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_low_sales',
   'target_reached',
   'card_reconcile',
+  'bon_unprinted',
 ];
 
 export interface PushConfig {

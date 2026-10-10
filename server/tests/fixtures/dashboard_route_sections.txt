@@ -682,6 +682,7 @@ POST /sync/{machine_id}/kiosk/sync -> till
 GET /sync/{machine_id}/kiosk/technician -> till
 POST /sync/{machine_id}/kiosks/{kiosk_machine_id}/commands -> till
 GET /sync/{machine_id}/kiosks/{kiosk_machine_id}/orders -> till
+POST /sync/{machine_id}/kitchen/bon-alerts -> till
 GET /sync/{machine_id}/last-close -> till
 GET /sync/{machine_id}/leaderboard -> till
 PUT /sync/{machine_id}/machine-catalog -> till
