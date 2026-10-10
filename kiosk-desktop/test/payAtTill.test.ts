@@ -100,13 +100,14 @@ describe('what this kiosk can take now', () => {
     }
   });
 
-  it('only split_card and a voucher: the card beside it, and no voucher with no till to finish its order', () => {
+  it('only split_card and a voucher: the card beside it, and the voucher kept but not usable with no terminal to pay what it leaves', () => {
     const { fetchFn } = fakeCloud();
     const svc = kiosk(fetchFn, { methods: ['voucher', 'split_card'] });
     try {
       const pay = svc.view().pay;
-      // A voucher could not be finished here (no "מזומן בקופה"): never a dead end (voucherCanFinish).
-      expect(pay.methods).toEqual(['card']);
+      // A voucher is a leg of the document the card pays the rest of (as the Android kiosk), so it stays on the list; but with no usable
+      // card and no "מזומן בקופה" its order could not be finished here: never a dead end (voucherCanFinish).
+      expect(pay.methods).toEqual(['card', 'voucher']);
       expect(pay.usable).not.toContain('split_card');
       expect(pay.usable).not.toContain('voucher');
     } finally {

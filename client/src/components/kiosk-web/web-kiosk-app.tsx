@@ -129,7 +129,11 @@ import {
 } from '@/lib/kioskFlow';
 import { webSells, type BasketChange, type WebKioskService, type WebKioskView } from '@/lib/kioskWebService';
 import { payFlowEvent, type BridgePayProgress } from '@/lib/kioskBridge';
-import { dueAgorot as dueOf, goodsAgorot as goodsOf, newId, orderCode, voucherCodeOf, type OpenOrder, type VoucherLeg, type WebOrderLine } from '@/lib/kioskWebOrders';
+import { goodsAgorot as goodsOf, orderCode, voucherCodeOf, type OpenOrder, type WebOrderLine } from '@/lib/kioskWebOrders';
+import type { VoucherSessionDeps, VoucherWords } from '@/lib/kioskVoucherSession';
+import type { AppliedDiscountVoucher } from '@/lib/kioskVouchers';
+import { DISCOUNT_PAY_HERE } from '@/lib/kioskVoucherClient';
+import { useKioskVouchers } from '@/kiosk-shared/use-vouchers';
 import { scannedVoucherCode } from '@/lib/kioskScan';
 import { formatMoney, voucherReason, type KioskWords } from './web-i18n';
 import { NO_DETAILS, WebDetailsScreen, tipOfDetails, type DetailsValue } from './web-details';
@@ -167,19 +171,15 @@ function useWindowSize() {
   return size;
 }
 
+/** The payment step's own windows and the order placed; the order's vouchers are the vouchers session's (lib/kioskVoucherSession.ts, shared with the Windows kiosk). */
 interface PayState {
-  vouchers: VoucherLeg[];
-  busy: boolean;
-  note: string | null;
-  error: string | null;
   entry: boolean;
   camera: boolean;
-  forfeit: string | null;
   /** The order placed ("מזומן בקופה"). */
   placed: { order: OpenOrder; dueAgorot: number; pending: boolean } | null;
 }
 
-const NO_PAY: PayState = { vouchers: [], busy: false, note: null, error: null, entry: false, camera: false, forfeit: null, placed: null };
+const NO_PAY: PayState = { entry: false, camera: false, placed: null };
 
 export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: WebKioskService; words: KioskWords }) {
   // "שיתאים את עצמו" (P:/specs/kiosk-landscape-till-mode.md §2, §4): the window read again at every resize or
@@ -224,11 +224,17 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     cartRef.current = cart;
   }, [cart]);
   const payRef = useRef<PayState>(NO_PAY);
-  /** Every voucher of this order back on itself (the order left the checkout before it went to the tills). */
+  /** The order's vouchers session (below, once the basket's pricing exists) and whether the card (or the vouchers) paid the order. */
+  const voucherSessionRef = useRef<{ giveBack: () => void; reset: () => void } | null>(null);
+  const paidRef = useRef(false);
+  /**
+   * Every voucher of this order back on itself — a discount voucher's hold released, a goods voucher reversed — when the order
+   * left the checkout before it went to the tills or was paid; the vouchers of a paid order stay with it (they are on its document).
+   */
   const giveBackVouchers = useCallback(() => {
-    const legs = payRef.current.placed ? [] : payRef.current.vouchers;
-    for (const v of legs) void svc.reverseVoucher(v.redemptionId);
-  }, [svc]);
+    if (payRef.current.placed || paidRef.current) return;
+    voucherSessionRef.current?.giveBack();
+  }, []);
   const dispatch = useCallback(
     (event: KioskEvent) => {
       const cartEmpty = cartRef.current.length === 0;
@@ -315,7 +321,6 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   const taps = useRef(new TapSequence());
   const longPress = useRef<number | null>(null);
   const swallowClick = useRef(false);
-  const voucherAttempt = useRef<{ code: string; id: string } | null>(null);
 
   /* ---------------------------------------------------------- the catalog */
 
@@ -380,10 +385,64 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // "מבצעים": the basket priced as the till will charge it (lib/kioskMoney.ts — the till's promotions), by the minute.
   const promotions = useMemo(() => promotionsOf(view.catalog.promotions ?? []), [view.catalog.promotions]);
   const minute = Math.floor(nowMs / 60_000);
-  const { pricing, priced } = useMemo(
-    () => basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true),
+  // The discount vouchers held for the order ("שוברי הנחה", lib/kioskVouchers.ts) come after the promotions, in the order applied.
+  const price = useCallback(
+    (discounts: readonly AppliedDiscountVoucher[]) =>
+      basketPricing(cart, promotions, localDateTimeOf(new Date(minute * 60_000)), (id) => soldById.get(id)?.noDiscount === true, discounts),
     [cart, promotions, minute, soldById],
   );
+  /** A basket line as the goods vouchers read it (the dish's own price: a voucher covers it, the paid extras are paid). */
+  const voucherLine = useCallback(
+    (key: string) => {
+      const l = cartRef.current.find((x) => x.key === key);
+      return l ? { productId: l.product.id, baseAgorot: soldById.get(l.product.id)?.priceAgorot ?? Math.round(l.product.price * 100), name: l.product.name } : null;
+    },
+    [soldById],
+  );
+  const tipOnGoods = useCallback((goods: number) => tipOfDetails(detailsRef.current, goods, cfg.payment), [cfg.payment]);
+  /** A voucher scanned or typed, through the service — set below, once the basket's lines exist. */
+  const voucherCall = useRef<VoucherSessionDeps<ReturnType<typeof basketPricing>>['call'] | null>(null);
+  const voucherWords = useMemo<VoucherWords>(
+    () => ({
+      checking: words.t('voucherChecking'),
+      appliedLeg: (agorot) => words.t('voucherAppliedNote', { amount: formatMoney(agorot / 100) }),
+      appliedDiscount: (serial, agorot) => words.t('voucherDiscountApplied', { serial, amount: formatMoney(agorot / 100) }),
+      offline: configuredText(cfg, 'he', 'voucherOffline') ?? words.builtin('voucherOffline'),
+      noMatch: configuredText(cfg, 'he', 'voucherNoMatch') ?? words.builtin('voucherNoMatch'),
+      reason: (reason, message) => message ?? voucherReason(words, reason),
+      codeOf: (raw) => scannedVoucherCode(raw) ?? voucherCodeOf(raw),
+    }),
+    [words, cfg],
+  );
+  const { session: voucherSession, view: vView } = useKioskVouchers({
+    price,
+    lineInfo: voucherLine,
+    tipOf: tipOnGoods,
+    call: (input) => (voucherCall.current ? voucherCall.current(input) : Promise.resolve({ kind: 'offline' as const })),
+    reverse: (id) => void svc.reverseVoucher(id),
+    release: (vouchers) => svc.releaseDiscounts(vouchers),
+    words: voucherWords,
+    // The vouchers pay all and no tip is left: the order goes on by itself, once, on this answer — by the card through the bridge
+    // when it takes cards (a document of the vouchers alone), else to the tills.
+    onCovered: () => {
+      chooseMethod(view.pay.usable.includes('card') ? 'card' : 'cash_at_till');
+      dispatch({ type: 'detailsDone' });
+    },
+  });
+  useEffect(() => {
+    voucherSessionRef.current = voucherSession;
+  }, [voucherSession]);
+  // Back to rest from anywhere else: the order's vouchers state cleared (given back when it left the checkout, by dispatch) and the paid mark with it.
+  const screenBefore = useRef(flow.screen);
+  useEffect(() => {
+    const before = screenBefore.current;
+    screenBefore.current = flow.screen;
+    if (RESTING.has(flow.screen) && !RESTING.has(before)) {
+      voucherSession.reset();
+      paidRef.current = false;
+    }
+  }, [flow.screen, voucherSession]);
+  const { pricing, priced } = vView.price;
   const pricingRef = useRef(pricing);
   const pricedRef = useRef(priced);
   useEffect(() => {
@@ -441,11 +500,18 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
             : null,
           noDiscount: row?.noDiscount === true,
           ...(share && share.promotionAgorot > 0 ? { promotionAgorot: share.promotionAgorot, promotionId: share.promotionId, promotionName: share.promotionName } : {}),
+          ...(share && share.voucherAgorot > 0 ? { voucherAgorot: share.voucherAgorot } : {}),
+          // The promotion's share that gave way to a voucher: the rules read the basket as the promotions priced it.
+          ...(share && share.promotionYieldedAgorot > 0 ? { promotionYieldedAgorot: share.promotionYieldedAgorot, promotionId: share.promotionId } : {}),
         };
       });
     },
     [soldById],
   );
+  useEffect(() => {
+    voucherCall.current = (input) =>
+      svc.redeemVoucher({ code: input.code, lines: orderLines(cartRef.current), earlier: input.earlier, discounts: input.discounts, forfeitRest: input.forfeitRest, clientRequestId: input.clientRequestId, saleRef: input.saleRef });
+  }, [svc, orderLines]);
 
   /* ---------------------------------------------------- the outside world */
 
@@ -487,7 +553,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // What the goods cost after the promotions (the tip is on that, as the till's).
   const goodsAgorot = pricing.totalAgorot;
   const tipAgorot = tipOfDetails(details, goodsAgorot, cfg.payment);
-  const dueNow = dueOf(goodsAgorot, tipAgorot, pay.vouchers);
+  const dueNow = vView.dueAgorot;
 
   /**
    * "מזומן בקופה": the basket checked against the catalog, then the open order to the tills.
@@ -522,6 +588,10 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         tableRef: d.table.trim() || null,
         tipPct: d.tipAgorot === null ? d.tipPct : null,
         tipAgorot: d.tipAgorot,
+        // The order's vouchers: a discount on the document and legs beside the card (the bridge's service recounts them from its own basket).
+        ...(voucherSession.state.legs.length + voucherSession.state.discounts.length > 0
+          ? { vouchers: { legs: voucherSession.state.legs, discounts: voucherSession.state.discounts, saleRef: voucherSession.state.saleRef } }
+          : {}),
       });
       if (r.kind !== 'ok') {
         dispatch({ type: 'paymentDeclined' });
@@ -554,7 +624,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       stopFollow.current = bridge.followPayment(out.orderId, (p) => {
         setCardPay(p);
         const ev = payFlowEvent(p);
-        if (ev === 'paymentApproved') setSuccessAt((x) => x ?? Date.now());
+        if (ev === 'paymentApproved') {
+          // Paid: the vouchers are on its document now — never given back.
+          paidRef.current = true;
+          setSuccessAt((x) => x ?? Date.now());
+        }
         if (ev) dispatch({ type: ev });
       });
       return;
@@ -571,7 +645,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       setCart((c) => c.filter((l) => !removed.has(l.key)).map((l) => (repriced.has(l.key) ? { ...l, unit: (repriced.get(l.key) ?? 0) / 100, unitAgorot: repriced.get(l.key) ?? 0 } : l)));
       const said = list.map((c) => (c.kind === 'removed' ? words.t('basketRemoved', { name: c.name }) : words.t('basketRepriced', { name: c.name })));
       if (totalAgorot !== null && totalAgorot !== shownAgorot) said.push(words.t('basketNewTotal', { total: formatMoney(totalAgorot / 100) }));
-      if (payRef.current.vouchers.length > 0) said.push(words.t('basketVouchersBack'));
+      if (voucherSession.state.legs.length + voucherSession.state.discounts.length > 0) said.push(words.t('basketVouchersBack'));
       setChanges(said);
     };
     // Even after a voucher: the cloud's word first (kiosk/basket-check), then the catalog as it is now.
@@ -593,7 +667,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         customerName: details.name.trim() || null,
         customerPhone: details.phone.trim() || null,
         tipAgorot: tipOfDetails(details, shownAgorot, cfg.payment),
-        vouchers: payRef.current.vouchers,
+        vouchers: voucherSession.state.legs,
+        discounts: voucherSession.state.discounts,
       })
       .catch((e: unknown) => ({ ok: false as const, reason: 'error' as const, message: e instanceof Error ? e.message : String(e) }));
     // The cloud prices the basket otherwise (kiosk_open_orders): nothing went to the tills.
@@ -609,7 +684,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     setPay((p) => ({ ...p, placed: { order: r.order, dueAgorot: r.dueAgorot, pending: r.pending } }));
     dispatch({ type: 'paymentApproved' });
     setSuccessAt(Date.now());
-  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn, cfg.payment]);
+  }, [details, dispatch, orderLines, svc, words, fallbackMethod, cfgIn, cfg.payment, voucherSession]);
 
   // Into the pay screen: the order goes to the tills at once.
   useEffect(() => {
@@ -631,32 +706,13 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     [cfg, words, view.catalog.menu],
   );
 
+  /** A voucher scanned, typed or read by the camera: the order's vouchers session applies it (goods as a leg of the payment, discount held for the order). */
   const redeem = useCallback(
     async (rawCode: string, forfeitRest = false) => {
-      const code = scannedVoucherCode(rawCode) ?? voucherCodeOf(rawCode);
-      if (!code || payRef.current.busy) return;
-      if (!voucherAttempt.current || voucherAttempt.current.code !== code) voucherAttempt.current = { code, id: newId() };
-      setPay((p) => ({ ...p, busy: true, error: null, note: words.t('voucherChecking'), entry: false, camera: false, forfeit: null }));
-      const r = await svc.redeemVoucher({ code, lines: orderLines(cartRef.current), earlier: payRef.current.vouchers, forfeitRest, clientRequestId: voucherAttempt.current.id });
-      if (r.kind === 'ok') {
-        voucherAttempt.current = null;
-        const legs = [...payRef.current.vouchers, r.leg];
-        payRef.current = { ...payRef.current, vouchers: legs };
-        setPay((p) => ({ ...p, busy: false, error: null, vouchers: legs, note: words.t('voucherAppliedNote', { amount: formatMoney(r.leg.amountAgorot / 100) }) }));
-        // Everything paid by the vouchers (no tip left): the order goes to the tills by itself — once, on this answer.
-        const goods = pricingRef.current.totalAgorot;
-        if (dueOf(goods, tipOfDetails(detailsRef.current, goods, cfg.payment), legs) === 0) {
-          chooseMethod('cash_at_till');
-          dispatch({ type: 'detailsDone' });
-        }
-        return;
-      }
-      const error =
-        r.kind === 'offline' ? txt('voucherOffline') : r.kind === 'no_match' ? txt('voucherNoMatch') : r.kind === 'forfeit' ? null : voucherReason(words, r.reason);
-      if (r.kind !== 'offline') voucherAttempt.current = r.kind === 'forfeit' ? voucherAttempt.current : null;
-      setPay((p) => ({ ...p, busy: false, note: null, error, forfeit: r.kind === 'forfeit' ? code : null }));
+      setPay((p) => ({ ...p, entry: false, camera: false }));
+      await voucherSession.redeem(rawCode, forfeitRest);
     },
-    [svc, orderLines, words, txt, dispatch, chooseMethod, cfg.payment],
+    [voucherSession],
   );
 
   const atPayMethod = flow.screen === 'details' && flow.detailsNext === 'pay';
@@ -742,7 +798,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           // As the Windows kiosk: "הצמידו כרטיס", the terminal's own lines, cancel while the card is out.
           phase: payBlocked ? 'blocked' : flow.pay === 'idle' ? 'starting' : flow.pay === 'approved' ? 'charging' : flow.pay,
           message: payBlocked ?? cardPay?.message ?? null,
-          amount: (cardPay?.amountAgorot ?? goodsAgorot + tipAgorot) / 100,
+          amount: (cardPay?.amountAgorot ?? dueNow) / 100,
           canCancel: mayCancelPayment(flow) && !!cardPay?.canCancel,
           cancelling: !!cardPay?.cancelling,
           onCancel: () => void svc.bridge?.cancelPayment(),
@@ -935,9 +991,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   const usable = new Set<PaymentMethod>(view.pay.usable);
   const voucherOffered = usable.has('voucher') && dueNow > 0;
-  // The card's tile: through the bridge when it takes cards (never with a voucher — one tender per document here).
-  const cardOff =
-    view.pay.cardOff === 'browser' ? words.t('cardOffBrowser') : view.pay.cardOff !== null ? view.pay.cardOff : pay.vouchers.length > 0 ? words.t('cardWithVoucher') : null;
+  // The card's tile: through the bridge when it takes cards — a voucher is a leg of its document and the card pays the rest.
+  const vState = vView.state;
+  const cardOff = view.pay.cardOff === 'browser' ? words.t('cardOffBrowser') : view.pay.cardOff !== null ? view.pay.cardOff : null;
   const payMethodLive: KioskLivePayMethod | null = detailsSteps.includes('payMethod')
     ? {
         steps: detailsSteps,
@@ -947,23 +1003,27 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
         })),
         goodsAgorot,
         tipAgorot,
-        vouchers: pay.vouchers.map((v) => ({ id: v.redemptionId, serial: v.serial, amountAgorot: v.amountAgorot, label: v.eventName })),
+        // The goods vouchers (legs: what each pays) and, apart, the discount ones (already off the order's total).
+        vouchers: vView.rows.filter((r) => !vState.discounts.some((d) => d.reservationId === r.id)),
+        discounts: vView.rows.filter((r) => vState.discounts.some((d) => d.reservationId === r.id)),
         dueAgorot: dueNow,
         onPick: (method) => {
           setLastTouch(Date.now());
-          if (method === 'voucher') setPay((p) => ({ ...p, entry: true, error: null, note: null }));
-          else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
+          if (method === 'voucher') {
+            voucherSession.clearMessages();
+            setPay((p) => ({ ...p, entry: true }));
+          } else if (method === 'cash_at_till' && vState.discounts.length > 0) {
+            // A discount voucher is held for this kiosk's own payment: not taken to a till (removed first).
+            voucherSession.setError(DISCOUNT_PAY_HERE);
+          } else if (method === 'cash_at_till' || (method === 'card' && cardOff === null)) {
             chooseMethod(method);
             dispatch({ type: 'detailsDone' });
           }
         },
-        onRemoveVoucher: (id) => {
-          void svc.reverseVoucher(id);
-          setPay((p) => ({ ...p, vouchers: p.vouchers.filter((v) => v.redemptionId !== id), note: null }));
-        },
-        busy: pay.busy,
-        note: pay.note,
-        error: pay.error,
+        onRemoveVoucher: (id) => voucherSession.remove(id),
+        busy: vState.busy,
+        note: vState.note,
+        error: vState.error,
         // "רשות": passed with the default method (never with a voucher waiting to pay the rest by card).
         skip:
           payAsk.optional && payAsk.fallback && payAsk.fallback !== 'voucher' && !(payAsk.fallback === 'card' && cardOff !== null)
@@ -978,7 +1038,14 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
             : null,
         extra:
           voucherOffered && cameraScanAvailable() ? (
-            <CameraScanButton m={m} label={words.t('voucherCamera')} onClick={() => setPay((p) => ({ ...p, camera: true, error: null }))} />
+            <CameraScanButton
+              m={m}
+              label={words.t('voucherCamera')}
+              onClick={() => {
+                voucherSession.clearMessages();
+                setPay((p) => ({ ...p, camera: true }));
+              }}
+            />
           ) : undefined,
       }
     : null;
@@ -1001,7 +1068,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     start: () => dispatch({ type: 'start' }),
     serviceOnAttract: serviceOnAttract(cfgIn),
     touch: () => setLastTouch(Date.now()),
-    onVoucher: atPayMethod && voucherOffered && !pay.busy ? (code) => void redeem(code) : null,
+    onVoucher: atPayMethod && voucherOffered && !vState.busy ? (code) => void redeem(code) : null,
   });
 
   /* ------------------------------------------------------------ the screen */
@@ -1247,13 +1314,13 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
           onClose={() => setPay((p) => ({ ...p, camera: false }))}
         />
       ) : null}
-      {pay.forfeit && atPayMethod ? (
+      {vState.forfeit && atPayMethod ? (
         <WebDialog
           m={m}
           title={txt('voucherTitle')}
           body={txt('voucherForfeit')}
-          primary={{ label: words.t('voucherForfeitYes'), onClick: () => void redeem(pay.forfeit ?? '', true) }}
-          secondary={{ label: words.t('voucherForfeitNo'), onClick: () => setPay((p) => ({ ...p, forfeit: null })) }}
+          primary={{ label: words.t('voucherForfeitYes'), onClick: () => void redeem(vState.forfeit ?? '', true) }}
+          secondary={{ label: words.t('voucherForfeitNo'), onClick: () => voucherSession.dismissForfeit() }}
         />
       ) : null}
       {idleState.kind === 'warn' ? (

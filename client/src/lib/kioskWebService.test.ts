@@ -197,6 +197,9 @@ describe('the honest pay methods', () => {
   it('never the card; a voucher only online; sells only with "מזומן בקופה"', () => {
     assert.deepEqual(usableMethods(['card', 'voucher', 'cash_at_till'], true), ['voucher', 'cash_at_till']);
     assert.deepEqual(usableMethods(['card', 'voucher', 'cash_at_till'], false), ['cash_at_till']);
+    // With the card through the bridge, a voucher is a leg of the document and the card pays the rest — no till needed.
+    assert.deepEqual(usableMethods(['card', 'voucher'], true, true), ['card', 'voucher']);
+    assert.deepEqual(usableMethods(['card', 'voucher'], true, false), []);
     assert.equal(webSells(['card']), false);
     assert.equal(webSells(['card', 'voucher']), false);
     assert.equal(webSells(['cash_at_till']), true);
@@ -220,8 +223,9 @@ describe('the honest pay methods', () => {
       body: { kiosk: true, configVersion: 'v3', config: { payment: { methods: ['voucher', 'split_card'] } }, state: {} },
     });
     await svc.kioskSync();
-    // The card beside the voucher (the cloud's repair) — and the voucher not offered: with no till to pay at, its order could not be finished (voucherCanFinish).
-    assert.deepEqual(svc.view().pay.methods, ['card']);
+    // The card beside the voucher (the cloud's repair); the voucher is not usable here: no till to pay at and no bridge for the card, its order could not be finished (voucherCanFinish).
+    assert.deepEqual(svc.view().pay.methods, ['card', 'voucher']);
+    assert.ok(!svc.view().pay.usable.includes('voucher'));
     assert.ok(!svc.view().pay.usable.includes('split_card'));
     assert.equal(svc.view().state.noPayment, true);
   });
@@ -400,6 +404,65 @@ describe('vouchers', () => {
     await svc.tick();
     assert.equal(svc.view().staff.pendingReversals, 0);
     assert.ok(cloud.calls.some((c) => c.path === 'sync/m1/prepaid-vouchers/redemptions/red-9/reverse' && c.method === 'POST'));
+  });
+});
+
+describe('discount vouchers ("שוברי הנחה")', () => {
+  const discount = {
+    id: 'v-1', voucherId: 'v-1', batchId: 'b-1', eventName: 'פסטיבל הקיץ', serial: 12, kind: 'order_discount', stacking: 'unlimited', redeemable: true, usesAvailable: 1,
+    benefit: { kind: 'order_discount', discountType: 'fixed', value: 1000, minPurchaseAgorot: null, maxDiscountAgorot: null, maxUnits: null, productIds: [], categoryIds: [], promotionPolicy: 'exclude', text: '₪10 הנחה' },
+  };
+  const cloudFor = (over: Record<string, Handler> = {}) => ({
+    'POST sync/m1/prepaid-vouchers/lookup': () => ({ status: 200, body: discount }),
+    'POST sync/m1/prepaid-vouchers/reserve': () => ({ status: 200, body: { ok: true, reservationId: 'res-1', uses: 1, expiresAt: '2026-10-10T12:15:00+00:00' } }),
+    'POST sync/m1/prepaid-vouchers/reservations/*/release': () => ({ status: 200, body: { ok: true } }),
+    ...over,
+  });
+
+  it('are held for the order: the cloud is told what this kiosk applies and sent the basket, and a discount is not a leg', async () => {
+    const { cloud, svc } = await paired();
+    Object.assign(cloud.handlers, cloudFor());
+    const r = await svc.redeemVoucher({ code: 'ABCDEFGHJKMNPQRS', lines: [line({ qty: 1 })], earlier: [], clientRequestId: 'req-1', saleRef: 'sale-1' });
+    assert.equal(r.kind, 'discount');
+    if (r.kind !== 'discount') return;
+    assert.equal(r.voucher.reservationId, 'res-1');
+    assert.equal(r.voucher.serial, 12);
+    assert.equal(r.voucher.batchName, 'פסטיבל הקיץ');
+    const lookup = cloud.calls.find((c) => c.path === 'sync/m1/prepaid-vouchers/lookup')!;
+    assert.deepEqual(lookup.body?.supportedKinds, ['items', 'order_discount', 'item_discount']);
+    const reserve = cloud.calls.find((c) => c.path === 'sync/m1/prepaid-vouchers/reserve')!;
+    assert.equal(reserve.body?.saleRef, 'sale-1');
+    assert.equal(reserve.body?.posUserId, 'kiosk:m1');
+    assert.equal((reserve.body?.lines as Array<Record<string, unknown>>)[0].grossAgorot, 5400);
+    // Nothing was redeemed: a discount is the document's, never a tender.
+    assert.ok(!cloud.calls.some((c) => c.path === 'sync/m1/prepaid-vouchers/redeem'));
+  });
+
+  it('are given back when removed: the hold released in the cloud', async () => {
+    const { cloud, svc } = await paired();
+    Object.assign(cloud.handlers, cloudFor());
+    svc.releaseDiscounts([{ reservationId: 'res-1' }]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(cloud.calls.some((c) => c.path === 'sync/m1/prepaid-vouchers/reservations/res-1/release' && c.method === 'POST'));
+  });
+
+  it('an order with one is paid here, never handed to a till: the Android kiosk\'s words', async () => {
+    const { cloud, svc } = await paired();
+    Object.assign(cloud.handlers, cloudFor());
+    const r = await svc.placeOpenOrder({ lines: [line()], service: 'take_away', tableRef: null, customerName: null, customerPhone: null, tipAgorot: 0, vouchers: [], discounts: [{ reservationId: 'res-1' } as never] });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.reason === 'rejected' ? r.message : '', 'שובר הנחה ממומש רק בתשלום כאן בעמדה. לתשלום בקופה — הסירו אותו והציגו אותו בקופה.');
+    // Nothing was sent to the tills.
+    assert.ok(!cloud.calls.some((c) => c.path === 'sync/m1/kiosk/open-orders'));
+  });
+
+  it('a goods voucher already on the order refuses a "one voucher" discount voucher before the cloud is asked to hold it', async () => {
+    const { cloud, svc } = await paired();
+    Object.assign(cloud.handlers, cloudFor({ 'POST sync/m1/prepaid-vouchers/lookup': () => ({ status: 200, body: { ...discount, stacking: 'single' } }) }));
+    const leg = { redemptionId: 'r1', serial: 4, amountAgorot: 1200, eventName: null, redeemed: [], inSale: { voucherId: 'v-leg', batchId: 'b-leg', kind: 'items' as const, stacking: 'unlimited' as const } };
+    const r = await svc.redeemVoucher({ code: 'ABCDEFGHJKMNPQRS', lines: [line({ qty: 1 })], earlier: [leg], clientRequestId: 'req-2', saleRef: 'sale-1' });
+    assert.deepEqual(r, { kind: 'refused', reason: 'prepaid_voucher_not_stackable', message: 'ניתן לממש שובר אחד בלבד בעסקה' });
+    assert.ok(!cloud.calls.some((c) => c.path === 'sync/m1/prepaid-vouchers/reserve'));
   });
 });
 

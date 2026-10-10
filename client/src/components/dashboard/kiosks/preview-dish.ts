@@ -29,6 +29,7 @@ import {
   type PricedBasket,
   type Promotion,
 } from '@/lib/kioskMoney';
+import type { AppliedDiscountVoucher } from '@/lib/kioskVouchers';
 import type { CartPricing, PGroup, PLine, PProduct } from './preview-screens';
 
 /** A screen group as the money rules read it (agorot from the option's exact price when the kiosk gave it). */
@@ -174,18 +175,24 @@ export function basketPricing(
   promotions: readonly Promotion[],
   now: LocalDateTime,
   noDiscount: (productId: string) => boolean = () => false,
+  /** The discount vouchers held for the order ("שוברי הנחה", lib/kioskVouchers.ts), in the order applied. */
+  vouchers: readonly AppliedDiscountVoucher[] = [],
 ): { pricing: CartPricing; priced: PricedBasket } {
   const priced = priceKioskBasket(
     cart.map((l) => ({ id: l.key, productIds: [l.product.id], categoryId: l.product.categoryId, unitAgorot: lineUnitAgorot(l), qty: l.qty, noDiscount: noDiscount(l.product.id) })),
     promotions,
     now,
+    vouchers,
   );
   return {
     priced,
     pricing: {
       totalAgorot: priced.totalAgorot,
       promotionAgorot: priced.promotionAgorot,
-      lines: Object.fromEntries(priced.lines.map((x) => [x.id, { promotionAgorot: x.promotionAgorot, promotionName: x.promotionName }])),
+      voucherAgorot: priced.voucherAgorot,
+      lines: Object.fromEntries(
+        priced.lines.map((x) => [x.id, { promotionAgorot: x.promotionAgorot, promotionName: x.promotionName, voucherAgorot: x.voucherAgorot, promotionYieldedAgorot: x.promotionYieldedAgorot }]),
+      ),
       applied: priced.applied.map((a) => ({ name: a.name, discountAgorot: a.discountAgorot })),
     },
   };

@@ -135,12 +135,19 @@ describe('the menu as the Android till reads it (Menu.groupsFor / notesFor, Menu
 });
 
 describe('a voucher only where its order can be finished (no dead end on the TS kiosks)', () => {
-  it('with the till to pay at, the voucher stays; with the card and vouchers alone it is not offered', () => {
+  it('with the card to pay what it leaves (a leg of the document, as the Android kiosk) or the till to pay at, the voucher stays', () => {
     assert.deepEqual(tsKioskPayMethods(['card', 'voucher', 'cash_at_till']), ['card', 'voucher', 'cash_at_till']);
-    assert.deepEqual(tsKioskPayMethods(['card', 'voucher']), ['card']);
+    assert.deepEqual(tsKioskPayMethods(['card', 'voucher']), ['card', 'voucher']);
     assert.deepEqual(tsKioskPayMethods(['voucher', 'cash_at_till']), ['voucher', 'cash_at_till']);
     assert.deepEqual(tsKioskPayMethods(['card', 'split_card', 'voucher', 'cash_at_till']), ['card', 'voucher', 'cash_at_till']);
-    assert.equal(voucherCanFinish(['card', 'voucher']), false);
+    assert.equal(voucherCanFinish(['card', 'voucher']), true);
+    assert.equal(voucherCanFinish(['voucher', 'cash_at_till']), true);
+  });
+
+  it('with the card unusable now (no terminal, no bridge) and no till, it is not offered — never a dead end', () => {
+    assert.equal(voucherCanFinish(['card', 'voucher'], false), false);
+    assert.equal(voucherCanFinish(['card', 'voucher', 'cash_at_till'], false), true);
+    assert.equal(voucherCanFinish(['voucher'], true), false);
   });
 });
 

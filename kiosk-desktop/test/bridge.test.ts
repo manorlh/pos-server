@@ -353,6 +353,20 @@ describe('the protocol (pure)', () => {
     });
     expect(menus?.lines[0]).toMatchObject({ unitAgorot: 4000, listAgorot: 4000, catalogAgorot: 5400, menuId: 'lunch', priceSource: 'menu' });
     expect(menus?.lines[1]).toEqual({ key: 'j', productId: 'q', qty: 1, options: [], notes: [] });
+    // The order's vouchers: goods ones as legs, discount ones held for it — read field by field, and a discount's minimum and cap kept.
+    const benefit = { kind: 'order_discount', discountType: 'percent', value: 1500, minPurchase: 6000, maxDiscount: 700, maxUnits: null, productIds: [], categoryIds: [], promotionPolicy: 'exclude', text: null };
+    const vouchers = {
+      saleRef: 's-1',
+      legs: [{ redemptionId: 'r1', serial: 7, amountAgorot: 1000, eventName: null, includeExtras: false, redeemed: [{ productId: 'p-cola', tillProductId: null, name: null, quantity: 1 }] }],
+      discounts: [{ reservationId: 'res-1', clientRequestId: 'c1', voucherId: 'v1', code: 'X', serial: 12, batchId: 'b', batchName: 'פסטיבל', stacking: 'unlimited', benefit, uses: 1, expiresAt: null }],
+    };
+    const withVouchers = startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }], vouchers });
+    expect(withVouchers?.vouchers?.legs[0]).toMatchObject({ redemptionId: 'r1', serial: 7, amountAgorot: 1000 });
+    expect(withVouchers?.vouchers?.discounts[0].benefit).toMatchObject({ minPurchase: 6000, maxDiscount: 700, value: 1500 });
+    expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }] })?.vouchers).toBeUndefined();
+    // Vouchers that are not an order's are no payment at all (never charged as if there were none).
+    expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }], vouchers: 'x' })).toBe(null);
+    expect(startPaymentInput({ lines: [{ key: 'k', productId: 'p', qty: 1 }], vouchers: { ...vouchers, saleRef: '' } })).toBe(null);
     expect(printablePage('bon', { kind: 'bon', lines: [] })).not.toBe(null);
     expect(printablePage('receipt', { kind: 'receipt' })).toBe(null);
     expect(printablePage('bon', { kind: 'slip' })).toBe(null);
