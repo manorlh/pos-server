@@ -9,7 +9,14 @@
 
 import { canAccess, type DashboardAccess } from './dashboardAccess';
 
-export type AlertCategory = 'till_offline' | 'card_terminal' | 'large_void' | 'drawer_no_sale' | 'till_low_sales' | 'target_reached';
+export type AlertCategory =
+  | 'till_offline'
+  | 'card_terminal'
+  | 'large_void'
+  | 'drawer_no_sale'
+  | 'till_low_sales'
+  | 'target_reached'
+  | 'card_reconcile';
 
 export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_offline',
@@ -18,6 +25,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'drawer_no_sale',
   'till_low_sales',
   'target_reached',
+  'card_reconcile',
 ];
 
 export interface PushConfig {
@@ -212,6 +220,9 @@ export interface AttentionItem {
 export function alertHref(a: Pick<FeedAlert, 'kind' | 'code' | 'details'>, canOpenLog = true): string | null {
   const eventId = a.details && typeof a.details.eventId === 'string' ? a.details.eventId : null;
   if (a.kind === 'target_reached' && eventId) return `/dashboard/live-event/${eventId}`;
+  // "התאמת אשראי מול Z-Credit": the run's page, where the row is handled.
+  const runId = a.details && typeof a.details.runId === 'string' ? a.details.runId : null;
+  if (a.kind === 'zcredit_recon' && runId) return `/dashboard/zcredit-reconciliation?run=${runId}`;
   return canOpenLog && a.code ? `/x/${a.code}` : null;
 }
 

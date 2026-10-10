@@ -1556,6 +1556,11 @@ from app.services.z_shift_guard import PARAMETER_SPECS as _Z_SHIFT_GUARD_SPECS  
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _Z_SHIFT_GUARD_SPECS)
 
+# "התאמת אשראי מול Z-Credit" (app/services/zcredit_reconcile.py): on / off and the nightly run time.
+from app.services.zcredit_reconcile import PARAMETER_SPECS as _ZCREDIT_RECON_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _ZCREDIT_RECON_SPECS)
+
 # Held sales at a close (app/services/held_sales_close.py): "סגירה עם מכירות מושהות" (off),
 # "ביטול מכירות מושהות מהענן בסגירה מרחוק" (on), "סגירה מרחוק גם עם עגלה פתוחה" (off).
 from app.services.held_sales_close import PARAMETER_SPECS as _HELD_SALES_SPECS  # noqa: E402
@@ -1605,6 +1610,13 @@ def validate_keyed_value(key: str, value: Any) -> Any:
         try:
             return kiosk_technician.clean_code(value)
         except kiosk_technician.TechnicianCodeError as exc:
+            raise TillParameterValueError(str(exc)) from exc
+    from app.services import zcredit_reconcile
+
+    if key == zcredit_reconcile.PARAM_TIME and value is not None:
+        try:
+            return zcredit_reconcile.validate_time(value)
+        except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
     return value
 

@@ -105,6 +105,9 @@ CATEGORIES: Tuple[Category, ...] = (
              ("till_low_sales",)),
     Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
              ("target_reached",)),
+    Category("card_reconcile", "אי-התאמה מול Z-Credit",
+             "התאמת האשראי הלילית מול Z-Credit: חיוב במסוף בלי מסמך שלנו, או מסמך שלנו בלי עסקה במסוף.",
+             ("zcredit_recon",)),
 )
 CATEGORY_BY_KEY: Dict[str, Category] = {c.key: c for c in CATEGORIES}
 CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)

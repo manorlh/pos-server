@@ -57,8 +57,8 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard", "/dashboard/live-items", "/dashboard/compare", "/dashboard/insights",
             "/dashboard/insights/kiosks", "/dashboard/transactions", "/dashboard/day-summary",
-            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/transmissions",
-            "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
+            "/dashboard/all-in-one", "/dashboard/reconciliation", "/dashboard/zcredit-reconciliation",
+            "/dashboard/transmissions", "/dashboard/events", "/dashboard/offline-transactions", "/dashboard/product-sales",
             "/dashboard/cashier-sales", "/dashboard/area-sales", "/dashboard/tips",
             "/dashboard/sales-by-payment", "/dashboard/card-brands", "/dashboard/promotions-report",
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
@@ -406,6 +406,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # A payment's decision commands are the transactions page's, not the cockpit's (it reads the list).
     (_GET, "/failed-payments/*", S("reports", "z", level=VIEW)),
     (_ALL, "/failed-payments/*", S("reports")),
+    # "התאמת אשראי מול Z-Credit": read with the reports — its open count also on the cockpit; "הרץ
+    # התאמה עכשיו" and "טופל" are edits of the same people as a remote credit.
+    (_GET, "/zcredit-reconciliation/attention", S("reports", "z", "cockpit", level=VIEW)),
+    (_ALL, "/zcredit-reconciliation*", S("reports", "z")),
     # ── Customers, club, messages ──
     (_ALL, "/club*", S("customers")),
     (_ALL, "/customers*", S("customers")),

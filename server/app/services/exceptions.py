@@ -175,6 +175,9 @@ RULES: Tuple[RuleSpec, ...] = (
     # A till with an open shift that stopped talking to the cloud for ≥ X minutes ("קופה לא
     # מחוברת"; app/services/exception_alerts/till_watch.py records it, and when it came back).
     RuleSpec("till_offline", True, (ParamSpec("offlineMinutes", 10, 2, 240, integer=True),), "high", "till_event"),
+    # "התאמת אשראי מול Z-Credit" (app/services/zcredit_reconcile.py): a charge at Z-Credit with no
+    # document of ours, or a document of ours with no Z-Credit transaction — one per transaction.
+    RuleSpec("zcredit_recon", True, (), "high", "zcredit"),
     # A sale between fromHour and toHour local time (wraps midnight when from > to).
     RuleSpec(
         "after_hours",
