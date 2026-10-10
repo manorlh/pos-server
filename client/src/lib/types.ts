@@ -1474,6 +1474,8 @@ export interface BasketDocument {
   totalAmount: number;
   paymentMethod?: string | null;
   refundOfTransactionId?: string | null;
+  /** "הפק חשבונית על שם לקוח": the original this document re-issues. */
+  reissueOfTransactionId?: string | null;
   createdAt: string;
 }
 
@@ -1513,6 +1515,17 @@ export interface Transaction {
   customerName?: string | null;
   customerPhone?: string | null;
   customerAddress?: string | null;
+  /** "פרטי לקוח לחשבונית": the buyer's ח.פ. / ע.מ. and email as printed on the invoice. */
+  customerVatNumber?: string | null;
+  customerEmail?: string | null;
+  /**
+   * "הפק חשבונית על שם לקוח": the original sale this document re-issues (on the credit note
+   * and on the new invoice), its number as printed, and the pair's other documents (detail
+   * read only — on the original, both of them).
+   */
+  reissueOfTransactionId?: string | null;
+  reissueOfTransactionNumber?: string | null;
+  reissueDocuments?: BasketDocument[];
   createdAt: string;
   updatedAt: string;
   serverReceivedAt: string;

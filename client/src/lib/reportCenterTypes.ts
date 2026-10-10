@@ -42,6 +42,8 @@ export interface TransactionExportRow {
   shiftNumber: number | null;
   zNumber: number | null;
   customerName: string | null;
+  /** "פרטי לקוח לחשבונית": the buyer's ח.פ. / ע.מ. (absent from an older server). */
+  customerVatNumber?: string | null;
   mealKind: string | null;
 }
 

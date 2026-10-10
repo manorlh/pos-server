@@ -474,7 +474,8 @@ export default function TransactionsPage() {
                     {tx.cardBrands?.length ? <span>· {tx.cardBrands.map(brandLabels.brand).join(', ')}</span> : null}
                     <Badge variant={statusVariant(tx.status)}>{t(`statusLabels.${tx.status}`)}</Badge>
                     <OfflineOutcomeBadge outcome={tx.offlineOutcome} />
-                    <RemoteCreditBadges tx={tx} />
+                    {tx.reissueOfTransactionId ? <Badge variant="outline">{t('reissueBadge')}</Badge> : null}
+                    <RemoteCreditBadges tx={tx.reissueOfTransactionId ? { ...tx, noMoneyMovement: false } : tx} />
                     <KioskPickupBadges pickup={tx.kioskPickup} matchedBy={tx.matchedBy} query={searchQ} />
                   </div>
                 </button>
@@ -527,6 +528,15 @@ export default function TransactionsPage() {
                         <Badge variant="outline" className="ms-2 font-sans">{t('basket')}</Badge>
                       )}
                       <KioskPickupBadges pickup={tx.kioskPickup} matchedBy={tx.matchedBy} query={searchQ} className="ms-2" />
+                      {tx.reissueOfTransactionId && (
+                        <Badge variant="outline" className="ms-2 font-sans">{t('reissueBadge')}</Badge>
+                      )}
+                      {/* "פרטי לקוח לחשבונית": who the invoice is made out to — what the search finds. */}
+                      {(tx.customerName || tx.customerVatNumber) && (
+                        <div className="font-sans text-muted-foreground">
+                          {[tx.customerName, tx.customerVatNumber].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>{machine?.name ?? tx.machineId.slice(0, 8)}</TableCell>
                     <TableCell>{tx.cashierId ?? '—'}</TableCell>
@@ -537,7 +547,8 @@ export default function TransactionsPage() {
                         {t(`statusLabels.${tx.status}`)}
                       </Badge>
                       <OfflineOutcomeBadge outcome={tx.offlineOutcome} />
-                      <RemoteCreditBadges tx={tx} />
+                      {/* A re-issue pair moves no money by design — its own badge, not "עסקה שלא בוצעה". */}
+                      <RemoteCreditBadges tx={tx.reissueOfTransactionId ? { ...tx, noMoneyMovement: false } : tx} />
                     </TableCell>
                     <TableCell className="text-end font-medium">
                       {formatCurrency(tx.totalAmount)}
@@ -662,12 +673,30 @@ function TransactionDetailsDialog({
                   </div>
                 </div>
               )}
-              {(data.customerName || data.customerPhone || data.customerAddress) && (
+              {data.reissueOfTransactionId && (
+                <div>
+                  <Label className="text-xs">{t('reissueOf')}</Label>
+                  <div className="font-mono text-xs">
+                    {data.reissueOfTransactionNumber ?? data.reissueOfTransactionId}
+                  </div>
+                </div>
+              )}
+              {(data.customerName || data.customerPhone || data.customerAddress || data.customerVatNumber || data.customerEmail) && (
                 <div className="col-span-2">
                   <Label className="text-xs">{t('customer')}</Label>
                   <div>
                     {[data.customerName, data.customerPhone, data.customerAddress].filter(Boolean).join(' · ')}
                   </div>
+                  {data.customerVatNumber && (
+                    <div>
+                      {t('customerVatNumber')}: <span className="font-mono">{data.customerVatNumber}</span>
+                    </div>
+                  )}
+                  {data.customerEmail && (
+                    <div>
+                      {t('customerEmail')}: <span dir="ltr">{data.customerEmail}</span>
+                    </div>
+                  )}
                 </div>
               )}
               {(data.claimedApproverPosUserId || data.claimedApproverUserId) && (
@@ -689,6 +718,26 @@ function TransactionDetailsDialog({
                     <li key={note.code}>{note.text}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {(data.reissueDocuments ?? []).length > 0 && (
+              <div className="rounded border p-3 space-y-2">
+                <Label className="text-xs">{t('reissueDocuments')}</Label>
+                {(data.reissueDocuments ?? []).map((doc) => (
+                  <button
+                    key={doc.id}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded px-2 py-1 text-start hover:bg-muted"
+                    onClick={() => onSelect(doc.id)}
+                  >
+                    <span>
+                      {documentTypeLabel(doc.documentType)}{' '}
+                      <span className="font-mono text-xs">{doc.documentNumber ?? doc.transactionNumber}</span>
+                    </span>
+                    <span className="font-medium tabular-nums">{formatCurrency(doc.totalAmount)}</span>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -769,7 +818,11 @@ function TransactionDetailsDialog({
                             .join(' · ')}
                         </span>
                       ) : null}
-                      {leg.noMoneyMovement ? <RemoteCreditBadges tx={{ noMoneyMovement: true }} /> : null}
+                      {leg.noMoneyMovement && data.reissueOfTransactionId ? (
+                        <Badge variant="outline" className="ms-1">{t('reissueNoMoney')}</Badge>
+                      ) : leg.noMoneyMovement ? (
+                        <RemoteCreditBadges tx={{ noMoneyMovement: true }} />
+                      ) : null}
                       <CloudCardRefundLegBadge leg={leg} />
                     </span>
                     <span className="flex items-center gap-2">
