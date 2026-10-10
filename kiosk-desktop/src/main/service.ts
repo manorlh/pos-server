@@ -576,8 +576,6 @@ export class KioskService extends EventEmitter {
     const catalog = this.cloud.catalog();
     this.saleChangeAt = catalogNextChangeMs(catalog.products, now);
     this.menuBlock = (catalog.catalogMenus as MenuBlock | null | undefined) ?? null;
-    this.menuKey = menuKeyAt(this.menuBlock, now);
-    this.armMenuClock();
     return buildKioskCatalog(catalog, this.settingsMap(), (url, size) => this.localMediaUrl(url, size), { stock: this.cloud.stockLevels(), nowMs: now });
   }
 
@@ -599,6 +597,10 @@ export class KioskService extends EventEmitter {
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
     const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    // "תפריטים": the menu the screens were built for; the clock looks again at the next minute boundary. Only a view build
+    // sets it — a basket priced in between does not hide a menu change from the screens.
+    this.menuKey = `${cat.menu.mode}:${cat.menu.menuId ?? ''}`;
+    if (phase === 'kiosk') this.armMenuClock();
     const categoryImages: Record<string, string> = {};
     if (cfg) for (const [id, ref] of Object.entries(cfg.catalog.categoryImages ?? {})) {
       const local = this.localMediaUrl(ref?.url ?? null, 'card');

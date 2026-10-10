@@ -187,6 +187,13 @@ const dataOf = (svc: KioskService) => (svc as unknown as { catalogData(): Data }
 type Priced = { lines: SaleLine[]; changes: BasketChange[] };
 const priceOf = (svc: KioskService, input: StartPaymentIn) => (svc as unknown as { priceBasket(i: StartPaymentIn, now?: Date): Priced }).priceBasket(input);
 
+/** The kiosk as the cloud pairs it: credentials and a kiosk snapshot, so that `view()` builds the screens' catalog. */
+function paired(svc: KioskService) {
+  svc.cloud.setCredentials({ serverUrl: 'http://localhost:8001', accessToken: 't', machineId: 'm1', machineCode: null, tenantId: null, shopId: null, mqttClientId: null, realtimeChannel: null, pairedAt: '' });
+  svc.cloud.setKioskSnapshot({ kiosk: true, configVersion: 'v1', operator: { id: 'kiosk:m1', name: 'קיוסק' }, config: {} });
+  return svc;
+}
+
 const basket = (lines: StartPaymentIn['lines']): StartPaymentIn => ({ lines, service: 'take_away', customerName: null, customerPhone: null, tableRef: null, tipPct: null, tipAgorot: null });
 const line = (over: Partial<StartPaymentIn['lines'][number]> = {}): StartPaymentIn['lines'][number] => ({ key: 'a', productId: 'p1', qty: 1, options: [], notes: [], ...over });
 
@@ -221,23 +228,29 @@ describe('the Windows kiosk\'s service and "תפריטים"', () => {
 
   it('looks at the clock at each minute boundary — offline, with no call — and rebuilds the view only when the menu changes', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    const svc = kiosk();
+    const svc = paired(kiosk());
     vi.setSystemTime(localMs('2026-10-07T10:59:35'));
-    dataOf(svc);
+    // The screens' view is built: the catalog under no menu, and the clock looks again at the next minute boundary.
+    expect(svc.view().catalog.menu?.mode).toBe('catalog');
     const rebuilt = vi.spyOn(svc as unknown as { dirty(): void }, 'dirty');
     // 10:59:59: nothing has happened — the first look is on the far side of the boundary.
     vi.advanceTimersByTime(24_000);
     expect(rebuilt).not.toHaveBeenCalled();
-    // The boundary: 11:00 — lunch starts, by the clock alone: the view is built again.
-    vi.advanceTimersByTime(1_100);
-    expect(rebuilt).toHaveBeenCalledTimes(1);
+    // 11:00:00.000 — lunch has started, the look is 25 ms away. A basket priced just then reads the catalog by the clock
+    // (under lunch) — which must not hide the change from the screens.
+    vi.advanceTimersByTime(1_000);
     expect(dataOf(svc).menu.menuId).toBe('lunch');
+    expect(rebuilt).not.toHaveBeenCalled();
+    // The look: lunch starts, by the clock alone — the view is built again.
+    vi.advanceTimersByTime(100);
+    expect(rebuilt).toHaveBeenCalledTimes(1);
+    expect(svc.view().catalog.menu?.menuId).toBe('lunch');
     // Minute after minute the look finds the same answer and rebuilds nothing, until 14:00.
     vi.advanceTimersByTime(60_000 * 100);
     expect(rebuilt).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(60_000 * 100);
     expect(rebuilt).toHaveBeenCalledTimes(2);
-    expect(dataOf(svc).menu.mode).toBe('catalog');
+    expect(svc.view().catalog.menu?.mode).toBe('catalog');
     svc.stop();
   });
 
