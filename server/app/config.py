@@ -126,8 +126,11 @@ class Settings(BaseSettings):
     cloudinary_api_secret: str = ""
 
     # Product image background removal (POST /images/upload?resource=products).
-    # A per-upload `keepBackground=true` skips it; this switches it off server-wide.
-    product_image_bg_removal: bool = True
+    # OFF by default: the model (rembg + onnxruntime, ~170 MB) is heavy on memory and CPU, and it is
+    # only ever imported and loaded the first time a removal is actually requested, so with this off
+    # nothing of it is loaded. Set PRODUCT_IMAGE_BG_REMOVAL=true to turn it on. A per-upload
+    # `keepBackground=true` skips it even then.
+    product_image_bg_removal: bool = False
     # rembg model: isnet-general-use (~170 MB, ~1.5 s per image on CPU) cuts cleaner
     # than u2netp (~5 MB, ~0.2 s). Downloaded on the first product upload.
     product_image_bg_model: str = "isnet-general-use"
