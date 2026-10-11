@@ -270,6 +270,82 @@ export function importTemplateCsv(mode: DistributionMode): string {
   return '\uFEFF' + rows.map((r) => r.join(',')).join('\r\n') + '\r\n';
 }
 
+/** What [voucherContentsRows] reads of a batch (a structural slice of the API's batch). */
+export interface VoucherContentsInput {
+  name: string;
+  typeName?: string | null;
+  eventName?: string | null;
+  customerName?: string | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
+  /** ₪: the whole voucher's value at the till; null: the goods, whatever they cost. */
+  tillValue?: number | null;
+  pricing?: 'fixed' | 'cover' | null;
+  includeExtras?: boolean;
+  items: { name: string; quantity: number; text?: string }[];
+  selection?: 'items' | 'groups';
+  totalQty?: number | null;
+  groups?: {
+    name: string;
+    minQty: number;
+    maxQty: number;
+    allItems?: boolean;
+    productIds?: string[];
+    categoryIds?: string[];
+    excludeProductIds?: string[];
+    excludeCategoryIds?: string[];
+  }[] | null;
+}
+
+/**
+ * "מה השובר מכיל": the template's second sheet, for the customer who fills in the recipients —
+ * label/value rows in Hebrew: the voucher, its validity, its value and what it covers (a fixed
+ * list, or each group with its choice and its categories / products by name).
+ */
+export function voucherContentsRows(
+  b: VoucherContentsInput,
+  names: { product: (id: string) => string | undefined; category: (id: string) => string | undefined },
+): [string, string][] {
+  const rows: [string, string][] = [['שובר', b.name]];
+  if (b.typeName) rows.push(['סוג', b.typeName]);
+  if (b.customerName) rows.push(['לקוח', b.customerName]);
+  if (b.eventName) rows.push(['אירוע', b.eventName]);
+  const day = (iso: string) => iso.slice(0, 10).split('-').reverse().join('/');
+  if (b.validFrom || b.validUntil) {
+    rows.push(['תוקף', [b.validFrom ? `מ-${day(b.validFrom)}` : '', b.validUntil ? `עד ${day(b.validUntil)}` : ''].filter(Boolean).join(' ')]);
+  }
+  if (b.tillValue != null) {
+    rows.push(['שווי', b.pricing === 'fixed' ? `₪${b.tillValue} (שווי קבוע)` : `עד ₪${b.tillValue}`]);
+  }
+  rows.push(['תוספות בתשלום', b.includeExtras ? 'כלולות' : 'בתשלום נפרד']);
+  const list = (ids: string[] | undefined, of: (id: string) => string | undefined) =>
+    (ids ?? []).map((id) => of(id) ?? '').filter(Boolean).join(', ');
+  if (b.selection === 'groups' && b.groups?.length) {
+    if (b.totalQty != null) rows.push(['סה״כ פריטים בשובר', String(b.totalQty)]);
+    for (const g of b.groups) {
+      const pick = g.minQty === g.maxQty ? `${g.maxQty}` : `${g.minQty}–${g.maxQty}`;
+      rows.push([g.name, `לבחירה: ${pick} פריטים`]);
+      if (g.allItems) rows.push(['', 'כל התפריט']);
+      const cats = list(g.categoryIds, names.category);
+      if (cats) rows.push(['', `קטגוריות: ${cats}`]);
+      const prods = list(g.productIds, names.product);
+      if (prods) rows.push(['', `פריטים: ${prods}`]);
+      const exCats = list(g.excludeCategoryIds, names.category);
+      const exProds = list(g.excludeProductIds, names.product);
+      if (exCats || exProds) rows.push(['', `לא כולל: ${[exCats, exProds].filter(Boolean).join(', ')}`]);
+    }
+  } else if (b.items.length) {
+    rows.push(['פריטים', '']);
+    for (const it of b.items) rows.push(['', it.text || (it.quantity === 1 ? it.name : `${it.quantity}× ${it.name}`)]);
+  }
+  return rows;
+}
+
+/** The recipients sheet's header, as the import detects it ([detectColumns]). */
+export function templateHeader(mode: DistributionMode): string[] {
+  return ['שם', 'טלפון', mode === 'group' ? 'קבוצה' : 'כמות שוברים'];
+}
+
 // ── Sharing the file itself ────────────────────────────────────────────────────
 
 /** What of `navigator` the share needs (a fake in tests). */

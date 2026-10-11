@@ -11,8 +11,11 @@ import { Badge } from '@/components/ui/badge';
 import {
   PAYMENT_OPTIONS,
   PAYMENT_OPTION_FALLBACK,
+  VOUCHER_SWITCHES,
+  VOUCHER_SWITCH_DEFAULT,
   noPaymentOptionAllowed,
   resolvePaymentOptionKey,
+  voucherOnly,
 } from '@/lib/paymentOptions';
 import { SELL_SCREEN_TOOLS, SELL_SCREEN_TOOL_DEFAULT } from '@/lib/sellScreen';
 import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
@@ -381,6 +384,34 @@ export function PosSettingsForm({
             </div>
           );
         })}
+        {/* "שובר הפקה": scanned, and typed by hand ("שובר ידני"). On unless switched off;
+            with every option above off they make a voucher-only till. */}
+        {VOUCHER_SWITCHES.map((v) => (
+          <div key={v.id} className="rounded-lg border p-3 space-y-2">
+            <div>
+              <p className="text-sm font-medium">{t(v.labelKey)}</p>
+              <p className="text-xs text-muted-foreground">{t(v.descriptionKey)}</p>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label>
+                  {t('payAllowed')}
+                  {overrideBadge(v.key)}
+                </Label>
+                {inheritedHint(v.key, onOff)}
+                {resetToInherited(v.key)}
+              </div>
+              <Switch
+                checked={resolvePaymentOptionKey(v.key, value, inherited, VOUCHER_SWITCH_DEFAULT)}
+                onCheckedChange={(c) => set(v.key, c)}
+              />
+            </div>
+          </div>
+        ))}
+        <p className="text-xs text-muted-foreground">{t('payVoucherOnlyHint')}</p>
+        {voucherOnly(value, inherited) ? (
+          <p className="text-sm font-medium text-primary">{t('payVoucherOnlyActive')}</p>
+        ) : null}
         {noneAllowed || paymentOptionsRejected ? (
           <p role="alert" className="text-sm text-destructive">
             {t('payNoneAllowed')}

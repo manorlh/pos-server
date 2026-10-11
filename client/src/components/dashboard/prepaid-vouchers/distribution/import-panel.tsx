@@ -14,7 +14,8 @@ import { Download, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import {
   cellText,
   detectColumns,
-  importTemplateCsv,
+  templateHeader,
+  voucherContentsRows,
   parseDelimited,
   rowsFromTable,
   type ColumnRole,
@@ -27,7 +28,7 @@ import {
   type PlannedRow,
   type PlanSummary,
 } from '@/lib/voucherDistributionApi';
-import type { PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
+import { fetchPrepaidCategories, fetchPrepaidProductions, searchPrepaidProducts, type PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -36,8 +37,22 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useDistributionError, useRefreshDistribution } from './shared';
 
+/** Empty rows in the template's "נמענים" sheet, the phone cells already text. */
+const TEMPLATE_ROWS = 500;
 const ROLES: ColumnRole[] = ['name', 'phone', 'group', 'count', 'ignore'];
 const PREVIEW_ROWS = 300;
+
+/** An Excel 97–2003 file (.xls — the template we send the customer): the first sheet, through SheetJS. */
+async function readXls(file: File): Promise<string[][]> {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellText: true, cellDates: false });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws) return [];
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: false, defval: '', blankrows: false });
+  return rows
+    .map((r) => (r as unknown[]).map((c) => (c == null ? '' : String(c).trim())))
+    .filter((cells) => cells.some((x) => x !== ''));
+}
 
 async function readSheet(file: File): Promise<string[][]> {
   const ExcelJS = (await import('exceljs')).default;
@@ -72,6 +87,61 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
   const [plan, setPlan] = useState<{ rows: PlannedRow[]; summary: PlanSummary } | null>(null);
   const [reading, setReading] = useState(false);
 
+  // "תבנית ללקוח": an Excel file the customer fills in (name, phone, vouchers or group) and we import
+  // back, with what this voucher holds on a second sheet — the owner, 11.10.2026.
+  const [templating, setTemplating] = useState(false);
+  const downloadTemplate = async () => {
+    setTemplating(true);
+    try {
+      const [categories, products, productions] = await Promise.all([
+        fetchPrepaidCategories(batch.companyId).catch(() => []),
+        searchPrepaidProducts('', batch.companyId, { limit: 200 }).catch(() => []),
+        batch.production ? fetchPrepaidProductions({ companyId: batch.companyId, includeInactive: true }).catch(() => []) : Promise.resolve([]),
+      ]);
+      const cat = new Map(categories.map((c) => [c.id, c.name]));
+      const prod = new Map(products.map((p) => [p.id, p.name]));
+      // The customer (the production's name, else the batch's) and the recipient — the production's contact.
+      const production = productions.find((p) => p.id === batch.production?.id);
+      const customer = production?.name ?? batch.customerName ?? null;
+      const recipient = production?.contactName ?? null;
+      const XLSX = await import('xlsx');
+      const wb = XLSX.utils.book_new();
+      // "נמענים": the header the import detects, and empty rows with the phone typed as text (a leading 0 kept).
+      const recipients: (string | null)[][] = [templateHeader(mode)];
+      const ws = XLSX.utils.aoa_to_sheet(recipients);
+      for (let r = 1; r <= TEMPLATE_ROWS; r++) ws[XLSX.utils.encode_cell({ r, c: 1 })] = { t: 's', v: '', z: '@' };
+      ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: TEMPLATE_ROWS, c: 2 } });
+      ws['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(wb, ws, 'נמענים');
+      const info = XLSX.utils.aoa_to_sheet([
+        ...(recipient ? [['נמען', recipient]] : []),
+        ...voucherContentsRows(
+          { ...batch, customerName: customer, typeName: batch.typeName ?? batch.type?.name ?? null },
+          { product: (id) => prod.get(id), category: (id) => cat.get(id) },
+        ),
+      ]);
+      info['!cols'] = [{ wch: 22 }, { wch: 70 }];
+      XLSX.utils.book_append_sheet(wb, info, 'מה השובר מכיל');
+      wb.Workbook = { Views: [{ RTL: true }] };
+      // "פרטי הקובץ" (Excel: File → Info → Properties): the voucher, the customer and the recipient.
+      wb.Props = {
+        Title: `${batch.name} - רשימת נמענים`,
+        Subject: 'רשימת נמענים לשוברים',
+        Company: customer ?? undefined,
+        Manager: recipient ?? undefined,
+        Author: 'R2M POS',
+        Comments: [customer ? `לקוח: ${customer}` : '', recipient ? `נמען: ${recipient}` : ''].filter(Boolean).join(' · ') || undefined,
+        CreatedDate: new Date(),
+      };
+      const fileName = [batch.name || 'שוברים', customer, 'נמענים'].filter(Boolean).join(' - ').replace(/[\/:*?"<>|]/g, ' ');
+      XLSX.writeFile(wb, `${fileName}.xls`, { bookType: 'biff8' });
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setTemplating(false);
+    }
+  };
+
   const load = (cells: string[][], name: string | null) => {
     const found = detectColumns(cells, mode);
     setTable(cells);
@@ -85,8 +155,9 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
     if (!file) return;
     setReading(true);
     try {
-      const isSheet = /\.xlsx$/i.test(file.name);
-      const cells = isSheet ? await readSheet(file) : parseDelimited(await file.text());
+      const cells = /\.xls$/i.test(file.name)
+        ? await readXls(file)
+        : /\.xlsx$/i.test(file.name) ? await readSheet(file) : parseDelimited(await file.text());
       if (!cells.length) toast.error(t('emptyFile'));
       load(cells, file.name);
       setPasted('');
@@ -141,7 +212,7 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2 rounded-lg border p-3">
             <p className="text-sm font-medium">{t('fromFile')}</p>
-            <input ref={fileRef} type="file" accept=".xlsx,.csv,.tsv,.txt,text/csv" className="hidden"
+            <input ref={fileRef} type="file" accept=".xls,.xlsx,.csv,.tsv,.txt,text/csv" className="hidden"
               onChange={(e) => void onFile(e.target.files?.[0])} />
             <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={reading}>
               {reading ? <Loader2 className="animate-spin" aria-hidden /> : <Upload aria-hidden />}
@@ -238,15 +309,8 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         </fieldset>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="ghost" onClick={() => {
-            const url = URL.createObjectURL(new Blob([importTemplateCsv(mode)], { type: 'text/csv;charset=utf-8' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'voucher-recipients-template.csv';
-            a.click();
-            URL.revokeObjectURL(url);
-          }}>
-            <Download aria-hidden /> {t('template')}
+          <Button type="button" variant="ghost" disabled={templating} onClick={() => void downloadTemplate()}>
+            {templating ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />} {t('template')}
           </Button>
           <Button type="button" variant="outline" disabled={!rows.length || !hasPhone || preview.isPending}
             onClick={() => preview.mutate()}>
