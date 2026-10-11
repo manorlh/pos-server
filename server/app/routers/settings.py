@@ -165,6 +165,7 @@ def _voucher_flow_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
         *voucher_flow.VOUCHER_FLOW_SETTING_KEYS,
         *voucher_balance.VOUCHER_BALANCE_SETTING_KEYS,
         *voucher_station.VOUCHER_STATION_SETTING_KEYS,
+        *voucher_station.VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
     )
     return {key: raw[key] for key in keys if key in raw}
 
@@ -381,6 +382,7 @@ def _inherited_preview(layers: List[Any]):
     effective.update(voucher_flow.resolve_voucher_flow(effective))
     effective.update(voucher_balance.resolve_preview(effective))
     effective.update(voucher_station.resolve_voucher_station(effective))
+    effective.update(voucher_station.resolve_station_paid_items(effective))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
     # The inherited payment order completed (every method, the unlisted ones after);
