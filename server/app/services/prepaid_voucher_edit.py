@@ -33,7 +33,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import status
+from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -263,7 +263,7 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     / `issue` / `refits` for [apply_edit]. Refused (HTTP) where a rule says no.
     """
     PV = _pv()
-    from app.schemas.prepaid_voucher import MAX_VOUCHERS_PER_BATCH, _check_prices, _check_terms
+    from app.schemas.prepaid_voucher import MAX_VOUCHERS_PER_BATCH, MaxUsesOverUses, _check_prices, _check_terms
     from app.services import prepaid_voucher_offline as PVO
     from app.services import prepaid_voucher_types as PVT
 
@@ -332,8 +332,11 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         if discount:
             m.items = []
         try:
-            _check_terms(m)
+            # Sent by this body: above the uses per voucher it is refused, never lowered in silence.
+            _check_terms(m, strict_uses="max_uses_per_sale" in given)
             _check_prices(m, one_off=False)
+        except MaxUsesOverUses as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
         except ValueError as exc:
             raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
         # The goods, the targets and the groups are checked again only when they (or the shops)

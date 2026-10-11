@@ -133,7 +133,9 @@ export interface DiscountDraft {
 }
 
 export type DiscountDraftError =
-  | 'value' | 'percentOver100' | 'minPurchase' | 'maxDiscount' | 'targets' | 'maxUnits' | 'uses' | 'usesPerSale' | 'usesPerDay';
+  | 'value' | 'percentOver100' | 'minPurchase' | 'maxDiscount' | 'targets' | 'maxUnits' | 'uses' | 'usesPerSale' | 'usesPerDay'
+  /** "מקסימום שימושים בעסקה" above "מספר שימושים בכל שובר": the cloud refuses it (never lowers it in silence). */
+  | 'usesPerSaleOverUses';
 
 function num(text: string): number | null {
   const t = text.trim();
@@ -168,5 +170,7 @@ export function discountDraftErrors(d: DiscountDraft): DiscountDraftError[] {
   if (!wholeIn(d.usesPerVoucher, 1, 1000, false)) out.push('uses');
   if (!wholeIn(d.maxUsesPerSale, 1, 1000, false)) out.push('usesPerSale');
   if (!wholeIn(d.maxUsesPerDay, 1, 1000, true)) out.push('usesPerDay');
+  if (wholeIn(d.usesPerVoucher, 1, 1000, false) && wholeIn(d.maxUsesPerSale, 1, 1000, false)
+      && Number(d.maxUsesPerSale) > Number(d.usesPerVoucher)) out.push('usesPerSaleOverUses');
   return out;
 }

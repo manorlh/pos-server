@@ -11,7 +11,9 @@ import {
   allState,
   bulkChanges,
   fieldApplies,
+  knownRefusal,
   notApplicableCount,
+  offeredFields,
   outcomeOrder,
   selectedShown,
   toggleAll,
@@ -73,6 +75,36 @@ describe('fieldApplies', () => {
   it('counts the picked batches a setting is not for', () => {
     assert.equal(notApplicableCount('splitAllowed', [goods, discount, meal, discount]), 2);
     assert.equal(notApplicableCount('showCode', [goods, discount]), 0);
+  });
+});
+
+describe('offeredFields', () => {
+  it('one kind: its settings; a discount’s rules only when every batch is a discount', () => {
+    const g = offeredFields([goods, goods]);
+    assert.equal(g.mixed, false);
+    assert.ok(g.fields.includes('splitAllowed') && g.fields.includes('pricing') && !g.fields.includes('maxUsesPerSale'));
+    const d = offeredFields([discount, { kind: 'item_discount' }]);
+    assert.ok(d.fields.includes('maxUsesPerSale') && d.fields.includes('promotionPolicy') && !d.fields.includes('splitAllowed'));
+  });
+
+  it('mixed kinds: only the common settings, and it says so', () => {
+    const m = offeredFields([goods, discount]);
+    assert.equal(m.mixed, true);
+    assert.ok(m.fields.includes('validUntil') && m.fields.includes('stacking') && m.fields.includes('offlineAllowed'));
+    for (const f of ['splitAllowed', 'pricing', 'includeExtras', 'maxUsesPerSale', 'totalQty'] as const) assert.ok(!m.fields.includes(f), f);
+  });
+
+  it('groups only when every batch is a package', () => {
+    assert.ok(offeredFields([meal]).fields.includes('totalQty'));
+    assert.ok(!offeredFields([meal, goods]).fields.includes('totalQty'));
+  });
+});
+
+describe('knownRefusal', () => {
+  it('words the cloud’s English checks with their limit', () => {
+    assert.deepEqual(knownRefusal('totalQty must be between 2 and 4'), { key: 'reasonTotalQty', min: 2, max: 4 });
+    assert.deepEqual(knownRefusal('tillValue is required for a fixed value'), { key: 'reasonFixedValue' });
+    assert.equal(knownRefusal('prepaid_voucher_forbidden'), null);
   });
 });
 

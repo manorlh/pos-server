@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.services.prepaid_voucher_rules import (
     DISCOUNT_KINDS,
@@ -174,10 +175,12 @@ class PrepaidVoucherItemIn(BaseModel):
         return _quantity(value, most=MAX_ITEM_QUANTITY)
 
 
-def _check_terms(m) -> None:
+def _check_terms(m, *, strict_uses: bool = False) -> None:
     """
     What a voucher gives, checked and tidied — the same for a batch made without a type and
     for a type: goods need items (each product once), a discount needs its terms.
+    [strict_uses]: the body sent `maxUsesPerSale` itself — above the uses per voucher it is refused
+    (`MaxUsesOverUses`) rather than lowered.
     """
     if getattr(m, "stacking", None) == "single":
         m.max_vouchers_per_sale = None  # "שובר אחד בעסקה" is its own maximum
@@ -244,7 +247,39 @@ def _check_terms(m) -> None:
     if m.min_purchase is not None and m.min_purchase <= 0:
         m.min_purchase = None
     if m.max_uses_per_sale > m.uses_per_voucher:
+        if strict_uses:
+            raise MaxUsesOverUses(m.max_uses_per_sale, m.uses_per_voucher)
+        # Stored terms from before the rule (or uses lowered without touching it): read as the most it can be.
         m.max_uses_per_sale = m.uses_per_voucher
+
+
+#: "מקסימום שימושים בעסקה" sent above "מספר שימושים בכל שובר": refused with the value and the limit,
+#: never silently lowered (the owner saw "לא בוצע שינוי" and did not know why).
+MAX_USES_PER_SALE_OVER_USES = "prepaid_voucher_max_uses_per_sale_over_uses"
+
+
+def max_uses_over_message(value: int, limit: int) -> str:
+    return (
+        f"לא ניתן לשמור {value}: מקסימום שימושים בעסקה לא יכול להיות גבוה ממספר השימושים בכל שובר ({limit}). "
+        f"שובר עם {limit} שימושים לא יכול לשמש יותר מ-{limit} פעמים בעסקה. "
+        "כדי לאפשר יותר — הגדילו קודם את מספר השימושים בכל שובר (אם הסדרה טרם הונפקה)."
+    )
+
+
+class MaxUsesOverUses(ValueError):
+    """[_check_terms] with `strict_uses`: the body itself asked for more uses per sale than a voucher has."""
+
+    def __init__(self, value: int, limit: int):
+        self.value, self.limit = int(value), int(limit)
+        super().__init__(max_uses_over_message(self.value, self.limit))
+
+    @property
+    def detail(self) -> Dict[str, Any]:
+        return {"code": MAX_USES_PER_SALE_OVER_USES, "message": str(self), "value": self.value, "limit": self.limit}
+
+    def pydantic(self) -> PydanticCustomError:
+        """For a body's own validator: a 422 whose `type` is the code and whose `msg` is the Hebrew text."""
+        return PydanticCustomError(MAX_USES_PER_SALE_OVER_USES, str(self), {"value": self.value, "limit": self.limit})
 
 
 def _check_prices(m, *, one_off: bool) -> None:
@@ -435,7 +470,10 @@ class PrepaidVoucherTypeCreate(BaseModel):
 
     @model_validator(mode="after")
     def _check(self):
-        _check_terms(self)
+        try:
+            _check_terms(self, strict_uses="max_uses_per_sale" in self.model_fields_set)
+        except MaxUsesOverUses as exc:
+            raise exc.pydantic()
         _check_prices(self, one_off=False)
         return self
 
@@ -703,7 +741,10 @@ class PrepaidVoucherBatchCreate(BaseModel):
             # Issued from a type: what it gives, its terms and prices are the type's (copied
             # by the service) — whatever else came is not this batch's to say.
             return self
-        _check_terms(self)
+        try:
+            _check_terms(self, strict_uses="max_uses_per_sale" in self.model_fields_set)
+        except MaxUsesOverUses as exc:
+            raise exc.pydantic()
         _check_prices(self, one_off=True)
         return self
 

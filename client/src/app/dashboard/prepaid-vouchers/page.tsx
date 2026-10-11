@@ -71,6 +71,7 @@ import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { BulkEditDialog } from '@/components/dashboard/prepaid-vouchers/batch-bulk-edit';
 import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from '@/lib/prepaidBatchBulkEdit';
+import { voucherFieldsFor } from '@/lib/voucherFields';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import {
@@ -273,6 +274,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
 }) {
   const t = useTranslations('prepaidVouchers.create');
   const te = useTranslations('prepaidVouchers.edit');
+  const tt = useTranslations('prepaidVouchers.types');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
@@ -362,6 +364,12 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
   const pricesVisible = ed ? !!ed.pricesVisible : !!types.data?.pricesVisible;
   const discount = isDiscountKind(chosen ? chosen.kind : kind);
+  // Only what this voucher has (lib/voucherFields.ts): goods — contents, pricing, split, extras, the
+  // policy; a discount — its terms and uses; both — stacking, validity, shops, offline, print flags.
+  const fields = voucherFieldsFor({
+    kind: chosen ? chosen.kind : kind, selection: groupsBatch ? 'groups' : 'items', pricing, stacking: rules.stacking,
+    discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
+  });
   const termErrors = chosen ? [] : discountDraftErrors({
     kind,
     discountType: terms.discountType,
@@ -479,12 +487,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       count: n,
       productionId: productionId || null,
       reportEventId: reportEventId || null,
+      offlineAllowed,
       ...stackingBody(rules),
     };
     if (pricesVisible) out.productionPrice = decimal(productionPrice);
     if (!discount) {
       Object.assign(out, {
-        offlineAllowed, redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
+        redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
         pricing, tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
         includeExtras, splitAllowed,
       });
@@ -687,7 +696,17 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
           {ed ? (
             <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
           ) : <KindPicker value={kind} onChange={setKind} />}
-          {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+          {fields.visible.has('discountType') ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+          {discount ? (
+            // A discount has no accounting or policy to set, but may be redeemed offline too.
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{tt('offlineAllowed')}</p>
+                <p className="text-xs text-muted-foreground">{tt('offlineHint')}</p>
+              </div>
+              <Switch checked={offlineAllowed} onCheckedChange={(v) => setOfflineAllowed(!!v)} aria-label={tt('offlineAllowed')} />
+            </div>
+          ) : null}
 
           {!discount && groupsBatch ? (
             <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
@@ -696,7 +715,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
           ) : null}
           {!discount && !groupsBatch ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
 
-          {!discount ? (
+          {fields.visible.has('includeExtras') ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
               <div className="min-w-0">
                 <p className="text-sm font-medium">{t('includeExtras')}</p>
@@ -706,7 +725,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
             </div>
           ) : null}
 
-          {!discount ? (
+          {fields.visible.has('tillValue') ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
@@ -733,7 +752,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
                   <option value="cover">{te('choice.pricing.cover')}</option>
                 </select>
               </div>
-              {pricing === 'cover' ? (
+              {fields.visible.has('allowTopUp') ? (
                 <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
                   <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
@@ -759,7 +778,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
                 onChange={(ev) => setCount(ev.target.value)} />
               {ed ? <p className="text-xs text-muted-foreground">{te('countHint', { n: issued })}</p> : null}
             </div>
-            {!discount && !chosen ? (
+            {fields.visible.has('splitAllowed') && !chosen ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>

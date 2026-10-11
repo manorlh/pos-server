@@ -8,19 +8,23 @@
  * them under one `clientRequestId`, so a retry after a lost answer never applies anything twice.
  */
 import type { PrepaidBatchEditChange, PrepaidBatchEditEffects } from './prepaidBatchEdit';
+import { commonVoucherFields, type VoucherField } from './voucherFields';
 
 /** The cloud's cap (app/schemas/prepaid_voucher.py MAX_BULK_BATCHES). */
 export const MAX_BULK_BATCHES = 200;
 
 export type BulkField =
   | 'validFrom' | 'validUntil' | 'shopIds' | 'offlineAllowed'
-  | 'stacking'
+  | 'stacking' | 'promotionPolicy' | 'maxUsesPerSale' | 'maxUsesPerDay'
   | 'splitAllowed' | 'includeExtras' | 'pricing' | 'tillValue' | 'allowTopUp' | 'redemptionAccounting' | 'discountBlockPolicy'
   | 'showCode' | 'showItems' | 'showValidity' | 'showCredit' | 'printTillValue' | 'barcodeType'
   | 'totalQty';
 
-/** Which batches a setting is for: every one, goods only (a discount is a discount on the document), a package's groups. */
-export type BulkScope = 'all' | 'goods' | 'groups';
+/**
+ * Which batches a setting is for: every one, goods only (a discount is a discount on the document),
+ * a discount only (its rules of use), a package's groups.
+ */
+export type BulkScope = 'all' | 'goods' | 'discount' | 'groups';
 
 export type BulkSection = 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'print';
 
@@ -37,6 +41,9 @@ export const BULK_FIELDS: readonly BulkFieldDef[] = [
   { field: 'shopIds', scope: 'all', section: 'where' },
   { field: 'offlineAllowed', scope: 'all', section: 'where' },
   { field: 'stacking', scope: 'all', section: 'rules' },
+  { field: 'promotionPolicy', scope: 'discount', section: 'rules' },
+  { field: 'maxUsesPerSale', scope: 'discount', section: 'rules' },
+  { field: 'maxUsesPerDay', scope: 'discount', section: 'rules' },
   { field: 'splitAllowed', scope: 'goods', section: 'contents' },
   { field: 'includeExtras', scope: 'goods', section: 'contents' },
   { field: 'totalQty', scope: 'groups', section: 'contents' },
@@ -72,8 +79,36 @@ export function fieldApplies(field: BulkField, batch: BulkBatchKind): boolean {
   const scope = scopeOf(field);
   const discount = DISCOUNT_KINDS.has(batch.kind ?? 'items');
   if (scope === 'goods') return !discount;
+  if (scope === 'discount') return discount;
   if (scope === 'groups') return !discount && batch.selection === 'groups';
   return true;
+}
+
+/**
+ * The settings the dialog offers for [batches]: only those every one of them has (lib/voucherFields.ts),
+ * and whether they are of different kinds ("נבחרו סדרות מסוגים שונים — מוצגים רק השדות המשותפים").
+ */
+export function offeredFields(batches: readonly BulkBatchKind[]): { fields: BulkField[]; mixed: boolean } {
+  const common = commonVoucherFields(batches.map((b) => ({ kind: b.kind, selection: b.selection })));
+  const fields = BULK_FIELDS
+    .map((d) => d.field)
+    .filter((f) => common.visible.has(f as VoucherField) && batches.every((b) => fieldApplies(f, b)));
+  return { fields, mixed: common.mixed };
+}
+
+/**
+ * A refusal of the single edit worded in English by the cloud's checks, as the dialog says it in
+ * Hebrew — with the limit: "totalQty must be between 2 and 4", "tillValue is required for a fixed value".
+ */
+export function knownRefusal(reason: string | null | undefined):
+  | { key: 'reasonTotalQty'; min: number; max: number }
+  | { key: 'reasonFixedValue' }
+  | null {
+  const r = (reason ?? '').trim();
+  const between = /^totalQty must be between (\d+) and (\d+)$/.exec(r);
+  if (between) return { key: 'reasonTotalQty', min: Number(between[1]), max: Number(between[2]) };
+  if (r === 'tillValue is required for a fixed value') return { key: 'reasonFixedValue' };
+  return null;
 }
 
 /** How many of [batches] do not have [field] (0: every one does). */

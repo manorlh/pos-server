@@ -17,6 +17,9 @@ import { fetchShops } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { retryableSendError, newKey } from '@/lib/deviceCommands';
 import { changesByCategory, editValueText, type PrepaidBatchEditPlan } from '@/lib/prepaidBatchEdit';
+import { formatDate } from '@/lib/format';
+import { MAX_VOUCHERS_PER_SALE, PREPAID_PROMOTION_POLICIES, type PrepaidPromotionPolicy } from '@/lib/prepaidVoucherBenefit';
+import { maxVouchersProblem } from '@/lib/voucherFields';
 import {
   BULK_FAILED,
   BULK_FIELDS,
@@ -24,7 +27,9 @@ import {
   MAX_BULK_BATCHES,
   NOT_APPLICABLE,
   bulkChanges,
+  knownRefusal,
   notApplicableCount,
+  offeredFields,
   outcomeOrder,
   willChange,
   type BulkApplyResult,
@@ -70,6 +75,9 @@ interface Draft {
   shopIds: string[];
   offlineAllowed: boolean;
   rules: RulesState;
+  promotionPolicy: PrepaidPromotionPolicy;
+  maxUsesPerSale: string;
+  maxUsesPerDay: string;
   splitAllowed: boolean;
   includeExtras: boolean;
   totalQty: string;
@@ -90,6 +98,7 @@ interface Draft {
 const EMPTY_DRAFT: Draft = {
   validFrom: '', validUntil: '', shopIds: [], offlineAllowed: false,
   rules: { stacking: 'single', maxVouchersPerSale: '', promotionPolicy: 'exclude', usesPerVoucher: '1', maxUsesPerSale: '1', maxUsesPerDay: '' },
+  promotionPolicy: 'exclude', maxUsesPerSale: '1', maxUsesPerDay: '',
   splitAllowed: false, includeExtras: false, totalQty: '', applyToPartial: false,
   pricing: 'cover', tillValue: '', allowTopUp: true, accounting: 'discount', policy: policyState(),
   showCode: false, showItems: true, showValidity: true, showCredit: true, printTillValue: false, barcodeType: 'qr',
@@ -105,6 +114,9 @@ function partsOf(d: Draft): Partial<Record<BulkField, Record<string, unknown>>> 
     shopIds: { shopIds: d.shopIds.length ? [...d.shopIds].sort() : null },
     offlineAllowed: { offlineAllowed: d.offlineAllowed },
     stacking: stackingBody(d.rules),
+    promotionPolicy: { promotionPolicy: d.promotionPolicy },
+    maxUsesPerSale: { maxUsesPerSale: parseInt(d.maxUsesPerSale, 10) || 1 },
+    maxUsesPerDay: { maxUsesPerDay: d.maxUsesPerDay.trim() ? parseInt(d.maxUsesPerDay, 10) : null },
     splitAllowed: { splitAllowed: d.splitAllowed },
     includeExtras: { includeExtras: d.includeExtras },
     totalQty: { totalQty: parseInt(d.totalQty, 10) || null },
@@ -122,15 +134,26 @@ function partsOf(d: Draft): Partial<Record<BulkField, Record<string, unknown>>> 
   };
 }
 
-/** What is still wrong with the ticked settings, in words (the button says why it is disabled). */
-function problemsOf(d: Draft, ticked: ReadonlySet<BulkField>, t: (k: string) => string): string[] {
+const wholeIn = (v: string, min: number, max: number) => /^\d+$/.test(v.trim()) && Number(v) >= min && Number(v) <= max;
+
+/** What is still wrong with the ticked settings — each with the value, why and the limit (the button stays disabled). */
+function problemsOf(d: Draft, ticked: ReadonlySet<BulkField>, t: (k: string, v?: Record<string, string | number>) => string): string[] {
   const out: string[] = [];
   if (ticked.size === 0) out.push(t('nothingChosen'));
-  if (ticked.has('stacking') && !stackingValid(d.rules)) out.push(t('problem.stacking'));
-  if (ticked.has('totalQty') && !(parseInt(d.totalQty, 10) > 0)) out.push(t('problem.totalQty'));
-  if (ticked.has('tillValue') && d.tillValue.trim() && !(Number(d.tillValue.replace(',', '.')) > 0)) out.push(t('problem.tillValue'));
+  const maxBad = ticked.has('stacking') && !stackingValid(d.rules) ? maxVouchersProblem(d.rules.maxVouchersPerSale, MAX_VOUCHERS_PER_SALE) : null;
+  if (maxBad) out.push(t('problem.stacking', { value: maxBad.value, max: maxBad.max }));
+  if (ticked.has('totalQty') && !wholeIn(d.totalQty, 1, 2000)) out.push(t('problem.totalQty', { value: d.totalQty }));
+  if (ticked.has('tillValue') && d.tillValue.trim() && !(Number(d.tillValue.replace(',', '.')) > 0)) {
+    out.push(t('problem.tillValue', { value: d.tillValue }));
+  }
+  if (ticked.has('maxUsesPerSale') && !wholeIn(d.maxUsesPerSale, 1, 1000)) out.push(t('problem.uses', { value: d.maxUsesPerSale }));
+  if (ticked.has('maxUsesPerDay') && d.maxUsesPerDay.trim() && !wholeIn(d.maxUsesPerDay, 1, 1000)) {
+    out.push(t('problem.uses', { value: d.maxUsesPerDay }));
+  }
   if (ticked.has('validFrom') && ticked.has('validUntil') && d.validFrom && d.validUntil && d.validUntil < d.validFrom) {
-    out.push(t('problem.dates'));
+    out.push(t('problem.dates', {
+      from: formatDate(dayBoundIso(d.validFrom, false) ?? d.validFrom), until: formatDate(dayBoundIso(d.validUntil, true) ?? d.validUntil),
+    }));
   }
   return out;
 }
@@ -181,9 +204,14 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
   const types = useQuery({ queryKey: ['prepaid-voucher-types', 'flags'], queryFn: () => fetchPrepaidTypes({ includeInactive: false }), enabled: open });
   const overrideEditable = !!types.data?.overrideEditable;
 
-  const changes = bulkChanges(partsOf(draft), ticked,
-    ticked.has('totalQty') && draft.applyToPartial ? { applyToPartial: true } : {}) as PrepaidBatchEditBody;
-  const problems = problemsOf(draft, ticked, t);
+  // Only the settings every picked batch has (lib/voucherFields.ts); a fixed value has no top-up.
+  const offered = offeredFields(batches);
+  const shownFields = new Set<BulkField>(offered.fields.filter((f) =>
+    !(f === 'allowTopUp' && ticked.has('pricing') && draft.pricing === 'fixed')));
+  const sending = new Set([...ticked].filter((f) => shownFields.has(f)));
+  const changes = bulkChanges(partsOf(draft), sending,
+    sending.has('totalQty') && draft.applyToPartial ? { applyToPartial: true } : {}) as PrepaidBatchEditBody;
+  const problems = problemsOf(draft, sending, t);
   const tooMany = ids.length > MAX_BULK_BATCHES;
 
   const errorText = (err: unknown) => {
@@ -193,10 +221,11 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
   };
 
   const plan = useMutation({
-    mutationFn: () => previewPrepaidBatchesBulkEdit(ids, changes),
-    onSuccess: (out) => {
+    mutationFn: (v: { ids: string[]; changes: PrepaidBatchEditBody }) => previewPrepaidBatchesBulkEdit(v.ids, v.changes),
+    onSuccess: (out, v) => {
       setPreview(out);
-      setSent({ ids, changes, requestId: newKey() });
+      // Exactly what was previewed (not the form as it may be now), under a new request id.
+      setSent({ ids: v.ids, changes: v.changes, requestId: newKey() });
       setLost(false);
       setStep('preview');
     },
@@ -269,7 +298,22 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
         emptyLabel={tp('create.noShops')} disabled={!on('shopIds')} />
     ), companyIds.length > 1 ? t('shopsManyCompanies') : undefined),
     offlineAllowed: switchRow('offlineAllowed', draft.offlineAllowed, (v) => set({ offlineAllowed: v })),
-    stacking: row('stacking', <RulesFields kind="items" value={draft.rules} onChange={(rules) => set({ rules })} />),
+    stacking: row('stacking', <RulesFields kind="items" stackingOnly value={draft.rules} onChange={(rules) => set({ rules })} />),
+    promotionPolicy: row('promotionPolicy', (
+      <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30" value={draft.promotionPolicy}
+        disabled={!on('promotionPolicy')} onChange={(e) => set({ promotionPolicy: e.target.value as PrepaidPromotionPolicy })}
+        aria-label={label('promotionPolicy')}>
+        {PREPAID_PROMOTION_POLICIES.map((p) => <option key={p} value={p}>{tp(`kinds.promotionPolicy.${p}`)}</option>)}
+      </select>
+    ), tp(`kinds.promotionHint.${draft.promotionPolicy}`)),
+    maxUsesPerSale: row('maxUsesPerSale', (
+      <Input type="number" min={1} max={1000} className="h-9 max-w-40" value={draft.maxUsesPerSale} disabled={!on('maxUsesPerSale')}
+        onChange={(e) => set({ maxUsesPerSale: e.target.value })} aria-label={label('maxUsesPerSale')} />
+    ), `${tp('kinds.maxUsesPerSaleHint')} ${t('usesPerBatchHint')}`),
+    maxUsesPerDay: row('maxUsesPerDay', (
+      <Input type="number" min={1} max={1000} className="h-9 max-w-40" value={draft.maxUsesPerDay} disabled={!on('maxUsesPerDay')}
+        onChange={(e) => set({ maxUsesPerDay: e.target.value })} placeholder={tp('kinds.noMaximum')} aria-label={label('maxUsesPerDay')} />
+    ), tp('kinds.maxUsesPerDayHint')),
     splitAllowed: switchRow('splitAllowed', draft.splitAllowed, (v) => set({ splitAllowed: v })),
     includeExtras: switchRow('includeExtras', draft.includeExtras, (v) => set({ includeExtras: v })),
     totalQty: row('totalQty', (
@@ -359,12 +403,20 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
         {step === 'form' ? (
           <div className="space-y-4">
             <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{t('intro')}</p>
-            {BULK_SECTIONS.map((section) => (
-              <section key={section} className="space-y-2">
-                <h3 className="text-sm font-semibold">{t(`section.${section}`)}</h3>
-                {BULK_FIELDS.filter((f) => f.section === section).map((f) => controls[f.field])}
-              </section>
-            ))}
+            {offered.mixed ? (
+              <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+                {t('mixedKinds')}
+              </p>
+            ) : null}
+            {BULK_SECTIONS.map((section) => {
+              const here = BULK_FIELDS.filter((f) => f.section === section && shownFields.has(f.field));
+              return here.length ? (
+                <section key={section} className="space-y-2">
+                  <h3 className="text-sm font-semibold">{t(`section.${section}`)}</h3>
+                  {here.map((f) => controls[f.field])}
+                </section>
+              ) : null;
+            })}
           </div>
         ) : null}
 
@@ -375,7 +427,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
             </p>
             <ul className="space-y-2">
               {outcomeOrder(preview.items).map((it) => (
-                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} />
+                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} sent={sent?.changes ?? null} />
               ))}
             </ul>
             {lost ? (
@@ -393,7 +445,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
             </p>
             <ul className="space-y-2">
               {outcomeOrder(result.items).map((it) => (
-                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} compact />
+                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} sent={sent?.changes ?? null} compact />
               ))}
             </ul>
           </div>
@@ -408,7 +460,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
           {step === 'form' ? (
             <>
               <Button variant="outline" onClick={() => close(false)}>{tc('cancel')}</Button>
-              <Button onClick={() => plan.mutate()} disabled={problems.length > 0 || tooMany || plan.isPending || ids.length === 0}>
+              <Button onClick={() => plan.mutate({ ids, changes })} disabled={problems.length > 0 || tooMany || plan.isPending || ids.length === 0}>
                 {plan.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                 {plan.isPending ? t('previewing') : t('preview')}
               </Button>
@@ -471,7 +523,13 @@ const STATUS_STYLE = {
 } as const;
 
 /** One batch of the preview / the result: what changes and what it touches, or why it is refused. */
-function OutcomeRow({ item, batch, compact = false }: { item: BulkBatchOutcome; batch: PrepaidVoucherBatch | null; compact?: boolean }) {
+function OutcomeRow({ item, batch, sent, compact = false }: {
+  item: BulkBatchOutcome;
+  batch: PrepaidVoucherBatch | null;
+  /** What was asked (the value a refusal names). */
+  sent: PrepaidBatchEditBody | null;
+  compact?: boolean;
+}) {
   const t = useTranslations('prepaidVouchers.bulk');
   const te = useTranslations('prepaidVouchers.edit');
   const tp = useTranslations('prepaidVouchers');
@@ -485,6 +543,9 @@ function OutcomeRow({ item, batch, compact = false }: { item: BulkBatchOutcome; 
   const reason = (): string => {
     if (item.reason === NOT_APPLICABLE) return t('notApplicable', { fields: (item.fields ?? []).map(label).join(', ') });
     if (item.reason === BULK_FAILED) return t('failed');
+    const known = knownRefusal(item.reason);
+    if (known?.key === 'reasonTotalQty') return t('reasonTotalQty', { value: String(sent?.totalQty ?? ''), min: known.min, max: known.max });
+    if (known?.key === 'reasonFixedValue') return t('reasonFixedValue');
     if (item.reason && /^[a-z_]+$/.test(item.reason) && tp.has(`errors.${item.reason}`)) return tp(`errors.${item.reason}`);
     return item.message ?? item.reason ?? '';
   };
