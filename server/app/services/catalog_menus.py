@@ -1267,7 +1267,11 @@ def simulate(
         return out
     products, categories = _catalog_rows(db, level, entity)
     off_channel = "kiosk_only" if surface == R.SURFACE_POS else "pos_only"
-    rows = [p for p in products if p.get("salesChannel") != off_channel and not p.get("isGeneral")]
+    # "תוספת בלבד" is in no sell catalog (app/services/addon_role.py).
+    rows = [
+        p for p in products
+        if p.get("salesChannel") != off_channel and not p.get("isGeneral") and p.get("addonRole") != "addon_only"
+    ]
     if surface != R.SURFACE_POS:
         # "מחייב אישור מנהל במכירה" is never on a kiosk (app/services/restricted_items.py).
         from app.services import restricted_items as RI

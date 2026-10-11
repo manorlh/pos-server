@@ -3,7 +3,8 @@
 /**
  * The modifier group editor ("קבוצת תוספות"): what the group is, how many may be chosen
  * and how many of them are free, and its options — dragged into order, each with a
- * price, a kitchen label, a default flag, allergens and an optional linked product.
+ * price, a kitchen label, a default flag, allergens, a picture (background removed, as a
+ * product's) and an optional linked product — add-ons ("תוספת") first; the option keeps its price.
  * Server rules: app/schemas/menu.py `validate_group_rules`.
  */
 
@@ -25,7 +26,9 @@ import {
   type GroupKind,
   type ModifierGroup,
 } from '@/lib/menuApi';
-import { ProductListPicker, useCategoryOptions } from '@/components/dashboard/promotions/group-picker';
+import { useCategoryOptions } from '@/components/dashboard/promotions/group-picker';
+import { ProductImageUpload } from '@/components/product-image-upload';
+import { LinkedProductPicker } from './linked-product-picker';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -44,6 +47,8 @@ interface OptionDraft {
   /** The most of this option in one dish; '' = no limit of its own. */
   maxQty: string;
   isActive: boolean;
+  /** The option's own picture; null: none (the linked product's shows on the devices). */
+  imageUrl: string | null;
 }
 
 interface Draft {
@@ -71,7 +76,7 @@ function draftOf(g: ModifierGroup | null, defaultCompany: string): Draft {
       name: '', companyId: defaultCompany, kind: 'addon', required: false, minSelect: '1',
       limited: true, maxSelect: '5', freeCount: '0', allowQuantity: false, allowPre: false, isActive: true,
       options: [
-        { key: newKey(), name: '', kitchenName: '', price: '0', isDefault: false, allergens: [], linkedProductId: null, maxQty: '', isActive: true },
+        { key: newKey(), name: '', kitchenName: '', price: '0', isDefault: false, allergens: [], linkedProductId: null, maxQty: '', isActive: true, imageUrl: null },
       ],
       categoryIds: [],
     };
@@ -99,6 +104,7 @@ function draftOf(g: ModifierGroup | null, defaultCompany: string): Draft {
       linkedProductId: o.linkedProductId,
       maxQty: o.maxQty ? String(o.maxQty) : '',
       isActive: o.isActive,
+      imageUrl: o.imageUrl ?? null,
     })),
     categoryIds: g.categoryIds,
   };
@@ -158,6 +164,7 @@ function inputOf(d: Draft): GroupInput {
         // A limit of its own only means something when an option can be taken more than once.
         maxQty: d.allowQuantity && !removal && o.maxQty ? int(o.maxQty) || null : null,
         isActive: o.isActive,
+        imageUrl: o.imageUrl,
       })),
     categoryIds: d.categoryIds,
   };
@@ -339,7 +346,7 @@ function GroupEditor({ group, onDone }: { group: ModifierGroup | null; onDone: (
                 ...d,
                 options: [
                   ...d.options,
-                  { key: newKey(), name: '', kitchenName: '', price: '0', isDefault: false, allergens: [], linkedProductId: null, maxQty: '', isActive: true },
+                  { key: newKey(), name: '', kitchenName: '', price: '0', isDefault: false, allergens: [], linkedProductId: null, maxQty: '', isActive: true, imageUrl: null },
                 ],
               }))
             }
@@ -372,6 +379,10 @@ function GroupEditor({ group, onDone }: { group: ModifierGroup | null; onDone: (
             >
               <div className="flex items-center gap-2 px-3 py-2">
                 <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-[#C7C7CC]" aria-label={t('dragHint')} />
+                {o.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- a thumbnail of the stored picture
+                  <img src={o.imageUrl} alt="" className="h-8 w-8 shrink-0 rounded-md bg-white object-contain" />
+                ) : null}
                 <Input
                   value={o.name}
                   onChange={(e) => setOption(o.key, { name: e.target.value })}
@@ -459,10 +470,16 @@ function GroupEditor({ group, onDone }: { group: ModifierGroup | null; onDone: (
                       ))}
                     </div>
                   </div>
-                  <ProductListPicker
-                    label={t('linkedProduct')}
-                    value={o.linkedProductId ? [o.linkedProductId] : []}
-                    onChange={(ids) => setOption(o.key, { linkedProductId: ids.length ? ids[ids.length - 1] : null })}
+                  <ProductImageUpload
+                    compact
+                    label={t('optionImage')}
+                    value={o.imageUrl ?? undefined}
+                    onChange={(url) => setOption(o.key, { imageUrl: url ?? null })}
+                  />
+                  <p className="text-[12px] text-[#6D6D72]">{t('optionImageHint')}</p>
+                  <LinkedProductPicker
+                    value={o.linkedProductId}
+                    onChange={(id) => setOption(o.key, { linkedProductId: id })}
                   />
                   <p className="text-[12px] text-[#6D6D72]">{t('linkedProductHint')}</p>
                   <label className="flex items-center justify-between gap-2 text-[13px]">

@@ -82,6 +82,8 @@ import {
   ProductChannelBadge,
   ProductChannelSection,
 } from '@/components/dashboard/products/product-channel-section';
+import { AddonRoleBadge } from '@/components/dashboard/products/addon-role-badge';
+import { ADDON_ROLES, addonRoleOf } from '@/lib/addonRole';
 
 type SkuMode = 'auto' | 'manual';
 
@@ -473,6 +475,7 @@ export default function ProductsPage() {
                           <Badge variant="outline">{tl('localBadge')}</Badge>
                         ) : null}
                         {ticketBadge(p)}<ProductChannelBadge product={p} />
+                        <AddonRoleBadge role={p.addonRole} />
                         <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                       </div>
                     </TableCell>
@@ -559,6 +562,7 @@ export default function ProductsPage() {
                         </Badge>
                       ) : null}
                       {ticketBadge(p)}<ProductChannelBadge product={p} />
+                      <AddonRoleBadge role={p.addonRole} />
                       <RestrictedBadge state={restrictionOf(p, restrictedCategories)} />
                     </div>
                     <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
@@ -860,6 +864,24 @@ export default function ProductsPage() {
             />
             {/* "מופיע ב": קופה / קיוסק / הזמנות אונליין / תפריט דיגיטלי — sent as appearsIn with the whole product (specs/item-blocks-targets.md §11). */}
             <ProductChannelSection product={editing} onChange={(patch) => setEditing((p) => ({ ...p, ...patch }))} />
+            {/* "תוספת": a regular item, an add-on only (in no sell catalog — an option's linked product, a meal's component), or both. */}
+            <div className="space-y-1 rounded-md border p-3">
+              <Label htmlFor="product-addon-role">{t('addonRole')}</Label>
+              <select
+                id="product-addon-role"
+                disabled={isGeneral}
+                value={addonRoleOf(editing.addonRole)}
+                onChange={(e) => setEditing((p) => ({ ...p, addonRole: addonRoleOf(e.target.value) }))}
+                className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              >
+                {ADDON_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {t(`addonRoleOption.${r}`)}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">{t(`addonRoleHint.${addonRoleOf(editing.addonRole)}`)}</p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>{t('barcode')}</Label>

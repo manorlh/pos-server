@@ -15,6 +15,11 @@ GET    /menu/categories/{id}            → course, groups, note chips
 PUT    /menu/categories/{id}
 GET    /menu/notes                      → the chips every dish gets, per company
 PUT    /menu/notes                      → `{"companyId", "notes": [...]}`
+POST   /menu/modifier-options/{id}/image → the option's picture (multipart `file`; the background
+                                          removed as a product's, `?keepBackground=true` keeps it)
+DELETE /menu/modifier-options/{id}/image → removed (the linked product's picture shows)
+POST   /menu/notes/{id}/image           → a note chip's picture (the same pipeline)
+DELETE /menu/notes/{id}/image
 GET    /menu/upsells | POST | PUT /{id} | DELETE /{id}   → upsell rules ("הגדלות מכירה")
 GET    /menu/courses | PUT              → the course list, per company
 GET    /reports/modifier-sales          → options chosen and their revenue
@@ -35,7 +40,7 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -208,6 +213,89 @@ def put_global_notes(
     M.set_global_notes(db, current_user, active_tenant_id, body)
     _changed(db, active_tenant_id, background_tasks)
     return M.list_global_notes(db, current_user, active_tenant_id)
+
+
+# ── Pictures: an option's, a note chip's ──────────────────────────────────────
+# The product pipeline (app/routers/images.py): the same type and size checks, the background
+# cut out (app/services/product_image_processing.py), the same storage, the upload kept beside it.
+
+
+def _picture_out(upload, **row) -> dict:
+    out = upload.model_dump(by_alias=True) if upload is not None else {}
+    out.update(row)
+    return out
+
+
+@router.post("/menu/modifier-options/{option_id}/image", status_code=status.HTTP_201_CREATED)
+async def upload_option_image(
+    option_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    keep_background: bool = Query(False, alias="keepBackground"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.routers import images
+
+    images._check_image_role(current_user)
+    option, group = M.get_option(db, active_tenant_id, option_id)
+    M.check_company_write(db, current_user, active_tenant_id, group.company_id)
+    contents = await images.read_checked_upload(file)
+    upload = await images.store_upload(contents, active_tenant_id, "products", keep_background)
+    M.set_option_image(db, current_user, active_tenant_id, option, group, upload.url)
+    _changed(db, active_tenant_id, background_tasks)
+    return _picture_out(upload, option=M.option_out(option))
+
+
+@router.delete("/menu/modifier-options/{option_id}/image")
+def delete_option_image(
+    option_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    option, group = M.get_option(db, active_tenant_id, option_id)
+    M.set_option_image(db, current_user, active_tenant_id, option, group, None)
+    _changed(db, active_tenant_id, background_tasks)
+    return {"option": M.option_out(option)}
+
+
+@router.post("/menu/notes/{note_id}/image", status_code=status.HTTP_201_CREATED)
+async def upload_note_image(
+    note_id: str,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    keep_background: bool = Query(False, alias="keepBackground"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    from app.routers import images
+
+    images._check_image_role(current_user)
+    note = M.get_note(db, active_tenant_id, note_id)
+    M.check_note_write(db, current_user, active_tenant_id, note)
+    contents = await images.read_checked_upload(file)
+    upload = await images.store_upload(contents, active_tenant_id, "products", keep_background)
+    M.set_note_image(db, current_user, active_tenant_id, note, upload.url)
+    _changed(db, active_tenant_id, background_tasks)
+    return _picture_out(upload, note=M.note_out(note))
+
+
+@router.delete("/menu/notes/{note_id}/image")
+def delete_note_image(
+    note_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    note = M.get_note(db, active_tenant_id, note_id)
+    M.set_note_image(db, current_user, active_tenant_id, note, None)
+    _changed(db, active_tenant_id, background_tasks)
+    return {"note": M.note_out(note)}
 
 
 # ── Upsell rules ──────────────────────────────────────────────────────────────

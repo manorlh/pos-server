@@ -120,7 +120,19 @@ def local_now(db: Session, tenant_id: Any, at: Optional[datetime] = None) -> dat
 
 
 def _catalog(db: Session, place: Place) -> Tuple[List[Product], Dict[str, Any]]:
-    """`(products, {product id: its shop row})` — the shop's assortment, or the company's catalog."""
+    """
+    `(products, {product id: its shop row})` — the shop's assortment, or the company's catalog. Never a
+    "תוספת בלבד" product (app/services/addon_role.py): it is only an option's linked product or a meal's
+    component, in no sell catalog — not on the public page, not in the editor, not orderable.
+    """
+    from app.services import addon_role
+
+    products, shop_rows = _catalog_rows(db, place)
+    kept = [p for p in products if not addon_role.is_addon_only(p)]
+    return kept, {k: v for k, v in shop_rows.items() if k in {str(p.id) for p in kept}}
+
+
+def _catalog_rows(db: Session, place: Place) -> Tuple[List[Product], Dict[str, Any]]:
     if place.shop_id is not None:
         rows = (
             db.query(ShopProductOverride, Product)

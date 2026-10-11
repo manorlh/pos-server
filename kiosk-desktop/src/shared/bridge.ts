@@ -47,6 +47,8 @@ export interface KioskView {
     held?: KProduct[];
     groups: Record<string, KGroup[]>;
     quickNotes: Record<string, string[]>;
+    /** "הערה עם תמונה": a note chip's picture (local) by its text; absent (the Android bundle's bridge): none. */
+    noteImages?: Record<string, string>;
     upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
     /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (client lib/kioskUpsellRules.ts); absent: none. */
     upsellRules?: KioskUpsellRule[];

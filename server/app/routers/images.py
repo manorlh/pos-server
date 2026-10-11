@@ -151,7 +151,12 @@ async def upload_image(
     stored as a trimmed transparent PNG, unless `?keepBackground=true` or
     PRODUCT_IMAGE_BG_REMOVAL is off. Categories are stored as uploaded."""
     _check_image_role(current_user)
+    contents = await read_checked_upload(file)
+    return await store_upload(contents, active_tenant_id, resource or "products", keep_background)
 
+
+async def read_checked_upload(file: UploadFile) -> bytes:
+    """The bytes of an uploaded picture that passed the type (415) and size (413) checks."""
     if file.content_type not in _ALLOWED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -164,7 +169,7 @@ async def upload_image(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="File exceeds 5 MB limit",
         )
-    return await store_upload(contents, active_tenant_id, resource or "products", keep_background)
+    return contents
 
 
 async def store_upload(

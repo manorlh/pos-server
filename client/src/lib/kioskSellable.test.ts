@@ -9,7 +9,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { neverOnKiosk, sellableOnKiosk } from './kioskSellable';
+import { addonOnlyRow, neverOnKiosk, onKioskScreens, sellableOnKiosk } from './kioskSellable';
 import { buildWebCatalog, sellableOnKiosk as exportedByTheCatalog } from './kioskWebCatalog';
 import type { MenuBlock } from './menuSchedule';
 
@@ -115,5 +115,65 @@ describe('the browser kiosk\'s catalog never carries them (buildWebCatalog)', ()
     assert.equal(cat.menu.mode, 'none');
     assert.deepEqual(cat.products, []);
     assert.deepEqual(ids(cat.held), ['dish', 'drink']);
+  });
+});
+
+describe('"תוספת בלבד" (addonRole addon_only) — never on the screens, kept for an add-on and a meal', () => {
+  const products: Row[] = [
+    { id: 'burger', categoryId: 'food', name: 'המבורגר', price: 52 },
+    { id: 'fries', categoryId: 'food', name: 'צ\'יפס', price: 12, addonRole: 'addon_only' },
+    { id: 'cola', categoryId: 'drinks', name: 'קולה', price: 10, addonRole: 'both' },
+    { id: 'meal', categoryId: 'food', name: 'ארוחה', price: 62 },
+  ];
+  const categories: Row[] = [
+    { id: 'food', name: 'אוכל', isActive: true },
+    { id: 'drinks', name: 'שתייה', isActive: true },
+  ];
+  const menu: Row = {
+    groups: [],
+    links: {},
+    notes: {},
+    meals: {
+      meal: [
+        { id: 's1', name: 'תוספת', quantity: 1, minSelect: 1, maxSelect: 1, options: [{ productId: 'fries', upcharge: 0, isDefault: true }] },
+        { id: 's2', name: 'שתייה', quantity: 1, minSelect: 1, maxSelect: 1, options: [{ productId: 'cola', upcharge: 0, isDefault: true }] },
+      ],
+    },
+  };
+  const ids = (list: Array<{ id: string }>) => list.map((p) => p.id).sort();
+
+  it('the rule: addon_only only; "both", none and an unknown code are ordinary products', () => {
+    assert.equal(addonOnlyRow({ addonRole: 'addon_only' }), true);
+    for (const v of ['both', 'none', undefined, 'weird']) assert.equal(addonOnlyRow({ addonRole: v }), false, String(v));
+    assert.equal(onKioskScreens({ addonRole: 'addon_only' }, 'all'), false);
+    assert.equal(onKioskScreens({ addonRole: 'both' }, 'all'), true);
+    // Still sold: a basket line or a meal's component of it is priced and checked.
+    assert.equal(sellableOnKiosk({ addonRole: 'addon_only' }, 'all'), true);
+  });
+
+  it('no menu: not on the screens, held — and still a choice of the meal\'s slot', () => {
+    const cat = buildWebCatalog({ products, categories, menu, machineCatalog: { mode: 'all' } }, {});
+    assert.deepEqual(ids(cat.products), ['burger', 'cola', 'meal']);
+    assert.deepEqual(ids(cat.held), ['fries']);
+    assert.deepEqual(cat.meals.meal.map((s) => s.choices.map((c) => c.productId)), [['fries'], ['cola']]);
+  });
+
+  it('a menu that places it does not put it on the screens either', () => {
+    const placesAll: MenuBlock = {
+      fallback: 'catalog',
+      menus: [
+        {
+          id: 'm', name: 'הכל', channel: 'kiosk',
+          schedule: { always: true, days: null, ranges: [], from: null, to: null },
+          categories: [{ id: 'food', all: true }, { id: 'drinks', all: true }],
+          products: [],
+        },
+      ],
+      assignments: [{ menuId: 'm', level: 'shop', depth: 0, priority: 0 }],
+    };
+    const cat = buildWebCatalog({ products, categories, menu, machineCatalog: { mode: 'all' }, catalogMenus: placesAll }, {}, { stock: {}, nowMs: Date.UTC(2026, 9, 11, 9, 0, 0) });
+    assert.equal(cat.menu.mode, 'menu');
+    assert.equal(cat.products.some((p) => p.id === 'fries'), false);
+    assert.deepEqual(ids(cat.held), ['fries']);
   });
 });

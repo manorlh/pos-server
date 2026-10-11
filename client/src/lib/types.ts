@@ -1073,6 +1073,11 @@ export interface Product {
    */
   appearsIn?: ('pos' | 'kiosk' | 'online' | 'menu')[];
   /**
+   * "תוספת" (lib/addonRole.ts): none (פריט רגיל, the default) / addon_only (תוספת בלבד — in no sell
+   * catalog, only an add-on's linked product or a meal's component) / both (גם וגם).
+   */
+  addonRole?: import('./addonRole').AddonRole;
+  /**
    * "סימוני תזונה" (lib/productDietary.ts): vegan / vegetarian / dairy / meat / gluten_free /
    * spicy, in that order; [] when none. Shown in the kiosk and, by a till parameter, on the till.
    */

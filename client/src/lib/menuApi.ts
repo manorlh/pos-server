@@ -26,6 +26,8 @@ export interface ModifierOption {
   maxQty: number | null;
   sortOrder: number;
   isActive: boolean;
+  /** The option's own picture (background removed); null: the linked product's shows on the devices. */
+  imageUrl?: string | null;
 }
 
 export interface ModifierGroup {
@@ -63,6 +65,8 @@ export interface OptionInput {
   linkedProductId?: string | null;
   maxQty?: number | null;
   isActive: boolean;
+  /** Omitted: an existing option keeps its picture; null: none. */
+  imageUrl?: string | null;
 }
 
 export interface GroupInput {
@@ -116,6 +120,15 @@ export interface NoteChip {
   text: string;
   isImportant: boolean;
   sortOrder?: number;
+  /** A picture for the chip — a kiosk shows the note as an image tile, like an option. */
+  imageUrl?: string | null;
+}
+
+/** A chip as the forms send it (`imageUrl` omitted: the chip of that text keeps its picture). */
+export interface NoteInput {
+  text: string;
+  isImportant: boolean;
+  imageUrl?: string | null;
 }
 
 export interface NotesState {
@@ -167,7 +180,7 @@ export interface ProductMenuInput {
   courseId?: string | null;
   setCourse?: boolean;
   links?: { mode: LinksMode; groupIds: string[] };
-  notes?: { mode: 'inherit' | 'own'; notes: { text: string; isImportant: boolean }[] };
+  notes?: { mode: 'inherit' | 'own'; notes: NoteInput[] };
   meal?: {
     slots: {
       id?: string;
@@ -224,8 +237,48 @@ export async function fetchGlobalNotes(): Promise<GlobalNotes> {
   return (await api.get<GlobalNotes>('/menu/notes')).data;
 }
 
-export async function saveGlobalNotes(companyId: string | null, notes: { text: string; isImportant: boolean }[]): Promise<GlobalNotes> {
+export async function saveGlobalNotes(companyId: string | null, notes: NoteInput[]): Promise<GlobalNotes> {
   return (await api.put<GlobalNotes>('/menu/notes', { mode: 'own', companyId, notes })).data;
+}
+
+/* ---------------- pictures of an option / a note chip (the product pipeline) ---------------- */
+
+export interface MenuPictureUpload {
+  url: string;
+  publicId: string;
+  originalUrl: string | null;
+  backgroundRemoved: boolean;
+  processed: boolean;
+}
+
+function pictureForm(file: File): FormData {
+  const body = new FormData();
+  body.append('file', file);
+  return body;
+}
+
+/** POST /menu/modifier-options/{id}/image: stored on the option at once (background removed unless kept). */
+export async function uploadOptionImage(optionId: string, file: File, keepBackground = false): Promise<MenuPictureUpload & { option: ModifierOption }> {
+  const { data } = await api.post(`/menu/modifier-options/${optionId}/image`, pictureForm(file), {
+    params: { keepBackground }, headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+export async function deleteOptionImage(optionId: string): Promise<{ option: ModifierOption }> {
+  return (await api.delete(`/menu/modifier-options/${optionId}/image`)).data;
+}
+
+/** POST /menu/notes/{id}/image: stored on the chip at once. */
+export async function uploadNoteImage(noteId: string, file: File, keepBackground = false): Promise<MenuPictureUpload & { note: NoteChip }> {
+  const { data } = await api.post(`/menu/notes/${noteId}/image`, pictureForm(file), {
+    params: { keepBackground }, headers: { 'Content-Type': undefined },
+  });
+  return data;
+}
+
+export async function deleteNoteImage(noteId: string): Promise<{ note: NoteChip }> {
+  return (await api.delete(`/menu/notes/${noteId}/image`)).data;
 }
 
 /* ---------------- courses ---------------- */
