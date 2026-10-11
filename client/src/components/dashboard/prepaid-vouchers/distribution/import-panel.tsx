@@ -14,7 +14,8 @@ import { Download, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import {
   cellText,
   detectColumns,
-  importTemplateCsv,
+  templateHeader,
+  voucherContentsRows,
   parseDelimited,
   rowsFromTable,
   type ColumnRole,
@@ -27,7 +28,7 @@ import {
   type PlannedRow,
   type PlanSummary,
 } from '@/lib/voucherDistributionApi';
-import type { PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
+import { fetchPrepaidCategories, searchPrepaidProducts, type PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -71,6 +72,47 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
   const [allowDuplicates, setAllowDuplicates] = useState(false);
   const [plan, setPlan] = useState<{ rows: PlannedRow[]; summary: PlanSummary } | null>(null);
   const [reading, setReading] = useState(false);
+
+  // "תבנית ללקוח": an Excel file the customer fills in (name, phone, vouchers or group) and we import
+  // back, with what this voucher holds on a second sheet — the owner, 11.10.2026.
+  const [templating, setTemplating] = useState(false);
+  const downloadTemplate = async () => {
+    setTemplating(true);
+    try {
+      const [categories, products] = await Promise.all([
+        fetchPrepaidCategories(batch.companyId).catch(() => []),
+        searchPrepaidProducts('', batch.companyId, { limit: 200 }).catch(() => []),
+      ]);
+      const cat = new Map(categories.map((c) => [c.id, c.name]));
+      const prod = new Map(products.map((p) => [p.id, p.name]));
+      const ExcelJS = (await import('exceljs')).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('נמענים', { views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }] });
+      ws.addRow(templateHeader(mode)).font = { bold: true };
+      ws.columns = [{ width: 24 }, { width: 18 }, { width: 14 }];
+      ws.getColumn(2).numFmt = '@';
+      const info = wb.addWorksheet('מה השובר מכיל', { views: [{ rightToLeft: true }] });
+      info.columns = [{ width: 22 }, { width: 70 }];
+      for (const r of voucherContentsRows(
+        { ...batch, typeName: batch.typeName ?? batch.type?.name ?? null },
+        { product: (id) => prod.get(id), category: (id) => cat.get(id) },
+      )) info.addRow(r);
+      info.getColumn(1).font = { bold: true };
+      const blob = new Blob([await wb.xlsx.writeBuffer()], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${batch.name || 'vouchers'} - נמענים.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setTemplating(false);
+    }
+  };
 
   const load = (cells: string[][], name: string | null) => {
     const found = detectColumns(cells, mode);
@@ -238,15 +280,8 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         </fieldset>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="ghost" onClick={() => {
-            const url = URL.createObjectURL(new Blob([importTemplateCsv(mode)], { type: 'text/csv;charset=utf-8' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'voucher-recipients-template.csv';
-            a.click();
-            URL.revokeObjectURL(url);
-          }}>
-            <Download aria-hidden /> {t('template')}
+          <Button type="button" variant="ghost" disabled={templating} onClick={() => void downloadTemplate()}>
+            {templating ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />} {t('template')}
           </Button>
           <Button type="button" variant="outline" disabled={!rows.length || !hasPhone || preview.isPending}
             onClick={() => preview.mutate()}>

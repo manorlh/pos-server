@@ -17,6 +17,8 @@ import {
   waMeLink,
   waWebLink,
   importTemplateCsv,
+  templateHeader,
+  voucherContentsRows,
   type QueueRow,
   type ShareNavigatorLike,
 } from './voucherDistribution';
@@ -181,4 +183,43 @@ test('import template: BOM + headers the import detects, for both modes', () => 
     assert.equal(found.header, true);
     assert.deepEqual(found.roles, ['name', 'phone', mode]);
   }
+});
+
+// ── The customer's Excel template: the recipients header and "what the voucher holds" ──
+
+test('template header: what the import detects, a group or a count by mode', () => {
+  for (const mode of ['count', 'group'] as const) {
+    const header = templateHeader(mode);
+    const found = detectColumns([header, ['דנה', '0501234567', '2']], mode);
+    assert.equal(found.header, true);
+    assert.deepEqual(found.roles, ['name', 'phone', mode]);
+  }
+});
+
+test('what the voucher holds: one of several food items, by category and product names', () => {
+  const rows = voucherContentsRows(
+    {
+      name: 'אירוע חברה', typeName: 'מזון', validUntil: '2026-12-31T00:00:00Z', tillValue: 40, pricing: 'cover',
+      items: [], selection: 'groups', totalQty: 1,
+      groups: [{ name: 'מזון', minQty: 1, maxQty: 1, categoryIds: ['c1'], productIds: ['p1'], excludeProductIds: ['p2'] }],
+    },
+    { category: (id) => ({ c1: 'מנות' } as Record<string, string>)[id], product: (id) => ({ p1: 'נקניקייה', p2: 'קולה' } as Record<string, string>)[id] },
+  );
+  const text = rows.map((r) => r.join(' | ')).join('\n');
+  assert.match(text, /שובר \| אירוע חברה/);
+  assert.match(text, /תוקף \| עד 31\/12\/2026/);
+  assert.match(text, /שווי \| עד ₪40/);
+  assert.match(text, /סה״כ פריטים בשובר \| 1/);
+  assert.match(text, /מזון \| לבחירה: 1 פריטים/);
+  assert.match(text, /קטגוריות: מנות/);
+  assert.match(text, /פריטים: נקניקייה/);
+  assert.match(text, /לא כולל: קולה/);
+});
+
+test('what the voucher holds: a fixed list prints each item as on the voucher', () => {
+  const rows = voucherContentsRows(
+    { name: 'ארוחה', items: [{ name: 'פיצה', quantity: 1 }, { name: 'שתייה', quantity: 2, text: '2× שתייה' }] },
+    { category: () => undefined, product: () => undefined },
+  );
+  assert.deepEqual(rows.slice(-3), [['פריטים', ''], ['', 'פיצה'], ['', '2× שתייה']]);
 });
