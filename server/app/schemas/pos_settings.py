@@ -109,6 +109,16 @@ class PosSettingsV1Patch(BaseModel):
     )
     #: "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden.
     voucher_show_unavailable: Optional[bool] = Field(None, alias="voucherShowUnavailable")
+    #: "בירור יתרת שובר" in the till's menu (app/services/voucher_balance_check.py): "auto" (unset —
+    #: on while the till has an active production voucher batch), "on" or "off". Anything else is a
+    #: 422; `null` in a PATCH resets the layer to inherit.
+    voucher_balance_check: Optional[Literal["auto", "on", "off"]] = Field(None, alias="voucherBalanceCheck")
+    # ── Closing on their own and the voucher station (app/services/voucher_station_settings.py) ──
+    #: "סגירה אוטומטית כשהשובר מכסה הכל": "on" (unset — today's behaviour) or "off".
+    voucher_auto_close: Optional[Literal["on", "off"]] = Field(None, alias="voucherAutoClose")
+    #: "עמדת שובר (מסך סריקה בלבד)": "off" (unset) or "on". Anything else is a 422 for both;
+    #: `null` in a PATCH resets the layer to inherit.
+    voucher_station: Optional[Literal["off", "on"]] = Field(None, alias="voucherStation")
     #: The most instalments the till's instalments picker (the `card` option) offers,
     #: 2–36. Unset = the card terminal decides; `null` in a PATCH resets the layer to
     #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).

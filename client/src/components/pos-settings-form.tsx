@@ -24,6 +24,14 @@ import { TIP_PRESETS_MAX } from '@/lib/types';
 import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, parseIdleReturnInput } from '@/lib/desktopIdleReturn';
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel, VoucherRedeemFlow } from '@/lib/types';
 import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnavailable } from '@/lib/voucherRedeemFlow';
+import {
+  VOUCHER_AUTO_CLOSE_VALUES,
+  VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_STATION_VALUES,
+  resolveVoucherAutoClose,
+  resolveVoucherBalanceCheck,
+  resolveVoucherStation,
+} from '@/lib/voucherTillSettings';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
 
@@ -483,6 +491,67 @@ export function PosSettingsForm({
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          );
+        })()}
+        {/* "בירור יתרת שובר", the auto close and the voucher station (lib/voucherTillSettings.ts): "ירושה" sends null. */}
+        {(() => {
+          const pick = (
+            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation',
+            values: readonly string[],
+            label: (v: string) => string,
+            inheritedValue: string,
+          ) => {
+            const items = [
+              { value: 'inherit', label: t('voucherSettingInherit', { value: label(inheritedValue) }) },
+              ...values.map((v) => ({ value: v, label: label(v) })),
+            ];
+            const own = value[key];
+            return (
+              <div className="space-y-1">
+                <Label>
+                  {t(`${key}Label`)}
+                  {overrideBadge(key)}
+                </Label>
+                <Select
+                  value={typeof own === 'string' && values.includes(own) ? own : 'inherit'}
+                  onValueChange={(v) => set(key, (v === 'inherit' ? null : v) as never)}
+                  items={items}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {items.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            );
+          };
+          return (
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
+              {pick(
+                'voucherBalanceCheck',
+                VOUCHER_BALANCE_CHECK_MODES,
+                (v) => t(`voucherBalanceCheck_${v}`),
+                resolveVoucherBalanceCheck(undefined, inherited?.voucherBalanceCheck),
+              )}
+              {pick(
+                'voucherAutoClose',
+                VOUCHER_AUTO_CLOSE_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherAutoClose(undefined, inherited?.voucherAutoClose),
+              )}
+              {pick(
+                'voucherStation',
+                VOUCHER_STATION_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherStation(undefined, inherited?.voucherStation),
+              )}
             </div>
           );
         })()}

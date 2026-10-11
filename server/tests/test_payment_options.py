@@ -400,7 +400,7 @@ def _hierarchy(tenant_settings: dict, company_settings: dict, shop_settings: dic
             "Shop": shop,
             "Company": company,
             "Tenant": tenant,
-        }[model.__name__]
+        }.get(model.__name__)  # others (the voucher batches "בירור יתרת שובר" reads): no rows
         return q
 
     db.query.side_effect = query_side

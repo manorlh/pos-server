@@ -12,6 +12,8 @@ from app.services.payment_options import PAYMENT_OPTION_SETTING_KEYS, VOUCHER_SE
 from app.services.refund_settings import REFUND_SETTING_KEYS
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 from app.services.voucher_redeem_settings import VOUCHER_FLOW_SETTING_KEYS
+from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
+from app.services.voucher_station_settings import VOUCHER_STATION_SETTING_KEYS
 
 MANAGED_SETTING_KEYS = (
     "globalTaxRate",
@@ -70,6 +72,12 @@ MANAGED_SETTING_KEYS = (
     # voucherRedeemFlow, voucherShowUnavailable — how the till enters a voucher's redemption
     # (app/services/voucher_redeem_settings.py).
     *VOUCHER_FLOW_SETTING_KEYS,
+    # voucherBalanceCheck — "בירור יתרת שובר" in the till's menu: auto / on / off
+    # (app/services/voucher_balance_check.py).
+    *VOUCHER_BALANCE_SETTING_KEYS,
+    # voucherAutoClose, voucherStation — closing on their own when vouchers cover the sale, and the
+    # scan-only voucher station (app/services/voucher_station_settings.py).
+    *VOUCHER_STATION_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).

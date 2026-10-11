@@ -317,6 +317,17 @@ export interface PosSettingsV1 {
   /** "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden. */
   voucherShowUnavailable?: boolean;
   /**
+   * "בירור יתרת שובר" in the till's menu (lib/voucherTillSettings.ts): auto (unset — on while the
+   * till has an active production voucher batch), on or off. In `effective` always resolved.
+   */
+  voucherBalanceCheck?: VoucherBalanceCheckMode;
+  /** `effective` only: whether "auto" is on at this level right now (an active batch reaches it). */
+  voucherBalanceCheckActiveVouchers?: boolean;
+  /** "סגירה אוטומטית כשהשובר מכסה הכל": on (unset — today) or off. */
+  voucherAutoClose?: VoucherOnOff;
+  /** "עמדת שובר (מסך סריקה בלבד)": off (unset) or on. */
+  voucherStation?: VoucherOnOff;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -401,6 +412,12 @@ export type VoucherSettingKey = 'payVoucherEnabled' | 'payVoucherManualEnabled';
 /** "דרך מימוש שובר" — the same three values as server/app/services/voucher_redeem_settings.py. */
 export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
 
+/** "בירור יתרת שובר" — server/app/services/voucher_balance_check.py. */
+export type VoucherBalanceCheckMode = 'auto' | 'on' | 'off';
+
+/** `voucherAutoClose` / `voucherStation` — server/app/services/voucher_station_settings.py. */
+export type VoucherOnOff = 'on' | 'off';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
   | PaymentOptionSettingKey
@@ -441,6 +458,9 @@ export type PosSettingsPatch = Partial<
     | 'paymentDeviceGroup'
     | 'voucherRedeemFlow'
     | 'voucherShowUnavailable'
+    | 'voucherBalanceCheck'
+    | 'voucherAutoClose'
+    | 'voucherStation'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -458,6 +478,10 @@ export type PosSettingsPatch = Partial<
   /** `null` = inherit "דרך מימוש שובר" / "פריטים זכאים שאינם זמינים" from the level above again. */
   voucherRedeemFlow?: VoucherRedeemFlow | null;
   voucherShowUnavailable?: boolean | null;
+  /** `null` = inherit "בירור יתרת שובר" / the auto close / the voucher station again. */
+  voucherBalanceCheck?: VoucherBalanceCheckMode | null;
+  voucherAutoClose?: VoucherOnOff | null;
+  voucherStation?: VoucherOnOff | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;

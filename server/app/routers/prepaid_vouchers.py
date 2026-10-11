@@ -472,6 +472,17 @@ def prepaid_voucher_type_events(
     return {"items": PVT.type_events(db, current_user, active_tenant_id, type_id)}
 
 
+def _wake_tills(db: Session, batch_or_out) -> None:
+    """
+    A batch made, edited or cancelled (committed): the tills it reaches pull their settings again,
+    so "בירור יתרת שובר" on "auto" follows (app/services/voucher_balance_check.py). Best effort.
+    """
+    from app.services import voucher_balance_check as VBC
+
+    target = batch_or_out.get("id") if isinstance(batch_or_out, dict) else batch_or_out
+    VBC.notify_tills_of_batch(db, target)
+
+
 @router.post("/prepaid-vouchers/batches", status_code=status.HTTP_201_CREATED)
 def create_prepaid_voucher_batch(
     body: PrepaidVoucherBatchCreate,
@@ -491,6 +502,8 @@ def create_prepaid_voucher_batch(
     from app.services import prepaid_batch_create as PBC
 
     out, replayed = PBC.create(db, current_user, active_tenant_id, body, key=idempotency_key)
+    if not replayed:
+        _wake_tills(db, out)
     if replayed and response is not None:
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"
@@ -535,6 +548,7 @@ def update_prepaid_voucher_batch(
 ):
     batch = PV.update_batch(db, current_user, active_tenant_id, batch_id, body)
     db.commit()
+    _wake_tills(db, batch)
     return PV.batch_out(db, batch, user=current_user)
 
 
@@ -578,6 +592,7 @@ def cancel_prepaid_voucher_batch(
 ):
     batch = PV.cancel_batch(db, current_user, active_tenant_id, batch_id, (body.reason if body else None))
     db.commit()
+    _wake_tills(db, batch)
     return PV.batch_out(db, batch, user=current_user)
 
 
