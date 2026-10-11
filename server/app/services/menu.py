@@ -331,7 +331,35 @@ def option_out(o: ModifierOption) -> Dict[str, Any]:
         "maxQty": o.max_qty,
         "sortOrder": o.sort_order or 0,
         "isActive": bool(o.is_active),
+        # The option's own picture (null: the linked product's shows on the devices).
+        "imageUrl": getattr(o, "image_url", None),
     }
+
+
+def device_image_url(url: Optional[str]) -> Optional[str]:
+    """A picture as a device fetches it: a path on this server made absolute; none stays none."""
+    return upsell_image_url(url)
+
+
+def linked_product_images(db: Session, options: Iterable[ModifierOption]) -> Dict[str, Optional[str]]:
+    """`{product id: its picture}` of the options' linked products (one query)."""
+    ids = {o.linked_product_id for o in options if getattr(o, "linked_product_id", None) is not None}
+    if not ids:
+        return {}
+    return {str(pid): url for pid, url in db.query(Product.id, Product.image_url).filter(Product.id.in_(ids)).all()}
+
+
+def option_image_url(o: ModifierOption, linked_images: Dict[str, Optional[str]]) -> Optional[str]:
+    """
+    The picture a device shows for an option: its own, else its linked product's, else none —
+    as a device fetches it (`device_image_url`).
+    """
+    own = getattr(o, "image_url", None)
+    if own:
+        return device_image_url(own)
+    if o.linked_product_id is not None:
+        return device_image_url(linked_images.get(str(o.linked_product_id)))
+    return None
 
 
 def group_out(
@@ -459,6 +487,9 @@ def _apply_group(db: Session, tenant_id, g: ModifierGroup, body: GroupIn) -> Non
         row.allergens = list(opt.allergens) or None
         row.linked_product_id = opt.linked_product_id
         row.max_qty = opt.max_qty
+        # Omitted: the option keeps the picture it has (an upload set it on its own row).
+        if "image_url" in opt.model_fields_set:
+            row.image_url = opt.image_url
         row.sort_order = index
         row.is_active = opt.is_active
     for key, row in existing.items():
@@ -664,7 +695,10 @@ def links_out(db: Session, tenant_id, target_type: str, target) -> Dict[str, Any
 
 
 def note_out(n: PrepNotePreset) -> Dict[str, Any]:
-    return {"id": str(n.id), "text": n.text, "isImportant": bool(n.is_important), "sortOrder": n.sort_order or 0}
+    return {
+        "id": str(n.id), "text": n.text, "isImportant": bool(n.is_important), "sortOrder": n.sort_order or 0,
+        "imageUrl": getattr(n, "image_url", None),
+    }
 
 
 def _own_notes(db: Session, tenant_id, target_type: str, target_id, company_id=None) -> List[PrepNotePreset]:
@@ -683,7 +717,10 @@ def _own_notes(db: Session, tenant_id, target_type: str, target_id, company_id=N
 
 
 def _write_notes(db: Session, tenant_id, target_type: str, target_id, notes, company_id=None) -> None:
+    # The rows are written afresh: a chip sent without `imageUrl` keeps the picture its text had.
+    pictures: Dict[str, Optional[str]] = {}
     for row in _own_notes(db, tenant_id, target_type, target_id, company_id):
+        pictures.setdefault(row.text.strip().lower(), getattr(row, "image_url", None))
         db.delete(row)
     db.flush()
     seen: Set[str] = set()
@@ -696,6 +733,7 @@ def _write_notes(db: Session, tenant_id, target_type: str, target_id, notes, com
             id=uuid.uuid4(), tenant_id=tenant_id, company_id=_as_uuid(company_id),
             target_type=target_type, target_id=_as_uuid(target_id) if target_type != "all" else None,
             text=n.text, is_important=n.is_important, sort_order=index,
+            image_url=n.image_url if "image_url" in n.model_fields_set else pictures.get(key),
         ))
     db.flush()
 
@@ -764,6 +802,68 @@ def notes_out(db: Session, tenant_id, target_type: str, target) -> Dict[str, Any
         "inheritedFromId": source,
         "inheritedFromName": source_name,
     }
+
+
+# ── Pictures of an option and of a note chip ─────────────────────────────────
+
+
+def get_option(db: Session, tenant_id, option_id) -> Tuple[ModifierOption, ModifierGroup]:
+    """An option of this organization, with its group (404 otherwise)."""
+    ident = _as_uuid(option_id)
+    found = (
+        db.query(ModifierOption, ModifierGroup)
+        .join(ModifierGroup, ModifierGroup.id == ModifierOption.group_id)
+        .filter(ModifierOption.id == ident, ModifierGroup.tenant_id == tenant_id)
+        .first()
+        if ident is not None
+        else None
+    )
+    if found is None:
+        raise _bad(NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    return found[0], found[1]
+
+
+def set_option_image(db: Session, user: User, tenant_id, option: ModifierOption, group: ModifierGroup,
+                     url: Optional[str]) -> None:
+    """The option's own picture (None: removed — the linked product's shows). Whoever may edit its group."""
+    check_company_write(db, user, tenant_id, group.company_id)
+    option.image_url = url
+    group.updated_at = _now()
+    db.flush()
+    bump(db, tenant_id)
+
+
+def get_note(db: Session, tenant_id, note_id) -> PrepNotePreset:
+    ident = _as_uuid(note_id)
+    row = (
+        db.query(PrepNotePreset).filter(PrepNotePreset.id == ident, PrepNotePreset.tenant_id == tenant_id).first()
+        if ident is not None
+        else None
+    )
+    if row is None:
+        raise _bad(NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    return row
+
+
+def check_note_write(db: Session, user: User, tenant_id, note: PrepNotePreset) -> None:
+    """A chip for every dish: whoever may write its company's; a product's / category's: whoever may edit it."""
+    if note.target_type == "all":
+        check_company_write(db, user, tenant_id, note.company_id)
+        return
+    model = Product if note.target_type == "product" else Category
+    target = db.query(model).filter(model.id == note.target_id, model.tenant_id == tenant_id).first()
+    if target is None:
+        raise _bad(NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    check_target_write(db, user, target)
+
+
+def set_note_image(db: Session, user: User, tenant_id, note: PrepNotePreset, url: Optional[str]) -> None:
+    """The chip's picture (None: a text chip again)."""
+    check_note_write(db, user, tenant_id, note)
+    note.image_url = url
+    note.updated_at = _now()
+    db.flush()
+    bump(db, tenant_id)
 
 
 # ── Meals ─────────────────────────────────────────────────────────────────────
@@ -1281,6 +1381,7 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
     ]
     group_ids = {str(g.id) for g in groups}
     options = _options_by_group(db, [g.id for g in groups])
+    linked_images = linked_product_images(db, [o for opts in options.values() for o in opts])
 
     links: Dict[str, Dict[str, List[str]]] = {"categories": {}, "products": {}}
     rows = (
@@ -1302,7 +1403,8 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
         .order_by(PrepNotePreset.target_type, PrepNotePreset.sort_order)
         .all()
     ):
-        chip = {"text": n.text, "important": bool(n.is_important)}
+        # `imageUrl`: a picture for the chip — a kiosk shows the note as an image tile, like an option.
+        chip = {"text": n.text, "important": bool(n.is_important), "imageUrl": device_image_url(n.image_url)}
         if n.target_type == "all":
             if _reaches(n, companies):
                 notes["all"].append(chip)
@@ -1439,6 +1541,8 @@ def menu_block(db: Session, machine: POSMachine) -> Dict[str, Any]:
                         "allergens": [a for a in (o.allergens or []) if a in ALLERGENS],
                         "linkedProductId": _s(o.linked_product_id),
                         "maxQty": o.max_qty,
+                        # The option's picture: its own, else its linked product's, else null.
+                        "imageUrl": option_image_url(o, linked_images),
                     }
                     for o in options.get(str(g.id), [])
                     if o.is_active

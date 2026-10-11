@@ -7,6 +7,7 @@ from datetime import datetime
 from app.services.item_ticket import ProductTicketMode
 from app.services import dietary
 from app.services import sales_channel as channels
+from app.services import addon_role as addon_roles
 from app.schemas.kitchen_printers import KitchenPrintersPatch
 
 #: The product's `description` column (String(1000)); the dashboard recommends 300 for
@@ -206,6 +207,8 @@ class ProductBase(BaseModel):
     # "מופיע ב" (app/services/product_channels.py): pos / kiosk / online / menu; omitted: as
     # `salesChannel` says, not online, not in the digital menu. When given, `salesChannel` follows it.
     appears_in: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, alias="appearsIn")
+    # "תוספת" (app/services/addon_role.py): none / addon_only / both; omitted: פריט רגיל.
+    addon_role: addon_roles.AddonRole = Field(addon_roles.NONE, alias="addonRole")
 
     @field_validator("name", "sku")
     @classmethod
@@ -291,6 +294,8 @@ class ProductUpdate(BaseModel):
     # "מופיע ב" (app/services/product_channels.py): omitted (or null) — left as it is; given, it
     # sets `salesChannel` too. Applied by the routers (excluded from `model_dump`).
     appears_in: Optional[List[Literal["pos", "kiosk", "online", "menu"]]] = Field(None, alias="appearsIn", exclude=True)
+    # "תוספת" (app/services/addon_role.py): omitted (or null) — left as it is.
+    addon_role: Optional[addon_roles.AddonRole] = Field(None, alias="addonRole")
     # Never changes. Echoing the current value (a form sending the product back) is
     # fine; anything else is refused — see app/services/general_item.py.
     is_general: Optional[bool] = Field(None, alias="isGeneral")
@@ -345,6 +350,9 @@ class ProductUpdate(BaseModel):
         # The same for "מחייב אישור מנהל במכירה" (NOT NULL too).
         if self.requires_manager_approval is None:
             self.__pydantic_fields_set__.discard("requires_manager_approval")
+        # The same for "תוספת" (NOT NULL too).
+        if self.addon_role is None:
+            self.__pydantic_fields_set__.discard("addon_role")
         return self
 
     class Config:
@@ -390,6 +398,8 @@ class ProductResponse(BaseModel):
     sales_channel: str = Field(channels.ALL, alias="salesChannel")
     # "מופיע ב": the channels it appears in, resolved (app/services/product_channels.py).
     appears_in: Optional[List[str]] = Field(None, alias="appearsIn")
+    # "תוספת": none / addon_only / both (app/services/addon_role.py).
+    addon_role: str = Field(addon_roles.NONE, alias="addonRole")
     # The company's built-in "פריט כללי", which the till's calculator sells through.
     is_general: bool = Field(False, alias="isGeneral")
     shop_scope: Optional[ShopScopeOut] = Field(None, alias="shopScope")
@@ -424,6 +434,11 @@ class ProductResponse(BaseModel):
     @classmethod
     def _channel_out(cls, v):
         return channels.out(v)
+
+    @field_validator("addon_role", mode="before")
+    @classmethod
+    def _addon_role_out(cls, v):
+        return addon_roles.out(v)
 
     @model_validator(mode="after")
     def _appears_in_out(self):

@@ -118,6 +118,9 @@ class ModifierOption(Base):
     max_qty = Column(Integer, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    #: The option's own picture (background removed, as a product's). Null: the linked
+    #: product's picture is shown, if any (`menu.option_image_url`).
+    image_url = Column(String(500), nullable=True)
 
 
 class ModifierLink(Base):
@@ -159,6 +162,9 @@ class PrepNotePreset(Base):
     is_important = Column(Boolean, nullable=False, default=False, server_default="false")
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    #: A picture for the chip (background removed, as a product's): a kiosk shows the note as
+    #: an image tile, like an option. Null: a text chip.
+    image_url = Column(String(500), nullable=True)
 
 
 class MealSlot(Base):
