@@ -88,9 +88,16 @@ export function BoardVouchers({
 
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div>
-          <p className="text-[26px] font-bold leading-tight tabular-nums text-cb-ink">{formatQuantity(totals.vouchers)}</p>
+          <p className="text-[26px] font-bold leading-tight tabular-nums text-cb-ink">
+            {formatQuantity(totals.vouchers)}
+            {/* "כמה מתוך כמה" (the owner, 11.10.2026): out of the listed batches' vouchers. */}
+            {report.issued ? (
+              <span className="ms-1 text-base font-medium text-cb-muted">{t('ofIssued', { total: formatQuantity(report.issued) })}</span>
+            ) : null}
+          </p>
           <p className="text-xs text-cb-muted">
             {t('redeemed', { count: totals.vouchers })} · {t('redemptions', { count: totals.redemptions })}
+            {report.issued ? <> · {t('usedEver', { used: formatQuantity(report.usedEver ?? 0), total: formatQuantity(report.issued) })}</> : null}
           </p>
         </div>
         <div className="flex flex-col items-end gap-0.5 text-xs text-cb-muted">
@@ -122,13 +129,17 @@ export function BoardVouchers({
                   {' · '}
                   {t('rowUnits', { units: formatQuantity(row.current.units), kind: row.kind === 'items' ? 'items' : 'uses' })}
                   {row.current.value > 0 ? ` · ${formatCurrency(row.current.value)}` : ''}
+                  {row.issued ? ` · ${t('usedEver', { used: formatQuantity(row.usedEver ?? 0), total: formatQuantity(row.issued) })}` : ''}
                 </p>
                 <div className="mt-1.5 h-1.5 rounded-full bg-cb-soft" aria-hidden>
                   <div className="h-1.5 rounded-full bg-cb-purple" style={{ width: `${(row.current.vouchers / max) * 100}%` }} />
                 </div>
               </div>
               <div className="shrink-0 text-end">
-                <p className="text-sm font-semibold tabular-nums text-cb-ink">{formatQuantity(row.current.vouchers)}</p>
+                <p className="text-sm font-semibold tabular-nums text-cb-ink">
+                  {formatQuantity(row.current.vouchers)}
+                  {row.issued ? <span className="text-xs font-normal text-cb-muted"> / {formatQuantity(row.issued)}</span> : null}
+                </p>
                 {comparing && row.previous ? (
                   <p className="text-xs tabular-nums text-cb-muted">{formatQuantity(row.previous.vouchers)}</p>
                 ) : null}

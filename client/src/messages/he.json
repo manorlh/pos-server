@@ -1255,6 +1255,8 @@
       "value": "שווי",
       "redemptions": "{count, plural, one {מימוש אחד} other {# מימושים}}",
       "rowUnits": "{units} {kind, select, items {פריטים} other {שימושים}}",
+      "ofIssued": "מתוך {total}",
+      "usedEver": "נוצלו עד היום {used} מתוך {total}",
       "open": "פתיחת השובר {name}",
       "all": "לכל השוברים",
       "versus": "מול {count}",
