@@ -2680,8 +2680,8 @@
       "group": "payMethod",
       "label": "שובר — נקלט, עם מספר וסכום",
       "defaults": {
-        "he": "שובר #{number} נקלט: {amount}",
-        "en": "Voucher #{number} applied: {amount}"
+        "he": "שובר מס׳ {number} נקלט: {amount}",
+        "en": "Voucher no. {number} applied: {amount}"
       },
       "max": 100,
       "placeholders": [
@@ -2733,10 +2733,10 @@
       "group": "payMethod",
       "label": "שובר — אינו כולל פריט מההזמנה",
       "defaults": {
-        "he": "השובר אינו כולל אף פריט מההזמנה",
-        "en": "The voucher covers nothing in this order"
+        "he": "השובר אינו כולל אף פריט מההזמנה — הוסיפו פריט מאושר או שלמו באמצעי אחר",
+        "en": "The voucher covers nothing in this order — add an approved item or pay another way"
       },
-      "max": 100,
+      "max": 150,
       "placeholders": [],
       "android": [
         "kpay_voucher_no_match"
@@ -2749,10 +2749,10 @@
       "group": "payMethod",
       "label": "שובר — אין חיבור",
       "defaults": {
-        "he": "תשלום בשובר אינו זמין כרגע — אין חיבור לרשת",
-        "en": "Voucher payment is unavailable right now — no connection"
+        "he": "תשלום בשובר אינו זמין כרגע (אין חיבור לרשת) — שלמו באמצעי אחר או הציגו את השובר בקופה",
+        "en": "Voucher payment unavailable (no connection) — pay another way or show it at the counter"
       },
-      "max": 100,
+      "max": 150,
       "placeholders": [],
       "android": [
         "kpay_voucher_offline"
@@ -2779,10 +2779,10 @@
     {
       "key": "voucherForfeit",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — השאלה",
+      "label": "מימוש בעסקה אחת — השאלה",
       "defaults": {
-        "he": "זהו שובר חד-פעמי: מה שבשובר ואינו בהזמנה לא יישאר בו. לממש בכל זאת?",
-        "en": "This is a single-use voucher: what is on it but not in this order will be lost. Use it anyway?"
+        "he": "השובר ממומש בעסקה אחת: מה שבשובר ואינו בהזמנה יאבד. לממש בכל זאת?",
+        "en": "This voucher is redeemed in one sale: what is on it but not in this order will be lost. Use it anyway?"
       },
       "max": 200,
       "placeholders": [],
@@ -2795,7 +2795,7 @@
     {
       "key": "payVoucherForfeitYes",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — כפתור \"כן\"",
+      "label": "מימוש בעסקה אחת — כפתור \"כן\"",
       "defaults": {
         "he": "כן, לממש",
         "en": "Yes, use it"
@@ -2811,7 +2811,7 @@
     {
       "key": "payVoucherForfeitNo",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — כפתור \"לא\"",
+      "label": "מימוש בעסקה אחת — כפתור \"לא\"",
       "defaults": {
         "he": "לא",
         "en": "No"
