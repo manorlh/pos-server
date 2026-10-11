@@ -343,6 +343,10 @@ def list_products(
             description='"company:<id>", "shop:<id>", "area:<id>" or "machine:<id>"',
         ),
     ] = None,
+    addon_role_filter: Annotated[
+        Optional[List[str]],
+        Query(alias="addonRole", description='"תוספת": any of none / addon_only / both (repeat the param)'),
+    ] = None,
 ):
     """
     The catalog, a page at a time. Search and filters are described in
@@ -371,6 +375,13 @@ def list_products(
         query = query.filter(Product.catalog_level == catalog_level)
     if in_stock is not None:
         query = query.filter(Product.in_stock == in_stock)
+    roles = [r for r in (addon_role_filter or []) if r]
+    if roles:
+        from app.services import addon_role
+
+        if any(r not in addon_role.ADDON_ROLES for r in roles):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown addonRole")
+        query = query.filter(Product.addon_role.in_(roles))
     matches = list_filters.search_condition(search)
     if matches is not None:
         query = query.filter(matches)

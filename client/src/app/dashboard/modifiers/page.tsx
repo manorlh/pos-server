@@ -32,6 +32,7 @@ import { useAuth } from '@/lib/auth';
 import { useScope } from '@/lib/scope';
 import { GroupEditorDialog } from '@/components/dashboard/menu/group-editor';
 import { MenuBroadcastBanner } from '@/components/dashboard/menu/broadcast-banner';
+import { NotePictureButton, NotePicturePanel } from '@/components/dashboard/menu/note-picture';
 import {
   IosCanvas,
   IosCard,
@@ -277,6 +278,8 @@ function GroupsTab() {
 interface ChipDraft {
   text: string;
   isImportant: boolean;
+  /** "הערה עם תמונה": a kiosk shows it as an image tile. */
+  imageUrl?: string | null;
 }
 
 /** The company a new list is made for: the scope's, the user's, or the organization. */
@@ -303,8 +306,9 @@ function NotesTab() {
   const [edit, setEdit] = useState<{ key: string; chips: ChipDraft[] } | null>(null);
   const key = own.companyId ?? 'org';
   const chips: ChipDraft[] =
-    edit && edit.key === key ? edit.chips : (current?.notes ?? []).map((n) => ({ text: n.text, isImportant: n.isImportant }));
+    edit && edit.key === key ? edit.chips : (current?.notes ?? []).map((n) => ({ text: n.text, isImportant: n.isImportant, imageUrl: n.imageUrl ?? null }));
   const [text, setText] = useState('');
+  const [picking, setPicking] = useState<number | null>(null);
   const set = (next: ChipDraft[]) => setEdit({ key, chips: next });
 
   const save = useMutation({
@@ -349,10 +353,14 @@ function NotesTab() {
                   {c.isImportant ? '★ ' : ''}
                   {c.text}
                 </button>
+                <NotePictureButton url={c.imageUrl} active={picking === i} onClick={() => setPicking(picking === i ? null : i)} />
                 <button
                   type="button"
                   aria-label={t('remove')}
-                  onClick={() => set(chips.filter((_, j) => j !== i))}
+                  onClick={() => {
+                    setPicking(null);
+                    set(chips.filter((_, j) => j !== i));
+                  }}
                   className="rounded-full p-0.5 opacity-70 hover:opacity-100"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
@@ -360,6 +368,14 @@ function NotesTab() {
               </span>
             ))}
           </div>
+          {picking !== null && chips[picking] ? (
+            <NotePicturePanel
+              text={chips[picking].text}
+              url={chips[picking].imageUrl}
+              onClose={() => setPicking(null)}
+              onChange={(url) => set(chips.map((x, j) => (j === picking ? { ...x, imageUrl: url } : x)))}
+            />
+          ) : null}
           <div className="flex gap-2">
             <Input
               value={text}
