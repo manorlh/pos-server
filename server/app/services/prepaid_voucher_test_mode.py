@@ -26,6 +26,10 @@ kiosk or voucher station — and nothing happens to them:
   ignored for voucher accounting (app/services/transactions.py).
 * **No test offline.** Test mode is refused while the batch is assigned to a device, and a batch in test
   mode is never assigned (`prepaid_voucher_test_mode_offline`).
+* **Only clients that know it.** A reserve / redeem on the test path needs `testModeAware: true` in the
+  request; any other client (an older till, the web / Windows kiosk) would sell for real while the voucher
+  stays untouched, so it is refused — 409 `prepaid_voucher_test_mode_unsupported` ([UNSUPPORTED_MESSAGE]),
+  nothing written. Lookup and the balance check stay open to everyone (read only, `testMode`).
 
 Unrelated to the staff test batches ("שוברי בדיקה", `prepaid_voucher_test_batches`,
 app/services/prepaid_voucher_controls.py): those are separate vouchers for tills in training mode.
@@ -61,6 +65,11 @@ MIXED_MESSAGE = "לא ניתן לשלב שובר בבדיקה עם מכירה א
 TEST_MODE_OFFLINE = "prepaid_voucher_test_mode_offline"
 #: A sale document (the outbox) naming a test hold: never confirmed — 409, the sync's warning.
 TEST_DOCUMENT = "prepaid_voucher_test_mode_document"
+#: A reserve / redeem of a test-mode voucher by a client that did not say `testModeAware: true` (an older
+#: till, the web / Windows kiosk): it would sell for real while the voucher stays untouched — 409, nothing
+#: written. Lookup / balance check stay open to it (read only, `testMode` in the voucher).
+UNSUPPORTED = "prepaid_voucher_test_mode_unsupported"
+UNSUPPORTED_MESSAGE = "הסדרה במצב בדיקה — יש לעדכן את הקופה לגרסה חדשה כדי לבדוק שובר זה"
 #: A test scan in a sale: a redeem done, a hold held (until it expires) or confirmed.
 _IN_SALE = ("done", "held", "confirmed")
 
@@ -86,6 +95,12 @@ def fake_id(row: T) -> str:
 
 def mixed() -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": MIXED, "message": MIXED_MESSAGE})
+
+
+def require_aware(body) -> None:
+    """A reserve / redeem on the test path: only a client that said `testModeAware: true` — else 409, nothing written."""
+    if getattr(body, "test_mode_aware", False) is not True:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": UNSUPPORTED, "message": UNSUPPORTED_MESSAGE})
 
 
 def prior(db: Session, machine: POSMachine, operation: str, request_id: str) -> Optional[T]:
@@ -213,9 +228,10 @@ def redeem(db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, prio
     """
     `/redeem` of a test-mode voucher: the core's checks (`redeem_checks`), then one log row — the voucher
     untouched. The reply is `/redeem`'s with `redemptionId` "test-…" and `testMode: true`. The caller has
-    locked the sale and the voucher, and commits.
+    locked the sale and the voucher, and commits. Only for a client that said `testModeAware: true`.
     """
     PV = _pv()
+    require_aware(body)
     if prior_row is not None:
         if prior_row.voucher_id != voucher.id:
             raise PV._http(status.HTTP_409_CONFLICT, PV.REQUEST_CONFLICT)
@@ -284,8 +300,10 @@ def reserve(db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, pri
     `/reserve` of a test-mode voucher: the core's checks for its kind, then one log row (a renewal with the
     same request id re-runs them on the same row) — nothing held, nothing counted. The reply is the hold's
     with `reservationId` "test-…" and `testMode: true`. The caller has locked the sale and the voucher.
+    Only for a client that said `testModeAware: true`.
     """
     PV = _pv()
+    require_aware(body)
     if prior_row is not None:
         if prior_row.voucher_id != voucher.id or (prior_row.sale_ref or "") != sale_ref:
             raise PV._http(status.HTTP_409_CONFLICT, PV.REQUEST_CONFLICT)

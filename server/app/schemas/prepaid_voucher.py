@@ -1136,6 +1136,10 @@ class PrepaidVoucherRedeemIn(BaseModel):
     #: (books all three `redemptionAccounting` modes and the cloud's value), "override", "groups",
     #: "production_voucher", "reserve_goods", "offline". Absent: none (every client before them).
     features: Optional[List[str]] = None
+    #: "מצב בדיקה" (P:/specs/voucher-test-mode.md, "חוזה"): this client simulates a test-mode voucher's
+    #: sale (no document, no payment). Absent / false: such a voucher is refused (409
+    #: `prepaid_voucher_test_mode_unsupported`) — an older client would sell for real.
+    test_mode_aware: bool = Field(False, alias="testModeAware")
 
     @field_validator("features", mode="before")
     @classmethod
@@ -1323,6 +1327,9 @@ class PrepaidVoucherReserveIn(BaseModel):
     other_vouchers: List[PrepaidVoucherInSaleIn] = Field(default_factory=list, alias="otherVouchers", max_length=50)
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
+    #: "מצב בדיקה": as on `/redeem` — absent / false, a test-mode voucher is refused
+    #: (409 `prepaid_voucher_test_mode_unsupported`).
+    test_mode_aware: bool = Field(False, alias="testModeAware")
 
     @field_validator("supported_kinds", mode="before")
     @classmethod

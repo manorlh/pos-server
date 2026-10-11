@@ -93,11 +93,13 @@ def look(w, code, till=None):
                                     machine=till, db=w.db)
 
 
-def redeem(w, code, *, till=None, request_id=None, sale=None, items=None):
+def redeem(w, code, *, till=None, request_id=None, sale=None, items=None, aware=True):
+    """[aware]: the till says `testModeAware: true` (a test-mode client); False — an older one, no field at all."""
     till = till or w.tills[0]
     body = PrepaidVoucherRedeemIn(
         code=code, clientRequestId=request_id or str(uuid.uuid4()), saleRef=sale, posUserId=7, posUserName="דנה",
         items=[{"productId": str(p.id), "quantity": q} for p, q in (items or [(w.hotdog, 1), (w.drink, 2)])],
+        **({"testModeAware": True} if aware else {}),
     )
     out = R.redeem_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
     return out
@@ -109,22 +111,23 @@ def _unit(product, price, ref):
             "noDiscount": False}
 
 
-def hold(w, code, *, till=None, request_id=None, sale=None, others=()):
+def hold(w, code, *, till=None, request_id=None, sale=None, others=(), aware=True):
     """A goods hold for the whole voucher (reserve), the sale still open."""
     till = till or w.tills[0]
     return R.reserve_prepaid_voucher(str(till.id), PrepaidVoucherReserveIn(
         code=code, clientRequestId=request_id or str(uuid.uuid4()), saleRef=sale or str(uuid.uuid4()),
         units=[_unit(w.hotdog, 2500, "a"), _unit(w.drink, 1200, "b"), _unit(w.drink, 1200, "c")],
-        features=GOODS_FEATURES, otherVouchers=list(others), posUserId=7, posUserName="דנה"), machine=till, db=w.db)
+        features=GOODS_FEATURES, otherVouchers=list(others), posUserId=7, posUserName="דנה",
+        **({"testModeAware": True} if aware else {})), machine=till, db=w.db)
 
 
-def discount_hold(w, code, *, till=None, request_id=None, sale="sale-1"):
+def discount_hold(w, code, *, till=None, request_id=None, sale="sale-1", aware=True):
     till = till or w.tills[0]
     body = PrepaidVoucherReserveIn(
         code=code, clientRequestId=request_id or str(uuid.uuid4()), saleRef=sale, supportedKinds=KINDS,
         lines=[{"id": "L1", "productIds": [str(w.hotdog.id)], "categoryIds": [str(w.hotdog.category_id)],
                 "quantity": 2, "grossAgorot": 5000}],
-        posUserId=7, posUserName="דנה",
+        posUserId=7, posUserName="דנה", **({"testModeAware": True} if aware else {}),
     )
     return R.reserve_prepaid_voucher(str(till.id), body, machine=till, db=w.db)
 
@@ -279,6 +282,55 @@ class TestFiveScans:
         assert w.db.query(PrepaidVoucherRedemption).count() == 0
         assert w.db.query(PrepaidVoucherTestRedemption).one().status == "held"  # never confirmed by a document
         assert row(w, code).status == "active"
+
+
+# ── Older clients: refused, nothing written ───────────────────────────────────
+
+
+def _unsupported(e):
+    return (e.status_code, e.detail) == (409, {"code": TM.UNSUPPORTED, "message": TM.UNSUPPORTED_MESSAGE})
+
+
+class TestOlderClients:
+    """A client that does not say `testModeAware: true` (an older till, the web / Windows kiosk) would sell for real."""
+
+    def test_refused_on_redeem_and_on_reserve_and_nothing_logged(self, w):
+        b = batch(w)
+        d = discount_batch(w)
+        code = codes(w, b)[0]
+        before = dict(row(w, code).remaining)
+        assert _unsupported(refused(redeem, w, code, aware=False))
+        assert _unsupported(refused(hold, w, code, aware=False))
+        assert _unsupported(refused(discount_hold, w, codes(w, d)[0], aware=False))
+        w.db.commit()
+        assert w.db.query(PrepaidVoucherTestRedemption).count() == 0
+        assert w.db.query(PrepaidVoucherRedemption).count() == w.db.query(PrepaidVoucherReservation).count() == 0
+        v = row(w, code)
+        assert (v.remaining, v.status) == (before, "active")
+        assert row(w, codes(w, d)[0]).uses_left == 1
+        # Lookup / the balance check stay open to it: read only, the flag in the voucher.
+        out = look(w, code)
+        assert (out["testMode"], out["redeemable"]) == (True, True)
+
+    def test_an_aware_client_tests_as_ever(self, w):
+        b = batch(w)
+        code = codes(w, b)[0]
+        assert redeem(w, code)["testMode"] is True
+        held = hold(w, code)
+        assert held["testMode"] is True and held["reservationId"].startswith("test-")
+        assert log(w, b)["total"] == 2
+
+    @pytest.mark.parametrize("aware", [False, True])
+    def test_a_real_batch_is_unaffected_either_way(self, w, aware):
+        b = batch(w, test=False, count=2)
+        cs = codes(w, b)
+        out = redeem(w, cs[0], aware=aware)
+        held = hold(w, cs[1], aware=aware)
+        confirm(w, held["reservationId"], amount=held["coveredAgorot"])
+        assert "testMode" not in out and not out["redemptionId"].startswith("test-")
+        assert (row(w, cs[0]).status, row(w, cs[1]).status) == ("used", "used")
+        assert w.db.query(PrepaidVoucherRedemption).count() == 2
+        assert w.db.query(PrepaidVoucherTestRedemption).count() == 0
 
 
 # ── 3. Never mixed with a real sale ───────────────────────────────────────────
