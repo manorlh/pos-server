@@ -4,7 +4,8 @@
  * Payment methods ("אמצעי תשלום") — which payment buttons the tills show, per level.
  *
  * The same settings keys as the payment section of the general POS settings form
- * (`pay*Enabled`, `pay*Tips`, `payInstallmentsMax`), on a page of their own and down to
+ * (`pay*Enabled`, `pay*Tips`, `payInstallmentsMax`, and the production voucher's
+ * `payVoucherEnabled` / `payVoucherManualEnabled`), on a page of their own and down to
  * the point of sale: pick a company, optionally a shop, a point of sale and a till, and
  * the deepest one chosen is the level edited. Each method is set "active", "blocked" or
  * left to inherit — and the inherited state shows what it currently is and which level
@@ -16,7 +17,8 @@
  *
  * Saving PATCHes that level's settings with only what changed, under the same server
  * rules as the settings dialogs: company managers and up for a company, shop managers
- * for their shop, its points of sale and tills; never every method blocked.
+ * for their shop, its points of sale and tills; never every method blocked (every cash and
+ * card method blocked with the voucher on is fine: a voucher-only till).
  *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
@@ -41,8 +43,11 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import {
   PAYMENT_OPTIONS,
+  VOUCHER_SWITCHES,
+  VOUCHER_SWITCH_DEFAULT,
   isNoPaymentOptionAllowedError,
   noPaymentOptionAllowed,
+  voucherOnly,
   type PaymentOptionId,
 } from '@/lib/paymentOptions';
 import {
@@ -59,6 +64,7 @@ import type {
   PosSettingsPatch,
   PosSettingsV1,
   SettingsLevel,
+  VoucherSettingKey,
 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -77,7 +83,7 @@ import { cn } from '@/lib/utils';
 type EditLevel = Exclude<SettingsLevel, 'tenant'>;
 
 /** The keys this page writes. */
-type PaymentKey = PaymentOptionSettingKey | 'payInstallmentsMax';
+type PaymentKey = PaymentOptionSettingKey | VoucherSettingKey | 'payInstallmentsMax';
 type Draft = Partial<Record<PaymentKey, boolean | number | null>>;
 
 const INSTALLMENTS_KEY = 'payInstallmentsMax';
@@ -92,6 +98,7 @@ const CASH_METHODS: PaymentOptionId[] = ['fastCash', 'cash'];
 
 const PAYMENT_KEYS: PaymentKey[] = [
   ...PAYMENT_OPTIONS.flatMap((o) => [o.enabledKey, o.tipsKey] as PaymentOptionSettingKey[]),
+  ...VOUCHER_SWITCHES.map((v) => v.key),
   INSTALLMENTS_KEY,
 ];
 
@@ -235,6 +242,7 @@ function MethodsEditor({
 
   const inherited = layer.effective;
   const noneAllowed = noPaymentOptionAllowed(draft as PosSettingsPatch, inherited);
+  const onlyVoucher = voucherOnly(draft as PosSettingsPatch, inherited);
   const installments = draft[INSTALLMENTS_KEY];
   const installmentsInvalid =
     typeof installments === 'number' &&
@@ -281,20 +289,35 @@ function MethodsEditor({
     return typeof inh === 'boolean' ? inh : opt.enabledByDefault;
   };
 
+  /** Whether a voucher switch is on at this level as drafted (unset everywhere = on). */
+  const voucherOnOf = (key: VoucherSettingKey): boolean => {
+    const own = draft[key];
+    if (typeof own === 'boolean') return own;
+    const inh = inherited?.[key];
+    return typeof inh === 'boolean' ? inh : VOUCHER_SWITCH_DEFAULT;
+  };
+
   /**
    * "אשראי בלבד" / "מזומן בלבד": the other tender's methods blocked at this level, and this
    * tender's one-tap and keyed paths switched on where they are not on already. Keyed card
-   * is left as it is (opt-in). "הכול בירושה" takes this level's switches back to inherit.
+   * is left as it is (opt-in), and so is the voucher. "שובר בלבד": every cash and card
+   * method blocked, and the voucher's two ways in (scanned, typed) switched on where they
+   * are not on already. "הכול בירושה" takes this level's switches back to inherit.
    */
-  const applyQuick = (kind: 'card' | 'cash' | 'inherit') => {
+  const applyQuick = (kind: 'card' | 'cash' | 'voucher' | 'inherit') => {
     setRejected(false);
     setDraft((d) => {
       const next = { ...d };
       for (const opt of options) {
         const cash = CASH_METHODS.includes(opt.id);
         if (kind === 'inherit') delete next[opt.enabledKey];
+        else if (kind === 'voucher') next[opt.enabledKey] = false;
         else if ((kind === 'card') === cash) next[opt.enabledKey] = false;
         else if (opt.id !== 'manualCard' && !effectiveOnOf(opt)) next[opt.enabledKey] = true;
+      }
+      for (const v of VOUCHER_SWITCHES) {
+        if (kind === 'inherit') delete next[v.key];
+        else if (kind === 'voucher' && !voucherOnOf(v.key)) next[v.key] = true;
       }
       return next;
     });
@@ -323,6 +346,9 @@ function MethodsEditor({
           </Button>
           <Button type="button" variant="outline" size="sm" disabled={!canWrite} onClick={() => applyQuick('cash')}>
             {t('quickCashOnly')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={!canWrite} onClick={() => applyQuick('voucher')}>
+            {t('quickVoucherOnly')}
           </Button>
           <Button type="button" variant="ghost" size="sm" disabled={!canWrite} onClick={() => applyQuick('inherit')}>
             {t('quickInheritAll')}
@@ -429,7 +455,62 @@ function MethodsEditor({
               </li>
             );
           })}
+          {/* "שובר הפקה": scanned, and typed by hand ("שובר ידני") — on / blocked / inherit,
+              no tip question. With every method above blocked they make a voucher-only till. */}
+          {VOUCHER_SWITCHES.map((v) => {
+            const own = draft[v.key];
+            const inheritedOn =
+              typeof inherited?.[v.key] === 'boolean' ? (inherited[v.key] as boolean) : VOUCHER_SWITCH_DEFAULT;
+            const effectiveOn = typeof own === 'boolean' ? own : inheritedOn;
+            return (
+              <li
+                key={v.id}
+                className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_16rem_14rem] md:items-start md:gap-4"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{t(`methods.${v.id}.label`)}</span>
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-0.5 text-xs font-medium',
+                        effectiveOn
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : 'bg-muted text-muted-foreground',
+                      )}
+                    >
+                      {effectiveOn ? t('stateActive') : t('stateBlocked')}
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground mt-0.5 text-xs">{t(`methods.${v.id}.desc`)}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-muted-foreground text-xs md:hidden">{t('colState')}</Label>
+                  <TriState
+                    value={typeof own === 'boolean' ? own : null}
+                    onChange={(val) => setKey(v.key, val)}
+                    disabled={!canWrite}
+                    onLabel={t('active')}
+                    offLabel={t('blocked')}
+                    inheritLabel={t('inheritShort')}
+                  />
+                  {typeof own !== 'boolean' ? (
+                    <p className="text-muted-foreground text-xs">
+                      {t('inheritNote', {
+                        state: inheritedOn ? t('stateActive') : t('stateBlocked'),
+                        source: levelName(layer.effectiveSources?.[v.key]),
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+                <p className="text-muted-foreground text-xs md:pt-2">{t('voucherNoTips')}</p>
+              </li>
+            );
+          })}
         </ul>
+        <div className="space-y-1 border-t px-4 py-3">
+          <p className="text-muted-foreground text-xs">{t('voucherOnlyHint')}</p>
+          {onlyVoucher ? <p className="text-primary text-sm font-medium">{t('voucherOnlyActive')}</p> : null}
+        </div>
       </Card>
 
       <PayOrderCard
@@ -439,6 +520,8 @@ function MethodsEditor({
         disabled={!canWrite}
         label={(id) => (id === 'voucher' ? t('orderVoucherLabel') : t(`methods.${id}.label`))}
         isOn={(id) => {
+          // The voucher's one row: blocked only when both its ways in are.
+          if (id === 'voucher') return VOUCHER_SWITCHES.some((v) => voucherOnOf(v.key));
           const opt = options.find((o) => o.id === id);
           return opt ? effectiveOnOf(opt) : null;
         }}
@@ -595,7 +678,7 @@ function PayOrderCard({
   source: string;
   disabled: boolean;
   label: (id: PayOrderId) => string;
-  /** Whether the method is on at this level; null for one without a switch (the voucher). */
+  /** Whether the method is on at this level (the voucher: either of its two switches); null = no switch. */
   isOn: (id: PayOrderId) => boolean | null;
   onMove: (id: PayOrderId, direction: -1 | 1) => void;
   onReset: () => void;

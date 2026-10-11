@@ -23,12 +23,14 @@ from app.schemas.pos_settings import (
     ShopSettingsResponse,
 )
 from app.services.payment_options import (
-    PAYMENT_OPTION_ALLOWED_KEYS,
+    PAYMENT_ALLOWED_KEYS_WITH_VOUCHER,
     PAYMENT_OPTION_SETTING_KEYS,
     PAY_ORDER_KEY,
+    VOUCHER_SETTING_KEYS,
     any_allowed,
     resolve_pay_order,
     resolve_payment_options,
+    resolve_voucher_options,
 )
 from app.services.refund_settings import REFUND_SETTING_KEYS, resolve_refund_settings
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS, resolve_sell_screen
@@ -133,9 +135,14 @@ def _payment_options_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     Same reason as branding: the dashboard's "reset to inherited" on these keys
     sends `null`, meaning remove the key from this layer so the parent's value
     shows through again. `false` is not a substitute — it overrides, and hides.
+    The voucher's two switches (scanned / typed by hand) take `null` the same way.
     """
     raw = data.model_dump(exclude_unset=True, by_alias=True)
-    return {key: raw[key] for key in PAYMENT_OPTION_SETTING_KEYS if key in raw}
+    return {
+        key: raw[key]
+        for key in (*PAYMENT_OPTION_SETTING_KEYS, *VOUCHER_SETTING_KEYS)
+        if key in raw
+    }
 
 
 def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
@@ -291,8 +298,9 @@ def _store_secrets(db: Session, level: str, entity: Any, secrets: Dict[str, Any]
 NO_PAYMENT_OPTION_DETAIL = {
     "code": "no_payment_option_allowed",
     "msg": (
-        "At least one payment option must stay allowed "
-        "(fast cash, cash, fast card or card): with none, the till cannot take payment."
+        "At least one payment option must stay allowed (fast cash, cash, fast card, card, "
+        "manual card, or the production voucher scanned or typed by hand): "
+        "with none, the till cannot take payment."
     ),
 }
 
@@ -301,6 +309,10 @@ def _check_leaves_a_payment_option(
     parent_layers: List[Any], current: Any, patch: Dict[str, Any]
 ) -> None:
     """Refuse a write that would leave this layer's tills no way to take payment.
+
+    A way to take payment is any of the five cash/card options or the production voucher
+    (scanned or typed by hand): every cash and card option off with a voucher switch on
+    is a voucher-only till, and is allowed (`any_allowed`). Only nothing at all is refused.
 
     Only the layer being written is checked, against its own parents. A tenant or
     company write can still leave a child shop with nothing allowed (the child's
@@ -313,7 +325,7 @@ def _check_leaves_a_payment_option(
     """
     stored = current if isinstance(current, dict) else {}
     if not any(
-        key in patch and patch[key] != stored.get(key) for key in PAYMENT_OPTION_ALLOWED_KEYS
+        key in patch and patch[key] != stored.get(key) for key in PAYMENT_ALLOWED_KEYS_WITH_VOUCHER
     ):
         return
     after = deep_merge_settings(*parent_layers, patch_settings_json(current, patch))
@@ -350,6 +362,7 @@ def _inherited_preview(layers: List[Any]):
     merged = deep_merge_settings(*(settings or {} for _, settings in present))
     effective = {k: merged[k] for k in MANAGED_SETTING_KEYS if k in merged}
     effective.update(resolve_payment_options(effective, effective=False))
+    effective.update(resolve_voucher_options(effective))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
     # The inherited payment order completed (every method, the unlisted ones after);

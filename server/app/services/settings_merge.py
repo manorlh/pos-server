@@ -8,7 +8,7 @@ from app.models.company import Company
 from app.models.shop import Shop
 from app.models.tenant import Tenant
 from app.schemas.pos_settings import BusinessInfoSync
-from app.services.payment_options import PAYMENT_OPTION_SETTING_KEYS
+from app.services.payment_options import PAYMENT_OPTION_SETTING_KEYS, VOUCHER_SETTING_KEYS
 from app.services.refund_settings import REFUND_SETTING_KEYS
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 
@@ -63,6 +63,9 @@ MANAGED_SETTING_KEYS = (
     # payFastCashEnabled, payFastCashTips, payCashEnabled, ... — the eight payment
     # option keys, spelled out once in payment_options.py.
     *PAYMENT_OPTION_SETTING_KEYS,
+    # payVoucherEnabled, payVoucherManualEnabled — the production voucher, scanned or typed
+    # by hand ("שובר ידני"); payment_options.py.
+    *VOUCHER_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).
