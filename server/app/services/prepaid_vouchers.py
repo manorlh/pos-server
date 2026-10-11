@@ -58,7 +58,7 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
@@ -108,6 +108,10 @@ COMPANY_NOT_FOUND = "prepaid_voucher_company_not_found"
 SHOP_INVALID = "prepaid_voucher_shop_invalid"
 PRODUCT_INVALID = "prepaid_voucher_product_invalid"
 BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
+#: "הוסף שוברים לסדרה" to a batch whose validity has ended (409).
+BATCH_EXPIRED = "prepaid_voucher_batch_expired"
+#: An add that did not make every voucher it was asked for (500; nothing of it is kept).
+ADD_INCOMPLETE = "prepaid_voucher_add_incomplete"
 # Redemption refusals (409), also the `reason` of a lookup that cannot be redeemed.
 CANCELLED = "prepaid_voucher_cancelled"
 USED = "prepaid_voucher_used"
@@ -988,6 +992,20 @@ def add_vouchers(
     More vouchers, with the next serials. A grouped batch issues them in groups too — of
     [group_size] when given, else of the batch's own size — starting a new group.
     """
+    return issue_more(db, user, tenant_id, batch_id, count, group_size)[0]
+
+
+def issue_more(
+    db: Session, user: User, tenant_id, batch_id, count: int, group_size: Optional[int] = None
+) -> Tuple[PrepaidVoucherBatch, Dict[str, Any]]:
+    """
+    "הוסף שוברים לסדרה" (the owner's spec of 11.10.2026 §11): [count] more vouchers of the batch —
+    its type, production, goods / groups, quotas, validity, shops and print settings are the batch's
+    own, so the new ones have them as the first ones do; each gets a new code and the next serial;
+    the vouchers already issued are not touched. Returns the batch and the run (`added`): its audit
+    line's id, how many, the serials (and groups), when and by whom — the audit line ("add") is the
+    run's record. 409 for a cancelled or expired batch; the caller commits.
+    """
     batch = get_batch(db, user, tenant_id, batch_id)
     # Serials are drawn under the batch's lock, so two clicks cannot hand out one twice.
     batch = (
@@ -998,13 +1016,40 @@ def add_vouchers(
     )
     if batch.status == "cancelled":
         raise _http(status.HTTP_409_CONFLICT, BATCH_CANCELLED)
+    if batch.valid_until is not None and _now() > _utc(batch.valid_until):
+        # Every voucher it would issue is refused at the till from the start (`expired`): extend the
+        # validity first ("ערוך סדרה"), then add. A batch has no other closed state.
+        raise _http(status.HTTP_409_CONFLICT, BATCH_EXPIRED)
     size = group_size or batch.group_size
     if size and not batch.group_size:
         batch.group_size = size
+    start = int(batch.next_serial or 1)
     issued = _issue(db, batch, count, size)
-    _event(db, batch, user, "add", count=count, details=_issued_details(issued, size))
+    ev = _event(db, batch, user, "add", count=count, details=_issued_details(issued, size))
     db.flush()
-    return batch
+    # All or nothing: the run is reported only when every one of its vouchers is in the batch, with
+    # a code of its own. Anything else fails the request, and its transaction takes the rest back.
+    made = (
+        db.query(func.count(func.distinct(PrepaidVoucher.code)))
+        .filter(
+            PrepaidVoucher.batch_id == batch.id,
+            PrepaidVoucher.serial >= start,
+            PrepaidVoucher.serial < start + count,
+        )
+        .scalar()
+    )
+    if len(issued) != count or int(made or 0) != count:
+        raise _http(status.HTTP_500_INTERNAL_SERVER_ERROR, ADD_INCOMPLETE)
+    added = {
+        "eventId": str(ev.id),
+        "count": count,
+        "fromSerial": issued[0].serial if issued else None,
+        "toSerial": issued[-1].serial if issued else None,
+        **{k: v for k, v in (ev.details or {}).items() if k in ("fromGroup", "toGroup", "groupSize")},
+        "createdAt": _iso(ev.created_at),
+        "userName": ev.user_name,
+    }
+    return batch, added
 
 
 def assign_groups(db: Session, user: User, tenant_id, batch_id, group_size: int) -> PrepaidVoucherBatch:
@@ -1181,6 +1226,31 @@ def _stats(db: Session, batch_ids: List[uuid.UUID]) -> Dict[str, Dict[str, int]]
     return out
 
 
+def export_vouchers(
+    db: Session, batch: PrepaidVoucherBatch, *, include_used: bool = True, group: Optional[int] = None,
+    voucher_id=None,
+) -> List[PrepaidVoucher]:
+    """
+    The vouchers a file of [batch] holds (GET /prepaid-vouchers/batches/{id}/file), read once, in
+    serial order: every voucher of the batch — whichever run issued it — but the cancelled ones
+    (never printed); [include_used] False leaves the used ones out too; [group] / [voucher_id]
+    narrow it. With neither, this is "ייצוא כל הסדרה" and its size is `batch_out`'s `exportCount`.
+    """
+    q = db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.status != "cancelled")
+    if voucher_id:
+        q = q.filter(PrepaidVoucher.id == _as_uuid(voucher_id))
+    if not include_used:
+        q = q.filter(PrepaidVoucher.status != "used")
+    if group is not None:
+        q = q.filter(PrepaidVoucher.group_no == group)
+    return q.order_by(PrepaidVoucher.serial).all()
+
+
+def export_count(stats: Dict[str, int]) -> int:
+    """How many vouchers "ייצוא כל הסדרה" holds, from the batch's counts: every voucher but the cancelled."""
+    return int(stats.get("total", 0)) - int(stats.get("cancelled", 0))
+
+
 def _empty_counts() -> Dict[str, int]:
     return {"total": 0, "active": 0, "partiallyUsed": 0, "used": 0, "cancelled": 0}
 
@@ -1287,6 +1357,9 @@ def batch_out(
         "shops": [{"id": s, "name": shop_names.get(s)} for s in (batch.shop_ids or [])],
         "items": _batch_items_out(batch),
         "stats": stats or _empty_counts(),
+        # "ייצוא כל הסדרה ל-PDF": how many vouchers it holds now — the same rows the file reads
+        # (`export_vouchers`: every voucher of the batch, of every run, but the cancelled ones).
+        "exportCount": export_count(stats or _empty_counts()),
         "createdAt": _iso(batch.created_at),
         "cancelledAt": _iso(batch.cancelled_at),
         # Production (docs/SPEC_VOUCHER_PRODUCTION.md).
@@ -1971,7 +2044,10 @@ def till_view(
             # (`prepaid_voucher_item_unusable`).
             "usable": unusable.get(row["productId"]) is None,
             "unusableReason": unusable.get(row["productId"]),
+            # What of this item was taken already ("מומשו"): quantity less remaining.
+            "used": qty_out(qty(row["quantity"]) - qty(row["remaining"])),
         })
+    groups_view = _groups_view(db, machine, batch, voucher)
     return {
         "id": str(voucher.id),
         "serial": int(voucher.serial),
@@ -2016,7 +2092,12 @@ def till_view(
         "offline": {"allowed": bool(getattr(batch, "offline_allowed", False)), "assignedMachineId": None,
                     "assignedKind": None},
         # Groups (§2): each with what is left and its products (the till's ids too); "items" else.
-        **_groups_view(db, machine, batch, voucher),
+        **groups_view,
+        # "מכסה 5 | מומשו 2 | נותרו 3" (the owner's spec of 11.10.2026 §5): the voucher's quota, what
+        # was taken and what is left — groups: units in all (`totalMax` / `totalRemaining`); a fixed
+        # list: its quantities summed; a discount: its uses. Live holds of other sales are not taken
+        # off here: the reserve answers `prepaid_voucher_in_use` for them.
+        **_quota_out(batch, voucher, items, groups_view),
         "message": message,
         "benefit": benefit_for_till(db, machine, batch),
         "usesLeft": voucher.uses_left,
@@ -2027,6 +2108,24 @@ def till_view(
         "maxUsesPerDay": batch.max_uses_per_day if is_discount(batch) else None,
         **controls_extra,  # §18 (helper): isTest
     }
+
+
+def _quota_out(
+    batch: PrepaidVoucherBatch, voucher: PrepaidVoucher, items: List[Dict[str, Any]], groups_view: Dict[str, Any],
+) -> Dict[str, Any]:
+    """`quota` / `used` / `remaining` of [voucher] and the unit they count (`quotaUnit`)."""
+    if is_discount(batch):
+        quota = int(batch.uses_per_voucher or 1)
+        left = int(voucher.uses_left or 0)
+        return {"quotaUnit": "uses", "quota": quota, "used": max(0, quota - left), "remaining": left}
+    if groups_view.get("selection") == "groups":
+        quota = int(groups_view.get("totalMax") or 0)
+        left = int(groups_view.get("totalRemaining") or 0)
+        return {"quotaUnit": "units", "quota": quota, "used": max(0, quota - left), "remaining": left}
+    quota = sum((qty(i["quantity"]) for i in items), Decimal(0))
+    left = sum((qty(i["remaining"]) for i in items), Decimal(0))
+    return {"quotaUnit": "units", "quota": qty_out(quota), "used": qty_out(max(Decimal(0), quota - left)),
+            "remaining": qty_out(left)}
 
 
 def lookup(

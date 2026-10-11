@@ -22,7 +22,8 @@ import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
 import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/lib/availabilityReopen';
 import { TIP_PRESETS_MAX } from '@/lib/types';
 import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, parseIdleReturnInput } from '@/lib/desktopIdleReturn';
-import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel, VoucherRedeemFlow } from '@/lib/types';
+import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnavailable } from '@/lib/voucherRedeemFlow';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
 
@@ -408,6 +409,83 @@ export function PosSettingsForm({
             </div>
           </div>
         ))}
+        {/* How the till enters a voucher's redemption (lib/voucherRedeemFlow.ts): "ירושה" sends null. */}
+        {(() => {
+          const flowLabel = (f: VoucherRedeemFlow) => t(`voucherFlow_${f}`);
+          const showLabel = (v: boolean) => t(v ? 'voucherUnavailableShow' : 'voucherUnavailableHide');
+          const flowItems = [
+            {
+              value: 'inherit',
+              label: t('voucherFlowInherit', {
+                value: flowLabel(resolveVoucherRedeemFlow(undefined, inherited?.voucherRedeemFlow)),
+              }),
+            },
+            ...VOUCHER_REDEEM_FLOWS.map((f) => ({ value: f as string, label: flowLabel(f) })),
+          ];
+          const showItems = [
+            {
+              value: 'inherit',
+              label: t('voucherUnavailableInherit', {
+                value: showLabel(resolveVoucherShowUnavailable(undefined, inherited?.voucherShowUnavailable)),
+              }),
+            },
+            { value: 'show', label: showLabel(true) },
+            { value: 'hide', label: showLabel(false) },
+          ];
+          const own = value.voucherShowUnavailable;
+          return (
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>
+                  {t('voucherFlowLabel')}
+                  {overrideBadge('voucherRedeemFlow')}
+                </Label>
+                <Select
+                  value={value.voucherRedeemFlow ?? 'inherit'}
+                  onValueChange={(v) =>
+                    set('voucherRedeemFlow', v === 'inherit' ? null : (v as VoucherRedeemFlow))
+                  }
+                  items={flowItems}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {flowItems.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>
+                  {t('voucherUnavailableLabel')}
+                  {overrideBadge('voucherShowUnavailable')}
+                </Label>
+                <Select
+                  value={typeof own === 'boolean' ? (own ? 'show' : 'hide') : 'inherit'}
+                  onValueChange={(v) =>
+                    set('voucherShowUnavailable', v === 'inherit' ? null : v === 'show')
+                  }
+                  items={showItems}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {showItems.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          );
+        })()}
         <p className="text-xs text-muted-foreground">{t('payVoucherOnlyHint')}</p>
         {voucherOnly(value, inherited) ? (
           <p className="text-sm font-medium text-primary">{t('payVoucherOnlyActive')}</p>

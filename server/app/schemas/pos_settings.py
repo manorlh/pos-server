@@ -101,6 +101,14 @@ class PosSettingsV1Patch(BaseModel):
     pay_voucher_enabled: Optional[bool] = Field(None, alias="payVoucherEnabled")
     #: "שובר ידני": typing the voucher's code by hand.
     pay_voucher_manual_enabled: Optional[bool] = Field(None, alias="payVoucherManualEnabled")
+    # ── How the till enters a production voucher's redemption (app/services/voucher_redeem_settings.py) ──
+    #: "דרך מימוש שובר": items first (unset = today's flow), the voucher first, or both ways in.
+    #: Anything else is a 422; `null` in a PATCH resets the layer to inherit.
+    voucher_redeem_flow: Optional[Literal["items_first", "voucher_first", "both"]] = Field(
+        None, alias="voucherRedeemFlow"
+    )
+    #: "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden.
+    voucher_show_unavailable: Optional[bool] = Field(None, alias="voucherShowUnavailable")
     #: The most instalments the till's instalments picker (the `card` option) offers,
     #: 2–36. Unset = the card terminal decides; `null` in a PATCH resets the layer to
     #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).

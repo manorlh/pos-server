@@ -41,10 +41,12 @@ import {
   downloadPrepaidVouchersFile,
   fetchAllPrepaidVouchers,
   fetchFilteredPrepaidBatches,
+  fetchPrepaidBatch,
   fetchPrepaidBatches,
   fetchPrepaidVoucherRows,
   fetchPrepaidTypes,
   updatePrepaidBatch,
+  type PrepaidAddedRun,
   type PrepaidBarcodeType,
   type PrepaidBatchEditBody,
   type PrepaidPricing,
@@ -1210,6 +1212,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const [addKeys] = useState(() => batchKeys(sessionStore()));
   const [addPhase, setAddPhase] = useState<SubmitPhase>('idle');
   const [addLost, setAddLost] = useState(false);
+  // "הוסף שוברים לסדרה": the summary before, the run's result after (what the server recorded).
+  const [addOpen, setAddOpen] = useState(false);
+  const [addResult, setAddResult] = useState<PrepaidAddedRun | null>(null);
   const addMore = useMutation({
     mutationFn: async () => {
       const count = parseInt(addCount, 10);
@@ -1225,7 +1230,16 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       }
       return res.value;
     },
-    onSuccess: (b) => { setAddLost(false); toast.success(t('added', { total: b.stats.total })); refresh(); },
+    onSuccess: (b) => {
+      setAddLost(false);
+      const run: PrepaidAddedRun = b.added ?? {
+        eventId: '', count: parseInt(addCount, 10), fromSerial: null, toSerial: null,
+        total: b.stats.total, createdAt: null, userName: null, replayed: false,
+      };
+      setAddResult(run);
+      toast.success(t('added', { total: run.total }));
+      refresh();
+    },
     onError: (err) => toast.error(errorText(err)),
   });
 
@@ -1250,7 +1264,36 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       fileName,
     });
 
+  const exportWholeBatch = async () => {
+    setBusy(t('fileServerPreparing'));
+    try {
+      // The count as it is now (another run may have been added since the page loaded).
+      const fresh = await fetchPrepaidBatch(batch.id);
+      const expected = fresh.exportCount ?? fresh.stats.total - fresh.stats.cancelled;
+      if (!expected) {
+        toast.error(t('nothingToPrint'));
+        return;
+      }
+      if (!window.confirm(t('exportAll.confirm', { n: expected, cancelled: fresh.stats.cancelled }))) return;
+      const got = await downloadPrepaidVouchersFile(batch.id, {
+        format: 'pdf',
+        layout: layout.preset,
+        width: layout.preset === 'custom' ? layout.width : undefined,
+        height: layout.preset === 'custom' ? layout.height : undefined,
+        fileName: `${fileBase}.pdf`,
+        wholeBatch: true,
+      });
+      toast.success(t('exportAll.done', { n: got ?? expected }));
+      refresh();
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runAll = async (kind: 'print' | 'pdf' | 'zip' | 'groups' | 'csv') => {
+    if (kind === 'pdf') return exportWholeBatch();
     setBusy(kind === 'print' ? t('printPreparing') : t('fileServerPreparing'));
     try {
       if (kind === 'groups' || kind === 'csv') {
@@ -1375,6 +1418,20 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         </div>
       </div>
       {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
+      {addOpen ? (
+        <AddToBatchDialog
+          batch={batch}
+          count={parseInt(addCount, 10) || 0}
+          benefit={termsText.benefit}
+          usesText={termsText.uses ?? (batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
+          pending={addMore.isPending}
+          checking={addMore.isPending && addPhase === 'checking'}
+          lost={addLost && !addMore.isPending}
+          result={addResult}
+          onConfirm={() => addMore.mutate()}
+          onClose={() => { if (!addMore.isPending) { setAddOpen(false); setAddResult(null); } }}
+        />
+      ) : null}
 
       <StatsBar b={batch} />
       {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
@@ -1469,7 +1526,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => void runAll('pdf')} disabled={!!busy || cancelled}>
               <FileDown className="h-4 w-4" />
-              {t('pdfAll')}
+              {t('exportAll.button', { n: batch.exportCount ?? batch.stats.total - batch.stats.cancelled })}
             </Button>
             <Button variant="outline" onClick={() => void runAll('zip')} disabled={!!busy || cancelled}>
               <FileDown className="h-4 w-4" />
@@ -1529,7 +1586,8 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             <Label htmlFor="pv-add">{t('addLabel')}</Label>
             <Input id="pv-add" type="number" min={1} max={5000} className="h-9 w-28" value={addCount} onChange={(e) => setAddCount(e.target.value)} />
           </div>
-          <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)} onClick={() => addMore.mutate()}>
+          <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)}
+            onClick={() => { setAddResult(null); setAddOpen(true); }}>
             {addMore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{' '}
             {addMore.isPending && addPhase === 'checking' ? t('addChecking') : addLost && !addMore.isPending ? t('addRetry') : t('add')}
           </Button>
@@ -1677,6 +1735,98 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       </div>
       </>)}
     </div>
+  );
+}
+
+/**
+ * "הוסף שוברים לסדרה": how many, and what the new vouchers take from the batch — they are the
+ * batch's, so its validity, contents, groups, value, terms, shops and print settings are theirs —
+ * then confirm once (one operation id per submission, lib/prepaidBatchSubmit.ts; the button is
+ * off while it runs), then the run as the server recorded it: how many, which serials, the new total.
+ */
+function AddToBatchDialog({ batch, count, benefit, usesText, pending, checking, lost, result, onConfirm, onClose }: {
+  batch: PrepaidVoucherBatch;
+  count: number;
+  benefit: string | null;
+  usesText: string;
+  pending: boolean;
+  checking: boolean;
+  lost: boolean;
+  result: PrepaidAddedRun | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const t = useTranslations('prepaidVouchers');
+  const issued = batch.issuedCount ?? batch.stats.total;
+  const from = issued + 1;
+  const groups = batch.selection === 'groups' ? batch.groups ?? [] : [];
+  const rows: Array<[string, string]> = [
+    [t('addDialog.validity'), validityText(batch, t)],
+    [t('addDialog.contents'), contentsText(batch, benefit)],
+    ...(groups.length
+      ? [[t('addDialog.groups'), [
+        ...groups.map((g) => t('addDialog.group', { name: g.name, max: g.maxQty })),
+        ...(batch.totalQty ? [t('addDialog.totalQty', { n: batch.totalQty })] : []),
+      ].join(' · ')] as [string, string]]
+      : []),
+    ...(batch.tillValue != null ? [[t('addDialog.value'), moneyText(Math.round(batch.tillValue * 100))] as [string, string]] : []),
+    [t('addDialog.terms'), usesText],
+    ...(batch.typeName || batch.type?.name ? [[t('addDialog.type'), (batch.typeName || batch.type?.name) as string] as [string, string]] : []),
+    ...(batch.customerName ? [[t('addDialog.production'), batch.customerName] as [string, string]] : []),
+    [t('addDialog.shops'), batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: batch.companyName ?? '' })],
+    ...(batch.groupSize ? [[t('addDialog.envelopes'), t('production.addHint', { size: batch.groupSize })] as [string, string]] : []),
+  ];
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[92dvh] max-w-lg overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('addDialog.title')}</DialogTitle>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-2" role="status" aria-live="polite">
+            <p className="text-sm font-medium">
+              {result.fromSerial != null && result.toSerial != null
+                ? t('addDialog.doneRange', { count: result.count, from: result.fromSerial, to: result.toSerial })
+                : t('addDialog.done', { count: result.count })}
+            </p>
+            <p className="text-sm">{t('addDialog.newTotal', { total: result.total })}</p>
+            {result.replayed ? <p className="text-xs text-muted-foreground">{t('addDialog.replayed')}</p> : null}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              {t('addDialog.summary', { count, from, to: issued + count, total: batch.stats.total + count })}
+            </p>
+            <div className="rounded-lg border p-3">
+              <p className="mb-2 text-xs text-muted-foreground">{t('addDialog.inherits')}</p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                {rows.map(([k, v]) => (
+                  <div key={k} className="contents">
+                    <dt className="text-muted-foreground">{k}</dt>
+                    <dd className="min-w-0 break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('addDialog.kept')}</p>
+            {lost ? <p role="status" className="text-xs text-amber-800 dark:text-amber-200">{t('addLostAnswer')}</p> : null}
+          </div>
+        )}
+        <DialogFooter>
+          {result ? (
+            <Button onClick={onClose}>{t('addDialog.close')}</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onClose} disabled={pending}>{t('addDialog.cancel')}</Button>
+              <Button onClick={onConfirm} disabled={pending || !(count >= 1)}>
+                {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{' '}
+                {checking ? t('addChecking') : lost ? t('addRetry') : t('addDialog.confirm', { count })}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

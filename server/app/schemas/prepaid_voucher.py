@@ -930,6 +930,9 @@ class PrepaidVoucherAddIn(BaseModel):
     count: int = Field(..., ge=1, le=MAX_VOUCHERS_PER_BATCH)
     #: In groups of this size (a new group first); null: the batch's own size, if any.
     group_size: Optional[int] = Field(None, alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
+    #: The operation id, for a client that cannot send the `Idempotency-Key` header (the header wins
+    #: when both are sent): a retry with the same id adds nothing (app/services/prepaid_batch_create.py).
+    client_request_id: Optional[str] = Field(None, alias="clientRequestId", max_length=100)
 
 
 class PrepaidVoucherGroupsIn(BaseModel):

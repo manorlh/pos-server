@@ -34,6 +34,7 @@ from app.services.payment_options import (
 )
 from app.services.refund_settings import REFUND_SETTING_KEYS, resolve_refund_settings
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS, resolve_sell_screen
+from app.services import voucher_redeem_settings as voucher_flow
 from app.services.settings_merge import (
     BRANDING_SETTING_KEYS,
     MANAGED_SETTING_KEYS,
@@ -155,6 +156,12 @@ def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     return {key: raw[key] for key in SELL_SCREEN_SETTING_KEYS if key in raw}
 
 
+def _voucher_flow_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
+    """The voucher's redemption keys the caller sent, keeping an explicit `null` (reset to inherit)."""
+    raw = data.model_dump(exclude_unset=True, by_alias=True)
+    return {key: raw[key] for key in voucher_flow.VOUCHER_FLOW_SETTING_KEYS if key in raw}
+
+
 def _refund_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     """Return-flow keys the caller explicitly sent, keeping an explicit `null` (reset)."""
     raw = data.model_dump(exclude_unset=True, by_alias=True)
@@ -264,6 +271,7 @@ def _build_patch(data: PosSettingsV1Patch, user: User) -> Dict[str, Any]:
         **_payment_options_patch(data),
         **_sell_screen_patch(data),
         **_refund_settings_patch(data),
+        **_voucher_flow_patch(data),
         **_tip_settings_patch(data),
         # The integration type and Z-Credit's fields: `null` resets, "auto" is not stored.
         **payment_integration.resettable_patch(data),
@@ -363,6 +371,7 @@ def _inherited_preview(layers: List[Any]):
     effective = {k: merged[k] for k in MANAGED_SETTING_KEYS if k in merged}
     effective.update(resolve_payment_options(effective, effective=False))
     effective.update(resolve_voucher_options(effective))
+    effective.update(voucher_flow.resolve_voucher_flow(effective))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
     # The inherited payment order completed (every method, the unlisted ones after);
@@ -425,6 +434,7 @@ def patch_tenant_settings(
         )
 
     _check_leaves_a_payment_option([], tenant.settings, patch)
+    voucher_flow.audit_patch(db, "tenant", tenant, patch, current_user)
     tenant.settings = patch_settings_json(tenant.settings, patch)
     _store_secrets(db, "tenant", tenant, secrets, current_user)
     tenant.settings_updated_at = utc_now()
@@ -498,6 +508,7 @@ def patch_company_settings(
     _check_leaves_a_payment_option(
         [_settings_of(_tenant_of(company, db))], company.settings, patch
     )
+    voucher_flow.audit_patch(db, "company", company, patch, current_user)
     company.settings = patch_settings_json(company.settings, patch)
     _store_secrets(db, "company", company, secrets, current_user)
     company.settings_updated_at = utc_now()
@@ -578,6 +589,7 @@ def patch_shop_settings(
     _check_leaves_a_payment_option(
         [_settings_of(tenant), _settings_of(company)], shop.settings, patch
     )
+    voucher_flow.audit_patch(db, "shop", shop, patch, current_user)
     shop.settings = patch_settings_json(shop.settings, patch)
     _store_secrets(db, "shop", shop, secrets, current_user)
     shop.settings_updated_at = utc_now()
@@ -672,6 +684,7 @@ def patch_area_settings(
     _check_leaves_a_payment_option(
         [_settings_of(tenant), _settings_of(company), _settings_of(shop)], area.settings, patch
     )
+    voucher_flow.audit_patch(db, "area", area, patch, current_user)
     area.settings = patch_settings_json(area.settings, patch)
     _store_secrets(db, "area", area, secrets, current_user)
     area.settings_updated_at = utc_now()
@@ -765,6 +778,7 @@ def patch_machine_settings(
         machine.settings,
         patch,
     )
+    voucher_flow.audit_patch(db, "machine", machine, patch, current_user)
     machine.settings = patch_settings_json(machine.settings, patch)
     _store_secrets(db, "machine", machine, secrets, current_user)
     machine.settings_updated_at = utc_now()

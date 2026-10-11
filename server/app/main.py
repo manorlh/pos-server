@@ -118,6 +118,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # How many vouchers a voucher file holds (GET /prepaid-vouchers/batches/{id}/file).
+    expose_headers=["X-Voucher-Count"],
 )
 app.add_middleware(RequestContextMiddleware)
 # Compressed answers: a till pulls the tables' state (≈140 KB at 200 tables) every few

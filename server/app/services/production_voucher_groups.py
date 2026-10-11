@@ -204,10 +204,19 @@ def till_view(db: Session, machine, batch, voucher) -> Dict[str, Any]:
             copy = (till.get(pid) or {}).get("tillProductId")
             if copy and str(copy).lower() != pid:
                 both.append(str(copy).lower())
+        quota = int(g.get("maxQty", 1) or 0)
+        remaining = left.get(g["key"], 0)
         out_groups.append({
             "key": g["key"], "name": g.get("name"), "minQty": g.get("minQty", 0), "maxQty": g.get("maxQty", 1),
-            "remaining": left.get(g["key"], 0), "valueAgorot": g.get("valueAgorot"),
+            "remaining": remaining, "valueAgorot": g.get("valueAgorot"),
             "allowRepeat": bool(g.get("allowRepeat", True)), "productIds": both,
+            # The same list under the name the voucher-first picker reads (the owner's spec of
+            # 11.10.2026 §3): the group's products as the reserve takes them — `eligible`, the
+            # frozen list or the live catalog by `catalogMode` — the cloud's ids and the till's own.
+            "eligibleProductIds": both,
+            # "מכסה 5 | מומשו 2 | נותרו 3" per group: units, from the voucher's own `remaining`.
+            "quota": quota,
+            "used": max(0, quota - int(remaining)),
             "excludedIds": list(g.get("excludeProductIds") or []),
         })
     total = total_max(groups, batch.total_qty)

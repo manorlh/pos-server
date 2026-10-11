@@ -150,6 +150,30 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
    * moment ago ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
    */
   possibleDuplicate?: PrepaidDuplicateRef | null;
+  /**
+   * "ייצוא כל הסדרה ל-PDF": how many vouchers the whole-batch file holds now — every voucher of the
+   * batch, of every run, but the cancelled ones (the same rows the file reads).
+   */
+  exportCount?: number;
+  /** Only on the answer of POST /prepaid-vouchers/batches/{id}/vouchers: what this run made. */
+  added?: PrepaidAddedRun | null;
+}
+
+/** "הוסף שוברים לסדרה": one run of more vouchers, as the server recorded it (its audit line). */
+export interface PrepaidAddedRun {
+  eventId: string;
+  count: number;
+  fromSerial: number | null;
+  toSerial: number | null;
+  fromGroup?: number | null;
+  toGroup?: number | null;
+  groupSize?: number | null;
+  /** The batch's total after the run. */
+  total: number;
+  createdAt: string | null;
+  userName: string | null;
+  /** A retry of the same operation: nothing was added this time; this is the first run. */
+  replayed: boolean;
 }
 
 // ── Productions ("הפקות") and the events a batch may name (§13) ──────────────
@@ -632,9 +656,11 @@ export async function addPrepaidVouchers(
   groupSize?: number | null,
   opts: { idempotencyKey?: string; timeoutMs?: number } = {},
 ): Promise<PrepaidVoucherBatch> {
+  // The operation id goes in the header and, for proxies that drop it, in the body too (one id).
   const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, {
     count,
     ...(groupSize ? { groupSize } : {}),
+    ...(opts.idempotencyKey ? { clientRequestId: opts.idempotencyKey } : {}),
   }, {
     headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
     timeout: opts.timeoutMs,
@@ -686,7 +712,7 @@ export async function cancelPrepaidGroup(
 
 export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
-  | 'offline_assign' | 'offline_release' | 'offline_force_release';
+  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export';
 
 export interface PrepaidBatchEvent {
   id: string;
@@ -875,7 +901,9 @@ export async function fetchPrepaidCategories(companyId: string): Promise<Prepaid
  * `pdf` — one PDF (`group` narrows it to one group, opened by its cover sheet); `zip` — a PDF
  * per voucher; `groups` — a PDF per group with cover sheets, and the CSV manifest, in a ZIP;
  * `csv` — the manifest of every code. Downloaded as `fileName`.
- * Used vouchers are left out, as in printing; `voucherId` narrows it to one.
+ * Used vouchers are left out, as in printing — but for one voucher (`voucherId`) and for
+ * `wholeBatch` ("ייצוא כל הסדרה ל-PDF": every voucher of every run, used ones too; cancelled never).
+ * Returns how many vouchers the file holds (the server's `X-Voucher-Count`), or null when not sent.
  */
 export async function downloadPrepaidVouchersFile(
   batchId: string,
@@ -887,20 +915,23 @@ export async function downloadPrepaidVouchersFile(
     voucherId?: string;
     group?: number;
     fileName: string;
+    wholeBatch?: boolean;
   },
-): Promise<void> {
-  const { data } = await api.get<Blob>(`/prepaid-vouchers/batches/${batchId}/file`, {
+): Promise<number | null> {
+  const { data, headers } = await api.get<Blob>(`/prepaid-vouchers/batches/${batchId}/file`, {
     params: {
       format: opts.format,
       layout: opts.layout,
       ...(opts.width ? { width: opts.width } : {}),
       ...(opts.height ? { height: opts.height } : {}),
       ...(opts.group ? { group: opts.group } : {}),
-      ...(opts.voucherId ? { voucherId: opts.voucherId, includeUsed: true } : { includeUsed: false }),
+      ...(opts.voucherId || opts.wholeBatch ? { includeUsed: true } : { includeUsed: false }),
+      ...(opts.voucherId ? { voucherId: opts.voucherId } : {}),
     },
     responseType: 'blob',
     timeout: 300_000,
   });
+  const counted = Number((headers as Record<string, unknown> | undefined)?.['x-voucher-count']);
   const url = URL.createObjectURL(data);
   const a = document.createElement('a');
   a.href = url;
@@ -909,6 +940,7 @@ export async function downloadPrepaidVouchersFile(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return Number.isFinite(counted) ? counted : null;
 }
 
 // ── The filter model: lists, search and the till report (server: prepaid_voucher_analytics.py) ──

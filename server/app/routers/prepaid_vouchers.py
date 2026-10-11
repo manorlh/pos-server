@@ -549,14 +549,19 @@ def add_prepaid_vouchers(
     idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
     """
-    More vouchers (the next serials) in one transaction, the answer built before the commit.
-    `Idempotency-Key`: a retry adds them once (200 + `Idempotent-Replayed` with the batch as it is
-    now); the same key with another body or batch → 422 (app/services/prepaid_batch_create.py).
+    More vouchers (the next serials) in one transaction, the answer built before the commit: the
+    batch as it is now, and `added` — this run: `count`, `fromSerial` / `toSerial` (groups too),
+    `total` (the batch's new total), `eventId` / `createdAt` / `userName` (its audit line), `replayed`.
+    `Idempotency-Key` (or the body's `clientRequestId`): a retry adds them once (200 +
+    `Idempotent-Replayed`, the first run's `added`); the same key with another body or batch → 422
+    (app/services/prepaid_batch_create.py). 409 `prepaid_voucher_batch_cancelled` /
+    `prepaid_voucher_batch_expired`. Never a partial run: all of them, or nothing and an error.
     """
     from app.services import command_idempotency as idem
     from app.services import prepaid_batch_create as PBC
 
-    out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=idempotency_key)
+    key = PBC.add_key_of(_given(idempotency_key), body)
+    out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=key)
     if replayed and response is not None:
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"
@@ -684,6 +689,13 @@ def prepaid_vouchers_file(
     * `format=csv` — the manifest: every voucher of the batch (any status) with its code.
 
     `voucherId` narrows it to one voucher. Cancelled vouchers are never printed.
+
+    "ייצוא כל הסדרה ל-PDF" is `format=pdf` with no `group` / `voucherId` and `includeUsed=true`: every
+    voucher of the batch by its id — the first run and every one added since — in serial order, with
+    the codes they were issued with; nothing is issued and no balance moves. The list is read once,
+    when the request starts (a run added meanwhile is in the next export), and its size is the
+    batch's `exportCount` then. `X-Voucher-Count`: how many vouchers the file holds. Each file made
+    is written to the batch's audit trail (`export`).
     """
     from fastapi import HTTPException
 
@@ -697,22 +709,28 @@ def prepaid_vouchers_file(
     pdf_name, zip_name = PDF.file_names(batch)
     base = pdf_name[:-4]
 
+    include_used = True if _given(include_used) is None else include_used
+    voucher_id = _given(voucher_id)
+    fmt = _given(fmt) or "pdf"
+    layout = _given(layout) or "ticket80x50"
+    width, height = _given(width), _given(height)
+
+    def exported(data: bytes, name: str, media: str, ext: str, rows):
+        PV._event(db, batch, current_user, "export", count=len(rows), details={
+            "format": fmt, "layout": layout, "group": group, "voucherId": voucher_id, "includeUsed": include_used,
+            "fromSerial": rows[0].serial if rows else None, "toSerial": rows[-1].serial if rows else None,
+        })
+        db.commit()
+        return _attachment(data, name, media, ext, count=len(rows))
+
     if fmt == "csv":
         everything = (
             db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.serial).all()
         )
-        return _attachment(PDF.manifest_csv(batch, everything), f"{base}_רשימת-קודים.csv", "text/csv; charset=utf-8", "csv")
+        return exported(PDF.manifest_csv(batch, everything), f"{base}_רשימת-קודים.csv", "text/csv; charset=utf-8", "csv", everything)
 
-    q = db.query(PrepaidVoucher).filter(
-        PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.status != "cancelled"
-    )
-    if voucher_id:
-        q = q.filter(PrepaidVoucher.id == PV._as_uuid(voucher_id))
-    if not include_used:
-        q = q.filter(PrepaidVoucher.status != "used")
-    if group is not None:
-        q = q.filter(PrepaidVoucher.group_no == group)
-    vouchers = q.order_by(PrepaidVoucher.serial).all()
+    # One read, at the start: the file is this list (PV.export_vouchers — the batch's `exportCount`).
+    vouchers = PV.export_vouchers(db, batch, include_used=include_used, group=group, voucher_id=voucher_id)
     groups_total = PV._last_group(db, batch.id)
     if fmt == "groups" and groups_total == 0:
         raise HTTPException(status_code=409, detail=PV.NOT_GROUPED)
@@ -734,9 +752,9 @@ def prepaid_vouchers_file(
             batch, vouchers, g, groups_total=groups_total, group_ranges=issued, logo=logo, opts=opts,
             covers=covers, made=made, manifest=PDF.manifest_csv(batch, everything),
         )
-        return _attachment(data, f"{base}_קבוצות.zip", "application/zip", "zip")
+        return exported(data, f"{base}_קבוצות.zip", "application/zip", "zip", vouchers)
     if fmt == "zip":
-        return _attachment(PDF.render_zip(batch, vouchers, g, logo=logo, opts=opts), zip_name, "application/zip", "zip")
+        return exported(PDF.render_zip(batch, vouchers, g, logo=logo, opts=opts), zip_name, "application/zip", "zip", vouchers)
 
     cover = None
     if group is not None and group in issued:
@@ -747,18 +765,21 @@ def prepaid_vouchers_file(
     elif voucher_id:
         pdf_name = f"{base}-{str(vouchers[0].serial).zfill(4)}.pdf"
     data = PDF.render_pdf(batch, vouchers, g, logo=logo, opts=opts, cover=cover, made=made)
-    return _attachment(data, pdf_name, "application/pdf", "pdf")
+    return exported(data, pdf_name, "application/pdf", "pdf", vouchers)
 
 
-def _attachment(data: bytes, name: str, media: str, ext: str):
+#: How many vouchers a file holds (exposed to the dashboard by CORS, app/main.py).
+VOUCHER_COUNT_HEADER = "X-Voucher-Count"
+
+
+def _attachment(data: bytes, name: str, media: str, ext: str, count: Optional[int] = None):
     from fastapi.responses import Response
     from urllib.parse import quote
 
-    return Response(
-        content=data,
-        media_type=media,
-        headers={"Content-Disposition": f"attachment; filename=\"vouchers.{ext}\"; filename*=UTF-8''{quote(name)}"},
-    )
+    headers = {"Content-Disposition": f"attachment; filename=\"vouchers.{ext}\"; filename*=UTF-8''{quote(name)}"}
+    if count is not None:
+        headers[VOUCHER_COUNT_HEADER] = str(count)
+    return Response(content=data, media_type=media, headers=headers)
 
 
 @router.get("/prepaid-vouchers/vouchers/{voucher_id}")

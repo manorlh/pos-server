@@ -20,6 +20,11 @@
  * for their shop, its points of sale and tills; never every method blocked (every cash and
  * card method blocked with the voucher on is fine: a voucher-only till).
  *
+ * Under the voucher's two switches, how the till enters a voucher's redemption (lib/voucherRedeemFlow.ts):
+ * "דרך מימוש שובר" (`voucherRedeemFlow`: items first / the voucher first / both) and "פריטים זכאים
+ * שאינם זמינים" (`voucherShowUnavailable`: shown blocked / hidden) — each with what is in force now,
+ * the level that decided it, and "ירושה" to inherit again.
+ *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
  */
@@ -64,8 +69,17 @@ import type {
   PosSettingsPatch,
   PosSettingsV1,
   SettingsLevel,
+  VoucherRedeemFlow,
   VoucherSettingKey,
 } from '@/lib/types';
+import {
+  VOUCHER_REDEEM_FLOWS,
+  VOUCHER_REDEEM_FLOW_KEY,
+  VOUCHER_SHOW_UNAVAILABLE_KEY,
+  isVoucherRedeemFlow,
+  resolveVoucherRedeemFlow,
+  resolveVoucherShowUnavailable,
+} from '@/lib/voucherRedeemFlow';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -83,8 +97,14 @@ import { cn } from '@/lib/utils';
 type EditLevel = Exclude<SettingsLevel, 'tenant'>;
 
 /** The keys this page writes. */
-type PaymentKey = PaymentOptionSettingKey | VoucherSettingKey | 'payInstallmentsMax';
-type Draft = Partial<Record<PaymentKey, boolean | number | null>>;
+type PaymentKey =
+  | PaymentOptionSettingKey
+  | VoucherSettingKey
+  | 'payInstallmentsMax'
+  | typeof VOUCHER_REDEEM_FLOW_KEY
+  | typeof VOUCHER_SHOW_UNAVAILABLE_KEY;
+type DraftValue = boolean | number | VoucherRedeemFlow | null;
+type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
 const INSTALLMENTS_KEY = 'payInstallmentsMax';
 const INSTALLMENTS_MIN = 2;
@@ -100,6 +120,8 @@ const PAYMENT_KEYS: PaymentKey[] = [
   ...PAYMENT_OPTIONS.flatMap((o) => [o.enabledKey, o.tipsKey] as PaymentOptionSettingKey[]),
   ...VOUCHER_SWITCHES.map((v) => v.key),
   INSTALLMENTS_KEY,
+  VOUCHER_REDEEM_FLOW_KEY,
+  VOUCHER_SHOW_UNAVAILABLE_KEY,
 ];
 
 interface LoadedLayer {
@@ -128,7 +150,7 @@ function ownDraft(settings: PosSettingsV1 | undefined): Draft {
   const out: Draft = {};
   for (const key of PAYMENT_KEYS) {
     const v = settings?.[key];
-    if (typeof v === 'boolean' || typeof v === 'number') out[key] = v;
+    if (typeof v === 'boolean' || typeof v === 'number' || isVoucherRedeemFlow(v)) out[key] = v;
   }
   return out;
 }
@@ -267,7 +289,7 @@ function MethodsEditor({
     },
   });
 
-  const setKey = (key: PaymentKey, value: boolean | number | null) => {
+  const setKey = (key: PaymentKey, value: DraftValue) => {
     setRejected(false);
     setDraft((d) => {
       const next = { ...d };
@@ -511,6 +533,18 @@ function MethodsEditor({
           <p className="text-muted-foreground text-xs">{t('voucherOnlyHint')}</p>
           {onlyVoucher ? <p className="text-primary text-sm font-medium">{t('voucherOnlyActive')}</p> : null}
         </div>
+        <VoucherFlowRows
+          flow={isVoucherRedeemFlow(draft[VOUCHER_REDEEM_FLOW_KEY]) ? (draft[VOUCHER_REDEEM_FLOW_KEY] as VoucherRedeemFlow) : null}
+          showUnavailable={
+            typeof draft[VOUCHER_SHOW_UNAVAILABLE_KEY] === 'boolean' ? (draft[VOUCHER_SHOW_UNAVAILABLE_KEY] as boolean) : null
+          }
+          inherited={inherited}
+          flowSource={levelName(layer.effectiveSources?.[VOUCHER_REDEEM_FLOW_KEY])}
+          showSource={levelName(layer.effectiveSources?.[VOUCHER_SHOW_UNAVAILABLE_KEY])}
+          disabled={!canWrite}
+          onFlow={(v) => setKey(VOUCHER_REDEEM_FLOW_KEY, v)}
+          onShowUnavailable={(v) => setKey(VOUCHER_SHOW_UNAVAILABLE_KEY, v)}
+        />
       </Card>
 
       <PayOrderCard
@@ -552,6 +586,129 @@ function MethodsEditor({
         </Button>
       </div>
     </>
+  );
+}
+
+/**
+ * "מימוש שובר הפקה בקופה": "דרך מימוש שובר" (items first / the voucher first / both / inherit) and
+ * "פריטים זכאים שאינם זמינים" (shown blocked / hidden / inherit), each with what is in force now and
+ * where that comes from. `null` = this level does not set it (inherits).
+ */
+function VoucherFlowRows({
+  flow,
+  showUnavailable,
+  inherited,
+  flowSource,
+  showSource,
+  disabled,
+  onFlow,
+  onShowUnavailable,
+}: {
+  flow: VoucherRedeemFlow | null;
+  showUnavailable: boolean | null;
+  inherited: PosSettingsV1 | undefined;
+  flowSource: string;
+  showSource: string;
+  disabled: boolean;
+  onFlow: (value: VoucherRedeemFlow | null) => void;
+  onShowUnavailable: (value: boolean | null) => void;
+}) {
+  const t = useTranslations('paymentMethods');
+  const inheritedFlow = resolveVoucherRedeemFlow(undefined, inherited?.voucherRedeemFlow);
+  const effectiveFlow = resolveVoucherRedeemFlow(flow, inherited?.voucherRedeemFlow);
+  const inheritedShow = resolveVoucherShowUnavailable(undefined, inherited?.voucherShowUnavailable);
+  const effectiveShow = resolveVoucherShowUnavailable(showUnavailable, inherited?.voucherShowUnavailable);
+  const showLabel = (v: boolean) => (v ? t('voucherUnavailableShow') : t('voucherUnavailableHide'));
+  return (
+    <div className="space-y-4 border-t px-4 py-3">
+      <p className="font-medium">{t('voucherFlowTitle')}</p>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_30rem] md:items-start md:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{t('voucherFlowLabel')}</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{t(`voucherFlow.${effectiveFlow}`)}</span>
+          </div>
+          <p className="text-muted-foreground mt-0.5 text-xs">{t(`voucherFlowHint.${effectiveFlow}`)}</p>
+        </div>
+        <div className="space-y-1">
+          <Segmented<VoucherRedeemFlow | null>
+            value={flow}
+            onChange={onFlow}
+            disabled={disabled}
+            choices={[
+              ...VOUCHER_REDEEM_FLOWS.map((f) => ({ v: f as VoucherRedeemFlow | null, label: t(`voucherFlow.${f}`) })),
+              { v: null, label: t('inheritShort') },
+            ]}
+          />
+          {flow === null ? (
+            <p className="text-muted-foreground text-xs">
+              {t('inheritNote', { state: t(`voucherFlow.${inheritedFlow}`), source: flowSource })}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_30rem] md:items-start md:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{t('voucherUnavailableLabel')}</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{showLabel(effectiveShow)}</span>
+          </div>
+          <p className="text-muted-foreground mt-0.5 text-xs">{t('voucherUnavailableDesc')}</p>
+        </div>
+        <div className="space-y-1">
+          <TriState
+            value={showUnavailable}
+            onChange={onShowUnavailable}
+            disabled={disabled}
+            onLabel={t('voucherUnavailableShow')}
+            offLabel={t('voucherUnavailableHide')}
+            inheritLabel={t('inheritShort')}
+          />
+          {showUnavailable === null ? (
+            <p className="text-muted-foreground text-xs">
+              {t('inheritNote', { state: showLabel(inheritedShow), source: showSource })}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A row of choices, one selected; `null` is a choice too (inherit). */
+function Segmented<T extends string | null>({
+  value,
+  onChange,
+  choices,
+  disabled,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  choices: Array<{ v: T; label: string }>;
+  disabled?: boolean;
+}) {
+  return (
+    <div role="radiogroup" className="flex w-full flex-wrap rounded-md border bg-muted/40 p-0.5">
+      {choices.map((c) => {
+        const selected = value === c.v;
+        return (
+          <button
+            key={String(c.v)}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={disabled}
+            onClick={() => onChange(c.v)}
+            className={cn(
+              'min-h-9 flex-1 rounded px-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+              selected ? 'bg-background text-primary font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {c.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

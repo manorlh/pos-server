@@ -310,6 +310,13 @@ export interface PosSettingsV1 {
   payVoucherEnabled?: boolean;
   payVoucherManualEnabled?: boolean;
   /**
+   * "דרך מימוש שובר" (lib/voucherRedeemFlow.ts): how the till enters a voucher's redemption —
+   * items first (unset: today's flow), the voucher first, or both. In `effective` always resolved.
+   */
+  voucherRedeemFlow?: VoucherRedeemFlow;
+  /** "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden. */
+  voucherShowUnavailable?: boolean;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -391,6 +398,9 @@ export type RefundSettingKey = 'unlinkedCardCreditEnabled' | 'refundCustomerDeta
 /** The production voucher's two switches: scanned, and typed by hand ("שובר ידני"). */
 export type VoucherSettingKey = 'payVoucherEnabled' | 'payVoucherManualEnabled';
 
+/** "דרך מימוש שובר" — the same three values as server/app/services/voucher_redeem_settings.py. */
+export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
   | PaymentOptionSettingKey
@@ -429,6 +439,8 @@ export type PosSettingsPatch = Partial<
     | 'paymentDeviceMode'
     | 'fixedPaymentDeviceId'
     | 'paymentDeviceGroup'
+    | 'voucherRedeemFlow'
+    | 'voucherShowUnavailable'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -443,6 +455,9 @@ export type PosSettingsPatch = Partial<
   autoReopenIgnoreStock?: boolean | null;
   /** `null` = unset this layer's payment order and inherit the level above's again. */
   payOrder?: string[] | null;
+  /** `null` = inherit "דרך מימוש שובר" / "פריטים זכאים שאינם זמינים" from the level above again. */
+  voucherRedeemFlow?: VoucherRedeemFlow | null;
+  voucherShowUnavailable?: boolean | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;

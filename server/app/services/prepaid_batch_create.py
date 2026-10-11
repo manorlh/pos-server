@@ -155,8 +155,20 @@ ADD_KIND = "prepaid_batch_add"
 
 
 def add_request_of(batch_id, body) -> Dict[str, Any]:
-    """The fingerprint of an add: the batch it is for, and the body (a key is never another batch's)."""
-    return {"batchId": str(PV._as_uuid(batch_id) or batch_id), **body.model_dump(mode="json", by_alias=True)}
+    """
+    The fingerprint of an add: the batch it is for, and the body (a key is never another batch's).
+    `clientRequestId` is the key itself (when sent in the body rather than the header), not a part of it.
+    """
+    out = {"batchId": str(PV._as_uuid(batch_id) or batch_id), **body.model_dump(mode="json", by_alias=True)}
+    out.pop("clientRequestId", None)
+    return out
+
+
+def add_key_of(header_key: Optional[str], body) -> Optional[str]:
+    """The add's operation id: the `Idempotency-Key` header, else the body's `clientRequestId`."""
+    if header_key is not None and str(header_key).strip():
+        return header_key
+    return getattr(body, "client_request_id", None)
 
 
 def add(db: Session, user: User, tenant_id, batch_id, body, key: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
@@ -168,13 +180,20 @@ def add(db: Session, user: User, tenant_id, batch_id, body, key: Optional[str] =
     """
 
     def run() -> Dict[str, Any]:
-        batch = PV.add_vouchers(db, user, tenant_id, batch_id, body.count, body.group_size)
-        return jsonable_encoder(PV.batch_out(db, batch, user=user))
+        batch, added = PV.issue_more(db, user, tenant_id, batch_id, body.count, body.group_size)
+        out = PV.batch_out(db, batch, user=user)
+        # What this run made, beside the batch as it is now (`stats.total` — the new total).
+        out["added"] = {**added, "total": out["stats"]["total"], "replayed": False}
+        return jsonable_encoder(out)
 
     def reread(first: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not first or not first.get("id"):
             return first
-        return jsonable_encoder(PV.batch_out(db, PV.get_batch(db, user, tenant_id, first["id"]), user=user))
+        fresh = PV.batch_out(db, PV.get_batch(db, user, tenant_id, first["id"]), user=user)
+        # The retry adds nothing: it answers with the run the first request made.
+        if isinstance(first.get("added"), dict):
+            fresh["added"] = {**first["added"], "replayed": True}
+        return jsonable_encoder(fresh)
 
     try:
         return idem.once(

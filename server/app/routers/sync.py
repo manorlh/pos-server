@@ -2362,6 +2362,12 @@ def get_settings_sync(
     # likewise always sent as real bools (unset -> on). With every option above off and
     # either of these on, the till is a voucher-only till.
     effective.update(resolve_voucher_options(all_settings))
+    # How the till enters a voucher's redemption ("דרך מימוש שובר", and whether eligible items
+    # not for sale show blocked or hidden): always sent resolved — unset = "items_first" / true,
+    # so a till keeps today's flow until someone changes it (app/services/voucher_redeem_settings.py).
+    from app.services.voucher_redeem_settings import resolve_voucher_flow
+
+    effective.update(resolve_voucher_flow(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))
