@@ -39,7 +39,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Query, Session
 
 from app.models.pos_machine import POSMachine
-from app.models.prepaid_voucher import PrepaidVoucherBatch, PrepaidVoucherRedemption
+from app.models.prepaid_voucher import PrepaidVoucher, PrepaidVoucherBatch, PrepaidVoucherRedemption
 from app.models.shop import Shop
 from app.models.transaction_item import TransactionItem
 from app.models.user import User
@@ -299,6 +299,20 @@ def build_voucher_board(
         )
     } if batch_ids else {}
 
+    # "כמה מתוך כמה": per listed batch, its vouchers (not cancelled) and those ever used — one query.
+    counts: Dict[str, Tuple[int, int]] = {}
+    if batches:
+        for bid, issued, used in (
+            db.query(
+                PrepaidVoucher.batch_id,
+                func.count(PrepaidVoucher.id),
+                func.sum(case((PrepaidVoucher.status.in_(("used", "partially_used")), 1), else_=0)),
+            )
+            .filter(PrepaidVoucher.batch_id.in_([b.id for b in batches.values()]), PrepaidVoucher.status != "cancelled")
+            .group_by(PrepaidVoucher.batch_id)
+        ):
+            counts[str(bid)] = (int(issued or 0), int(used or 0))
+
     rows: List[VoucherUsageRow] = []
     for batch_id in set(by_batch) | set(prev_by):
         batch = batches.get(batch_id)
@@ -314,6 +328,8 @@ def build_voucher_board(
                 current=current,
                 previous=previous,
                 deltas=_deltas(current, previous) if previous is not None else None,
+                issued=counts.get(batch_id, (0, 0))[0],
+                used_ever=counts.get(batch_id, (0, 0))[1],
             )
         )
     rows.sort(key=lambda r: (-r.current.vouchers, -r.current.value, -(r.previous.vouchers if r.previous else 0), r.name))
@@ -324,6 +340,8 @@ def build_voucher_board(
         window=current_p.window.to_schema(),
         compare_window=previous_p.window.to_schema() if previous_p is not None else None,
         totals=totals,
+        issued=sum(r.issued for r in rows),
+        used_ever=sum(r.used_ever for r in rows),
         previous=previous_totals,
         deltas=_deltas(totals, previous_totals) if previous_totals is not None else None,
         rows=rows,
