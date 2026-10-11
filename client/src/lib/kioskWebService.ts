@@ -475,7 +475,7 @@ export class WebKioskService {
     const phase: WebKioskPhase = !this.loaded ? 'loading' : !creds ? 'unpaired' : kiosk ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const nowMs = this.now();
-    const cat: WebCatalog = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const cat: WebCatalog = phase === 'kiosk' ? buildWebCatalog(this.catalog, this.settings.settings, { stock: this.stock, nowMs }) : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, noteImages: {}, upsells: [], upsellRules: [] };
     if (phase === 'kiosk') this.scheduleSaleChange(catalogNextChangeMs(this.catalog.products, nowMs), nowMs);
     this.menuKey = menuKeyAt(this.catalog.catalogMenus, nowMs);
     if (phase === 'kiosk') this.scheduleMenuClock(nowMs);

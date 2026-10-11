@@ -118,6 +118,10 @@ def check(db: Session, machine: POSMachine, lines: List[Dict[str, Any]], promoti
                 reason = "not_on_kiosk"
             elif RI.is_restricted(p.get(RI.FIELD), p.get("categoryId"), restricted):
                 reason = "not_on_kiosk"
+            elif p.get("addonRole") == "addon_only":
+                # "תוספת בלבד" (app/services/addon_role.py): in no sell catalog — only an option's
+                # linked product or a meal's component, never a line of its own.
+                reason = "not_on_kiosk"
             elif never_on_kiosk(p):
                 # The general item, an open-price and a weighed product: a customer keys no price and weighs
                 # nothing, so no kiosk ever sells them (the devices' own rule: pos-android KioskCatalogView.build,

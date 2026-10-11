@@ -534,6 +534,8 @@ def machine_create_cloud_product(
         dietary_tags=data.dietary_tags or None,
         # "היכן הפריט נמכר" from the till's product dialog (app/services/sales_channel.py).
         sales_channel=data.sales_channel,
+        # "תוספת" (app/services/addon_role.py), validated by the schema.
+        addon_role=data.addon_role,
         # Only `ensure_general_item` makes a general item (the request cannot ask).
         is_general=False,
     )

@@ -344,6 +344,7 @@ class TestSync:
         assert block["groups"][0]["options"][1] == {
             "id": doneness["options"][1]["id"], "name": "Medium", "kitchenName": None, "price": 0.0,
             "isDefault": True, "allergens": [], "linkedProductId": None, "maxQty": None,
+            "imageUrl": None,
         }
         assert block["links"]["categories"] == {str(menu.burgers.id): [doneness["id"]]}
         assert block["links"]["products"] == {str(menu.cola.id): []}

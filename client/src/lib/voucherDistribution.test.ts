@@ -15,6 +15,8 @@ import {
   shareFile,
   supportsFileShare,
   waMeLink,
+  waWebLink,
+  importTemplateCsv,
   type QueueRow,
   type ShareNavigatorLike,
 } from './voucherDistribution';
@@ -158,4 +160,25 @@ test('queue state: select, sent, next, undo', () => {
 
 test('progress counts', () => {
   assert.deepEqual(queueProgress(rows), { total: 6, done: 2, waiting: 2, blocked: 2 });
+});
+
+// ── WhatsApp Web link and the import template ─────────────────────────────────
+
+test('WhatsApp Web: web.whatsapp.com/send with the digits and the encoded message; no number → no phone param', () => {
+  const link = waWebLink('+972 50-123-4567', 'שלום\nhttps://x.test/v/A?d=1&e=2');
+  assert.ok(link.startsWith('https://web.whatsapp.com/send?phone=972501234567&text='));
+  assert.equal(new URL(link).searchParams.get('text'), 'שלום\nhttps://x.test/v/A?d=1&e=2');
+  const open = waWebLink(null, 'x');
+  assert.equal(open, 'https://web.whatsapp.com/send?text=x');
+});
+
+test('import template: BOM + headers the import detects, for both modes', () => {
+  for (const mode of ['count', 'group'] as const) {
+    const csv = importTemplateCsv(mode);
+    assert.ok(csv.startsWith('\uFEFF'));
+    const table = parseDelimited(csv);
+    const found = detectColumns(table, mode);
+    assert.equal(found.header, true);
+    assert.deepEqual(found.roles, ['name', 'phone', mode]);
+  }
 });

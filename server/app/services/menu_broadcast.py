@@ -447,15 +447,57 @@ _PRODUCT_LIVE = frozenset({
 })
 _CATEGORY_LIVE = frozenset({"createdAt", "updatedAt", "activeLock"})
 
+#: Fields added after publications existed, with the value a publication made before them means:
+#: a row carrying exactly that value is the same content as one without the field, so adding a
+#: field never makes every shop's draft "changed" (the fingerprint), nor shows in the review.
+_PRODUCT_DEFAULTS: Dict[str, Any] = {"addonRole": "none"}
+_OPTION_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
+_CHIP_DEFAULTS: Dict[str, Any] = {"imageUrl": None}
+
+
+def _without_defaults(row: Any, defaults: Dict[str, Any]) -> Any:
+    if not isinstance(row, dict):
+        return row
+    return {f: v for f, v in row.items() if not (f in defaults and v == defaults[f])}
+
+
+def _menu_content(menu: Dict[str, Any]) -> Dict[str, Any]:
+    """The menu block with the later fields at their "before" value left out (`_without_defaults`)."""
+    out = dict(menu)
+    if isinstance(out.get("groups"), list):
+        out["groups"] = [
+            {**g, "options": [_without_defaults(o, _OPTION_DEFAULTS) for o in g.get("options") or []]}
+            if isinstance(g, dict) else g
+            for g in out["groups"]
+        ]
+    notes = out.get("notes")
+    if isinstance(notes, dict):
+        out["notes"] = _chips_content(notes)
+    return out
+
+
+def _chips(rows: Any) -> Any:
+    return [_without_defaults(r, _CHIP_DEFAULTS) for r in rows] if isinstance(rows, list) else rows
+
+
+def _chips_content(notes: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(notes)
+    if "all" in out:
+        out["all"] = _chips(out["all"])
+    for kind in ("categories", "products"):
+        if isinstance(out.get(kind), dict):
+            out[kind] = {k: _chips(v) for k, v in out[kind].items()}
+    return out
+
 
 def content_of(snapshot: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The gated content of a snapshot: what a broadcast changes, nothing operational."""
     snapshot = snapshot or {}
-    menu = dict(snapshot.get("menu") or {})
+    menu = _menu_content(dict(snapshot.get("menu") or {}))
     menu.pop("updatedAt", None)
     content = {
         "products": {
-            k: {f: v for f, v in row.items() if f not in _PRODUCT_LIVE}
+            k: _without_defaults({f: v for f, v in row.items() if f not in _PRODUCT_LIVE}, _PRODUCT_DEFAULTS)
             for k, row in (snapshot.get("products") or {}).items()
         },
         "productGates": {
@@ -1009,6 +1051,8 @@ _PRODUCT_FIELDS = (
 #: Compared only when both snapshots carry them: a publication made before the field
 #: existed has none, and that is not a change the merchant made.
 _PRODUCT_NEW_FIELDS = ("dietaryTags", "salesChannel", "requiresManagerApproval")
+#: Compared as their "before" value when a snapshot has none (`_PRODUCT_DEFAULTS`).
+_PRODUCT_DEFAULTED_FIELDS = tuple(_PRODUCT_DEFAULTS)
 _CATEGORY_FIELDS = (
     "name", "description", "parentId", "sortOrder", "isActive", "color", "imageUrl", "courseId",
     "ticketMode",
@@ -1016,7 +1060,7 @@ _CATEGORY_FIELDS = (
 #: Compared only when both snapshots carry them (as _PRODUCT_NEW_FIELDS).
 _CATEGORY_NEW_FIELDS = ("requiresManagerApproval",)
 _GROUP_FIELDS = ("name", "kind", "minSelect", "maxSelect", "freeCount", "allowQuantity", "allowPre")
-_OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens")
+_OPTION_FIELDS = ("name", "price", "isDefault", "kitchenName", "linkedProductId", "maxQty", "allergens", "imageUrl")
 _UPSELL_HOURS = ("startTime", "endTime", "weekdays")
 _UPSELL_FIELDS = ("name", "triggerType", "triggerIds", "action", "productId", "message", "showPrice", "priority")
 #: "חלון בחירה": compared only when both snapshots carry them (an older one does not).
@@ -1108,6 +1152,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return bool(value)
         if field_name == "dietaryTags":
             return dietary.labels(value)
+        if field_name == "addonRole":
+            from app.services import addon_role
+
+            return addon_role.LABELS_HE.get(addon_role.out(value), value)
         if field_name == "appearsIn":
             from app.services import product_channels
 
@@ -1155,6 +1203,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
         ]
         if by_appears and appears_before != appears_after:
             changes.append(_change("appearsIn", shown("appearsIn", appears_before, True), shown("appearsIn", appears_after)))
+        for f in _PRODUCT_DEFAULTED_FIELDS:
+            before_v, after_v = a.get(f, _PRODUCT_DEFAULTS[f]), b.get(f, _PRODUCT_DEFAULTS[f])
+            if not _same(before_v, after_v):
+                changes.append(_change(f, shown(f, before_v, True), shown(f, after_v)))
         if changes:
             out["products"].append(_item("changed", key, name, changes))
         before, after = _gate_available(og.get(key)), _gate_available(ng.get(key))
@@ -1244,7 +1296,8 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
     def chips(rows):
         return None if rows is None else [r.get("text") for r in rows]
 
-    on, nn = om.get("notes") or {}, nm.get("notes") or {}
+    # A chip without a picture is the same chip as one published before pictures existed.
+    on, nn = _chips_content(om.get("notes") or {}), _chips_content(nm.get("notes") or {})
     if (on.get("all") or []) != (nn.get("all") or []):
         out["modifiers"].append(_item(
             "changed", "all", None, [_change("notes", chips(on.get("all") or []), chips(nn.get("all") or []))],

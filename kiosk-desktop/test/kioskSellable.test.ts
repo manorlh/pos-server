@@ -134,6 +134,43 @@ describe('the Windows kiosk\'s catalog never carries them (buildKioskCatalog)', 
   });
 });
 
+describe('"תוספת בלבד" (addonRole addon_only) on the Windows kiosk — held, never on the screens; pictures of options and notes', () => {
+  const products: Row[] = [
+    { id: 'burger', categoryId: 'food', name: 'המבורגר', price: 52 },
+    { id: 'fries', categoryId: 'food', name: "צ'יפס", price: 12, addonRole: 'addon_only', imageUrl: 'https://img.test/fries.jpg' },
+    { id: 'cola', categoryId: 'food', name: 'קולה', price: 10, addonRole: 'both' },
+  ];
+  const categories: Row[] = [{ id: 'food', name: 'אוכל', isActive: true }];
+  const menu: Row = {
+    groups: [{ id: 'g', name: 'תוספות', kind: 'addon', minSelect: 0, maxSelect: 3, options: [
+      { id: 'o1', name: "צ'יפס", price: 6, linkedProductId: 'fries', imageUrl: 'https://img.test/fries.jpg' },
+      { id: 'o2', name: 'ביצה', price: 4, imageUrl: null },
+    ] }],
+    links: { products: { burger: ['g'] } },
+    notes: { all: [], categories: {}, products: { burger: [{ text: 'בלי בצל', important: false, imageUrl: 'https://img.test/onion.jpg' }, { text: 'חריף', important: false, imageUrl: null }] } },
+    meals: {},
+  };
+  const local = (url: string | null) => (url ? `local:${url}` : null);
+
+  it('not on the screens, held; "both" sold as usual', () => {
+    const cat = buildKioskCatalog({ products, categories, menu, machineCatalog: { mode: 'all' } }, {}, local, { stock: {}, nowMs: 0 });
+    expect(cat.products.map((p) => p.id).sort()).toEqual(['burger', 'cola']);
+    expect(cat.held.map((p) => p.id)).toEqual(['fries']);
+  });
+
+  it('an option carries its picture (local), a note chip its picture by its text', () => {
+    const cat = buildKioskCatalog({ products, categories, menu, machineCatalog: { mode: 'all' } }, {}, local, { stock: {}, nowMs: 0 });
+    expect(cat.groups.burger[0].options.map((o) => o.imageUrl)).toEqual(['local:https://img.test/fries.jpg', null]);
+    expect(cat.quickNotes.burger).toEqual(['בלי בצל', 'חריף']);
+    expect(cat.noteImages).toEqual({ 'בלי בצל': 'local:https://img.test/onion.jpg' });
+  });
+
+  it("keeps the options' and the notes' pictures on the disk", () => {
+    const urls = catalogMedia({ products, categories, machineCatalog: { mode: 'all' }, menu }, { categories: [], products: [] }).map((m) => m.url).sort();
+    expect(urls).toEqual(['https://img.test/fries.jpg', 'https://img.test/onion.jpg']);
+  });
+});
+
 const noPrinter: Transport = { send: async () => undefined, status: async () => ({ health: 'ok', detail: null }), list: async () => [], dispose: () => undefined };
 
 /** A kiosk with a cloud catalog of two dishes (30 and 12), under an always-on menu that places the first and holds the second. */

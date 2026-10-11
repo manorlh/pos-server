@@ -40,10 +40,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { IosChip, IosSegmented, IosSwitch, IosTag } from './ios';
+import { NotePictureButton, NotePicturePanel } from './note-picture';
 
 interface NoteDraft {
   text: string;
   isImportant: boolean;
+  /** "הערה עם תמונה": a kiosk shows it as an image tile. */
+  imageUrl?: string | null;
 }
 
 interface LinksDraft {
@@ -188,6 +191,7 @@ function NotesEditor({
 }) {
   const t = useTranslations('menu.section');
   const [text, setText] = useState('');
+  const [picking, setPicking] = useState<number | null>(null);
   const own = value !== null;
   const add = () => {
     const clean = text.trim();
@@ -233,11 +237,15 @@ function NotesEditor({
                   {n.isImportant ? '★ ' : ''}
                   {n.text}
                 </button>
+                <NotePictureButton url={n.imageUrl} active={picking === i} disabled={disabled} onClick={() => setPicking(picking === i ? null : i)} />
                 <button
                   type="button"
                   disabled={disabled}
                   aria-label={t('removeNote')}
-                  onClick={() => onChange((value ?? []).filter((_, j) => j !== i))}
+                  onClick={() => {
+                    setPicking(null);
+                    onChange((value ?? []).filter((_, j) => j !== i));
+                  }}
                   className="rounded-full p-0.5 opacity-70 hover:opacity-100"
                 >
                   <X className="h-3 w-3" aria-hidden />
@@ -245,6 +253,15 @@ function NotesEditor({
               </span>
             ))}
           </div>
+          {picking !== null && (value ?? [])[picking] ? (
+            <NotePicturePanel
+              text={(value ?? [])[picking].text}
+              url={(value ?? [])[picking].imageUrl}
+              disabled={disabled}
+              onClose={() => setPicking(null)}
+              onChange={(url) => onChange((value ?? []).map((x, j) => (j === picking ? { ...x, imageUrl: url } : x)))}
+            />
+          ) : null}
           <div className="flex gap-2">
             <Input
               value={text}
@@ -579,7 +596,7 @@ export function ProductMenuSection({ productId }: { productId: string }) {
     draft.notes !== undefined
       ? draft.notes
       : data?.notes.mode === 'own'
-        ? data.notes.notes.map((n) => ({ text: n.text, isImportant: n.isImportant }))
+        ? data.notes.notes.map((n) => ({ text: n.text, isImportant: n.isImportant, imageUrl: n.imageUrl ?? null }))
         : null;
   const slots = draft.meal ?? slotsOf(data?.meal.slots ?? []);
   const isMeal = slots.length > 0;
@@ -745,7 +762,7 @@ export function CategoryMenuSection({ categoryId }: { categoryId: string }) {
     draft.notes !== undefined
       ? draft.notes
       : data?.notes.mode === 'own'
-        ? data.notes.notes.map((n) => ({ text: n.text, isImportant: n.isImportant }))
+        ? data.notes.notes.map((n) => ({ text: n.text, isImportant: n.isImportant, imageUrl: n.imageUrl ?? null }))
         : null;
 
   const save = useMutation({

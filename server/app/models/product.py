@@ -107,6 +107,9 @@ class Product(Base):
     # product appears in — any of pos / kiosk / online / menu. NULL: as `sales_channel` says for
     # the tills and the kiosk, and not online nor in the digital menu (until published there).
     appears_in = Column(JSON, nullable=True)
+    # "תוספת" (app/services/addon_role.py): none / addon_only (never in a sell catalog, only a
+    # modifier option's linked product or a meal's component) / both. The cloud carries the code.
+    addon_role = Column(String(16), default="none", nullable=False, server_default="none")
 
     # The menu layer (docs/SPEC_MENU_MODIFIERS.md): the allergen codes the dish contains
     # (app.models.menu.ALLERGENS), and the course its table lines are fired in by default

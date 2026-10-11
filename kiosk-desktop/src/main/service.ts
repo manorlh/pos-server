@@ -599,7 +599,7 @@ export class KioskService extends EventEmitter {
     const phase: KioskView['phase'] = !creds ? 'unpaired' : snap?.kiosk === true ? 'kiosk' : 'waiting';
     const cfg = phase === 'kiosk' ? this.config() : null;
     const font = this.fontFace();
-    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, upsells: [], upsellRules: [] };
+    const cat = phase === 'kiosk' ? this.catalogData() : { categories: [], products: [], menu: noMenuState(), held: [], groups: {}, meals: {}, quickNotes: {}, noteImages: {}, upsells: [], upsellRules: [] };
     // "תפריטים": the menu the screens were built for; the clock looks again at the next minute boundary. Only a view build
     // sets it — a basket priced in between does not hide a menu change from the screens.
     this.menuKey = `${cat.menu.mode}:${cat.menu.menuId ?? ''}`;

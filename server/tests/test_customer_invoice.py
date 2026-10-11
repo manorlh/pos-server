@@ -586,5 +586,7 @@ def test_the_migration_is_the_single_head():
     script = ScriptDirectory.from_config(config)
 
     heads = script.get_heads()
-    assert heads == ["a1eece573e4e"]
+    assert len(heads) == 1
+    # Later migrations chain on top (the add-on role and pictures, b5e2c8a417d3, is the first).
+    assert "a1eece573e4e" in {r.revision for r in script.walk_revisions("base", heads[0])}
     assert script.get_revision("a1eece573e4e").down_revision == "31958d027cef"

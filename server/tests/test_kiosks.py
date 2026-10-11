@@ -1692,7 +1692,8 @@ def test_the_kiosk_menu_version_check_and_validation(w, monkeypatch):
 
 MOTION_KEYS = ("categorySwitch", "itemsEnter", "screenChange", "sheet", "addToCart", "speed")
 #: "מנוע הנפשות" (kiosk_motion.py; tests/test_kiosk_motion.py): a new kiosk's engine keys.
-MOTION_ENGINE_DEFAULTS = {"preset": "standard", "globalSpeed": None, "speedMultiplier": 1.0, "events": {}}
+#: Plus "תהליך פריט" (`itemFlow`, no style sets it): one window by default.
+MOTION_ENGINE_DEFAULTS = {"preset": "standard", "globalSpeed": None, "speedMultiplier": 1.0, "events": {}, "itemFlow": "sheet"}
 
 
 def test_motion_defaults_follow_the_style_and_animate_in_every_style():

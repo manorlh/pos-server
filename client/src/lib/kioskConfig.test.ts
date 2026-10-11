@@ -1406,11 +1406,11 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
   it('the defaults are the wolt style, and every style animates the category and pops its dishes in', () => {
     // The style's keys, and "אפקטים" (the device's, not a style's): auto.
     // "מנוע הנפשות" (kioskMotionEngine.ts): Runner Standard, the speed by `speed`, no event of its own.
-    assert.deepEqual(KIOSK_DEFAULTS.motion, { ...KIOSK_UI_PRESET_MOTION.wolt, effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} });
+    assert.deepEqual(KIOSK_DEFAULTS.motion, { ...KIOSK_UI_PRESET_MOTION.wolt, effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {}, itemFlow: 'sheet' });
     assert.deepEqual([...PRESET_MOTION_KEYS], ['categorySwitch', 'itemsEnter', 'screenChange', 'sheet', 'addToCart', 'speed']);
     for (const style of UI_STYLES) {
       const c = resolveKioskConfig({ theme: { uiStyle: style } });
-      assert.deepEqual(c.motion, { ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} }, style);
+      assert.deepEqual(c.motion, { ...KIOSK_UI_PRESET_MOTION[style], effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {}, itemFlow: 'sheet' }, style);
       assert.deepEqual(validateKioskConfig(c), [], style);
       const t = transitionSpec(c.motion, c.general);
       assert.notEqual(t.categorySwitch, 'none', style);
@@ -1426,7 +1426,7 @@ describe('"הנפשות ומעברים" — the transitions (the server kiosk_co
     const kiosk = { motion: { categorySwitch: 'push' } };
     assert.deepEqual(resolveKioskConfig(company, shop, kiosk).motion, {
       categorySwitch: 'push', itemsEnter: 'flip', screenChange: 'fade', sheet: 'fade', addToCart: 'fly', speed: 'fast', effects: 'auto',
-      preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {},
+      preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {}, itemFlow: 'sheet',
     });
     // The editor: rebased on the level's style, reset goes back to it, a draft following it saves nothing.
     const parents = { motion: { speed: 'fast' } };
@@ -2135,7 +2135,7 @@ describe('"טכנולוגי" — the tech style (the server UI_PRESETS["tech"], 
       [c.attract.cta.size, c.attract.cta.icon, c.attract.cta.animation, c.attract.cta.shadow, c.attract.cta.borderWidth],
       ['l', 'arrow', 'none', false, 0],
     );
-    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {} });
+    assert.deepEqual(c.motion, { categorySwitch: 'fade', itemsEnter: 'cascade', screenChange: 'fade', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto', preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {}, itemFlow: 'sheet' });
     // The brand colour stays the business's: the style follows it.
     assert.equal(resolveTech({ theme: { uiStyle: 'tech' } }, { theme: { primaryColor: '#3B82F6' } }).theme.primaryColor, '#3B82F6');
   });
