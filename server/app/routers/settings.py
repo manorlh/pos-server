@@ -35,6 +35,8 @@ from app.services.payment_options import (
 from app.services.refund_settings import REFUND_SETTING_KEYS, resolve_refund_settings
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS, resolve_sell_screen
 from app.services import voucher_redeem_settings as voucher_flow
+from app.services import voucher_balance_check as voucher_balance
+from app.services import voucher_station_settings as voucher_station
 from app.services.settings_merge import (
     BRANDING_SETTING_KEYS,
     MANAGED_SETTING_KEYS,
@@ -159,7 +161,12 @@ def _sell_screen_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
 def _voucher_flow_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
     """The voucher's redemption keys the caller sent, keeping an explicit `null` (reset to inherit)."""
     raw = data.model_dump(exclude_unset=True, by_alias=True)
-    return {key: raw[key] for key in voucher_flow.VOUCHER_FLOW_SETTING_KEYS if key in raw}
+    keys = (
+        *voucher_flow.VOUCHER_FLOW_SETTING_KEYS,
+        *voucher_balance.VOUCHER_BALANCE_SETTING_KEYS,
+        *voucher_station.VOUCHER_STATION_SETTING_KEYS,
+    )
+    return {key: raw[key] for key in keys if key in raw}
 
 
 def _refund_settings_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
@@ -372,6 +379,8 @@ def _inherited_preview(layers: List[Any]):
     effective.update(resolve_payment_options(effective, effective=False))
     effective.update(resolve_voucher_options(effective))
     effective.update(voucher_flow.resolve_voucher_flow(effective))
+    effective.update(voucher_balance.resolve_preview(effective))
+    effective.update(voucher_station.resolve_voucher_station(effective))
     effective.update(resolve_sell_screen(effective))
     effective.update(resolve_refund_settings(effective))
     # The inherited payment order completed (every method, the unlisted ones after);
@@ -468,6 +477,7 @@ def get_company_settings(
     if include_effective:
         # Inherited preview = the tenant's settings alone.
         effective, sources = _inherited_preview([("tenant", _tenant_of(company, db))])
+        effective[voucher_balance.VOUCHER_BALANCE_CHECK_ACTIVE_KEY] = voucher_balance.has_active_for_company(db, company)
     return ShopSettingsResponse(
         settings=company.settings or {},
         settings_updated_at=company.settings_updated_at,
@@ -546,6 +556,10 @@ def get_shop_settings(
             # Inherited preview = company (+ tenant) defaults without shop overrides.
             effective, sources = _inherited_preview(
                 [("tenant", _tenant_of(company, db)), ("company", company)]
+            )
+            # What "auto" ("בירור יתרת שובר") turns into at this shop's tills right now.
+            effective[voucher_balance.VOUCHER_BALANCE_CHECK_ACTIVE_KEY] = voucher_balance.has_active_for_shop(
+                db, shop.tenant_id, shop
             )
 
     return ShopSettingsResponse(
@@ -641,6 +655,9 @@ def get_area_settings(
             effective, sources = _inherited_preview(
                 [("tenant", _tenant_of(company, db)), ("company", company), ("shop", shop)]
             )
+            effective[voucher_balance.VOUCHER_BALANCE_CHECK_ACTIVE_KEY] = voucher_balance.has_active_for_shop(
+                db, shop.tenant_id, shop
+            )
     return AreaSettingsResponse(
         settings=area.settings or {},
         settings_updated_at=area.settings_updated_at,
@@ -733,6 +750,9 @@ def get_machine_settings(
             # Inherited preview = tenant + company + shop + area, without the till's own values.
             effective, sources = _inherited_preview(
                 [("tenant", tenant), ("company", company), ("shop", shop), ("area", area)]
+            )
+            effective[voucher_balance.VOUCHER_BALANCE_CHECK_ACTIVE_KEY] = voucher_balance.has_active_for_shop(
+                db, machine.tenant_id, shop
             )
     return MachineSettingsResponse(
         settings=machine.settings or {},

@@ -59,8 +59,15 @@ def resolve_voucher_flow(merged: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _audited_keys() -> Tuple[str, ...]:
     from app.services.payment_options import VOUCHER_SETTING_KEYS
+    from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
+    from app.services.voucher_station_settings import VOUCHER_STATION_SETTING_KEYS
 
-    return (*VOUCHER_FLOW_SETTING_KEYS, *VOUCHER_SETTING_KEYS)
+    return (
+        *VOUCHER_FLOW_SETTING_KEYS,
+        *VOUCHER_SETTING_KEYS,
+        *VOUCHER_BALANCE_SETTING_KEYS,
+        *VOUCHER_STATION_SETTING_KEYS,
+    )
 
 
 def audit_patch(db, level: str, entity: Any, patch: Mapping[str, Any], user: Any) -> int:

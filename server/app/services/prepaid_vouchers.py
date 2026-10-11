@@ -2137,8 +2137,18 @@ def lookup(
     db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None,
     *, features: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
+    """
+    The voucher as this till sees it. Read only: nothing is held, taken or written — "בירור יתרת
+    שובר" calls it as often as it likes. With its redemptions, newest first (`redemptions`,
+    `redemptionsTotal`, `firstRedeemedAt`, `lastRedeemedAt`) and the shops it is valid in (`validShops`):
+    app/services/prepaid_voucher_lookup_extras.py.
+    """
+    from app.services.prepaid_voucher_lookup_extras import lookup_extras
+
     voucher = _locate(db, machine, raw_code, lock=False)
-    return till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
+    out = till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
+    out.update(lookup_extras(db, machine, voucher))
+    return out
 
 
 #: What the redemption re-checks: the product lost its identity (the general item) or left
