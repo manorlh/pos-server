@@ -1152,6 +1152,10 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
             return bool(value)
         if field_name == "dietaryTags":
             return dietary.labels(value)
+        if field_name == "addonRole":
+            from app.services import addon_role
+
+            return addon_role.LABELS_HE.get(addon_role.out(value), value)
         if field_name == "appearsIn":
             from app.services import product_channels
 
@@ -1202,7 +1206,7 @@ def diff(old: Optional[Dict[str, Any]], new: Optional[Dict[str, Any]]) -> Dict[s
         for f in _PRODUCT_DEFAULTED_FIELDS:
             before_v, after_v = a.get(f, _PRODUCT_DEFAULTS[f]), b.get(f, _PRODUCT_DEFAULTS[f])
             if not _same(before_v, after_v):
-                changes.append(_change(f, before_v, after_v))
+                changes.append(_change(f, shown(f, before_v, True), shown(f, after_v)))
         if changes:
             out["products"].append(_item("changed", key, name, changes))
         before, after = _gate_available(og.get(key)), _gate_available(ng.get(key))

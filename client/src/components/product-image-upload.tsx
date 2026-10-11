@@ -15,6 +15,10 @@ type ProductImageUploadProps = {
   onChange: (url: string | undefined) => void;
   disabled?: boolean;
   className?: string;
+  /** The heading; the product form's "תמונה" when absent (an add-on option, a note chip name their own). */
+  label?: string;
+  /** A smaller frame (inside a list row). */
+  compact?: boolean;
 };
 
 export function ProductImageUpload({
@@ -22,6 +26,8 @@ export function ProductImageUpload({
   onChange,
   disabled = false,
   className,
+  label,
+  compact = false,
 }: ProductImageUploadProps) {
   const t = useTranslations('products');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -48,11 +54,12 @@ export function ProductImageUpload({
 
   return (
     <div className={cn('space-y-2', className)}>
-      <p className="text-sm font-medium">{t('image')}</p>
+      <p className={cn('font-medium', compact ? 'text-[13px]' : 'text-sm')}>{label ?? t('image')}</p>
       <div className="flex items-start gap-3">
         <div
           className={cn(
-            'relative h-24 w-24 shrink-0 overflow-hidden rounded-lg border bg-muted',
+            'relative shrink-0 overflow-hidden rounded-lg border bg-muted',
+            compact ? 'h-16 w-16' : 'h-24 w-24',
             !value && 'flex items-center justify-center',
           )}
         >
@@ -62,7 +69,7 @@ export function ProductImageUpload({
               alt={t('imagePreview')}
               fill
               className="object-contain"
-              sizes="96px"
+              sizes={compact ? '64px' : '96px'}
             />
           ) : (
             <ImagePlus className="h-8 w-8 text-muted-foreground" />

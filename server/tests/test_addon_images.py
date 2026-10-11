@@ -378,3 +378,29 @@ def test_item_flow_defaults_to_one_sheet_and_takes_pages():
 def test_an_unknown_item_flow_is_refused():
     _cleaned, errors = KC.validate_layer({"motion": {"itemFlow": "carousel"}})
     assert errors and errors[0].to_wire()["path"] == "motion.itemFlow"
+
+
+# ── The dashboard's list: add-ons first in the option editor's picker ─────────
+
+
+def _names(w, **filters):
+    from app.routers import products as products_router
+
+    args = dict(
+        page=1, page_size=200, company_id=None, shop_id=None, pos_machine_id=None,
+        category_id=None, catalog_level=None, in_stock=None, search=None,
+    )
+    args.update(filters)
+    res = products_router.list_products(**args, current_user=w.users.admin, active_tenant_id=w.tid, db=w.db)
+    return {p.name: p.addon_role for p in res.items}
+
+
+def test_the_product_list_filters_by_addon_role(dw):  # noqa: F811
+    dw.Q.addon_role = "addon_only"
+    dw.db.commit()
+    everything = _names(dw)
+    assert everything[dw.Q.name] == "addon_only" and everything[dw.P.name] == "none"
+    assert set(_names(dw, addon_role_filter=["addon_only", "both"])) == {dw.Q.name}
+    with pytest.raises(HTTPException) as e:
+        _names(dw, addon_role_filter=["sometimes"])
+    assert e.value.status_code == 422
