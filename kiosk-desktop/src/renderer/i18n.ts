@@ -55,7 +55,7 @@ export const LIVE: Record<string, string> = {
   // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).
   placing: 'שולחים את ההזמנה לקופה…',
   placeFailed: 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.',
-  voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
+  voucherOffline: 'תשלום בשובר אינו זמין כרגע (אין חיבור לרשת) — שלמו באמצעי אחר או הציגו את השובר בקופה',
   voucherAppliedNote: 'השובר נקלט · {amount}',
   voucherDiscountApplied: 'שובר #{serial}: הנחה של {amount}',
   voucherChecking: 'בודקים את השובר…',
