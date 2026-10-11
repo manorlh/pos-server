@@ -276,7 +276,7 @@ class PrepaidVoucherBatch(Base):
     valid_from = Column(DateTime(timezone=True), nullable=True)
     valid_until = Column(DateTime(timezone=True), nullable=True)
     #: True: "מימוש בחלקים" — what is not taken now stays on the voucher. False:
-    #: "מימוש חד-פעמי" — one redemption uses the voucher up.
+    #: "מימוש בעסקה אחת" — one redemption uses the voucher up.
     split_allowed = Column(Boolean, nullable=False, default=False, server_default="false")
 
     status = Column(String(16), nullable=False, default="active", server_default="active")

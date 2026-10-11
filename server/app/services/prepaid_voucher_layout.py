@@ -95,7 +95,7 @@ class CardContent:
     """What one voucher says — texts already in their final words."""
 
     title: str
-    #: The terms in small print ("מימוש חד-פעמי"); None: no line (with the validity hidden).
+    #: The terms in small print ("מימוש בעסקה אחת"); None: no line (with the validity hidden).
     terms: Optional[str]
     serial: str
     #: "code128" draws a line barcode across the bottom; anything else a QR.

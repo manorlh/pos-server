@@ -12,7 +12,7 @@ The rules, and why:
   till returns the first answer again, so a retry after a dropped response never takes
   the goods twice. The id is checked *under the lock*, so even two copies of the same
   request racing each other resolve to one redemption.
-* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש חד-פעמי"): one
+* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש בעסקה אחת"): one
   redemption uses the voucher up. Taking only part of it is refused unless the till
   says the cashier confirmed the rest is forfeited (`forfeitRest`), and what was given
   up is logged. `split_allowed=True` ("מימוש בחלקים"): whatever is not taken stays.

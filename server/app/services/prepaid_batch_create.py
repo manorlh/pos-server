@@ -43,7 +43,7 @@ KIND = "prepaid_batch_create"
 #: How far back an identical batch of the same user counts as "made a moment ago".
 DUPLICATE_WINDOW = timedelta(minutes=2)
 #: The reason the dashboard's "בטל את הכפולה" sends with the existing cancel (POST …/cancel).
-DUPLICATE_CANCEL_REASON = "אצווה כפולה — נוצרה פעמיים בטעות"
+DUPLICATE_CANCEL_REASON = "סדרה כפולה — נוצרה פעמיים בטעות"
 
 
 def request_of(body) -> Dict[str, Any]:

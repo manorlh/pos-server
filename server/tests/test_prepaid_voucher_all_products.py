@@ -302,9 +302,9 @@ class TestWeight:
         assert total == '1.5 ק"ג זיתים, 6× נקניקייה'
         rows = PDF.manifest_csv(batch, w.db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id).all())
         assert '"0.2 ק""ג זיתים; 2× נקניקייה"' in rows.decode("utf-8-sig")  # CSV doubles the quote
-        assert PDF.terms_line(batch) == "ניתן לממש בחלקים"
+        assert PDF.terms_line(batch) == "מימוש בחלקים"
         batch.include_extras = True
-        assert PDF.terms_line(batch) == "ניתן לממש בחלקים · כולל תוספות"
+        assert PDF.terms_line(batch) == "מימוש בחלקים · כולל תוספות"
         # The PDF draws (a weight in the quantity column).
         assert PDF.render_pdf(batch, [batch.vouchers[0]], PDF.geometry("card")).startswith(b"%PDF")
 

@@ -122,14 +122,15 @@ MAX_PER_RECIPIENT = 500
 TEMPLATE_MAX = 2000
 NAME_MAX = 200
 
-#: The default messages. Placeholders: {שם} {אירוע} {כמות} {מספרים} {קישור} {תוקף} {קבוצה}.
+#: The default messages. Placeholders: {שם} {אירוע} {כמות} {שוברים} {מספרים} {קישור} {תוקף} {קבוצה} —
+#: {שוברים} is the count in words ("שובר אחד" / "3 שוברים"), {כמות} the bare number.
 DEFAULT_MESSAGE = (
     "שלום {שם},\n"
-    "מצורפים השוברים שלך ל{אירוע} ({כמות} שוברים, מס׳ {מספרים}).\n"
+    "קיבלת {שוברים} ל{אירוע} (מס׳ {מספרים}).\n"
     "להורדת הקובץ: {קישור}"
 )
 DEFAULT_GROUP_MESSAGE = (
-    "שוברי {אירוע} — קבוצה {קבוצה} ({כמות} שוברים, מס׳ {מספרים}).\n"
+    "שוברי {אירוע} — קבוצת שוברים {קבוצה}: {שוברים} (מס׳ {מספרים}).\n"
     "להורדת הקובץ: {קישור}"
 )
 #: Placeholder (Hebrew, and its English alias) → value key.
@@ -137,6 +138,7 @@ PLACEHOLDERS = {
     "שם": "name", "name": "name",
     "אירוע": "event", "event": "event",
     "כמות": "count", "count": "count",
+    "שוברים": "vouchers", "vouchers": "vouchers",
     "מספרים": "serials", "serials": "serials",
     "קישור": "link", "link": "link",
     "תוקף": "validUntil", "validUntil": "validUntil",
@@ -393,6 +395,11 @@ def _local_day(moment: Optional[datetime], zone) -> Optional[str]:
     return moment.strftime("%d/%m/%Y")
 
 
+def vouchers_text(n: int) -> str:
+    """{שוברים}: "שובר אחד", "3 שוברים" (the dashboard's `vouchersText`)."""
+    return "שובר אחד" if int(n) == 1 else f"{int(n)} שוברים"
+
+
 def message_values(
     batch: PrepaidVoucherBatch, r: VoucherDistributionRecipient, serials: Sequence[int], link: Optional[str], zone,
 ) -> Dict[str, Any]:
@@ -400,6 +407,7 @@ def message_values(
         "name": (r.name or "").strip(),
         "event": batch.event_name or batch.name,
         "count": len(serials),
+        "vouchers": vouchers_text(len(serials)),
         "serials": serials_text(serials),
         "link": link,
         "validUntil": _local_day(batch.valid_until, zone) or "",
@@ -1242,7 +1250,7 @@ def landing_page(db: Session, batch: PrepaidVoucherBatch, r: VoucherDistribution
     pdf = html.escape(public_path(token) + "/pdf")
     if not vouchers:
         body = (
-            f"<h1>{html.escape(event)}</h1><p class='lead'>אין בקישור זה שוברים פעילים.</p>"
+            f"<h1>{html.escape(event)}</h1><p class='lead'>אין בקישור זה שוברים לממש.</p>"
             "<p class='muted'>ייתכן שכבר מומשו, בוטלו או הועברו. לשאלות פנו להפקה.</p>"
         )
         return _page(event, body, og=(f"שוברים — {event}", "קישור אישי לשוברים"))
