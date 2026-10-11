@@ -74,7 +74,7 @@ export function useEditFieldLabel() {
 }
 
 /** One category's effect, in words ("ישפיע על 340 שוברים שטרם מומשו"). */
-function useEffectLines() {
+export function useEffectLines() {
   const t = useTranslations('prepaidVouchers.edit.effect');
   return (category: PrepaidEditCategory, plan: PrepaidBatchEditPlan): string[] => {
     const e = plan.effects;

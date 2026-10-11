@@ -578,8 +578,13 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
-def apply_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, body) -> Dict[str, Any]:
-    """[plan_edit], then written: the columns, the goods, the vouchers' contents, more vouchers, the log."""
+def apply_edit(
+    db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, body, *, bulk: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    [plan_edit], then written: the columns, the goods, the vouchers' contents, more vouchers, the log.
+    [bulk]: the edit is one batch of "שינוי הגדרות לסדרות שנבחרו" — said on its log line (`details.bulk`).
+    """
     PV = _pv()
     plan = plan_edit(db, user, tenant_id, batch, body)
     if not plan["changes"]:
@@ -634,6 +639,8 @@ def apply_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, b
     }
     if refit is not None:
         details["refit"] = refit
+    if bulk:
+        details["bulk"] = dict(bulk)
     PV._event(db, batch, user, "update", details=details)
     if issued:
         PV._event(db, batch, user, "add", count=len(issued), details=PV._issued_details(issued, batch.group_size))

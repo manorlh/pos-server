@@ -850,6 +850,55 @@ class PrepaidVoucherBatchUpdate(BaseModel):
         return _clean_text(value, 500)
 
 
+#: "שינוי הגדרות לסדרות שנבחרו" (app/services/prepaid_voucher_bulk_edit.py): the most batches one request takes.
+MAX_BULK_BATCHES = 200
+#: The settings of "ערוך סדרה" that make sense for many batches at once (its attribute names): the rules,
+#: validity, where, the accounting and the print settings. Never a batch's own identity or contents —
+#: its name, for whom, its goods, its discount, its count or its production price.
+BULK_EDIT_FIELDS = (
+    "valid_from", "valid_until", "shop_ids", "offline_allowed",
+    "stacking", "max_vouchers_per_sale", "promotion_policy", "max_uses_per_sale", "max_uses_per_day",
+    "split_allowed", "include_extras", "pricing", "till_value", "allow_top_up", "redemption_accounting",
+    "discount_block_policy",
+    "show_code", "show_items", "show_validity", "show_credit", "print_till_value", "barcode_type",
+    "free_text", "logo_url",
+    "total_qty", "groups",
+)
+
+
+class PrepaidBatchBulkEditIn(BaseModel):
+    """
+    The same change for many batches: `changes` is "ערוך סדרה"'s body (only the fields sent change,
+    each batch checked and written by the single edit). `clientRequestId`: a retry of the apply with
+    the same id answers the first result and changes nothing again (the preview ignores it).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    batch_ids: List[str] = Field(..., alias="batchIds", min_length=1, max_length=MAX_BULK_BATCHES)
+    changes: PrepaidVoucherBatchUpdate
+    client_request_id: Optional[str] = Field(None, alias="clientRequestId", max_length=100)
+
+    @field_validator("batch_ids")
+    @classmethod
+    def _ids(cls, value):
+        # Each once, in the order picked (a batch twice is still one edit).
+        return list(dict.fromkeys(str(v).strip() for v in value if str(v).strip()))
+
+    @model_validator(mode="after")
+    def _only_bulk_fields(self):
+        if not self.batch_ids:
+            raise ValueError("batchIds: at least one batch")
+        given = set(self.changes.model_fields_set) - {"apply_to_partial"}
+        fields = PrepaidVoucherBatchUpdate.model_fields
+        other = sorted(fields[f].alias or f for f in given - set(BULK_EDIT_FIELDS))
+        if other:
+            raise ValueError(f"not editable for many batches at once: {', '.join(other)}")
+        if not given:
+            raise ValueError("changes: at least one setting")
+        return self
+
+
 class PrepaidProductionCreate(BaseModel):
     """A production ("הפקה", §13): the customer a company's vouchers are made for."""
 

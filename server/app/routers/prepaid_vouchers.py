@@ -14,6 +14,10 @@ GET    /prepaid-vouchers/batches                      → batches with their cou
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
 PATCH  /prepaid-vouchers/batches/{id}                 → texts, logo, validity
+POST   /prepaid-vouchers/batches/bulk-edit-preview    → the same change on many batches: per batch ok /
+                                                        unchanged / refused (the single edit's reason)
+POST   /prepaid-vouchers/batches/bulk-edit            → applied per batch through the single edit;
+                                                        idempotent by `clientRequestId`
 POST   /prepaid-vouchers/batches/{id}/vouchers        → issue more vouchers (next serials)
 POST   /prepaid-vouchers/batches/{id}/cancel          → cancel the batch and its open vouchers
 GET    /prepaid-vouchers/batches/{id}/vouchers        → its vouchers (codes for printing)
@@ -55,6 +59,7 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
+    PrepaidBatchBulkEditIn,
     PrepaidProductionCreate,
     PrepaidProductionUpdate,
     PrepaidVoucherAddIn,
@@ -495,6 +500,46 @@ def create_prepaid_voucher_batch(
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"
     return out
+
+
+@router.post("/prepaid-vouchers/batches/bulk-edit-preview")
+def preview_prepaid_voucher_batches_bulk_edit(
+    body: PrepaidBatchBulkEditIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שינוי הגדרות לסדרות שנבחרו" before it is applied: for each batch the single edit's preview
+    (`ok`, its changes and effects), `unchanged`, or `refused` with the single edit's reason — a
+    batch the user may not edit included (never skipped). Nothing is written.
+    """
+    from app.services import prepaid_voucher_bulk_edit as PBE
+
+    return PBE.preview(db, current_user, active_tenant_id, body)
+
+
+@router.post("/prepaid-vouchers/batches/bulk-edit")
+def bulk_edit_prepaid_voucher_batches(
+    body: PrepaidBatchBulkEditIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+    response: Response = None,
+):
+    """
+    The same change applied to each batch through "ערוך סדרה" (its checks, its rules for the vouchers
+    already issued, its log line marked `bulk`), each batch whole or not at all, never one batch's
+    refusal blocking another. `clientRequestId` (required): a retry gets the first result back
+    (`replayed`, `Idempotent-Replayed: true`) and changes nothing again.
+    """
+    from app.services import command_idempotency as idem
+    from app.services import prepaid_voucher_bulk_edit as PBE
+
+    out, replayed = PBE.apply(db, current_user, active_tenant_id, body)
+    if replayed and response is not None:
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return {**out, "replayed": replayed}
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}")

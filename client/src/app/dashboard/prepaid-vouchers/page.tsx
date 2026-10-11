@@ -69,6 +69,8 @@ import {
 } from '@/lib/prepaidBatchSubmit';
 import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
+import { BulkEditDialog } from '@/components/dashboard/prepaid-vouchers/batch-bulk-edit';
+import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from '@/lib/prepaidBatchBulkEdit';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import {
@@ -1012,9 +1014,16 @@ function validityText(b: PrepaidVoucherBatch, t: (k: string, v?: Record<string, 
   return t('row.noValidity');
 }
 
-function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
+function BatchCard({ b, onOpen, selected, onSelect }: {
+  b: PrepaidVoucherBatch;
+  onOpen: () => void;
+  /** "שינוי הגדרות לסדרות שנבחרו": the card's own box. */
+  selected?: boolean;
+  onSelect?: (on: boolean) => void;
+}) {
   const t = useTranslations('prepaidVouchers');
   const ts = useTranslations('prepaidVouchers.scope');
+  const tb = useTranslations('prepaidVouchers.bulk');
   const termsText = useBatchTermsText()(b);
   const discount = isDiscountKind(b.kind);
   const f = b.figures;
@@ -1022,8 +1031,13 @@ function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }
     ? (['cancelled', 'not_started', 'expired', 'fully_redeemed'] as const).find((k) => b.state![k]) ?? 'active'
     : null;
   return (
-    <li>
-      <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25">
+    <li className="flex items-start gap-2">
+      {onSelect ? (
+        <input type="checkbox" className="mt-4 h-4 w-4 shrink-0 accent-primary" checked={!!selected}
+          onChange={(e) => onSelect(e.target.checked)} aria-label={tb('selectBatch', { name: b.name })} />
+      ) : null}
+      <button type="button" onClick={onOpen} className={cn('w-full min-w-0 space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25',
+        selected && 'ring-2 ring-primary/60')}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold">
@@ -1902,6 +1916,16 @@ export default function PrepaidVouchersPage() {
     queryFn: () => fetchFilteredPrepaidBatches(listQuery, sort),
     enabled: view === 'batches' && !selectedId,
   });
+  // "שינוי הגדרות לסדרות שנבחרו": the picked batches. Only the ones the filters still show count
+  // (lib/prepaidBatchBulkEdit.ts selectedShown) — "בחר הכל" picks what is shown, nothing hidden.
+  const tb = useTranslations('prepaidVouchers.bulk');
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const shownBatches = shown.data?.items ?? [];
+  const shownIds = shownBatches.map((b) => b.id);
+  const pickedIds = selectedShown(picked, shownIds);
+  const pickedBatches = shownBatches.filter((b) => picked.has(b.id));
+  const pickAll = allState(picked, shownIds);
 
   const onPick = (p: SearchPick) => {
     if (p.kind === 'batch') {
@@ -1994,6 +2018,15 @@ export default function PrepaidVouchersPage() {
               {shown.data ? ts('count', { shown: shown.data.total, total: batches.data!.length }) : null}
             </span>
           </div>
+          {shownIds.length ? (
+            <label className="flex w-fit items-center gap-2 text-sm" title={tb('selectAllHint')}>
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={pickAll === 'all'}
+                ref={(el) => { if (el) el.indeterminate = pickAll === 'some'; }}
+                onChange={() => setPicked(toggleAll(picked, shownIds))} aria-label={tb('selectAll')} />
+              {tb('selectAll')}
+              <span className="text-xs text-muted-foreground">{tb('selectAllHint')}</span>
+            </label>
+          ) : null}
           {shown.isPending ? (
             <Skeleton className="h-24 w-full rounded-xl" />
           ) : shown.isError ? (
@@ -2001,12 +2034,31 @@ export default function PrepaidVouchersPage() {
           ) : shown.data!.items.length ? (
             <ul className="space-y-2">
               {shown.data!.items.map((b) => (
-                <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
+                <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)}
+                  selected={picked.has(b.id)} onSelect={(on) => setPicked(toggleOne(picked, b.id, on))} />
               ))}
             </ul>
           ) : (
             <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('filters.none')}</p>
           )}
+          {pickedIds.length ? (
+            <div role="region" aria-label={tb('barLabel')}
+              className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur">
+              <div className="min-w-0">
+                <p className="text-sm font-medium" aria-live="polite">{tb('selected', { n: pickedIds.length })}</p>
+                {pickedIds.length > MAX_BULK_BATCHES ? (
+                  <p className="text-xs text-destructive">{tb('tooMany', { max: MAX_BULK_BATCHES })}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>{tb('clear')}</Button>
+                <Button size="sm" onClick={() => setBulkOpen(true)} disabled={pickedIds.length > MAX_BULK_BATCHES}>
+                  <Pencil className="h-4 w-4" /> {tb('open')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <BulkEditDialog open={bulkOpen} batches={pickedBatches} onOpenChange={setBulkOpen} onDone={() => setPicked(new Set())} />
         </>
       )}
 

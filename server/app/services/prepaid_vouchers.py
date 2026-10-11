@@ -1090,14 +1090,19 @@ def _locked_batch(db: Session, user: User, tenant_id, batch_id) -> PrepaidVouche
     return db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().one()
 
 
-def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+def update_batch(db: Session, user: User, tenant_id, batch_id, body, *, bulk=None) -> PrepaidVoucherBatch:
     """"ערוך סדרה": planned, checked and written as a whole (app/services/prepaid_voucher_edit.py)."""
+    return edit_batch(db, user, tenant_id, batch_id, body, bulk=bulk)[0]
+
+
+def edit_batch(db: Session, user: User, tenant_id, batch_id, body, *, bulk=None) -> Tuple[PrepaidVoucherBatch, Dict[str, Any]]:
+    """[update_batch] with the plan it applied (each change before → after, the effects)."""
     from app.services import prepaid_voucher_edit as PVE
 
     batch = _locked_batch(db, user, tenant_id, batch_id)
-    PVE.apply_edit(db, user, tenant_id, batch, body)
+    plan = PVE.apply_edit(db, user, tenant_id, batch, body, bulk=bulk)
     db.flush()
-    return batch
+    return batch, plan
 
 
 def preview_batch_edit(db: Session, user: User, tenant_id, batch_id, body) -> Dict[str, Any]:
