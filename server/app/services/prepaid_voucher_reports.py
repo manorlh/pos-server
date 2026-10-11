@@ -14,7 +14,8 @@ Prepaid voucher ("שוברי הפקה") reports: one batch, over its whole life.
   and the total benefit given (₪, what the sale documents took off); also how many uses
   were flagged by the cloud's re-check and how many are held by open sales right now.
   issued = used + remaining + void. A goods batch: its units the same way (no ₪ figure —
-  the goods were paid outside the till).
+  the goods were paid outside the till); a batch of item groups (a punch card, "כרטיסייה") counts
+  its vouchers' units in all — the quota ("מכסה"), what was taken, what is left — not per product.
 
 A staff **test batch** ("שוברי בדיקה", the helper's §18.5) is reported like any other — it is the
 batch asked for — and marked `isTest`: out of every settlement and of the commercial reports
@@ -79,8 +80,41 @@ class _Bucket:
         return out
 
 
+def _usage_groups(db: Session, batch, stats: Dict[str, int], redemptions) -> Dict[str, Any]:
+    """A batch of item groups: the vouchers' units in all — "ניצול המכסה" of a punch card (50 / 6 / 44)."""
+    from app.services import production_voucher_groups as PG
+
+    per = PG.total_max(batch.groups, batch.total_qty)
+    remaining = void = 0
+    for status_, left in db.query(PrepaidVoucher.status, PrepaidVoucher.remaining).filter(
+        PrepaidVoucher.batch_id == batch.id
+    ):
+        units = int(Decimal(str((left or {}).get(PG.TOTAL, per))))
+        if status_ == "cancelled":
+            void += units
+        else:
+            remaining += units
+    used = Decimal(0)
+    for r in redemptions:
+        for u in (r.units or r.items or []):
+            q = PV.taken_of(u)
+            used += q if q == q.to_integral_value() else Decimal(1)  # a weighed unit is one
+    return {
+        "unit": "units",
+        "issued": per * int(stats.get("total", 0)),
+        "used": PV.qty_out(used),
+        "remaining": remaining,
+        "void": void,
+        "benefit": None,
+        "flagged": 0,
+        "held": 0,
+    }
+
+
 def _usage(db: Session, batch, stats: Dict[str, int], products, redemptions) -> Dict[str, Any]:
     """Issued / used / remaining / void, and the ₪ given — see the module docstring."""
+    if not PV.is_discount(batch) and (getattr(batch, "selection", None) or "items") == "groups" and batch.groups:
+        return _usage_groups(db, batch, stats, redemptions)
     if not PV.is_discount(batch):
         def total(*keys):
             return PV.qty_out(sum((PV.qty(p[k]) for p in products for k in keys), Decimal(0)))

@@ -131,15 +131,15 @@ export function AgreementDetail({ id, onBack }: { id: string; onBack: () => void
       </Section>
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label={t('chargeable')} value={tt.chargeable} hint={t('chargeableHint', { basis: t(`basis.${a.billingBasis}`) })} />
+        <StatTile label={t('chargeable')} value={t('vouchersN', { n: tt.chargeable })} hint={t('chargeableHint', { basis: t(`basis.${a.billingBasis}`) })} />
         <StatTile label={t('amount')} value={money(tt.amountAgorot)} hint={a.pricesVisible ? t('amountHint') : t('pricesHidden')} />
-        <StatTile label={t('invoiced')} value={tt.invoiced} hint={money(tt.invoicedAmountAgorot)} />
-        <StatTile label={t('uninvoiced')} value={tt.uninvoiced} hint={money(tt.uninvoicedAmountAgorot)}
+        <StatTile label={t('invoiced')} value={t('vouchersN', { n: tt.invoiced })} hint={money(tt.invoicedAmountAgorot)} />
+        <StatTile label={t('uninvoiced')} value={t('vouchersN', { n: tt.uninvoiced })} hint={money(tt.uninvoicedAmountAgorot)}
           tone={tt.overInvoiced > 0 ? 'bad' : tt.uninvoiced > 0 ? 'warn' : 'good'} />
-        <StatTile label={t('issued')} value={tt.issued} hint={t('replacementsN', { n: tt.replacements })} />
-        <StatTile label={t('delivered')} value={tt.delivered} hint={t('deliveredFreeN', { n: tt.deliveredFree })} />
-        <StatTile label={t('redeemed')} value={tt.redeemed} hint={t('redemptionsN', { n: tt.redemptions, units: tt.units })} />
-        <StatTile label={t('cancelled')} value={tt.cancelled} hint={t('cancelledChargedN', { n: tt.cancelledCharged })} />
+        <StatTile label={t('issued')} value={t('vouchersN', { n: tt.issued })} hint={t('replacementsN', { n: tt.replacements })} />
+        <StatTile label={t('delivered')} value={t('vouchersN', { n: tt.delivered })} hint={t('deliveredFreeN', { n: tt.deliveredFree })} />
+        <StatTile label={t('redeemed')} value={t('vouchersN', { n: tt.redeemed })} hint={t('redemptionsN', { n: tt.redemptions, units: tt.units })} />
+        <StatTile label={t('cancelled')} value={t('vouchersN', { n: tt.cancelled })} hint={t('cancelledChargedN', { n: tt.cancelledCharged })} />
       </div>
       <StatTile tone="muted" label={t('tillValue')} value={money(tt.tillValueAgorot)} hint={t('tillValueHint')} />
 

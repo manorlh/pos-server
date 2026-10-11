@@ -523,6 +523,8 @@ def type_out(db: Session, user: User, t: PrepaidVoucherType, batch_count: Option
         "splitAllowed": bool(t.split_allowed),
         "includeExtras": bool(t.include_extras),
         "printTillValue": bool(t.print_till_value),
+        # Groups: the names of what they choose (the editor's chips, "סיכום השובר"); null without groups.
+        "groupNames": PV.group_names_out(db, t),
         "batchCount": batch_count if batch_count is not None else _batch_counts(db, [t.id]).get(str(t.id), 0),
         "createdAt": PV._iso(t.created_at),
         "updatedAt": PV._iso(t.updated_at),

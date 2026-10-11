@@ -558,7 +558,7 @@ class TestPdf:
         assert refused(R.recipient_pdf, batch["id"], item["id"], purpose="download", **_ctx(w)).detail == VD.NO_VOUCHERS
         # The link still opens, and says so without a voucher in it.
         resp = pdf(w, token_of(item))
-        assert resp.status_code == 404 and "אין בקישור זה שוברים פעילים" in bytes(resp.body).decode()
+        assert resp.status_code == 404 and "אין בקישור זה שוברים לממש" in bytes(resp.body).decode()
         assert stub_pdf == []
 
 
@@ -570,8 +570,17 @@ class TestMessages:
         batch = make(w, count=3)
         do_import(w, batch, PEOPLE[:1], mode="count", perRecipient=3)
         item = recipients(w, batch)["items"][0]
-        assert item["message"].startswith("שלום דנה,\nמצורפים השוברים שלך לפסטיבל הקיץ (3 שוברים, מס׳ 0001-0003).")
+        assert item["message"].startswith("שלום דנה,\nקיבלת 3 שוברים לפסטיבל הקיץ (מס׳ 0001-0003).")
         assert item["message"].endswith(item["link"])
+
+    def test_one_voucher_is_said_in_the_singular(self, w):
+        batch = make(w, count=3)
+        do_import(w, batch, PEOPLE[:1], mode="one")
+        item = recipients(w, batch)["items"][0]
+        assert item["message"].startswith("שלום דנה,\nקיבלת שובר אחד לפסטיבל הקיץ (מס׳ 0001).")
+        assert (VD.vouchers_text(1), VD.vouchers_text(2), VD.vouchers_text(12)) == ("שובר אחד", "2 שוברים", "12 שוברים")
+        values = {"vouchers": "שובר אחד", "count": 1, "link": "https://x/v/T"}
+        assert VD.render_message("{שוברים} / {vouchers} / {כמות}", values) == "שובר אחד / שובר אחד / 1\nhttps://x/v/T"
 
     def test_placeholders_aliases_a_missing_name_and_the_link_always_there(self):
         values = {"name": "", "event": "פסטיבל", "count": 2, "serials": "0001-0002", "link": "https://x/v/T"}
@@ -585,7 +594,7 @@ class TestMessages:
         do_import(w, batch, [{"group": 2}, {"group": 1, "phone": "0501234567", "name": "ראש קבוצה"}], mode="group", kind="group")
         items = recipients(w, batch, kind="group")["items"]
         assert [(i["group"], i["phone"]) for i in items] == [(2, None), (1, "972501234567")]
-        assert items[0]["message"].startswith("שוברי פסטיבל הקיץ — קבוצה 2 (5 שוברים, מס׳ 0006-0010).")
+        assert items[0]["message"].startswith("שוברי פסטיבל הקיץ — קבוצת שוברים 2: 5 שוברים (מס׳ 0006-0010).")
         R.update_distribution(batch["id"], DistributionSettingsIn(groupMessageTemplate="קבוצה {קבוצה}: {קישור}"), **_ctx(w))
         assert recipients(w, batch, kind="group")["items"][0]["message"] == f"קבוצה 2: {items[0]['link']}"
 

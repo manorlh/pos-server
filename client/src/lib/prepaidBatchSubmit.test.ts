@@ -148,7 +148,7 @@ test('what counts as "no answer"', () => {
 test('the duplicate warning is read from the answer', () => {
   assert.equal(duplicateOf({ possibleDuplicate: null }), null);
   assert.equal(duplicateOf(undefined), null);
-  const ref = { id: 'b0', name: 'הפקה', customerName: null, count: 50, createdAt: null, cancelReason: 'אצווה כפולה' };
+  const ref = { id: 'b0', name: 'הפקה', customerName: null, count: 50, createdAt: null, cancelReason: 'סדרה כפולה' };
   assert.deepEqual(duplicateOf({ possibleDuplicate: ref }), ref);
 });
 

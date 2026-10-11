@@ -50,7 +50,8 @@ import {
 } from '@/lib/prepaidVouchersApi';
 import { useEditFieldLabel, useEditValueFormat, useEffectLines } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { RulesFields, stackingBody, stackingValid, type RulesState } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
-import { policyBody, policyState, type PolicyState } from '@/components/dashboard/prepaid-vouchers/voucher-types';
+import { batchSummaryLines, policyBody, policyState, type PolicyState } from '@/components/dashboard/prepaid-vouchers/voucher-types';
+import { SummaryCard } from '@/components/dashboard/prepaid-vouchers/setup-parts';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -433,7 +434,8 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
             </p>
             <ul className="space-y-2">
               {outcomeOrder(preview.items).map((it) => (
-                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} sent={sent?.changes ?? null} />
+                <OutcomeRow key={it.batchId} item={it} batch={byId.get(it.batchId) ?? null} sent={sent?.changes ?? null}
+                  shopNames={new Map((shops.data ?? []).map((x) => [x.id, x.label]))} />
               ))}
             </ul>
             {lost ? (
@@ -528,13 +530,34 @@ const STATUS_STYLE = {
   refused: 'text-destructive',
 } as const;
 
+/**
+ * [batch] as it will be after [sent] (the preview's "סיכום השובר"): the asked values over the batch's
+ * own, shops by name. Only the settings "סיכום השובר" reads; what the cloud refuses never shows here.
+ */
+function afterChange(batch: PrepaidVoucherBatch, sent: PrepaidBatchEditBody | null, shopNames?: ReadonlyMap<string, string>): PrepaidVoucherBatch {
+  if (!sent) return batch;
+  const pick = <K extends keyof PrepaidVoucherBatch>(k: K, v: unknown): Partial<PrepaidVoucherBatch> => (v === undefined ? {} : { [k]: v } as Partial<PrepaidVoucherBatch>);
+  return {
+    ...batch,
+    ...pick('validFrom', sent.validFrom), ...pick('validUntil', sent.validUntil),
+    ...pick('splitAllowed', sent.splitAllowed), ...pick('pricing', sent.pricing), ...pick('tillValue', sent.tillValue),
+    ...pick('redemptionAccounting', sent.redemptionAccounting),
+    ...pick('includeExtras', sent.includeExtras), ...pick('offlineAllowed', sent.offlineAllowed),
+    ...pick('stacking', sent.stacking), ...pick('maxVouchersPerSale', sent.maxVouchersPerSale),
+    ...pick('maxUsesPerSale', sent.maxUsesPerSale), ...pick('maxUsesPerDay', sent.maxUsesPerDay),
+    ...(sent.shopIds === undefined ? {} : { shops: (sent.shopIds ?? []).map((id) => ({ id, name: shopNames?.get(id)?.split(' · ')[0] ?? null })) }),
+  };
+}
+
 /** One batch of the preview / the result: what changes and what it touches, or why it is refused. */
-function OutcomeRow({ item, batch, sent, compact = false }: {
+function OutcomeRow({ item, batch, sent, compact = false, shopNames }: {
   item: BulkBatchOutcome;
   batch: PrepaidVoucherBatch | null;
   /** What was asked (the value a refusal names). */
   sent: PrepaidBatchEditBody | null;
   compact?: boolean;
+  /** The shops' names (the preview's "סיכום השובר" after the change). */
+  shopNames?: ReadonlyMap<string, string>;
 }) {
   const t = useTranslations('prepaidVouchers.bulk');
   const te = useTranslations('prepaidVouchers.edit');
@@ -583,6 +606,7 @@ function OutcomeRow({ item, batch, sent, compact = false }: {
       {item.status !== 'refused' && (item.unchangedFields ?? []).length ? (
         <p className="ps-6 text-[11px] text-muted-foreground">{t('unchangedFields', { fields: (item.unchangedFields ?? []).map(label).join(', ') })}</p>
       ) : null}
+      {item.status === 'ok' && !compact && batch ? <SummaryCard className="ms-6" lines={batchSummaryLines(afterChange(batch, sent, shopNames))} /> : null}
     </li>
   );
 }

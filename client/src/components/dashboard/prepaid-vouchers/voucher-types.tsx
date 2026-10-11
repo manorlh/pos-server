@@ -25,14 +25,29 @@ import {
   type PrepaidPricing,
   type PrepaidRedemptionAccounting,
   type PrepaidTypeBody,
+  type PrepaidVoucherBatch,
   PREPAID_REDEMPTION_ACCOUNTING,
   type PrepaidVoucherType,
 } from '@/lib/prepaidVouchersApi';
-import { benefitText, discountDraftErrors, isDiscountKind, moneyText, termsOfBatch, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+import { benefitText, discountDraftErrors, isDiscountKind, maxVouchersPerSale, moneyText, termsOfBatch, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import { itemText } from '@/lib/prepaidVoucherProducts';
 import { changedFields } from '@/lib/prepaidBatchEdit';
 import { voucherFieldsFor } from '@/lib/voucherFields';
-import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
+import {
+  draftGroupsOf,
+  emptyGroup,
+  groupProblems,
+  groupsBody,
+  isPunchCard,
+  presetValues,
+  totalQtyBody,
+  type DraftGroup,
+  type VoucherPreset,
+  type VoucherSelection,
+} from '@/lib/voucherPresets';
+import { voucherSummary, type SummaryInput } from '@/lib/voucherSummary';
+import { type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
+import { FormSection, GoodsContents, PresetPicker, SummaryCard, summaryGroupsOf } from '@/components/dashboard/prepaid-vouchers/setup-parts';
 import {
   DiscountTermsFields,
   EMPTY_DISCOUNT_TERMS,
@@ -40,6 +55,7 @@ import {
   RulesFields,
   stackingBody,
   stackingValid,
+  usePrepaidCategoryOptions,
   type DiscountTermsState,
   type RulesState,
 } from '@/components/dashboard/prepaid-vouchers/voucher-terms';
@@ -54,9 +70,51 @@ function money(v: number | null | undefined): string | null {
   return v == null ? null : moneyText(Math.round(v * 100));
 }
 
-/** "1× נקניקייה + 1× שתייה", or a discount's benefit. */
-export function typeContents(t: Pick<PrepaidVoucherType, 'kind' | 'items' | 'benefitText' | 'discountType' | 'discountValue' | 'minPurchase' | 'maxDiscount' | 'maxUnits' | 'targets'>): string {
+/** What "סיכום השובר" reads of a type or a batch (a batch has most of these optional). */
+export type SummarySource = Pick<PrepaidVoucherType, 'items'> & Partial<Pick<PrepaidVoucherType,
+  'kind' | 'benefitText' | 'discountType' | 'discountValue' | 'minPurchase' | 'maxDiscount' | 'maxUnits' | 'targets'
+  | 'selection' | 'groups' | 'totalQty' | 'groupNames' | 'splitAllowed' | 'includeExtras' | 'pricing' | 'tillValue' | 'allowTopUp'
+  | 'redemptionAccounting' | 'usesPerVoucher' | 'maxUsesPerSale' | 'maxUsesPerDay' | 'stacking' | 'maxVouchersPerSale' | 'offlineAllowed'>>;
+
+/**
+ * A type (or a batch) as "סיכום השובר" reads it (lib/voucherSummary.ts): the groups by the names the
+ * cloud sent (`groupNames`), money in ₪. A batch adds its count, validity and shops.
+ */
+export function summaryInputOf(t: SummarySource): SummaryInput {
+  const discount = isDiscountKind(t.kind);
+  const name = (map: Record<string, string> | undefined, id: string) => map?.[id.toLowerCase()] ?? map?.[id] ?? null;
+  const groups = (t.groups ?? []).map((g) => ({
+    name: g.name, minQty: g.minQty, maxQty: g.maxQty, allowRepeat: g.allowRepeat, allItems: g.allItems,
+    names: [...(g.categoryIds ?? []).map((id) => name(t.groupNames?.categories, id)), ...(g.productIds ?? []).map((id) => name(t.groupNames?.products, id))]
+      .filter((x): x is string => !!x),
+    excluded: [...(g.excludeCategoryIds ?? []).map((id) => name(t.groupNames?.categories, id)), ...(g.excludeProductIds ?? []).map((id) => name(t.groupNames?.products, id))]
+      .filter((x): x is string => !!x),
+  }));
+  return {
+    kind: t.kind ?? 'items', selection: t.selection ?? 'items',
+    items: t.items.map((i) => ({ name: i.name, quantity: i.quantity, weighed: i.weighed, unitLabel: i.unitLabel })),
+    groups, totalQty: t.totalQty ?? null, splitAllowed: !discount && !!t.splitAllowed, includeExtras: !discount && !!t.includeExtras,
+    pricing: t.pricing ?? null, tillValue: t.tillValue ?? null, allowTopUp: t.allowTopUp ?? null, accounting: discount ? null : t.redemptionAccounting ?? null,
+    benefit: discount ? t.benefitText ?? benefitText(termsOfBatch(t)) : null,
+    usesPerVoucher: t.usesPerVoucher ?? 1, maxUsesPerSale: t.maxUsesPerSale ?? 1, maxUsesPerDay: t.maxUsesPerDay ?? null,
+    stacking: t.stacking ?? null, maxVouchersPerSale: t.maxVouchersPerSale ?? null, offlineAllowed: !!t.offlineAllowed,
+  };
+}
+
+/** "סיכום השובר" of an issued batch: its terms, how many vouchers, the validity and the shops. */
+export function batchSummaryLines(b: PrepaidVoucherBatch): string[] {
+  return voucherSummary({
+    ...summaryInputOf(b),
+    count: b.issuedCount ?? b.stats.total,
+    validFrom: b.validFrom, validUntil: b.validUntil,
+    shopNames: (b.shops ?? []).map((x) => x.name ?? '').filter(Boolean),
+  });
+}
+
+/** "1× נקניקייה + 1× שתייה", a discount's benefit, or what the item groups give ("כרטיסייה: עד 50 פריטים מתוך 'אוכל'…"). */
+export function typeContents(t: SummarySource): string {
   if (isDiscountKind(t.kind)) return t.benefitText ?? benefitText(termsOfBatch(t)) ?? '';
+  if (t.selection === 'groups' && t.groups?.length) return voucherSummary(summaryInputOf(t))[0] ?? '';
   return t.items.map((i) => i.text ?? itemText(i)).join(' + ');
 }
 
@@ -71,7 +129,8 @@ export function TypeSummary({ type }: { type: PrepaidVoucherType }) {
         {type.code ? <span className="ms-2 rounded bg-muted px-1.5 py-0.5 text-[11px] font-normal">{type.code}</span> : null}
         <span className="ms-2 text-xs font-normal text-muted-foreground">{t('version', { n: type.version })}</span>
       </p>
-      <p className="text-muted-foreground">{tk(`kind.${type.kind ?? 'items'}`)} · {typeContents(type)}</p>
+      <p className="text-muted-foreground">{tk(`kind.${type.kind ?? 'items'}`)}</p>
+      <SummaryCard lines={voucherSummary(summaryInputOf(type))} />
       <TypePrices type={type} />
     </div>
   );
@@ -213,6 +272,8 @@ function TypeForm({
   overrideEditable: boolean;
 }) {
   const t = useTranslations('prepaidVouchers.types');
+  const ts = useTranslations('prepaidVouchers.setup');
+  const tk = useTranslations('prepaidVouchers.kinds');
   const tc = useTranslations('common');
   const qc = useQueryClient();
   const [pickedCompany, setCompanyId] = useState(initial?.companyId ?? '');
@@ -222,6 +283,13 @@ function TypeForm({
   const [kind, setKind] = useState<PrepaidVoucherKind>(initial?.kind ?? 'items');
   // Editing keeps the type's goods unless they are changed (the picker needs full product rows).
   const [items, setItems] = useState<DraftItem[]>([]);
+  // A fixed list or item groups (lib/voucherPresets.ts): the groups by name, as the cloud sent them.
+  const [selection, setSelection] = useState<VoucherSelection>(initial?.selection === 'groups' ? 'groups' : 'items');
+  const [groups, setGroups] = useState<DraftGroup[]>(() => draftGroupsOf(initial?.groups, initial?.groupNames));
+  const [totalQty, setTotalQty] = useState(initial?.totalQty ? String(initial.totalQty) : '');
+  // The quick start picked (new types), and the punch card's simple view.
+  const [preset, setPreset] = useState<VoucherPreset | null>(null);
+  const [punchView, setPunchView] = useState(() => isPunchCard(initial?.selection, initial?.groups ?? [], initial?.totalQty));
   const [terms, setTerms] = useState<DiscountTermsState>({
     ...EMPTY_DISCOUNT_TERMS,
     discountType: initial?.discountType ?? 'fixed',
@@ -255,12 +323,14 @@ function TypeForm({
   const companies = useQuery({ queryKey: ['companies'], queryFn: fetchCompanies, enabled: !initial });
   // One company: it is the one (nothing to pick).
   const companyId = pickedCompany || (companies.data?.length === 1 ? companies.data[0].id : '');
+  const categoryOptions = usePrepaidCategoryOptions(companyId);
 
   const discount = isDiscountKind(kind);
+  const grouped = !discount && selection === 'groups';
   // Only what this kind of voucher has (lib/voucherFields.ts): goods — contents, pricing, split, extras;
   // a discount — its terms and the three uses; both — stacking, offline and the print flags.
   const fields = voucherFieldsFor({
-    kind, pricing, stacking: rules.stacking, discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
+    kind, selection, pricing, stacking: rules.stacking, discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
   });
   const decimal = (v: string) => (v.trim() ? Number(v.replace(',', '.')) : null);
   const termErrors = discountDraftErrors({
@@ -268,11 +338,15 @@ function TypeForm({
     targetCount: terms.products.length + terms.categoryIds.length + (initial?.targets?.productIds.length ?? 0),
     maxUnits: terms.maxUnits, usesPerVoucher: rules.usesPerVoucher, maxUsesPerSale: rules.maxUsesPerSale, maxUsesPerDay: rules.maxUsesPerDay,
   });
+  // Groups of a type opened to edit stay as they are unless changed; a new one is checked.
+  const groupsEditing = !initial || goodsTouched || initial.selection !== 'groups';
+  const groupErrors = grouped && groupsEditing ? groupProblems(groups, totalQty) : [];
   const goodsCount = goodsTouched || !initial ? items.length : initial.items.length;
   const problems = [
     !name.trim() ? t('problem.name') : null,
     !companyId ? t('problem.company') : null,
-    !discount && goodsCount === 0 ? t('problem.items') : null,
+    !discount && !grouped && goodsCount === 0 ? t('problem.items') : null,
+    groupErrors.length ? t('problem.groups') : null,
     discount && termErrors.length ? t('problem.terms') : null,
     !stackingValid(rules) ? t('problem.maxVouchers') : null,
     !discount && pricing === 'fixed' && decimal(tillValue) == null ? t('problem.value') : null,
@@ -294,7 +368,14 @@ function TypeForm({
       });
       if (pricesEditable) out.productionPrice = decimal(productionPrice);
       if (overrideEditable || policy.mode === 'honour') out.discountBlockPolicy = policyBody(policy);
-      if (goodsTouched || !initial) out.items = items.map((i) => ({ productId: i.product.id, quantity: i.quantity }));
+      if (grouped && groupsEditing) {
+        // Item groups (the API's own fields), sent when set or changed; a fixed list's items go with the change.
+        Object.assign(out, { selection: 'groups', groups: groupsBody(groups), totalQty: totalQtyBody(totalQty) });
+        if (initial && initial.selection !== 'groups') out.items = [];
+      } else if (!grouped) {
+        if (initial?.selection === 'groups' || !initial) out.selection = 'items';
+        if (goodsTouched || !initial) out.items = items.map((i) => ({ productId: i.product.id, quantity: i.quantity }));
+      }
     } else {
       Object.assign(out, {
         discountType: terms.discountType, discountValue: decimal(terms.value),
@@ -314,6 +395,58 @@ function TypeForm({
     }
     return out;
   };
+
+  // A quick start: the form filled with values the owner could set by hand (lib/voucherPresets.ts).
+  const applyPreset = (p: VoucherPreset) => {
+    const v = presetValues(p, 50, grouped ? groups[0] : undefined);
+    setPreset(p);
+    setKind(v.kind);
+    if (v.kind === 'items') {
+      setSelection(v.selection);
+      setGroups(v.groups);
+      setTotalQty(v.totalQty);
+      setSplitAllowed(v.splitAllowed);
+      setPunchView(p === 'punch');
+      // A punch card covers each item at its menu price unless a value is set (section 5).
+      if (p === 'punch' && !tillValue.trim()) setPricing('cover');
+    } else if (v.discountType) {
+      setTerms((cur) => ({ ...cur, discountType: v.discountType! }));
+    }
+  };
+  const pickSelection = (v: VoucherSelection) => {
+    setSelection(v);
+    setGoodsTouched(true);
+    if (v === 'groups' && !groups.length) setGroups([emptyGroup('פריטים')]);
+  };
+
+  // "סיכום השובר" (lib/voucherSummary.ts), from what the form says now.
+  const goodsNames = goodsTouched || !initial
+    ? items.map((i) => ({ name: i.product.name, quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel }))
+    : (initial?.items ?? []).map((i) => ({ name: i.name, quantity: i.quantity, weighed: i.weighed, unitLabel: i.unitLabel }));
+  const targetNames = [
+    ...terms.products.map((p) => p.name),
+    ...categoryOptions.filter((c) => terms.categoryIds.includes(c.id)).map((c) => c.label.split(' › ').pop() ?? c.label),
+  ];
+  const benefit = discount
+    ? (initial && !terms.products.length && terms.categoryIds === (initial.targets?.categoryIds ?? []) && terms.value === text(initial.discountValue)
+      ? initial.benefitText ?? null
+      : benefitText({
+        kind, discountType: terms.discountType,
+        value: Number(terms.value) > 0 ? Math.round(Number(terms.value) * 100) : null,
+        minPurchaseAgorot: Number(terms.minPurchase) > 0 ? Math.round(Number(terms.minPurchase) * 100) : null,
+        maxDiscountAgorot: Number(terms.maxDiscount) > 0 ? Math.round(Number(terms.maxDiscount) * 100) : null,
+        maxUnits: Number(terms.maxUnits) || null, names: targetNames,
+      }))
+    : null;
+  const summary = voucherSummary({
+    kind, selection, items: goodsNames, groups: summaryGroupsOf(groups), totalQty: totalQtyBody(totalQty),
+    splitAllowed: !discount && splitAllowed, includeExtras: !discount && includeExtras,
+    pricing, tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp, accounting: discount ? null : accounting,
+    benefit, usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1, maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+    maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+    stacking: rules.stacking, maxVouchersPerSale: maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) ?? null,
+    offlineAllowed,
+  });
 
   // Editing a type that batches were issued from: a change of what it gives, its prices or its terms
   // makes a new version — confirmed first, with what changes; the batches issued keep theirs.
@@ -343,68 +476,108 @@ function TypeForm({
     onError: (err) => toast.error(axiosErrorToToastMessage(err, t('saveFailed'))),
   });
 
+  const goodsUntouched = !!initial && !goodsTouched;
+  // "מכסה: עד 50 פריטים לכל שובר" in "כמה ומתי" (set with the items, in step 2).
+  const quotaN = grouped ? (totalQtyBody(totalQty) ?? summaryGroupsOf(groups).reduce((a, g) => a + g.maxQty, 0)) : 0;
   return (
     <>
         <div className="space-y-4">
           {initial && initial.batchCount > 0 ? (
             <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{t('versionNote', { n: initial.batchCount })}</p>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1 sm:col-span-2">
-              <Label htmlFor="pvt-name">{t('name')}</Label>
-              <Input id="pvt-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pvt-code">{t('code')}</Label>
-              <Input id="pvt-code" value={code} maxLength={32} dir="ltr" onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="MEAL" />
-            </div>
-          </div>
-          {!initial ? (
-            <div className="space-y-1">
-              <Label>{t('company')}</Label>
-              <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-                value={companyId} onChange={(e) => { setCompanyId(e.target.value); setItems([]); }} aria-label={t('company')}>
-                <option value="">{t('pickCompany')}</option>
-                {(companies.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-          ) : null}
-          <div className="space-y-1">
-            <Label htmlFor="pvt-desc">{t('description')}</Label>
-            <Input id="pvt-desc" value={description} maxLength={1000} onChange={(e) => setDescription(e.target.value)} />
-          </div>
-
-          {!initial ? <KindPicker value={kind} onChange={setKind} /> : null}
-          {fields.visible.has('discountType') ? (
-            <>
-              <DiscountTermsFields kind={kind} companyId={companyId} shopIds={[]} value={terms} onChange={setTerms} errors={termErrors} />
-              <div className="space-y-3 rounded-lg border p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{t('offlineAllowed')}</p>
-                    <p className="text-xs text-muted-foreground">{t('offlineHint')}</p>
-                  </div>
-                  <Switch checked={offlineAllowed} onCheckedChange={(v) => setOfflineAllowed(!!v)} aria-label={t('offlineAllowed')} />
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm">{t('showValidity')}</span>
-                  <Switch checked={showValidity} onCheckedChange={(v) => setShowValidity(!!v)} aria-label={t('showValidity')} />
-                </div>
+          <FormSection title={ts('typeDetailsTitle')} purpose={ts('typeDetailsPurpose')}>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="pvt-name">{t('name')}</Label>
+                <Input id="pvt-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
               </div>
-            </>
-          ) : (
-            <>
-              {initial && !goodsTouched ? (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
-                  <span>{typeContents(initial)}</span>
-                  <Button size="sm" variant="outline" onClick={() => setGoodsTouched(true)}>{t('changeGoods')}</Button>
-                </div>
-              ) : (
-                <GoodsEditor companyId={companyId} items={items} onChange={(v) => { setItems(v); setGoodsTouched(true); }} />
-              )}
+              <div className="space-y-1">
+                <Label htmlFor="pvt-code">{t('code')}</Label>
+                <Input id="pvt-code" value={code} maxLength={32} dir="ltr" onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="MEAL" />
+                <p className="text-xs text-muted-foreground">{t('codeHint')}</p>
+              </div>
+            </div>
+            {!initial ? (
+              <div className="space-y-1">
+                <Label>{t('company')}</Label>
+                <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                  value={companyId} onChange={(e) => { setCompanyId(e.target.value); setItems([]); setGroups((gs) => gs.map((g) => ({ ...g, products: [], categories: [], excludeProducts: [], excludeCategories: [] }))); }} aria-label={t('company')}>
+                  <option value="">{t('pickCompany')}</option>
+                  {(companies.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            ) : null}
+            <div className="space-y-1">
+              <Label htmlFor="pvt-desc">{t('description')}</Label>
+              <Input id="pvt-desc" value={description} maxLength={1000} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+          </FormSection>
 
-              <div className="space-y-3 rounded-lg border p-3">
-                <p className="text-sm font-medium">{t('pricesTitle')}</p>
+          <FormSection n={1} title={ts('s1Title')} purpose={ts('s1Purpose')}>
+            {!initial ? (
+              <>
+                <PresetPicker value={preset} onPick={applyPreset} />
+                <KindPicker value={kind} onChange={(k) => { setKind(k); setPreset(null); }} />
+              </>
+            ) : (
+              <p className="text-sm">
+                <span className="font-medium">{ts('kindIs')}</span> {tk(`kind.${kind}`)}
+                <span className="block text-xs text-muted-foreground">{ts('kindFixedType')}</span>
+              </p>
+            )}
+          </FormSection>
+
+          <FormSection n={2} title={ts('s2Title')} purpose={discount ? ts('s2PurposeDiscount') : ts('s2Purpose')}>
+            {fields.visible.has('discountType') ? (
+              <DiscountTermsFields kind={kind} companyId={companyId} shopIds={[]} value={terms} onChange={setTerms} errors={termErrors} />
+            ) : goodsUntouched ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm">
+                <span>{typeContents(initial!)}</span>
+                <Button size="sm" variant="outline" onClick={() => setGoodsTouched(true)}>{t('changeGoods')}</Button>
+              </div>
+            ) : (
+              <GoodsContents companyId={companyId} selection={selection} onSelection={pickSelection}
+                items={items} onItems={(v) => { setItems(v); setGoodsTouched(true); }}
+                groups={groups} onGroups={(v) => { setGroups(v); setGoodsTouched(true); }}
+                totalQty={totalQty} onTotalQty={(v) => { setTotalQty(v); setGoodsTouched(true); }}
+                punch={punchView} onPunch={setPunchView} />
+            )}
+            {fields.visible.has('includeExtras') ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{t('includeExtras')}</p>
+                  <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
+                </div>
+                <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
+              </div>
+            ) : null}
+          </FormSection>
+
+          <FormSection n={3} title={ts('s3Title')} purpose={discount ? ts('s3PurposeDiscount') : ts('s3PurposeType')}>
+            {discount ? (
+              <RulesFields kind={kind} value={rules} onChange={setRules} part="uses" />
+            ) : (
+              <>
+                {grouped && quotaN ? <p className="text-sm">{ts('quotaIs', { n: quotaN })}</p> : null}
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
+                    <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : grouped ? t('splitOffHintGroups') : t('splitOffHint')}</p>
+                  </div>
+                  <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitOn')} />
+                </div>
+              </>
+            )}
+            <p className="text-xs text-muted-foreground">{ts('validityInBatch')}</p>
+          </FormSection>
+
+          <FormSection n={4} title={ts('s4Title')} purpose={ts('s4Purpose')}>
+            <RulesFields kind={kind} value={rules} onChange={setRules} part="sale" />
+          </FormSection>
+
+          <FormSection n={5} title={ts('s5Title')} purpose={discount ? ts('s5PurposeDiscount') : ts('s5Purpose')}>
+            {discount ? null : (
+              <>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <Label htmlFor="pvt-value">{t('tillValue')}</Label>
@@ -428,6 +601,7 @@ function TypeForm({
                       <span><span className="font-medium">{t(`pricing.${p}`)}</span> — <span className="text-muted-foreground">{t(`pricingHint.${p}`)}</span></span>
                     </label>
                   ))}
+                  {grouped && punchView ? <p className="text-xs text-muted-foreground">{ts('punchPricingHint')}</p> : null}
                 </fieldset>
                 {fields.visible.has('allowTopUp') ? (
                   <div className="flex items-center justify-between gap-3">
@@ -438,36 +612,30 @@ function TypeForm({
                 <ToggleFields
                   accounting={accounting} onAccounting={setAccounting}
                   offlineAllowed={offlineAllowed} onOfflineAllowed={setOfflineAllowed}
-                  policy={policy} onPolicy={setPolicy} overrideEditable={overrideEditable}
+                  policy={policy} onPolicy={setPolicy} overrideEditable={overrideEditable} showOffline={false}
                 />
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm">{t('showValidity')}</span>
-                  <Switch checked={showValidity} onCheckedChange={(v) => setShowValidity(!!v)} aria-label={t('showValidity')} />
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm">{t('printTillValue')}</span>
-                  <Switch checked={printTillValue} onCheckedChange={(v) => setPrintTillValue(!!v)} aria-label={t('printTillValue')} />
-                </div>
-              </div>
+              </>
+            )}
+          </FormSection>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
-                    <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
-                  </div>
-                  <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitOn')} />
-                </div>
-                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <span className="text-sm font-medium">{t('includeExtras')}</span>
-                  <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
-                </div>
+          <FormSection n={6} title={ts('s6Title')} purpose={ts('s6PurposeType')}>
+            <OfflineSwitch value={offlineAllowed} onChange={setOfflineAllowed} />
+          </FormSection>
+
+          <FormSection n={7} title={ts('s7Title')} purpose={ts('s7Purpose')}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm">{t('showValidity')}</span>
+              <Switch checked={showValidity} onCheckedChange={(v) => setShowValidity(!!v)} aria-label={t('showValidity')} />
+            </div>
+            {!discount ? (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm">{t('printTillValue')}</span>
+                <Switch checked={printTillValue} onCheckedChange={(v) => setPrintTillValue(!!v)} aria-label={t('printTillValue')} />
               </div>
-            </>
-          )}
-          <div className="rounded-lg border p-3">
-            <RulesFields kind={kind} value={rules} onChange={setRules} />
-          </div>
+            ) : null}
+          </FormSection>
+
+          <SummaryCard lines={summary} sticky />
           {problems.length ? <p className="text-xs text-muted-foreground">{t('missing', { list: problems.join(', ') })}</p> : null}
         </div>
         <DialogFooter>
@@ -527,7 +695,7 @@ export function policyBody(p: PolicyState): PrepaidOverridePolicy {
  * (auto / manager) is set only with the `voucher_discount_override` section.
  */
 export function ToggleFields({
-  accounting, onAccounting, offlineAllowed, onOfflineAllowed, policy, onPolicy, overrideEditable, disabled = false,
+  accounting, onAccounting, offlineAllowed, onOfflineAllowed, policy, onPolicy, overrideEditable, disabled = false, showOffline = true,
 }: {
   accounting: PrepaidRedemptionAccounting;
   onAccounting: (v: PrepaidRedemptionAccounting) => void;
@@ -537,6 +705,8 @@ export function ToggleFields({
   onPolicy: (p: PolicyState) => void;
   overrideEditable: boolean;
   disabled?: boolean;
+  /** False: "מימוש ללא אינטרנט" is shown elsewhere (the guided form's "איפה תקף"). */
+  showOffline?: boolean;
 }) {
   const t = useTranslations('prepaidVouchers.types');
   return (
@@ -550,13 +720,7 @@ export function ToggleFields({
         <p className="text-xs text-muted-foreground">{t(`accountingHint.${accounting}`)}</p>
         <p className="text-xs font-medium text-amber-700 dark:text-amber-400">{t('accountantNote')}</p>
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{t('offlineAllowed')}</p>
-          <p className="text-xs text-muted-foreground">{t('offlineHint')}</p>
-        </div>
-        <Switch checked={offlineAllowed} disabled={disabled} onCheckedChange={(v) => onOfflineAllowed(!!v)} aria-label={t('offlineAllowed')} />
-      </div>
+      {showOffline ? <OfflineSwitch value={offlineAllowed} onChange={onOfflineAllowed} disabled={disabled} /> : null}
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">{t('overrideLabel')}</legend>
         {(['honour', 'auto', 'manager'] as const).map((m) => (
@@ -579,6 +743,20 @@ export function ToggleFields({
           </div>
         ) : null}
       </fieldset>
+    </div>
+  );
+}
+
+/** "מימוש ללא אינטרנט" with what it means. */
+export function OfflineSwitch({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const t = useTranslations('prepaidVouchers.types');
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{t('offlineAllowed')}</p>
+        <p className="text-xs text-muted-foreground">{t('offlineHint')}</p>
+      </div>
+      <Switch checked={value} disabled={disabled} onCheckedChange={(v) => onChange(!!v)} aria-label={t('offlineAllowed')} />
     </div>
   );
 }

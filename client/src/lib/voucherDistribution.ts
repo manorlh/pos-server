@@ -187,6 +187,7 @@ export const PLACEHOLDERS: { token: string; key: string }[] = [
   { token: '{שם}', key: 'name' },
   { token: '{אירוע}', key: 'event' },
   { token: '{כמות}', key: 'count' },
+  { token: '{שוברים}', key: 'vouchers' },
   { token: '{מספרים}', key: 'serials' },
   { token: '{קישור}', key: 'link' },
   { token: '{תוקף}', key: 'validUntil' },
@@ -201,6 +202,8 @@ export interface MessageValues {
   name?: string | null;
   event?: string | null;
   count?: number | string | null;
+  /** {שוברים}: "שובר אחד" / "3 שוברים" ([vouchersText]). */
+  vouchers?: string | null;
   serials?: string | null;
   link?: string | null;
   validUntil?: string | null;
@@ -224,6 +227,11 @@ export function renderMessage(template: string, values: MessageValues): string {
   const link = values.link;
   if (link && !text.includes(link)) text = text ? `${text}\n${link}` : link;
   return text;
+}
+
+/** {שוברים}: "שובר אחד", "3 שוברים" — the server's `vouchers_text`. */
+export function vouchersText(n: number): string {
+  return n === 1 ? 'שובר אחד' : `${n} שוברים`;
 }
 
 /** [1, 2, 3, 5] → "0001-0003, 0005" — the serials as printed ("מס׳ 0008"). */
@@ -306,33 +314,33 @@ export function voucherContentsRows(
   b: VoucherContentsInput,
   names: { product: (id: string) => string | undefined; category: (id: string) => string | undefined },
 ): [string, string][] {
-  const rows: [string, string][] = [['שובר', b.name]];
-  if (b.typeName) rows.push(['סוג', b.typeName]);
-  if (b.customerName) rows.push(['לקוח', b.customerName]);
+  const rows: [string, string][] = [['סדרה', b.name]];
+  if (b.typeName) rows.push(['סוג שובר', b.typeName]);
+  if (b.customerName) rows.push(['עבור מי', b.customerName]);
   if (b.eventName) rows.push(['אירוע', b.eventName]);
   const day = (iso: string) => iso.slice(0, 10).split('-').reverse().join('/');
   if (b.validFrom || b.validUntil) {
     rows.push(['תוקף', [b.validFrom ? `מ-${day(b.validFrom)}` : '', b.validUntil ? `עד ${day(b.validUntil)}` : ''].filter(Boolean).join(' ')]);
   }
   if (b.tillValue != null) {
-    rows.push(['שווי', b.pricing === 'fixed' ? `₪${b.tillValue} (שווי קבוע)` : `עד ₪${b.tillValue}`]);
+    rows.push(['שווי בקופה', b.pricing === 'fixed' ? `₪${b.tillValue} (שווי קבוע)` : `עד ₪${b.tillValue}`]);
   }
   rows.push(['תוספות בתשלום', b.includeExtras ? 'כלולות' : 'בתשלום נפרד']);
   const list = (ids: string[] | undefined, of: (id: string) => string | undefined) =>
     (ids ?? []).map((id) => of(id) ?? '').filter(Boolean).join(', ');
   if (b.selection === 'groups' && b.groups?.length) {
-    if (b.totalQty != null) rows.push(['סה״כ פריטים בשובר', String(b.totalQty)]);
+    if (b.totalQty != null) rows.push(['מכסה', b.totalQty === 1 ? 'פריט אחד' : `${b.totalQty} פריטים`]);
     for (const g of b.groups) {
       const pick = g.minQty === g.maxQty ? `${g.maxQty}` : `${g.minQty}–${g.maxQty}`;
-      rows.push([g.name, `לבחירה: ${pick} פריטים`]);
+      rows.push([g.name, pick === '1' ? 'לבחירה: פריט אחד' : `לבחירה: ${pick} פריטים`]);
       if (g.allItems) rows.push(['', 'כל התפריט']);
       const cats = list(g.categoryIds, names.category);
       if (cats) rows.push(['', `קטגוריות: ${cats}`]);
       const prods = list(g.productIds, names.product);
-      if (prods) rows.push(['', `פריטים: ${prods}`]);
+      if (prods) rows.push(['', `מוצרים: ${prods}`]);
       const exCats = list(g.excludeCategoryIds, names.category);
       const exProds = list(g.excludeProductIds, names.product);
-      if (exCats || exProds) rows.push(['', `לא כולל: ${[exCats, exProds].filter(Boolean).join(', ')}`]);
+      if (exCats || exProds) rows.push(['', `מוחרגים: ${[exCats, exProds].filter(Boolean).join(', ')}`]);
     }
   } else if (b.items.length) {
     rows.push(['פריטים', '']);

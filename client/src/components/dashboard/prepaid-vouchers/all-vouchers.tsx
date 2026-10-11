@@ -16,7 +16,7 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { downloadExcel, type ExcelSheet } from '@/lib/excelExport';
 import { fetchAllPages } from '@/lib/fetchAllPages';
 import { formatDate, formatDateTime, isoDate } from '@/lib/format';
-import { quantityNumberText } from '@/lib/prepaidVoucherProducts';
+import { DEFAULT_WEIGHT_UNIT, quantityNumberText } from '@/lib/prepaidVoucherProducts';
 import { filtersToQuery, type VoucherFilters, type VoucherState } from '@/lib/prepaidVoucherFilters';
 import { fetchPrepaidVoucherRows, type PrepaidVoucherRow } from '@/lib/prepaidVouchersApi';
 import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
@@ -38,13 +38,24 @@ export const STATE_STYLE: Record<VoucherState, string> = {
 
 const when = (iso: string | null | undefined) => (isoDate(iso) ? formatDateTime(iso) : '');
 
-export function remainingText(v: PrepaidVoucherRow): string {
-  if (v.usesLeft != null) return `${v.usesLeft}/${v.usesPerVoucher ?? 1}`;
-  return v.items.map((i) => `${quantityNumberText(i.remaining)}/${quantityNumberText(i.quantity)} ${i.name}`).join(' · ');
+/** `prepaidVouchers.allVouchers`'s translator (with values). */
+type Tr = (key: string, values?: Record<string, string | number>) => string;
+
+/** What is left, with its unit (the glossary's "נותרו"): "נותרו 3 מתוך 5 שימושים", "קפה: נותרו 2 מתוך 3". */
+export function remainingText(v: PrepaidVoucherRow, t: Tr): string {
+  if (v.usesLeft != null) return t('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? 1 });
+  // Item groups (a punch card): one quota of items — "נותרו 44 מתוך 50 פריטים".
+  if (!v.items.length && v.quota != null && v.remaining != null) return t('unitsLeft', { left: v.remaining, total: v.quota });
+  return v.items.map((i) => t('itemLeft', {
+    name: i.name,
+    left: quantityNumberText(i.remaining),
+    // By weight: "0.2 מתוך 0.5 ק״ג", as the batch's own voucher list.
+    total: i.weighed ? `${quantityNumberText(i.quantity)} ${i.unitLabel || DEFAULT_WEIGHT_UNIT}` : quantityNumberText(i.quantity),
+  })).join(' · ');
 }
 
 /** The rows as an Excel sheet (every row the filters match). */
-export function voucherSheet(rows: PrepaidVoucherRow[], t: (k: string) => string, ts: (k: string) => string): ExcelSheet {
+export function voucherSheet(rows: PrepaidVoucherRow[], t: Tr, ts: (k: string) => string): ExcelSheet {
   return {
     name: t('sheet'),
     columns: [
@@ -57,7 +68,7 @@ export function voucherSheet(rows: PrepaidVoucherRow[], t: (k: string) => string
       { header: t('lastRedeemed'), kind: 'datetime' },
     ],
     rows: rows.map((v) => [
-      v.serial, v.displayCode, v.batch.name, v.batch.customerName ?? '', ts(`states.${v.state}`), remainingText(v),
+      v.serial, v.displayCode, v.batch.name, v.batch.customerName ?? '', ts(`states.${v.state}`), remainingText(v, t),
       v.lastRedeemedAt ?? null,
     ]),
   };
@@ -122,7 +133,7 @@ export function VoucherRowsTable({
       {list.isPending ? (
         <Skeleton className="h-40 w-full rounded-xl" />
       ) : list.isError ? (
-        <p className="text-sm text-destructive">{axiosErrorToToastMessage(list.error, t('empty'))}</p>
+        <p className="text-sm text-destructive">{axiosErrorToToastMessage(list.error, t('loadError'))}</p>
       ) : (
         <ul className="divide-y rounded-xl bg-card ring-1 ring-foreground/10">
           {list.data!.items.map((v) => (
@@ -138,7 +149,7 @@ export function VoucherRowsTable({
                     {v.batch.eventName ? <span className="text-muted-foreground"> · {v.batch.eventName}</span> : null}
                   </span>
                 ) : null}
-                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{remainingText(v)}</span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{remainingText(v, t)}</span>
                 {v.lastRedeemedAt ? <span className="text-xs text-muted-foreground">{when(v.lastRedeemedAt)}</span> : null}
                 <Button size="icon-sm" variant="ghost" aria-label={t('history')} title={t('history')}
                   onClick={() => setOpenHistory(openHistory === v.id ? null : v.id)}>

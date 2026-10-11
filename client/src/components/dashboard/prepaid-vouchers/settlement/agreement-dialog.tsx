@@ -213,36 +213,39 @@ function AgreementForm({ initial, onDone }: {
             error={candidates.isError ? errorText(candidates.error) : null} items={candidates.data} />
         </fieldset>
 
-        <fieldset className="space-y-1">
-          <legend className="text-sm font-medium">{t('form.basis')}</legend>
-          {radio('pvs-basis', 'redemption', basis, setBasis, t('basis.redemption'), t('basisHint.redemption'))}
-          {radio('pvs-basis', 'delivery', basis, setBasis, t('basis.delivery'), t('basisHint.delivery'))}
+        <fieldset className="space-y-3 rounded-lg border p-3">
+          <legend className="px-1 text-sm font-medium">{t('rules')}</legend>
+          <fieldset className="space-y-1">
+            <legend className="text-sm font-medium">{t('form.basis')}</legend>
+            {radio('pvs-basis', 'redemption', basis, setBasis, t('basis.redemption'), t('basisHint.redemption'))}
+            {radio('pvs-basis', 'delivery', basis, setBasis, t('basis.delivery'), t('basisHint.delivery'))}
+          </fieldset>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="pvs-from">{t('form.periodFrom')}</Label>
+              <Input id="pvs-from" type="date" value={periodFrom} max={periodTo || undefined} onChange={(e) => setPeriodFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pvs-to">{t('form.periodTo')}</Label>
+              <Input id="pvs-to" type="date" value={periodTo} min={periodFrom || undefined} onChange={(e) => setPeriodTo(e.target.value)} />
+            </div>
+            <p className="text-xs text-muted-foreground sm:col-span-2">{t('form.periodHint')}</p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <fieldset className="space-y-1">
+              <legend className="text-sm font-medium">{t('form.cancelledPolicy')}</legend>
+              {radio('pvs-cancelled', 'exclude', cancelledPolicy, setCancelledPolicy, t('cancelledPolicy.exclude'))}
+              {radio('pvs-cancelled', 'charge', cancelledPolicy, setCancelledPolicy, t('cancelledPolicy.charge'))}
+            </fieldset>
+            <fieldset className="space-y-1">
+              <legend className="text-sm font-medium">{t('form.replacementPolicy')}</legend>
+              {radio('pvs-replacement', 'free', replacementPolicy, setReplacementPolicy, t('replacementPolicy.free'))}
+              {radio('pvs-replacement', 'charge', replacementPolicy, setReplacementPolicy, t('replacementPolicy.charge'))}
+            </fieldset>
+          </div>
         </fieldset>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label htmlFor="pvs-from">{t('form.periodFrom')}</Label>
-            <Input id="pvs-from" type="date" value={periodFrom} max={periodTo || undefined} onChange={(e) => setPeriodFrom(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pvs-to">{t('form.periodTo')}</Label>
-            <Input id="pvs-to" type="date" value={periodTo} min={periodFrom || undefined} onChange={(e) => setPeriodTo(e.target.value)} />
-          </div>
-          <p className="text-xs text-muted-foreground sm:col-span-2">{t('form.periodHint')}</p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <fieldset className="space-y-1">
-            <legend className="text-sm font-medium">{t('form.cancelledPolicy')}</legend>
-            {radio('pvs-cancelled', 'exclude', cancelledPolicy, setCancelledPolicy, t('cancelledPolicy.exclude'))}
-            {radio('pvs-cancelled', 'charge', cancelledPolicy, setCancelledPolicy, t('cancelledPolicy.charge'))}
-          </fieldset>
-          <fieldset className="space-y-1">
-            <legend className="text-sm font-medium">{t('form.replacementPolicy')}</legend>
-            {radio('pvs-replacement', 'free', replacementPolicy, setReplacementPolicy, t('replacementPolicy.free'))}
-            {radio('pvs-replacement', 'charge', replacementPolicy, setReplacementPolicy, t('replacementPolicy.charge'))}
-          </fieldset>
-        </div>
 
         <div className="space-y-1">
           <Label htmlFor="pvs-notes">{t('form.notes')}</Label>

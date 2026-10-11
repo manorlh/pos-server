@@ -27,10 +27,12 @@ import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnava
 import {
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherStation,
+  voucherStationPaidItemsView,
 } from '@/lib/voucherTillSettings';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
@@ -491,16 +493,19 @@ export function PosSettingsForm({
                   </SelectContent>
                 </Select>
               </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherFlowHint')}</p>
             </div>
           );
         })()}
-        {/* "בירור יתרת שובר", the auto close and the voucher station (lib/voucherTillSettings.ts): "ירושה" sends null. */}
+        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items
+            (lib/voucherTillSettings.ts): "ירושה" sends null. */}
         {(() => {
           const pick = (
-            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation',
+            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation' | 'voucherStationPaidItems',
             values: readonly string[],
             label: (v: string) => string,
             inheritedValue: string,
+            extra?: ReactNode,
           ) => {
             const items = [
               { value: 'inherit', label: t('voucherSettingInherit', { value: label(inheritedValue) }) },
@@ -529,11 +534,13 @@ export function PosSettingsForm({
                     ))}
                   </SelectContent>
                 </Select>
+                {extra}
               </div>
             );
           };
+          const paidItems = voucherStationPaidItemsView(value, inherited);
           return (
-            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
               {pick(
                 'voucherBalanceCheck',
                 VOUCHER_BALANCE_CHECK_MODES,
@@ -552,6 +559,21 @@ export function PosSettingsForm({
                 (v) => t(`voucherOnOff_${v}`),
                 resolveVoucherStation(undefined, inherited?.voucherStation),
               )}
+              {pick(
+                'voucherStationPaidItems',
+                VOUCHER_STATION_PAID_ITEMS_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                paidItems.inheritedValue,
+                <>
+                  <p className="text-xs text-muted-foreground">{t('voucherStationPaidItemsHint')}</p>
+                  {paidItems.noPaymentWarning ? (
+                    <p role="alert" className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      {t('voucherStationPaidItemsNoPayment')}
+                    </p>
+                  ) : null}
+                </>,
+              )}
+              <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherTillHint')}</p>
             </div>
           );
         })()}

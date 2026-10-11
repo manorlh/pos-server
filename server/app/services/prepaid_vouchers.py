@@ -12,7 +12,7 @@ The rules, and why:
   till returns the first answer again, so a retry after a dropped response never takes
   the goods twice. The id is checked *under the lock*, so even two copies of the same
   request racing each other resolve to one redemption.
-* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש חד-פעמי"): one
+* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש בעסקה אחת"): one
   redemption uses the voucher up. Taking only part of it is refused unless the till
   says the cashier confirmed the rest is forfeited (`forfeitRest`), and what was given
   up is logged. `split_allowed=True` ("מימוש בחלקים"): whatever is not taken stays.
@@ -1411,6 +1411,8 @@ def batch_out(
         "discountBlockPolicy": _policy_out(batch),
         "offlineAllowed": bool(getattr(batch, "offline_allowed", False)),
         "printTillValue": bool(getattr(batch, "print_till_value", False)),
+        # Groups: the names of what they choose (the dashboard's "סיכום השובר"); null without groups.
+        "groupNames": group_names_out(db, batch),
         # "מצב בדיקה" (P:/specs/voucher-test-mode.md): scans take nothing and count nowhere; since when, by whom.
         "testMode": bool(getattr(batch, "test_mode", False)),
         "testModeSince": _iso(getattr(batch, "test_mode_since", None)),
@@ -1418,6 +1420,15 @@ def batch_out(
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
+
+
+def group_names_out(db: Session, holder) -> Optional[Dict[str, Dict[str, str]]]:
+    """A batch's or a type's groups' product and category names (production_voucher_groups.names)."""
+    if (getattr(holder, "selection", None) or "items") != "groups":
+        return None
+    from app.services import production_voucher_groups as PG
+
+    return PG.names(db, holder.tenant_id, getattr(holder, "groups", None))
 
 
 def _production_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
@@ -1607,6 +1618,8 @@ def voucher_out(
         # A discount voucher: its uses left of the batch's per-voucher uses (null for goods).
         "usesLeft": voucher.uses_left,
         "usesPerVoucher": int(voucher.batch.uses_per_voucher or 1) if is_discount(voucher.batch) else None,
+        # "נותרו 44 מתוך 50 פריטים" in the dashboard's lists: the lookup's own numbers (`quota_of`).
+        **quota_of(voucher),
         "firstRedeemedAt": _iso(voucher.first_redeemed_at),
         "lastRedeemedAt": _iso(voucher.last_redeemed_at),
         "cancelledAt": _iso(voucher.cancelled_at),
@@ -2143,6 +2156,26 @@ def _quota_out(
     left = sum((qty(i["remaining"]) for i in items), Decimal(0))
     return {"quotaUnit": "units", "quota": qty_out(quota), "used": qty_out(max(Decimal(0), quota - left)),
             "remaining": qty_out(left)}
+
+
+def quota_of(voucher: PrepaidVoucher) -> Dict[str, Any]:
+    """
+    `quotaUnit` / `quota` / `used` / `remaining` of [voucher] for the dashboard's voucher lists — the
+    same numbers the lookup sends (`_quota_out`): item groups in units of all ("כרטיסייה": 50 / 6 / 44),
+    a fixed list its quantities summed, a discount its uses. Read only.
+    """
+    batch = voucher.batch
+    groups = list(getattr(batch, "groups", None) or [])
+    view: Dict[str, Any] = {"selection": "items"}
+    if not is_discount(batch) and (getattr(batch, "selection", None) or "items") == "groups" and groups:
+        from app.services import production_voucher_groups as PG
+
+        view = {
+            "selection": "groups",
+            "totalMax": PG.total_max(groups, batch.total_qty),
+            "totalRemaining": PG.remaining_of(voucher, groups, batch.total_qty)[PG.TOTAL],
+        }
+    return _quota_out(batch, voucher, _remaining_out(batch, voucher), view)
 
 
 def lookup(

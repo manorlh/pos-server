@@ -68,6 +68,7 @@ export function DeliveriesDialog({ batch, agreementId, editable, onClose }: {
 
 export function DeliveriesPanel({ batchId, agreementId, editable }: { batchId: string; agreementId?: string; editable: boolean }) {
   const t = useTranslations('prepaidVouchers.settlement.deliveries');
+  const ts = useTranslations('prepaidVouchers.settlement');
   const errorText = useExtrasErrorText();
   const qc = useQueryClient();
   const [voiding, setVoiding] = useState<Delivery | null>(null);
@@ -93,9 +94,9 @@ export function DeliveriesPanel({ batchId, agreementId, editable }: { batchId: s
     <div className="space-y-3">
       <div className="grid gap-2 sm:grid-cols-4">
         <StatTile label={t('lastSerial')} value={d.lastSerial} />
-        <StatTile label={t('delivered')} value={d.delivered} />
-        <StatTile label={t('deliveredFree')} value={d.deliveredFree} />
-        <StatTile label={t('undelivered')} value={rangesCount(d.undelivered)} tone={rangesCount(d.undelivered) ? 'warn' : 'good'} />
+        <StatTile label={t('delivered')} value={ts('vouchersN', { n: d.delivered })} />
+        <StatTile label={t('deliveredFree')} value={ts('vouchersN', { n: d.deliveredFree })} />
+        <StatTile label={t('undelivered')} value={ts('vouchersN', { n: rangesCount(d.undelivered) })} tone={rangesCount(d.undelivered) ? 'warn' : 'good'} />
       </div>
       <div className="space-y-1 text-sm">
         <p><span className="font-medium">{t('undeliveredRanges')}:</span>{' '}

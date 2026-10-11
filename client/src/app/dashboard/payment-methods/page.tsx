@@ -27,7 +27,9 @@
  * יתרת שובר בתפריט הקופה" (`voucherBalanceCheck`: auto / on / off — under "auto" whether it is on at
  * this level now), "סגירה אוטומטית כשהשובר מכסה הכל" (`voucherAutoClose`) and "עמדת שובר (מסך סריקה
  * בלבד)" (`voucherStation`, with a non-blocking recommendation when the level's flow or voucher
- * switches do not suit a station), the same way.
+ * switches do not suit a station) and, next to it, "רכישה נוספת בתשלום בעמדת שובר"
+ * (`voucherStationPaidItems`, with a warning when it is on and no cash or card method is left to
+ * pay with), the same way.
  *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
@@ -85,6 +87,8 @@ import {
   VOUCHER_BALANCE_CHECK_KEY,
   VOUCHER_BALANCE_CHECK_MODES,
   VOUCHER_STATION_KEY,
+  VOUCHER_STATION_PAID_ITEMS_KEY,
+  VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
   isVoucherBalanceCheckMode,
   isVoucherOnOff,
@@ -93,6 +97,7 @@ import {
   resolveVoucherStation,
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
+  voucherStationPaidItemsView,
 } from '@/lib/voucherTillSettings';
 import {
   VOUCHER_REDEEM_FLOWS,
@@ -127,7 +132,8 @@ type PaymentKey =
   | typeof VOUCHER_SHOW_UNAVAILABLE_KEY
   | typeof VOUCHER_BALANCE_CHECK_KEY
   | typeof VOUCHER_AUTO_CLOSE_KEY
-  | typeof VOUCHER_STATION_KEY;
+  | typeof VOUCHER_STATION_KEY
+  | typeof VOUCHER_STATION_PAID_ITEMS_KEY;
 type DraftValue = boolean | number | VoucherRedeemFlow | VoucherBalanceCheckMode | VoucherOnOff | null;
 type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
@@ -150,13 +156,16 @@ const PAYMENT_KEYS: PaymentKey[] = [
   VOUCHER_BALANCE_CHECK_KEY,
   VOUCHER_AUTO_CLOSE_KEY,
   VOUCHER_STATION_KEY,
+  VOUCHER_STATION_PAID_ITEMS_KEY,
 ];
 
 /** Whether [v] is a value this page keeps for [key] (anything else reads as "inherits"). */
 function ownValue(key: PaymentKey, v: unknown): v is Exclude<DraftValue, null> {
   if (key === VOUCHER_REDEEM_FLOW_KEY) return isVoucherRedeemFlow(v);
   if (key === VOUCHER_BALANCE_CHECK_KEY) return isVoucherBalanceCheckMode(v);
-  if (key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY) return isVoucherOnOff(v);
+  if (key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY) {
+    return isVoucherOnOff(v);
+  }
   return typeof v === 'boolean' || typeof v === 'number';
 }
 
@@ -585,10 +594,15 @@ function MethodsEditor({
           balance={isVoucherBalanceCheckMode(draft[VOUCHER_BALANCE_CHECK_KEY]) ? (draft[VOUCHER_BALANCE_CHECK_KEY] as VoucherBalanceCheckMode) : null}
           autoClose={isVoucherOnOff(draft[VOUCHER_AUTO_CLOSE_KEY]) ? (draft[VOUCHER_AUTO_CLOSE_KEY] as VoucherOnOff) : null}
           station={isVoucherOnOff(draft[VOUCHER_STATION_KEY]) ? (draft[VOUCHER_STATION_KEY] as VoucherOnOff) : null}
+          paidItems={
+            isVoucherOnOff(draft[VOUCHER_STATION_PAID_ITEMS_KEY]) ? (draft[VOUCHER_STATION_PAID_ITEMS_KEY] as VoucherOnOff) : null
+          }
+          paidItemsView={voucherStationPaidItemsView(draft as PosSettingsPatch, inherited)}
           inherited={inherited}
           balanceSource={levelName(layer.effectiveSources?.[VOUCHER_BALANCE_CHECK_KEY])}
           autoCloseSource={levelName(layer.effectiveSources?.[VOUCHER_AUTO_CLOSE_KEY])}
           stationSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_KEY])}
+          paidItemsSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_PAID_ITEMS_KEY])}
           stationNeedsAdvice={voucherStationNeedsAdvice(
             resolveVoucherStation(draft[VOUCHER_STATION_KEY], inherited?.voucherStation),
             resolveVoucherRedeemFlow(draft[VOUCHER_REDEEM_FLOW_KEY], inherited?.voucherRedeemFlow),
@@ -599,6 +613,7 @@ function MethodsEditor({
           onBalance={(v) => setKey(VOUCHER_BALANCE_CHECK_KEY, v)}
           onAutoClose={(v) => setKey(VOUCHER_AUTO_CLOSE_KEY, v)}
           onStation={(v) => setKey(VOUCHER_STATION_KEY, v)}
+          onPaidItems={(v) => setKey(VOUCHER_STATION_PAID_ITEMS_KEY, v)}
           onApplyAdvice={() => setKey(VOUCHER_REDEEM_FLOW_KEY, 'voucher_first')}
         />
       </Card>
@@ -733,37 +748,47 @@ function VoucherFlowRows({
 
 /**
  * "בירור יתרת שובר בתפריט הקופה" (auto / on / off / inherit, and under "auto" whether it is on at this
- * level now), "סגירה אוטומטית כשהשובר מכסה הכל" (on / off / inherit) and "עמדת שובר (מסך סריקה בלבד)"
- * (off / on / inherit, with its recommendation) — each with what is in force and where it comes from.
- * `null` = this level does not set it (inherits).
+ * level now), "סגירה אוטומטית כשהשובר מכסה הכל" (on / off / inherit), "עמדת שובר (מסך סריקה בלבד)"
+ * (off / on / inherit, with its recommendation) and "רכישה נוספת בתשלום בעמדת שובר" (off / on /
+ * inherit, with a warning when on and no cash or card method is left) — each with what is in force
+ * and where it comes from. `null` = this level does not set it (inherits).
  */
 function VoucherTillRows({
   balance,
   autoClose,
   station,
+  paidItems,
+  paidItemsView,
   inherited,
   balanceSource,
   autoCloseSource,
   stationSource,
+  paidItemsSource,
   stationNeedsAdvice,
   disabled,
   onBalance,
   onAutoClose,
   onStation,
+  onPaidItems,
   onApplyAdvice,
 }: {
   balance: VoucherBalanceCheckMode | null;
   autoClose: VoucherOnOff | null;
   station: VoucherOnOff | null;
+  paidItems: VoucherOnOff | null;
+  /** lib/voucherTillSettings.ts: the value in force, what is inherited, and whether to warn. */
+  paidItemsView: ReturnType<typeof voucherStationPaidItemsView>;
   inherited: PosSettingsV1 | undefined;
   balanceSource: string;
   autoCloseSource: string;
   stationSource: string;
+  paidItemsSource: string;
   stationNeedsAdvice: boolean;
   disabled: boolean;
   onBalance: (value: VoucherBalanceCheckMode | null) => void;
   onAutoClose: (value: VoucherOnOff | null) => void;
   onStation: (value: VoucherOnOff | null) => void;
+  onPaidItems: (value: VoucherOnOff | null) => void;
   onApplyAdvice: () => void;
 }) {
   const t = useTranslations('paymentMethods');
@@ -779,6 +804,7 @@ function VoucherTillRows({
     own === null ? <p className="text-muted-foreground text-xs">{t('inheritNote', { state, source })}</p> : null;
   return (
     <div className="space-y-4 border-t px-4 py-3">
+      <p className="font-medium">{t('voucherTillTitle')}</p>
       <SettingRow
         label={t('voucherBalanceLabel')}
         badge={t(`voucherBalanceShort.${effectiveBalance}`)}
@@ -849,6 +875,31 @@ function VoucherTillRows({
           ]}
         />
         {note(station, onOff(inheritedStation), stationSource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherStationPaidItemsLabel')}
+        badge={onOff(paidItemsView.value)}
+        desc={
+          <>
+            <p>{t('voucherStationPaidItemsDesc')}</p>
+            {paidItemsView.noPaymentWarning ? (
+              <p role="alert" className="font-medium text-amber-700 dark:text-amber-400">
+                {t('voucherStationPaidItemsNoPayment')}
+              </p>
+            ) : null}
+          </>
+        }
+      >
+        <Segmented<VoucherOnOff | null>
+          value={paidItems}
+          onChange={onPaidItems}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_STATION_PAID_ITEMS_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(paidItems, onOff(paidItemsView.inheritedValue), paidItemsSource)}
       </SettingRow>
     </div>
   );
