@@ -359,7 +359,7 @@ def test_the_migration_adds_the_columns_once():
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT addon_role FROM products")).scalar() == "none"
     module = _migration()
-    assert (module.revision, module.down_revision) == ("b5e2c8a417d3", "7c3a9d2e5b14")
+    assert (module.revision, module.down_revision) == ("b5e2c8a417d3", "a1eece573e4e")
 
 
 # ── Kiosk: "תהליך פריט עם תוספות והערות" (motion.itemFlow) ─────────────────────

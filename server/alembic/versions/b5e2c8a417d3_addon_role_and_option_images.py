@@ -8,7 +8,7 @@ nullable, nothing else touched.
 Idempotent: each column is looked at first (the API's create_all may have made it before this runs).
 Downgrade drops only these three columns.
 
-Revision ID: b5e2c8a417d3, revises 7c3a9d2e5b14 (11.10.2026).
+Revision ID: b5e2c8a417d3, revises a1eece573e4e (11.10.2026; was written on 7c3a9d2e5b14).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import context, op
 
 revision: str = "b5e2c8a417d3"
-down_revision: Union[str, Sequence[str], None] = "7c3a9d2e5b14"
+down_revision: Union[str, Sequence[str], None] = "a1eece573e4e"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
