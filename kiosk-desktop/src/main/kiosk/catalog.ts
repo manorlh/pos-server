@@ -30,7 +30,8 @@ import { mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories
 import { hasMenus, layMenu, menuInputsOf, type KioskMenuState } from '@dash-lib/kioskMenus';
 import type { MenuBlock } from '@dash-lib/menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from '@dash-lib/kioskUpsellRules';
-import { sellableOnKiosk } from '@dash-lib/kioskSellable';
+import { addonOnlyRow, sellableOnKiosk } from '@dash-lib/kioskSellable';
+import { noteImagesOf, optionImagesOf } from '@dash-lib/kioskItemFlow';
 import { kioskSoldOut, rowAvailable, type SaleState } from '@dash-lib/kioskSoldOut';
 import { isRestrictedProduct, restrictedCategoryIds, type RestrictedCategoryRow } from '@dash-lib/restrictedItems';
 import type { MediaRefIn } from '../../core/mediaPlan';
@@ -72,6 +73,8 @@ export interface KOption {
   isDefault: boolean;
   /** The most of this option in one dish; null: only the group's max. */
   maxQty: number | null;
+  /** Its picture (local; its own, else its linked product's); null: none. */
+  imageUrl?: string | null;
 }
 
 export interface KGroup {
@@ -134,6 +137,8 @@ export interface KioskCatalogData {
   /** The meals' slots by meal product id (menu.meals). */
   meals: Record<string, MealSlot[]>;
   quickNotes: Record<string, string[]>;
+  /** "הערה עם תמונה": a note chip's picture (local) by its text — an image tile, chosen like an option. */
+  noteImages: Record<string, string>;
   /** Upsell candidates by trigger: product ids offered for a product, a category, or any order. */
   upsells: Array<{ triggerType: string; triggerIds: string[]; productIds: string[]; categoryIds: string[]; prompt: string | null }>;
   /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (`upsells` + `kioskUpsells`, lib/kioskUpsellRules.ts). */
@@ -221,9 +226,13 @@ export function buildKioskCatalog(
   const ordered = catalog.products
     .slice()
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'));
-  const onKiosk = lay.state.mode === 'menu' ? ordered.filter(byMenu) : lay.state.mode === 'none' ? [] : ordered.filter(byCatalog);
+  // "תוספת בלבד" (lib/kioskSellable.ts addonOnlyRow): never on the screens, whatever a menu places — kept below.
+  const onScreens = (p: Row) => !addonOnlyRow(p);
+  const onKiosk = lay.state.mode === 'menu' ? ordered.filter((p) => byMenu(p) && onScreens(p)) : lay.state.mode === 'none' ? [] : ordered.filter((p) => byCatalog(p) && onScreens(p));
   const onKioskIds = new Set(onKiosk.map((p) => String(p.id)));
-  const keptRows = lay.state.mode === 'catalog' ? [] : ordered.filter((p) => byCatalog(p) && !onKioskIds.has(String(p.id)));
+  // Held: what the catalog sells but the screens do not show — an open basket's lines and a meal's components (an add-on
+  // only among them, under any menu mode).
+  const keptRows = ordered.filter((p) => byCatalog(p) && !onKioskIds.has(String(p.id)) && (lay.state.mode !== 'catalog' || addonOnlyRow(p)));
   const productOf = (p: Row): KProduct => {
     const url = str(p.imageUrl);
     // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
@@ -260,6 +269,7 @@ export function buildKioskCatalog(
 
   const menu = catalog.menu ?? {};
   const groupsById = new Map<string, KGroup>();
+  const optionImages = optionImagesOf(menu.groups);
   for (const row of Array.isArray(menu.groups) ? (menu.groups as Row[]) : []) {
     const g = menuGroupOf(row);
     if (!g) continue;
@@ -272,8 +282,16 @@ export function buildKioskCatalog(
       freeCount: g.freeCount,
       allowQuantity: g.allowQuantity,
       allowPre: g.allowPre,
-      options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.priceAgorot / 100, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+      options: g.options.map((o) => ({
+        id: o.id, name: o.name, price: o.priceAgorot / 100, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty,
+        imageUrl: localImage(optionImages[o.id] ?? null, 'card'),
+      })),
     });
+  }
+  const noteImages: Record<string, string> = {};
+  for (const [text, pic] of Object.entries(noteImagesOf(menu.notes))) {
+    const local = localImage(pic, 'card');
+    if (local) noteImages[text] = local;
   }
   const links = (menu.links ?? {}) as { categories?: Record<string, string[]>; products?: Record<string, string[]> };
   const parentOf = parentOfCategories(catalog.categories.filter((c) => c.deleted !== true));
@@ -309,12 +327,12 @@ export function buildKioskCatalog(
     const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
     if (usable.length > 0) meals[id] = usable;
   }
-  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, upsells, upsellRules: upsellRulesOf(menu) };
+  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, noteImages, upsells, upsellRules: upsellRulesOf(menu) };
 }
 
 /** The pictures the kiosk keeps for its catalog (not of what it hides or does not sell). */
 export function catalogMedia(
-  catalog: { products: Row[]; categories: Row[]; machineCatalog: { mode?: string } | null; catalogMenus?: MenuBlock | null },
+  catalog: { products: Row[]; categories: Row[]; machineCatalog: { mode?: string } | null; catalogMenus?: MenuBlock | null; menu?: Row | null },
   hidden: { categories: string[]; products: string[] },
 ): MediaRefIn[] {
   // A kiosk with menus keeps the pictures of whatever a menu may place — over the machine's list — so that a menu
@@ -330,6 +348,15 @@ export function catalogMedia(
   for (const p of catalog.products) {
     if (!sellableOnKiosk(p, mode) || hidden.products.includes(String(p.id)) || restrictedRow(p, restricted)) continue;
     if (http(p.imageUrl)) out.push({ url: p.imageUrl, kind: 'image', sha256: null, bytes: null });
+  }
+  // The add-on options' and the note chips' pictures (the item's window and its pages show them).
+  const menu = catalog.menu ?? {};
+  const seen = new Set(out.map((r) => r.url));
+  for (const pic of [...Object.values(optionImagesOf(menu.groups)), ...Object.values(noteImagesOf(menu.notes))]) {
+    if (http(pic) && !seen.has(pic)) {
+      seen.add(pic);
+      out.push({ url: pic, kind: 'image', sha256: null, bytes: null });
+    }
   }
   return out;
 }

@@ -1142,6 +1142,7 @@ export function KioskApp({ view }: { view: KioskView }) {
             groups={groupsOf(product.id)}
             allergens={view.catalog.products.find((p) => p.id === product.id)?.allergens ?? []}
             quickNotes={view.catalog.quickNotes[product.id] ?? []}
+              noteImages={view.catalog.noteImages ?? {}}
             onClose={() => {
               upsellTaking.current = false;
               setProductId(null);
@@ -1289,7 +1290,7 @@ function pGroupsOf(groups: KioskView['catalog']['groups'][string]): PGroup[] {
     freeCount: g.freeCount,
     allowQuantity: g.allowQuantity,
     allowPre: g.allowPre,
-    options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+    options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.price, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty, imageUrl: o.imageUrl ?? null })),
   }));
 }
 

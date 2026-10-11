@@ -165,6 +165,10 @@ export function StepsProductSheet({
                         border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
                       }}
                     >
+                      {o.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element -- the option's picture (its own, else its linked product's)
+                        <img src={o.imageUrl} alt="" draggable={false} className="pointer-events-none object-contain" style={{ width: 52 * u, height: 52 * u }} />
+                      ) : null}
                       <span className="flex items-center gap-1.5 kt-15 font-bold" style={textSize(m, 'itemOptions', 15)}>
                         {on ? (
                           <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ background: m.c.primary, color: m.c.buttonText }}>

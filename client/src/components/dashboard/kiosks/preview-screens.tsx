@@ -156,6 +156,8 @@ export interface POption {
   priceAgorot?: number;
   isDefault?: boolean;
   maxQty?: number | null;
+  /** The real kiosk: its picture (its own, else its linked product's) — a tile with it; null / absent: none. */
+  imageUrl?: string | null;
 }
 
 export interface PGroup {
@@ -2153,6 +2155,7 @@ export function ProductSheet({
   onClose,
   onAdd,
   quickNotes,
+  noteImages,
   variant = 'sheet',
 }: {
   m: PreviewModel;
@@ -2164,6 +2167,8 @@ export function ProductSheet({
   onAdd: (line: PLine, from: DOMRect | null) => void;
   /** The menu's quick notes for this product (the real kiosk); the preview shows samples. */
   quickNotes?: string[];
+  /** "הערה עם תמונה": a note chip's picture by its text — such a note is a tile with its picture, chosen like an option. */
+  noteImages?: Record<string, string>;
   /**
    * layout.itemView (kiosk-shared/layouts): the centred window of today, a smaller one, the whole
    * screen, or the compact one (inline / popover: no big picture — a small one beside the name).
@@ -2357,6 +2362,28 @@ export function ProductSheet({
               <div className="flex flex-wrap gap-1.5">
                 {quick.map((q) => {
                   const on = notes.includes(q);
+                  const pic = noteImages?.[q];
+                  if (pic) {
+                    return (
+                      <button
+                        key={q}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => setNotes(on ? notes.filter((x) => x !== q) : [...notes, q])}
+                        className="flex w-[30%] min-w-[88px] flex-col items-center gap-1 p-2 text-xs font-medium transition-colors duration-150"
+                        style={{
+                          borderRadius: Math.min(m.radius, 14),
+                          background: on ? `${m.c.primary}14` : m.c.surface,
+                          border: `${on ? 2 : 1.5}px solid ${on ? m.c.primary : m.c.border}`,
+                          ...textSize(m, 'itemOptions', 12),
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element -- the kiosk's own (local or sized) picture */}
+                        <img src={pic} alt="" draggable={false} className="pointer-events-none h-12 w-12 object-contain" />
+                        {q}
+                      </button>
+                    );
+                  }
                   return (
                     <button
                       key={q}
@@ -2457,6 +2484,10 @@ export function OptionRow({ m, dish, group, option, first }: { m: PreviewModel; 
         >
           {on ? <Check className="h-3 w-3" /> : null}
         </span>
+        {option.imageUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- the option's picture (its own, else its linked product's)
+          <img src={option.imageUrl} alt="" draggable={false} className="pointer-events-none h-9 w-9 shrink-0 object-contain" />
+        ) : null}
         <span className="min-w-0 flex-1 truncate">{option.name}</span>
         {free ? (
           <span className="shrink-0 kt-11 font-bold" style={{ color: m.c.accent }}>

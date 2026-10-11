@@ -202,7 +202,8 @@ MOTION_EFFECTS = ("auto", "full", "light")
 #: and the notes (as always); "pages" — "דף אחר דף": one page per modifier group the dish has (in
 #: the group order, a required group's minimum before "הבא"), then a notes page when it has notes,
 #: each page sliding in by the direction of travel (the screens' motion) and its tiles entering as
-#: `itemsEnter` says. The clients' kiosk-shared/item-flow.ts and the till's kiosk mirror it.
+#: `itemsEnter` says. The clients' lib/kioskItemFlow.ts (kiosk-shared/layouts/pages.tsx) and the till's kiosk
+#: mirror it.
 MOTION_ITEM_FLOWS = ("sheet", "pages")
 #: The Motion Engine ("מנוע הנפשות", kiosk_motion.py): a preset of every event's timings, a global
 #: speed (null: the older `speed` above), and each event's own values as overrides.

@@ -694,6 +694,13 @@ export const MOTION_SPEEDS: MotionSpeed[] = ['fast', 'normal', 'relaxed'];
  */
 export type MotionEffects = 'auto' | 'full' | 'light';
 export const MOTION_EFFECTS: MotionEffects[] = ['auto', 'full', 'light'];
+/**
+ * "תהליך פריט עם תוספות והערות" (`motion.itemFlow`; the server's MOTION_ITEM_FLOWS, the till's kiosk the same):
+ * "sheet" — one window with every add-on group and the notes (as always); "pages" — "דף אחר דף": one page per
+ * modifier group the dish has, then a notes page when it has notes, animated (kiosk-shared/item-flow.ts).
+ */
+export type MotionItemFlow = 'sheet' | 'pages';
+export const MOTION_ITEM_FLOWS: MotionItemFlow[] = ['sheet', 'pages'];
 
 export interface KioskMotionSettings {
   /** The dishes' grid when the customer picks another category (one category at a time). */
@@ -710,6 +717,8 @@ export interface KioskMotionSettings {
   speed: MotionSpeed;
   /** "אפקטים": everything, the cheaper variant of each, or the device decides (MotionEffects). */
   effects: MotionEffects;
+  /** "תהליך פריט": one window, or page after page (MotionItemFlow). Absent in a config stored before it: one window. */
+  itemFlow?: MotionItemFlow;
   /**
    * "מנוע הנפשות" (lib/kioskMotionEngine.ts): every event's base timings — Runner Standard / Slow /
    * Fast, custom, or "legacy" (the pace before the engine). Absent in a config stored before it.
@@ -1019,6 +1028,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     categorySwitch: 'slide', itemsEnter: 'cascade', screenChange: 'slide', sheet: 'scale', addToCart: 'fly', speed: 'normal', effects: 'auto',
     // "מנוע הנפשות": Runner Standard for a new kiosk, the speed by `speed`, no event of its own.
     preset: 'standard', globalSpeed: null, speedMultiplier: 1, events: {},
+    // "תהליך פריט": one window (no style sets it).
+    itemFlow: 'sheet',
   },
   // "כיתוב רץ": off; once on, on the menu and the basket, under the header, slowly.
   ticker: {
@@ -1999,6 +2010,8 @@ export function validateKioskConfig(
       checkEnum(e, 'motion.addToCart', mo.addToCart, ADD_TO_CART_FX);
       checkEnum(e, 'motion.speed', mo.speed, MOTION_SPEEDS);
       checkEnum(e, 'motion.effects', mo.effects, MOTION_EFFECTS);
+      // Absent (a config from before it): one window.
+      if (mo.itemFlow !== undefined) checkEnum(e, 'motion.itemFlow', mo.itemFlow, MOTION_ITEM_FLOWS);
       validateMotionEngine(e, mo);
     }
   }

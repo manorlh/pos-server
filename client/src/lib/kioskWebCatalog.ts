@@ -30,7 +30,8 @@
 
 import { agorotOfShekels, mealsOf, menuGroupIdsFor, menuGroupOf, menuNotesFor, parentOfCategories, type MealSlot, type MenuNotes } from './kioskMoney';
 import { layMenu, menuInputsOf, type KioskMenuState } from './kioskMenus';
-import { sellableOnKiosk } from './kioskSellable';
+import { addonOnlyRow, sellableOnKiosk } from './kioskSellable';
+import { noteImagesOf, optionImagesOf } from './kioskItemFlow';
 import type { MenuBlock } from './menuSchedule';
 import { upsellRulesOf, type KioskUpsellRule } from './kioskUpsellRules';
 import { kioskSoldOut, rowAvailable, type SaleState } from './kioskSoldOut';
@@ -72,6 +73,8 @@ export interface WebOption {
   isDefault: boolean;
   /** The most of this option in one dish; null: only the group's max. */
   maxQty: number | null;
+  /** Its picture (its own, else its linked product's), sized for a tile; null: none. */
+  imageUrl: string | null;
 }
 
 export interface WebGroup {
@@ -143,6 +146,8 @@ export interface WebCatalog {
   /** The meals' slots by meal product id (menu.meals). */
   meals: Record<string, MealSlot[]>;
   quickNotes: Record<string, string[]>;
+  /** "הערה עם תמונה": a note chip's picture by its text (an image tile, chosen like an option). */
+  noteImages: Record<string, string>;
   upsells: WebUpsell[];
   /** "הגדלת מכירה": the menu's rules as the Android kiosk reads them (`upsells` + `kioskUpsells`, lib/kioskUpsellRules.ts). */
   upsellRules: KioskUpsellRule[];
@@ -235,9 +240,13 @@ export function buildWebCatalog(
   const ordered = catalog.products
     .slice()
     .sort((a, b) => rank(prodOrder, String(a.id)) - rank(prodOrder, String(b.id)) || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'he'));
-  const onKiosk = lay.state.mode === 'menu' ? ordered.filter(byMenu) : lay.state.mode === 'none' ? [] : ordered.filter(byCatalog);
+  // "תוספת בלבד" (lib/kioskSellable.ts addonOnlyRow): never on the screens, whatever a menu places — kept below.
+  const onScreens = (p: Row) => !addonOnlyRow(p);
+  const onKiosk = lay.state.mode === 'menu' ? ordered.filter((p) => byMenu(p) && onScreens(p)) : lay.state.mode === 'none' ? [] : ordered.filter((p) => byCatalog(p) && onScreens(p));
   const onKioskIds = new Set(onKiosk.map((p) => String(p.id)));
-  const keptRows = lay.state.mode === 'catalog' ? [] : ordered.filter((p) => byCatalog(p) && !onKioskIds.has(String(p.id)));
+  // Held: what the catalog sells but the screens do not show — an open basket's lines and a meal's components (an add-on
+  // only among them, under any menu mode).
+  const keptRows = ordered.filter((p) => byCatalog(p) && !onKioskIds.has(String(p.id)) && (lay.state.mode !== 'catalog' || addonOnlyRow(p)));
   const productOf = (p: Row): WebProduct => {
     const url = str(p.imageUrl);
     // "אזל" / "חסום" as the Android kiosk (lib/kioskSoldOut.ts, KioskCatalogView.soldOut): the row's lock,
@@ -275,6 +284,7 @@ export function buildWebCatalog(
   const held: WebProduct[] = keptRows.map(productOf);
 
   const groupsById = new Map<string, WebGroup>();
+  const optionImages = optionImagesOf(menu.groups);
   for (const row of Array.isArray(menu.groups) ? (menu.groups as Row[]) : []) {
     const g = menuGroupOf(row);
     if (!g) continue;
@@ -287,8 +297,16 @@ export function buildWebCatalog(
       freeCount: g.freeCount,
       allowQuantity: g.allowQuantity,
       allowPre: g.allowPre,
-      options: g.options.map((o) => ({ id: o.id, name: o.name, price: o.priceAgorot / 100, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty })),
+      options: g.options.map((o) => ({
+        id: o.id, name: o.name, price: o.priceAgorot / 100, priceAgorot: o.priceAgorot, isDefault: o.isDefault, maxQty: o.maxQty,
+        imageUrl: sizedImage(optionImages[o.id] ?? null, 240),
+      })),
     });
+  }
+  const noteImages: Record<string, string> = {};
+  for (const [text, pic] of Object.entries(noteImagesOf(menu.notes))) {
+    const sized = sizedImage(pic, 240);
+    if (sized) noteImages[text] = sized;
   }
   const links = (menu.links ?? {}) as { categories?: Record<string, string[]>; products?: Record<string, string[]> };
   const parentOf = parentOfCategories(catalog.categories.filter((c) => c.deleted !== true));
@@ -324,7 +342,7 @@ export function buildWebCatalog(
     const usable = slots.map((s) => ({ ...s, choices: s.choices.filter((c) => sold.has(c.productId)) })).filter((s) => s.choices.length > 0);
     if (usable.length > 0) meals[id] = usable;
   }
-  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, upsells, upsellRules: upsellRulesOf(menu) };
+  return { categories, products, menu: lay.state, held, groups, meals, quickNotes, noteImages, upsells, upsellRules: upsellRulesOf(menu) };
 }
 
 /** A full pull replaces; a delta upserts by id (the menu only when sent). A full pull of nothing never empties the kiosk. */

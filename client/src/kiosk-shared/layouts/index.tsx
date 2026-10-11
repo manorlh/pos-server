@@ -15,6 +15,8 @@ import { useContext, useEffect, useState, type ComponentType, type ReactNode } f
 import { catalogKindOf, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
 import { CatalogScreen, ProductSheet, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { MealChooser, MealSheet, StepsProductSheet } from './item';
+import { PagesProductSheet } from './pages';
+import { itemFlowOf, itemFlowPages, usesItemPages } from '@/lib/kioskItemFlow';
 import { ReachDishContext } from './reach';
 import { guidedCheckout, LandingCatalog, serviceStepOf } from './landing';
 import { GuidedBar, LayoutActionsContext } from './parts';
@@ -111,6 +113,8 @@ interface SheetProps {
   onClose: () => void;
   onAdd: (line: PLine, from: DOMRect | null) => void;
   quickNotes?: string[];
+  /** "הערה עם תמונה": a note chip's picture by its text (the real kiosks). */
+  noteImages?: Record<string, string>;
 }
 
 /**
@@ -122,6 +126,24 @@ export function LayoutProductSheet(props: SheetProps) {
   // drawn as a tray filling up where layout.mealView says so (combo).
   const meal = props.m.mealOf?.(props.product) ?? null;
   if (meal) return <MealSheet m={props.m} product={props.product} meal={meal} onClose={props.onClose} onAdd={props.onAdd} tray={mealViewOf(props.m.cfg) === 'tray'} />;
+  // "תהליך פריט": page after page — a page per add-on group the dish has, then its notes (motion.itemFlow = pages).
+  const { m } = props;
+  const notes = m.cfg.general.quickNotesEnabled ? (props.quickNotes ?? [m.t('quickNote1'), m.t('quickNote2'), m.t('quickNote3')]) : [];
+  const pages = itemFlowPages(props.groups, notes);
+  if (usesItemPages(itemFlowOf(m.cfg), pages)) {
+    return (
+      <PagesProductSheet
+        m={m}
+        product={props.product}
+        groups={props.groups}
+        pages={pages}
+        notes={notes}
+        noteImages={props.noteImages}
+        onClose={props.onClose}
+        onAdd={props.onAdd}
+      />
+    );
+  }
   const view = itemViewOf(props.m.cfg);
   if (view === 'steps') return <StepsProductSheet {...props} />;
   const variant = view === 'full' ? 'full' : view === 'modal' ? 'modal' : view === 'inline' || view === 'popover' ? 'compact' : 'sheet';
