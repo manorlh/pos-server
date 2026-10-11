@@ -45,6 +45,17 @@ def _money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(Decimal("0.01"))
 
 
+def clean_image_url(v):
+    """A picture's address: http(s) or a path on this server; blank is none."""
+    if isinstance(v, str):
+        v = v.strip()
+    if not v:
+        return None
+    if not (v.startswith("https://") or v.startswith("http://") or v.startswith("/")):
+        raise ValueError("imageUrl is an http(s) address or a path on this server")
+    return v
+
+
 class _Body(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -61,6 +72,14 @@ class OptionIn(_Body):
     #: The most of this option in one dish; null: only the group's max applies.
     max_qty: Optional[int] = Field(None, alias="maxQty", ge=1, le=SELECT_MAX)
     is_active: bool = Field(True, alias="isActive")
+    #: The option's own picture (POST /menu/modifier-options/{id}/image, or the address of an
+    #: upload). Omitted: an existing option keeps its picture; null: none (the linked product's shows).
+    image_url: Optional[str] = Field(None, alias="imageUrl", max_length=500)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _image(cls, v):
+        return clean_image_url(v)
 
     @field_validator("name", "kitchen_name", mode="before")
     @classmethod
@@ -165,6 +184,14 @@ class LinksIn(_Body):
 class NoteIn(_Body):
     text: str = Field(min_length=1, max_length=60)
     is_important: bool = Field(False, alias="isImportant")
+    #: The chip's picture (a kiosk shows it as an image tile). Omitted: the chip of the same text
+    #: keeps the picture it had; null: none.
+    image_url: Optional[str] = Field(None, alias="imageUrl", max_length=500)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def _image(cls, v):
+        return clean_image_url(v)
 
     @field_validator("text", mode="before")
     @classmethod

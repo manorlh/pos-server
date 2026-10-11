@@ -49,6 +49,7 @@ from app.models.voucher import Voucher
 from app.services import dietary
 from app.services import product_channels
 from app.services import sales_channel
+from app.services import addon_role
 from app.services import general_item
 from app.services import item_ticket
 from app.services import machine_catalog
@@ -140,6 +141,9 @@ def _serialize_product(p: Product, shop_listed: Optional[bool] = None) -> Dict[s
         "dietaryTags": dietary.tags_out(getattr(p, "dietary_tags", None)),
         # "היכן הפריט נמכר" (docs/SPEC_PRODUCT_CHANNELS.md): all / kiosk_only / pos_only.
         "salesChannel": sales_channel.out(getattr(p, "sales_channel", None)),
+        # "תוספת" (app/services/addon_role.py): none / addon_only (in no sell catalog — only an
+        # option's linked product or a meal's component) / both.
+        "addonRole": addon_role.of(p),
         "courseId": str(p.course_id) if getattr(p, "course_id", None) else None,
         # Order limits and refills (docs/SPEC_MENU_MODIFIERS.md §3.9).
         "maxPerOrder": getattr(p, "max_per_order", None),
@@ -302,6 +306,9 @@ def _serialize_merged_product(
         "salesChannel": product_channels.device_sales_channel(global_p, is_kiosk),
         # "מופיע ב": pos / kiosk / online / menu.
         "appearsIn": list(product_channels.appears_in(global_p)),
+        # "תוספת", from the global row like the rest of what the product is: addon_only is in no
+        # sell catalog (app/services/addon_role.py).
+        "addonRole": addon_role.of(global_p),
         "courseId": str(global_p.course_id) if getattr(global_p, "course_id", None) else None,
         "maxPerOrder": getattr(global_p, "max_per_order", None),
         "refillable": bool(getattr(global_p, "refillable", False)),

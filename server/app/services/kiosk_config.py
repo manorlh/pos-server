@@ -198,6 +198,12 @@ MOTION_SPEEDS = ("fast", "normal", "relaxed")
 #: "full" — every effect, "light" — the cheaper variant of each (no shadows, no cascade of cards,
 #: fades at the fast pace, none of the tech style's glow and scan line). Not a style's choice.
 MOTION_EFFECTS = ("auto", "full", "light")
+#: "תהליך פריט עם תוספות והערות" (`motion.itemFlow`): "sheet" — one window with every add-on group
+#: and the notes (as always); "pages" — "דף אחר דף": one page per modifier group the dish has (in
+#: the group order, a required group's minimum before "הבא"), then a notes page when it has notes,
+#: each page sliding in by the direction of travel (the screens' motion) and its tiles entering as
+#: `itemsEnter` says. The clients' kiosk-shared/item-flow.ts and the till's kiosk mirror it.
+MOTION_ITEM_FLOWS = ("sheet", "pages")
 #: The Motion Engine ("מנוע הנפשות", kiosk_motion.py): a preset of every event's timings, a global
 #: speed (null: the older `speed` above), and each event's own values as overrides.
 MOTION_PRESETS = motion_engine.PRESETS
@@ -492,6 +498,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "sheet": "scale", "addToCart": "fly", "speed": "normal",
         # "אפקטים": the device decides (MOTION_EFFECTS); no style sets it.
         "effects": "auto",
+        # "תהליך פריט": one window (MOTION_ITEM_FLOWS); no style sets it.
+        "itemFlow": "sheet",
         # "מנוע הנפשות" (kiosk_motion.py): Runner Standard for a new kiosk (a kiosk from before the
         # engine is stamped "legacy" by migration b3e7c1a9d5f2); the global speed follows `speed`
         # until a level sets one; no event of its own.
@@ -1328,6 +1336,8 @@ SCHEMA = Obj({
         "addToCart": Enum(MOTION_ADD_TO_CART),
         "speed": Enum(MOTION_SPEEDS),
         "effects": Enum(MOTION_EFFECTS),
+        # "תהליך פריט עם תוספות והערות": sheet / pages. A config stored before it has none (filled).
+        "itemFlow": Enum(MOTION_ITEM_FLOWS),
         # "מנוע הנפשות" (kiosk_motion.py). A config stored before it has none of these (filled).
         "preset": Enum(MOTION_PRESETS),
         "globalSpeed": Enum(MOTION_GLOBAL_SPEEDS, nullable=True),
@@ -1338,6 +1348,7 @@ SCHEMA = Obj({
         ),
     }, fill={
         "preset": motion_engine.DEFAULT_PRESET, "globalSpeed": None, "speedMultiplier": 1.0, "events": {},
+        "itemFlow": "sheet",
     }),
     "ticker": Obj({
         "enabled": Bool(),
@@ -1519,6 +1530,7 @@ def limits() -> Dict[str, Any]:
             "motionAddToCart": list(MOTION_ADD_TO_CART),
             "motionSpeed": list(MOTION_SPEEDS),
             "motionEffects": list(MOTION_EFFECTS),
+            "motionItemFlow": list(MOTION_ITEM_FLOWS),
             "motionPreset": list(MOTION_PRESETS),
             "motionGlobalSpeed": list(MOTION_GLOBAL_SPEEDS),
             "fonts": [f.id for f in FONT_CATALOG],
