@@ -74,6 +74,7 @@ import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from 
 import { voucherFieldsFor } from '@/lib/voucherFields';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
+import { BatchTestModePanel, TestModeTag } from '@/components/dashboard/prepaid-vouchers/batch-test-mode';
 import {
   BATCH_SORTS,
   EMPTY_FILTERS,
@@ -311,6 +312,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   // "הצג תוקף על השובר": on by default.
   const [showValidity, setShowValidity] = useState(ed ? ed.showValidity !== false : true);
   const [offlineAllowed, setOfflineAllowed] = useState(ed?.offlineAllowed ?? false);
+  // "להתחיל במצב בדיקה" (a new batch only; default off).
+  const [startInTestMode, setStartInTestMode] = useState(false);
+  const tm = useTranslations('prepaidVoucherTestMode');
   const [policy, setPolicy] = useState<PolicyState>(policyState(ed?.discountBlockPolicy));
   // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
@@ -407,6 +411,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setAccounting('discount');
     setShowValidity(true);
     setOfflineAllowed(false);
+    setStartInTestMode(false);
     setPolicy(policyState());
     setGroupMode('none');
     setGroupCustom('');
@@ -469,6 +474,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     orderRef: orderRef.trim() || null,
     productionId: productionId || null,
     reportEventId: reportEventId || null,
+    ...(startInTestMode ? { startInTestMode: true } : {}),
   };
   // "ערוך סדרה": the settings as the PATCH reads them — sent only where they differ from how the
   // form opened (lib/prepaidBatchEdit.ts changedFields), the cloud plans and confirms the rest.
@@ -950,6 +956,16 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
             </div>
           </div>
         </div>
+        {ed ? null : (
+          <label className="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={startInTestMode}
+              onChange={(e) => setStartInTestMode(e.target.checked)} />
+            <span className="min-w-0">
+              <span className="block font-medium">{tm('startIn')}</span>
+              <span className="block text-xs text-muted-foreground">{tm('startInHint')}</span>
+            </span>
+          </label>
+        )}
         <div className="space-y-1 text-sm" aria-live="polite">
           {totals && totals.units + totals.weights.length > 0 && Number.isFinite(n) && n > 0 ? (
             <p className="font-medium">
@@ -1069,6 +1085,7 @@ function BatchCard({ b, onOpen, selected, onSelect }: {
             discount ? 'bg-violet-100 text-violet-900 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-muted')}>
             {termsText.kind}
           </span>
+          {b.testMode ? <TestModeTag /> : null}
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
@@ -1441,6 +1458,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          {batch.testMode ? <TestModeTag /> : null}
           <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${batch.status}`)}
           </span>
@@ -1467,6 +1485,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       ) : null}
 
       <StatsBar b={batch} />
+      <BatchTestModePanel batch={batch} onChanged={refresh} />
       {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>

@@ -158,6 +158,10 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   exportCount?: number;
   /** Only on the answer of POST /prepaid-vouchers/batches/{id}/vouchers: what this run made. */
   added?: PrepaidAddedRun | null;
+  /** "מצב בדיקה" (lib/prepaidVoucherTestMode.ts): scans take nothing and count nowhere; since when, by whom. */
+  testMode?: boolean;
+  testModeSince?: string | null;
+  testModeBy?: string | null;
 }
 
 /** "הוסף שוברים לסדרה": one run of more vouchers, as the server recorded it (its audit line). */
@@ -578,6 +582,8 @@ export interface PrepaidBatchCreate {
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
   maxUsesPerDay?: number | null;
+  /** "להתחיל במצב בדיקה" (default off). */
+  startInTestMode?: boolean;
 }
 
 /** The rules of use that may change after printing (what it gives and its uses never do). */
@@ -625,7 +631,7 @@ export async function createPrepaidBatch(
  * clears what may be empty. `count`: the vouchers in all (more is issued, never fewer).
  * `applyToPartial`: new contents reach the partly redeemed vouchers too.
  */
-export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets'>> &
+export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets' | 'startInTestMode'>> &
   PrepaidBatchRulesUpdate & {
     targets?: { productIds: string[]; categoryIds: string[] } | null;
     selection?: 'items' | 'groups';
@@ -633,6 +639,8 @@ export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' 
     totalQty?: number | null;
     catalogMode?: 'frozen' | 'live';
     applyToPartial?: boolean;
+    /** "מצב בדיקה" on / off ("סיום בדיקה והפעלה"). */
+    testMode?: boolean;
   };
 
 export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody): Promise<PrepaidVoucherBatch> {
@@ -735,7 +743,7 @@ export async function cancelPrepaidGroup(
 
 export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
-  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export';
+  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off';
 
 export interface PrepaidBatchEvent {
   id: string;

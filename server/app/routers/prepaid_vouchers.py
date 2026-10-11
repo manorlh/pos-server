@@ -27,6 +27,7 @@ GET    /prepaid-vouchers/batches/{id}/groups          → per group: serials and
 POST   /prepaid-vouchers/batches/{id}/groups          → split the vouchers with no group into groups
 POST   /prepaid-vouchers/batches/{id}/groups/{n}/cancel → cancel a whole group (a lost envelope)
 GET    /prepaid-vouchers/batches/{id}/events          → the batch's audit trail
+GET    /prepaid-vouchers/batches/{id}/test-redemptions → "יומן בדיקות": its test-mode scans (nothing counted)
 GET    /prepaid-vouchers/batches/{id}/report          → counts, goods taken, redemptions by
                                                         hour / day / shop / till / employee
 GET    /prepaid-vouchers/vouchers/{id}                → one voucher with its redemptions
@@ -154,6 +155,7 @@ def voucher_scope(
     state: Optional[str] = Query(None, description="open | partial | redeemed | cancelled | expired"),
     group: Optional[int] = Query(None, ge=1),
     q: Optional[str] = Query(None, max_length=100),
+    test_mode: Optional[str] = Query(None, alias="testMode", description="yes | no: the batch is in test mode"),
 ) -> "PVA.Scope":
     """The vouchers' one filter model (app/services/prepaid_voucher_analytics.py)."""
     return PVA.make_scope(
@@ -162,6 +164,8 @@ def voucher_scope(
         value_min=value_min, value_max=value_max, price_min=price_min, price_max=price_max, created_by=created_by,
         issued_from=issued_from, issued_to=issued_to, valid_on=valid_on, batch_status=batch_status,
         date_from=date_from, date_to=date_to, machine_id=machine_id, employee=employee, state=state, group=group, q=q,
+        # A direct call (a test, another router) that leaves it out passes the Query default itself.
+        test_mode=test_mode if isinstance(test_mode, str) else None,
     )
 
 
@@ -693,6 +697,24 @@ def prepaid_voucher_events(
 ):
     """The batch's audit trail, newest first: made, issued, grouped, cancelled — by whom and why."""
     return PV.batch_events(db, current_user, active_tenant_id, batch_id)
+
+
+@router.get("/prepaid-vouchers/batches/{batch_id}/test-redemptions")
+def prepaid_voucher_test_redemptions(
+    batch_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "יומן בדיקות" (P:/specs/voucher-test-mode.md): the batch's test-mode scans, newest first — who, when,
+    which till and shop, which voucher, what it would have covered and what would have been left. Shown
+    here only: no report, board, settlement or Z reads them.
+    """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    return TM.batch_log(db, current_user, active_tenant_id, batch_id, limit=limit)
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}/vouchers")

@@ -298,6 +298,41 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
     """A goods voucher held for one open sale (§3). The caller has locked the sale and the voucher."""
     PV = _pv()
     batch = voucher.batch
+    answer = goods_answer(db, machine, body, voucher, prior, now, sale_ref)
+    expires = now + PV.RESERVATION_TTL
+    if prior is not None:
+        prior.goods = answer
+        prior.amount = answer["coveredAgorot"]
+        prior.status = "held"
+        prior.expires_at = expires
+        prior.updated_at = now
+        r = prior
+    else:
+        r = PrepaidVoucherReservation(
+            id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id,
+            machine_id=machine.id, shop_id=machine.shop_id, client_request_id=body.client_request_id.strip(),
+            sale_ref=sale_ref, uses=1, amount=answer["coveredAgorot"], status="held", expires_at=expires,
+            pos_user_id=(str(body.pos_user_id) if body.pos_user_id is not None else None), pos_user_name=body.pos_user_name,
+            goods=answer, created_at=now, updated_at=now,
+        )
+        db.add(r)
+    db.flush()
+    return reservation_out(db, machine, voucher, r, replayed=prior is not None)
+
+
+def goods_answer(
+    db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, prior, now: datetime, sale_ref: str, *,
+    test: bool = False, exclude_test=None,
+) -> Dict[str, Any]:
+    """
+    Every check of a goods hold, in its order, and its answer (the units valued, what the document books,
+    the approval) — nothing written. [test]: the batch is in test mode ("מצב בדיקה"): its other test scans
+    in the sale count for stacking as real ones would ([exclude_test]: this request's own).
+    """
+    PV = _pv()
+    from app.services import prepaid_voucher_test_mode as TM
+
+    batch = voucher.batch
     features = set(getattr(body, "features", None) or []) | {"reserve_goods"}
     # The voucher's own state first ("השובר בוטל", a test voucher at a real till …), then what the till can do.
     reason = PV.refusal_reason(db, machine, voucher, now)
@@ -319,10 +354,13 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
     if any(PV._reservation_live(o, now) for o in others):
         raise _refuse(PV.IN_USE)
     exclude = prior.id if prior is not None else None
-    refusal = PV.RULES.stacking_refusal(
-        PV._vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude, reported=body.other_vouchers),
-        PV._in_sale(voucher),
-    )
+    # A test-mode voucher never shares a sale with a real one (either way round).
+    TM.check_mixed(db, machine, voucher, sale_ref, body.other_vouchers, test=test, exclude_test=exclude_test,
+                   exclude_reservation=exclude)
+    in_sale = PV._vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude, reported=body.other_vouchers)
+    if test:
+        in_sale = TM.with_test_vouchers(db, machine, sale_ref, in_sale, exclude_id=exclude_test)
+    refusal = PV.RULES.stacking_refusal(in_sale, PV._in_sale(voucher))
     if refusal is not None:
         raise _refuse(refusal)
     units = _units_in(body)
@@ -357,25 +395,7 @@ def reserve_goods(db: Session, machine: POSMachine, body, voucher: PrepaidVouche
             if approval is not None else None
         ),
     })
-    expires = now + PV.RESERVATION_TTL
-    if prior is not None:
-        prior.goods = answer
-        prior.amount = answer["coveredAgorot"]
-        prior.status = "held"
-        prior.expires_at = expires
-        prior.updated_at = now
-        r = prior
-    else:
-        r = PrepaidVoucherReservation(
-            id=uuid.uuid4(), tenant_id=voucher.tenant_id, voucher_id=voucher.id, batch_id=batch.id,
-            machine_id=machine.id, shop_id=machine.shop_id, client_request_id=body.client_request_id.strip(),
-            sale_ref=sale_ref, uses=1, amount=answer["coveredAgorot"], status="held", expires_at=expires,
-            pos_user_id=(str(body.pos_user_id) if body.pos_user_id is not None else None), pos_user_name=body.pos_user_name,
-            goods=answer, created_at=now, updated_at=now,
-        )
-        db.add(r)
-    db.flush()
-    return reservation_out(db, machine, voucher, r, replayed=prior is not None)
+    return answer
 
 
 def reservation_out(db: Session, machine: POSMachine, voucher: PrepaidVoucher, r, *, replayed: bool) -> Dict[str, Any]:

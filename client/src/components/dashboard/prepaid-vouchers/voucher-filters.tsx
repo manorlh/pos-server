@@ -235,6 +235,7 @@ export function VoucherFilterBar({
   facets: PrepaidFacets | undefined;
 }) {
   const t = useTranslations('prepaidVouchers.scope');
+  const tm = useTranslations('prepaidVoucherTestMode.filter');
   const [more, setMore] = useState(false);
   const set = <K extends keyof VoucherFilters>(k: K, v: VoucherFilters[K]) => onChange({ ...value, [k]: v });
   const omit: (keyof VoucherFilters)[] = view === 'batches' ? ['state', 'group', 'q'] : ['q'];
@@ -310,6 +311,8 @@ export function VoucherFilterBar({
             onChange={(v) => set('override', v)} labelOf={(s) => t(`overrideOptions.${s}`)} />
           <ChoiceSelect label={t('offline')} allLabel={t('any')} options={YES_NO} value={value.offline}
             onChange={(v) => set('offline', v)} labelOf={(s) => t(`offlineOptions.${s}`)} />
+          <ChoiceSelect label={tm('label')} allLabel={t('any')} options={YES_NO} value={value.testMode}
+            onChange={(v) => set('testMode', v)} labelOf={(s) => tm(`options.${s}`)} />
           <AmountRange label={t('value')} min={value.valueMin} max={value.valueMax}
             onChange={(a, b) => onChange({ ...value, valueMin: a, valueMax: b })} />
           {f?.pricesVisible ? (

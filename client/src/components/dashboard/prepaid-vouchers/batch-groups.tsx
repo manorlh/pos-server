@@ -43,8 +43,19 @@ function changesOf(e: PrepaidBatchEvent): { field: string; before?: unknown; aft
   return Array.isArray(changes) ? (changes as { field: string; before?: unknown; after?: unknown; secret?: string }[]).filter((c) => c && typeof c.field === 'string') : [];
 }
 
+/** An audit line's action in words — "מצב בדיקה"'s in its own namespace (batch-test-mode.tsx). */
+function useActionText() {
+  const t = useTranslations('prepaidVouchers.events');
+  const tm = useTranslations('prepaidVoucherTestMode.events');
+  return (e: PrepaidBatchEvent) =>
+    (t.has(`action.${e.action}`) || !tm.has(e.action)
+      ? t(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '' })
+      : tm(e.action));
+}
+
 function EventLine({ e, batch }: { e: PrepaidBatchEvent; batch: PrepaidVoucherBatch }) {
   const t = useTranslations('prepaidVouchers.events');
+  const actionText = useActionText();
   const fmt = useEditValueFormat(batch);
   const label = useEditFieldLabel();
   const serial = typeof e.details?.serial === 'number' ? ` #${e.details.serial}` : '';
@@ -53,7 +64,7 @@ function EventLine({ e, batch }: { e: PrepaidBatchEvent; batch: PrepaidVoucherBa
     <li className="rounded border px-2 py-1 text-xs">
       <span className="font-medium tabular-nums">{when(e.createdAt)}</span>
       {' · '}
-      {t(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '' })}
+      {actionText(e)}
       {serial}
       {e.userName ? <span className="text-muted-foreground"> · {t('by', { name: e.userName })}</span> : null}
       {e.reason ? <span className="block text-muted-foreground">{t('reason', { reason: e.reason })}</span> : null}
@@ -84,6 +95,7 @@ export function PrepaidBatchGroupsView({
   const t = useTranslations('prepaidVouchers.groups');
   const tp = useTranslations('prepaidVouchers');
   const te = useTranslations('prepaidVouchers.events');
+  const actionText = useActionText();
   const tc = useTranslations('common');
   const qc = useQueryClient();
 
@@ -164,7 +176,7 @@ export function PrepaidBatchGroupsView({
         rows: eventRows.map((e) => {
           const serial = e.details?.serial;
           return [
-            e.createdAt, te(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '' }), e.group,
+            e.createdAt, actionText(e), e.group,
             typeof serial === 'number' ? serial : null, e.count, e.userName, e.reason,
           ];
         }),

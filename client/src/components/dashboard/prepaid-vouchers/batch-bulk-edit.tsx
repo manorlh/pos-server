@@ -93,6 +93,8 @@ interface Draft {
   showCredit: boolean;
   printTillValue: boolean;
   barcodeType: PrepaidBarcodeType;
+  /** "מצב בדיקה" (each batch's own audit line). */
+  testMode: boolean;
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -102,6 +104,7 @@ const EMPTY_DRAFT: Draft = {
   splitAllowed: false, includeExtras: false, totalQty: '', applyToPartial: false,
   pricing: 'cover', tillValue: '', allowTopUp: true, accounting: 'discount', policy: policyState(),
   showCode: false, showItems: true, showValidity: true, showCredit: true, printTillValue: false, barcodeType: 'qr',
+  testMode: false,
 };
 
 const decimal = (v: string) => (v.trim() ? Number(v.replace(',', '.')) : null);
@@ -131,6 +134,7 @@ function partsOf(d: Draft): Partial<Record<BulkField, Record<string, unknown>>> 
     showCredit: { showCredit: d.showCredit },
     printTillValue: { printTillValue: d.printTillValue },
     barcodeType: { barcodeType: d.barcodeType },
+    testMode: { testMode: d.testMode },
   };
 }
 
@@ -171,6 +175,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
   const t = useTranslations('prepaidVouchers.bulk');
   const tp = useTranslations('prepaidVouchers');
   const tc = useTranslations('common');
+  const tm = useTranslations('prepaidVoucherTestMode');
   const qc = useQueryClient();
   const label = useEditFieldLabel();
   const [step, setStep] = useState<Step>('form');
@@ -387,6 +392,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
         <option value="code128">{tp('create.barcodeCode128')}</option>
       </select>
     )),
+    testMode: switchRow('testMode', draft.testMode, (v) => set({ testMode: v })),
   };
 
   const okCount = willChange(preview);
@@ -412,7 +418,7 @@ export function BulkEditDialog({ open, batches, onOpenChange, onDone }: {
               const here = BULK_FIELDS.filter((f) => f.section === section && shownFields.has(f.field));
               return here.length ? (
                 <section key={section} className="space-y-2">
-                  <h3 className="text-sm font-semibold">{t(`section.${section}`)}</h3>
+                  <h3 className="text-sm font-semibold">{t.has(`section.${section}`) ? t(`section.${section}`) : tm(`bulkSection.${section}`)}</h3>
                   {here.map((f) => controls[f.field])}
                 </section>
               ) : null;

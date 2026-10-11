@@ -185,6 +185,11 @@ def assign(db: Session, user: User, tenant_id, batch_id, target: str, machine_id
     from app.services.prepaid_voucher_controls import offline_assign_check  # §18 hook (helper): test / paused
 
     offline_assign_check(db, batch, machine)
+    if getattr(batch, "test_mode", False):
+        # "מצב בדיקה" has no offline (P:/specs/voucher-test-mode.md): a device would redeem the batch for real.
+        from app.services.prepaid_voucher_test_mode import TEST_MODE_OFFLINE
+
+        raise PV._http(status.HTTP_409_CONFLICT, TEST_MODE_OFFLINE)
     current = active_of(db, batch.id)
     if current is not None:
         if current.status == "active" and current.machine_id == machine.id and current.target == target:

@@ -101,6 +101,8 @@ class Scope:
     state: Optional[str] = None
     group: Optional[int] = None
     q: Optional[str] = None
+    #: "מצב בדיקה": only the batches in test mode (True) / not (False).
+    test_mode: Optional[bool] = None
 
     @property
     def has_redemption_filter(self) -> bool:
@@ -185,6 +187,7 @@ def make_scope(
     state: Optional[str] = None,
     group: Optional[int] = None,
     q: Optional[str] = None,
+    test_mode: Optional[str] = None,
 ) -> Scope:
     """The query parameters, checked: an unknown choice is a 400 `prepaid_voucher_bad_filter:<name>`."""
     scope = Scope(
@@ -215,6 +218,7 @@ def make_scope(
         state=_choice(state, STATES, "state"),
         group=group if group and group > 0 else None,
         q=(q or "").strip() or None,
+        test_mode=_yes_no(test_mode, "testMode"),
     )
     for lo, hi, name in (
         (scope.issued_from, scope.issued_to, "issuedTo"),
@@ -354,6 +358,8 @@ def scoped_batches(
         q = q.filter(PrepaidVoucherBatch.discount_block_policy == "honour")
     if scope.offline is not None:
         q = q.filter(PrepaidVoucherBatch.offline_allowed.is_(scope.offline))
+    if scope.test_mode is not None:
+        q = q.filter(PrepaidVoucherBatch.test_mode.is_(scope.test_mode))
     if scope.value_min is not None:
         q = q.filter(PrepaidVoucherBatch.till_value >= _agorot(scope.value_min))
     if scope.value_max is not None:

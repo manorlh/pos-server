@@ -139,9 +139,14 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     db.query(TransactionVoucherDiscount).filter(
         TransactionVoucherDiscount.transaction_id == tx.id
     ).delete(synchronize_session=False)
+    # "מצב בדיקה" (app/services/prepaid_voucher_test_mode.py): a test scan ("test-…") never reaches a
+    # document; one that does anyway is no voucher accounting — no row kept, nothing confirmed or linked.
+    test_entries = [e for e in entries if _names_test_scan(e)]
+    entries = [e for e in entries if not _names_test_scan(e)]
+    test_warnings = [f"voucherDiscounts: {len(test_entries)} test-mode voucher(s) ignored"] if test_entries else []
     if not entries:
         # No deduction — the document may still name its goods holds (a payment leg, memo lines).
-        return _confirm_document_holds(db, issuer, tx, refund_of, [])
+        return test_warnings + _confirm_document_holds(db, issuer, tx, refund_of, [])
     rows = []
     for e in entries:
         amount = _D(str(e.amount or 0)).copy_abs().quantize(_D("0.01"))
@@ -168,11 +173,11 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     link = tx.refund_of_transaction_id if refund_of is ... else refund_of
     if is_refund_document(document_type=tx.document_type, refund_of_transaction_id=link):
         # A credit note credits what was paid; a voucher's use is not given back by it.
-        return []
+        return test_warnings
     if tx.status in ("pending", "cancelled"):
         # Not a sale (yet): a card still waiting, or declined. Its re-push as completed
         # confirms; a declined one never does — the till releases the voucher.
-        return []
+        return test_warnings
     # A production voucher's deduction names the redemption it books: the redemption learns
     # its document (set once, as `…/redemptions/{id}/transaction` does).
     _PV.link_deductions(db, issuer, str(tx.id), rows)
@@ -194,7 +199,19 @@ def _voucher_discounts(db: Session, issuer, tx, refund_of) -> List[str]:
     except Exception:  # noqa: BLE001 — the document stands; the next push confirms again
         logger.exception("document %s: its voucher reservations were not confirmed", tx.id)
         warnings.append("voucherDiscounts: not confirmed now (error); confirmed on the next push")
-    return warnings + _confirm_document_holds(db, issuer, tx, refund_of, entries)
+    return test_warnings + warnings + _confirm_document_holds(db, issuer, tx, refund_of, entries)
+
+
+def _is_test_scan_id(value) -> bool:
+    """A test-mode scan's id ("test-…", app/services/prepaid_voucher_test_mode.py)."""
+    from app.services.prepaid_voucher_test_mode import is_fake
+
+    return is_fake(value)
+
+
+def _names_test_scan(entry) -> bool:
+    """A voucher entry naming a test-mode scan (its hold or its redemption)."""
+    return _is_test_scan_id(getattr(entry, "reservation_id", None)) or _is_test_scan_id(getattr(entry, "redemption_id", None))
 
 
 def _agorot_of(value) -> int:
@@ -238,7 +255,13 @@ def _confirm_document_holds(db: Session, issuer, tx, refund_of, entries) -> List
             holds.append((f"items[voucherReservationId={rid}]", rid, lambda: 0, True))
     warnings: List[str] = []
     seen: set = set()
+    from app.services.prepaid_voucher_test_mode import is_fake
+
     for where, raw, read_amount, warn in holds:
+        if is_fake(raw):
+            # A test-mode scan: nothing was held, nothing is confirmed (no voucher accounting).
+            warnings.append(f"{where}: a test-mode voucher, ignored")
+            continue
         rid = _promotion_uuid(raw)
         if rid is None:
             # A deduction's unreadable id is already warned about by `_voucher_discounts`.
@@ -1334,7 +1357,11 @@ def upsert_transactions(
                         # Production vouchers: the deduction's share, a ₪0 memo line's value.
                         prepaid_deduction=None if reissue_invoice else getattr(it, "prepaid_deduction", None),
                         voucher_memo_value=None if reissue_invoice else getattr(it, "voucher_memo_value_agorot", None),
-                        voucher_redemption_id=None if reissue_invoice else getattr(it, "voucher_redemption_id", None),
+                        # A test-mode scan's id ("test-…") is no redemption: never linked.
+                        voucher_redemption_id=(
+                            None if reissue_invoice or _is_test_scan_id(getattr(it, "voucher_redemption_id", None))
+                            else getattr(it, "voucher_redemption_id", None)
+                        ),
                         # What the dish was ordered with (docs/SPEC_MENU_MODIFIERS.md).
                         details=_menu.clean_details(it.details),
                         upsell_rule_id=_promotion_uuid(it.upsell_rule_id),

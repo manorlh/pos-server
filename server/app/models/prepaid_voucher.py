@@ -354,6 +354,13 @@ class PrepaidVoucherBatch(Base):
     #: False (the default, and every batch before it): the base price as listed is covered,
     #: the extras are paid at the till (docs/SPEC_VOUCHER_PRODUCTION.md §7.14).
     include_extras = Column(Boolean, nullable=False, default=False, server_default="false")
+    #: "מצב בדיקה" (P:/specs/voucher-test-mode.md): the batch's real vouchers are scanned through the
+    #: whole redemption — every check as for real — yet nothing is taken off them and nothing counts
+    #: anywhere; each would-be redemption goes to `prepaid_voucher_test_redemptions` only. Off: real
+    #: from the next scan. When it was turned on, and by whom (the user's name); null while off.
+    test_mode = Column(Boolean, nullable=False, default=False, server_default="false")
+    test_mode_since = Column(DateTime(timezone=True), nullable=True)
+    test_mode_by = Column(String(200), nullable=True)
 
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -586,6 +593,75 @@ class PrepaidVoucherReservation(Base):
     voucher = relationship("PrepaidVoucher")
 
 
+#: `prepaid_voucher_test_redemptions.operation`: an immediate `/redeem`, or a hold (`/reserve`, then
+#: confirm / release).
+TEST_REDEMPTION_OPERATIONS = ("redeem", "reserve")
+#: `prepaid_voucher_test_redemptions.status`: `done` (a redeem), `held` / `confirmed` / `released`
+#: (a hold), `reversed` (the till undid it).
+TEST_REDEMPTION_STATUSES = ("done", "held", "confirmed", "released", "reversed")
+
+
+class PrepaidVoucherTestRedemption(Base):
+    """
+    "יומן בדיקות" (P:/specs/voucher-test-mode.md): one scan of a voucher whose batch is in test mode
+    ("מצב בדיקה") — who, when, where, which voucher, and what it *would* have covered and left. Never
+    read by a report, the board, a settlement, a Z or "כמה מתוך כמה": the voucher was not touched.
+    Idempotent per till and operation by `client_request_id`; the till knows it as "test-" + its id.
+    """
+
+    __tablename__ = "prepaid_voucher_test_redemptions"
+    __table_args__ = (
+        UniqueConstraint(
+            "machine_id", "operation", "client_request_id", name="uq_prepaid_voucher_test_redemptions_request"
+        ),
+        Index("ix_prepaid_voucher_test_redemptions_batch", "batch_id", "created_at"),
+        Index("ix_prepaid_voucher_test_redemptions_sale", "machine_id", "sale_ref"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    batch_id = Column(
+        UUID(as_uuid=True), ForeignKey("prepaid_voucher_batches.id", ondelete="CASCADE"), nullable=False
+    )
+    voucher_id = Column(UUID(as_uuid=True), ForeignKey("prepaid_vouchers.id", ondelete="CASCADE"), nullable=False)
+    serial = Column(Integer, nullable=True)
+    machine_id = Column(UUID(as_uuid=True), ForeignKey("pos_machines.id", ondelete="SET NULL"), nullable=True)
+    shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"), nullable=True)
+    pos_user_id = Column(String(100), nullable=True)
+    pos_user_name = Column(String(200), nullable=True)
+    operation = Column(String(16), nullable=False)
+    client_request_id = Column(String(100), nullable=False)
+    sale_ref = Column(String(100), nullable=True)
+    status = Column(String(16), nullable=False)
+    #: What the till named when it "confirmed" the simulated sale (no document exists).
+    transaction_id = Column(String(100), nullable=True)
+    #: Would have been taken / given up: [{productId, name, quantity}] (a discount's: empty).
+    items = Column(JSON, nullable=True)
+    forfeited = Column(JSON, nullable=True)
+    #: Per unit, as a redemption records them (values in agorot).
+    units = Column(JSON, nullable=True)
+    #: Agorot: what the voucher would have covered, its value, the customer's top-up, the list value;
+    #: a discount voucher's ₪ off the basket and its uses.
+    covered_agorot = Column(Integer, nullable=True)
+    value_agorot = Column(Integer, nullable=True)
+    top_up_agorot = Column(Integer, nullable=True)
+    list_value_agorot = Column(Integer, nullable=True)
+    discount_agorot = Column(Integer, nullable=True)
+    uses = Column(Integer, nullable=True)
+    redemption_accounting = Column(String(16), nullable=True)
+    #: What the voucher would have kept ({product id | "g:<group>" | "total": quantity}, or {"uses": n}).
+    remaining_after = Column(JSON, nullable=True)
+    #: A hold's answer as the till got it (a goods hold's valued units, a discount's shares) — its replay.
+    answer = Column(JSON, nullable=True)
+    #: A hold's: until when it would have been held.
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    released_at = Column(DateTime(timezone=True), nullable=True)
+    reversed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 #: `transaction_voucher_discounts.kind` of a production voucher booked as a document deduction
 #: ("קיזוז מהחשבונית", `redemption_accounting` discount): inside `document_discount` like a
 #: discount, but never "a discount" in a management report — its own category, "שוברי הפקה".
@@ -684,6 +760,8 @@ PREPAID_EVENT_ACTIONS = (
     "offline_release",         # released after the device synced everything
     "offline_release_requested",  # the release's first step: the device is told on its next sync
     "offline_force_release",   # released with redemptions still on the device (a reason given)
+    "test_mode_on",            # "מצב בדיקה" turned on (at creation, alone or in a bulk edit)
+    "test_mode_off",           # "סיום בדיקה והפעלה": real from the next scan
 )
 
 

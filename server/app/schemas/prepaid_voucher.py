@@ -697,6 +697,8 @@ class PrepaidVoucherBatchCreate(BaseModel):
     production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
     #: The event (the existing report events); the printed `eventName` defaults to its name.
     report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
+    #: "להתחיל במצב בדיקה" (P:/specs/voucher-test-mode.md): the batch starts in test mode. Off by default.
+    start_in_test_mode: bool = Field(False, alias="startInTestMode")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -834,6 +836,8 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
     #: The event (the existing report events); null: none.
     report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
+    #: "מצב בדיקה" on / off ("סיום בדיקה והפעלה"): logged on the batch's audit trail on its own line.
+    test_mode: Optional[bool] = Field(None, alias="testMode")
 
     @field_validator("stacking", mode="before")
     @classmethod
@@ -904,6 +908,8 @@ BULK_EDIT_FIELDS = (
     "show_code", "show_items", "show_validity", "show_credit", "print_till_value", "barcode_type",
     "free_text", "logo_url",
     "total_qty", "groups",
+    # "מצב בדיקה" on / off for many batches at once — each batch's own audit line.
+    "test_mode",
 )
 
 

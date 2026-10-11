@@ -18,7 +18,9 @@ export type BulkField =
   | 'stacking' | 'promotionPolicy' | 'maxUsesPerSale' | 'maxUsesPerDay'
   | 'splitAllowed' | 'includeExtras' | 'pricing' | 'tillValue' | 'allowTopUp' | 'redemptionAccounting' | 'discountBlockPolicy'
   | 'showCode' | 'showItems' | 'showValidity' | 'showCredit' | 'printTillValue' | 'barcodeType'
-  | 'totalQty';
+  | 'totalQty'
+  // "מצב בדיקה" (every kind; each batch's own audit line).
+  | 'testMode';
 
 /**
  * Which batches a setting is for: every one, goods only (a discount is a discount on the document),
@@ -26,7 +28,7 @@ export type BulkField =
  */
 export type BulkScope = 'all' | 'goods' | 'discount' | 'groups';
 
-export type BulkSection = 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'print';
+export type BulkSection = 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'print' | 'test';
 
 export interface BulkFieldDef {
   field: BulkField;
@@ -58,9 +60,13 @@ export const BULK_FIELDS: readonly BulkFieldDef[] = [
   { field: 'showCredit', scope: 'all', section: 'print' },
   { field: 'printTillValue', scope: 'goods', section: 'print' },
   { field: 'barcodeType', scope: 'all', section: 'print' },
+  { field: 'testMode', scope: 'all', section: 'test' },
 ];
 
-export const BULK_SECTIONS: readonly BulkSection[] = ['validity', 'where', 'rules', 'contents', 'accounting', 'print'];
+export const BULK_SECTIONS: readonly BulkSection[] = ['validity', 'where', 'rules', 'contents', 'accounting', 'print', 'test'];
+
+/** Settings of a batch, not of what its vouchers give (lib/voucherFields.ts knows nothing of them): always offered. */
+const BATCH_ONLY_FIELDS: ReadonlySet<BulkField> = new Set<BulkField>(['testMode']);
 
 /** The part of a batch the scope reads. */
 export interface BulkBatchKind {
@@ -92,7 +98,7 @@ export function offeredFields(batches: readonly BulkBatchKind[]): { fields: Bulk
   const common = commonVoucherFields(batches.map((b) => ({ kind: b.kind, selection: b.selection })));
   const fields = BULK_FIELDS
     .map((d) => d.field)
-    .filter((f) => common.visible.has(f as VoucherField) && batches.every((b) => fieldApplies(f, b)));
+    .filter((f) => (BATCH_ONLY_FIELDS.has(f) || common.visible.has(f as VoucherField)) && batches.every((b) => fieldApplies(f, b)));
   return { fields, mixed: common.mixed };
 }
 

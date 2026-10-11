@@ -98,6 +98,12 @@ describe('offeredFields', () => {
     assert.ok(offeredFields([meal]).fields.includes('totalQty'));
     assert.ok(!offeredFields([meal, goods]).fields.includes('totalQty'));
   });
+
+  it('"מצב בדיקה" for every batch, whatever its kind — sent as testMode', () => {
+    for (const picked of [[goods], [discount], [goods, discount, meal]]) assert.ok(offeredFields(picked).fields.includes('testMode'));
+    assert.equal(fieldApplies('testMode', discount), true);
+    assert.deepEqual(bulkChanges({ testMode: { testMode: true } }, new Set<BulkField>(['testMode'])), { testMode: true });
+  });
 });
 
 describe('knownRefusal', () => {

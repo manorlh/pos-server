@@ -458,6 +458,7 @@ POST /prepaid-vouchers/batches/{batch_id}/offline/assign -> prepaid_vouchers:edi
 POST /prepaid-vouchers/batches/{batch_id}/offline/release -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/offline/targets -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/report -> prepaid_vouchers:view
+GET /prepaid-vouchers/batches/{batch_id}/test-redemptions -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:edit
 GET /prepaid-vouchers/categories -> prepaid_vouchers:view

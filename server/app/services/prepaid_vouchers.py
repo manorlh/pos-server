@@ -975,12 +975,17 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         PG.validate(db, tenant_id, company.id, stored)
         # `frozen`: the catalog as it is now — a product added to a category later does not join.
         batch.groups = PG.freeze(db, tenant_id, company.id, stored) if batch.catalog_mode == "frozen" else stored
+    # "להתחיל במצב בדיקה" (P:/specs/voucher-test-mode.md): off by default.
+    if getattr(body, "start_in_test_mode", False):
+        batch.test_mode, batch.test_mode_since, batch.test_mode_by = True, batch.created_at, _user_name(user)
     db.add(batch)
     db.flush()
     issued = _issue(db, batch, body.count, batch.group_size)
     details = _issued_details(issued, batch.group_size)
     details.update({"typeId": str(the_type.id), "typeVersion": batch.type_version})
     _event(db, batch, user, "create", count=body.count, details=details)
+    if batch.test_mode:
+        _event(db, batch, user, "test_mode_on", details={"atCreate": True})
     db.flush()
     return batch
 
@@ -1406,6 +1411,10 @@ def batch_out(
         "discountBlockPolicy": _policy_out(batch),
         "offlineAllowed": bool(getattr(batch, "offline_allowed", False)),
         "printTillValue": bool(getattr(batch, "print_till_value", False)),
+        # "מצב בדיקה" (P:/specs/voucher-test-mode.md): scans take nothing and count nowhere; since when, by whom.
+        "testMode": bool(getattr(batch, "test_mode", False)),
+        "testModeSince": _iso(getattr(batch, "test_mode_since", None)),
+        "testModeBy": getattr(batch, "test_mode_by", None),
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
@@ -2112,6 +2121,9 @@ def till_view(
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1) if is_discount(batch) else None,
         "maxUsesPerDay": batch.max_uses_per_day if is_discount(batch) else None,
         **controls_extra,  # §18 (helper): isTest
+        # "מצב בדיקה" (P:/specs/voucher-test-mode.md): its batch is in test mode — a reserve / redeem
+        # runs every check, takes nothing and answers `testMode: true` (the till's orange bar).
+        "testMode": bool(getattr(batch, "test_mode", False)),
     }
 
 
@@ -2224,6 +2236,61 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
         return _redeem_out(db, machine, voucher, prior, replayed=True)
 
+    # "מצב בדיקה" (app/services/prepaid_voucher_test_mode.py): every check below, nothing taken.
+    from app.services import prepaid_voucher_test_mode as TM
+
+    test_prior = TM.prior(db, machine, TM.OP_REDEEM, request_id)
+    if test_prior is not None or TM.in_test_mode(voucher.batch):
+        return TM.redeem(db, machine, body, voucher, test_prior)
+
+    plan = redeem_checks(db, machine, body, voucher)
+    batch, sale_ref, wanted = plan["batch"], plan["sale_ref"], plan["wanted"]
+    names, order, left, forfeited = plan["names"], plan["order"], plan["left"], plan["forfeited"]
+
+    now = _now()
+    redemption = PrepaidVoucherRedemption(
+        id=uuid.uuid4(),
+        tenant_id=voucher.tenant_id,
+        voucher_id=voucher.id,
+        batch_id=batch.id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        pos_user_id=(body.pos_user_id or None),
+        pos_user_name=(body.pos_user_name or None),
+        client_request_id=request_id,
+        transaction_id=(body.transaction_id or None),
+        sale_ref=sale_ref,
+        items=plan["items"],
+        forfeited=forfeited or None,
+        redeemed_at=now,
+        **record_snapshot(db, machine, batch, voucher, wanted, features=getattr(body, "features", None)),
+    )
+    # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
+    voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
+    voucher.status = "used" if not any(q > 0 for q in left.values()) else "partially_used"
+    voucher.first_redeemed_at = voucher.first_redeemed_at or now
+    voucher.last_redeemed_at = now
+    voucher.updated_at = now
+    db.add(redemption)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Only the (machine, request id) key can collide; the lock makes this a
+        # backstop for a database without row locks.
+        db.rollback()
+        raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
+    return _redeem_out(db, machine, voucher, redemption, replayed=False)
+
+
+def redeem_checks(db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, *, test: bool = False) -> Dict[str, Any]:
+    """
+    Every check of an immediate `/redeem`, in its order, nothing written: the voucher's state, the
+    client, the sale (a test-mode voucher never mixes with a real one; stacking), what is left, what
+    can be handed over, a one-time voucher taken in part. [test]: the voucher's batch is in test mode
+    — its other test scans in the same sale count for stacking as real ones would. Returns what the
+    write needs: `batch`, `sale_ref`, `wanted`, `left` (per product after it), `forfeited`, `items`,
+    `names`, `order`.
+    """
     reason = refusal_reason(db, machine, voucher)
     if reason is not None:
         raise _http(status.HTTP_409_CONFLICT, reason)
@@ -2242,7 +2309,13 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         raise _http(status.HTTP_409_CONFLICT, RESERVE_REQUIRED)
     sale_ref = (getattr(body, "sale_ref", None) or "").strip() or None
     if sale_ref:
-        refusal = RULES.stacking_refusal(_vouchers_in_sale(db, machine, sale_ref), _in_sale(voucher))
+        from app.services import prepaid_voucher_test_mode as TM
+
+        TM.check_mixed(db, machine, voucher, sale_ref, test=test)
+        others = _vouchers_in_sale(db, machine, sale_ref)
+        if test:
+            others = TM.with_test_vouchers(db, machine, sale_ref, others)
+        refusal = RULES.stacking_refusal(others, _in_sale(voucher))
         if refusal is not None:
             raise _http(status.HTTP_409_CONFLICT, refusal)
     remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
@@ -2270,44 +2343,20 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             if left.get(pid, zero) > 0
         ]
         left = {pid: zero for pid in left}
-
-    now = _now()
-    redemption = PrepaidVoucherRedemption(
-        id=uuid.uuid4(),
-        tenant_id=voucher.tenant_id,
-        voucher_id=voucher.id,
-        batch_id=batch.id,
-        machine_id=machine.id,
-        shop_id=machine.shop_id,
-        pos_user_id=(body.pos_user_id or None),
-        pos_user_name=(body.pos_user_name or None),
-        client_request_id=request_id,
-        transaction_id=(body.transaction_id or None),
-        sale_ref=sale_ref,
-        items=[
+    return {
+        "batch": batch,
+        "sale_ref": sale_ref,
+        "wanted": wanted,
+        "left": left,
+        "forfeited": forfeited,
+        "names": names,
+        "order": order,
+        "items": [
             {"productId": pid, "name": names.get(pid), "quantity": qty_out(wanted[pid])}
             for pid in order
             if wanted.get(pid)
         ],
-        forfeited=forfeited or None,
-        redeemed_at=now,
-        **record_snapshot(db, machine, batch, voucher, wanted, features=getattr(body, "features", None)),
-    )
-    # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
-    voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
-    voucher.status = "used" if not any(q > 0 for q in left.values()) else "partially_used"
-    voucher.first_redeemed_at = voucher.first_redeemed_at or now
-    voucher.last_redeemed_at = now
-    voucher.updated_at = now
-    db.add(redemption)
-    try:
-        db.flush()
-    except IntegrityError:
-        # Only the (machine, request id) key can collide; the lock makes this a
-        # backstop for a database without row locks.
-        db.rollback()
-        raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
-    return _redeem_out(db, machine, voucher, redemption, replayed=False)
+    }
 
 
 def _type_name_of(db: Session, batch: PrepaidVoucherBatch) -> Optional[str]:
@@ -2444,6 +2493,10 @@ def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> 
     (and anything forfeited with it) go back on the voucher; the row stays, marked
     reversed. Idempotent: reversing twice answers the same. The caller commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(redemption_id):
+        return TM.reverse(db, machine, redemption_id)  # a test scan: nothing was taken, nothing goes back
     rid = _as_uuid(redemption_id)
     redemption = (
         db.query(PrepaidVoucherRedemption)
@@ -2477,6 +2530,7 @@ def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
     """
     from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
 
+    # A test scan's id ("test-…") never reads as a redemption's: a document naming one links nothing.
     ids = [r.redemption_id for r in rows if r.kind == PRODUCTION_VOUCHER_DEDUCTION and r.redemption_id is not None]
     if not ids or machine is None:
         return
@@ -2490,6 +2544,11 @@ def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
 
 def attach_transaction(db: Session, machine: POSMachine, redemption_id: str, transaction_id: str) -> None:
     """Name the sale document a redemption paid towards (set once). The caller commits."""
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(redemption_id):
+        TM.attach(db, machine, redemption_id, transaction_id)  # a test scan: noted on its log line only
+        return
     rid = _as_uuid(redemption_id)
     redemption = (
         db.query(PrepaidVoucherRedemption)
@@ -2715,37 +2774,22 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         if prior.status == "released":
             raise _http(status.HTTP_409_CONFLICT, RESERVATION_RELEASED)
 
+    # "מצב בדיקה" (app/services/prepaid_voucher_test_mode.py): every check below, nothing held. A hold
+    # made before the batch went into test mode (a real `prior`) goes on as it began.
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if prior is None:
+        test_prior = TM.prior(db, machine, TM.OP_RESERVE, request_id)
+        if test_prior is not None or TM.in_test_mode(batch):
+            return TM.reserve(db, machine, body, voucher, test_prior, now, sale_ref)
+
     if not is_discount(batch):
         # Goods: held for the sale with their units valued (the production vouchers contract §3).
         from app.services import production_voucher_reserve as PVRG
 
         return PVRG.reserve_goods(db, machine, body, voucher, prior, now, sale_ref)
-    if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
-        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
-    reason = refusal_reason(db, machine, voucher, now)
-    if reason is not None:
-        raise _http(status.HTTP_409_CONFLICT, reason)
-    if missing_features(db, batch, getattr(body, "features", None)):  # §18 (helper): a test voucher's "training"
-        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
-
     exclude = prior.id if prior is not None else None
-    refusal = RULES.stacking_refusal(
-        _vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude, reported=body.other_vouchers),
-        _in_sale(voucher),
-    )
-    if refusal is not None:
-        raise _http(status.HTTP_409_CONFLICT, refusal)
-
-    uses = uses_open(db, voucher, now, exclude_id=exclude)
-    if uses["available"] <= 0:
-        raise _http(status.HTTP_409_CONFLICT, IN_USE if int(voucher.uses_left or 0) > 0 else USED)
-    if uses["today"] <= 0:
-        raise _http(status.HTTP_409_CONFLICT, DAILY_LIMIT)
-    granted = max(1, min(int(body.uses or 1), uses["perSale"], uses["available"], uses["today"]))
-
-    result = RULES.discount_for(_benefit_rules(db, batch), _basket(body.lines), granted)
-    if result.refusal is not None:
-        raise _http(status.HTTP_409_CONFLICT, result.refusal)
+    granted, result = reserve_discount_checks(db, machine, body, voucher, now, sale_ref, exclude_reservation=exclude)
 
     if prior is not None:
         # Renewed: held again for the full time, for what the basket comes to now.
@@ -2783,6 +2827,50 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     return _reservation_out(db, machine, voucher, r, replayed=False, result=result)
 
 
+def reserve_discount_checks(
+    db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, now: datetime, sale_ref: str, *,
+    exclude_reservation=None, test: bool = False, exclude_test=None,
+) -> Tuple[int, RULES.DiscountResult]:
+    """
+    Every check of a discount voucher's hold, in its order, nothing written: the client's support of
+    its kind, the voucher's state, the client's features, the sale (a test-mode voucher never mixes with
+    a real one; stacking), the uses (left, held by other sales, per sale, per day) and what it takes off
+    the basket. Returns (uses granted, the shared rules' result). [test]: the batch is in test mode —
+    its other test scans in the sale count for stacking ([exclude_test]: this request's own).
+    """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    batch = voucher.batch
+    if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
+        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+    reason = refusal_reason(db, machine, voucher, now)
+    if reason is not None:
+        raise _http(status.HTTP_409_CONFLICT, reason)
+    if missing_features(db, batch, getattr(body, "features", None)):  # §18 (helper): a test voucher's "training"
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+
+    TM.check_mixed(db, machine, voucher, sale_ref, body.other_vouchers, test=test, exclude_test=exclude_test,
+                   exclude_reservation=exclude_reservation)
+    others = _vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude_reservation, reported=body.other_vouchers)
+    if test:
+        others = TM.with_test_vouchers(db, machine, sale_ref, others, exclude_id=exclude_test)
+    refusal = RULES.stacking_refusal(others, _in_sale(voucher))
+    if refusal is not None:
+        raise _http(status.HTTP_409_CONFLICT, refusal)
+
+    uses = uses_open(db, voucher, now, exclude_id=exclude_reservation)
+    if uses["available"] <= 0:
+        raise _http(status.HTTP_409_CONFLICT, IN_USE if int(voucher.uses_left or 0) > 0 else USED)
+    if uses["today"] <= 0:
+        raise _http(status.HTTP_409_CONFLICT, DAILY_LIMIT)
+    granted = max(1, min(int(body.uses or 1), uses["perSale"], uses["available"], uses["today"]))
+
+    result = RULES.discount_for(_benefit_rules(db, batch), _basket(body.lines), granted)
+    if result.refusal is not None:
+        raise _http(status.HTTP_409_CONFLICT, result.refusal)
+    return granted, result
+
+
 def _reservation(db: Session, machine: POSMachine, reservation_id, *, any_till: bool = False) -> PrepaidVoucherReservation:
     rid = _as_uuid(reservation_id)
     q = db.query(PrepaidVoucherReservation).filter(PrepaidVoucherReservation.id == rid) if rid else None
@@ -2799,6 +2887,10 @@ def release(db: Session, machine: POSMachine, reservation_id) -> Dict[str, Any]:
     Give a held voucher back (removed from the basket, the sale abandoned). Idempotent; a
     confirmed one stays confirmed (its sale was written). The caller commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(reservation_id):
+        return TM.release(db, machine, reservation_id)
     r = _reservation(db, machine, reservation_id)
     if r.status == "held":
         now = _now()
@@ -2842,6 +2934,12 @@ def confirm(
     promotion policy are checked again and a breach is flagged, never refused. The caller
     commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(reservation_id):
+        # A test-mode hold ("test-…"): its log line is marked, nothing is taken or recorded. A document
+        # naming one (the outbox, [any_till]) never reaches here — the sync drops it first.
+        return TM.confirm(db, machine, reservation_id, transaction_id, amount_agorot, uses, any_till=any_till)
     r = _reservation(db, machine, reservation_id, any_till=any_till)
     transaction_id = str(transaction_id).strip()[:100]
     # The voucher first (as the reserve locks it), then the reservation again under its own lock:
