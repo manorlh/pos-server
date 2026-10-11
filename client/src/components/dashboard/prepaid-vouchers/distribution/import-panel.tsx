@@ -114,7 +114,7 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
       ws['!cols'] = [{ wch: 24 }, { wch: 18 }, { wch: 14 }];
       XLSX.utils.book_append_sheet(wb, ws, 'נמענים');
       const info = XLSX.utils.aoa_to_sheet([
-        ...(recipient ? [['נמען', recipient]] : []),
+        ...(recipient ? [['איש קשר', recipient]] : []),
         ...voucherContentsRows(
           { ...batch, customerName: customer, typeName: batch.typeName ?? batch.type?.name ?? null },
           { product: (id) => prod.get(id), category: (id) => cat.get(id) },
@@ -130,7 +130,7 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         Company: customer ?? undefined,
         Manager: recipient ?? undefined,
         Author: 'R2M POS',
-        Comments: [customer ? `לקוח: ${customer}` : '', recipient ? `נמען: ${recipient}` : ''].filter(Boolean).join(' · ') || undefined,
+        Comments: [customer ? `הפקה: ${customer}` : '', recipient ? `איש קשר: ${recipient}` : ''].filter(Boolean).join(' · ') || undefined,
         CreatedDate: new Date(),
       };
       const fileName = [batch.name || 'שוברים', customer, 'נמענים'].filter(Boolean).join(' - ').replace(/[\/:*?"<>|]/g, ' ');
@@ -224,6 +224,13 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">{t('fileHint')}</p>
+            {/* The file the production fills in comes before the upload — not with preview / save. */}
+            <div className="space-y-1 border-t pt-2">
+              <Button type="button" variant="ghost" disabled={templating} onClick={() => void downloadTemplate()}>
+                {templating ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />} {t('template')}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t('templateHint', { mode })}</p>
+            </div>
           </div>
           <div className="space-y-2 rounded-lg border p-3">
             <Label htmlFor="vd-paste">{t('paste')}</Label>
@@ -293,8 +300,11 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
                 </span>
               </span>
               {m === 'count' && mode === 'count' ? (
-                <Input type="number" min={1} max={500} value={perRecipient} className="ms-auto h-8 w-20"
-                  aria-label={t('perRecipient')} onChange={(e) => { setPerRecipient(e.target.value); setPlan(null); }} />
+                <span className="ms-auto flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <Input type="number" min={1} max={500} value={perRecipient} className="h-8 w-20"
+                    aria-label={t('perRecipient')} onChange={(e) => { setPerRecipient(e.target.value); setPlan(null); }} />
+                  <span aria-hidden>{t('perRecipient')}</span>
+                </span>
               ) : null}
             </label>
           ))}
@@ -309,9 +319,6 @@ export function ImportPanel({ batch, overview }: { batch: PrepaidVoucherBatch; o
         </fieldset>
 
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="ghost" disabled={templating} onClick={() => void downloadTemplate()}>
-            {templating ? <Loader2 className="animate-spin" aria-hidden /> : <Download aria-hidden />} {t('template')}
-          </Button>
           <Button type="button" variant="outline" disabled={!rows.length || !hasPhone || preview.isPending}
             onClick={() => preview.mutate()}>
             {preview.isPending ? <Loader2 className="animate-spin" aria-hidden /> : null}

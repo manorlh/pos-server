@@ -1,5 +1,5 @@
 /**
- * "הנפקת אצווה" exactly once — the dashboard side of POST /prepaid-vouchers/batches
+ * "הנפקת סדרה" exactly once — the dashboard side of POST /prepaid-vouchers/batches
  * (server: app/services/prepaid_batch_create.py).
  *
  * The owner's report: "הנפקנו 50 שוברים וזה הראה שגיאה, ניסינו שוב והסתדר" — the first request had
@@ -8,7 +8,7 @@
  * - every form submission carries an `Idempotency-Key`: the same body keeps the same key until it
  *   succeeds (a retry, a second click, the dialog closed and reopened, even the page reloaded —
  *   the pending keys live in sessionStorage), so the server answers a retry with the SAME batch;
- * - no answer (a network error, a timeout) or a server error: "בודק אם האצווה נוצרה…" and the
+ * - no answer (a network error, a timeout) or a server error: "בודק אם הסדרה נוצרה…" and the
  *   same request is sent again with the same key; when that does not help either, "נסה שוב"
  *   sends it once more — with the same key, never a new batch;
  * - a refusal (a 4xx: the form is wrong) is shown as it is and not retried;
@@ -22,11 +22,11 @@
 import { isKeyReused, newKey, retryableSendError } from './deviceCommands';
 
 /** What the dialog shows while it re-checks after a lost answer (also in messages/he.json). */
-export const CHECKING_TEXT = 'בודק אם האצווה נוצרה…';
+export const CHECKING_TEXT = 'בודק אם הסדרה נוצרה…';
 /** The same for "הוסף שוברים" on an existing batch (POST …/batches/{id}/vouchers). */
 export const ADD_CHECKING_TEXT = 'בודק אם השוברים נוספו…';
 export const RETRY_TEXT = 'נסה שוב';
-export const DUPLICATE_TEXT = 'נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?';
+export const DUPLICATE_TEXT = 'נראה שסדרה זהה נוצרה לפני רגע — לבטל את הכפולה?';
 
 /** One request's own time limit: past it the answer counts as lost and is asked for again. */
 export const ATTEMPT_TIMEOUT_MS = 45_000;

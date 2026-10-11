@@ -106,10 +106,10 @@ function AgreementCard({ a, onOpen }: { a: SettlementAgreementSummary; onOpen: (
           <p className="text-xs text-muted-foreground">{t('period')}: {periodText(a.periodFrom, a.periodTo)}</p>
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
-          <div><dt className="text-xs text-muted-foreground">{t('chargeable')}</dt><dd className="tabular-nums">{tt.chargeable}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">{t('chargeable')}</dt><dd className="tabular-nums">{t('vouchersN', { n: tt.chargeable })}</dd></div>
           <div><dt className="text-xs text-muted-foreground">{t('amount')}</dt><dd className="tabular-nums">{money(tt.amountAgorot)}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">{t('invoiced')}</dt><dd className="tabular-nums">{tt.invoiced}</dd></div>
-          <div><dt className="text-xs text-muted-foreground">{t('uninvoiced')}</dt><dd className="tabular-nums">{tt.uninvoiced}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">{t('invoiced')}</dt><dd className="tabular-nums">{t('vouchersN', { n: tt.invoiced })}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">{t('uninvoiced')}</dt><dd className="tabular-nums">{t('vouchersN', { n: tt.uninvoiced })}</dd></div>
         </dl>
         <ChevronLeft className="mt-1 h-4 w-4 shrink-0 text-muted-foreground rtl:rotate-0 ltr:rotate-180" aria-hidden />
       </button>

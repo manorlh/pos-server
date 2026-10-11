@@ -19,14 +19,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { keys, useDistributionError, useRefreshDistribution, when } from './shared';
 
-function detailText(e: DistributionEvent, tv: (k: string) => string): string {
+/** The words for what the server logs as codes (a typed reason stays quoted as typed). */
+interface DetailLabels {
+  via: (k: string) => string;
+  reason: (k: string) => string | null;
+  status: (k: string) => string;
+  imported: (created: number, rows: number) => string;
+}
+
+function detailText(e: DistributionEvent, l: DetailLabels): string {
   const d = e.details ?? {};
   const parts: string[] = [];
   if (Array.isArray(d.serials) && d.serials.length) parts.push(serialsText(d.serials as number[]));
-  if (typeof d.via === 'string') parts.push(tv(d.via));
-  if (typeof d.reason === 'string' && d.reason) parts.push(`"${d.reason}"`);
-  if (typeof d.created === 'number') parts.push(`${d.created}/${d.rows}`);
-  if (typeof d.status === 'string') parts.push(d.status);
+  if (typeof d.via === 'string') parts.push(l.via(d.via));
+  if (typeof d.reason === 'string' && d.reason) parts.push(l.reason(d.reason) ?? `"${d.reason}"`);
+  if (typeof d.created === 'number') parts.push(l.imported(d.created, Number(d.rows)));
+  if (typeof d.status === 'string') parts.push(l.status(d.status));
   if (typeof d.code === 'string' && d.code) parts.push(d.code);
   return parts.join(' · ');
 }
@@ -34,6 +42,13 @@ function detailText(e: DistributionEvent, tv: (k: string) => string): string {
 export function DistributionLog({ batch, overview }: { batch: PrepaidVoucherBatch; overview: DistributionOverview }) {
   const t = useTranslations('voucherDistribution.log');
   const tv = useTranslations('voucherDistribution.via');
+  const ts = useTranslations('voucherDistribution.state');
+  const labels: DetailLabels = {
+    via: (k) => (tv.has(k) ? tv(k) : k),
+    reason: (k) => (t.has(`reason_${k}`) ? t(`reason_${k}`) : null),
+    status: (k) => (ts.has(k) ? ts(k) : k),
+    imported: (created, rows) => t('importedRows', { created, rows }),
+  };
   const errorText = useDistributionError();
   const refresh = useRefreshDistribution(batch.id);
   const events = useQuery({ queryKey: keys.events(batch.id), queryFn: () => fetchDistributionEvents(batch.id) });
@@ -72,7 +87,7 @@ export function DistributionLog({ batch, overview }: { batch: PrepaidVoucherBatc
                 <span className="font-medium tabular-nums">{when(e.createdAt)}</span>
                 {' · '}
                 {t.has(`action.${e.action}`) ? t(`action.${e.action}`) : e.action}
-                {detailText(e, (k) => (tv.has(k) ? tv(k) : k)) ? <span dir="auto"> · {detailText(e, (k) => (tv.has(k) ? tv(k) : k))}</span> : null}
+                {detailText(e, labels) ? <span dir="auto"> · {detailText(e, labels)}</span> : null}
                 {e.userName ? <span className="text-muted-foreground"> · {t('by', { name: e.userName })}</span> : null}
                 {e.fromPublic ? <span className="text-muted-foreground"> · {t('fromLink')}</span> : null}
               </li>

@@ -10,24 +10,31 @@
  * - `voucherAutoClose` — "סגירה אוטומטית כשהשובר מכסה הכל": `on` (unset: today) or `off`.
  * - `voucherStation` — "עמדת שובר (מסך סריקה בלבד)": `off` (unset) or `on`
  *   (server/app/services/voucher_station_settings.py).
+ * - `voucherStationPaidItems` (12.10.2026, the spec's §5) — "רכישה נוספת בתשלום בעמדת שובר": `off`
+ *   (unset: the station redeems vouchers only) or `on` (after the voucher, items paid for at the
+ *   regular price can join the same sale). The till shows it only with a cash or card option on.
  *
  * A layer's own value wins; else what it inherits (the server sends `effective` resolved); else the
  * default. `null` in a PATCH = this layer inherits again.
  */
-import type { VoucherBalanceCheckMode, VoucherOnOff, VoucherRedeemFlow } from './types';
+import { PAYMENT_OPTIONS, resolvePaymentOptionKey } from './paymentOptions';
+import type { PosSettingsPatch, PosSettingsV1, VoucherBalanceCheckMode, VoucherOnOff, VoucherRedeemFlow } from './types';
 
 export const VOUCHER_BALANCE_CHECK_KEY = 'voucherBalanceCheck' as const;
 export const VOUCHER_BALANCE_ACTIVE_KEY = 'voucherBalanceCheckActiveVouchers' as const;
 export const VOUCHER_AUTO_CLOSE_KEY = 'voucherAutoClose' as const;
 export const VOUCHER_STATION_KEY = 'voucherStation' as const;
+export const VOUCHER_STATION_PAID_ITEMS_KEY = 'voucherStationPaidItems' as const;
 
 export const VOUCHER_BALANCE_CHECK_MODES: readonly VoucherBalanceCheckMode[] = ['auto', 'on', 'off'];
 export const VOUCHER_AUTO_CLOSE_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_STATION_VALUES: readonly VoucherOnOff[] = ['off', 'on'];
+export const VOUCHER_STATION_PAID_ITEMS_VALUES: readonly VoucherOnOff[] = ['off', 'on'];
 
 export const VOUCHER_BALANCE_CHECK_DEFAULT: VoucherBalanceCheckMode = 'auto';
 export const VOUCHER_AUTO_CLOSE_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_STATION_DEFAULT: VoucherOnOff = 'off';
+export const VOUCHER_STATION_PAID_ITEMS_DEFAULT: VoucherOnOff = 'off';
 
 export function isVoucherBalanceCheckMode(value: unknown): value is VoucherBalanceCheckMode {
   return typeof value === 'string' && (VOUCHER_BALANCE_CHECK_MODES as readonly string[]).includes(value);
@@ -61,6 +68,31 @@ export function resolveVoucherStation(own: unknown, inherited: unknown): Voucher
   if (isVoucherOnOff(own)) return own;
   if (isVoucherOnOff(inherited)) return inherited;
   return VOUCHER_STATION_DEFAULT;
+}
+
+export function resolveVoucherStationPaidItems(own: unknown, inherited: unknown): VoucherOnOff {
+  if (isVoucherOnOff(own)) return own;
+  if (isVoucherOnOff(inherited)) return inherited;
+  return VOUCHER_STATION_PAID_ITEMS_DEFAULT;
+}
+
+/**
+ * "רכישה נוספת בתשלום בעמדת שובר" at a layer as drafted: the value in force (its own, else the
+ * inherited one, else "off"), what it would inherit, and whether the dashboard warns that the till
+ * will not show it — "on" while every cash and card option resolves blocked at that level (a
+ * voucher-only till has nothing to take the money with). The voucher's own switches do not count:
+ * they redeem, they do not pay for the extra items.
+ */
+export function voucherStationPaidItemsView(
+  own: PosSettingsPatch,
+  inherited: PosSettingsV1 | undefined,
+): { value: VoucherOnOff; inheritedValue: VoucherOnOff; noPaymentWarning: boolean } {
+  const value = resolveVoucherStationPaidItems(own[VOUCHER_STATION_PAID_ITEMS_KEY], inherited?.[VOUCHER_STATION_PAID_ITEMS_KEY]);
+  const inheritedValue = resolveVoucherStationPaidItems(undefined, inherited?.[VOUCHER_STATION_PAID_ITEMS_KEY]);
+  const anyPaymentOn = PAYMENT_OPTIONS.some((o) =>
+    resolvePaymentOptionKey(o.enabledKey, own, inherited, o.enabledByDefault),
+  );
+  return { value, inheritedValue, noPaymentWarning: value === 'on' && !anyPaymentOn };
 }
 
 /**

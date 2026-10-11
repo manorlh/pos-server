@@ -142,13 +142,15 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   groups?: PrepaidBatchGroup[] | null;
   totalQty?: number | null;
   catalogMode?: 'frozen' | 'live';
+  /** The names of what the groups choose ("סיכום השובר"); null without groups. */
+  groupNames?: PrepaidGroupNames | null;
   /** The list's figures (GET /prepaid-vouchers/batches): issued, redeemed, open, the rate. */
   figures?: PrepaidBatchFigures;
   /** Every status the list filters by, at once. */
   state?: PrepaidBatchState;
   /**
    * Only on the answer of POST /prepaid-vouchers/batches: an identical batch the same user made a
-   * moment ago ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
+   * moment ago ("נראה שסדרה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
    */
   possibleDuplicate?: PrepaidDuplicateRef | null;
   /**
@@ -319,6 +321,12 @@ export interface PrepaidBatchGroup {
   sortOrder?: number;
 }
 
+/** The products' and categories' names of a type's / batch's groups (the dashboard only). */
+export interface PrepaidGroupNames {
+  products: Record<string, string>;
+  categories: Record<string, string>;
+}
+
 export interface PrepaidBatchFigures {
   issued: number;
   /** Redeemed in full or in part. */
@@ -393,6 +401,12 @@ export interface PrepaidVoucherType extends PrepaidBatchTerms {
   splitAllowed: boolean;
   includeExtras: boolean;
   printTillValue: boolean;
+  /** "items" (a fixed list) or "groups" (קבוצות פריטים). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidBatchGroup[] | null;
+  totalQty?: number | null;
+  catalogMode?: 'frozen' | 'live';
+  groupNames?: PrepaidGroupNames | null;
   batchCount: number;
   createdAt: string | null;
   updatedAt: string | null;
@@ -430,6 +444,27 @@ export interface PrepaidTypeBody {
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
   maxUsesPerDay?: number | null;
+  /** Goods: "items" (a fixed list) or "groups" with their total (null: the groups' maxima). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidGroupBody[] | null;
+  totalQty?: number | null;
+}
+
+/** A group as a type / batch body sends it (₪ for its value). */
+export interface PrepaidGroupBody {
+  key?: string;
+  name: string;
+  minQty: number;
+  maxQty: number;
+  value?: number | null;
+  allowRepeat: boolean;
+  allItems: boolean;
+  productIds: string[];
+  categoryIds: string[];
+  includeSubcategories: boolean;
+  excludeProductIds: string[];
+  excludeCategoryIds: string[];
+  sortOrder: number;
 }
 
 export interface PrepaidTypeEvent {
@@ -519,6 +554,14 @@ export interface PrepaidVoucher {
   /** A discount voucher: its uses left of the batch's per-voucher uses (null for goods). */
   usesLeft?: number | null;
   usesPerVoucher?: number | null;
+  /**
+   * "מכסה 50 | מומשו 6 | נותרו 44": the voucher's quota, what was taken and what is left (the lookup's
+   * numbers) — item groups in items of all, a fixed list its quantities summed, a discount its uses.
+   */
+  quotaUnit?: 'units' | 'uses';
+  quota?: number | null;
+  used?: number | null;
+  remaining?: number | null;
   firstRedeemedAt: string | null;
   lastRedeemedAt: string | null;
   cancelledAt: string | null;
@@ -578,6 +621,10 @@ export interface PrepaidBatchCreate {
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
   maxUsesPerDay?: number | null;
+  /** Goods: "items" (a fixed list) or "groups" with their total (null: the groups' maxima). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidGroupBody[] | null;
+  totalQty?: number | null;
 }
 
 /** The rules of use that may change after printing (what it gives and its uses never do). */
@@ -625,7 +672,7 @@ export async function createPrepaidBatch(
  * clears what may be empty. `count`: the vouchers in all (more is issued, never fewer).
  * `applyToPartial`: new contents reach the partly redeemed vouchers too.
  */
-export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets'>> &
+export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets' | 'groups'>> &
   PrepaidBatchRulesUpdate & {
     targets?: { productIds: string[]; categoryIds: string[] } | null;
     selection?: 'items' | 'groups';

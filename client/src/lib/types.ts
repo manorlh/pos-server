@@ -328,6 +328,11 @@ export interface PosSettingsV1 {
   /** "עמדת שובר (מסך סריקה בלבד)": off (unset) or on. */
   voucherStation?: VoucherOnOff;
   /**
+   * "רכישה נוספת בתשלום בעמדת שובר": off (unset — vouchers only) or on (items paid for at the
+   * regular price join the station's sale after the voucher). In `effective` always resolved.
+   */
+  voucherStationPaidItems?: VoucherOnOff;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -415,7 +420,7 @@ export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
 /** "בירור יתרת שובר" — server/app/services/voucher_balance_check.py. */
 export type VoucherBalanceCheckMode = 'auto' | 'on' | 'off';
 
-/** `voucherAutoClose` / `voucherStation` — server/app/services/voucher_station_settings.py. */
+/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` — server/app/services/voucher_station_settings.py. */
 export type VoucherOnOff = 'on' | 'off';
 
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
@@ -461,6 +466,7 @@ export type PosSettingsPatch = Partial<
     | 'voucherBalanceCheck'
     | 'voucherAutoClose'
     | 'voucherStation'
+    | 'voucherStationPaidItems'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -478,10 +484,11 @@ export type PosSettingsPatch = Partial<
   /** `null` = inherit "דרך מימוש שובר" / "פריטים זכאים שאינם זמינים" from the level above again. */
   voucherRedeemFlow?: VoucherRedeemFlow | null;
   voucherShowUnavailable?: boolean | null;
-  /** `null` = inherit "בירור יתרת שובר" / the auto close / the voucher station again. */
+  /** `null` = inherit "בירור יתרת שובר" / the auto close / the voucher station / its paid items again. */
   voucherBalanceCheck?: VoucherBalanceCheckMode | null;
   voucherAutoClose?: VoucherOnOff | null;
   voucherStation?: VoucherOnOff | null;
+  voucherStationPaidItems?: VoucherOnOff | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;

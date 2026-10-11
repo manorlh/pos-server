@@ -99,14 +99,29 @@ import { VoucherSearch, type SearchPick } from '@/components/dashboard/prepaid-v
 import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import {
+  OfflineSwitch,
   PrepaidTypesView,
   ToggleFields,
   TypeSummary,
+  batchSummaryLines,
   policyBody,
   policyState,
+  summaryInputOf,
   type PolicyState,
 } from '@/components/dashboard/prepaid-vouchers/voucher-types';
-import { discountDraftErrors, isDiscountKind, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+import { FormSection, GoodsContents, PresetPicker, SummaryCard, summaryGroupsOf } from '@/components/dashboard/prepaid-vouchers/setup-parts';
+import {
+  emptyGroup,
+  groupProblems,
+  groupsBody,
+  presetValues,
+  totalQtyBody,
+  type DraftGroup,
+  type VoucherPreset,
+  type VoucherSelection,
+} from '@/lib/voucherPresets';
+import { voucherSummary, type SummaryInput } from '@/lib/voucherSummary';
+import { benefitText, discountDraftErrors, isDiscountKind, maxVouchersPerSale, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import {
   BatchRulesCard,
   DEFAULT_RULES,
@@ -274,7 +289,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
 }) {
   const t = useTranslations('prepaidVouchers.create');
   const te = useTranslations('prepaidVouchers.edit');
-  const tt = useTranslations('prepaidVouchers.types');
+  const ts = useTranslations('prepaidVouchers.setup');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
@@ -355,6 +370,12 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   // "החל גם על שוברים במימוש חלקי": new contents reach the partly redeemed vouchers too.
   const [applyToPartial, setApplyToPartial] = useState(false);
   const groupsBatch = ed?.selection === 'groups';
+  // A new batch without a type: a fixed list or item groups (lib/voucherPresets.ts), a quick start, the punch card's view.
+  const [selection, setSelection] = useState<VoucherSelection>('items');
+  const [groups, setGroups] = useState<DraftGroup[]>([]);
+  const [totalQty, setTotalQty] = useState('');
+  const [preset, setPreset] = useState<VoucherPreset | null>(null);
+  const [punchView, setPunchView] = useState(false);
   // The company's active types (its own and its parents').
   const types = useQuery({
     queryKey: ['prepaid-voucher-types', companyId, 'active'],
@@ -364,10 +385,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
   const pricesVisible = ed ? !!ed.pricesVisible : !!types.data?.pricesVisible;
   const discount = isDiscountKind(chosen ? chosen.kind : kind);
+  const createGroups = !ed && !chosen && !discount && selection === 'groups';
   // Only what this voucher has (lib/voucherFields.ts): goods — contents, pricing, split, extras, the
   // policy; a discount — its terms and uses; both — stacking, validity, shops, offline, print flags.
   const fields = voucherFieldsFor({
-    kind: chosen ? chosen.kind : kind, selection: groupsBatch ? 'groups' : 'items', pricing, stacking: rules.stacking,
+    kind: chosen ? chosen.kind : kind, selection: groupsBatch || createGroups ? 'groups' : 'items', pricing, stacking: rules.stacking,
     discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
   });
   const termErrors = chosen ? [] : discountDraftErrors({
@@ -422,6 +444,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setTerms(EMPTY_DISCOUNT_TERMS);
     setRules(DEFAULT_RULES);
     setIncludeExtras(false);
+    setSelection('items');
+    setGroups([]);
+    setTotalQty('');
+    setPreset(null);
+    setPunchView(false);
   };
 
   const n = parseInt(count, 10);
@@ -430,7 +457,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const plan = groupOk ? planText(n, groupSize) : null;
   // What is still missing, said in words under the button (not just a disabled button).
   const problems = batchFormProblems({
-    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch ? 1 : items.length,
+    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch || createGroups ? 1 : items.length,
     termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
     stackingOk: chosen ? true : stackingValid(rules),
   });
@@ -441,6 +468,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
         !discount && pricing === 'fixed' && !tillValue.trim() ? te('problem.value') : null,
       ].filter((x): x is string => !!x)
     : [];
+  // Item groups of a new batch: the value, the reason and the limit (lib/voucherPresets.ts).
+  const groupErrors = createGroups ? groupProblems(groups, totalQty) : [];
+  if (groupErrors.length) editProblems.push(ts('problemGroups'));
   const canCreate = problems.length === 0 && editProblems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
   const totals = discount ? null : issueTotals(n, chosen
@@ -540,7 +570,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
         offlineAllowed,
         discountBlockPolicy: discount ? { mode: 'honour' } : policyBody(policy),
         splitAllowed: discount ? false : splitAllowed,
-        items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        items: discount || createGroups ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        ...(createGroups ? { selection: 'groups' as const, groups: groupsBody(groups), totalQty: totalQtyBody(totalQty) } : {}),
         includeExtras: discount ? false : includeExtras,
         count: n,
         groupSize,
@@ -628,6 +659,57 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
   };
 
+  // A quick start: the form filled with values the owner could set by hand (lib/voucherPresets.ts).
+  const applyPreset = (p: VoucherPreset) => {
+    const v = presetValues(p, 50, createGroups ? groups[0] : undefined);
+    setPreset(p);
+    setKind(v.kind);
+    if (v.kind === 'items') {
+      setSelection(v.selection);
+      setGroups(v.groups);
+      setTotalQty(v.totalQty);
+      setSplitAllowed(v.splitAllowed);
+      setPunchView(p === 'punch');
+    } else if (v.discountType) {
+      setTerms((cur) => ({ ...cur, discountType: v.discountType! }));
+    }
+  };
+  const pickSelection = (v: VoucherSelection) => {
+    setSelection(v);
+    if (v === 'groups' && !groups.length) setGroups([emptyGroup('פריטים')]);
+  };
+
+  // "סיכום השובר" (lib/voucherSummary.ts): the type's terms when one is chosen, else the form's — with
+  // this batch's count, validity and shops.
+  const shopNames = shopIds.length ? (shops.data ?? []).filter((x) => shopIds.includes(x.id)).map((x) => x.name) : null;
+  const batchFacts = { count: Number.isFinite(n) && n > 0 ? n : null, validFrom: validFrom || null, validUntil: validUntil || null, shopNames };
+  const summaryInput: SummaryInput = chosen
+    ? { ...summaryInputOf(chosen), ...batchFacts }
+    : {
+        kind, selection: groupsBatch || createGroups ? 'groups' : 'items',
+        items: items.map((i) => ({ name: i.product.name, quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel })),
+        groups: groupsBatch && ed ? summaryInputOf(ed).groups : summaryGroupsOf(groups),
+        totalQty: groupsBatch ? ed?.totalQty ?? null : totalQtyBody(totalQty),
+        splitAllowed: !discount && splitAllowed, includeExtras: !discount && includeExtras,
+        pricing: ed ? pricing : tillValue.trim() ? 'fixed' : 'cover', tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
+        accounting: discount ? null : accounting,
+        benefit: discount ? benefitText({
+          kind, discountType: terms.discountType,
+          value: Number(terms.value) > 0 ? Math.round(Number(terms.value) * 100) : null,
+          minPurchaseAgorot: Number(terms.minPurchase) > 0 ? Math.round(Number(terms.minPurchase) * 100) : null,
+          maxDiscountAgorot: Number(terms.maxDiscount) > 0 ? Math.round(Number(terms.maxDiscount) * 100) : null,
+          maxUnits: Number(terms.maxUnits) || null, names: terms.products.map((x) => x.name),
+        }) : null,
+        usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1, maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+        maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+        stacking: rules.stacking, maxVouchersPerSale: maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) ?? null,
+        offlineAllowed,
+        ...batchFacts,
+      };
+  const summary = voucherSummary(summaryInput);
+  // "מכסה: עד 50 פריטים לכל שובר" in "כמה ומתי" (set with the items, in step 2).
+  const createQuota = createGroups ? (totalQtyBody(totalQty) ?? summaryGroupsOf(groups).reduce((a, g) => a + g.maxQty, 0)) : 0;
+
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
@@ -654,146 +736,300 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               {ed.type?.origin === 'manual' && ed.type.name ? <p>{te('typeLine', { name: ed.type.name, version: ed.type.version })}</p> : null}
             </div>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
+
+          <FormSection title={ts('batchDetailsTitle')} purpose={ts('batchDetailsPurpose')}>
             <div className="space-y-1">
-              <Label htmlFor="pv-name">{t('name')}</Label>
-              <Input id="pv-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
+              <Label>{t('company')}</Label>
+              <Select
+                value={companyId}
+                disabled={!!ed}
+                onValueChange={(v) => {
+                  setCompanyId(String(v ?? ''));
+                  setShopIds([]);
+                  // A production and an event are a company's: they go with it.
+                  setProductionId('');
+                  setReportEventId('');
+                  // What another company may carry is another list: the picks go with the company.
+                  setItems([]);
+                  setGroups((gs) => gs.map((g) => ({ ...g, products: [], categories: [], excludeProducts: [], excludeCategories: [] })));
+                  setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
+                }}
+                items={(companies.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
+              >
+                <SelectTrigger className="w-full"><SelectValue placeholder={t('pickCompany')} /></SelectTrigger>
+                <SelectContent>
+                  {(companies.data ?? []).map((c) => (
+                    <SelectItem key={c.id} value={c.id} label={c.name}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-event">{t('eventName')}</Label>
-              <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
-              onChange={(id, pname) => {
-                setProductionId(id);
-                // "עבור מי" is the production's name (the cloud keeps them in step).
-                if (id && pname) setCustomerName(pname);
-              }} />
-            <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
-              onChange={(id, ename) => {
-                setReportEventId(id);
-                // The printed event name: the event's, unless one was typed.
-                if (id && ename && !eventName.trim()) setEventName(ename);
-              }} />
-          </div>
-
-          {ed ? null : (
-          <div className="space-y-1">
-            <Label>{t('type')}</Label>
-            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-              value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
-              <option value="">{t('typeNone')}</option>
-              {(types.data?.items ?? []).map((x) => (
-                <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
-          </div>
-          )}
-          {chosen ? <TypeSummary type={chosen} /> : (<>
-          {ed ? (
-            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
-          ) : <KindPicker value={kind} onChange={setKind} />}
-          {fields.visible.has('discountType') ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
-          {discount ? (
-            // A discount has no accounting or policy to set, but may be redeemed offline too.
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{tt('offlineAllowed')}</p>
-                <p className="text-xs text-muted-foreground">{tt('offlineHint')}</p>
-              </div>
-              <Switch checked={offlineAllowed} onCheckedChange={(v) => setOfflineAllowed(!!v)} aria-label={tt('offlineAllowed')} />
-            </div>
-          ) : null}
-
-          {!discount && groupsBatch ? (
-            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
-              {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
-            </p>
-          ) : null}
-          {!discount && !groupsBatch ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
-
-          {fields.visible.has('includeExtras') ? (
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t('includeExtras')}</p>
-                <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
-              </div>
-              <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
-            </div>
-          ) : null}
-
-          {fields.visible.has('tillValue') ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
-                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
-                  placeholder={t('tillValuePlaceholder')} />
-                <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+                <Label htmlFor="pv-name">{t('name')}</Label>
+                <Input id="pv-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
               </div>
-              {pricesVisible ? (
-                <div className="space-y-1">
-                  <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
-                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
-                  <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
-                </div>
-              ) : null}
+              <div className="space-y-1">
+                <Label htmlFor="pv-event">{t('eventName')}</Label>
+                <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
+              </div>
             </div>
-          ) : null}
-          {!discount && ed ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
+                onChange={(id, pname) => {
+                  setProductionId(id);
+                  // "עבור מי" is the production's name (the cloud keeps them in step).
+                  if (id && pname) setCustomerName(pname);
+                }} />
+              <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
+                onChange={(id, ename) => {
+                  setReportEventId(id);
+                  // The printed event name: the event's, unless one was typed.
+                  if (id && ename && !eventName.trim()) setEventName(ename);
+                }} />
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
-                <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-                  value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
-                  <option value="fixed">{te('choice.pricing.fixed')}</option>
-                  <option value="cover">{te('choice.pricing.cover')}</option>
+                <Label htmlFor="pv-customer">{t('customerName')}</Label>
+                <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder={t('customerPlaceholder')} disabled={!!productionId} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="pv-order">{t('orderRef')}</Label>
+                <Input id="pv-order" value={orderRef} maxLength={100} onChange={(e) => setOrderRef(e.target.value)} />
+              </div>
+            </div>
+          </FormSection>
+
+          <FormSection n={1} title={ts('s1Title')} purpose={ed ? ts('s1PurposeEdit') : ts('s1PurposeBatch')}>
+            {ed ? null : (
+              <div className="space-y-1">
+                <Label>{t('type')}</Label>
+                <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                  value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
+                  <option value="">{t('typeNone')}</option>
+                  {(types.data?.items ?? []).map((x) => (
+                    <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
+                  ))}
                 </select>
+                <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
               </div>
-              {fields.visible.has('allowTopUp') ? (
+            )}
+            {chosen ? <TypeSummary type={chosen} /> : ed ? (
+              <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
+            ) : (
+              <>
+                <PresetPicker value={preset} onPick={applyPreset} />
+                <KindPicker value={kind} onChange={(k) => { setKind(k); setPreset(null); }} />
+              </>
+            )}
+          </FormSection>
+
+          {chosen ? null : (
+            <FormSection n={2} title={ts('s2Title')} purpose={discount ? ts('s2PurposeDiscount') : ts('s2Purpose')}>
+              {fields.visible.has('discountType') ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+              {!discount && groupsBatch ? (
+                <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+                  {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
+                </p>
+              ) : null}
+              {!discount && !groupsBatch ? (ed ? (
+                <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} />
+              ) : (
+                <GoodsContents companyId={companyId} shopIds={shopIds} selection={selection} onSelection={pickSelection}
+                  items={items} onItems={setItems} groups={groups} onGroups={setGroups} totalQty={totalQty} onTotalQty={setTotalQty}
+                  punch={punchView} onPunch={setPunchView} enabled={open} />
+              )) : null}
+              {fields.visible.has('includeExtras') ? (
                 <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
-                  <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{t('includeExtras')}</p>
+                    <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
+                  </div>
+                  <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
+                </div>
+              ) : null}
+            </FormSection>
+          )}
+
+          <FormSection n={3} title={ts('s3Title')} purpose={ts('s3PurposeBatch')}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
+                <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
+                  onChange={(ev) => setCount(ev.target.value)} />
+                <p className="text-xs text-muted-foreground">{ed ? te('countHint', { n: issued }) : t('countHint')}</p>
+              </div>
+              {fields.visible.has('splitAllowed') && !chosen ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {splitAllowed ? t('splitOnHint') : (groupsBatch || createGroups) ? t('splitOffHintGroups') : t('splitOffHint')}
+                    </p>
+                  </div>
+                  <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
                 </div>
               ) : null}
             </div>
-          ) : null}
-          {!discount ? (
-            <div className="rounded-lg border p-3">
+            {!chosen && discount ? <RulesFields kind={kind} value={rules} onChange={setRules} part="uses" /> : null}
+            {createGroups && createQuota ? <p className="text-sm">{ts('quotaIs', { n: createQuota })}</p> : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-from">{t('validFrom')}</Label>
+                <DatePicker id="pv-from" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="pv-until">{t('validUntil')}</Label>
+                <DatePicker id="pv-until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('validityHint')}</p>
+          </FormSection>
+
+          {chosen ? null : (
+            <FormSection n={4} title={ts('s4Title')} purpose={ts('s4Purpose')}>
+              <RulesFields kind={kind} value={rules} onChange={setRules} part="sale" />
+            </FormSection>
+          )}
+
+          <FormSection n={5} title={ts('s5Title')} purpose={chosen ? ts('s5PurposeFromType') : discount ? ts('s5PurposeDiscount') : ts('s5Purpose')}>
+            {!chosen && fields.visible.has('tillValue') ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
+                  <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
+                    placeholder={t('tillValuePlaceholder')} />
+                  <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+                </div>
+                {pricesVisible ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
+                    <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
+                    <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!chosen && !discount && ed ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
+                  <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                    value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
+                    <option value="fixed">{te('choice.pricing.fixed')}</option>
+                    <option value="cover">{te('choice.pricing.cover')}</option>
+                  </select>
+                </div>
+                {fields.visible.has('allowTopUp') ? (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                    <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
+                    <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!chosen && !discount ? (
               <ToggleFields
                 accounting={accounting} onAccounting={setAccounting}
                 offlineAllowed={offlineAllowed} onOfflineAllowed={setOfflineAllowed}
-                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable}
+                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} showOffline={false}
+              />
+            ) : null}
+          </FormSection>
+
+          <FormSection n={6} title={ts('s6Title')} purpose={ts('s6PurposeBatch')}>
+            <div className="space-y-1">
+              <Label>{t('shops')}</Label>
+              <EntityMultiSelect
+                label={t('shops')}
+                options={(shops.data ?? []).map((s) => ({ id: s.id, label: s.name }))}
+                selected={shopIds}
+                onChange={setShopIds}
+                allLabel={t('allShops')}
+                clearLabel={t('allShops')}
+                emptyLabel={t('noShops')}
+                disabled={!companyId}
               />
             </div>
-          ) : null}
-          </>)}
+            {chosen ? null : <OfflineSwitch value={offlineAllowed} onChange={setOfflineAllowed} />}
+          </FormSection>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
-              <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
-                onChange={(ev) => setCount(ev.target.value)} />
-              {ed ? <p className="text-xs text-muted-foreground">{te('countHint', { n: issued })}</p> : null}
+          <FormSection n={7} title={ts('s7Title')} purpose={ts('s7Purpose')}>
+            {ed ? null : (
+              <div className="space-y-2">
+                <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
+                {!groupOk ? (
+                  <p className="text-xs text-destructive">{t('groupSizeInvalid')}</p>
+                ) : plan ? (
+                  <p className="text-sm font-medium" aria-live="polite">{plan}</p>
+                ) : null}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('showItems')}</p>
+                <p className="text-xs text-muted-foreground">{showItems ? t('showItemsOn') : t('showItemsOff')}</p>
+              </div>
+              <Switch checked={showItems} onCheckedChange={(v) => setShowItems(!!v)} aria-label={t('showItems')} />
             </div>
-            {fields.visible.has('splitAllowed') && !chosen ? (
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
-                  <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
+                  <p className="text-sm font-medium">{t('showCode')}</p>
+                  <p className="text-xs text-muted-foreground">{t('showCodeHint')}</p>
                 </div>
-                <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
+                <Switch checked={showCode} onCheckedChange={(v) => setShowCode(!!v)} aria-label={t('showCode')} />
               </div>
-            ) : null}
-          </div>
-
-          {!chosen ? (
-            <div className="rounded-lg border p-3">
-              <RulesFields kind={kind} value={rules} onChange={setRules} />
+              <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
             </div>
-          ) : null}
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
+                onChange={(e) => setShowCredit(e.target.checked)} />
+              {t('showCredit')}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
+                onChange={(e) => setShowValidity(e.target.checked)} />
+              {t('showValidity')}
+            </label>
+            <div className="space-y-1">
+              <Label htmlFor="pv-text">{t('freeText')}</Label>
+              <textarea
+                id="pv-text"
+                rows={3}
+                value={freeText}
+                maxLength={1000}
+                onChange={(e) => setFreeText(e.target.value)}
+                placeholder={t('freeTextPlaceholder')}
+                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>{t('logo')}</Label>
+              <div className="flex items-center gap-3">
+                {logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={logoUrl} alt="" className="h-12 w-auto max-w-32 rounded border object-contain" />
+                ) : null}
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                  onChange={(e) => { void uploadLogo(e.target.files?.[0]); e.target.value = ''; }} />
+                <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                  {logoUrl ? t('logoReplace') : t('logoUpload')}
+                </Button>
+                {logoUrl ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setLogoUrl(null)}>{t('logoRemove')}</Button>
+                ) : null}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('preview')}</Label>
+              <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
+                <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
+              </div>
+            </div>
+          </FormSection>
 
           {ed && contentsChanged ? (
             <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/30">
@@ -808,147 +1044,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
             </label>
           ) : null}
 
-          {ed ? null : (
-          <div className="space-y-2 rounded-lg border p-3">
-            <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
-            {!groupOk ? (
-              <p className="text-xs text-destructive">{t('groupSizeInvalid')}</p>
-            ) : plan ? (
-              <p className="text-sm font-medium" aria-live="polite">{plan}</p>
-            ) : null}
-          </div>
-          )}
-
-          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{t('showItems')}</p>
-              <p className="text-xs text-muted-foreground">{showItems ? t('showItemsOn') : t('showItemsOff')}</p>
-            </div>
-            <Switch checked={showItems} onCheckedChange={(v) => setShowItems(!!v)} aria-label={t('showItems')} />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t('showCode')}</p>
-                <p className="text-xs text-muted-foreground">{t('showCodeHint')}</p>
-              </div>
-              <Switch checked={showCode} onCheckedChange={(v) => setShowCode(!!v)} aria-label={t('showCode')} />
-            </div>
-            <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
-              onChange={(e) => setShowCredit(e.target.checked)} />
-            {t('showCredit')}
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
-              onChange={(e) => setShowValidity(e.target.checked)} />
-            {t('showValidity')}
-          </label>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-customer">{t('customerName')}</Label>
-              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
-                placeholder={t('customerPlaceholder')} disabled={!!productionId} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-order">{t('orderRef')}</Label>
-              <Input id="pv-order" value={orderRef} maxLength={100} onChange={(e) => setOrderRef(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-from">{t('validFrom')}</Label>
-              <DatePicker id="pv-from" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-until">{t('validUntil')}</Label>
-              <DatePicker id="pv-until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="pv-text">{t('freeText')}</Label>
-            <textarea
-              id="pv-text"
-              rows={3}
-              value={freeText}
-              maxLength={1000}
-              onChange={(e) => setFreeText(e.target.value)}
-              placeholder={t('freeTextPlaceholder')}
-              className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label>{t('logo')}</Label>
-            <div className="flex items-center gap-3">
-              {logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={logoUrl} alt="" className="h-12 w-auto max-w-32 rounded border object-contain" />
-              ) : null}
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-                onChange={(e) => { void uploadLogo(e.target.files?.[0]); e.target.value = ''; }} />
-              <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                {logoUrl ? t('logoReplace') : t('logoUpload')}
-              </Button>
-              {logoUrl ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => setLogoUrl(null)}>{t('logoRemove')}</Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>{t('company')}</Label>
-              <Select
-                value={companyId}
-                disabled={!!ed}
-                onValueChange={(v) => {
-                  setCompanyId(String(v ?? ''));
-                  setShopIds([]);
-                  // A production and an event are a company's: they go with it.
-                  setProductionId('');
-                  setReportEventId('');
-                  // What another company may carry is another list: the picks go with the company.
-                  setItems([]);
-                  setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
-                }}
-                items={(companies.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
-              >
-                <SelectTrigger className="w-full"><SelectValue placeholder={t('pickCompany')} /></SelectTrigger>
-                <SelectContent>
-                  {(companies.data ?? []).map((c) => (
-                    <SelectItem key={c.id} value={c.id} label={c.name}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>{t('shops')}</Label>
-              <EntityMultiSelect
-                label={t('shops')}
-                options={(shops.data ?? []).map((s) => ({ id: s.id, label: s.name }))}
-                selected={shopIds}
-                onChange={setShopIds}
-                allLabel={t('allShops')}
-                clearLabel={t('allShops')}
-                emptyLabel={t('noShops')}
-                disabled={!companyId}
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>{t('preview')}</Label>
-            <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
-              <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
-            </div>
-          </div>
+          <SummaryCard lines={summary} sticky />
         </div>
         <div className="space-y-1 text-sm" aria-live="polite">
           {totals && totals.units + totals.weights.length > 0 && Number.isFinite(n) && n > 0 ? (
@@ -1467,6 +1563,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       ) : null}
 
       <StatsBar b={batch} />
+      <SummaryCard lines={batchSummaryLines(batch)} />
       {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
@@ -1708,7 +1805,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.usesLeft != null
                       ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
-                      : v.items.map((i) => t('remainingOf', {
+                      : !v.items.length && v.quota != null && v.remaining != null
+                        ? ta('unitsLeft', { left: v.remaining, total: v.quota })
+                        : v.items.map((i) => t('remainingOf', {
                         name: i.name,
                         left: quantityNumberText(i.remaining),
                         // By weight: "0.2/0.5 ק״ג".

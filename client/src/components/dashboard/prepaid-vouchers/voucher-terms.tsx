@@ -83,7 +83,7 @@ export const EMPTY_DISCOUNT_TERMS: DiscountTermsState = {
  * The categories an item discount of [companyId] may name (`GET /prepaid-vouchers/categories`,
  * the save's own rule), each named with its parent path ("שתייה › חמה").
  */
-function usePrepaidCategoryOptions(companyId: string): MultiSelectOption[] {
+export function usePrepaidCategoryOptions(companyId: string): MultiSelectOption[] {
   const { data = [] } = useQuery({
     queryKey: ['prepaid-voucher-categories', companyId],
     queryFn: () => fetchPrepaidCategories(companyId),
@@ -329,12 +329,15 @@ export function RulesFields({
   onChange,
   usesFixed = false,
   stackingOnly = false,
+  part = 'all',
 }: {
   kind: PrepaidVoucherKind;
   value: RulesState;
   onChange: (next: RulesState) => void;
   usesFixed?: boolean;
   stackingOnly?: boolean;
+  /** The guided form's sections: `sale` — other vouchers and promotions ("שילוב בעסקה"); `uses` — the uses ("כמה ומתי"). */
+  part?: 'all' | 'sale' | 'uses';
 }) {
   const t = useTranslations('prepaidVouchers.kinds');
   const set = (patch: Partial<RulesState>) => onChange({ ...value, ...patch });
@@ -343,8 +346,11 @@ export function RulesFields({
   const perSaleFixed = fields.disabled.has('maxUsesPerSale');
   const over = perSaleFixed ? null : usesPerSaleProblem(value.maxUsesPerSale, value.usesPerVoucher);
   const maxBad = fields.visible.has('maxVouchersPerSale') ? maxVouchersProblem(value.maxVouchersPerSale, MAX_VOUCHERS_PER_SALE) : null;
+  const showSale = part !== 'uses';
+  const showUses = part !== 'sale' && !stackingOnly;
   return (
     <div className="space-y-3">
+      {showSale ? (
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>{t('stackingLabel')}</Label>
@@ -392,7 +398,8 @@ export function RulesFields({
           </div>
         ) : null}
       </div>
-      {stackingOnly ? null : fields.visible.has('usesPerVoucher') ? (
+      ) : null}
+      {!showUses ? null : fields.visible.has('usesPerVoucher') ? (
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1">
             <Label htmlFor="pv-uses">{t('usesPerVoucher')}</Label>

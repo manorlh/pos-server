@@ -88,15 +88,18 @@ export function BoardVouchers({
 
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div>
+          {/* "כמה מתוך כמה" (the owner, 11.10.2026): out of the listed batches' vouchers — read as
+              "מומשו 12 מתוך 500 שוברים" (the glossary); an older server without `issued`: the count alone. */}
           <p className="text-[26px] font-bold leading-tight tabular-nums text-cb-ink">
+            {report.issued ? <span className="me-1 text-base font-medium text-cb-muted">{t('redeemedLead')}</span> : null}
             {formatQuantity(totals.vouchers)}
-            {/* "כמה מתוך כמה" (the owner, 11.10.2026): out of the listed batches' vouchers. */}
             {report.issued ? (
               <span className="ms-1 text-base font-medium text-cb-muted">{t('ofIssued', { total: formatQuantity(report.issued) })}</span>
             ) : null}
           </p>
           <p className="text-xs text-cb-muted">
-            {t('redeemed', { count: totals.vouchers })} · {t('redemptions', { count: totals.redemptions })}
+            {report.issued ? null : <>{t('redeemed', { count: totals.vouchers })} · </>}
+            {t('redemptions', { count: totals.redemptions })}
             {report.issued ? <> · {t('usedEver', { used: formatQuantity(report.usedEver ?? 0), total: formatQuantity(report.issued) })}</> : null}
           </p>
         </div>

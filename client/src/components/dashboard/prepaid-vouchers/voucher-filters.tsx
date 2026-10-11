@@ -326,7 +326,8 @@ export function VoucherFilterBar({
           {view !== 'batches' ? (
             <label className="block space-y-1">
               <span className="block text-xs font-medium text-muted-foreground">{t('group')}</span>
-              <Input inputMode="numeric" className="h-9" value={value.group} onChange={(e) => set('group', e.target.value.replace(/\D/g, ''))} />
+              <Input inputMode="numeric" className="h-9" value={value.group} placeholder={t('groupPlaceholder')}
+                onChange={(e) => set('group', e.target.value.replace(/\D/g, ''))} />
             </label>
           ) : null}
         </div>
