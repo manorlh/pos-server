@@ -358,8 +358,12 @@ POST /menu/groups -> products:edit
 PUT /menu/groups-order -> products:edit
 DELETE /menu/groups/{group_id} -> products:edit
 PUT /menu/groups/{group_id} -> products:edit
+DELETE /menu/modifier-options/{option_id}/image -> products:edit
+POST /menu/modifier-options/{option_id}/image -> products:edit
 GET /menu/notes -> products:view
 PUT /menu/notes -> products:edit
+DELETE /menu/notes/{note_id}/image -> products:edit
+POST /menu/notes/{note_id}/image -> products:edit
 GET /menu/products/{product_id} -> products:view
 PUT /menu/products/{product_id} -> products:edit
 GET /menu/upsells -> products:view
