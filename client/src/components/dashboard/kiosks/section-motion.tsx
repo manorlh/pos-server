@@ -18,7 +18,7 @@ import { Activity, Check, Gauge, History, Info, RadioTower, RotateCcw, SlidersHo
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { MOTION_EFFECTS } from '@/lib/kioskConfig';
+import { MOTION_EFFECTS, MOTION_ITEM_FLOWS } from '@/lib/kioskConfig';
 import {
   MOTION_GLOBAL_SPEEDS,
   MOTION_MULTIPLIER_MAX,
@@ -335,6 +335,29 @@ function EffectsPicker() {
   );
 }
 
+/**
+ * "תהליך פריט עם תוספות והערות" (`motion.itemFlow`): חלון אחד (today's) · דף אחר דף — a page per add-on group the
+ * dish has, then its notes, sliding by "מעבר בין מסכים" with the tiles entering by "כניסת הפריטים".
+ */
+function ItemFlowPicker() {
+  const t = useTranslations('kiosks.motion');
+  const tf = useTranslations('kiosks.fields');
+  const path = 'motion.itemFlow';
+  const f = useKioskField<string | undefined>(path);
+  const label = tf(path);
+  return (
+    <FieldShell path={path} label={label} hint={t('itemFlowHint')}>
+      <Segmented<string>
+        value={f.value ?? 'sheet'}
+        options={MOTION_ITEM_FLOWS.map((v) => ({ value: v, label: t(`itemFlowOption.${v}`) }))}
+        onChange={f.set}
+        disabled={f.disabled}
+        ariaLabel={label}
+      />
+    </FieldShell>
+  );
+}
+
 function MotionGlobalCard() {
   const tx = useMotionText();
   return (
@@ -345,6 +368,7 @@ function MotionGlobalCard() {
         <DurationMath />
       </div>
       <EffectsPicker />
+      <ItemFlowPicker />
       <p className="text-xs text-muted-foreground">{tx.t('perfNote')}</p>
     </SectionCard>
   );

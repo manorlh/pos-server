@@ -10,6 +10,9 @@
  *    §3.3: a menu beats the machine's own list);
  *  - not one nobody can order at a kiosk (`neverOnKiosk`): the general item, an open-price product and a weighed one.
  *
+ * "תוספת בלבד" (`addonRole` addon_only, lib/addonRole.ts) is sold — as an add-on option's linked product and as a meal's
+ * component — but never on the screens (`onKioskScreens`): the catalogs keep it apart (`held`) for those.
+ *
  * Pure; no imports (the node tests compile it on its own).
  */
 
@@ -23,6 +26,19 @@ type Row = Record<string, unknown>;
  */
 export function neverOnKiosk(p: Row): boolean {
   return p.isGeneral === true || p.isOpenPrice === true || p.isWeighed === true;
+}
+
+/**
+ * "תוספת בלבד" (`addonRole` addon_only): in no sell catalog — not on the screens, whatever a menu or the machine's list
+ * says; kept (`held`) as an option's linked product and a meal's component. "גם וגם" (`both`) is an ordinary product here.
+ */
+export function addonOnlyRow(p: Row): boolean {
+  return p.addonRole === 'addon_only';
+}
+
+/** On the kiosk's screens: sold (`sellableOnKiosk`) and not an add-on only. */
+export function onKioskScreens(p: Row, machineCatalogMode: string | null | undefined, menuActive = false): boolean {
+  return sellableOnKiosk(p, machineCatalogMode, menuActive) && !addonOnlyRow(p);
 }
 
 /**
