@@ -42,6 +42,11 @@ ALL_OFF = {
     "payCardEnabled": False,
 }
 
+# The production voucher's two switches off. On when unset, so with them unset ALL_OFF
+# leaves a voucher-only till, which is allowed; only both off as well leaves nothing.
+VOUCHER_OFF = {"payVoucherEnabled": False, "payVoucherManualEnabled": False}
+NOTHING_LEFT = {**ALL_OFF, **VOUCHER_OFF}
+
 
 def _ts() -> datetime:
     return datetime(2026, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -129,8 +134,8 @@ def test_manual_card_switched_on_at_the_shop_beats_the_company_off() -> None:
 def test_manual_card_alone_is_enough_to_keep_a_layer_payable() -> None:
     from app.services.payment_options import any_allowed
 
-    assert any_allowed({**ALL_OFF, "payManualCardEnabled": True}) is True
-    assert any_allowed(ALL_OFF) is False
+    assert any_allowed({**NOTHING_LEFT, "payManualCardEnabled": True}) is True
+    assert any_allowed(NOTHING_LEFT) is False
 
 
 # ── Parity with the till (one test per row) ──────────────────────────────────
@@ -459,7 +464,7 @@ def test_the_till_view_still_never_tips_on_a_hidden_option() -> None:
 
 # ── Refusing a write that leaves no payment option ───────────────────────────
 
-def test_tenant_patch_hiding_all_four_is_refused() -> None:
+def test_tenant_patch_hiding_all_four_and_the_voucher_is_refused() -> None:
     tenant, _, _, db = _hierarchy({}, {}, {})
     with patch("app.routers.settings._can_manage_tenant", return_value=True), patch(
         "app.routers.settings.notify_machines_for_tenant_settings"
@@ -467,7 +472,7 @@ def test_tenant_patch_hiding_all_four_is_refused() -> None:
         with pytest.raises(HTTPException) as exc:
             patch_tenant_settings(
                 tenant_id=str(tenant.id),
-                data=PosSettingsV1Patch.model_validate(ALL_OFF),
+                data=PosSettingsV1Patch.model_validate(NOTHING_LEFT),
                 current_user=_user(UserRole.DISTRIBUTOR),
                 db=db,
             )
@@ -481,7 +486,7 @@ def test_tenant_patch_hiding_all_four_is_refused() -> None:
 
 def test_company_patch_hiding_the_last_option_its_tenant_left_is_refused() -> None:
     three_off = {k: False for k in ("payFastCashEnabled", "payCashEnabled", "payFastCardEnabled")}
-    _, company, _, db = _hierarchy(three_off, {}, {})
+    _, company, _, db = _hierarchy({**three_off, **VOUCHER_OFF}, {}, {})
     with patch("app.routers.settings._check_company_access"), patch(
         "app.routers.settings._check_company_settings_write"
     ), patch("app.routers.settings.notify_machines_for_company_settings"):
@@ -501,7 +506,7 @@ def test_company_patch_hiding_the_last_option_its_tenant_left_is_refused() -> No
 
 def test_shop_patch_hiding_the_last_option_is_refused_but_leaving_one_is_not() -> None:
     _, _, shop, db = _hierarchy(
-        {"payFastCashEnabled": False},
+        {"payFastCashEnabled": False, **VOUCHER_OFF},
         {"payCashEnabled": False},
         {},
     )
@@ -644,8 +649,8 @@ def test_null_still_does_not_unset_non_payment_keys() -> None:
 
 def test_a_reset_that_would_leave_nothing_allowed_is_refused() -> None:
     # The shop's own True is the only thing keeping cash on; resetting it would
-    # inherit the parents' all-off.
-    _, _, shop, db = _hierarchy(ALL_OFF, {}, {"payCashEnabled": True})
+    # inherit the parents' all-off (the voucher included).
+    _, _, shop, db = _hierarchy(NOTHING_LEFT, {}, {"payCashEnabled": True})
     with pytest.raises(HTTPException) as exc:
         _patch_shop(shop, db, {"payCashEnabled": None})
     assert exc.value.status_code == 422

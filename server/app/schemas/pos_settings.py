@@ -95,6 +95,12 @@ class PosSettingsV1Patch(BaseModel):
     pay_card_tips: Optional[bool] = Field(None, alias="payCardTips")
     pay_manual_card_enabled: Optional[bool] = Field(None, alias="payManualCardEnabled")
     pay_manual_card_tips: Optional[bool] = Field(None, alias="payManualCardTips")
+    # ── The production voucher ("שובר הפקה") on the till's payment screen ──
+    # Unset = on; `null` in a PATCH resets the layer to inherit. With every option above
+    # off, either one on keeps the till payable: a voucher-only till (payment_options.py).
+    pay_voucher_enabled: Optional[bool] = Field(None, alias="payVoucherEnabled")
+    #: "שובר ידני": typing the voucher's code by hand.
+    pay_voucher_manual_enabled: Optional[bool] = Field(None, alias="payVoucherManualEnabled")
     #: The most instalments the till's instalments picker (the `card` option) offers,
     #: 2–36. Unset = the card terminal decides; `null` in a PATCH resets the layer to
     #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).

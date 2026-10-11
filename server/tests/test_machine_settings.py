@@ -188,6 +188,9 @@ def test_zscope_is_refused_at_the_till() -> None:
 def test_a_till_cannot_be_left_without_a_payment_option() -> None:
     _, _, _, machine, db = _world({}, {}, {}, {})
     off = {k: False for k in ("payFastCashEnabled", "payCashEnabled", "payFastCardEnabled", "payCardEnabled")}
+    # The production voucher (on when unset) keeps it payable: a voucher-only till is
+    # allowed. Only the voucher off as well leaves nothing.
+    off.update({"payVoucherEnabled": False, "payVoucherManualEnabled": False})
     with pytest.raises(Exception):
         _patch_machine(machine, db, off)
 
