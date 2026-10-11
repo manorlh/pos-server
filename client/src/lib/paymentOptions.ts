@@ -27,6 +27,7 @@ import type {
   PosSettingsPatch,
   PosSettingsV1,
   ResettableSwitchKey,
+  VoucherSettingKey,
 } from './types';
 
 export type PaymentOptionId = 'fastCash' | 'cash' | 'fastCard' | 'card' | 'manualCard';
@@ -95,6 +96,42 @@ export const PAYMENT_OPTIONS = [
  */
 export const PAYMENT_OPTION_FALLBACK = { tips: false } as const;
 
+export type VoucherSwitchId = 'voucher' | 'voucherManual';
+
+export interface VoucherSwitch {
+  id: VoucherSwitchId;
+  key: VoucherSettingKey;
+  /** Message keys in the `posSettings` namespace. */
+  labelKey: string;
+  descriptionKey: string;
+}
+
+/**
+ * The production voucher ("שובר הפקה") on the till's payment screen: scanning it, and
+ * "שובר ידני" — typing its code by hand. A rule of its own beside the five options above
+ * (no tender of its own, no tip question): both on when nothing sets them, so a shop that
+ * predates the switches keeps the voucher. With every cash and card option off and either
+ * of these on, the till is a voucher-only till — allowed, unlike a till with nothing.
+ * The same keys and default as server/app/services/payment_options.py.
+ */
+export const VOUCHER_SWITCHES = [
+  {
+    id: 'voucher',
+    key: 'payVoucherEnabled',
+    labelKey: 'payVoucherLabel',
+    descriptionKey: 'payVoucherDesc',
+  },
+  {
+    id: 'voucherManual',
+    key: 'payVoucherManualEnabled',
+    labelKey: 'payVoucherManualLabel',
+    descriptionKey: 'payVoucherManualDesc',
+  },
+] as const satisfies readonly VoucherSwitch[];
+
+/** What an unset voucher switch means: on. */
+export const VOUCHER_SWITCH_DEFAULT = true;
+
 /**
  * This layer's own value if it set one, else what it inherits, else `fallback`.
  * Also used by the sell-screen switches (lib/sellScreen.ts), which follow the same
@@ -116,13 +153,30 @@ export function resolvePaymentOptionKey(
 /**
  * A till with every option hidden could not take a payment at all. The server
  * refuses such a save with a 422; the form checks first so the operator sees why.
+ * Every cash and card option off is fine while the voucher (scanned or typed) is on:
+ * that is a voucher-only till. Only nothing at all left is refused.
  */
 export function noPaymentOptionAllowed(
   own: PosSettingsPatch,
   inherited: PosSettingsV1 | undefined,
 ): boolean {
-  return PAYMENT_OPTIONS.every(
-    (o) => !resolvePaymentOptionKey(o.enabledKey, own, inherited, o.enabledByDefault),
+  return (
+    PAYMENT_OPTIONS.every(
+      (o) => !resolvePaymentOptionKey(o.enabledKey, own, inherited, o.enabledByDefault),
+    ) &&
+    VOUCHER_SWITCHES.every(
+      (v) => !resolvePaymentOptionKey(v.key, own, inherited, VOUCHER_SWITCH_DEFAULT),
+    )
+  );
+}
+
+/** Whether the layer as drafted takes payment only by voucher: every cash and card option off. */
+export function voucherOnly(own: PosSettingsPatch, inherited: PosSettingsV1 | undefined): boolean {
+  return (
+    !noPaymentOptionAllowed(own, inherited) &&
+    PAYMENT_OPTIONS.every(
+      (o) => !resolvePaymentOptionKey(o.enabledKey, own, inherited, o.enabledByDefault),
+    )
   );
 }
 

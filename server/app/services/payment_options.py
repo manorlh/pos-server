@@ -26,6 +26,11 @@ offers it and one saying whether it asks for a tip. Flat rather than one nested
 object because the tenant -> company -> shop merge and the dashboard's
 inherited/overridden badges both work per top-level key, and the till keeps
 settings as a flat string key/value table.
+
+The production voucher ("שובר הפקה") has two switches of its own, outside the five:
+`payVoucherEnabled` (scanning it) and `payVoucherManualEnabled` ("שובר ידני", typing its
+code), both on when unset. With every cash and card option off and a voucher switch on,
+the till is a voucher-only till; a layer is refused only when nothing at all is left.
 """
 from __future__ import annotations
 
@@ -143,8 +148,51 @@ def legacy_tip_flags(resolved: Mapping[str, bool]) -> Dict[str, bool]:
     }
 
 
+# ── "שובר הפקה": the production voucher on the till's payment screen ─────────────
+
+#: Scanning a production voucher ("שובר הפקה") on the till's payment screen.
+PAY_VOUCHER_ENABLED_KEY = "payVoucherEnabled"
+#: "שובר ידני": typing the production voucher's code by hand.
+PAY_VOUCHER_MANUAL_ENABLED_KEY = "payVoucherManualEnabled"
+
+#: The voucher's two switches. A rule of their own beside the five options above (the
+#: parity table there is untouched): no tender of their own and no tip question — the
+#: voucher pays the goods it covers and the rest goes to another method. Flat keys,
+#: set at any level and merged like the `pay*Enabled` switches; both on when unset,
+#: so every shop that predates them keeps the voucher as it was (always offered).
+VOUCHER_SETTING_KEYS: Tuple[str, ...] = (PAY_VOUCHER_ENABLED_KEY, PAY_VOUCHER_MANUAL_ENABLED_KEY)
+
+
+def resolve_voucher_options(merged: Mapping[str, Any]) -> Dict[str, bool]:
+    """Both voucher keys as real bools from a merged settings dict; unset (or not a bool) = on.
+
+    A view, like resolve_payment_options: never write it back into a layer.
+    """
+    out: Dict[str, bool] = {}
+    for key in VOUCHER_SETTING_KEYS:
+        stored = _stored_bool(merged, key)
+        out[key] = True if stored is None else stored
+    return out
+
+
+def voucher_allowed(merged: Mapping[str, Any]) -> bool:
+    """Whether the till takes a production voucher at all: scanned, typed by hand, or both."""
+    return any(resolve_voucher_options(merged).values())
+
+
+#: Every switch the "never leave a till without a way to take payment" rule reads:
+#: the five options' allowed keys and the voucher's two.
+PAYMENT_ALLOWED_KEYS_WITH_VOUCHER: Tuple[str, ...] = PAYMENT_OPTION_ALLOWED_KEYS + VOUCHER_SETTING_KEYS
+
+
 def any_allowed(merged: Mapping[str, Any]) -> bool:
-    return any(is_allowed(merged, o) for o in PAYMENT_OPTIONS)
+    """Whether a till under `merged` can take payment at all.
+
+    Any of the five cash/card options, or the voucher (scanned or typed): a till whose
+    every cash and card option is off but whose voucher is on is a voucher-only till
+    ("קופת שוברים בלבד"), which is allowed. Only nothing at all left is not.
+    """
+    return any(is_allowed(merged, o) for o in PAYMENT_OPTIONS) or voucher_allowed(merged)
 
 
 # ── "סדר אמצעי התשלום": the order the till lists its payment buttons in ───────────
@@ -158,9 +206,9 @@ PAY_ORDER_KEY = "payOrder"
 #: Every id `payOrder` may name, in the order a till shows them when no level sets one:
 #: the payment screen as it is drawn — the big buttons "אשראי מהיר", "מזומן עם עודף",
 #: "מזומן מהיר", then the rows under them, instalments, keyed card and "שובר". The five
-#: options above plus the voucher, which has no switch (a till offers it wherever a
-#: voucher can pay) but has a row of its own to place. The Android till carries the same
-#: list (domain/PayOrder.kt).
+#: options above plus the voucher, one row for both of its ways in (scanned and typed by
+#: hand: `payVoucherEnabled` / `payVoucherManualEnabled` above), so it has one id to
+#: place. The Android till carries the same list (domain/PayOrder.kt).
 DEFAULT_PAY_ORDER: Tuple[str, ...] = ("fastCard", "cash", "fastCash", "card", "manualCard", "voucher")
 
 #: The ids drawn as the big buttons at the top of the payment screen ("מהיר"); the rest

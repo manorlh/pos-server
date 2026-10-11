@@ -68,6 +68,7 @@ from app.services.payment_options import (
     legacy_tip_flags,
     resolve_pay_order,
     resolve_payment_options,
+    resolve_voucher_options,
 )
 from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
@@ -2357,6 +2358,10 @@ def get_settings_sync(
     payment_options = resolve_payment_options(all_settings)
     effective.update(payment_options)
     effective.update(legacy_tip_flags(payment_options))
+    # The production voucher's two switches, scanned and typed by hand ("שובר ידני"),
+    # likewise always sent as real bools (unset -> on). With every option above off and
+    # either of these on, the till is a voucher-only till.
+    effective.update(resolve_voucher_options(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))

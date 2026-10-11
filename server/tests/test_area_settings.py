@@ -266,6 +266,9 @@ def test_a_cashier_and_another_shops_manager_may_not_write_an_area():
 def test_an_area_cannot_be_left_without_a_payment_option():
     _, _, shop, area, _, db = _world({}, {}, {}, {}, {})
     off = {k: False for k in ("payFastCashEnabled", "payCashEnabled", "payFastCardEnabled", "payCardEnabled")}
+    # The production voucher (on when unset) keeps it payable: a voucher-only point of
+    # sale is allowed. Only the voucher off as well leaves nothing.
+    off.update({"payVoucherEnabled": False, "payVoucherManualEnabled": False})
     with pytest.raises(HTTPException) as exc:
         _patch_area(area, shop, db, off)
     assert exc.value.status_code == 422

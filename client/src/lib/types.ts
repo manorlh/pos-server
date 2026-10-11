@@ -303,6 +303,13 @@ export interface PosSettingsV1 {
   payManualCardEnabled?: boolean;
   payManualCardTips?: boolean;
   /**
+   * "שובר הפקה" on the till's payment screen: scanning the voucher, and "שובר ידני" —
+   * typing its code by hand. Unset = on. With every cash and card option off and either
+   * of these on, the till is a voucher-only till (lib/paymentOptions.ts).
+   */
+  payVoucherEnabled?: boolean;
+  payVoucherManualEnabled?: boolean;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -381,8 +388,15 @@ export type SellScreenSettingKey =
 
 export type RefundSettingKey = 'unlinkedCardCreditEnabled' | 'refundCustomerDetailsRequired';
 
+/** The production voucher's two switches: scanned, and typed by hand ("שובר ידני"). */
+export type VoucherSettingKey = 'payVoucherEnabled' | 'payVoucherManualEnabled';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
-export type ResettableSwitchKey = PaymentOptionSettingKey | SellScreenSettingKey | RefundSettingKey;
+export type ResettableSwitchKey =
+  | PaymentOptionSettingKey
+  | VoucherSettingKey
+  | SellScreenSettingKey
+  | RefundSettingKey;
 
 /**
  * PATCH body for POS settings. Branding keys accept an explicit `null`, which
