@@ -6,6 +6,7 @@
  */
 import { api } from './api';
 import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
+import type { BulkApplyResult, BulkPreviewResult } from './prepaidBatchBulkEdit';
 import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
@@ -642,6 +643,28 @@ export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody)
 /** What an edit would change and touch (each change before → after, the effects); nothing is saved. */
 export async function previewPrepaidBatchEdit(id: string, body: PrepaidBatchEditBody): Promise<PrepaidBatchEditPlan> {
   const { data } = await api.post<PrepaidBatchEditPlan>(`/prepaid-vouchers/batches/${id}/edit-preview`, body);
+  return data;
+}
+
+/**
+ * "שינוי הגדרות לסדרות שנבחרו" (lib/prepaidBatchBulkEdit.ts): per batch ok / unchanged / refused with
+ * the single edit's reason, each with its changes and effects. Nothing is saved.
+ */
+export async function previewPrepaidBatchesBulkEdit(batchIds: string[], changes: PrepaidBatchEditBody): Promise<BulkPreviewResult> {
+  const { data } = await api.post<BulkPreviewResult>('/prepaid-vouchers/batches/bulk-edit-preview', { batchIds, changes });
+  return data;
+}
+
+/**
+ * The same change applied to each batch through "ערוך סדרה". [clientRequestId]: one per apply — a retry
+ * after a lost answer sends the same one and gets the first result back, never a second apply.
+ */
+export async function applyPrepaidBatchesBulkEdit(
+  batchIds: string[],
+  changes: PrepaidBatchEditBody,
+  clientRequestId: string,
+): Promise<BulkApplyResult> {
+  const { data } = await api.post<BulkApplyResult>('/prepaid-vouchers/batches/bulk-edit', { batchIds, changes, clientRequestId });
   return data;
 }
 

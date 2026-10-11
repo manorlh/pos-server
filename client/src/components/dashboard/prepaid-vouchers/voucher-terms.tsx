@@ -30,6 +30,7 @@ import {
   type PrepaidStacking,
   type PrepaidVoucherKind,
 } from '@/lib/prepaidVoucherBenefit';
+import { maxVouchersProblem, usesPerSaleProblem, voucherFieldsFor } from '@/lib/voucherFields';
 import {
   fetchPrepaidCategories,
   searchPrepaidProducts,
@@ -190,6 +191,8 @@ export function DiscountTermsFields({
   const categoryOptions = usePrepaidCategoryOptions(companyId);
   const set = (patch: Partial<DiscountTermsState>) => onChange({ ...value, ...patch });
   const types: PrepaidDiscountType[] = ['fixed', 'percent'];
+  // Only the kind's terms (lib/voucherFields.ts): a cap only for a percent.
+  const fields = voucherFieldsFor({ kind, discountType: value.discountType });
   // As the server prints them: the products' names, then the categories'.
   const names = [
     ...value.products.map((p) => p.name),
@@ -223,7 +226,7 @@ export function DiscountTermsFields({
             onChange={(e) => set({ value: e.target.value })} />
         </div>
       </div>
-      {kind === 'order_discount' ? (
+      {fields.visible.has('minPurchase') ? (
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="pv-min">{t('minPurchase')}</Label>
@@ -231,7 +234,7 @@ export function DiscountTermsFields({
               onChange={(e) => set({ minPurchase: e.target.value })} />
             <p className="text-xs text-muted-foreground">{t('minPurchaseHint')}</p>
           </div>
-          {value.discountType === 'percent' ? (
+          {fields.visible.has('maxDiscount') ? (
             <div className="space-y-1">
               <Label htmlFor="pv-cap">{t('maxDiscount')}</Label>
               <Input id="pv-cap" inputMode="decimal" className="h-9" value={value.maxDiscount}
@@ -240,7 +243,7 @@ export function DiscountTermsFields({
           ) : null}
         </div>
       ) : null}
-      {kind === 'item_discount' ? (
+      {fields.visible.has('targets') ? (
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('targets')}</p>
           <TargetProductsPicker companyId={companyId} shopIds={shopIds} value={value.products} onChange={(products) => set({ products })} />
@@ -301,6 +304,9 @@ export const DEFAULT_RULES: RulesState = {
   stacking: 'unlimited', maxVouchersPerSale: '', promotionPolicy: 'exclude', usesPerVoucher: '1', maxUsesPerSale: '1', maxUsesPerDay: '',
 };
 
+/** "שובר אחד בעסקה" / "כמה שוברים בעסקה (גם מאותה סדרה)" / "כמה שוברים, רק מסדרות שונות". */
+const STACKING_CHOICES: readonly PrepaidStacking[] = ['single', 'unlimited', 'distinct_batches'];
+
 /** The rules' stacking as the API takes it (null clears the maximum). */
 export function stackingBody(rules: RulesState): { stacking: PrepaidStacking; maxVouchersPerSale: number | null } {
   return { stacking: rules.stacking, maxVouchersPerSale: maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) ?? null };
@@ -311,61 +317,66 @@ export function stackingValid(rules: RulesState): boolean {
   return maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) !== undefined;
 }
 
-/** Other vouchers in the sale, promotions, uses. [usesFixed]: after printing, uses per voucher do not change. */
+/**
+ * Other vouchers in the sale, promotions, uses — only what the voucher's kind has (lib/voucherFields.ts):
+ * the maximum per sale only when more than one voucher may go in a sale, the three "שימושים" only for a
+ * discount (a goods voucher says why not). [usesFixed]: after printing, uses per voucher do not change.
+ * [stackingOnly]: the stacking and its maximum alone ("שינוי הגדרות לסדרות שנבחרו").
+ */
 export function RulesFields({
   kind,
   value,
   onChange,
   usesFixed = false,
+  stackingOnly = false,
 }: {
   kind: PrepaidVoucherKind;
   value: RulesState;
   onChange: (next: RulesState) => void;
   usesFixed?: boolean;
+  stackingOnly?: boolean;
 }) {
   const t = useTranslations('prepaidVouchers.kinds');
   const set = (patch: Partial<RulesState>) => onChange({ ...value, ...patch });
   const discount = isDiscountKind(kind);
+  const fields = voucherFieldsFor({ kind, stacking: value.stacking, usesPerVoucher: value.usesPerVoucher });
+  const perSaleFixed = fields.disabled.has('maxUsesPerSale');
+  const over = perSaleFixed ? null : usesPerSaleProblem(value.maxUsesPerSale, value.usesPerVoucher);
+  const maxBad = fields.visible.has('maxVouchersPerSale') ? maxVouchersProblem(value.maxVouchersPerSale, MAX_VOUCHERS_PER_SALE) : null;
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>{t('stackingLabel')}</Label>
-          <div className="grid grid-cols-2 gap-1" role="radiogroup" aria-label={t('stackingLabel')}>
-            {(['single', 'many'] as const).map((choice) => {
-              const on = choice === 'single' ? value.stacking === 'single' : value.stacking !== 'single';
+          <div className="grid gap-1" role="radiogroup" aria-label={t('stackingLabel')}>
+            {STACKING_CHOICES.map((choice) => {
+              const on = value.stacking === choice;
               return (
                 <Button key={choice} type="button" size="sm" variant={on ? 'default' : 'outline'} role="radio" aria-checked={on}
-                  onClick={() => set(choice === 'single'
-                    ? { stacking: 'single', maxVouchersPerSale: '' }
-                    : { stacking: value.stacking === 'single' ? 'unlimited' : value.stacking })}>
-                  {t(choice === 'single' ? 'stacking.single' : 'stacking.unlimited')}
+                  className="h-auto justify-start whitespace-normal py-1.5 text-start"
+                  onClick={() => set(choice === 'single' ? { stacking: 'single', maxVouchersPerSale: '' } : { stacking: choice })}>
+                  {t(`stacking.${choice}`)}
                 </Button>
               );
             })}
           </div>
-          {value.stacking !== 'single' ? (
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" className="h-4 w-4" checked={value.stacking === 'distinct_batches'}
-                  onChange={(e) => set({ stacking: e.target.checked ? 'distinct_batches' : 'unlimited' })} />
-                {t('stacking.distinct_batches')}
-              </label>
-              <div className="space-y-1">
-                <Label htmlFor="pv-max-vouchers">{t('maxVouchersPerSale')}</Label>
-                <Input id="pv-max-vouchers" type="number" min={1} max={MAX_VOUCHERS_PER_SALE} className="h-9"
-                  placeholder={t('noMaximum')} value={value.maxVouchersPerSale}
-                  aria-invalid={!stackingValid(value)}
-                  onChange={(e) => set({ maxVouchersPerSale: e.target.value })} />
-                {!stackingValid(value) ? (
-                  <p className="text-xs text-destructive">{t('maxVouchersInvalid', { max: MAX_VOUCHERS_PER_SALE })}</p>
-                ) : null}
-              </div>
+          <p className="text-xs text-muted-foreground">{t('stackingExplain')}</p>
+          {fields.visible.has('maxVouchersPerSale') ? (
+            <div className="space-y-1">
+              <Label htmlFor="pv-max-vouchers">{t('maxVouchersPerSale')}</Label>
+              <Input id="pv-max-vouchers" type="number" min={1} max={MAX_VOUCHERS_PER_SALE} className="h-9"
+                placeholder={t('noMaximum')} value={value.maxVouchersPerSale}
+                aria-invalid={maxBad !== null}
+                onChange={(e) => set({ maxVouchersPerSale: e.target.value })} />
+              <p className="text-xs text-muted-foreground">{t('maxVouchersHint')}</p>
+              {maxBad ? (
+                <p className="text-xs text-destructive" role="alert">{t('maxVouchersInvalidValue', { value: maxBad.value, max: maxBad.max })}</p>
+              ) : null}
             </div>
           ) : null}
-          {discount ? <p className="text-xs text-muted-foreground">{t('stackingHint')}</p> : null}
+          {discount && !stackingOnly ? <p className="text-xs text-muted-foreground">{t('stackingHint')}</p> : null}
         </div>
-        {discount ? (
+        {fields.visible.has('promotionPolicy') && !stackingOnly ? (
           <div className="space-y-1">
             <Label>{t('promotionLabel')}</Label>
             <Select value={value.promotionPolicy} onValueChange={(v) => v && set({ promotionPolicy: v as PrepaidPromotionPolicy })}
@@ -381,25 +392,38 @@ export function RulesFields({
           </div>
         ) : null}
       </div>
-      {discount ? (
+      {stackingOnly ? null : fields.visible.has('usesPerVoucher') ? (
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1">
             <Label htmlFor="pv-uses">{t('usesPerVoucher')}</Label>
             <Input id="pv-uses" type="number" min={1} max={1000} className="h-9" value={value.usesPerVoucher} disabled={usesFixed}
-              onChange={(e) => set({ usesPerVoucher: e.target.value })} />
+              onChange={(e) => {
+                const v = e.target.value;
+                // One use per voucher: at most one in a sale (the field shows 1, fixed).
+                set(parseInt(v, 10) === 1 ? { usesPerVoucher: v, maxUsesPerSale: '1' } : { usesPerVoucher: v });
+              }} />
+            <p className="text-xs text-muted-foreground">{t('usesPerVoucherHint')}</p>
           </div>
           <div className="space-y-1">
             <Label htmlFor="pv-per-sale">{t('maxUsesPerSale')}</Label>
-            <Input id="pv-per-sale" type="number" min={1} max={1000} className="h-9" value={value.maxUsesPerSale}
+            <Input id="pv-per-sale" type="number" min={1} max={Math.max(1, parseInt(value.usesPerVoucher, 10) || 1)} className="h-9"
+              value={perSaleFixed ? '1' : value.maxUsesPerSale} disabled={perSaleFixed} aria-invalid={over !== null}
               onChange={(e) => set({ maxUsesPerSale: e.target.value })} />
+            <p className="text-xs text-muted-foreground">{perSaleFixed ? t('maxUsesPerSaleOne') : t('maxUsesPerSaleHint')}</p>
+            {over ? (
+              <p className="text-xs text-destructive" role="alert">{t('usesPerSaleOver', { value: over.value, limit: over.limit })}</p>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label htmlFor="pv-per-day">{t('maxUsesPerDay')}</Label>
             <Input id="pv-per-day" type="number" min={1} max={1000} className="h-9" value={value.maxUsesPerDay}
               onChange={(e) => set({ maxUsesPerDay: e.target.value })} />
+            <p className="text-xs text-muted-foreground">{t('maxUsesPerDayHint')}</p>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <p className="rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">{t('usesNotForGoods')}</p>
+      )}
     </div>
   );
 }
@@ -433,8 +457,9 @@ export function BatchRulesCard({ batch, onSaved }: { batch: PrepaidVoucherBatch;
   });
   const perSale = parseInt(rules.maxUsesPerSale, 10);
   const perDay = rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null;
+  // Above the uses per voucher: said under the field (the value and the limit), never saved.
   const valid = Number.isFinite(perSale) && perSale >= 1 && (perDay === null || (Number.isFinite(perDay) && perDay >= 1))
-    && stackingValid(rules);
+    && stackingValid(rules) && (!isDiscountKind(kind) || usesPerSaleProblem(rules.maxUsesPerSale, rules.usesPerVoucher) === null);
   // The rules apply to redemptions from now on: planned and confirmed first ("ערוך סדרה").
   const edit = useBatchEditSave(batch, () => onSaved());
   const save = () => void edit.save(isDiscountKind(kind)

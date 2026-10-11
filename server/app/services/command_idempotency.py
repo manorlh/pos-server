@@ -20,6 +20,8 @@ untouched), `till_message` (POST /till-messages), `printer_test` (POST /printers
 `prepaid_batch_create` (POST /prepaid-vouchers/batches) and `prepaid_batch_add`
 (POST /prepaid-vouchers/batches/{id}/vouchers) — app/services/prepaid_batch_create.py.
 `device_logs_request` (POST /device-logs/requests, "בקש לוגים" — app/services/device_logs.py).
+`prepaid_batch_bulk_edit` (POST /prepaid-vouchers/batches/bulk-edit, keyed by its `clientRequestId` —
+app/services/prepaid_voucher_bulk_edit.py).
 A kiosk command (POST /kiosks/{m}/commands) needs none: pause / resume set a state, and its close
 and Z reuse the till's pending request.
 
@@ -58,7 +60,7 @@ KEEP_FOR = timedelta(hours=24)
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,100}$")
 KINDS = (
     "device_command", "card_command", "till_message", "printer_test", "prepaid_batch_create", "prepaid_batch_add",
-    "device_logs_request",
+    "device_logs_request", "prepaid_batch_bulk_edit",
 )
 
 

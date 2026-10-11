@@ -31,6 +31,7 @@ import {
 import { benefitText, discountDraftErrors, isDiscountKind, moneyText, termsOfBatch, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import { itemText } from '@/lib/prepaidVoucherProducts';
 import { changedFields } from '@/lib/prepaidBatchEdit';
+import { voucherFieldsFor } from '@/lib/voucherFields';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import {
   DiscountTermsFields,
@@ -256,6 +257,11 @@ function TypeForm({
   const companyId = pickedCompany || (companies.data?.length === 1 ? companies.data[0].id : '');
 
   const discount = isDiscountKind(kind);
+  // Only what this kind of voucher has (lib/voucherFields.ts): goods — contents, pricing, split, extras;
+  // a discount — its terms and the three uses; both — stacking, offline and the print flags.
+  const fields = voucherFieldsFor({
+    kind, pricing, stacking: rules.stacking, discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
+  });
   const decimal = (v: string) => (v.trim() ? Number(v.replace(',', '.')) : null);
   const termErrors = discountDraftErrors({
     kind, discountType: terms.discountType, value: terms.value, minPurchase: terms.minPurchase, maxDiscount: terms.maxDiscount,
@@ -292,9 +298,11 @@ function TypeForm({
     } else {
       Object.assign(out, {
         discountType: terms.discountType, discountValue: decimal(terms.value),
-        minPurchase: kind === 'order_discount' ? decimal(terms.minPurchase) : null,
-        maxDiscount: kind === 'order_discount' && terms.discountType === 'percent' ? decimal(terms.maxDiscount) : null,
-        maxUnits: kind === 'item_discount' ? parseInt(terms.maxUnits, 10) || 1 : null,
+        minPurchase: fields.visible.has('minPurchase') ? decimal(terms.minPurchase) : null,
+        maxDiscount: fields.visible.has('maxDiscount') ? decimal(terms.maxDiscount) : null,
+        maxUnits: fields.visible.has('maxUnits') ? parseInt(terms.maxUnits, 10) || 1 : null,
+        // Every kind has them (a discount too): offline and "הצג תוקף על השובר".
+        offlineAllowed, showValidity,
         promotionPolicy: rules.promotionPolicy,
         usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1,
         maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
@@ -367,8 +375,23 @@ function TypeForm({
           </div>
 
           {!initial ? <KindPicker value={kind} onChange={setKind} /> : null}
-          {discount ? (
-            <DiscountTermsFields kind={kind} companyId={companyId} shopIds={[]} value={terms} onChange={setTerms} errors={termErrors} />
+          {fields.visible.has('discountType') ? (
+            <>
+              <DiscountTermsFields kind={kind} companyId={companyId} shopIds={[]} value={terms} onChange={setTerms} errors={termErrors} />
+              <div className="space-y-3 rounded-lg border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{t('offlineAllowed')}</p>
+                    <p className="text-xs text-muted-foreground">{t('offlineHint')}</p>
+                  </div>
+                  <Switch checked={offlineAllowed} onCheckedChange={(v) => setOfflineAllowed(!!v)} aria-label={t('offlineAllowed')} />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm">{t('showValidity')}</span>
+                  <Switch checked={showValidity} onCheckedChange={(v) => setShowValidity(!!v)} aria-label={t('showValidity')} />
+                </div>
+              </div>
+            </>
           ) : (
             <>
               {initial && !goodsTouched ? (
@@ -406,7 +429,7 @@ function TypeForm({
                     </label>
                   ))}
                 </fieldset>
-                {pricing === 'cover' ? (
+                {fields.visible.has('allowTopUp') ? (
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm">{t('allowTopUp')}</span>
                     <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={t('allowTopUp')} />
