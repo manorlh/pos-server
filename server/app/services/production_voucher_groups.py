@@ -165,6 +165,40 @@ def freeze(db: Session, tenant_id, company_id, groups: Optional[Sequence[Dict[st
     return [{**g, "frozenProductIds": PR.eligible_products(selection_of(g), catalog)} for g in groups]
 
 
+def names(db: Session, tenant_id, groups: Optional[Sequence[Dict[str, Any]]]) -> Optional[Dict[str, Dict[str, str]]]:
+    """
+    The names of the products and categories [groups] name, chosen and excluded — for the dashboard
+    only (the editor's chips and "סיכום השובר": "עד 50 פריטים מתוך 'אוכל'"). Read only; None without groups.
+    """
+    if not groups:
+        return None
+    product_ids: set = set()
+    category_ids: set = set()
+    for g in groups:
+        product_ids |= set(g.get("productIds") or []) | set(g.get("excludeProductIds") or [])
+        category_ids |= set(g.get("categoryIds") or []) | set(g.get("excludeCategoryIds") or [])
+
+    def uuids(values):
+        out = []
+        for v in values:
+            try:
+                out.append(uuid.UUID(str(v)))
+            except ValueError:
+                continue
+        return out
+
+    pids, cids = uuids(product_ids), uuids(category_ids)
+    products = {
+        str(i).lower(): n
+        for i, n in db.query(Product.id, Product.name).filter(Product.tenant_id == tenant_id, Product.id.in_(pids))
+    } if pids else {}
+    categories = {
+        str(i).lower(): n
+        for i, n in db.query(Category.id, Category.name).filter(Category.tenant_id == tenant_id, Category.id.in_(cids))
+    } if cids else {}
+    return {"products": products, "categories": categories}
+
+
 def initial_remaining(groups: Sequence[Dict[str, Any]], total_qty: Optional[int]) -> Dict[str, int]:
     out = {f"g:{g['key']}": int(g.get("maxQty") or 0) for g in groups}
     out[TOTAL] = total_max(groups, total_qty)
