@@ -1,7 +1,7 @@
 # Fly.io — POS Cloud API (Frankfurt, near Neon + EMQX EU)
 #
 # Sized for continuous evening load, not for idling (P:/specs/performance-review-2026-10.md #2):
-# a dedicated core, two uvicorn workers per machine (Dockerfile), at least two machines always
+# two shared vCPUs, two uvicorn workers per machine (Dockerfile), at least two machines always
 # running (no cold start, one survives the other's deploy or crash), and Fly told how many
 # requests a machine takes before it routes to the next one.
 app = 'pos-cloud-api'
@@ -57,10 +57,12 @@ primary_region = 'fra'
     interval = '30s'
     timeout = '5s'
 
-# performance-1x: one dedicated core. 2 GB is Fly's floor for a performance core (the review's
-# 1 GB was for the shared-cpu-2x fallback); two workers use well under it.
+# shared-cpu-2x, 2 GB: one vCPU per worker. On 2026-10-11 the performance-1x core sat at a load
+# average of 0.00–0.03 under live traffic, while the two workers held ~850 MB, so 1 GB would be too
+# tight. ~$31/month for both machines in fra instead of ~$76. If Fly's CPU throttling metric
+# shows up under load, go back to size = 'performance-1x'.
 [[vm]]
-  size = 'performance-1x'
+  size = 'shared-cpu-2x'
   memory = '2gb'
-  cpu_kind = 'performance'
-  cpus = 1
+  cpu_kind = 'shared'
+  cpus = 2
