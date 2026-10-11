@@ -834,7 +834,7 @@ export async function fetchPrepaidBatchReport(batchId: string): Promise<PrepaidB
 export async function searchPrepaidProducts(
   search: string,
   companyId: string,
-  opts: { purpose?: PrepaidProductPurpose; shopIds?: string[] } = {},
+  opts: { purpose?: PrepaidProductPurpose; shopIds?: string[]; limit?: number } = {},
 ): Promise<PrepaidProductOption[]> {
   // The cloud's own rule for what a batch of this company may carry — the save checks the same.
   // Every product comes back, each with whether it can go on and why not (§7.14).
@@ -844,6 +844,7 @@ export async function searchPrepaidProducts(
       ...(search.trim() ? { search: search.trim() } : {}),
       ...(opts.purpose ? { purpose: opts.purpose } : {}),
       ...(opts.shopIds?.length ? { shopIds: opts.shopIds } : {}),
+      ...(opts.limit ? { limit: opts.limit } : {}),
     },
     // `shopIds=a&shopIds=b`, as FastAPI reads a list.
     paramsSerializer: { indexes: null },
