@@ -245,7 +245,19 @@ export function DiscountTermsFields({
           <p className="text-sm font-medium">{t('targets')}</p>
           <TargetProductsPicker companyId={companyId} shopIds={shopIds} value={value.products} onChange={(products) => set({ products })} />
           <div className="space-y-1">
-            <Label>{t('categories')}</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label>{t('categories')}</Label>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" variant="ghost" disabled={!categoryOptions.length}
+                  onClick={() => set({ categoryIds: categoryOptions.map((c) => c.id) })}>
+                  {t('allCategories')}
+                </Button>
+                <Button type="button" size="sm" variant="ghost" disabled={!value.categoryIds.length}
+                  onClick={() => set({ categoryIds: [] })}>
+                  {t('clearCategories')}
+                </Button>
+              </div>
+            </div>
             <EntityMultiSelect
               label={t('categories')}
               options={categoryOptions}
