@@ -126,6 +126,10 @@ class PosSettingsV1Patch(BaseModel):
     #: "הצג לקופאי מה מגיע ללקוח בסריקת שובר": "on" (unset — a card on every voucher scan, never
     #: stopping the redemption) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_show_entitlement: Optional[Literal["on", "off"]] = Field(None, alias="voucherShowEntitlement")
+    #: "מימוש אוטומטי בסריקת שובר": "on" (unset — a voucher scanned over a cart is applied at once to
+    #: the matching lines, no redeem sheet, when no choice is needed) or "off" (the sheet opens, as
+    #: before). Anything else is a 422; `null` in a PATCH resets the layer.
+    voucher_auto_apply: Optional[Literal["on", "off"]] = Field(None, alias="voucherAutoApply")
     #: "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": "on" (unset — a strong sound when a
     #: voucher is accepted / refused) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_sound_approve: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundApprove")

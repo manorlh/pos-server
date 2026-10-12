@@ -25,12 +25,14 @@ import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, par
 import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel, VoucherRedeemFlow } from '@/lib/types';
 import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnavailable } from '@/lib/voucherRedeemFlow';
 import {
+  VOUCHER_AUTO_APPLY_VALUES,
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_MODES,
   VOUCHER_SHOW_ENTITLEMENT_VALUES,
   VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
+  resolveVoucherAutoApply,
   resolveVoucherAutoClose,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
@@ -502,7 +504,8 @@ export function PosSettingsForm({
           );
         })()}
         {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items, the
-            cashier's "מה מגיע ללקוח" card and the approve / reject sounds (lib/voucherTillSettings.ts):
+            cashier's "מה מגיע ללקוח" card, the auto apply on a scan over a cart and the approve /
+            reject sounds (lib/voucherTillSettings.ts):
             "ירושה" sends null. */}
         {(() => {
           const pick = (
@@ -512,6 +515,7 @@ export function PosSettingsForm({
               | 'voucherStation'
               | 'voucherStationPaidItems'
               | 'voucherShowEntitlement'
+              | 'voucherAutoApply'
               | 'voucherSoundApprove'
               | 'voucherSoundReject',
             values: readonly string[],
@@ -591,6 +595,13 @@ export function PosSettingsForm({
                 (v) => t(`voucherOnOff_${v}`),
                 resolveVoucherShowEntitlement(undefined, inherited?.voucherShowEntitlement),
                 <p className="text-xs text-muted-foreground">{t('voucherShowEntitlementHint')}</p>,
+              )}
+              {pick(
+                'voucherAutoApply',
+                VOUCHER_AUTO_APPLY_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherAutoApply(undefined, inherited?.voucherAutoApply),
+                <p className="text-xs text-muted-foreground">{t('voucherAutoApplyHint')}</p>,
               )}
               {pick(
                 'voucherSoundApprove',

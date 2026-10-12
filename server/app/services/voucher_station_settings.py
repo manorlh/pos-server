@@ -29,6 +29,14 @@ the same way:
                                     the redemption (the default)
                             "off" — the till behaves as before
 
+And one more, added 12.10.2026 ("מימוש אוטומטי בסריקת שובר"), set and inherited the same way:
+
+    voucherAutoApply  "on"  — "מימוש אוטומטי בסריקת שובר": a voucher scanned with items already in the
+                              cart is applied at once to the matching cart lines, with no redeem sheet
+                              and no "מימוש" press, when no choice is needed; the sheet opens only when
+                              one is (the default)
+                      "off" — the redeem sheet opens as before
+
 And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירוב חזק, אפשר לבטל אותם בפרמטרים — לגבי
 השוברים במימוש"), set and inherited the same way:
 
@@ -83,6 +91,14 @@ DEFAULT_SHOW_ENTITLEMENT = ON
 
 VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SHOW_ENTITLEMENT_KEY,)
 
+#: 12.10.2026: a voucher scanned over a cart is applied to the matching lines with no redeem sheet.
+VOUCHER_AUTO_APPLY_KEY = "voucherAutoApply"
+AUTO_APPLY_VALUES: Tuple[str, ...] = (ON, OFF)
+#: Unset everywhere: applied at once when no choice is needed.
+DEFAULT_AUTO_APPLY = ON
+
+VOUCHER_AUTO_APPLY_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_AUTO_APPLY_KEY,)
+
 #: 12.10.2026: the strong approve / reject sounds when a voucher is redeemed.
 VOUCHER_SOUND_APPROVE_KEY = "voucherSoundApprove"
 VOUCHER_SOUND_REJECT_KEY = "voucherSoundReject"
@@ -125,6 +141,16 @@ def resolve_show_entitlement(merged: Mapping[str, Any]) -> Dict[str, Any]:
         VOUCHER_SHOW_ENTITLEMENT_KEY: show
         if isinstance(show, str) and show in SHOW_ENTITLEMENT_VALUES
         else DEFAULT_SHOW_ENTITLEMENT,
+    }
+
+
+def resolve_auto_apply(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherAutoApply` resolved from a merged settings dict; unknown or missing = "on". A view only."""
+    auto_apply = merged.get(VOUCHER_AUTO_APPLY_KEY)
+    return {
+        VOUCHER_AUTO_APPLY_KEY: auto_apply
+        if isinstance(auto_apply, str) and auto_apply in AUTO_APPLY_VALUES
+        else DEFAULT_AUTO_APPLY,
     }
 
 

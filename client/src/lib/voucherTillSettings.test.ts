@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  VOUCHER_AUTO_APPLY_DEFAULT,
+  VOUCHER_AUTO_APPLY_KEY,
+  VOUCHER_AUTO_APPLY_VALUES,
   VOUCHER_AUTO_CLOSE_DEFAULT,
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_DEFAULT,
@@ -19,6 +22,7 @@ import {
   VOUCHER_STATION_VALUES,
   isVoucherBalanceCheckMode,
   isVoucherOnOff,
+  resolveVoucherAutoApply,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherShowEntitlement,
@@ -174,6 +178,25 @@ test('voucherShowEntitlement: its own value, then the inherited one, then on; ju
   for (const junk of ['OFF', 'false', '', 0, false, {}]) {
     assert.equal(resolveVoucherShowEntitlement(junk, junk), 'on');
     assert.equal(resolveVoucherShowEntitlement(junk, 'off'), 'off');
+  }
+});
+
+// ── "מימוש אוטומטי בסריקת שובר" (voucherAutoApply, 12.10.2026) ──
+
+test("voucherAutoApply: the server's key, values and default (on)", () => {
+  assert.equal(VOUCHER_AUTO_APPLY_KEY, 'voucherAutoApply');
+  assert.deepEqual([...VOUCHER_AUTO_APPLY_VALUES], ['on', 'off']);
+  assert.equal(VOUCHER_AUTO_APPLY_DEFAULT, 'on');
+});
+
+test('voucherAutoApply: its own value, then the inherited one, then on; junk is unset', () => {
+  assert.equal(resolveVoucherAutoApply('off', 'on'), 'off');
+  assert.equal(resolveVoucherAutoApply('on', 'off'), 'on');
+  assert.equal(resolveVoucherAutoApply(null, 'off'), 'off');
+  assert.equal(resolveVoucherAutoApply(undefined, undefined), 'on');
+  for (const junk of ['OFF', 'false', '', 0, false, {}]) {
+    assert.equal(resolveVoucherAutoApply(junk, junk), 'on');
+    assert.equal(resolveVoucherAutoApply(junk, 'off'), 'off');
   }
 });
 

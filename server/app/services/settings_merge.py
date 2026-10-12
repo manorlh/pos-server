@@ -14,6 +14,7 @@ from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 from app.services.voucher_redeem_settings import VOUCHER_FLOW_SETTING_KEYS
 from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
 from app.services.voucher_station_settings import (
+    VOUCHER_AUTO_APPLY_SETTING_KEYS,
     VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
     VOUCHER_SOUND_SETTING_KEYS,
     VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
@@ -89,6 +90,9 @@ MANAGED_SETTING_KEYS = (
     # voucherShowEntitlement — the cashier's "what the customer gets" card on every voucher scan
     # (same module, 13.10.2026).
     *VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+    # voucherAutoApply — a voucher scanned over a cart applied at once to the matching lines, no
+    # redeem sheet, when no choice is needed (same module, 12.10.2026).
+    *VOUCHER_AUTO_APPLY_SETTING_KEYS,
     # voucherSoundApprove, voucherSoundReject — the strong approve / reject sounds of a voucher
     # redemption (same module, 12.10.2026).
     *VOUCHER_SOUND_SETTING_KEYS,
