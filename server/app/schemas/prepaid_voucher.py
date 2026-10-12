@@ -266,6 +266,61 @@ def max_uses_over_message(value: int, limit: int) -> str:
     )
 
 
+#: A batch's name and count, refused with the value, the reason and the limit (P:/specs/voucher-glossary.md §7.3):
+#: "שינוי שם" (PATCH `name`) and "שכפול סדרה" (POST …/batches/{id}/duplicate).
+NAME_EMPTY = "prepaid_voucher_name_empty"
+NAME_TOO_LONG = "prepaid_voucher_name_too_long"
+COUNT_OUT_OF_RANGE = "prepaid_voucher_count_out_of_range"
+
+
+def name_empty_message() -> str:
+    return f"לא ניתן לשמור שם ריק: לכל סדרה חייב להיות שם, עד {NAME_MAX} תווים."
+
+
+def name_too_long_message(length: int) -> str:
+    return f"לא ניתן לשמור שם של {length} תווים: שם הסדרה יכול להיות עד {NAME_MAX} תווים."
+
+
+def count_out_of_range_message(value: Any) -> str:
+    limit = f"בסדרה אפשר 1 עד {MAX_VOUCHERS_PER_BATCH:,} שוברים."
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return f"חסר מספר השוברים: {limit}"
+    return f"לא ניתן להנפיק {value} שוברים: {limit}"
+
+
+def batch_name(value: Any) -> str:
+    """
+    A batch's name as a rename or a duplicate sends it: trimmed; empty, whitespace or null refused
+    (a name is never cleared), and longer than NAME_MAX refused — each in Hebrew, with the limit.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise PydanticCustomError(NAME_EMPTY, name_empty_message(), {"limit": NAME_MAX})
+    if not isinstance(value, str):
+        raise ValueError("must be text")
+    value = value.strip()
+    if len(value) > NAME_MAX:
+        raise PydanticCustomError(NAME_TOO_LONG, name_too_long_message(len(value)),
+                                  {"value": len(value), "limit": NAME_MAX})
+    return value
+
+
+def batch_count(value: Any) -> int:
+    """How many vouchers a new batch issues: a whole number from 1 to MAX_VOUCHERS_PER_BATCH, as batch create."""
+    n = None
+    if not isinstance(value, bool):
+        if isinstance(value, int):
+            n = value
+        elif isinstance(value, float) and value.is_integer():
+            n = int(value)
+        elif isinstance(value, str) and value.strip().lstrip("-").isdigit():
+            n = int(value.strip())
+    if n is None or not (1 <= n <= MAX_VOUCHERS_PER_BATCH):
+        shown = value if n is None else n
+        raise PydanticCustomError(COUNT_OUT_OF_RANGE, count_out_of_range_message(shown),
+                                  {"limit": MAX_VOUCHERS_PER_BATCH})
+    return n
+
+
 class MaxUsesOverUses(ValueError):
     """[_check_terms] with `strict_uses`: the body itself asked for more uses per sale than a voucher has."""
 
@@ -869,7 +924,13 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     def _money(cls, value, info):
         return _shekels(value, info.field_name)
 
-    @field_validator("name", "event_name", "customer_name", mode="before")
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        # "שינוי שם": sent, the name is never emptied — refused with the limit, not ignored.
+        return batch_name(value)
+
+    @field_validator("event_name", "customer_name", mode="before")
     @classmethod
     def _names(cls, value):
         return _clean_text(value, NAME_MAX)
@@ -1029,6 +1090,46 @@ class PrepaidVoucherAddIn(BaseModel):
     #: The operation id, for a client that cannot send the `Idempotency-Key` header (the header wins
     #: when both are sent): a retry with the same id adds nothing (app/services/prepaid_batch_create.py).
     client_request_id: Optional[str] = Field(None, alias="clientRequestId", max_length=100)
+
+
+class PrepaidBatchDuplicateIn(BaseModel):
+    """
+    "שכפול סדרה" (app/services/prepaid_batch_duplicate.py): a new batch with the source's terms and
+    [count] new vouchers. `name` and `count` are required. The rest, when absent, are the source's;
+    a null clears a date, a text or a link. `productionId` is the production ("הפקה") and
+    `customerName` "עבור מי" (the production's name when one is named, as at batch create);
+    `reportEventId` the event and `eventName` its printed name.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = Field(None, validate_default=True)
+    count: Optional[int] = Field(None, validate_default=True)
+    valid_from: Optional[datetime] = Field(None, alias="validFrom")
+    valid_until: Optional[datetime] = Field(None, alias="validUntil")
+    customer_name: Optional[str] = Field(None, alias="customerName")
+    event_name: Optional[str] = Field(None, alias="eventName")
+    production_id: Optional[uuid.UUID] = Field(None, alias="productionId")
+    report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
+    #: "להתחיל במצב בדיקה": off by default — the source's test mode is never copied.
+    start_in_test_mode: bool = Field(False, alias="startInTestMode")
+    #: The operation id when the `Idempotency-Key` header cannot be sent (the header wins).
+    client_request_id: Optional[str] = Field(None, alias="clientRequestId", max_length=100)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name(cls, value):
+        return batch_name(value)
+
+    @field_validator("count", mode="before")
+    @classmethod
+    def _count(cls, value):
+        return batch_count(value)
+
+    @field_validator("customer_name", "event_name", mode="before")
+    @classmethod
+    def _texts(cls, value):
+        return _clean_text(value, NAME_MAX)
 
 
 class PrepaidGroupsCheckIn(BaseModel):
