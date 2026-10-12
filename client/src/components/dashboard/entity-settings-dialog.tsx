@@ -31,7 +31,7 @@ import { voucherStationTitleTooLong } from '@/lib/voucherTillSettings';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import { usePaymentIntegrationValidation } from '@/components/payment-integration-section';
 import { PI_TEXT, paymentIntegrationErrorMessage, withSendableSecrets } from '@/lib/paymentIntegration';
-import type { PosSettingsV1 } from '@/lib/types';
+import type { EffectiveSources, PosSettingsV1 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -60,6 +60,8 @@ export function EntityPosSettingsDialog({
   const twf = useTranslations('kds.workflow');
   const [value, setValue] = useState<PosSettingsFormState>({});
   const [inherited, setInherited] = useState<PosSettingsV1 | undefined>();
+  // Per key, the level above that set the inherited value ("נקבע ב" in the voucher settings).
+  const [inheritedSources, setInheritedSources] = useState<EffectiveSources | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
@@ -74,6 +76,7 @@ export function EntityPosSettingsDialog({
     let cancelled = false;
     setValue({});
     setInherited(undefined);
+    setInheritedSources(null);
     setPaymentOptionsRejected(false);
     setLoading(true);
     const load = async () => {
@@ -92,6 +95,7 @@ export function EntityPosSettingsDialog({
           if (!cancelled) {
             setValue(res.settings ?? {});
             setInherited(res.effective);
+            setInheritedSources(res.effectiveSources ?? null);
           }
         }
       } catch (err: unknown) {
@@ -199,6 +203,7 @@ export function EntityPosSettingsDialog({
           value={value}
           onChange={handleChange}
           inherited={inheritedForForm}
+          inheritedSources={showsInherited ? inheritedSources : null}
           showOverrideHints={showsInherited}
           paymentOptionsRejected={paymentOptionsRejected}
           tenantLevel={level === 'tenant'}

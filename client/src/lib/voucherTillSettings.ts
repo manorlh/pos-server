@@ -320,7 +320,7 @@ export function resolveVoucherFastChoice<K extends VoucherFastChoiceKey>(
 /** A title as the server stores it: control characters as spaces, runs of whitespace as one, trimmed. */
 export function normalizeVoucherStationTitle(value: string): string {
   return value
-    // eslint-disable-next-line no-control-regex -- exactly the control characters, as the server's "Cc"
+    // Exactly the control characters, as the server's "Cc".
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
