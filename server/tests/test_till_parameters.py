@@ -382,7 +382,8 @@ def test_a_till_gets_its_resolved_parameters(world, published):
     _set(world, mode.id, "machine", world.tills[0].id, "b")
 
     in_area = _pull(world, world.tills[0])
-    assert set(in_area) == {"parameters", "updatedAt"}
+    # "ניהול קטלוג מהקופה": the cloud's answer for the till's catalog screen, beside the map.
+    assert set(in_area) == {"parameters", "updatedAt", "catalogAdminView"}
     assert in_area["parameters"] == {"printCopies": 2, "mode": "b"}
     assert in_area["updatedAt"] is not None
 
@@ -458,7 +459,9 @@ def test_deleting_a_parameter_removes_its_values(world, published):
     _run(tasks)
     assert world.db.query(TillParameter).count() == 0
     assert world.db.query(TillParameterValue).count() == 0
-    assert _pull(world, world.tills[0]) == {"parameters": {}, "updatedAt": None}
+    assert _pull(world, world.tills[0]) == {
+        "parameters": {}, "updatedAt": None, "catalogAdminView": {"scope": "shop", "label": "קטלוג הסניף"},
+    }
 
 
 def test_a_duplicate_key_is_a_409_in_any_case(world, published):
@@ -583,7 +586,9 @@ def test_the_sync_endpoint_sends_parameters_and_an_iso_watermark(client):
     assert body == {
         "parameters": {"printCopies": 2, "rate": 1.5, "beep": False, "mode": "b"},
         "updatedAt": body["updatedAt"],
+        "catalogAdminView": body["catalogAdminView"],
     }
+    assert body["catalogAdminView"]["scope"] in ("menu", "shop", "till")
     assert datetime.fromisoformat(body["updatedAt"].replace("Z", "+00:00")) == _ts(30)
 
     empty = TP.ResolvedParameters(parameters={}, updated_at=None)
@@ -591,6 +596,7 @@ def test_the_sync_endpoint_sends_parameters_and_an_iso_watermark(client):
         assert http.get(f"/api/v1/sync/{machine.id}/parameters").json() == {
             "parameters": {},
             "updatedAt": None,
+            "catalogAdminView": {"scope": "shop", "label": "קטלוג הסניף"},
         }
 
 
@@ -635,6 +641,7 @@ def test_every_dashboard_route_hangs_on_the_super_admin_gate():
             yield from calls(sub)
 
     routes = [r for r in R.router.routes if hasattr(r, "dependant")]
-    assert len(routes) == 8
+    # + "ניהול קטלוג מהקופה" (GET / PUT) and "שחזר ברירת מחדל" (reset).
+    assert len(routes) == 11
     for route in routes:
         assert get_current_super_admin in set(calls(route.dependant)), route.path

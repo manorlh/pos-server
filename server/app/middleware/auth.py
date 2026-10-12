@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 import uuid
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -495,7 +495,7 @@ def _operator_with_authority(
     return operator
 
 
-def require_catalog_authority(scope: Scope = Scope.CATALOG_WRITE):
+def require_catalog_authority(scope: Optional[Scope] = Scope.CATALOG_WRITE):
     """
     Build a dependency that accepts a grant for `scope`, *or* a signed-in operator who holds it.
 
@@ -517,6 +517,11 @@ def require_catalog_authority(scope: Scope = Scope.CATALOG_WRITE):
     before — a cashier's till with a manager's grant attributes the write to the manager.
     With neither a usable grant nor an operator who holds the scope, the answer is the
     same 401 `elevation_required`, which is what makes the till ask for someone who does.
+
+    **`scope=None`** — a write whose scopes depend on what it changes (a product's price, name
+    or availability in one `PUT`, specs/till-catalog-management.md §6.2): the dependency hands
+    the handler a `CatalogAuthority`, and the handler calls `require(...)` with the scopes its
+    body needs before it writes anything.
     """
 
     def dependency(
@@ -524,19 +529,77 @@ def require_catalog_authority(scope: Scope = Scope.CATALOG_WRITE):
         elevation_token: Optional[str] = Header(None, alias=ELEVATION_HEADER),
         operator_id: Optional[str] = Header(None, alias=POS_USER_HEADER),
         db: Session = Depends(get_db),
-    ) -> CatalogActor:
-        if elevation_token:
-            session = _checked_grant(db, machine, elevation_token, scope)
-            if requires_per_action_reauth(scope) and not consume_per_action_use(db, session):
-                raise _elevation_401("elevation_already_used")
-            return CatalogActor(user_id=session.user_id, pos_user_id=session.pos_user_id)
-
-        operator = _operator_with_authority(db, machine, operator_id, scope)
-        if operator is None:
-            raise _elevation_401("elevation_required")
-        return CatalogActor(pos_user_id=operator.id)
+    ) -> Any:
+        if scope is None:
+            return CatalogAuthority(db=db, machine=machine, elevation_token=elevation_token, operator_id=operator_id)
+        return authorize_catalog(db, machine, elevation_token, operator_id, scope)
 
     return dependency
+
+
+def _catalog_grant(db: Session, machine: POSMachine, raw_token: str, scope: Scope) -> ElevatedSession:
+    """
+    `_checked_grant` for a catalog scope, where an older till's `catalog:write` grant also answers
+    for the four "ניהול קטלוג" scopes (specs/till-catalog-management.md §6.2).
+    """
+    from app.services.permissions import CATALOG_WRITE_COVERS
+
+    if scope in CATALOG_WRITE_COVERS:
+        session = resolve_session(db, raw_token)
+        if (
+            session is not None
+            and str(session.machine_id) == str(machine.id)
+            and not session_has_scope(session, scope)
+            and session_has_scope(session, Scope.CATALOG_WRITE)
+        ):
+            return session
+    return _checked_grant(db, machine, raw_token, scope)
+
+
+def authorize_catalog(
+    db: Session,
+    machine: POSMachine,
+    elevation_token: Optional[str],
+    operator_id: Optional[str],
+    scope: Scope,
+) -> CatalogActor:
+    """
+    The authority for one catalog scope: a grant for it (or, for the four "ניהול קטלוג" scopes, a
+    legacy `catalog:write` grant), else a signed-in operator whose own role holds it. 401
+    `elevation_required` otherwise — see `require_catalog_authority`.
+    """
+    if elevation_token:
+        session = _catalog_grant(db, machine, elevation_token, scope)
+        if requires_per_action_reauth(scope) and not consume_per_action_use(db, session):
+            raise _elevation_401("elevation_already_used")
+        return CatalogActor(user_id=session.user_id, pos_user_id=session.pos_user_id)
+
+    operator = _operator_with_authority(db, machine, operator_id, scope)
+    if operator is None:
+        raise _elevation_401("elevation_required")
+    return CatalogActor(pos_user_id=operator.id)
+
+
+@dataclass
+class CatalogAuthority:
+    """
+    A catalog write whose scopes depend on what it changes (a product's price, name or
+    availability in one `PUT`) — `require_catalog_authority(None)`: the handler asks for each
+    one it needs (`require`), and the first it lacks answers as a fixed scope would.
+    """
+
+    db: Session
+    machine: POSMachine
+    elevation_token: Optional[str]
+    operator_id: Optional[str]
+
+    def require(self, *scopes: Scope) -> CatalogActor:
+        actor: Optional[CatalogActor] = None
+        for scope in dict.fromkeys(scopes):
+            actor = authorize_catalog(self.db, self.machine, self.elevation_token, self.operator_id, scope)
+        if actor is None:
+            raise ValueError("at least one scope")
+        return actor
 
 
 def elevation_if_offered(scope: Scope):

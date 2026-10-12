@@ -193,6 +193,21 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
     PermissionSpec("CATALOG_WRITE", "עריכת קטלוג מהקופה", "admin",
                    "עריכת מוצרים, עיצוב מסך, נעילת מוצר, שמות שולחנות ומפה, מדפסות ומסופון.",
                    scope="catalog:write"),
+    # specs/till-catalog-management.md §6.2: "ניהול קטלוג" at the till, one permission per kind of
+    # change instead of CATALOG_WRITE alone (which stays for screen editing, printers and tables). A role
+    # saved before these existed reads each of the four writes at its own CATALOG_WRITE level
+    # (`effective_permissions`), and a till's `catalog:write` grant still answers for all four.
+    PermissionSpec("CATALOG_VIEW", "ניהול קטלוג — כניסה וצפייה", "admin",
+                   "כניסה למסך \"ניהול קטלוג\" בקופה, צפייה וחיפוש. בלי הרשאה זו הכניסה לא מוצגת."),
+    PermissionSpec("CATALOG_AVAILABILITY", "ניהול קטלוג — פעיל / לא פעיל ואזל", "admin",
+                   "הפעלה וכיבוי של מוצר או מחלקה (לקופה, לנקודת המכירה או לסניף) וסימון \"אזל\" מניהול הקטלוג.",
+                   scope="catalog:availability"),
+    PermissionSpec("CATALOG_PRICE", "ניהול קטלוג — שינוי מחיר", "admin",
+                   "שינוי מחיר של מוצר מהקופה. המחיר חל על כל הסניף.", scope="catalog:price"),
+    PermissionSpec("CATALOG_EDIT", "ניהול קטלוג — עריכת מוצר", "admin",
+                   "שם, ברקוד, מחלקה, תמונה ומדפסות מטבח של מוצר, ושם ומדפסות של מחלקה.", scope="catalog:edit"),
+    PermissionSpec("CATALOG_CREATE", "ניהול קטלוג — מוצר ומחלקה חדשים", "admin",
+                   "הוספת מוצר חדש או מחלקה חדשה מהקופה.", scope="catalog:create"),
     # specs/item-blocks-targets.md: from the till (a long press, the catalog, "חסומים כעת"), a kiosk's
     # staff screen and a controlling till's kiosk panel. The cloud checks the approver named by the
     # device against this (app/routers/item_blocks.py) — no elevation scope.
@@ -231,6 +246,14 @@ CODES: Tuple[str, ...] = tuple(PERMISSIONS_BY_CODE)
 
 #: Elevation scope (wire) → permission code. Includes the scopes only the till knows.
 SCOPE_PERMISSIONS: Dict[str, str] = {p.scope: p.code for p in PERMISSIONS if p.scope}
+
+#: "ניהול קטלוג" (§6.2): the catalog's four writes from the till. A role or a user override that
+#: sets `CATALOG_WRITE` and none of these reads each of them at that level — so a role saved before
+#: they existed neither opens nor locks anything. Stored rows are never rewritten for it.
+CATALOG_LEGACY_CODE = "CATALOG_WRITE"
+CATALOG_FINE_CODES: FrozenSet[str] = frozenset({
+    "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
+})
 
 
 # ── Built-in roles ─────────────────────────────────────────────────────────────
@@ -284,6 +307,8 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
     "SELL_RESTRICTED_ITEMS",
     "HELD_SALE_CANCEL",
     "ITEM_BLOCK",
+    # "ניהול קטלוג" (§6.2): the four writes as CATALOG_WRITE was — a legacy cashier asks a manager.
+    "CATALOG_AVAILABILITY", "CATALOG_PRICE", "CATALOG_EDIT", "CATALOG_CREATE",
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
@@ -343,6 +368,12 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "CASH_DRAWER.VIEW_LOG":              (D, D, A, A),
     "CASH_DRAWER.VIEW_CASH_MOVEMENTS":   (D, D, A, A),
     "CATALOG_WRITE":                     (D, P, P, A),
+    # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
+    "CATALOG_VIEW":                      (A, A, A, A),
+    "CATALOG_AVAILABILITY":              (D, P, A, A),
+    "CATALOG_PRICE":                     (D, D, P, A),
+    "CATALOG_EDIT":                      (D, D, P, A),
+    "CATALOG_CREATE":                    (D, D, P, A),
     # "חסימת פריט / אזל": the shift supervisor and the manager alone; a cashier on a manager's code.
     "ITEM_BLOCK":                        (D, P, A, A),
     "ATTENDANCE_MANAGE":                 (P, P, A, A),
@@ -531,10 +562,15 @@ def effective_permissions(
     limits: Dict[str, Dict[str, float]] = {}
     for spec in PERMISSIONS:
         code = spec.code
+        derives = code in CATALOG_FINE_CODES
         if code in ov_states:
             states[code], sources[code] = ov_states[code], "override"
+        elif derives and CATALOG_LEGACY_CODE in ov_states:
+            states[code], sources[code] = ov_states[CATALOG_LEGACY_CODE], "override"
         elif code in own_states:
             states[code], sources[code] = own_states[code], "role"
+        elif derives and CATALOG_LEGACY_CODE in own_states:
+            states[code], sources[code] = own_states[CATALOG_LEGACY_CODE], "role"
         else:
             states[code], sources[code] = base_states.get(code, DENY), "template"
         merged: Dict[str, float] = {}
@@ -568,7 +604,8 @@ def _role_value(role: Any) -> str:
 #: there — the direction to fail in.
 #: Not grown with codes added after roles (SELL_RESTRICTED_ITEMS): an older till never asks for
 #: them, and a custom role must not read as a cashier there because of one it cannot use.
-LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"}
+#: Nor the catalog's four writes (§6.2): an older till asks for `catalog:write` only.
+LEGACY_SENIOR_CODES: FrozenSet[str] = LEGACY_APPROVAL_CODES - {"SELL_RESTRICTED_ITEMS"} - CATALOG_FINE_CODES
 
 
 def legacy_role_for(states: Mapping[str, str]) -> str:

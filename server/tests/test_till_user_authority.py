@@ -225,6 +225,8 @@ class TestTillRoleMap:
             Scope.REFUND, Scope.DISCOUNT, Scope.DAY_CLOSE, Scope.SHIFT_CLOSE,
             Scope.CATALOG_WRITE, Scope.TRANSMIT, Scope.TABLE_CANCEL, Scope.TABLE_UNLOCK,
             Scope.USER_SESSION_RELEASE,
+            # "ניהול קטלוג" (specs/till-catalog-management.md §6.2).
+            Scope.CATALOG_AVAILABILITY, Scope.CATALOG_PRICE, Scope.CATALOG_EDIT, Scope.CATALOG_CREATE,
         }
 
     def test_a_till_shop_manager_matches_a_cloud_shop_manager(self):

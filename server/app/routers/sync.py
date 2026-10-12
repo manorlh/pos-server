@@ -22,6 +22,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Dict, List, Literal, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
@@ -33,6 +34,7 @@ from app.database import get_db
 from app.middleware.auth import (
     ELEVATION_HEADER,
     CatalogActor,
+    CatalogAuthority,
     elevation_if_offered,
     get_pos_machine_for_sync_path,
     get_pos_machine_from_sync_machine_token,
@@ -458,6 +460,55 @@ _CATEGORY_OVERRIDE_FIELDS = {"name"}
 _OVERRIDE_FIELDS = {"price", "is_available", "is_listed"}
 
 
+def _same(a: Any, b: Any, *, number: bool = False) -> bool:
+    """
+    Equal as the till means it: 12 and Decimal("12.00") are one number (a price compares as a
+    number whatever its type); text, flags and lists as they are — barcode "007" is not "7".
+    """
+    if a is None or b is None:
+        return a is None and b is None
+    if not number and (isinstance(a, (str, bool, list, dict)) or isinstance(b, (str, bool, list, dict))):
+        return getattr(a, "value", a) == getattr(b, "value", b)
+    try:
+        return Decimal(str(a)) == Decimal(str(b))
+    except (InvalidOperation, ValueError, TypeError):
+        return str(a) == str(b)
+
+
+def _product_update_scopes(product: Product, override: Optional[ShopProductOverride], updates: dict) -> List[Scope]:
+    """
+    The catalog scopes a till's product update needs (specs/till-catalog-management.md §6.2),
+    counting only what it changes — a till's dialog sends every field back:
+    `price` → price; `is_available` → availability; anything else (name, barcode, category,
+    printers, listing…) → edit. An update that changes nothing is an edit.
+    """
+    scopes: List[Scope] = []
+    edit = False
+    for key, value in updates.items():
+        if key in ("is_general", "requires_manager_approval"):
+            continue  # echoes the endpoint drops
+        if key == "price":
+            current = override.price if override is not None and override.price is not None else product.price
+            if not _same(current, value, number=True):
+                scopes.append(Scope.CATALOG_PRICE)
+        elif key == "is_available":
+            current = override.is_available if override is not None else None
+            if current != value:
+                scopes.append(Scope.CATALOG_AVAILABILITY)
+        elif key == "is_listed":
+            current = override.is_listed if override is not None else True
+            if bool(current) != bool(value):
+                edit = True
+        elif key == "kitchen_printers":
+            if value is not None:
+                edit = True
+        elif not hasattr(product, key) or not _same(getattr(product, key), value):
+            edit = True
+    if edit or not scopes:
+        scopes.append(Scope.CATALOG_EDIT)
+    return scopes
+
+
 def _machine_editable_product(db: Session, machine: POSMachine, product_id: str) -> Product:
     product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
@@ -483,7 +534,7 @@ def machine_create_cloud_product(
     machine_id: str,
     data: ProductCreate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_CREATE)),
     db: Session = Depends(get_db),
 ):
     """Create a product from the till, listed in the till's own shop."""
@@ -580,7 +631,8 @@ def machine_update_cloud_product(
     product_id: str,
     data: ProductUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    # Which scopes depends on what the body changes (`_product_update_scopes`): decided below.
+    actor: Any = Depends(require_catalog_authority(None)),
     db: Session = Depends(get_db),
 ):
     """
@@ -595,6 +647,12 @@ def machine_update_cloud_product(
     product = _machine_editable_product(db, machine, product_id)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # "ניהול קטלוג" (specs/till-catalog-management.md §6.2): each kind of change its own
+    # permission — the price, the availability, anything else an edit.
+    if isinstance(actor, CatalogAuthority):
+        actor = actor.require(
+            *_product_update_scopes(product, _override_for(db, shop.id, product.id), updates)
+        )
     # The general item's fixed fields, checked whoever may edit the rest of it. The
     # flag itself is never written from a request, so an echo of it is dropped here
     # rather than counted as a change to the chain's master record.
@@ -778,7 +836,7 @@ def machine_create_cloud_category(
     machine_id: str,
     data: CategoryCreate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_CREATE)),
     db: Session = Depends(get_db),
 ):
     """
@@ -840,7 +898,7 @@ def machine_update_cloud_category(
     category_id: str,
     data: CategoryUpdate,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_EDIT)),
     db: Session = Depends(get_db),
 ):
     """
@@ -968,7 +1026,7 @@ def machine_set_product_availability(
     product_id: str,
     body: TillAvailabilitySet,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_AVAILABILITY)),
     db: Session = Depends(get_db),
 ):
     """
@@ -1357,7 +1415,7 @@ async def machine_upload_product_image(
     keep_background: bool = Query(False, alias="keepBackground"),
     enhance: bool = Query(True, alias="enhance"),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_EDIT)),
     db: Session = Depends(get_db),
 ):
     """
@@ -1411,7 +1469,7 @@ def machine_remove_product_image(
     machine_id: str,
     product_id: str,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_EDIT)),
     db: Session = Depends(get_db),
 ):
     """
@@ -1451,7 +1509,7 @@ def machine_set_category_availability(
     category_id: str,
     body: TillAvailabilitySet,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
-    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_WRITE)),
+    actor: CatalogActor = Depends(require_catalog_authority(Scope.CATALOG_AVAILABILITY)),
     db: Session = Depends(get_db),
 ):
     """
@@ -2559,10 +2617,14 @@ def get_till_parameters_sync(
     `{"parameters": {key: value}, "updatedAt": ISO-8601 | null}`. Pulled on start and
     on an Ably `settings` notify with reason `till_parameters_updated`.
     """
+    from app.services.catalog_admin import view_for_machine
+
     resolved = till_parameters_for_machine(db, machine)
     body = TillParametersSyncResponse(
         parameters=resolved.parameters,
         updated_at=resolved.updated_at,
+        # "ניהול קטלוג מהקופה": what the till's catalog screen shows (specs/till-catalog-management.md §6.1).
+        catalog_admin_view=view_for_machine(db, machine, resolved.parameters),
     )
     # Only changes cross the wire: the till pulls this on every heartbeat, so an answer
     # identical to the one it holds is a bare 304. The ETag is a hash of the resolved
@@ -2576,8 +2638,10 @@ def get_till_parameters_sync(
     from fastapi.responses import JSONResponse, Response as _Response
 
     payload = body.model_dump(mode="json", by_alias=True)
+    # The catalog view too: a menu assigned or cleared changes it with no parameter changing.
+    hashed = {"parameters": payload["parameters"], "catalogAdminView": payload.get("catalogAdminView")}
     etag = '"' + hashlib.sha1(
-        _json.dumps(payload["parameters"], sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+        _json.dumps(hashed, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
     ).hexdigest() + '"'
     if request is not None and request.headers.get("if-none-match") == etag:
         return _Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})

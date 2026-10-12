@@ -76,6 +76,7 @@ PUT /catalog-menus-order -> products:edit
 GET /catalog-menus-simulate -> products:view
 GET /catalog-menus-targets -> products:view
 PUT /catalog-menus-targets -> products:edit
+DELETE /catalog-menus/assignments -> products:edit
 DELETE /catalog-menus/{menu_id} -> products:edit
 GET /catalog-menus/{menu_id} -> products:view
 PUT /catalog-menus/{menu_id} -> products:edit
@@ -863,6 +864,9 @@ POST /till-messages/{message_id}/resend -> till_messages:edit
 POST /till-messages/{message_id}/resume -> till_messages:edit
 GET /till-parameters -> super_admin
 POST /till-parameters -> super_admin
+GET /till-parameters/catalog-admin -> super_admin
+PUT /till-parameters/catalog-admin -> super_admin
+POST /till-parameters/reset -> super_admin
 DELETE /till-parameters/{parameter_id} -> super_admin
 PUT /till-parameters/{parameter_id} -> super_admin
 GET /till-parameters/{parameter_id}/changes -> super_admin

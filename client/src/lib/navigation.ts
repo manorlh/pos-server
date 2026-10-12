@@ -86,6 +86,7 @@ import {
   HeartPulse,
   TabletSmartphone,
   Target,
+  PackageSearch,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -373,6 +374,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/till-parameters',
         labelKey: 'tillParameters',
         icon: SlidersHorizontal,
+        gate: 'superAdmin',
+      },
+      // "ניהול קטלוג מהקופה": the till's catalog screen per level — till parameters, so the super admin's.
+      {
+        href: '/dashboard/catalog-admin',
+        labelKey: 'catalogAdmin',
+        icon: PackageSearch,
         gate: 'superAdmin',
       },
       // "הרשאות": which entries and device actions each role is denied — the super admin's.
