@@ -6572,5 +6572,377 @@
         }
       }
     }
+  ],
+  "entitlementLeftMany": [
+    {
+      "name": "6.6: 3 hot dogs, 2 colas and a dessert on two vouchers — only B is owed the dessert",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 0,
+          "splitAllowed": false
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 1
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        }
+      ],
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 1,
+          "groups": [
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד פריט מהשובר: קינוח ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד פריט מהשובר: קינוח ×1 — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (קינוח ×1)",
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "6.6: both vouchers without their dessert — dessert ×2 from the vouchers",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 1
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 1
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        }
+      ],
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 2,
+          "groups": [
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 2
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×2 — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשוברים: קינוח ×2 — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "6.6: A is owed the dessert and B the drink",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 1
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 1
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": true
+        }
+      ],
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 2,
+          "groups": [
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 1
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×1 · שתייה ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשוברים: קינוח ×1 · שתייה ×1 — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "6.6: one each and one up to the total — up to",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 1
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 1
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 1
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": false
+        }
+      ],
+      "expect": {
+        "entitlement": {
+          "kind": "upTo",
+          "count": 2,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 2
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשוברים, מתוך: מזון / קינוח — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשוברים, מתוך: מזון / קינוח — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "6.6: a punch card in parts and a voucher owed the food — only the food",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "items",
+              "name": "פריטים",
+              "remainingAfterThisSale": 44
+            }
+          ],
+          "totalRemainingAfterThisSale": 44,
+          "splitAllowed": true
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 1
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 1,
+          "splitAllowed": true
+        }
+      ],
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 1,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד פריט מהשובר: מזון ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד פריט מהשובר: מזון ×1 — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": "מה שלא מומש יישאר בשובר לפעם הבאה (מזון ×1)"
+        }
+      }
+    },
+    {
+      "name": "6.6: both vouchers taken in full — nothing",
+      "vouchers": [
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 0,
+          "splitAllowed": false
+        },
+        {
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "remainingAfterThisSale": 0
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "remainingAfterThisSale": 0
+            }
+          ],
+          "totalRemainingAfterThisSale": 0,
+          "splitAllowed": false
+        }
+      ],
+      "expect": {
+        "entitlement": null
+      }
+    }
   ]
 }

@@ -7,8 +7,8 @@ and how a product that takes no discounts ("לא מקבל הנחות") is treate
 
 Every function here is pinned, case by case, by the shared golden fixture
 tests/fixtures/prepaid_voucher_rules.json (sections `eligibility`, `assignment`, `selection`,
-`entitlementLeft`, `splitValue`, `fixedShare`, `cover`, `override`) — the same bytes in pos-android's
-app/src/test/resources, SHA-256 pinned on both sides (P:\\specs\\production-vouchers-api.md).
+`entitlementLeft`, `entitlementLeftMany`, `splitValue`, `fixedShare`, `cover`, `override`) — the same
+bytes in pos-android's app/src/test/resources, SHA-256 pinned on both sides (P:\\specs\\production-vouchers-api.md).
 No database, no I/O: ids are strings, money is integer agorot, percents are basis points.
 """
 from __future__ import annotations
@@ -301,12 +301,13 @@ ENTITLEMENT_UP_TO = "upTo"
 
 #: The texts of the entitlement left (P:/specs/voucher-one-per-group.md §8.2). `{units}` is "עוד פריט" /
 #: "עוד 2 פריטים"; `{list}` is "מזון ×1 · קינוח ×1", or "פריט אחד מתוך: מזון / קינוח" when the open
-#: groups depend on the voucher's total; `{names}` is "מזון / קינוח".
+#: groups depend on the voucher's total; `{names}` is "מזון / קינוח"; `{source}` is "מהשובר", or
+#: "מהשוברים" when several vouchers of the sale are said together (entitlement_left_many).
 ENTITLEMENT_TEXT = {
-    "till_each": "הלקוח זכאי ל{units} מהשובר: {list} — הציעו לו",
-    "till_upTo": "הלקוח זכאי ל{units} מהשובר, מתוך: {names} — הציעו לו",
-    "kiosk_each": "מגיע לך {units} מהשובר: {list} — להוסיף?",
-    "kiosk_upTo": "מגיע לך {units} מהשובר, מתוך: {names} — להוסיף?",
+    "till_each": "הלקוח זכאי ל{units} {source}: {list} — הציעו לו",
+    "till_upTo": "הלקוח זכאי ל{units} {source}, מתוך: {names} — הציעו לו",
+    "kiosk_each": "מגיע לך {units} {source}: {list} — להוסיף?",
+    "kiosk_upTo": "מגיע לך {units} {source}, מתוך: {names} — להוסיף?",
     "close_confirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד ({list})",
     "close_note": "מה שלא מומש יישאר בשובר לפעם הבאה ({list})",
 }
@@ -365,16 +366,11 @@ def entitlement_left(groups: Sequence[GroupLeft], total_remaining: int, split_al
     else:
         kind, count = ENTITLEMENT_UP_TO, total
         open_ = [(key, name, min(n, total)) for key, name, n in open_]
-    units = "עוד פריט" if count == 1 else f"עוד {count} פריטים"
-    names = " / ".join(name for _, name, _ in open_)
+    till, kiosk = _entitlement_texts(kind, count, open_, "מהשובר")
     if kind == ENTITLEMENT_EACH:
         listed = " · ".join(f"{name} ×{n}" for _, name, n in open_)
-        till = ENTITLEMENT_TEXT["till_each"].format(units=units, list=listed)
-        kiosk = ENTITLEMENT_TEXT["kiosk_each"].format(units=units, list=listed)
     else:
-        listed = f"{units_text(count)} מתוך: {names}"
-        till = ENTITLEMENT_TEXT["till_upTo"].format(units=units, names=names)
-        kiosk = ENTITLEMENT_TEXT["kiosk_upTo"].format(units=units, names=names)
+        listed = f"{units_text(count)} מתוך: " + " / ".join(name for _, name, _ in open_)
     return EntitlementLeft(
         kind=kind,
         count=count,
@@ -384,6 +380,53 @@ def entitlement_left(groups: Sequence[GroupLeft], total_remaining: int, split_al
         close_confirm=None if split_allowed else ENTITLEMENT_TEXT["close_confirm"].format(list=listed),
         close_note=ENTITLEMENT_TEXT["close_note"].format(list=listed) if split_allowed else None,
     )
+
+
+def _entitlement_texts(kind: str, count: int, groups: Sequence[Tuple[str, str, int]], source: str) -> Tuple[str, str]:
+    """The till's and the kiosk's words for [groups]; [source] is "מהשובר" or "מהשוברים"."""
+    units = "עוד פריט" if count == 1 else f"עוד {count} פריטים"
+    if kind == ENTITLEMENT_EACH:
+        listed = " · ".join(f"{name} ×{n}" for _, name, n in groups)
+        till = ENTITLEMENT_TEXT["till_each"].format(units=units, source=source, list=listed)
+        kiosk = ENTITLEMENT_TEXT["kiosk_each"].format(units=units, source=source, list=listed)
+    else:
+        names = " / ".join(name for _, name, _ in groups)
+        till = ENTITLEMENT_TEXT["till_upTo"].format(units=units, source=source, names=names)
+        kiosk = ENTITLEMENT_TEXT["kiosk_upTo"].format(units=units, source=source, names=names)
+    return till, kiosk
+
+
+def entitlement_left_many(per_voucher: Sequence[Optional[EntitlementLeft]]) -> Optional[EntitlementLeft]:
+    """
+    The entitlement left of several vouchers in one sale (the spec's §6.6), each voucher's
+    [entitlement_left] in scan order — one alert for the sale:
+
+    * the empty ones dropped; none left → None; one left → exactly that one (its own closing words);
+    * else merged: "each" when every one is "each", else "upTo"; the count is their sum; the groups
+      by name in first-seen order (the first one's key), their counts summed — for "upTo" at most
+      the count; the texts say "מהשוברים": "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×1 · שתייה ×1
+      — הציעו לו". The closing words stay each voucher's own (the till composes them): None here.
+    """
+    left = [e for e in per_voucher if e is not None]
+    if not left:
+        return None
+    if len(left) == 1:
+        return left[0]
+    kind = ENTITLEMENT_EACH if all(e.kind == ENTITLEMENT_EACH for e in left) else ENTITLEMENT_UP_TO
+    count = sum(e.count for e in left)
+    merged: Dict[str, List] = {}
+    for e in left:
+        for key, name, n in e.groups:
+            if name in merged:
+                merged[name][2] += n
+            else:
+                merged[name] = [key, name, n]
+    groups = tuple(
+        (key, name, n if kind == ENTITLEMENT_EACH else min(n, count)) for key, name, n in merged.values()
+    )
+    till, kiosk = _entitlement_texts(kind, count, groups, "מהשוברים")
+    return EntitlementLeft(kind=kind, count=count, groups=groups, till_text=till, kiosk_text=kiosk,
+                           close_confirm=None, close_note=None)
 
 
 # ── Value: a fixed value split between the units, to the agora (§5) ────────────

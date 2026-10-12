@@ -35,7 +35,7 @@ import {
 } from './kioskVouchers';
 
 /** The fixture's SHA-256, its line endings read as LF — the same constant as pos-server's and pos-android's tests. */
-const RULES_SHA256 = '63bd23c7977e96a76afb33bec38e91027d2b4da401405ff97a17f9abf242171c';
+const RULES_SHA256 = 'cccdd917a08d9e88b411dceff44e0faa3e066b290dea1f6924d0b4b1cd64ff24';
 
 function fixtureText(): string {
   const name = 'prepaid_voucher_rules.json';

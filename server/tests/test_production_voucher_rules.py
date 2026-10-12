@@ -1,7 +1,7 @@
 """
 Production vouchers — the shared rules (app/services/production_voucher_rules.py), pinned by the
 golden fixture tests/fixtures/prepaid_voucher_rules.json: sections `eligibility`, `assignment`,
-`selection`, `entitlementLeft`, `splitValue`, `fixedShare`, `cover`, `override` (the till runs the same cases from
+`selection`, `entitlementLeft`, `entitlementLeftMany`, `splitValue`, `fixedShare`, `cover`, `override` (the till runs the same cases from
 its copy; the file's SHA-256 is pinned in tests/test_prepaid_voucher_kinds.py and in pos-android).
 
 The inputs live here; `UPDATE_PREPAID_VOUCHER_RULES=1` writes their answers into the fixture (the
@@ -223,6 +223,30 @@ ENTITLEMENT_LEFT = [
      "groups": [left("items", "פריטים", 3)], "totalRemainingAfterThisSale": 3, "splitAllowed": False},
 ]
 
+
+def three(food, drink, dessert, total, split=False):
+    """A voucher of "פריט אחד מכל קבוצה" with three groups, as it stands after this sale."""
+    return {"groups": [left("food", "מזון", food), left("drink", "שתייה", drink), left("dessert", "קינוח", dessert)],
+            "totalRemainingAfterThisSale": total, "splitAllowed": split}
+
+
+# Several vouchers in one sale (the spec's §6.6): each voucher's entitlement_left, in scan order, said once.
+ENTITLEMENT_LEFT_MANY = [
+    {"name": "6.6: 3 hot dogs, 2 colas and a dessert on two vouchers — only B is owed the dessert",
+     "vouchers": [three(0, 0, 0, 0), three(0, 0, 1, 1)]},
+    {"name": "6.6: both vouchers without their dessert — dessert ×2 from the vouchers",
+     "vouchers": [three(0, 0, 1, 1), three(0, 0, 1, 1)]},
+    {"name": "6.6: A is owed the dessert and B the drink",
+     "vouchers": [three(0, 0, 1, 1), three(0, 1, 0, 1, split=True)]},
+    {"name": "6.6: one each and one up to the total — up to",
+     "vouchers": [three(1, 0, 0, 1), three(1, 0, 1, 1)]},
+    {"name": "6.6: a punch card in parts and a voucher owed the food — only the food",
+     "vouchers": [{"groups": [left("items", "פריטים", 44)], "totalRemainingAfterThisSale": 44, "splitAllowed": True},
+                  three(1, 0, 0, 1, split=True)]},
+    {"name": "6.6: both vouchers taken in full — nothing",
+     "vouchers": [three(0, 0, 0, 0), three(0, 0, 0, 0)]},
+]
+
 SPLIT_VALUE = [
     {"name": "by list price, exactly", "totalAgorot": 8000, "units": [[5000, None], [1500, None], [1500, None]]},
     {"name": "by list price, rounded to the agora", "totalAgorot": 8000, "units": [[4590, None], [1290, None], [1190, None]]},
@@ -339,9 +363,12 @@ def run_selection(c):
     return {"refusal": _refusal(r)}
 
 
-def run_entitlement_left(c):
-    groups = [P.GroupLeft(g["key"], g["name"], g["remainingAfterThisSale"]) for g in c["groups"]]
-    e = P.entitlement_left(groups, c["totalRemainingAfterThisSale"], c["splitAllowed"])
+def _entitlement_of(v):
+    groups = [P.GroupLeft(g["key"], g["name"], g["remainingAfterThisSale"]) for g in v["groups"]]
+    return P.entitlement_left(groups, v["totalRemainingAfterThisSale"], v["splitAllowed"])
+
+
+def _entitlement_out(e):
     if e is None:
         return {"entitlement": None}
     return {"entitlement": {
@@ -353,6 +380,14 @@ def run_entitlement_left(c):
         "closeConfirm": e.close_confirm,
         "closeNote": e.close_note,
     }}
+
+
+def run_entitlement_left(c):
+    return _entitlement_out(_entitlement_of(c))
+
+
+def run_entitlement_left_many(c):
+    return _entitlement_out(P.entitlement_left_many([_entitlement_of(v) for v in c["vouchers"]]))
 
 
 def run_split_value(c):
@@ -393,6 +428,7 @@ SECTIONS = {
     "assignment": (ASSIGNMENT, run_assignment),
     "selection": (SELECTION, run_selection),
     "entitlementLeft": (ENTITLEMENT_LEFT, run_entitlement_left),
+    "entitlementLeftMany": (ENTITLEMENT_LEFT_MANY, run_entitlement_left_many),
     "splitValue": (SPLIT_VALUE, run_split_value),
     "fixedShare": (FIXED_SHARE, run_fixed_share),
     "cover": (COVER, run_cover),
@@ -497,6 +533,30 @@ def test_the_entitlement_left_by_hand():
     assert P.entitlement_left([L("food", "מזון", 1)], 0, False) is None
     assert P.entitlement_left([L("food", "מזון", 0), L("drink", "שתייה", 0)], 1, False) is None
     assert P.entitlement_left([L("items", "פריטים", 44)], 44, True) is None
+
+
+def test_the_entitlement_of_several_vouchers_by_hand():
+    L = P.GroupLeft
+
+    def voucher(food, drink, dessert, split=False):
+        return P.entitlement_left([L("f", "מזון", food), L("d", "שתייה", drink), L("k", "קינוח", dessert)],
+                                  food + drink + dessert, split)
+
+    only_b = P.entitlement_left_many([voucher(0, 0, 0), voucher(0, 0, 1)])
+    assert only_b == voucher(0, 0, 1)  # one contributor: exactly its own, closing words included
+    assert only_b.till_text == "הלקוח זכאי לעוד פריט מהשובר: קינוח ×1 — הציעו לו"
+    both = P.entitlement_left_many([voucher(0, 0, 1), voucher(0, 0, 1)])
+    assert (both.kind, both.count, both.groups) == ("each", 2, (("k", "קינוח", 2),))
+    assert both.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×2 — הציעו לו"
+    assert both.kiosk_text == "מגיע לך עוד 2 פריטים מהשוברים: קינוח ×2 — להוסיף?"
+    assert (both.close_confirm, both.close_note) == (None, None)  # each voucher's own, composed by the till
+    two = P.entitlement_left_many([voucher(0, 0, 1), voucher(0, 1, 0, split=True)])
+    assert two.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×1 · שתייה ×1 — הציעו לו"
+    up_to = P.entitlement_left([L("f", "מזון", 1), L("k", "קינוח", 1)], 1, False)
+    mixed = P.entitlement_left_many([voucher(1, 0, 0), up_to])
+    assert (mixed.kind, mixed.count) == ("upTo", 2)
+    assert mixed.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים, מתוך: מזון / קינוח — הציעו לו"
+    assert P.entitlement_left_many([None, None]) is None and P.entitlement_left_many([]) is None
 
 
 def test_a_fixed_value_sums_exactly():
