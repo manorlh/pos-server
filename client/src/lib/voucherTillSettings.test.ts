@@ -8,6 +8,10 @@ import {
   VOUCHER_SHOW_ENTITLEMENT_DEFAULT,
   VOUCHER_SHOW_ENTITLEMENT_KEY,
   VOUCHER_SHOW_ENTITLEMENT_VALUES,
+  VOUCHER_SOUND_APPROVE_KEY,
+  VOUCHER_SOUND_DEFAULT,
+  VOUCHER_SOUND_REJECT_KEY,
+  VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_DEFAULT,
   VOUCHER_STATION_PAID_ITEMS_DEFAULT,
   VOUCHER_STATION_PAID_ITEMS_KEY,
@@ -18,6 +22,7 @@ import {
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherShowEntitlement,
+  resolveVoucherSound,
   resolveVoucherStation,
   resolveVoucherStationPaidItems,
   voucherBalanceCheckEnabled,
@@ -169,5 +174,24 @@ test('voucherShowEntitlement: its own value, then the inherited one, then on; ju
   for (const junk of ['OFF', 'false', '', 0, false, {}]) {
     assert.equal(resolveVoucherShowEntitlement(junk, junk), 'on');
     assert.equal(resolveVoucherShowEntitlement(junk, 'off'), 'off');
+  }
+});
+
+// ── "צליל אישור / סירוב במימוש שובר" (voucherSoundApprove / voucherSoundReject, 12.10.2026) ──
+
+test("voucherSoundApprove / voucherSoundReject: the server's keys, values and default (on)", () => {
+  assert.equal(VOUCHER_SOUND_APPROVE_KEY, 'voucherSoundApprove');
+  assert.equal(VOUCHER_SOUND_REJECT_KEY, 'voucherSoundReject');
+  assert.deepEqual([...VOUCHER_SOUND_VALUES], ['on', 'off']);
+  assert.equal(VOUCHER_SOUND_DEFAULT, 'on');
+});
+
+test('voucher sounds: their own value, then the inherited one, then on; junk is unset', () => {
+  assert.equal(resolveVoucherSound('off', 'on'), 'off');
+  assert.equal(resolveVoucherSound(null, 'off'), 'off');
+  assert.equal(resolveVoucherSound(undefined, undefined), 'on');
+  for (const junk of ['OFF', 'false', '', 0, false, {}]) {
+    assert.equal(resolveVoucherSound(junk, junk), 'on');
+    assert.equal(resolveVoucherSound(junk, 'off'), 'off');
   }
 });
