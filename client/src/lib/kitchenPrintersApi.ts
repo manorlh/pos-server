@@ -96,7 +96,17 @@ export interface KitchenOptions {
   shop: PrinterSettingValues;
   areas: Record<string, PrinterSettingValues>;
   machines: Record<string, PrinterSettingValues>;
+  /**
+   * Per till: its model's own defaults, below every level — "פתיחת מגירה" on a till with a
+   * drawer port of its own is "בתשלום מזומן + כפתור פתיחה" until some level sets it.
+   */
+  deviceDefaults?: Record<string, PrinterSettingValues>;
+  /** Per till: what it takes now and from where. */
+  effective?: Record<string, Record<string, { value: PrinterSettingValue | null; effectiveSource: PrinterSettingSource }>>;
 }
+
+/** Where a till's printing setting comes from; `device_default` — its model's own default. */
+export type PrinterSettingSource = 'machine' | 'area' | 'shop' | 'company' | 'device_default' | 'default';
 
 export interface KitchenPrintersPage {
   shopId: string;
