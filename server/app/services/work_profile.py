@@ -26,10 +26,13 @@ each value, each change in the change log (`till_parameter_changes`):
 first Android till becomes the main till (`main_till`, with "רשת מקומית") under `shop_local`, the
 next ones `lan_member` (or `remote_shop_z` for Windows / a browser), every till `shop_z_cloud`
 under `shop_cloud`, `own_z` under `per_till`, and a kiosk `kiosk_shop_z` / `kiosk_own_z`. A device
-paired with no plan of its own takes it by itself (`apply_on_pairing`). Once there are tills, a
-super admin's save switches them: `z_mode_policy.switch_all`, `work_config.apply` (the main till,
-a kiosk's own Z) and `lan_server.set_local_network` — with every rule they keep (a till's shift
-closed, no Z under way, the shop Z producer's guard).
+a super admin pairs with no plan of its own takes it by itself (`apply_on_pairing`); one anyone
+else pairs stays "לפי הסניף", as before — the presets' services are the super admin's, and nothing
+here acts as one for anybody else — and the status says the Z waits for a super admin ("ממתין
+למנהל-על — יש להחיל את תצורת העבודה מדף הסניף"). A super admin's save switches the tills:
+`z_mode_policy.switch_all`, `work_config.apply` (the main till, a kiosk's own Z) and
+`lan_server.set_local_network` — with every rule they keep (a till's shift closed, no Z under
+way, the shop Z producer's guard).
 
 **All or nothing.** Everything that can be refused is checked before anything is written; a
 refusal is a 409 with the Hebrew reason (`{detail: {code, message, field, …}}`) and nothing
@@ -66,6 +69,9 @@ logger = logging.getLogger(__name__)
 
 FIRST_TILL = "יופעל כשתצומד הקופה הראשונה"
 WAIT_MAIN = "ממתין לקופה ראשית"
+#: The tills are there but not as the profile says, and no rule stands in the way: a super
+#: admin's save applies it (a device paired by anyone else stays "לפי הסניף").
+WAIT_SUPER_ADMIN = "ממתין למנהל-על — יש להחיל את תצורת העבודה מדף הסניף"
 
 APPLIED, PENDING, BLOCKED = "applied", "pending", "blocked"
 
@@ -136,25 +142,9 @@ def _now(now: Optional[datetime] = None) -> datetime:
     return now or datetime.now(timezone.utc)
 
 
-class ProfileActor:
-    """
-    The shop's work profile applying itself to a device that just paired with no plan of its
-    own: as the super admin would (the presets' services are the super admin's), in the name of
-    the user who paired it — and said so in the change log. Nothing beyond the profile's own
-    suggestion for that device is ever written with it.
-    """
-
-    role = UserRole.SUPER_ADMIN
-
-    def __init__(self, user: Any = None):
-        self.user = user
-        self.id = getattr(user, "id", None)
-        email = getattr(user, "email", None)
-        self.email = f"{email} (תצורת עבודה של הסניף)" if email else "תצורת עבודה של הסניף"
-        self.username = getattr(user, "username", None) or "work-profile"
-        self.tenant_id = getattr(user, "tenant_id", None)
-        self.company_id = None
-        self.shop_id = None
+#: Reading a switch's rules for the status reason (`independent_till.check_switch` asks for the
+#: super admin before the rules): only ever passed to a check, never to a write.
+_RULES_ONLY = SimpleNamespace(role=UserRole.SUPER_ADMIN, id=None, email=None, username=None)
 
 
 # ── The shop as it stands ─────────────────────────────────────────────────────
@@ -429,7 +419,7 @@ def _independence_refusal(db: Session, machine: POSMachine) -> Optional[Dict[str
     from app.services import till_z
 
     try:
-        IT.check_switch(db, ProfileActor(), machine, True)
+        IT.check_switch(db, _RULES_ONLY, machine, True)
     except (IT.IndependentSwitchRefused, till_z.TillZRefused) as refused:
         body = refused.body
         return {"code": body.get("detail"), "message": body.get("message"), "machineId": str(machine.id)}
@@ -487,10 +477,6 @@ def _blocked(reason: str) -> Dict[str, Any]:
     return {"state": BLOCKED, "reason": reason}
 
 
-def _kind(mode: str) -> str:
-    return "Z לכל קופה" if mode == Z_TILL else "Z סניפי"
-
-
 def _local_status(db: Session, state: ShopState, want: bool, now: datetime) -> Dict[str, Any]:
     """"שרת מקומי": the shop's main till with "רשת מקומית" on (local mode) — or not."""
     if want:
@@ -507,25 +493,20 @@ def _local_status(db: Session, state: ShopState, want: bool, now: datetime) -> D
             busy = _producer_refusal(db, state.shop, True, candidate, now)
             if busy:
                 return _blocked(busy["message"])
-            return _blocked(
-                f"אין עדיין קופה ראשית בסניף. שמירת התצורה על ידי מנהל-על תקבע את {_label(candidate)} "
-                "כקופה הראשית ותפעיל את הרשת המקומית."
-            )
+            # A main till is there to be had: a super admin's save makes it one.
+            return _pending(WAIT_SUPER_ADMIN)
         busy = _producer_refusal(db, state.shop, True, state.main, now)
         if busy:
             return _blocked(busy["message"])
-        return _blocked(
-            f"הרשת המקומית כבויה בסניף, ולכן {_label(state.main)} (הקופה הראשית) לא מפיקה את ה-Z הסניפי. "
-            "שמירת התצורה על ידי מנהל-על תפעיל אותה."
-        )
+        # "רשת מקומית" is off: a super admin's save turns it on.
+        return _pending(WAIT_SUPER_ADMIN)
     if not state.local_network:
         return _applied()
     busy = _producer_refusal(db, state.shop, False, None, now)
     if busy:
         return _blocked(busy["message"])
-    return _blocked(
-        "הרשת המקומית דלוקה בסניף: הקופה הראשית מפיקה את ה-Z הסניפי ברשת. שמירת התצורה על ידי מנהל-על תכבה אותה."
-    )
+    # "רשת מקומית" is on: a super admin's save turns it off.
+    return _pending(WAIT_SUPER_ADMIN)
 
 
 def _z_status(db: Session, state: ShopState, profile: Dict[str, Any], now: datetime) -> Dict[str, Any]:
@@ -544,17 +525,13 @@ def _z_status(db: Session, state: ShopState, profile: Dict[str, Any], now: datet
             why = _switch_refusal(db, machine, mode, now)
         if why is not None:
             return _blocked(why["message"])
-        return _blocked(
-            f"{_label(machine)} עדיין ב\"{_kind(_z_mode(machine))}\". שמירת התצורה על ידי מנהל-על תעביר "
-            f"אותה ל\"{_kind(mode)}\"."
-        )
+        # Paired by someone other than a super admin (it stays "לפי הסניף"), or changed on its own
+        # page: a super admin's save switches it.
+        return _pending(WAIT_SUPER_ADMIN)
     if want == T.Z_SHOP_LOCAL and not state.local_mode:
         return _local_status(db, state, True, now)
     if want == T.Z_SHOP_CLOUD and state.local_mode:
-        return _blocked(
-            "הסניף עובד ברשת מקומית: ה-Z הסניפי מופק בקופה הראשית ולא מהענן. שמירת התצורה על ידי מנהל-על "
-            "תכבה את הרשת המקומית."
-        )
+        return _local_status(db, state, False, now)
     return _applied()
 
 
@@ -1129,29 +1106,21 @@ def suggestion_fields(db: Session, shop: Optional[Shop], ctx) -> Dict[str, Any]:
     }
 
 
-def plan_follows_profile(db: Session, shop: Optional[Shop], role: Optional[str], platform: Optional[str],
-                         plan: Dict[str, Any]) -> bool:
-    """
-    The plan a pairing code would carry is the profile's own suggestion for the device: nothing to
-    store — the profile applies itself as the device pairs (`apply_on_pairing`).
-    """
-    from app.services import work_config as WC
-
-    if shop is None or not plan or set(plan) - {"preset", "enableLocalNetwork"}:
-        return False
-    offer = suggest(db, shop, WC.context_for_new(db, shop, role, platform))
-    return offer is not None and plan.get("preset") == offer["preset"]
-
-
 def apply_on_pairing(db: Session, machine: POSMachine, *, user_id: Any, pairing_code: Any = None) -> Optional[bool]:
     """
     A device that just paired into a shop with a work profile, and no plan of its own: the
-    profile's suggestion for it, applied (`ProfileActor`, in the name of the user who paired it).
-    Never raises — a refusal leaves the device as the shop's default, and is kept on the code for
-    the device page. None: nothing to apply; else whether it was applied. Commits when it applies.
+    profile's suggestion for it, applied — when the user who paired it is a super admin, whose the
+    presets' services are. Anyone else's device stays "לפי הסניף", exactly as before: the shop's
+    status then says the Z waits for a super admin (`WAIT_SUPER_ADMIN`), whose save on the shop's
+    page applies it. Never raises — a refusal leaves the device as the shop's default, and is kept
+    on the code for the device page. None: nothing applied or tried; else whether it was applied.
+    Commits when it applies.
     """
     from app.services import work_config as WC
 
+    user = db.get(User, user_id) if user_id is not None else None
+    if getattr(user, "role", None) != UserRole.SUPER_ADMIN:
+        return None
     try:
         shop = WC.seated_shop(db, machine)
         if stored_profile(shop) is None:
@@ -1162,14 +1131,12 @@ def apply_on_pairing(db: Session, machine: POSMachine, *, user_id: Any, pairing_
         return None
     if offer is None:
         return None
-    user = db.get(User, user_id) if user_id is not None else None
-    actor = ProfileActor(user)
     now = _now()
     plan = offer["plan"]
     code_id = getattr(pairing_code, "id", None)
     db.commit()
     try:
-        changed = WC.apply(db, actor, machine, plan, now=now)
+        changed = WC.apply(db, user, machine, plan, now=now)
         result = {"applied": True, "changes": changed, "at": now.isoformat(), "source": "workProfile"}
     except WC.WorkConfigRefused as refused:
         db.rollback()

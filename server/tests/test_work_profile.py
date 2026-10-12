@@ -334,20 +334,51 @@ class TestPairing:
         assert view["status"]["localServer"] == {"state": "pending", "reason": "ממתין לקופה ראשית"}
         assert MT.main_till_of_shop(w.db, shop.id) is None
 
-    def test_a_distributor_pairs_by_the_profile(self, w, seat):
+    def test_a_non_super_admins_pairing_does_not_apply_the_z(self, w, seat, _quiet):
         dist = user_of(w, UserRole.DISTRIBUTOR)
         shop = create(w, user=dist, workProfile=template("restaurant_tables"))
-        # The plan the dialog offers is the profile's: nothing to store on the code.
-        assert WC.check_pairing_request(
-            w.db, dist, shop_id=shop.id, role="till", platform="android",
-            plan={"preset": "main_till", "enableLocalNetwork": True},
-        ) is None
-        # Paired with no plan, the profile applies itself — the presets' services are the super
-        # admin's, and the profile was the distributor's to choose.
+        # The dialog: the suggestion's fiscal plan is the super admin's, as before.
+        with pytest.raises(WC.WorkConfigRefused) as err:
+            WC.check_pairing_request(
+                w.db, dist, shop_id=shop.id, role="till", platform="android",
+                plan={"preset": "main_till", "enableLocalNetwork": True},
+            )
+        assert err.value.status_code == 403 and err.value.body["detail"] == "super_admin_only"
+        # Paired with no plan by a distributor: "לפי הסניף", exactly as before.
+        sent = len(_quiet)
         machine, code_id = pair(w, shop, by=dist)
+        assert MT.main_till_of_shop(w.db, shop.id) is None
+        assert w.db.get(Shop, shop.id).local_network is False and machine.z_mode == "cloud"
+        assert w.db.get(PairingCode, code_id).work_config_result is None
+        assert len(_quiet) == sent
+        view = get(w, shop, dist)
+        assert view["status"]["zType"] == {"state": "pending", "reason": WP.WAIT_SUPER_ADMIN}
+        assert view["status"]["localServer"] == {"state": "pending", "reason": WP.WAIT_SUPER_ADMIN}
+        assert WP.WAIT_SUPER_ADMIN == "ממתין למנהל-על — יש להחיל את תצורת העבודה מדף הסניף"
+        assert view["canEdit"]["zType"] is False
+        # The distributor's re-save changes nothing on the tills (and is not refused: no Z change).
+        out = put(w, shop, template("restaurant_tables", attendance=True), dist)
+        assert out["status"]["zType"]["state"] == "pending" and MT.main_till_of_shop(w.db, shop.id) is None
+        # The super admin's re-save on the shop page applies it.
+        out = put(w, shop, template("restaurant_tables", attendance=True))
         assert MT.main_till_of_shop(w.db, shop.id).id == machine.id
         assert LZ.local_mode_of_shop(w.db, shop)
-        assert w.db.get(PairingCode, code_id).work_config_result["applied"] is True
+        assert set(states(out).values()) == {"applied"}
+
+    def test_the_qr_and_assign_paths_follow_the_same_rule(self, w):
+        dist = user_of(w, UserRole.DISTRIBUTOR)
+        shop = create(w, workProfile=template("independent_till"))
+        till = w.six[1]
+        till.shop_id = shop.id
+        w.db.commit()
+        # A distributor's: nothing applied.
+        assert WP.apply_on_pairing(w.db, till, user_id=dist.id) is None
+        assert till.z_mode == "cloud"
+        assert get(w, shop)["status"]["zType"] == {"state": "pending", "reason": WP.WAIT_SUPER_ADMIN}
+        # A super admin's: the profile's own Z.
+        assert WP.apply_on_pairing(w.db, till, user_id=w.admin.id) is True
+        assert till.z_mode == "till"
+        assert get(w, shop)["status"]["zType"] == {"state": "applied"}
 
     def test_a_code_with_a_plan_of_its_own_wins(self, w, seat):
         shop = create(w, workProfile=template("quick_counter"))
@@ -599,5 +630,7 @@ class TestStatus:
         w.shop.local_network = False
         w.db.commit()
         view = get(w, w.shop)
-        assert view["status"]["localServer"]["state"] == "blocked"
-        assert "הרשת המקומית כבויה" in view["status"]["localServer"]["reason"]
+        # Nothing stands in the way: it waits for a super admin's save on the shop's page.
+        assert view["status"]["localServer"] == {"state": "pending", "reason": WP.WAIT_SUPER_ADMIN}
+        assert view["status"]["zType"] == {"state": "pending", "reason": WP.WAIT_SUPER_ADMIN}
+        assert set(states(put(w, w.shop, template("restaurant_tables"))).values()) == {"applied"}
