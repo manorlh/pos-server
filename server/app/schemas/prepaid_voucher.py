@@ -1031,6 +1031,20 @@ class PrepaidVoucherAddIn(BaseModel):
     client_request_id: Optional[str] = Field(None, alias="clientRequestId", max_length=100)
 
 
+class PrepaidGroupsCheckIn(BaseModel):
+    """
+    The item groups of a type or batch being set up, checked against the catalog before saving
+    (POST /prepaid-vouchers/groups/check): the same scope as the form — the company, and the
+    batch's shops when it has them. Read only; it never refuses the setup, it warns.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    company_id: uuid.UUID = Field(..., alias="companyId")
+    shop_ids: Optional[List[uuid.UUID]] = Field(None, alias="shopIds")
+    groups: List[PrepaidGroupIn] = Field(..., min_length=1, max_length=MAX_GROUPS)
+
+
 class PrepaidVoucherGroupsIn(BaseModel):
     """Split the vouchers that have no group yet into groups of this size."""
 

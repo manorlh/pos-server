@@ -10,6 +10,9 @@ POST   /prepaid-vouchers/types                        → a new type
 GET    /prepaid-vouchers/types/{id}                   → one type
 PATCH  /prepaid-vouchers/types/{id}                   → name / code / active; terms → a new version
 GET    /prepaid-vouchers/types/{id}/events            → the type's audit trail
+POST   /prepaid-vouchers/groups/check                 → item groups being set up against the catalog:
+                                                        products in two groups, empty departments
+                                                        (warnings; read only)
 GET    /prepaid-vouchers/batches                      → batches with their counts
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
@@ -68,6 +71,7 @@ from app.schemas.prepaid_voucher import (
     PrepaidVoucherBatchUpdate,
     PrepaidVoucherCancelIn,
     PrepaidVoucherConfirmIn,
+    PrepaidGroupsCheckIn,
     PrepaidVoucherGroupsIn,
     PrepaidVoucherLookupIn,
     PrepaidVoucherNoteIn,
@@ -425,6 +429,24 @@ def list_prepaid_voucher_types(
         # Whether this user sets a discount-block override (the `voucher_discount_override` section).
         "overrideEditable": PVT.override_editable(db, current_user),
     }
+
+
+@router.post("/prepaid-vouchers/groups/check")
+def check_prepaid_voucher_groups(
+    body: PrepaidGroupsCheckIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    The item groups of a type or batch being set up, against the company's catalog (departments
+    expanded, exclusions applied): `overlaps` — a product more than one group takes, which the till
+    asks the cashier about — and `emptyGroups` — a department with no active products. Warnings
+    next to the group, never a refusal; nothing is written (the owner's spec of 13.10.2026 §4).
+    """
+    from app.services import production_voucher_groups as PG
+
+    return PG.check(db, current_user, active_tenant_id, body.company_id, body.shop_ids, body.groups)
 
 
 @router.post("/prepaid-vouchers/types", status_code=status.HTTP_201_CREATED)
