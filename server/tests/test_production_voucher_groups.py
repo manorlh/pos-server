@@ -72,6 +72,45 @@ class TestTypes:
             meal_type(w, totalQty=None, groups=[{"name": "x", "maxQty": 1, "productIds": [uuid.uuid4()]}])
         assert e.value.status_code == 422
 
+    def test_a_group_takes_every_product_the_picker_offers(self, w):
+        # 12.10.2026: "prepaid_voucher_groups_invalid: unknown product …" on a product the picker listed —
+        # the groups' catalog left out the tenant-wide products and the ones made on a till.
+        from app.models.company import Company
+
+        general = Product(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=None, category_id=w.food.id,
+                          catalog_level=CatalogLevel.GLOBAL, name="פופקורן", price=10, sku="sku-general")
+        made_on_till = Product(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id,
+                               pos_machine_id=w.tills[0].id, category_id=w.food.id, catalog_level=CatalogLevel.LOCAL,
+                               name="מנת היום", price=35, sku="sku-till")
+        other = Company(id=uuid.uuid4(), tenant_id=w.tenant.id, name="אחרת", vat_number="9")
+        w.db.add_all([general, made_on_till, other])
+        w.db.flush()
+        alien = Product(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=other.id, category_id=w.food.id,
+                        catalog_level=CatalogLevel.GLOBAL, name="מוצר זר", price=5, sku="sku-alien")
+        w.db.add(alien)
+        w.db.commit()
+
+        offered = {p["id"] for p in R.list_prepaid_voucher_products(
+            str(w.company.id), search=None, limit=200, purpose="items", **_ctx(w))["items"]}
+        assert {str(general.id), str(made_on_till.id)} <= offered and str(alien.id) not in offered
+
+        t = meal_type(w, code="ALL", name="כל מה שמוצע", totalQty=None, groups=[
+            {"name": "מזון", "maxQty": 1, "productIds": [general.id, made_on_till.id, w.hotdog.id]},
+        ])
+        out = look(w, codes(w, issue(w, t["id"]))[0])
+        assert {str(general.id), str(made_on_till.id), str(w.hotdog.id)} <= set(out["groups"][0]["productIds"])
+        # A department takes them too, frozen at issue.
+        dept = issue(w, meal_type(w, code="DEPT", name="מחלקה")["id"])
+        frozen = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(dept["id"])).one()
+        meal = next(g for g in frozen.groups if g["name"] == "מנה")
+        assert {str(general.id), str(made_on_till.id)} <= set(meal["frozenProductIds"])
+
+        # Another company's product is still refused, as its picker marks it.
+        with pytest.raises(HTTPException) as e:
+            meal_type(w, code="ALIEN", name="זר", totalQty=None,
+                      groups=[{"name": "x", "maxQty": 1, "productIds": [alien.id]}])
+        assert e.value.status_code == 422 and "unknown product" in str(e.value.detail)
+
 
 class TestBatches:
     def test_the_catalog_is_frozen_at_issue_with_sub_categories(self, w):
