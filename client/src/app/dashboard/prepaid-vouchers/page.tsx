@@ -77,6 +77,7 @@ import { voucherFieldsFor } from '@/lib/voucherFields';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import { BatchTestModePanel, TestModeTag } from '@/components/dashboard/prepaid-vouchers/batch-test-mode';
+import { BatchActiveNotices, BatchActiveSwitch, InactiveTag, batchIsActive } from '@/components/dashboard/prepaid-vouchers/batch-active';
 import {
   BatchRowMenu,
   BatchTitle,
@@ -1209,6 +1210,7 @@ function BatchCard({ b, onOpen, selected, onSelect, onDuplicate, onRename }: {
             {termsText.kind}
           </span>
           {b.testMode ? <TestModeTag /> : null}
+          {!batchIsActive(b) && b.status !== 'cancelled' ? <InactiveTag /> : null}
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
@@ -1284,11 +1286,13 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
   );
 }
 
-function BatchDetail({ batch, onBack, onOpenBatch }: {
+function BatchDetail({ batch, onBack, onOpenBatch, onOpenPauses }: {
   batch: PrepaidVoucherBatch;
   onBack: () => void;
   /** Another batch: the one "שכפול סדרה" made, or the one an audit line names. */
   onOpenBatch: (id: string) => void;
+  /** "בקרה ובדיקות" → "השהיית מימושים": where a pause of its event / production / type is lifted. */
+  onOpenPauses?: () => void;
 }) {
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
@@ -1596,6 +1600,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {!cancelled ? <BatchActiveSwitch batch={batch} onChanged={refresh} /> : null}
           {batch.testMode ? <TestModeTag /> : null}
           <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${batch.status}`)}
@@ -1607,6 +1612,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
           <DuplicateBatchButton batch={batch} onCreated={(b) => onOpenBatch(b.id)} className="print:hidden" />
         </div>
       </div>
+      {!cancelled ? <BatchActiveNotices batch={batch} onOpenPauses={onOpenPauses} /> : null}
       {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
       {addOpen ? (
         <AddToBatchDialog
@@ -2177,7 +2183,8 @@ export default function PrepaidVouchersPage() {
       ) : null}
 
       {selected ? (
-        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} onOpenBatch={setSelectedId} />
+        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} onOpenBatch={setSelectedId}
+          onOpenPauses={() => { setSelectedId(null); setView('extras'); }} />
       ) : view === 'types' ? (
         <PrepaidTypesView />
       ) : view === 'productions' ? (

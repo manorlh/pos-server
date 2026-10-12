@@ -7,11 +7,11 @@
  * that list ("ישפיע על 340 שוברים שטרם מומשו").
  */
 
-export type PrepaidEditCategory = 'free' | 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'quantity' | 'price' | 'test';
+export type PrepaidEditCategory = 'free' | 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'quantity' | 'price' | 'test' | 'active';
 
 /** The order the confirmation lists them in (the cloud's FIELDS order). */
 export const EDIT_CATEGORIES: readonly PrepaidEditCategory[] = [
-  'free', 'validity', 'where', 'rules', 'accounting', 'contents', 'quantity', 'price', 'test',
+  'free', 'validity', 'where', 'rules', 'accounting', 'contents', 'quantity', 'price', 'test', 'active',
 ];
 
 export interface PrepaidBatchEditChange {
@@ -34,6 +34,8 @@ export interface PrepaidBatchEditEffects {
   price?: { fromSerial: number; issued: number };
   /** "מצב בדיקה" on / off: from the next scan. */
   test?: { on: boolean; vouchers: number };
+  /** "סדרה פעילה" on / off: from the next scan the tills redeem it / refuse it. */
+  active?: { on: boolean; vouchers: number };
 }
 
 export interface PrepaidBatchEditPlan {
