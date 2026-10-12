@@ -115,10 +115,16 @@ def get_kds_order_states(
     machine_id: str,
     source: str = Query("table"),
     refs: str = Query(""),
+    lines: bool = Query(False),
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
 ):
-    return KDS.order_states(db, machine, source, refs.split(",") if refs else [])
+    """
+    Per source ref: the order's counts. `?lines=1` adds each order's `lines` — `[{lineKey,
+    state, readyAt}]`, "מוכן" per line for "לוח מנות" (till design phase 2 §2.1); a till that
+    does not ask gets the answer it always did.
+    """
+    return KDS.order_states(db, machine, source, refs.split(",") if refs else [], with_lines=lines is True)
 
 
 @router.get("/sync/{machine_id}/kds/ready-orders")
