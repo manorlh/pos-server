@@ -426,6 +426,7 @@ POST /prepaid-vouchers/batches/bulk-edit -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/bulk-edit-preview -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:view
 PATCH /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:edit
+PUT /prepaid-vouchers/batches/{batch_id}/active -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/cancel -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/deliveries -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/deliveries -> prepaid_vouchers:edit

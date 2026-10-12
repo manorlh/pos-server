@@ -20,6 +20,9 @@ the shops the user manages), its checks, the rules for the vouchers already issu
   `prepaid_batch_bulk_edit`): a retry answers the first result and never applies anything again.
 * **Audit** — each batch's "update" line is the single edit's, with `details.bulk`
   (`{requestId, batches}`) saying it was part of a bulk edit.
+* **"סדרה פעילה"** — `active` (with `activeReason`) turns every picked batch off / on through the same
+  single edit (app/services/prepaid_voucher_controls.py `set_active`): each batch its own
+  `active_off` / `active_on` line marked `bulk`; one already so is `unchanged`.
 """
 from __future__ import annotations
 
@@ -60,8 +63,8 @@ def _wire(attr: str) -> str:
 
 
 def requested(changes: PrepaidVoucherBatchUpdate) -> List[str]:
-    """The settings [changes] sends, by their wire names."""
-    return sorted(_wire(f) for f in set(changes.model_fields_set) - {"apply_to_partial"})
+    """The settings [changes] sends, by their wire names ("סדרה פעילה"'s reason goes with it, not a setting)."""
+    return sorted(_wire(f) for f in set(changes.model_fields_set) - {"apply_to_partial", "active_reason"})
 
 
 def not_applicable(batch: PrepaidVoucherBatch, changes: PrepaidVoucherBatchUpdate) -> List[str]:

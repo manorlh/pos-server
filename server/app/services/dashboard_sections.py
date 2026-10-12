@@ -429,6 +429,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/prepaid-vouchers/groups/check", S("prepaid_vouchers", level=VIEW)),
     # "שכפול סדרה" makes a batch: the same section and level as batch create (POST /prepaid-vouchers/batches).
     ("POST", "/prepaid-vouchers/batches/{}/duplicate", S("prepaid_vouchers")),
+    # "סדרה פעילה" on / off is "ערוך סדרה" (`active`): the same section and level as PATCH /prepaid-vouchers/batches/{id}.
+    ("PUT", "/prepaid-vouchers/batches/{}/active", S("prepaid_vouchers")),
     # "מימוש ידני מהענן" (app/services/prepaid_voucher_manual.py): its own permission, or edit on the vouchers;
     # the preview too (it is the redeem's first step). The till's reverse is `/sync/…` (TILL).
     (_ALL, "/prepaid-vouchers/manual-redeem*", S("prepaid_voucher_redeem", "prepaid_vouchers", level=EDIT)),

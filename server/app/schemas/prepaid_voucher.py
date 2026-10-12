@@ -28,6 +28,8 @@ MAX_ITEM_QUANTITY = 100
 MAX_GROUP_SIZE = MAX_VOUCHERS_PER_BATCH
 BARCODE_TYPES = ("qr", "code128")
 REF_MAX = 100
+#: "סדרה פעילה": the reason a batch is turned off (shown on the batch's banner and its log).
+ACTIVE_REASON_MAX = 500
 #: Discount vouchers: the most a fixed one, a minimum or a cap may be (₪), and uses.
 MONEY_MAX = Decimal("100000")
 MAX_USES = 1000
@@ -893,6 +895,16 @@ class PrepaidVoucherBatchUpdate(BaseModel):
     report_event_id: Optional[uuid.UUID] = Field(None, alias="reportEventId")
     #: "מצב בדיקה" on / off ("סיום בדיקה והפעלה"): logged on the batch's audit trail on its own line.
     test_mode: Optional[bool] = Field(None, alias="testMode")
+    #: "סדרה פעילה" on / off (app/services/prepaid_voucher_controls.py `set_active`): off pauses the
+    #: batch's redemptions, on resumes them; logged on the batch's audit trail on its own line.
+    active: Optional[bool] = None
+    #: Why — the pause's reason (blank: "הסדרה כובתה מהענן") or the resume's note. Read only with `active`.
+    active_reason: Optional[str] = Field(None, alias="activeReason")
+
+    @field_validator("active_reason", mode="before")
+    @classmethod
+    def _active_reason(cls, value):
+        return _clean_text(value, ACTIVE_REASON_MAX)
 
     @field_validator("stacking", mode="before")
     @classmethod
@@ -971,6 +983,8 @@ BULK_EDIT_FIELDS = (
     "total_qty", "groups",
     # "מצב בדיקה" on / off for many batches at once — each batch's own audit line.
     "test_mode",
+    # "סדרה פעילה" on / off for many batches at once (with its reason) — each batch's own audit line.
+    "active", "active_reason",
 )
 
 
@@ -997,7 +1011,8 @@ class PrepaidBatchBulkEditIn(BaseModel):
     def _only_bulk_fields(self):
         if not self.batch_ids:
             raise ValueError("batchIds: at least one batch")
-        given = set(self.changes.model_fields_set) - {"apply_to_partial"}
+        # `activeReason` only goes with `active` (a reason alone changes nothing).
+        given = set(self.changes.model_fields_set) - {"apply_to_partial", "active_reason"}
         fields = PrepaidVoucherBatchUpdate.model_fields
         other = sorted(fields[f].alias or f for f in given - set(BULK_EDIT_FIELDS))
         if other:
@@ -1152,6 +1167,22 @@ class PrepaidVoucherGroupsIn(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     group_size: int = Field(..., alias="groupSize", ge=1, le=MAX_GROUP_SIZE)
+
+
+class PrepaidBatchActiveIn(BaseModel):
+    """
+    "סדרה פעילה" (`PUT /prepaid-vouchers/batches/{id}/active`): off pauses the batch's redemptions
+    (every till refuses: "הסדרה כבויה — לא ניתן לממש שוברים ממנה"), on resumes them. `reason`: why
+    (blank: "הסדרה כובתה מהענן"); on, the resume's note.
+    """
+
+    active: bool
+    reason: Optional[str] = None
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _reason(cls, value):
+        return _clean_text(value, ACTIVE_REASON_MAX)
 
 
 class PrepaidVoucherCancelIn(BaseModel):
