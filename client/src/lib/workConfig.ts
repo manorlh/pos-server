@@ -222,6 +222,13 @@ export interface WorkConfigView {
   presets: PresetAvailability[];
   pairing?: PairingOutcome | null;
   changes?: string[];
+  /**
+   * A device still to pair (`GET /shops/{id}/work-config`): the preset the shop's "תצורת עבודה"
+   * gives it — applied as it pairs when no other is chosen — the plan for it, and why (Hebrew).
+   */
+  suggestedPreset?: WorkPresetId | null;
+  suggestedPlan?: Record<string, unknown> | null;
+  suggestedReason?: string | null;
 }
 
 export interface PairingOutcome {

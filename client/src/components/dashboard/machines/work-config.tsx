@@ -79,11 +79,13 @@ function useRefusalText() {
 
 function Meaning({ view, draft }: { view: WorkConfigView; draft: WorkConfigDraft }) {
   const moves = view.presets.find((p) => p.id === draft.preset)?.movesMainTillFrom ?? null;
-  // "לפי הסניף" means what the shop's default preset means — the tables as the shop has them.
+  // "לפי הסניף" means what the shop gives the device — the preset its "תצורת עבודה" suggests
+  // (a new device), else its default preset — with the tables as the shop has them.
   const byShop = draft.preset === BY_SHOP;
-  const id = byShop ? view.inheritedPreset : draft.preset;
+  const shopPreset = view.suggestedPreset ?? view.inheritedPreset;
+  const id = byShop ? shopPreset : draft.preset;
   const shown = byShop
-    ? { ...draftFor(view.inheritedPreset, view, draft), tablesMode: draft.tablesMode ?? INHERIT }
+    ? { ...draftFor(shopPreset, view, draft), tablesMode: draft.tablesMode ?? INHERIT }
     : draft;
   const m = presetMeaning(id, shown, {
     localNetwork: view.shop?.localNetwork ?? false,
@@ -349,11 +351,16 @@ export function WorkConfigEditor({
   // The shop's main till takes no other configuration until another is chosen (the server's words).
   const mainBlock =
     mode === 'device' ? (view.presets.find((p) => p.reason === 'work_config_is_main_till')?.message ?? null) : null;
+  // A new device: the preset the shop's "תצורת עבודה" gives it (applied as it pairs, when nothing
+  // else is chosen) — the server's `suggestedPreset` and its reason.
+  const suggested = mode === 'pairing' ? (view.suggestedPreset ?? null) : null;
   const options: { id: WorkPresetId | typeof BY_SHOP; label: string; hint: string; available: boolean; why: string | null }[] = [
     {
       id: BY_SHOP,
       label: 'לפי הסניף',
-      hint: `${PRESET_LABELS[view.inheritedPreset] ?? ''} — מה שהסניף נותן למכשיר בלי הגדרה משלו.`,
+      hint: suggested
+        ? `לפי תצורת העבודה של הסניף: ${PRESET_LABELS[suggested] ?? suggested}.${view.suggestedReason ? ` ${view.suggestedReason}` : ''}`
+        : `${PRESET_LABELS[view.inheritedPreset] ?? ''} — מה שהסניף נותן למכשיר בלי הגדרה משלו.`,
       available: !mainBlock,
       why: mainBlock,
     },
@@ -394,6 +401,11 @@ export function WorkConfigEditor({
                   {current ? (
                     <Badge variant="secondary" className="text-[10px]">
                       עכשיו
+                    </Badge>
+                  ) : null}
+                  {suggested && o.id === suggested ? (
+                    <Badge variant="outline" className="text-[10px]">
+                      לפי תצורת הסניף
                     </Badge>
                   ) : null}
                 </span>
