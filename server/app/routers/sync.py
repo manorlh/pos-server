@@ -2381,12 +2381,18 @@ def get_settings_sync(
     effective.update(voucher_balance.till_settings(db, machine, shop, all_settings, server_time))
     # Closing on their own when vouchers cover the sale (unset = "on", today) and the scan-only
     # voucher station (unset = "off"), and whether the station also sells items paid for at the
-    # regular price after the voucher (`voucherStationPaidItems`, unset = "off"): always sent
+    # regular price after the voucher (`voucherStationPaidItems`, unset = "off"), and the cashier's
+    # "מה מגיע ללקוח" card on a voucher scan (`voucherShowEntitlement`, unset = "on"): always sent
     # resolved (app/services/voucher_station_settings.py).
-    from app.services.voucher_station_settings import resolve_station_paid_items, resolve_voucher_station
+    from app.services.voucher_station_settings import (
+        resolve_show_entitlement,
+        resolve_station_paid_items,
+        resolve_voucher_station,
+    )
 
     effective.update(resolve_voucher_station(all_settings))
     effective.update(resolve_station_paid_items(all_settings))
+    effective.update(resolve_show_entitlement(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))

@@ -123,6 +123,9 @@ class PosSettingsV1Patch(BaseModel):
     #: regular price added at the station after the voucher). Anything else is a 422; `null` in a
     #: PATCH resets the layer to inherit.
     voucher_station_paid_items: Optional[Literal["off", "on"]] = Field(None, alias="voucherStationPaidItems")
+    #: "הצג לקופאי מה מגיע ללקוח בסריקת שובר": "on" (unset — a card on every voucher scan, never
+    #: stopping the redemption) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
+    voucher_show_entitlement: Optional[Literal["on", "off"]] = Field(None, alias="voucherShowEntitlement")
     #: The most instalments the till's instalments picker (the `card` option) offers,
     #: 2–36. Unset = the card terminal decides; `null` in a PATCH resets the layer to
     #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
