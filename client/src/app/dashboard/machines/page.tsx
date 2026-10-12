@@ -961,7 +961,7 @@ export default function MachinesPage() {
                       {pairWorkConfigOutcomeText.text}
                     </p>
                   ) : pairAwaitingWorkConfig ? (
-                    <p className="text-xs text-muted-foreground animate-pulse">מחיל את תצורת העבודה…</p>
+                    <p className="text-xs text-muted-foreground animate-pulse">מחיל את תצורת המכשיר…</p>
                   ) : null}
                 </>
               ) : (

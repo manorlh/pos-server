@@ -222,6 +222,13 @@ export interface WorkConfigView {
   presets: PresetAvailability[];
   pairing?: PairingOutcome | null;
   changes?: string[];
+  /**
+   * A device still to pair (`GET /shops/{id}/work-config`): the preset the shop's "תצורת עבודה"
+   * gives it — applied as it pairs when no other is chosen — the plan for it, and why (Hebrew).
+   */
+  suggestedPreset?: WorkPresetId | null;
+  suggestedPlan?: Record<string, unknown> | null;
+  suggestedReason?: string | null;
 }
 
 export interface PairingOutcome {
@@ -537,6 +544,6 @@ export function presetMeaning(id: WorkPresetId | typeof BY_SHOP, d: WorkConfigDr
 export function pairingOutcomeText(o: PairingOutcome | null | undefined): { tone: 'ok' | 'bad'; text: string } | null {
   if (!o || o.applied == null) return null;
   const name = o.preset ? PRESET_LABELS[o.preset] ?? o.preset : 'ההגדרות שנבחרו';
-  if (o.applied) return { tone: 'ok', text: `תצורת העבודה "${name}" הוחלה על המכשיר.` };
-  return { tone: 'bad', text: `תצורת העבודה "${name}" שנבחרה בהוספה לא הוחלה: ${o.message ?? 'סיבה לא ידועה'}` };
+  if (o.applied) return { tone: 'ok', text: `תצורת המכשיר "${name}" הוחלה על המכשיר.` };
+  return { tone: 'bad', text: `תצורת המכשיר "${name}" שנבחרה בהוספה לא הוחלה: ${o.message ?? 'סיבה לא ידועה'}` };
 }
