@@ -73,6 +73,7 @@
       "kapp_alert_",
       "kpay_till_",
       "kpay_bon_",
+      "kapp_reprint_",
       "kscan_diag_",
       "kscan_outcome_"
     ],
@@ -82,7 +83,10 @@
     "includeUnreferencedPrefixes": [
       "klay_"
     ],
-    "leaveOut": {}
+    "leaveOut": {
+      "kapp_pre_regular": "A dish's preparation label (the dish pre feature): no meta yet — its owner adds the entry.",
+      "kapp_pre_change": "A dish's preparation label (the dish pre feature): no meta yet — its owner adds the entry."
+    }
   },
   "autoKeyPrefixes": [
     [
@@ -2249,7 +2253,7 @@
       "key": "voucherNoMatch",
       "group": "payMethod",
       "label": "שובר — אינו כולל פריט מההזמנה",
-      "max": 100,
+      "max": 150,
       "kind": "S",
       "android": [
         "kpay_voucher_no_match"
@@ -2260,7 +2264,7 @@
       "key": "voucherOffline",
       "group": "payMethod",
       "label": "שובר — אין חיבור",
-      "max": 100,
+      "max": 150,
       "kind": "S",
       "android": [
         "kpay_voucher_offline"
@@ -2281,7 +2285,7 @@
     {
       "key": "voucherForfeit",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — השאלה",
+      "label": "מימוש בעסקה אחת — השאלה",
       "max": 200,
       "kind": "D",
       "android": [
@@ -2292,7 +2296,7 @@
     {
       "key": "payVoucherForfeitYes",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — כפתור \"כן\"",
+      "label": "מימוש בעסקה אחת — כפתור \"כן\"",
       "max": 30,
       "kind": "B",
       "android": [
@@ -2303,7 +2307,7 @@
     {
       "key": "payVoucherForfeitNo",
       "group": "payMethod",
-      "label": "שובר חד-פעמי — כפתור \"לא\"",
+      "label": "מימוש בעסקה אחת — כפתור \"לא\"",
       "max": 30,
       "kind": "B",
       "android": [
@@ -3779,7 +3783,7 @@
   "notes": [
     "en.json does not exist in client/src/messages (the dashboard is Hebrew-only): English comes from values-en, else from the meta (listed above). The script reads en.json `kiosks.builtin` / `kiosks.preview` first if it ever appears.",
     "`checkoutCta` (\"לתשלום\") has no placeholder; Android's fallback `kapp_checkout` (\"לתשלום · %1$s\") has one, so it is its own key `checkout` ({total}). Both platforms build \"<checkoutCta> · <total>\" when checkoutCta is set (KioskOrderScreens.kt, Details.tsx); the side panel (KioskCatalogParts.kt) uses `kapp_checkout` alone. `checkoutCta` is `\"android\": []`.",
-    "`voucherApplied` (\"השובר נקלט\", no placeholder) is not used by Android; Android's `kpay_voucher_applied` (\"שובר #%1$d נקלט: %2$s\") is the separate key `payVoucherApplied` ({number}, {amount}).",
+    "`voucherApplied` (\"השובר נקלט\", no placeholder) is not used by Android; Android's `kpay_voucher_applied` (\"שובר מס׳ %1$d נקלט: %2$s\") is the separate key `payVoucherApplied` ({number}, {amount}).",
     "`helpText` overrides `kapp_help_body` (the long how-to) on Android, but its he.json default is the short line (= `kapp_help_short`, kept as `helpShort`); its English is written to match the Hebrew default (see the table above).",
     "`payTitle`: he.json \"תשלום\" vs Android \"תשלום באשראי\"; English written as \"Payment\" to match the Hebrew default.",
     "`cashSlipPending` overrides two Android texts today (the slip's `kpay_slip_pending` and the screen's `kpay_done_pending`, which adds \"— הציגו את הפתק בקופה\"); they differ in content, so `kpay_done_pending` is its own key `payDonePending`. Android may keep reading a configured `cashSlipPending` first for the screen line.",

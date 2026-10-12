@@ -40,8 +40,9 @@ function savedPreset(): PagePresetId {
   }
 }
 
-function itemsLeftText(v: PrepaidVoucherRow): string {
-  if (v.usesLeft != null) return `${v.usesLeft}/${v.usesPerVoucher ?? ''}`;
+/** What the voucher has left: "3 מתוך 5 שימושים" for a discount, "2× קפה, 1× כריך" for goods. */
+function itemsLeftText(v: PrepaidVoucherRow, usesText: (left: number, total: number) => string): string {
+  if (v.usesLeft != null) return v.usesPerVoucher != null ? usesText(v.usesLeft, v.usesPerVoucher) : String(v.usesLeft);
   return v.items.filter((i) => i.remaining > 0).map((i) => `${i.remaining}× ${i.name}`).join(', ');
 }
 
@@ -212,7 +213,9 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
                 <Tag tone={replaceable(picked.status) ? 'primary' : 'muted'}>{tst(picked.state)}</Tag>
               </p>
               <p className="text-muted-foreground">{[picked.batch.name, picked.batch.typeName, picked.batch.customerName, picked.batch.eventName].filter(Boolean).join(' · ')}</p>
-              <p className="text-xs text-muted-foreground">{t('left')}: {itemsLeftText(picked) || '—'}</p>
+              <p className="text-xs text-muted-foreground">
+                {t('left')}: {itemsLeftText(picked, (left, total) => t('usesLeft', { left, total })) || '—'}
+              </p>
               {picked.note ? <p className="text-xs text-muted-foreground">{picked.note}</p> : null}
             </div>
             <Button size="sm" variant="ghost" onClick={() => setPicked(null)}>{t('change')}</Button>
@@ -233,7 +236,7 @@ function ReplaceForm({ onDone }: { onDone: (r: ReplaceResult) => void }) {
                 </div>
               </fieldset>
               <div className="space-y-1">
-                <Label htmlFor="pvr-reason">{t('reason')}</Label>
+                <Label htmlFor="pvr-reason">{t('reasonDetail')}</Label>
                 <textarea id="pvr-reason" rows={2} maxLength={1000} className={TEXTAREA_CLASS} value={reason} onChange={(e) => setReason(e.target.value)}
                   placeholder={t('reasonPlaceholder')} />
               </div>

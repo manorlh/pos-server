@@ -6,6 +6,7 @@
  */
 import { api } from './api';
 import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
+import type { BulkApplyResult, BulkPreviewResult } from './prepaidBatchBulkEdit';
 import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type {
@@ -141,15 +142,45 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   groups?: PrepaidBatchGroup[] | null;
   totalQty?: number | null;
   catalogMode?: 'frozen' | 'live';
+  /** The names of what the groups choose ("סיכום השובר"); null without groups. */
+  groupNames?: PrepaidGroupNames | null;
   /** The list's figures (GET /prepaid-vouchers/batches): issued, redeemed, open, the rate. */
   figures?: PrepaidBatchFigures;
   /** Every status the list filters by, at once. */
   state?: PrepaidBatchState;
   /**
    * Only on the answer of POST /prepaid-vouchers/batches: an identical batch the same user made a
-   * moment ago ("נראה שאצווה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
+   * moment ago ("נראה שסדרה זהה נוצרה לפני רגע — לבטל את הכפולה?"). A warning, never a refusal.
    */
   possibleDuplicate?: PrepaidDuplicateRef | null;
+  /**
+   * "ייצוא כל הסדרה ל-PDF": how many vouchers the whole-batch file holds now — every voucher of the
+   * batch, of every run, but the cancelled ones (the same rows the file reads).
+   */
+  exportCount?: number;
+  /** Only on the answer of POST /prepaid-vouchers/batches/{id}/vouchers: what this run made. */
+  added?: PrepaidAddedRun | null;
+  /** "מצב בדיקה" (lib/prepaidVoucherTestMode.ts): scans take nothing and count nowhere; since when, by whom. */
+  testMode?: boolean;
+  testModeSince?: string | null;
+  testModeBy?: string | null;
+}
+
+/** "הוסף שוברים לסדרה": one run of more vouchers, as the server recorded it (its audit line). */
+export interface PrepaidAddedRun {
+  eventId: string;
+  count: number;
+  fromSerial: number | null;
+  toSerial: number | null;
+  fromGroup?: number | null;
+  toGroup?: number | null;
+  groupSize?: number | null;
+  /** The batch's total after the run. */
+  total: number;
+  createdAt: string | null;
+  userName: string | null;
+  /** A retry of the same operation: nothing was added this time; this is the first run. */
+  replayed: boolean;
 }
 
 // ── Productions ("הפקות") and the events a batch may name (§13) ──────────────
@@ -294,6 +325,12 @@ export interface PrepaidBatchGroup {
   sortOrder?: number;
 }
 
+/** The products' and categories' names of a type's / batch's groups (the dashboard only). */
+export interface PrepaidGroupNames {
+  products: Record<string, string>;
+  categories: Record<string, string>;
+}
+
 export interface PrepaidBatchFigures {
   issued: number;
   /** Redeemed in full or in part. */
@@ -368,6 +405,12 @@ export interface PrepaidVoucherType extends PrepaidBatchTerms {
   splitAllowed: boolean;
   includeExtras: boolean;
   printTillValue: boolean;
+  /** "items" (a fixed list) or "groups" (קבוצות פריטים). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidBatchGroup[] | null;
+  totalQty?: number | null;
+  catalogMode?: 'frozen' | 'live';
+  groupNames?: PrepaidGroupNames | null;
   batchCount: number;
   createdAt: string | null;
   updatedAt: string | null;
@@ -405,6 +448,27 @@ export interface PrepaidTypeBody {
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
   maxUsesPerDay?: number | null;
+  /** Goods: "items" (a fixed list) or "groups" with their total (null: the groups' maxima). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidGroupBody[] | null;
+  totalQty?: number | null;
+}
+
+/** A group as a type / batch body sends it (₪ for its value). */
+export interface PrepaidGroupBody {
+  key?: string;
+  name: string;
+  minQty: number;
+  maxQty: number;
+  value?: number | null;
+  allowRepeat: boolean;
+  allItems: boolean;
+  productIds: string[];
+  categoryIds: string[];
+  includeSubcategories: boolean;
+  excludeProductIds: string[];
+  excludeCategoryIds: string[];
+  sortOrder: number;
 }
 
 export interface PrepaidTypeEvent {
@@ -494,6 +558,14 @@ export interface PrepaidVoucher {
   /** A discount voucher: its uses left of the batch's per-voucher uses (null for goods). */
   usesLeft?: number | null;
   usesPerVoucher?: number | null;
+  /**
+   * "מכסה 50 | מומשו 6 | נותרו 44": the voucher's quota, what was taken and what is left (the lookup's
+   * numbers) — item groups in items of all, a fixed list its quantities summed, a discount its uses.
+   */
+  quotaUnit?: 'units' | 'uses';
+  quota?: number | null;
+  used?: number | null;
+  remaining?: number | null;
   firstRedeemedAt: string | null;
   lastRedeemedAt: string | null;
   cancelledAt: string | null;
@@ -553,6 +625,12 @@ export interface PrepaidBatchCreate {
   usesPerVoucher?: number;
   maxUsesPerSale?: number;
   maxUsesPerDay?: number | null;
+  /** Goods: "items" (a fixed list) or "groups" with their total (null: the groups' maxima). */
+  selection?: 'items' | 'groups';
+  groups?: PrepaidGroupBody[] | null;
+  totalQty?: number | null;
+  /** "להתחיל במצב בדיקה" (default off). */
+  startInTestMode?: boolean;
 }
 
 /** The rules of use that may change after printing (what it gives and its uses never do). */
@@ -600,7 +678,7 @@ export async function createPrepaidBatch(
  * clears what may be empty. `count`: the vouchers in all (more is issued, never fewer).
  * `applyToPartial`: new contents reach the partly redeemed vouchers too.
  */
-export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets'>> &
+export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' | 'typeId' | 'groupSize' | 'targets' | 'groups' | 'startInTestMode'>> &
   PrepaidBatchRulesUpdate & {
     targets?: { productIds: string[]; categoryIds: string[] } | null;
     selection?: 'items' | 'groups';
@@ -608,6 +686,8 @@ export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' 
     totalQty?: number | null;
     catalogMode?: 'frozen' | 'live';
     applyToPartial?: boolean;
+    /** "מצב בדיקה" on / off ("סיום בדיקה והפעלה"). */
+    testMode?: boolean;
   };
 
 export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody): Promise<PrepaidVoucherBatch> {
@@ -618,6 +698,28 @@ export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody)
 /** What an edit would change and touch (each change before → after, the effects); nothing is saved. */
 export async function previewPrepaidBatchEdit(id: string, body: PrepaidBatchEditBody): Promise<PrepaidBatchEditPlan> {
   const { data } = await api.post<PrepaidBatchEditPlan>(`/prepaid-vouchers/batches/${id}/edit-preview`, body);
+  return data;
+}
+
+/**
+ * "שינוי הגדרות לסדרות שנבחרו" (lib/prepaidBatchBulkEdit.ts): per batch ok / unchanged / refused with
+ * the single edit's reason, each with its changes and effects. Nothing is saved.
+ */
+export async function previewPrepaidBatchesBulkEdit(batchIds: string[], changes: PrepaidBatchEditBody): Promise<BulkPreviewResult> {
+  const { data } = await api.post<BulkPreviewResult>('/prepaid-vouchers/batches/bulk-edit-preview', { batchIds, changes });
+  return data;
+}
+
+/**
+ * The same change applied to each batch through "ערוך סדרה". [clientRequestId]: one per apply — a retry
+ * after a lost answer sends the same one and gets the first result back, never a second apply.
+ */
+export async function applyPrepaidBatchesBulkEdit(
+  batchIds: string[],
+  changes: PrepaidBatchEditBody,
+  clientRequestId: string,
+): Promise<BulkApplyResult> {
+  const { data } = await api.post<BulkApplyResult>('/prepaid-vouchers/batches/bulk-edit', { batchIds, changes, clientRequestId });
   return data;
 }
 
@@ -632,9 +734,11 @@ export async function addPrepaidVouchers(
   groupSize?: number | null,
   opts: { idempotencyKey?: string; timeoutMs?: number } = {},
 ): Promise<PrepaidVoucherBatch> {
+  // The operation id goes in the header and, for proxies that drop it, in the body too (one id).
   const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/vouchers`, {
     count,
     ...(groupSize ? { groupSize } : {}),
+    ...(opts.idempotencyKey ? { clientRequestId: opts.idempotencyKey } : {}),
   }, {
     headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
     timeout: opts.timeoutMs,
@@ -686,7 +790,7 @@ export async function cancelPrepaidGroup(
 
 export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
-  | 'offline_assign' | 'offline_release' | 'offline_force_release';
+  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off';
 
 export interface PrepaidBatchEvent {
   id: string;
@@ -875,7 +979,9 @@ export async function fetchPrepaidCategories(companyId: string): Promise<Prepaid
  * `pdf` — one PDF (`group` narrows it to one group, opened by its cover sheet); `zip` — a PDF
  * per voucher; `groups` — a PDF per group with cover sheets, and the CSV manifest, in a ZIP;
  * `csv` — the manifest of every code. Downloaded as `fileName`.
- * Used vouchers are left out, as in printing; `voucherId` narrows it to one.
+ * Used vouchers are left out, as in printing — but for one voucher (`voucherId`) and for
+ * `wholeBatch` ("ייצוא כל הסדרה ל-PDF": every voucher of every run, used ones too; cancelled never).
+ * Returns how many vouchers the file holds (the server's `X-Voucher-Count`), or null when not sent.
  */
 export async function downloadPrepaidVouchersFile(
   batchId: string,
@@ -887,20 +993,23 @@ export async function downloadPrepaidVouchersFile(
     voucherId?: string;
     group?: number;
     fileName: string;
+    wholeBatch?: boolean;
   },
-): Promise<void> {
-  const { data } = await api.get<Blob>(`/prepaid-vouchers/batches/${batchId}/file`, {
+): Promise<number | null> {
+  const { data, headers } = await api.get<Blob>(`/prepaid-vouchers/batches/${batchId}/file`, {
     params: {
       format: opts.format,
       layout: opts.layout,
       ...(opts.width ? { width: opts.width } : {}),
       ...(opts.height ? { height: opts.height } : {}),
       ...(opts.group ? { group: opts.group } : {}),
-      ...(opts.voucherId ? { voucherId: opts.voucherId, includeUsed: true } : { includeUsed: false }),
+      ...(opts.voucherId || opts.wholeBatch ? { includeUsed: true } : { includeUsed: false }),
+      ...(opts.voucherId ? { voucherId: opts.voucherId } : {}),
     },
     responseType: 'blob',
     timeout: 300_000,
   });
+  const counted = Number((headers as Record<string, unknown> | undefined)?.['x-voucher-count']);
   const url = URL.createObjectURL(data);
   const a = document.createElement('a');
   a.href = url;
@@ -909,6 +1018,7 @@ export async function downloadPrepaidVouchersFile(
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return Number.isFinite(counted) ? counted : null;
 }
 
 // ── The filter model: lists, search and the till report (server: prepaid_voucher_analytics.py) ──

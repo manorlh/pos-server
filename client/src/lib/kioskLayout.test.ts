@@ -55,7 +55,7 @@ import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, 
 
 const TEMPLATES_SHA256 = 'bf83cc7ab875bec0e3411b0e927fb1b5ef013c9d09e72927f48bb975867324b1';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
-const REGISTRY_SHA256 = '604e2b58954849c25cb1883a74705114ae56d12e0f60003a0d892acec56ee5a6';
+const REGISTRY_SHA256 = 'fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240';
 
 function fixture(name: string): string {
   const candidates = [join(process.cwd(), '..', 'server', 'tests', 'fixtures', name), join(__dirname, '..', '..', 'server', 'tests', 'fixtures', name)];

@@ -11,6 +11,12 @@ from app.schemas.pos_settings import BusinessInfoSync
 from app.services.payment_options import PAYMENT_OPTION_SETTING_KEYS, VOUCHER_SETTING_KEYS
 from app.services.refund_settings import REFUND_SETTING_KEYS
 from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
+from app.services.voucher_redeem_settings import VOUCHER_FLOW_SETTING_KEYS
+from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
+from app.services.voucher_station_settings import (
+    VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
+    VOUCHER_STATION_SETTING_KEYS,
+)
 
 MANAGED_SETTING_KEYS = (
     "globalTaxRate",
@@ -66,6 +72,18 @@ MANAGED_SETTING_KEYS = (
     # payVoucherEnabled, payVoucherManualEnabled — the production voucher, scanned or typed
     # by hand ("שובר ידני"); payment_options.py.
     *VOUCHER_SETTING_KEYS,
+    # voucherRedeemFlow, voucherShowUnavailable — how the till enters a voucher's redemption
+    # (app/services/voucher_redeem_settings.py).
+    *VOUCHER_FLOW_SETTING_KEYS,
+    # voucherBalanceCheck — "בירור יתרת שובר" in the till's menu: auto / on / off
+    # (app/services/voucher_balance_check.py).
+    *VOUCHER_BALANCE_SETTING_KEYS,
+    # voucherAutoClose, voucherStation — closing on their own when vouchers cover the sale, and the
+    # scan-only voucher station (app/services/voucher_station_settings.py).
+    *VOUCHER_STATION_SETTING_KEYS,
+    # voucherStationPaidItems — items paid for at the regular price added at the voucher station
+    # after the voucher (same module, the spec's §5).
+    *VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).

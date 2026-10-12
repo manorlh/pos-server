@@ -421,6 +421,8 @@ GET /prepaid-vouchers/analytics/redemptions -> prepaid_vouchers:view
 GET /prepaid-vouchers/analytics/tills -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches -> prepaid_vouchers:edit
+POST /prepaid-vouchers/batches/bulk-edit -> prepaid_vouchers:edit
+POST /prepaid-vouchers/batches/bulk-edit-preview -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:view
 PATCH /prepaid-vouchers/batches/{batch_id} -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/cancel -> prepaid_vouchers:edit
@@ -456,6 +458,7 @@ POST /prepaid-vouchers/batches/{batch_id}/offline/assign -> prepaid_vouchers:edi
 POST /prepaid-vouchers/batches/{batch_id}/offline/release -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/offline/targets -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/report -> prepaid_vouchers:view
+GET /prepaid-vouchers/batches/{batch_id}/test-redemptions -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:view
 POST /prepaid-vouchers/batches/{batch_id}/vouchers -> prepaid_vouchers:edit
 GET /prepaid-vouchers/categories -> prepaid_vouchers:view

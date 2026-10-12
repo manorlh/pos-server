@@ -83,6 +83,7 @@ export function SimulatorSection() {
       <Section title={t('voucher')}>
         <Segmented value={source} onChange={(v) => { setSource(v); setResult(null); setBasket([]); }} className="w-56"
           options={[{ id: 'type', label: t('byType') }, { id: 'batch', label: t('byBatch') }]} />
+        <p className="text-xs text-muted-foreground">{t('sourceHint')}</p>
         <div className="grid gap-3 sm:grid-cols-2">
           {source === 'type' ? (
             <div className="space-y-1">

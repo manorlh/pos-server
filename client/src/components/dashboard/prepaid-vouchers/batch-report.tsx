@@ -18,6 +18,7 @@ import {
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { isDiscountKind } from '@/lib/prepaidVoucherBenefit';
 import { DEFAULT_WEIGHT_UNIT } from '@/lib/prepaidVoucherProducts';
 import { formatDate, formatHour } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
@@ -46,10 +47,12 @@ function Counts({ label, value, tone }: { label: string; value: number; tone?: s
   );
 }
 
-function GroupTable({ title, rows, nameHeader, unknown, withShop }: {
+function GroupTable({ title, rows, nameHeader, unitsHeader, unknown, withShop }: {
   title: string;
   rows: PrepaidReportGroup[];
   nameHeader: string;
+  /** "פריטים" for a goods batch, "שימושים" for a discount one. */
+  unitsHeader: string;
   unknown: string;
   withShop?: boolean;
 }) {
@@ -70,7 +73,7 @@ function GroupTable({ title, rows, nameHeader, unknown, withShop }: {
                 {withShop ? <TableHead>{t('col.shop')}</TableHead> : null}
                 <TableHead className="text-end">{t('col.redemptions')}</TableHead>
                 <TableHead className="text-end">{t('col.vouchers')}</TableHead>
-                <TableHead className="text-end">{t('col.units')}</TableHead>
+                <TableHead className="text-end">{unitsHeader}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -95,12 +98,12 @@ function GroupTable({ title, rows, nameHeader, unknown, withShop }: {
 function sheetsOf(
   r: PrepaidBatchReport,
   t: ReturnType<typeof useTranslations>,
-  labels: { unknownTill: string; unknownShop: string; unknownEmployee: string },
+  labels: { unknownTill: string; unknownShop: string; unknownEmployee: string; units: string },
 ): ExcelSheet[] {
   const counts = [
     { header: t('col.redemptions'), kind: 'number' as const },
     { header: t('col.vouchers'), kind: 'number' as const },
-    { header: t('col.units'), kind: 'number' as const },
+    { header: labels.units, kind: 'number' as const },
   ];
   const group = (name: string, header: string, rows: PrepaidReportGroup[], unknown: string, withShop = false): ExcelSheet => ({
     name,
@@ -109,22 +112,23 @@ function sheetsOf(
   });
   const v = r.vouchers;
   const u = r.usage;
-  // Usage (docs/SPEC_VOUCHER_PRODUCTION.md §7): issued / used / remaining / void and the ₪ given.
+  // Usage (docs/SPEC_VOUCHER_PRODUCTION.md §7): issued / used / remaining / void and the ₪ given —
+  // "מכסה | מומשו | נותרו" (the glossary). Flat `usage*` keys: `report` has no `usage` object.
   const usage: ExcelSheet[] = u
     ? [{
-        name: t('usage.sheet'),
-        columns: [{ header: t('col.measure'), width: 28 }, { header: u.unit === 'uses' ? t('usage.unitUses') : t('usage.unitUnits'), kind: 'number' }],
+        name: t('usageSheet'),
+        columns: [{ header: t('col.measure'), width: 28 }, { header: u.unit === 'uses' ? t('usageUnitUses') : t('usageUnitUnits'), kind: 'number' }],
         rows: [
-          [t('usage.issued'), u.issued],
-          [t('usage.used'), u.used],
-          [t('usage.remaining'), u.remaining],
-          [t('usage.void'), u.void],
-          ...(u.unit === 'uses' ? [[t('usage.held'), u.held], [t('usage.flagged'), u.flagged]] as (string | number)[][] : []),
+          [t('usageIssued'), u.issued],
+          [t('usageUsed'), u.used],
+          [t('usageRemaining'), u.remaining],
+          [u.unit === 'uses' ? t('usageVoidUses') : t('usageVoid'), u.void],
+          ...(u.unit === 'uses' ? [[t('usageHeld'), u.held], [t('usageFlagged'), u.flagged]] as (string | number)[][] : []),
         ],
       }, ...(u.benefit != null ? [{
-        name: t('usage.benefit'),
-        columns: [{ header: t('col.measure'), width: 28 }, { header: t('usage.amount'), kind: 'money' as const }],
-        rows: [[t('usage.benefit'), u.benefit]],
+        name: t('usageBenefit'),
+        columns: [{ header: t('col.measure'), width: 28 }, { header: t('usageAmount'), kind: 'money' as const }],
+        rows: [[t('usageBenefit'), u.benefit]],
       }] : [])]
     : [];
   return [
@@ -139,7 +143,7 @@ function sheetsOf(
         [t('vouchers.used'), v.used],
         [t('vouchers.cancelled'), v.cancelled],
         [t('col.redemptions'), r.totals.redemptions],
-        [t('col.units'), r.totals.units],
+        [labels.units, r.totals.units],
       ],
     },
     {
@@ -191,10 +195,13 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
     queryKey: ['prepaid-voucher-report', batch.id],
     queryFn: () => fetchPrepaidBatchReport(batch.id),
   });
+  // A discount batch's "units" are its uses (the server's batch report).
+  const discount = isDiscountKind(batch.kind);
   const labels = {
     unknownTill: t('unknownTill'),
     unknownShop: t('unknownShop'),
     unknownEmployee: t('unknownEmployee'),
+    units: discount ? t('col.uses') : t('col.units'),
   };
 
   if (q.isPending) {
@@ -252,23 +259,23 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
         <Card className="break-inside-avoid">
           <CardHeader>
             <CardTitle className="text-base">
-              {t('usage.title')} · {r.usage.unit === 'uses' ? t('usage.unitUses') : t('usage.unitUnits')}
+              {t('usageTitle')} · {r.usage.unit === 'uses' ? t('usageUnitUses') : t('usageUnitUnits')}
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <Counts label={t('usage.issued')} value={r.usage.issued} />
-            <Counts label={t('usage.used')} value={r.usage.used} tone="text-emerald-700 dark:text-emerald-300" />
-            <Counts label={t('usage.remaining')} value={r.usage.remaining} />
-            <Counts label={t('usage.void')} value={r.usage.void} tone="text-destructive" />
+            <Counts label={t('usageIssued')} value={r.usage.issued} />
+            <Counts label={t('usageUsed')} value={r.usage.used} tone="text-emerald-700 dark:text-emerald-300" />
+            <Counts label={t('usageRemaining')} value={r.usage.remaining} />
+            <Counts label={r.usage.unit === 'uses' ? t('usageVoidUses') : t('usageVoid')} value={r.usage.void} tone="text-destructive" />
             {r.usage.benefit != null ? (
               <div className="rounded-lg border px-3 py-2">
-                <p className="text-xs text-muted-foreground">{t('usage.benefit')}</p>
+                <p className="text-xs text-muted-foreground">{t('usageBenefit')}</p>
                 <p className="text-xl font-semibold tabular-nums">₪{r.usage.benefit.toFixed(2)}</p>
               </div>
             ) : null}
             {r.usage.unit === 'uses' && (r.usage.held || r.usage.flagged) ? (
               <p className="col-span-full text-xs text-muted-foreground">
-                {t('usage.held')}: {r.usage.held} · {t('usage.flagged')}: {r.usage.flagged}
+                {t('usageHeld')}: {r.usage.held} · {t('usageFlagged')}: {r.usage.flagged}
               </p>
             ) : null}
           </CardContent>
@@ -374,8 +381,8 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
                     <div className="h-3 flex-1 overflow-hidden rounded bg-muted">
                       <div className="h-full rounded bg-primary/70" style={{ width: `${(h.units / maxHour) * 100}%` }} />
                     </div>
-                    <span className="w-28 shrink-0 text-end text-xs tabular-nums text-muted-foreground">
-                      {t('hourLine', { units: h.units, redemptions: h.redemptions })}
+                    <span className="w-36 shrink-0 text-end text-xs tabular-nums text-muted-foreground">
+                      {t(discount ? 'hourLineUses' : 'hourLine', { units: h.units, redemptions: h.redemptions })}
                     </span>
                   </li>
                 ))}
@@ -386,9 +393,9 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <GroupTable title={t('byShop')} rows={r.byShop} nameHeader={t('col.shop')} unknown={labels.unknownShop} />
-        <GroupTable title={t('byTill')} rows={r.byTill} nameHeader={t('col.till')} unknown={labels.unknownTill} withShop />
-        <GroupTable title={t('byEmployee')} rows={r.byEmployee} nameHeader={t('col.employee')} unknown={labels.unknownEmployee} />
+        <GroupTable title={t('byShop')} rows={r.byShop} nameHeader={t('col.shop')} unitsHeader={labels.units} unknown={labels.unknownShop} />
+        <GroupTable title={t('byTill')} rows={r.byTill} nameHeader={t('col.till')} unitsHeader={labels.units} unknown={labels.unknownTill} withShop />
+        <GroupTable title={t('byEmployee')} rows={r.byEmployee} nameHeader={t('col.employee')} unitsHeader={labels.units} unknown={labels.unknownEmployee} />
       </div>
     </div>
   );

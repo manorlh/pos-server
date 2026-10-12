@@ -41,10 +41,12 @@ import {
   downloadPrepaidVouchersFile,
   fetchAllPrepaidVouchers,
   fetchFilteredPrepaidBatches,
+  fetchPrepaidBatch,
   fetchPrepaidBatches,
   fetchPrepaidVoucherRows,
   fetchPrepaidTypes,
   updatePrepaidBatch,
+  type PrepaidAddedRun,
   type PrepaidBarcodeType,
   type PrepaidBatchEditBody,
   type PrepaidPricing,
@@ -67,8 +69,12 @@ import {
 } from '@/lib/prepaidBatchSubmit';
 import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
+import { BulkEditDialog } from '@/components/dashboard/prepaid-vouchers/batch-bulk-edit';
+import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from '@/lib/prepaidBatchBulkEdit';
+import { voucherFieldsFor } from '@/lib/voucherFields';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
+import { BatchTestModePanel, TestModeTag } from '@/components/dashboard/prepaid-vouchers/batch-test-mode';
 import {
   BATCH_SORTS,
   EMPTY_FILTERS,
@@ -94,14 +100,29 @@ import { VoucherSearch, type SearchPick } from '@/components/dashboard/prepaid-v
 import { DEFAULT_WEIGHT_UNIT, itemText, quantityNumberText } from '@/lib/prepaidVoucherProducts';
 import { GoodsEditor, type DraftItem } from '@/components/dashboard/prepaid-vouchers/goods-editor';
 import {
+  OfflineSwitch,
   PrepaidTypesView,
   ToggleFields,
   TypeSummary,
+  batchSummaryLines,
   policyBody,
   policyState,
+  summaryInputOf,
   type PolicyState,
 } from '@/components/dashboard/prepaid-vouchers/voucher-types';
-import { discountDraftErrors, isDiscountKind, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
+import { FormSection, GoodsContents, PresetPicker, SummaryCard, summaryGroupsOf } from '@/components/dashboard/prepaid-vouchers/setup-parts';
+import {
+  emptyGroup,
+  groupProblems,
+  groupsBody,
+  presetValues,
+  totalQtyBody,
+  type DraftGroup,
+  type VoucherPreset,
+  type VoucherSelection,
+} from '@/lib/voucherPresets';
+import { voucherSummary, type SummaryInput } from '@/lib/voucherSummary';
+import { benefitText, discountDraftErrors, isDiscountKind, maxVouchersPerSale, moneyText, type PrepaidVoucherKind } from '@/lib/prepaidVoucherBenefit';
 import {
   BatchRulesCard,
   DEFAULT_RULES,
@@ -269,6 +290,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
 }) {
   const t = useTranslations('prepaidVouchers.create');
   const te = useTranslations('prepaidVouchers.edit');
+  const ts = useTranslations('prepaidVouchers.setup');
   const tc = useTranslations('common');
   const errorText = useErrorText();
   const qc = useQueryClient();
@@ -305,6 +327,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   // "הצג תוקף על השובר": on by default.
   const [showValidity, setShowValidity] = useState(ed ? ed.showValidity !== false : true);
   const [offlineAllowed, setOfflineAllowed] = useState(ed?.offlineAllowed ?? false);
+  // "להתחיל במצב בדיקה" (a new batch only; default off).
+  const [startInTestMode, setStartInTestMode] = useState(false);
+  const tm = useTranslations('prepaidVoucherTestMode');
   const [policy, setPolicy] = useState<PolicyState>(policyState(ed?.discountBlockPolicy));
   // Production (docs/SPEC_VOUCHER_PRODUCTION.md): groups, the code under the barcode, the barcode, who ordered.
   const [groupMode, setGroupMode] = useState<GroupMode>('none');
@@ -349,6 +374,12 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   // "החל גם על שוברים במימוש חלקי": new contents reach the partly redeemed vouchers too.
   const [applyToPartial, setApplyToPartial] = useState(false);
   const groupsBatch = ed?.selection === 'groups';
+  // A new batch without a type: a fixed list or item groups (lib/voucherPresets.ts), a quick start, the punch card's view.
+  const [selection, setSelection] = useState<VoucherSelection>('items');
+  const [groups, setGroups] = useState<DraftGroup[]>([]);
+  const [totalQty, setTotalQty] = useState('');
+  const [preset, setPreset] = useState<VoucherPreset | null>(null);
+  const [punchView, setPunchView] = useState(false);
   // The company's active types (its own and its parents').
   const types = useQuery({
     queryKey: ['prepaid-voucher-types', companyId, 'active'],
@@ -358,6 +389,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const chosen = typeId ? (types.data?.items ?? []).find((x) => x.id === typeId) ?? null : null;
   const pricesVisible = ed ? !!ed.pricesVisible : !!types.data?.pricesVisible;
   const discount = isDiscountKind(chosen ? chosen.kind : kind);
+  const createGroups = !ed && !chosen && !discount && selection === 'groups';
+  // Only what this voucher has (lib/voucherFields.ts): goods — contents, pricing, split, extras, the
+  // policy; a discount — its terms and uses; both — stacking, validity, shops, offline, print flags.
+  const fields = voucherFieldsFor({
+    kind: chosen ? chosen.kind : kind, selection: groupsBatch || createGroups ? 'groups' : 'items', pricing, stacking: rules.stacking,
+    discountType: terms.discountType, usesPerVoucher: rules.usesPerVoucher,
+  });
   const termErrors = chosen ? [] : discountDraftErrors({
     kind,
     discountType: terms.discountType,
@@ -395,6 +433,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setAccounting('discount');
     setShowValidity(true);
     setOfflineAllowed(false);
+    setStartInTestMode(false);
     setPolicy(policyState());
     setGroupMode('none');
     setGroupCustom('');
@@ -410,6 +449,11 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setTerms(EMPTY_DISCOUNT_TERMS);
     setRules(DEFAULT_RULES);
     setIncludeExtras(false);
+    setSelection('items');
+    setGroups([]);
+    setTotalQty('');
+    setPreset(null);
+    setPunchView(false);
   };
 
   const n = parseInt(count, 10);
@@ -418,7 +462,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const plan = groupOk ? planText(n, groupSize) : null;
   // What is still missing, said in words under the button (not just a disabled button).
   const problems = batchFormProblems({
-    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch ? 1 : items.length,
+    name, companyId, discount, itemCount: chosen ? Math.max(1, chosen.items.length) : groupsBatch || createGroups ? 1 : items.length,
     termErrors: termErrors.length, count: n, groupOk, validFrom, validUntil,
     stackingOk: chosen ? true : stackingValid(rules),
   });
@@ -429,6 +473,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
         !discount && pricing === 'fixed' && !tillValue.trim() ? te('problem.value') : null,
       ].filter((x): x is string => !!x)
     : [];
+  // Item groups of a new batch: the value, the reason and the limit (lib/voucherPresets.ts).
+  const groupErrors = createGroups ? groupProblems(groups, totalQty) : [];
+  if (groupErrors.length) editProblems.push(ts('problemGroups'));
   const canCreate = problems.length === 0 && editProblems.length === 0;
   // "100 שוברים … זכאות ל-300 יחידות" — what the run entitles to in all, before it is issued.
   const totals = discount ? null : issueTotals(n, chosen
@@ -457,6 +504,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     orderRef: orderRef.trim() || null,
     productionId: productionId || null,
     reportEventId: reportEventId || null,
+    ...(startInTestMode ? { startInTestMode: true } : {}),
   };
   // "ערוך סדרה": the settings as the PATCH reads them — sent only where they differ from how the
   // form opened (lib/prepaidBatchEdit.ts changedFields), the cloud plans and confirms the rest.
@@ -475,12 +523,13 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       count: n,
       productionId: productionId || null,
       reportEventId: reportEventId || null,
+      offlineAllowed,
       ...stackingBody(rules),
     };
     if (pricesVisible) out.productionPrice = decimal(productionPrice);
     if (!discount) {
       Object.assign(out, {
-        offlineAllowed, redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
+        redemptionAccounting: accounting, discountBlockPolicy: policyBody(policy),
         pricing, tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
         includeExtras, splitAllowed,
       });
@@ -527,7 +576,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
         offlineAllowed,
         discountBlockPolicy: discount ? { mode: 'honour' } : policyBody(policy),
         splitAllowed: discount ? false : splitAllowed,
-        items: discount ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        items: discount || createGroups ? [] : items.map((i) => ({ productId: i.product.id, quantity: i.quantity })),
+        ...(createGroups ? { selection: 'groups' as const, groups: groupsBody(groups), totalQty: totalQtyBody(totalQty) } : {}),
         includeExtras: discount ? false : includeExtras,
         count: n,
         groupSize,
@@ -615,6 +665,57 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
   };
 
+  // A quick start: the form filled with values the owner could set by hand (lib/voucherPresets.ts).
+  const applyPreset = (p: VoucherPreset) => {
+    const v = presetValues(p, 50, createGroups ? groups[0] : undefined);
+    setPreset(p);
+    setKind(v.kind);
+    if (v.kind === 'items') {
+      setSelection(v.selection);
+      setGroups(v.groups);
+      setTotalQty(v.totalQty);
+      setSplitAllowed(v.splitAllowed);
+      setPunchView(p === 'punch');
+    } else if (v.discountType) {
+      setTerms((cur) => ({ ...cur, discountType: v.discountType! }));
+    }
+  };
+  const pickSelection = (v: VoucherSelection) => {
+    setSelection(v);
+    if (v === 'groups' && !groups.length) setGroups([emptyGroup('פריטים')]);
+  };
+
+  // "סיכום השובר" (lib/voucherSummary.ts): the type's terms when one is chosen, else the form's — with
+  // this batch's count, validity and shops.
+  const shopNames = shopIds.length ? (shops.data ?? []).filter((x) => shopIds.includes(x.id)).map((x) => x.name) : null;
+  const batchFacts = { count: Number.isFinite(n) && n > 0 ? n : null, validFrom: validFrom || null, validUntil: validUntil || null, shopNames };
+  const summaryInput: SummaryInput = chosen
+    ? { ...summaryInputOf(chosen), ...batchFacts }
+    : {
+        kind, selection: groupsBatch || createGroups ? 'groups' : 'items',
+        items: items.map((i) => ({ name: i.product.name, quantity: i.quantity, weighed: i.product.isWeighed, unitLabel: i.product.unitLabel })),
+        groups: groupsBatch && ed ? summaryInputOf(ed).groups : summaryGroupsOf(groups),
+        totalQty: groupsBatch ? ed?.totalQty ?? null : totalQtyBody(totalQty),
+        splitAllowed: !discount && splitAllowed, includeExtras: !discount && includeExtras,
+        pricing: ed ? pricing : tillValue.trim() ? 'fixed' : 'cover', tillValue: decimal(tillValue), allowTopUp: pricing === 'cover' && allowTopUp,
+        accounting: discount ? null : accounting,
+        benefit: discount ? benefitText({
+          kind, discountType: terms.discountType,
+          value: Number(terms.value) > 0 ? Math.round(Number(terms.value) * 100) : null,
+          minPurchaseAgorot: Number(terms.minPurchase) > 0 ? Math.round(Number(terms.minPurchase) * 100) : null,
+          maxDiscountAgorot: Number(terms.maxDiscount) > 0 ? Math.round(Number(terms.maxDiscount) * 100) : null,
+          maxUnits: Number(terms.maxUnits) || null, names: terms.products.map((x) => x.name),
+        }) : null,
+        usesPerVoucher: parseInt(rules.usesPerVoucher, 10) || 1, maxUsesPerSale: parseInt(rules.maxUsesPerSale, 10) || 1,
+        maxUsesPerDay: rules.maxUsesPerDay.trim() ? parseInt(rules.maxUsesPerDay, 10) : null,
+        stacking: rules.stacking, maxVouchersPerSale: maxVouchersPerSale(rules.stacking, rules.maxVouchersPerSale) ?? null,
+        offlineAllowed,
+        ...batchFacts,
+      };
+  const summary = voucherSummary(summaryInput);
+  // "מכסה: עד 50 פריטים לכל שובר" in "כמה ומתי" (set with the items, in step 2).
+  const createQuota = createGroups ? (totalQtyBody(totalQty) ?? summaryGroupsOf(groups).reduce((a, g) => a + g.maxQty, 0)) : 0;
+
   const uploadLogo = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
@@ -641,136 +742,300 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               {ed.type?.origin === 'manual' && ed.type.name ? <p>{te('typeLine', { name: ed.type.name, version: ed.type.version })}</p> : null}
             </div>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-2">
+
+          <FormSection title={ts('batchDetailsTitle')} purpose={ts('batchDetailsPurpose')}>
             <div className="space-y-1">
-              <Label htmlFor="pv-name">{t('name')}</Label>
-              <Input id="pv-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
+              <Label>{t('company')}</Label>
+              <Select
+                value={companyId}
+                disabled={!!ed}
+                onValueChange={(v) => {
+                  setCompanyId(String(v ?? ''));
+                  setShopIds([]);
+                  // A production and an event are a company's: they go with it.
+                  setProductionId('');
+                  setReportEventId('');
+                  // What another company may carry is another list: the picks go with the company.
+                  setItems([]);
+                  setGroups((gs) => gs.map((g) => ({ ...g, products: [], categories: [], excludeProducts: [], excludeCategories: [] })));
+                  setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
+                }}
+                items={(companies.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
+              >
+                <SelectTrigger className="w-full"><SelectValue placeholder={t('pickCompany')} /></SelectTrigger>
+                <SelectContent>
+                  {(companies.data ?? []).map((c) => (
+                    <SelectItem key={c.id} value={c.id} label={c.name}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-event">{t('eventName')}</Label>
-              <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
-              onChange={(id, pname) => {
-                setProductionId(id);
-                // "עבור מי" is the production's name (the cloud keeps them in step).
-                if (id && pname) setCustomerName(pname);
-              }} />
-            <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
-              onChange={(id, ename) => {
-                setReportEventId(id);
-                // The printed event name: the event's, unless one was typed.
-                if (id && ename && !eventName.trim()) setEventName(ename);
-              }} />
-          </div>
-
-          {ed ? null : (
-          <div className="space-y-1">
-            <Label>{t('type')}</Label>
-            <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-              value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
-              <option value="">{t('typeNone')}</option>
-              {(types.data?.items ?? []).map((x) => (
-                <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
-              ))}
-            </select>
-            <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
-          </div>
-          )}
-          {chosen ? <TypeSummary type={chosen} /> : (<>
-          {ed ? (
-            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
-          ) : <KindPicker value={kind} onChange={setKind} />}
-          {discount ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
-
-          {!discount && groupsBatch ? (
-            <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
-              {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
-            </p>
-          ) : null}
-          {!discount && !groupsBatch ? <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} /> : null}
-
-          {!discount ? (
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t('includeExtras')}</p>
-                <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
-              </div>
-              <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
-            </div>
-          ) : null}
-
-          {!discount ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
-                <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
-                  placeholder={t('tillValuePlaceholder')} />
-                <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+                <Label htmlFor="pv-name">{t('name')}</Label>
+                <Input id="pv-name" value={name} maxLength={200} onChange={(e) => setName(e.target.value)} placeholder={t('namePlaceholder')} />
               </div>
-              {pricesVisible ? (
-                <div className="space-y-1">
-                  <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
-                  <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
-                  <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
-                </div>
-              ) : null}
+              <div className="space-y-1">
+                <Label htmlFor="pv-event">{t('eventName')}</Label>
+                <Input id="pv-event" value={eventName} maxLength={200} onChange={(e) => setEventName(e.target.value)} placeholder={t('eventNamePlaceholder')} />
+              </div>
             </div>
-          ) : null}
-          {!discount && ed ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ProductionPicker companyId={companyId} value={productionId} current={ed?.production ?? null}
+                onChange={(id, pname) => {
+                  setProductionId(id);
+                  // "עבור מי" is the production's name (the cloud keeps them in step).
+                  if (id && pname) setCustomerName(pname);
+                }} />
+              <EventPicker companyId={companyId} value={reportEventId} current={ed?.reportEvent ?? null}
+                onChange={(id, ename) => {
+                  setReportEventId(id);
+                  // The printed event name: the event's, unless one was typed.
+                  if (id && ename && !eventName.trim()) setEventName(ename);
+                }} />
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
-                <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
-                  value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
-                  <option value="fixed">{te('choice.pricing.fixed')}</option>
-                  <option value="cover">{te('choice.pricing.cover')}</option>
+                <Label htmlFor="pv-customer">{t('customerName')}</Label>
+                <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder={t('customerPlaceholder')} disabled={!!productionId} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="pv-order">{t('orderRef')}</Label>
+                <Input id="pv-order" value={orderRef} maxLength={100} onChange={(e) => setOrderRef(e.target.value)} />
+              </div>
+            </div>
+          </FormSection>
+
+          <FormSection n={1} title={ts('s1Title')} purpose={ed ? ts('s1PurposeEdit') : ts('s1PurposeBatch')}>
+            {ed ? null : (
+              <div className="space-y-1">
+                <Label>{t('type')}</Label>
+                <select className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                  value={typeId} onChange={(ev) => setTypeId(ev.target.value)} disabled={!companyId} aria-label={t('type')}>
+                  <option value="">{t('typeNone')}</option>
+                  {(types.data?.items ?? []).map((x) => (
+                    <option key={x.id} value={x.id}>{x.code ? `${x.name} (${x.code})` : x.name}</option>
+                  ))}
                 </select>
+                <p className="text-xs text-muted-foreground">{companyId ? t('typeHint') : t('pickCompany')}</p>
               </div>
-              {pricing === 'cover' ? (
+            )}
+            {chosen ? <TypeSummary type={chosen} /> : ed ? (
+              <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{te('kindFixed')}</p>
+            ) : (
+              <>
+                <PresetPicker value={preset} onPick={applyPreset} />
+                <KindPicker value={kind} onChange={(k) => { setKind(k); setPreset(null); }} />
+              </>
+            )}
+          </FormSection>
+
+          {chosen ? null : (
+            <FormSection n={2} title={ts('s2Title')} purpose={discount ? ts('s2PurposeDiscount') : ts('s2Purpose')}>
+              {fields.visible.has('discountType') ? <DiscountTermsFields kind={kind} companyId={companyId} shopIds={shopIds} value={terms} onChange={setTerms} errors={termErrors} /> : null}
+              {!discount && groupsBatch ? (
+                <p className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+                  {te('groupsReadOnly', { groups: (ed?.groups ?? []).map((g) => `${g.name} (${g.minQty}–${g.maxQty})`).join(' · ') })}
+                </p>
+              ) : null}
+              {!discount && !groupsBatch ? (ed ? (
+                <GoodsEditor companyId={companyId} shopIds={shopIds} items={items} onChange={setItems} enabled={open} />
+              ) : (
+                <GoodsContents companyId={companyId} shopIds={shopIds} selection={selection} onSelection={pickSelection}
+                  items={items} onItems={setItems} groups={groups} onGroups={setGroups} totalQty={totalQty} onTotalQty={setTotalQty}
+                  punch={punchView} onPunch={setPunchView} enabled={open} />
+              )) : null}
+              {fields.visible.has('includeExtras') ? (
                 <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                  <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
-                  <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{t('includeExtras')}</p>
+                    <p className="text-xs text-muted-foreground">{includeExtras ? t('includeExtrasOn') : t('includeExtrasOff')}</p>
+                  </div>
+                  <Switch checked={includeExtras} onCheckedChange={(v) => setIncludeExtras(!!v)} aria-label={t('includeExtras')} />
+                </div>
+              ) : null}
+            </FormSection>
+          )}
+
+          <FormSection n={3} title={ts('s3Title')} purpose={ts('s3PurposeBatch')}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
+                <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
+                  onChange={(ev) => setCount(ev.target.value)} />
+                <p className="text-xs text-muted-foreground">{ed ? te('countHint', { n: issued }) : t('countHint')}</p>
+              </div>
+              {fields.visible.has('splitAllowed') && !chosen ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {splitAllowed ? t('splitOnHint') : (groupsBatch || createGroups) ? t('splitOffHintGroups') : t('splitOffHint')}
+                    </p>
+                  </div>
+                  <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
                 </div>
               ) : null}
             </div>
-          ) : null}
-          {!discount ? (
-            <div className="rounded-lg border p-3">
+            {!chosen && discount ? <RulesFields kind={kind} value={rules} onChange={setRules} part="uses" /> : null}
+            {createGroups && createQuota ? <p className="text-sm">{ts('quotaIs', { n: createQuota })}</p> : null}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="pv-from">{t('validFrom')}</Label>
+                <DatePicker id="pv-from" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="pv-until">{t('validUntil')}</Label>
+                <DatePicker id="pv-until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('validityHint')}</p>
+          </FormSection>
+
+          {chosen ? null : (
+            <FormSection n={4} title={ts('s4Title')} purpose={ts('s4Purpose')}>
+              <RulesFields kind={kind} value={rules} onChange={setRules} part="sale" />
+            </FormSection>
+          )}
+
+          <FormSection n={5} title={ts('s5Title')} purpose={chosen ? ts('s5PurposeFromType') : discount ? ts('s5PurposeDiscount') : ts('s5Purpose')}>
+            {!chosen && fields.visible.has('tillValue') ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="pv-till-value">{t('tillValue')}</Label>
+                  <Input id="pv-till-value" inputMode="decimal" value={tillValue} onChange={(ev) => setTillValue(ev.target.value)}
+                    placeholder={t('tillValuePlaceholder')} />
+                  <p className="text-xs text-muted-foreground">{ed ? te(`pricingHint.${pricing}`) : tillValue.trim() ? t('tillValueFixed') : t('tillValueNone')}</p>
+                </div>
+                {pricesVisible ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="pv-production-price">{t('productionPrice')}</Label>
+                    <Input id="pv-production-price" inputMode="decimal" value={productionPrice} onChange={(ev) => setProductionPrice(ev.target.value)} />
+                    <p className="text-xs text-muted-foreground">{ed ? te('priceHint') : t('productionPriceHint')}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!chosen && !discount && ed ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="pv-pricing">{te('field.pricing')}</Label>
+                  <select id="pv-pricing" className="h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30"
+                    value={pricing} onChange={(ev) => setPricing(ev.target.value as PrepaidPricing)}>
+                    <option value="fixed">{te('choice.pricing.fixed')}</option>
+                    <option value="cover">{te('choice.pricing.cover')}</option>
+                  </select>
+                </div>
+                {fields.visible.has('allowTopUp') ? (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+                    <p className="min-w-0 text-sm font-medium">{te('field.allowTopUp')}</p>
+                    <Switch checked={allowTopUp} onCheckedChange={(v) => setAllowTopUp(!!v)} aria-label={te('field.allowTopUp')} />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!chosen && !discount ? (
               <ToggleFields
                 accounting={accounting} onAccounting={setAccounting}
                 offlineAllowed={offlineAllowed} onOfflineAllowed={setOfflineAllowed}
-                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable}
+                policy={policy} onPolicy={setPolicy} overrideEditable={!!types.data?.overrideEditable} showOffline={false}
+              />
+            ) : null}
+          </FormSection>
+
+          <FormSection n={6} title={ts('s6Title')} purpose={ts('s6PurposeBatch')}>
+            <div className="space-y-1">
+              <Label>{t('shops')}</Label>
+              <EntityMultiSelect
+                label={t('shops')}
+                options={(shops.data ?? []).map((s) => ({ id: s.id, label: s.name }))}
+                selected={shopIds}
+                onChange={setShopIds}
+                allLabel={t('allShops')}
+                clearLabel={t('allShops')}
+                emptyLabel={t('noShops')}
+                disabled={!companyId}
               />
             </div>
-          ) : null}
-          </>)}
+            {chosen ? null : <OfflineSwitch value={offlineAllowed} onChange={setOfflineAllowed} />}
+          </FormSection>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-count">{ed ? te('field.count') : t('count')}</Label>
-              <Input id="pv-count" type="number" min={ed ? Math.max(1, issued) : 1} max={ed ? issued + 5000 : 5000} value={count}
-                onChange={(ev) => setCount(ev.target.value)} />
-              {ed ? <p className="text-xs text-muted-foreground">{te('countHint', { n: issued })}</p> : null}
+          <FormSection n={7} title={ts('s7Title')} purpose={ts('s7Purpose')}>
+            {ed ? null : (
+              <div className="space-y-2">
+                <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
+                {!groupOk ? (
+                  <p className="text-xs text-destructive">{t('groupSizeInvalid')}</p>
+                ) : plan ? (
+                  <p className="text-sm font-medium" aria-live="polite">{plan}</p>
+                ) : null}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('showItems')}</p>
+                <p className="text-xs text-muted-foreground">{showItems ? t('showItemsOn') : t('showItemsOff')}</p>
+              </div>
+              <Switch checked={showItems} onCheckedChange={(v) => setShowItems(!!v)} aria-label={t('showItems')} />
             </div>
-            {!discount && !chosen ? (
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{splitAllowed ? t('splitOn') : t('splitOff')}</p>
-                  <p className="text-xs text-muted-foreground">{splitAllowed ? t('splitOnHint') : t('splitOffHint')}</p>
+                  <p className="text-sm font-medium">{t('showCode')}</p>
+                  <p className="text-xs text-muted-foreground">{t('showCodeHint')}</p>
                 </div>
-                <Switch checked={splitAllowed} onCheckedChange={(v) => setSplitAllowed(!!v)} aria-label={t('splitLabel')} />
+                <Switch checked={showCode} onCheckedChange={(v) => setShowCode(!!v)} aria-label={t('showCode')} />
               </div>
-            ) : null}
-          </div>
-
-          {!chosen ? (
-            <div className="rounded-lg border p-3">
-              <RulesFields kind={kind} value={rules} onChange={setRules} />
+              <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
             </div>
-          ) : null}
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
+                onChange={(e) => setShowCredit(e.target.checked)} />
+              {t('showCredit')}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
+                onChange={(e) => setShowValidity(e.target.checked)} />
+              {t('showValidity')}
+            </label>
+            <div className="space-y-1">
+              <Label htmlFor="pv-text">{t('freeText')}</Label>
+              <textarea
+                id="pv-text"
+                rows={3}
+                value={freeText}
+                maxLength={1000}
+                onChange={(e) => setFreeText(e.target.value)}
+                placeholder={t('freeTextPlaceholder')}
+                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>{t('logo')}</Label>
+              <div className="flex items-center gap-3">
+                {logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={logoUrl} alt="" className="h-12 w-auto max-w-32 rounded border object-contain" />
+                ) : null}
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                  onChange={(e) => { void uploadLogo(e.target.files?.[0]); e.target.value = ''; }} />
+                <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                  {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+                  {logoUrl ? t('logoReplace') : t('logoUpload')}
+                </Button>
+                {logoUrl ? (
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setLogoUrl(null)}>{t('logoRemove')}</Button>
+                ) : null}
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>{t('preview')}</Label>
+              <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
+                <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
+              </div>
+            </div>
+          </FormSection>
 
           {ed && contentsChanged ? (
             <label className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-900 dark:bg-amber-950/30">
@@ -785,148 +1050,18 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
             </label>
           ) : null}
 
-          {ed ? null : (
-          <div className="space-y-2 rounded-lg border p-3">
-            <GroupSizePicker mode={groupMode} custom={groupCustom} onMode={setGroupMode} onCustom={setGroupCustom} idPrefix="pv-create" />
-            {!groupOk ? (
-              <p className="text-xs text-destructive">{t('groupSizeInvalid')}</p>
-            ) : plan ? (
-              <p className="text-sm font-medium" aria-live="polite">{plan}</p>
-            ) : null}
-          </div>
-          )}
-
-          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{t('showItems')}</p>
-              <p className="text-xs text-muted-foreground">{showItems ? t('showItemsOn') : t('showItemsOff')}</p>
-            </div>
-            <Switch checked={showItems} onCheckedChange={(v) => setShowItems(!!v)} aria-label={t('showItems')} />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{t('showCode')}</p>
-                <p className="text-xs text-muted-foreground">{t('showCodeHint')}</p>
-              </div>
-              <Switch checked={showCode} onCheckedChange={(v) => setShowCode(!!v)} aria-label={t('showCode')} />
-            </div>
-            <BarcodeTypePicker value={barcodeType} onChange={setBarcodeType} />
-          </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showCredit}
-              onChange={(e) => setShowCredit(e.target.checked)} />
-            {t('showCredit')}
-          </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" className="h-4 w-4 accent-primary" checked={showValidity}
-              onChange={(e) => setShowValidity(e.target.checked)} />
-            {t('showValidity')}
-          </label>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-customer">{t('customerName')}</Label>
-              <Input id="pv-customer" value={customerName} maxLength={200} onChange={(e) => setCustomerName(e.target.value)}
-                placeholder={t('customerPlaceholder')} disabled={!!productionId} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-order">{t('orderRef')}</Label>
-              <Input id="pv-order" value={orderRef} maxLength={100} onChange={(e) => setOrderRef(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label htmlFor="pv-from">{t('validFrom')}</Label>
-              <DatePicker id="pv-from" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="pv-until">{t('validUntil')}</Label>
-              <DatePicker id="pv-until" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="pv-text">{t('freeText')}</Label>
-            <textarea
-              id="pv-text"
-              rows={3}
-              value={freeText}
-              maxLength={1000}
-              onChange={(e) => setFreeText(e.target.value)}
-              placeholder={t('freeTextPlaceholder')}
-              className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label>{t('logo')}</Label>
-            <div className="flex items-center gap-3">
-              {logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={logoUrl} alt="" className="h-12 w-auto max-w-32 rounded border object-contain" />
-              ) : null}
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
-                onChange={(e) => { void uploadLogo(e.target.files?.[0]); e.target.value = ''; }} />
-              <Button type="button" variant="outline" size="sm" disabled={uploading} onClick={() => fileRef.current?.click()}>
-                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                {logoUrl ? t('logoReplace') : t('logoUpload')}
-              </Button>
-              {logoUrl ? (
-                <Button type="button" variant="ghost" size="sm" onClick={() => setLogoUrl(null)}>{t('logoRemove')}</Button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>{t('company')}</Label>
-              <Select
-                value={companyId}
-                disabled={!!ed}
-                onValueChange={(v) => {
-                  setCompanyId(String(v ?? ''));
-                  setShopIds([]);
-                  // A production and an event are a company's: they go with it.
-                  setProductionId('');
-                  setReportEventId('');
-                  // What another company may carry is another list: the picks go with the company.
-                  setItems([]);
-                  setTerms((cur) => ({ ...cur, products: [], categoryIds: [] }));
-                }}
-                items={(companies.data ?? []).map((c) => ({ value: c.id, label: c.name }))}
-              >
-                <SelectTrigger className="w-full"><SelectValue placeholder={t('pickCompany')} /></SelectTrigger>
-                <SelectContent>
-                  {(companies.data ?? []).map((c) => (
-                    <SelectItem key={c.id} value={c.id} label={c.name}>{c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>{t('shops')}</Label>
-              <EntityMultiSelect
-                label={t('shops')}
-                options={(shops.data ?? []).map((s) => ({ id: s.id, label: s.name }))}
-                selected={shopIds}
-                onChange={setShopIds}
-                allLabel={t('allShops')}
-                clearLabel={t('allShops')}
-                emptyLabel={t('noShops')}
-                disabled={!companyId}
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label>{t('preview')}</Label>
-            <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
-              <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
-            </div>
-          </div>
+          <SummaryCard lines={summary} sticky />
         </div>
+        {ed ? null : (
+          <label className="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm">
+            <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={startInTestMode}
+              onChange={(e) => setStartInTestMode(e.target.checked)} />
+            <span className="min-w-0">
+              <span className="block font-medium">{tm('startIn')}</span>
+              <span className="block text-xs text-muted-foreground">{tm('startInHint')}</span>
+            </span>
+          </label>
+        )}
         <div className="space-y-1 text-sm" aria-live="polite">
           {totals && totals.units + totals.weights.length > 0 && Number.isFinite(n) && n > 0 ? (
             <p className="font-medium">
@@ -1010,9 +1145,16 @@ function validityText(b: PrepaidVoucherBatch, t: (k: string, v?: Record<string, 
   return t('row.noValidity');
 }
 
-function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }) {
+function BatchCard({ b, onOpen, selected, onSelect }: {
+  b: PrepaidVoucherBatch;
+  onOpen: () => void;
+  /** "שינוי הגדרות לסדרות שנבחרו": the card's own box. */
+  selected?: boolean;
+  onSelect?: (on: boolean) => void;
+}) {
   const t = useTranslations('prepaidVouchers');
   const ts = useTranslations('prepaidVouchers.scope');
+  const tb = useTranslations('prepaidVouchers.bulk');
   const termsText = useBatchTermsText()(b);
   const discount = isDiscountKind(b.kind);
   const f = b.figures;
@@ -1020,8 +1162,13 @@ function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }
     ? (['cancelled', 'not_started', 'expired', 'fully_redeemed'] as const).find((k) => b.state![k]) ?? 'active'
     : null;
   return (
-    <li>
-      <button type="button" onClick={onOpen} className="w-full space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25">
+    <li className="flex items-start gap-2">
+      {onSelect ? (
+        <input type="checkbox" className="mt-4 h-4 w-4 shrink-0 accent-primary" checked={!!selected}
+          onChange={(e) => onSelect(e.target.checked)} aria-label={tb('selectBatch', { name: b.name })} />
+      ) : null}
+      <button type="button" onClick={onOpen} className={cn('w-full min-w-0 space-y-2 rounded-xl bg-card p-3 text-start ring-1 ring-foreground/10 hover:ring-foreground/25',
+        selected && 'ring-2 ring-primary/60')}>
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <p className="truncate font-semibold">
@@ -1034,6 +1181,7 @@ function BatchCard({ b, onOpen }: { b: PrepaidVoucherBatch; onOpen: () => void }
             discount ? 'bg-violet-100 text-violet-900 dark:bg-violet-950/40 dark:text-violet-300' : 'bg-muted')}>
             {termsText.kind}
           </span>
+          {b.testMode ? <TestModeTag /> : null}
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
@@ -1210,6 +1358,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const [addKeys] = useState(() => batchKeys(sessionStore()));
   const [addPhase, setAddPhase] = useState<SubmitPhase>('idle');
   const [addLost, setAddLost] = useState(false);
+  // "הוסף שוברים לסדרה": the summary before, the run's result after (what the server recorded).
+  const [addOpen, setAddOpen] = useState(false);
+  const [addResult, setAddResult] = useState<PrepaidAddedRun | null>(null);
   const addMore = useMutation({
     mutationFn: async () => {
       const count = parseInt(addCount, 10);
@@ -1225,7 +1376,16 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       }
       return res.value;
     },
-    onSuccess: (b) => { setAddLost(false); toast.success(t('added', { total: b.stats.total })); refresh(); },
+    onSuccess: (b) => {
+      setAddLost(false);
+      const run: PrepaidAddedRun = b.added ?? {
+        eventId: '', count: parseInt(addCount, 10), fromSerial: null, toSerial: null,
+        total: b.stats.total, createdAt: null, userName: null, replayed: false,
+      };
+      setAddResult(run);
+      toast.success(t('added', { total: run.total }));
+      refresh();
+    },
     onError: (err) => toast.error(errorText(err)),
   });
 
@@ -1250,7 +1410,36 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       fileName,
     });
 
+  const exportWholeBatch = async () => {
+    setBusy(t('fileServerPreparing'));
+    try {
+      // The count as it is now (another run may have been added since the page loaded).
+      const fresh = await fetchPrepaidBatch(batch.id);
+      const expected = fresh.exportCount ?? fresh.stats.total - fresh.stats.cancelled;
+      if (!expected) {
+        toast.error(t('nothingToPrint'));
+        return;
+      }
+      if (!window.confirm(t('exportAll.confirm', { n: expected, cancelled: fresh.stats.cancelled }))) return;
+      const got = await downloadPrepaidVouchersFile(batch.id, {
+        format: 'pdf',
+        layout: layout.preset,
+        width: layout.preset === 'custom' ? layout.width : undefined,
+        height: layout.preset === 'custom' ? layout.height : undefined,
+        fileName: `${fileBase}.pdf`,
+        wholeBatch: true,
+      });
+      toast.success(t('exportAll.done', { n: got ?? expected }));
+      refresh();
+    } catch (err) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const runAll = async (kind: 'print' | 'pdf' | 'zip' | 'groups' | 'csv') => {
+    if (kind === 'pdf') return exportWholeBatch();
     setBusy(kind === 'print' ? t('printPreparing') : t('fileServerPreparing'));
     try {
       if (kind === 'groups' || kind === 'csv') {
@@ -1365,6 +1554,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          {batch.testMode ? <TestModeTag /> : null}
           <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${batch.status}`)}
           </span>
@@ -1375,8 +1565,24 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
         </div>
       </div>
       {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
+      {addOpen ? (
+        <AddToBatchDialog
+          batch={batch}
+          count={parseInt(addCount, 10) || 0}
+          benefit={termsText.benefit}
+          usesText={termsText.uses ?? (batch.splitAllowed ? t('card.splitAllowed') : t('card.oneTime'))}
+          pending={addMore.isPending}
+          checking={addMore.isPending && addPhase === 'checking'}
+          lost={addLost && !addMore.isPending}
+          result={addResult}
+          onConfirm={() => addMore.mutate()}
+          onClose={() => { if (!addMore.isPending) { setAddOpen(false); setAddResult(null); } }}
+        />
+      ) : null}
 
       <StatsBar b={batch} />
+      <SummaryCard lines={batchSummaryLines(batch)} />
+      <BatchTestModePanel batch={batch} onChanged={refresh} />
       {!discount && !cancelled ? <BatchToggles batch={batch} onSaved={refresh} /> : null}
 
       <div className="flex gap-1 print:hidden" role="tablist" aria-label={t('viewLabel')}>
@@ -1469,7 +1675,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => void runAll('pdf')} disabled={!!busy || cancelled}>
               <FileDown className="h-4 w-4" />
-              {t('pdfAll')}
+              {t('exportAll.button', { n: batch.exportCount ?? batch.stats.total - batch.stats.cancelled })}
             </Button>
             <Button variant="outline" onClick={() => void runAll('zip')} disabled={!!busy || cancelled}>
               <FileDown className="h-4 w-4" />
@@ -1529,7 +1735,8 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             <Label htmlFor="pv-add">{t('addLabel')}</Label>
             <Input id="pv-add" type="number" min={1} max={5000} className="h-9 w-28" value={addCount} onChange={(e) => setAddCount(e.target.value)} />
           </div>
-          <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)} onClick={() => addMore.mutate()}>
+          <Button variant="outline" size="sm" disabled={addMore.isPending || !(parseInt(addCount, 10) >= 1)}
+            onClick={() => { setAddResult(null); setAddOpen(true); }}>
             {addMore.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{' '}
             {addMore.isPending && addPhase === 'checking' ? t('addChecking') : addLost && !addMore.isPending ? t('addRetry') : t('add')}
           </Button>
@@ -1617,7 +1824,9 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {v.usesLeft != null
                       ? tk('usesLeft', { left: v.usesLeft, total: v.usesPerVoucher ?? batch.usesPerVoucher ?? 1 })
-                      : v.items.map((i) => t('remainingOf', {
+                      : !v.items.length && v.quota != null && v.remaining != null
+                        ? ta('unitsLeft', { left: v.remaining, total: v.quota })
+                        : v.items.map((i) => t('remainingOf', {
                         name: i.name,
                         left: quantityNumberText(i.remaining),
                         // By weight: "0.2/0.5 ק״ג".
@@ -1677,6 +1886,98 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       </div>
       </>)}
     </div>
+  );
+}
+
+/**
+ * "הוסף שוברים לסדרה": how many, and what the new vouchers take from the batch — they are the
+ * batch's, so its validity, contents, groups, value, terms, shops and print settings are theirs —
+ * then confirm once (one operation id per submission, lib/prepaidBatchSubmit.ts; the button is
+ * off while it runs), then the run as the server recorded it: how many, which serials, the new total.
+ */
+function AddToBatchDialog({ batch, count, benefit, usesText, pending, checking, lost, result, onConfirm, onClose }: {
+  batch: PrepaidVoucherBatch;
+  count: number;
+  benefit: string | null;
+  usesText: string;
+  pending: boolean;
+  checking: boolean;
+  lost: boolean;
+  result: PrepaidAddedRun | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const t = useTranslations('prepaidVouchers');
+  const issued = batch.issuedCount ?? batch.stats.total;
+  const from = issued + 1;
+  const groups = batch.selection === 'groups' ? batch.groups ?? [] : [];
+  const rows: Array<[string, string]> = [
+    [t('addDialog.validity'), validityText(batch, t)],
+    [t('addDialog.contents'), contentsText(batch, benefit)],
+    ...(groups.length
+      ? [[t('addDialog.groups'), [
+        ...groups.map((g) => t('addDialog.group', { name: g.name, max: g.maxQty })),
+        ...(batch.totalQty ? [t('addDialog.totalQty', { n: batch.totalQty })] : []),
+      ].join(' · ')] as [string, string]]
+      : []),
+    ...(batch.tillValue != null ? [[t('addDialog.value'), moneyText(Math.round(batch.tillValue * 100))] as [string, string]] : []),
+    [t('addDialog.terms'), usesText],
+    ...(batch.typeName || batch.type?.name ? [[t('addDialog.type'), (batch.typeName || batch.type?.name) as string] as [string, string]] : []),
+    ...(batch.customerName ? [[t('addDialog.production'), batch.customerName] as [string, string]] : []),
+    [t('addDialog.shops'), batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: batch.companyName ?? '' })],
+    ...(batch.groupSize ? [[t('addDialog.envelopes'), t('production.addHint', { size: batch.groupSize })] as [string, string]] : []),
+  ];
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[92dvh] max-w-lg overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t('addDialog.title')}</DialogTitle>
+        </DialogHeader>
+        {result ? (
+          <div className="space-y-2" role="status" aria-live="polite">
+            <p className="text-sm font-medium">
+              {result.fromSerial != null && result.toSerial != null
+                ? t('addDialog.doneRange', { count: result.count, from: result.fromSerial, to: result.toSerial })
+                : t('addDialog.done', { count: result.count })}
+            </p>
+            <p className="text-sm">{t('addDialog.newTotal', { total: result.total })}</p>
+            {result.replayed ? <p className="text-xs text-muted-foreground">{t('addDialog.replayed')}</p> : null}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              {t('addDialog.summary', { count, from, to: issued + count, total: batch.stats.total + count })}
+            </p>
+            <div className="rounded-lg border p-3">
+              <p className="mb-2 text-xs text-muted-foreground">{t('addDialog.inherits')}</p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                {rows.map(([k, v]) => (
+                  <div key={k} className="contents">
+                    <dt className="text-muted-foreground">{k}</dt>
+                    <dd className="min-w-0 break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <p className="text-xs text-muted-foreground">{t('addDialog.kept')}</p>
+            {lost ? <p role="status" className="text-xs text-amber-800 dark:text-amber-200">{t('addLostAnswer')}</p> : null}
+          </div>
+        )}
+        <DialogFooter>
+          {result ? (
+            <Button onClick={onClose}>{t('addDialog.close')}</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={onClose} disabled={pending}>{t('addDialog.cancel')}</Button>
+              <Button onClick={onConfirm} disabled={pending || !(count >= 1)}>
+                {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{' '}
+                {checking ? t('addChecking') : lost ? t('addRetry') : t('addDialog.confirm', { count })}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1752,6 +2053,16 @@ export default function PrepaidVouchersPage() {
     queryFn: () => fetchFilteredPrepaidBatches(listQuery, sort),
     enabled: view === 'batches' && !selectedId,
   });
+  // "שינוי הגדרות לסדרות שנבחרו": the picked batches. Only the ones the filters still show count
+  // (lib/prepaidBatchBulkEdit.ts selectedShown) — "בחר הכל" picks what is shown, nothing hidden.
+  const tb = useTranslations('prepaidVouchers.bulk');
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const shownBatches = shown.data?.items ?? [];
+  const shownIds = shownBatches.map((b) => b.id);
+  const pickedIds = selectedShown(picked, shownIds);
+  const pickedBatches = shownBatches.filter((b) => picked.has(b.id));
+  const pickAll = allState(picked, shownIds);
 
   const onPick = (p: SearchPick) => {
     if (p.kind === 'batch') {
@@ -1844,6 +2155,15 @@ export default function PrepaidVouchersPage() {
               {shown.data ? ts('count', { shown: shown.data.total, total: batches.data!.length }) : null}
             </span>
           </div>
+          {shownIds.length ? (
+            <label className="flex w-fit items-center gap-2 text-sm" title={tb('selectAllHint')}>
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={pickAll === 'all'}
+                ref={(el) => { if (el) el.indeterminate = pickAll === 'some'; }}
+                onChange={() => setPicked(toggleAll(picked, shownIds))} aria-label={tb('selectAll')} />
+              {tb('selectAll')}
+              <span className="text-xs text-muted-foreground">{tb('selectAllHint')}</span>
+            </label>
+          ) : null}
           {shown.isPending ? (
             <Skeleton className="h-24 w-full rounded-xl" />
           ) : shown.isError ? (
@@ -1851,12 +2171,31 @@ export default function PrepaidVouchersPage() {
           ) : shown.data!.items.length ? (
             <ul className="space-y-2">
               {shown.data!.items.map((b) => (
-                <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)} />
+                <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)}
+                  selected={picked.has(b.id)} onSelect={(on) => setPicked(toggleOne(picked, b.id, on))} />
               ))}
             </ul>
           ) : (
             <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('filters.none')}</p>
           )}
+          {pickedIds.length ? (
+            <div role="region" aria-label={tb('barLabel')}
+              className="sticky bottom-3 z-20 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur">
+              <div className="min-w-0">
+                <p className="text-sm font-medium" aria-live="polite">{tb('selected', { n: pickedIds.length })}</p>
+                {pickedIds.length > MAX_BULK_BATCHES ? (
+                  <p className="text-xs text-destructive">{tb('tooMany', { max: MAX_BULK_BATCHES })}</p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>{tb('clear')}</Button>
+                <Button size="sm" onClick={() => setBulkOpen(true)} disabled={pickedIds.length > MAX_BULK_BATCHES}>
+                  <Pencil className="h-4 w-4" /> {tb('open')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <BulkEditDialog open={bulkOpen} batches={pickedBatches} onOpenChange={setBulkOpen} onDone={() => setPicked(new Set())} />
         </>
       )}
 

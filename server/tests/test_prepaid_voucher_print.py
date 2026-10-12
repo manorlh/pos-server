@@ -337,7 +337,7 @@ class TestFreeText:
             assert 0 <= x0 and x1 <= W and 0 <= y0 and y1 <= H, (preset, call.text)
         # Never at the cost of the validity and the terms.
         assert PDF._visual("בתוקף עד 14/08/2026") in texts(drawn)
-        assert PDF._visual("מימוש חד-פעמי") in texts(drawn)
+        assert PDF._visual("מימוש בעסקה אחת") in texts(drawn)
 
     def test_the_80mm_ticket_wraps_a_long_line_over_several(self, drawn):
         card(batch_obj(free_text="לא ניתן להמיר בכסף ולא ניתן לפצל בין כמה קופות שונות במתחם הפסטיבל"))
@@ -349,7 +349,7 @@ class TestFreeText:
         card(batch_obj(free_text=long))
         out = texts(drawn)
         assert "…" in out
-        assert PDF._visual("בתוקף עד 14/08/2026") in out and PDF._visual("מימוש חד-פעמי") in out
+        assert PDF._visual("בתוקף עד 14/08/2026") in out and PDF._visual("מימוש בעסקה אחת") in out
 
     def test_many_goods_still_leave_room_for_it(self, drawn):
         goods = tuple((f"מוצר {chr(0x05d0 + i)}", 1) for i in range(12))
@@ -365,7 +365,7 @@ GOLDEN = ROOT / "tests" / "fixtures" / "prepaid_voucher_layout.json"
 GOODS = [["1×", "נקניקייה בלחמניה", False], ["2×", "שתייה קלה", False], ["0.5 ק\"ג", "זיתים", True]]
 BASE = {
     "title": "פסטיבל הקיץ 2026",
-    "terms": "מימוש חד-פעמי",
+    "terms": "מימוש בעסקה אחת",
     "serial": "מס׳ 0008 · קבוצה 3",
     "items": GOODS,
     "freeText": "יש להציג את השובר בקופה.\nלא ניתן להמיר בכסף ולא ניתן לפצל בין כמה קופות שונות במתחם.",
@@ -506,7 +506,7 @@ class TestShowValidity:
     def test_off_leaves_out_the_validity_and_the_terms(self, drawn):
         card(batch_obj(show_validity=False), "ticket80x120")
         out = texts(drawn)
-        assert PDF._visual("בתוקף עד 14/08/2026") not in out and PDF._visual("מימוש חד-פעמי") not in out
+        assert PDF._visual("בתוקף עד 14/08/2026") not in out and PDF._visual("מימוש בעסקה אחת") not in out
         assert shows(drawn, "פסטיבל הקיץ") and PDF._visual("מס׳ 0008") in out
 
     def test_the_gap_closes(self):

@@ -20,6 +20,9 @@ A change is planned first (what changes, before → after, and what it touches),
   (cancel them instead).
 * **price** — the production price, with the prices section only: it applies to the vouchers
   issued from now on (`production_price_history`, by serial — the settlement reads it).
+* **test** — "מצב בדיקה" on / off (P:/specs/voucher-test-mode.md): from the next scan. Never while
+  the batch is assigned to a device offline (there is no test offline). Logged on its own line
+  (`test_mode_on` / `test_mode_off`, who and when), never inside "update".
 
 The kind (goods / discount) and the company do not change: a new batch is made for that.
 Every applied edit is one "update" line of the batch's log, with each change before → after.
@@ -33,7 +36,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import status
+from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -52,8 +55,8 @@ COUNT_TOO_MANY = "prepaid_voucher_count_too_many"
 OFFLINE_SHOP = "prepaid_voucher_offline_shop"
 HOLDS_LIVE = "prepaid_voucher_holds_live"
 
-FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE = (
-    "free", "validity", "where", "rules", "accounting", "contents", "quantity", "price",
+FREE, VALIDITY, WHERE, RULES_OF_USE, ACCOUNTING, CONTENTS, QUANTITY, PRICE, TEST = (
+    "free", "validity", "where", "rules", "accounting", "contents", "quantity", "price", "test",
 )
 #: The wire name of each editable setting, and its category (the order the confirmation lists them in).
 FIELDS: Tuple[Tuple[str, str], ...] = (
@@ -72,6 +75,7 @@ FIELDS: Tuple[Tuple[str, str], ...] = (
     ("totalQty", CONTENTS), ("catalogMode", CONTENTS),
     ("count", QUANTITY),
     ("productionPrice", PRICE),
+    ("testMode", TEST),
 )
 CATEGORY = dict(FIELDS)
 #: Stored money (agorot) on the batch; ₪ in the schema and on the wire.
@@ -80,6 +84,7 @@ _MONEY = ("till_value", "production_price", "min_purchase", "max_discount", "dis
 _PLAIN = (
     "name", "customer_name", "event_name", "order_ref", "free_text", "logo_url", "show_items", "show_validity",
     "show_credit", "show_code", "barcode_type", "print_till_value", "valid_from", "valid_until", "offline_allowed",
+    "test_mode",
 )
 #: The terms, checked as a whole (the schema's `_check_terms` / `_check_prices`) over what the batch says.
 _TERMS = (
@@ -94,7 +99,7 @@ _DISCOUNT_ONLY = ("promotion_policy", "max_uses_per_sale", "max_uses_per_day", "
 _NOT_NULL = (
     "show_code", "show_items", "show_credit", "print_till_value", "barcode_type", "stacking", "promotion_policy",
     "max_uses_per_sale", "redemption_accounting", "show_validity", "offline_allowed", "pricing", "allow_top_up",
-    "split_allowed", "include_extras", "uses_per_voucher", "selection", "catalog_mode", "count",
+    "split_allowed", "include_extras", "uses_per_voucher", "selection", "catalog_mode", "count", "test_mode",
 )
 
 
@@ -187,6 +192,7 @@ def view(b, *, prices: bool) -> Dict[str, Any]:
         "count": int(b.next_serial or 1) - 1,
         "productionId": str(b.production_id) if getattr(b, "production_id", None) else None,
         "reportEventId": str(b.report_event_id) if getattr(b, "report_event_id", None) else None,
+        "testMode": bool(getattr(b, "test_mode", False)),
     }
     if prices:
         out["productionPrice"] = PV._shekels_out(b.production_price)
@@ -263,7 +269,7 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     / `issue` / `refits` for [apply_edit]. Refused (HTTP) where a rule says no.
     """
     PV = _pv()
-    from app.schemas.prepaid_voucher import MAX_VOUCHERS_PER_BATCH, _check_prices, _check_terms
+    from app.schemas.prepaid_voucher import MAX_VOUCHERS_PER_BATCH, MaxUsesOverUses, _check_prices, _check_terms
     from app.services import prepaid_voucher_offline as PVO
     from app.services import prepaid_voucher_types as PVT
 
@@ -318,6 +324,11 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
 
     edit_check(db, batch, cols)
     assignment = PVO.active_of(db, batch.id)
+    if cols.get("test_mode") is True and not bool(batch.test_mode) and assignment is not None:
+        # No test offline (the spec): a device holding the batch would redeem it for real.
+        from app.services.prepaid_voucher_test_mode import TEST_MODE_OFFLINE
+
+        raise PV._http(status.HTTP_409_CONFLICT, TEST_MODE_OFFLINE)
     if assignment is not None:
         if cols.get("offline_allowed") is False:
             raise PV._http(status.HTTP_409_CONFLICT, PVO.OFFLINE_ASSIGNED)
@@ -332,8 +343,11 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         if discount:
             m.items = []
         try:
-            _check_terms(m)
+            # Sent by this body: above the uses per voucher it is refused, never lowered in silence.
+            _check_terms(m, strict_uses="max_uses_per_sale" in given)
             _check_prices(m, one_off=False)
+        except MaxUsesOverUses as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
         except ValueError as exc:
             raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
         # The goods, the targets and the groups are checked again only when they (or the shops)
@@ -400,7 +414,8 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
     ]
     _name_refs(db, changes)
     changed = {c["category"] for c in changes}
-    if batch.status == "cancelled" and changed - {FREE}:
+    # A cancelled batch: its free texts, and test mode (ending a test, or seeing "השובר בוטל" in one).
+    if batch.status == "cancelled" and changed - {FREE, TEST}:
         raise PV._http(status.HTTP_409_CONFLICT, PV.BATCH_CANCELLED)
     if CONTENTS in changed:
         from app.models.prepaid_voucher import PrepaidVoucherReservation
@@ -433,6 +448,9 @@ def plan_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, bo
         effects[QUANTITY] = {"issued": issued, "issue": issue}
     if PRICE in changed:
         effects[PRICE] = {"fromSerial": int(batch.next_serial or 1), "issued": issued}
+    if TEST in changed:
+        # On: the next scans take nothing and count nowhere. Off: real from the next scan.
+        effects[TEST] = {"on": bool(cols.get("test_mode")), "vouchers": open_n}
     return {
         "changes": changes,
         "effects": effects,
@@ -578,8 +596,13 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
-def apply_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, body) -> Dict[str, Any]:
-    """[plan_edit], then written: the columns, the goods, the vouchers' contents, more vouchers, the log."""
+def apply_edit(
+    db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, body, *, bulk: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    [plan_edit], then written: the columns, the goods, the vouchers' contents, more vouchers, the log.
+    [bulk]: the edit is one batch of "שינוי הגדרות לסדרות שנבחרו" — said on its log line (`details.bulk`).
+    """
     PV = _pv()
     plan = plan_edit(db, user, tenant_id, batch, body)
     if not plan["changes"]:
@@ -618,22 +641,36 @@ def apply_edit(db: Session, user: User, tenant_id, batch: PrepaidVoucherBatch, b
     if plan["_issue"]:
         issued = PV._issue(db, batch, plan["_issue"], batch.group_size)
     assignment = plan["_assignment"]
-    if assignment is not None and plan["_categories"] - {FREE}:
+    if assignment is not None and plan["_categories"] - {FREE, TEST}:
         # The device downloads the batch again (its version moved); what it redeemed meanwhile syncs as ever.
         assignment.version = int(assignment.version or 1) + 1
     batch.updated_at = now
+    # "מצב בדיקה" on / off: who and when on the batch, and its own line on the audit trail.
+    test = next((c for c in plan["changes"] if c["field"] == "testMode"), None)
+    if test is not None:
+        on = bool(test["after"])
+        batch.test_mode_since = now if on else None
+        batch.test_mode_by = PV._user_name(user) if on else None
+        PV._event(db, batch, user, "test_mode_on" if on else "test_mode_off",
+                  details={"bulk": dict(bulk)} if bulk else None)
+    rest = [c for c in plan["changes"] if c["field"] != "testMode"]
+    if not rest:
+        db.flush()
+        return plan
     secret = {"productionPrice"}
     details = {
-        "fields": sorted(column_of(c["field"]) for c in plan["changes"]),
+        "fields": sorted(column_of(c["field"]) for c in rest),
         "changes": [
             {**{k: _jsonable(v) for k, v in c.items()}, **({"secret": "prices"} if c["field"] in secret else {})}
-            for c in plan["changes"]
+            for c in rest
         ],
-        "effects": plan["effects"],
+        "effects": {k: v for k, v in plan["effects"].items() if k != TEST},
         "applyToPartial": plan["_apply_partial"],
     }
     if refit is not None:
         details["refit"] = refit
+    if bulk:
+        details["bulk"] = dict(bulk)
     PV._event(db, batch, user, "update", details=details)
     if issued:
         PV._event(db, batch, user, "add", count=len(issued), details=PV._issued_details(issued, batch.group_size))

@@ -20,11 +20,22 @@
  * for their shop, its points of sale and tills; never every method blocked (every cash and
  * card method blocked with the voucher on is fine: a voucher-only till).
  *
+ * Under the voucher's two switches, how the till enters a voucher's redemption (lib/voucherRedeemFlow.ts):
+ * "דרך מימוש שובר" (`voucherRedeemFlow`: items first / the voucher first / both) and "פריטים זכאים
+ * שאינם זמינים" (`voucherShowUnavailable`: shown blocked / hidden) — each with what is in force now,
+ * the level that decided it, and "ירושה" to inherit again. Then (lib/voucherTillSettings.ts) "בירור
+ * יתרת שובר בתפריט הקופה" (`voucherBalanceCheck`: auto / on / off — under "auto" whether it is on at
+ * this level now), "סגירה אוטומטית כשהשובר מכסה הכל" (`voucherAutoClose`) and "עמדת שובר (מסך סריקה
+ * בלבד)" (`voucherStation`, with a non-blocking recommendation when the level's flow or voucher
+ * switches do not suit a station) and, next to it, "רכישה נוספת בתשלום בעמדת שובר"
+ * (`voucherStationPaidItems`, with a warning when it is on and no cash or card method is left to
+ * pay with), the same way.
+ *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -64,8 +75,38 @@ import type {
   PosSettingsPatch,
   PosSettingsV1,
   SettingsLevel,
+  VoucherBalanceCheckMode,
+  VoucherOnOff,
+  VoucherRedeemFlow,
   VoucherSettingKey,
 } from '@/lib/types';
+import {
+  VOUCHER_AUTO_CLOSE_KEY,
+  VOUCHER_AUTO_CLOSE_VALUES,
+  VOUCHER_BALANCE_ACTIVE_KEY,
+  VOUCHER_BALANCE_CHECK_KEY,
+  VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_STATION_KEY,
+  VOUCHER_STATION_PAID_ITEMS_KEY,
+  VOUCHER_STATION_PAID_ITEMS_VALUES,
+  VOUCHER_STATION_VALUES,
+  isVoucherBalanceCheckMode,
+  isVoucherOnOff,
+  resolveVoucherAutoClose,
+  resolveVoucherBalanceCheck,
+  resolveVoucherStation,
+  voucherBalanceCheckEnabled,
+  voucherStationNeedsAdvice,
+  voucherStationPaidItemsView,
+} from '@/lib/voucherTillSettings';
+import {
+  VOUCHER_REDEEM_FLOWS,
+  VOUCHER_REDEEM_FLOW_KEY,
+  VOUCHER_SHOW_UNAVAILABLE_KEY,
+  isVoucherRedeemFlow,
+  resolveVoucherRedeemFlow,
+  resolveVoucherShowUnavailable,
+} from '@/lib/voucherRedeemFlow';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -83,8 +124,18 @@ import { cn } from '@/lib/utils';
 type EditLevel = Exclude<SettingsLevel, 'tenant'>;
 
 /** The keys this page writes. */
-type PaymentKey = PaymentOptionSettingKey | VoucherSettingKey | 'payInstallmentsMax';
-type Draft = Partial<Record<PaymentKey, boolean | number | null>>;
+type PaymentKey =
+  | PaymentOptionSettingKey
+  | VoucherSettingKey
+  | 'payInstallmentsMax'
+  | typeof VOUCHER_REDEEM_FLOW_KEY
+  | typeof VOUCHER_SHOW_UNAVAILABLE_KEY
+  | typeof VOUCHER_BALANCE_CHECK_KEY
+  | typeof VOUCHER_AUTO_CLOSE_KEY
+  | typeof VOUCHER_STATION_KEY
+  | typeof VOUCHER_STATION_PAID_ITEMS_KEY;
+type DraftValue = boolean | number | VoucherRedeemFlow | VoucherBalanceCheckMode | VoucherOnOff | null;
+type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
 const INSTALLMENTS_KEY = 'payInstallmentsMax';
 const INSTALLMENTS_MIN = 2;
@@ -100,7 +151,23 @@ const PAYMENT_KEYS: PaymentKey[] = [
   ...PAYMENT_OPTIONS.flatMap((o) => [o.enabledKey, o.tipsKey] as PaymentOptionSettingKey[]),
   ...VOUCHER_SWITCHES.map((v) => v.key),
   INSTALLMENTS_KEY,
+  VOUCHER_REDEEM_FLOW_KEY,
+  VOUCHER_SHOW_UNAVAILABLE_KEY,
+  VOUCHER_BALANCE_CHECK_KEY,
+  VOUCHER_AUTO_CLOSE_KEY,
+  VOUCHER_STATION_KEY,
+  VOUCHER_STATION_PAID_ITEMS_KEY,
 ];
+
+/** Whether [v] is a value this page keeps for [key] (anything else reads as "inherits"). */
+function ownValue(key: PaymentKey, v: unknown): v is Exclude<DraftValue, null> {
+  if (key === VOUCHER_REDEEM_FLOW_KEY) return isVoucherRedeemFlow(v);
+  if (key === VOUCHER_BALANCE_CHECK_KEY) return isVoucherBalanceCheckMode(v);
+  if (key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY) {
+    return isVoucherOnOff(v);
+  }
+  return typeof v === 'boolean' || typeof v === 'number';
+}
 
 interface LoadedLayer {
   settings: PosSettingsV1;
@@ -128,7 +195,7 @@ function ownDraft(settings: PosSettingsV1 | undefined): Draft {
   const out: Draft = {};
   for (const key of PAYMENT_KEYS) {
     const v = settings?.[key];
-    if (typeof v === 'boolean' || typeof v === 'number') out[key] = v;
+    if (ownValue(key, v)) out[key] = v;
   }
   return out;
 }
@@ -267,7 +334,7 @@ function MethodsEditor({
     },
   });
 
-  const setKey = (key: PaymentKey, value: boolean | number | null) => {
+  const setKey = (key: PaymentKey, value: DraftValue) => {
     setRejected(false);
     setDraft((d) => {
       const next = { ...d };
@@ -511,6 +578,44 @@ function MethodsEditor({
           <p className="text-muted-foreground text-xs">{t('voucherOnlyHint')}</p>
           {onlyVoucher ? <p className="text-primary text-sm font-medium">{t('voucherOnlyActive')}</p> : null}
         </div>
+        <VoucherFlowRows
+          flow={isVoucherRedeemFlow(draft[VOUCHER_REDEEM_FLOW_KEY]) ? (draft[VOUCHER_REDEEM_FLOW_KEY] as VoucherRedeemFlow) : null}
+          showUnavailable={
+            typeof draft[VOUCHER_SHOW_UNAVAILABLE_KEY] === 'boolean' ? (draft[VOUCHER_SHOW_UNAVAILABLE_KEY] as boolean) : null
+          }
+          inherited={inherited}
+          flowSource={levelName(layer.effectiveSources?.[VOUCHER_REDEEM_FLOW_KEY])}
+          showSource={levelName(layer.effectiveSources?.[VOUCHER_SHOW_UNAVAILABLE_KEY])}
+          disabled={!canWrite}
+          onFlow={(v) => setKey(VOUCHER_REDEEM_FLOW_KEY, v)}
+          onShowUnavailable={(v) => setKey(VOUCHER_SHOW_UNAVAILABLE_KEY, v)}
+        />
+        <VoucherTillRows
+          balance={isVoucherBalanceCheckMode(draft[VOUCHER_BALANCE_CHECK_KEY]) ? (draft[VOUCHER_BALANCE_CHECK_KEY] as VoucherBalanceCheckMode) : null}
+          autoClose={isVoucherOnOff(draft[VOUCHER_AUTO_CLOSE_KEY]) ? (draft[VOUCHER_AUTO_CLOSE_KEY] as VoucherOnOff) : null}
+          station={isVoucherOnOff(draft[VOUCHER_STATION_KEY]) ? (draft[VOUCHER_STATION_KEY] as VoucherOnOff) : null}
+          paidItems={
+            isVoucherOnOff(draft[VOUCHER_STATION_PAID_ITEMS_KEY]) ? (draft[VOUCHER_STATION_PAID_ITEMS_KEY] as VoucherOnOff) : null
+          }
+          paidItemsView={voucherStationPaidItemsView(draft as PosSettingsPatch, inherited)}
+          inherited={inherited}
+          balanceSource={levelName(layer.effectiveSources?.[VOUCHER_BALANCE_CHECK_KEY])}
+          autoCloseSource={levelName(layer.effectiveSources?.[VOUCHER_AUTO_CLOSE_KEY])}
+          stationSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_KEY])}
+          paidItemsSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_PAID_ITEMS_KEY])}
+          stationNeedsAdvice={voucherStationNeedsAdvice(
+            resolveVoucherStation(draft[VOUCHER_STATION_KEY], inherited?.voucherStation),
+            resolveVoucherRedeemFlow(draft[VOUCHER_REDEEM_FLOW_KEY], inherited?.voucherRedeemFlow),
+            voucherOnOf('payVoucherEnabled'),
+            voucherOnOf('payVoucherManualEnabled'),
+          )}
+          disabled={!canWrite}
+          onBalance={(v) => setKey(VOUCHER_BALANCE_CHECK_KEY, v)}
+          onAutoClose={(v) => setKey(VOUCHER_AUTO_CLOSE_KEY, v)}
+          onStation={(v) => setKey(VOUCHER_STATION_KEY, v)}
+          onPaidItems={(v) => setKey(VOUCHER_STATION_PAID_ITEMS_KEY, v)}
+          onApplyAdvice={() => setKey(VOUCHER_REDEEM_FLOW_KEY, 'voucher_first')}
+        />
       </Card>
 
       <PayOrderCard
@@ -552,6 +657,314 @@ function MethodsEditor({
         </Button>
       </div>
     </>
+  );
+}
+
+/**
+ * "מימוש שובר הפקה בקופה": "דרך מימוש שובר" (items first / the voucher first / both / inherit) and
+ * "פריטים זכאים שאינם זמינים" (shown blocked / hidden / inherit), each with what is in force now and
+ * where that comes from. `null` = this level does not set it (inherits).
+ */
+function VoucherFlowRows({
+  flow,
+  showUnavailable,
+  inherited,
+  flowSource,
+  showSource,
+  disabled,
+  onFlow,
+  onShowUnavailable,
+}: {
+  flow: VoucherRedeemFlow | null;
+  showUnavailable: boolean | null;
+  inherited: PosSettingsV1 | undefined;
+  flowSource: string;
+  showSource: string;
+  disabled: boolean;
+  onFlow: (value: VoucherRedeemFlow | null) => void;
+  onShowUnavailable: (value: boolean | null) => void;
+}) {
+  const t = useTranslations('paymentMethods');
+  const inheritedFlow = resolveVoucherRedeemFlow(undefined, inherited?.voucherRedeemFlow);
+  const effectiveFlow = resolveVoucherRedeemFlow(flow, inherited?.voucherRedeemFlow);
+  const inheritedShow = resolveVoucherShowUnavailable(undefined, inherited?.voucherShowUnavailable);
+  const effectiveShow = resolveVoucherShowUnavailable(showUnavailable, inherited?.voucherShowUnavailable);
+  const showLabel = (v: boolean) => (v ? t('voucherUnavailableShow') : t('voucherUnavailableHide'));
+  return (
+    <div className="space-y-4 border-t px-4 py-3">
+      <p className="font-medium">{t('voucherFlowTitle')}</p>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_30rem] md:items-start md:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{t('voucherFlowLabel')}</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{t(`voucherFlow.${effectiveFlow}`)}</span>
+          </div>
+          <p className="text-muted-foreground mt-0.5 text-xs">{t(`voucherFlowHint.${effectiveFlow}`)}</p>
+        </div>
+        <div className="space-y-1">
+          <Segmented<VoucherRedeemFlow | null>
+            value={flow}
+            onChange={onFlow}
+            disabled={disabled}
+            choices={[
+              ...VOUCHER_REDEEM_FLOWS.map((f) => ({ v: f as VoucherRedeemFlow | null, label: t(`voucherFlow.${f}`) })),
+              { v: null, label: t('inheritShort') },
+            ]}
+          />
+          {flow === null ? (
+            <p className="text-muted-foreground text-xs">
+              {t('inheritNote', { state: t(`voucherFlow.${inheritedFlow}`), source: flowSource })}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_30rem] md:items-start md:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{t('voucherUnavailableLabel')}</span>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{showLabel(effectiveShow)}</span>
+          </div>
+          <p className="text-muted-foreground mt-0.5 text-xs">{t('voucherUnavailableDesc')}</p>
+        </div>
+        <div className="space-y-1">
+          <TriState
+            value={showUnavailable}
+            onChange={onShowUnavailable}
+            disabled={disabled}
+            onLabel={t('voucherUnavailableShow')}
+            offLabel={t('voucherUnavailableHide')}
+            inheritLabel={t('inheritShort')}
+          />
+          {showUnavailable === null ? (
+            <p className="text-muted-foreground text-xs">
+              {t('inheritNote', { state: showLabel(inheritedShow), source: showSource })}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "בירור יתרת שובר בתפריט הקופה" (auto / on / off / inherit, and under "auto" whether it is on at this
+ * level now), "סגירה אוטומטית כשהשובר מכסה הכל" (on / off / inherit), "עמדת שובר (מסך סריקה בלבד)"
+ * (off / on / inherit, with its recommendation) and "רכישה נוספת בתשלום בעמדת שובר" (off / on /
+ * inherit, with a warning when on and no cash or card method is left) — each with what is in force
+ * and where it comes from. `null` = this level does not set it (inherits).
+ */
+function VoucherTillRows({
+  balance,
+  autoClose,
+  station,
+  paidItems,
+  paidItemsView,
+  inherited,
+  balanceSource,
+  autoCloseSource,
+  stationSource,
+  paidItemsSource,
+  stationNeedsAdvice,
+  disabled,
+  onBalance,
+  onAutoClose,
+  onStation,
+  onPaidItems,
+  onApplyAdvice,
+}: {
+  balance: VoucherBalanceCheckMode | null;
+  autoClose: VoucherOnOff | null;
+  station: VoucherOnOff | null;
+  paidItems: VoucherOnOff | null;
+  /** lib/voucherTillSettings.ts: the value in force, what is inherited, and whether to warn. */
+  paidItemsView: ReturnType<typeof voucherStationPaidItemsView>;
+  inherited: PosSettingsV1 | undefined;
+  balanceSource: string;
+  autoCloseSource: string;
+  stationSource: string;
+  paidItemsSource: string;
+  stationNeedsAdvice: boolean;
+  disabled: boolean;
+  onBalance: (value: VoucherBalanceCheckMode | null) => void;
+  onAutoClose: (value: VoucherOnOff | null) => void;
+  onStation: (value: VoucherOnOff | null) => void;
+  onPaidItems: (value: VoucherOnOff | null) => void;
+  onApplyAdvice: () => void;
+}) {
+  const t = useTranslations('paymentMethods');
+  const inheritedBalance = resolveVoucherBalanceCheck(undefined, inherited?.voucherBalanceCheck);
+  const effectiveBalance = resolveVoucherBalanceCheck(balance, inherited?.voucherBalanceCheck);
+  const balanceOn = voucherBalanceCheckEnabled(effectiveBalance, inherited?.[VOUCHER_BALANCE_ACTIVE_KEY]);
+  const inheritedAutoClose = resolveVoucherAutoClose(undefined, inherited?.voucherAutoClose);
+  const effectiveAutoClose = resolveVoucherAutoClose(autoClose, inherited?.voucherAutoClose);
+  const inheritedStation = resolveVoucherStation(undefined, inherited?.voucherStation);
+  const effectiveStation = resolveVoucherStation(station, inherited?.voucherStation);
+  const onOff = (v: VoucherOnOff) => t(`voucherOnOff.${v}`);
+  const note = (own: unknown, state: string, source: string) =>
+    own === null ? <p className="text-muted-foreground text-xs">{t('inheritNote', { state, source })}</p> : null;
+  return (
+    <div className="space-y-4 border-t px-4 py-3">
+      <p className="font-medium">{t('voucherTillTitle')}</p>
+      <SettingRow
+        label={t('voucherBalanceLabel')}
+        badge={t(`voucherBalanceShort.${effectiveBalance}`)}
+        desc={
+          <>
+            <p>{t('voucherBalanceDesc')}</p>
+            {effectiveBalance === 'auto' && balanceOn !== null ? (
+              <p className={cn('font-medium', balanceOn ? 'text-primary' : 'text-muted-foreground')}>
+                {balanceOn ? t('voucherBalanceAutoOn') : t('voucherBalanceAutoOff')}
+              </p>
+            ) : null}
+          </>
+        }
+      >
+        <Segmented<VoucherBalanceCheckMode | null>
+          value={balance}
+          onChange={onBalance}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_BALANCE_CHECK_MODES.map((m) => ({ v: m as VoucherBalanceCheckMode | null, label: t(`voucherBalance.${m}`) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(balance, t(`voucherBalance.${inheritedBalance}`), balanceSource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherAutoCloseLabel')}
+        badge={onOff(effectiveAutoClose)}
+        desc={<p>{t('voucherAutoCloseDesc')}</p>}
+      >
+        <Segmented<VoucherOnOff | null>
+          value={autoClose}
+          onChange={onAutoClose}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_AUTO_CLOSE_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(autoClose, onOff(inheritedAutoClose), autoCloseSource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherStationLabel')}
+        badge={onOff(effectiveStation)}
+        desc={
+          <>
+            <p>{t('voucherStationDesc')}</p>
+            {stationNeedsAdvice ? (
+              <div className="flex flex-wrap items-center gap-2 text-amber-700 dark:text-amber-400">
+                <span className="font-medium">{t('voucherStationAdvice')}</span>
+                {!disabled ? (
+                  <Button type="button" variant="outline" size="sm" className="h-7" onClick={onApplyAdvice}>
+                    {t('voucherStationApply')}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        }
+      >
+        <Segmented<VoucherOnOff | null>
+          value={station}
+          onChange={onStation}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_STATION_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(station, onOff(inheritedStation), stationSource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherStationPaidItemsLabel')}
+        badge={onOff(paidItemsView.value)}
+        desc={
+          <>
+            <p>{t('voucherStationPaidItemsDesc')}</p>
+            {paidItemsView.noPaymentWarning ? (
+              <p role="alert" className="font-medium text-amber-700 dark:text-amber-400">
+                {t('voucherStationPaidItemsNoPayment')}
+              </p>
+            ) : null}
+          </>
+        }
+      >
+        <Segmented<VoucherOnOff | null>
+          value={paidItems}
+          onChange={onPaidItems}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_STATION_PAID_ITEMS_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(paidItems, onOff(paidItemsView.inheritedValue), paidItemsSource)}
+      </SettingRow>
+    </div>
+  );
+}
+
+/** One setting: its name and the value in force on one side, its choices on the other. */
+function SettingRow({
+  label,
+  badge,
+  desc,
+  children,
+}: {
+  label: string;
+  badge: string;
+  desc: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_30rem] md:items-start md:gap-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{label}</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium">{badge}</span>
+        </div>
+        <div className="text-muted-foreground mt-0.5 space-y-0.5 text-xs">{desc}</div>
+      </div>
+      <div className="space-y-1">{children}</div>
+    </div>
+  );
+}
+
+/** A row of choices, one selected; `null` is a choice too (inherit). */
+function Segmented<T extends string | null>({
+  value,
+  onChange,
+  choices,
+  disabled,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  choices: Array<{ v: T; label: string }>;
+  disabled?: boolean;
+}) {
+  return (
+    <div role="radiogroup" className="flex w-full flex-wrap rounded-md border bg-muted/40 p-0.5">
+      {choices.map((c) => {
+        const selected = value === c.v;
+        return (
+          <button
+            key={String(c.v)}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            disabled={disabled}
+            onClick={() => onChange(c.v)}
+            className={cn(
+              'min-h-9 flex-1 rounded px-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+              selected ? 'bg-background text-primary font-medium shadow-sm' : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {c.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

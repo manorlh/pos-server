@@ -39,8 +39,9 @@ const MODES = ['discount', 'payment', 'zero'] as const;
 const when = (iso: string | null | undefined) => (isoDate(iso) ? formatDateTime(iso) : '');
 const shekels = (agorot: number) => Math.round(agorot) / 100;
 
-function itemsText(r: PrepaidRedemptionRow): string {
-  if (r.uses) return `×${r.uses}`;
+/** What the redemption took: "2× קפה, 1× מאפה", or a discount's uses ("3 שימושים"). */
+function itemsText(r: PrepaidRedemptionRow, t: (key: string, values?: Record<string, number>) => string): string {
+  if (r.uses) return t('usesN', { n: r.uses });
   return r.items.map((i) => `${i.quantity}× ${i.name ?? ''}`).join(', ');
 }
 
@@ -97,7 +98,7 @@ export function TillsReport({ filters, onTill }: { filters: VoucherFilters; onTi
         { header: t('flagsCol'), width: 26 },
       ],
       rows: all.map((r) => [
-        r.redeemedAt, r.machineName ?? '', r.serial ? `#${r.serial} ${r.displayCode ?? ''}` : '', r.batch.name, itemsText(r),
+        r.redeemedAt, r.machineName ?? '', r.serial ? `#${r.serial} ${r.displayCode ?? ''}` : '', r.batch.name, itemsText(r, t),
         r.employeeName ?? '', shekels(r.value), flagTexts(r.flags).join(', '),
       ]),
     };
@@ -114,7 +115,7 @@ export function TillsReport({ filters, onTill }: { filters: VoucherFilters; onTi
       {report.isPending ? (
         <Skeleton className="h-48 w-full rounded-xl" />
       ) : report.isError ? (
-        <p className="text-sm text-destructive">{axiosErrorToToastMessage(report.error, t('empty'))}</p>
+        <p className="text-sm text-destructive">{axiosErrorToToastMessage(report.error, t('loadError'))}</p>
       ) : rows.length === 0 ? (
         <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t('empty')}</p>
       ) : (
@@ -239,7 +240,7 @@ function TillRedemptions({ till, filters, onClose }: { till: PrepaidTillRow; fil
                     <span dir="ltr" className="font-mono text-xs text-muted-foreground">{r.displayCode}</span>
                   </td>
                   <td className="px-2 py-1.5">{r.batch.name}{r.batch.customerName ? <span className="text-muted-foreground"> · {r.batch.customerName}</span> : null}</td>
-                  <td className="px-2 py-1.5">{itemsText(r)}<RedemptionFlags flags={r.flags} /></td>
+                  <td className="px-2 py-1.5">{itemsText(r, t)}<RedemptionFlags flags={r.flags} /></td>
                   <td className="px-2 py-1.5">{r.employeeName ?? ''}</td>
                   <td className="px-2 py-1.5 text-end tabular-nums" title={t(`basis.${r.valueBasis}`)}>{agorotText(r.value)}</td>
                 </tr>

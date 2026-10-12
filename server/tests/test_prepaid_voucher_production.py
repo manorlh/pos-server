@@ -248,11 +248,11 @@ class TestFiles:
         resp = file(w, batch, "csv")
         assert resp.body.startswith("﻿".encode("utf-8"))
         table = list(csv.reader(io.StringIO(resp.body.decode("utf-8-sig"))))
-        assert table[0][:5] == ["מס׳ שובר", "קבוצה", "קוד", "קוד מודפס", "תוכן הברקוד"]
+        assert table[0][:5] == ["מספר שובר", "קבוצת שוברים", "קוד שובר", "קוד מודפס", "תוכן הברקוד"]
         assert len(table) == 13
         first = rows(w, batch)[0]
         assert table[1][:5] == ["1", "1", first["code"], first["displayCode"], "PV:" + first["code"]]
-        assert table[1][5] == "פעיל" and table[1][7:9] == ["קייטרינג אלון", "PO-77"]
+        assert table[1][5] == "פתוח" and table[1][7:9] == ["קייטרינג אלון", "PO-77"]
 
 
 # ── The code under the barcode ────────────────────────────────────────────────
@@ -388,7 +388,7 @@ class TestPaper:
         b = w.db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == uuid.UUID(batch_row["id"])).one()
         info = PDF.GroupInfo(group=3, groups=100, low=21, high=30, count=10, issued=10)
         texts = [t for _, t in PDF.cover_lines(b, info, PDF.PrintOptions(validity="בתוקף עד 14/08/2026"))]
-        for expected in ("קבוצה 3 מתוך 100", "שוברים 0021-0030", "10 שוברים בקבוצה", "לקוח: קייטרינג אלון",
+        for expected in ("קבוצת שוברים 3 מתוך 100", "שוברים 0021-0030", "10 שוברים בקבוצה", "עבור: קייטרינג אלון",
                          "הזמנה: PO-77", "בתוקף עד 14/08/2026"):
             assert expected in texts
         assert "סה״כ בקבוצה: 10× נקניקייה, 20× שתייה" in texts

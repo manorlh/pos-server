@@ -14,6 +14,10 @@ GET    /prepaid-vouchers/batches                      → batches with their cou
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
 PATCH  /prepaid-vouchers/batches/{id}                 → texts, logo, validity
+POST   /prepaid-vouchers/batches/bulk-edit-preview    → the same change on many batches: per batch ok /
+                                                        unchanged / refused (the single edit's reason)
+POST   /prepaid-vouchers/batches/bulk-edit            → applied per batch through the single edit;
+                                                        idempotent by `clientRequestId`
 POST   /prepaid-vouchers/batches/{id}/vouchers        → issue more vouchers (next serials)
 POST   /prepaid-vouchers/batches/{id}/cancel          → cancel the batch and its open vouchers
 GET    /prepaid-vouchers/batches/{id}/vouchers        → its vouchers (codes for printing)
@@ -23,6 +27,7 @@ GET    /prepaid-vouchers/batches/{id}/groups          → per group: serials and
 POST   /prepaid-vouchers/batches/{id}/groups          → split the vouchers with no group into groups
 POST   /prepaid-vouchers/batches/{id}/groups/{n}/cancel → cancel a whole group (a lost envelope)
 GET    /prepaid-vouchers/batches/{id}/events          → the batch's audit trail
+GET    /prepaid-vouchers/batches/{id}/test-redemptions → "יומן בדיקות": its test-mode scans (nothing counted)
 GET    /prepaid-vouchers/batches/{id}/report          → counts, goods taken, redemptions by
                                                         hour / day / shop / till / employee
 GET    /prepaid-vouchers/vouchers/{id}                → one voucher with its redemptions
@@ -55,6 +60,7 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
+    PrepaidBatchBulkEditIn,
     PrepaidProductionCreate,
     PrepaidProductionUpdate,
     PrepaidVoucherAddIn,
@@ -149,6 +155,7 @@ def voucher_scope(
     state: Optional[str] = Query(None, description="open | partial | redeemed | cancelled | expired"),
     group: Optional[int] = Query(None, ge=1),
     q: Optional[str] = Query(None, max_length=100),
+    test_mode: Optional[str] = Query(None, alias="testMode", description="yes | no: the batch is in test mode"),
 ) -> "PVA.Scope":
     """The vouchers' one filter model (app/services/prepaid_voucher_analytics.py)."""
     return PVA.make_scope(
@@ -157,6 +164,8 @@ def voucher_scope(
         value_min=value_min, value_max=value_max, price_min=price_min, price_max=price_max, created_by=created_by,
         issued_from=issued_from, issued_to=issued_to, valid_on=valid_on, batch_status=batch_status,
         date_from=date_from, date_to=date_to, machine_id=machine_id, employee=employee, state=state, group=group, q=q,
+        # A direct call (a test, another router) that leaves it out passes the Query default itself.
+        test_mode=test_mode if isinstance(test_mode, str) else None,
     )
 
 
@@ -472,6 +481,17 @@ def prepaid_voucher_type_events(
     return {"items": PVT.type_events(db, current_user, active_tenant_id, type_id)}
 
 
+def _wake_tills(db: Session, batch_or_out) -> None:
+    """
+    A batch made, edited or cancelled (committed): the tills it reaches pull their settings again,
+    so "בירור יתרת שובר" on "auto" follows (app/services/voucher_balance_check.py). Best effort.
+    """
+    from app.services import voucher_balance_check as VBC
+
+    target = batch_or_out.get("id") if isinstance(batch_or_out, dict) else batch_or_out
+    VBC.notify_tills_of_batch(db, target)
+
+
 @router.post("/prepaid-vouchers/batches", status_code=status.HTTP_201_CREATED)
 def create_prepaid_voucher_batch(
     body: PrepaidVoucherBatchCreate,
@@ -491,10 +511,52 @@ def create_prepaid_voucher_batch(
     from app.services import prepaid_batch_create as PBC
 
     out, replayed = PBC.create(db, current_user, active_tenant_id, body, key=idempotency_key)
+    if not replayed:
+        _wake_tills(db, out)
     if replayed and response is not None:
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"
     return out
+
+
+@router.post("/prepaid-vouchers/batches/bulk-edit-preview")
+def preview_prepaid_voucher_batches_bulk_edit(
+    body: PrepaidBatchBulkEditIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "שינוי הגדרות לסדרות שנבחרו" before it is applied: for each batch the single edit's preview
+    (`ok`, its changes and effects), `unchanged`, or `refused` with the single edit's reason — a
+    batch the user may not edit included (never skipped). Nothing is written.
+    """
+    from app.services import prepaid_voucher_bulk_edit as PBE
+
+    return PBE.preview(db, current_user, active_tenant_id, body)
+
+
+@router.post("/prepaid-vouchers/batches/bulk-edit")
+def bulk_edit_prepaid_voucher_batches(
+    body: PrepaidBatchBulkEditIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+    response: Response = None,
+):
+    """
+    The same change applied to each batch through "ערוך סדרה" (its checks, its rules for the vouchers
+    already issued, its log line marked `bulk`), each batch whole or not at all, never one batch's
+    refusal blocking another. `clientRequestId` (required): a retry gets the first result back
+    (`replayed`, `Idempotent-Replayed: true`) and changes nothing again.
+    """
+    from app.services import command_idempotency as idem
+    from app.services import prepaid_voucher_bulk_edit as PBE
+
+    out, replayed = PBE.apply(db, current_user, active_tenant_id, body)
+    if replayed and response is not None:
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return {**out, "replayed": replayed}
 
 
 @router.get("/prepaid-vouchers/batches/{batch_id}")
@@ -535,6 +597,7 @@ def update_prepaid_voucher_batch(
 ):
     batch = PV.update_batch(db, current_user, active_tenant_id, batch_id, body)
     db.commit()
+    _wake_tills(db, batch)
     return PV.batch_out(db, batch, user=current_user)
 
 
@@ -549,14 +612,19 @@ def add_prepaid_vouchers(
     idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
 ):
     """
-    More vouchers (the next serials) in one transaction, the answer built before the commit.
-    `Idempotency-Key`: a retry adds them once (200 + `Idempotent-Replayed` with the batch as it is
-    now); the same key with another body or batch → 422 (app/services/prepaid_batch_create.py).
+    More vouchers (the next serials) in one transaction, the answer built before the commit: the
+    batch as it is now, and `added` — this run: `count`, `fromSerial` / `toSerial` (groups too),
+    `total` (the batch's new total), `eventId` / `createdAt` / `userName` (its audit line), `replayed`.
+    `Idempotency-Key` (or the body's `clientRequestId`): a retry adds them once (200 +
+    `Idempotent-Replayed`, the first run's `added`); the same key with another body or batch → 422
+    (app/services/prepaid_batch_create.py). 409 `prepaid_voucher_batch_cancelled` /
+    `prepaid_voucher_batch_expired`. Never a partial run: all of them, or nothing and an error.
     """
     from app.services import command_idempotency as idem
     from app.services import prepaid_batch_create as PBC
 
-    out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=idempotency_key)
+    key = PBC.add_key_of(_given(idempotency_key), body)
+    out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=key)
     if replayed and response is not None:
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"
@@ -573,6 +641,7 @@ def cancel_prepaid_voucher_batch(
 ):
     batch = PV.cancel_batch(db, current_user, active_tenant_id, batch_id, (body.reason if body else None))
     db.commit()
+    _wake_tills(db, batch)
     return PV.batch_out(db, batch, user=current_user)
 
 
@@ -630,6 +699,24 @@ def prepaid_voucher_events(
     return PV.batch_events(db, current_user, active_tenant_id, batch_id)
 
 
+@router.get("/prepaid-vouchers/batches/{batch_id}/test-redemptions")
+def prepaid_voucher_test_redemptions(
+    batch_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "יומן בדיקות" (P:/specs/voucher-test-mode.md): the batch's test-mode scans, newest first — who, when,
+    which till and shop, which voucher, what it would have covered and what would have been left. Shown
+    here only: no report, board, settlement or Z reads them.
+    """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    return TM.batch_log(db, current_user, active_tenant_id, batch_id, limit=limit)
+
+
 @router.get("/prepaid-vouchers/batches/{batch_id}/vouchers")
 def list_prepaid_vouchers(
     batch_id: str,
@@ -684,6 +771,13 @@ def prepaid_vouchers_file(
     * `format=csv` — the manifest: every voucher of the batch (any status) with its code.
 
     `voucherId` narrows it to one voucher. Cancelled vouchers are never printed.
+
+    "ייצוא כל הסדרה ל-PDF" is `format=pdf` with no `group` / `voucherId` and `includeUsed=true`: every
+    voucher of the batch by its id — the first run and every one added since — in serial order, with
+    the codes they were issued with; nothing is issued and no balance moves. The list is read once,
+    when the request starts (a run added meanwhile is in the next export), and its size is the
+    batch's `exportCount` then. `X-Voucher-Count`: how many vouchers the file holds. Each file made
+    is written to the batch's audit trail (`export`).
     """
     from fastapi import HTTPException
 
@@ -697,22 +791,28 @@ def prepaid_vouchers_file(
     pdf_name, zip_name = PDF.file_names(batch)
     base = pdf_name[:-4]
 
+    include_used = True if _given(include_used) is None else include_used
+    voucher_id = _given(voucher_id)
+    fmt = _given(fmt) or "pdf"
+    layout = _given(layout) or "ticket80x50"
+    width, height = _given(width), _given(height)
+
+    def exported(data: bytes, name: str, media: str, ext: str, rows):
+        PV._event(db, batch, current_user, "export", count=len(rows), details={
+            "format": fmt, "layout": layout, "group": group, "voucherId": voucher_id, "includeUsed": include_used,
+            "fromSerial": rows[0].serial if rows else None, "toSerial": rows[-1].serial if rows else None,
+        })
+        db.commit()
+        return _attachment(data, name, media, ext, count=len(rows))
+
     if fmt == "csv":
         everything = (
             db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id).order_by(PrepaidVoucher.serial).all()
         )
-        return _attachment(PDF.manifest_csv(batch, everything), f"{base}_רשימת-קודים.csv", "text/csv; charset=utf-8", "csv")
+        return exported(PDF.manifest_csv(batch, everything), f"{base}_רשימת-קודים.csv", "text/csv; charset=utf-8", "csv", everything)
 
-    q = db.query(PrepaidVoucher).filter(
-        PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.status != "cancelled"
-    )
-    if voucher_id:
-        q = q.filter(PrepaidVoucher.id == PV._as_uuid(voucher_id))
-    if not include_used:
-        q = q.filter(PrepaidVoucher.status != "used")
-    if group is not None:
-        q = q.filter(PrepaidVoucher.group_no == group)
-    vouchers = q.order_by(PrepaidVoucher.serial).all()
+    # One read, at the start: the file is this list (PV.export_vouchers — the batch's `exportCount`).
+    vouchers = PV.export_vouchers(db, batch, include_used=include_used, group=group, voucher_id=voucher_id)
     groups_total = PV._last_group(db, batch.id)
     if fmt == "groups" and groups_total == 0:
         raise HTTPException(status_code=409, detail=PV.NOT_GROUPED)
@@ -734,9 +834,9 @@ def prepaid_vouchers_file(
             batch, vouchers, g, groups_total=groups_total, group_ranges=issued, logo=logo, opts=opts,
             covers=covers, made=made, manifest=PDF.manifest_csv(batch, everything),
         )
-        return _attachment(data, f"{base}_קבוצות.zip", "application/zip", "zip")
+        return exported(data, f"{base}_קבוצות.zip", "application/zip", "zip", vouchers)
     if fmt == "zip":
-        return _attachment(PDF.render_zip(batch, vouchers, g, logo=logo, opts=opts), zip_name, "application/zip", "zip")
+        return exported(PDF.render_zip(batch, vouchers, g, logo=logo, opts=opts), zip_name, "application/zip", "zip", vouchers)
 
     cover = None
     if group is not None and group in issued:
@@ -747,18 +847,21 @@ def prepaid_vouchers_file(
     elif voucher_id:
         pdf_name = f"{base}-{str(vouchers[0].serial).zfill(4)}.pdf"
     data = PDF.render_pdf(batch, vouchers, g, logo=logo, opts=opts, cover=cover, made=made)
-    return _attachment(data, pdf_name, "application/pdf", "pdf")
+    return exported(data, pdf_name, "application/pdf", "pdf", vouchers)
 
 
-def _attachment(data: bytes, name: str, media: str, ext: str):
+#: How many vouchers a file holds (exposed to the dashboard by CORS, app/main.py).
+VOUCHER_COUNT_HEADER = "X-Voucher-Count"
+
+
+def _attachment(data: bytes, name: str, media: str, ext: str, count: Optional[int] = None):
     from fastapi.responses import Response
     from urllib.parse import quote
 
-    return Response(
-        content=data,
-        media_type=media,
-        headers={"Content-Disposition": f"attachment; filename=\"vouchers.{ext}\"; filename*=UTF-8''{quote(name)}"},
-    )
+    headers = {"Content-Disposition": f"attachment; filename=\"vouchers.{ext}\"; filename*=UTF-8''{quote(name)}"}
+    if count is not None:
+        headers[VOUCHER_COUNT_HEADER] = str(count)
+    return Response(content=data, media_type=media, headers=headers)
 
 
 @router.get("/prepaid-vouchers/vouchers/{voucher_id}")

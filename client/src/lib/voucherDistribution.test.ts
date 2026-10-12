@@ -12,6 +12,7 @@ import {
   renderMessage,
   rowsFromTable,
   serialsText,
+  vouchersText,
   shareFile,
   supportsFileShare,
   waMeLink,
@@ -206,14 +207,15 @@ test('what the voucher holds: one of several food items, by category and product
     { category: (id) => ({ c1: 'מנות' } as Record<string, string>)[id], product: (id) => ({ p1: 'נקניקייה', p2: 'קולה' } as Record<string, string>)[id] },
   );
   const text = rows.map((r) => r.join(' | ')).join('\n');
-  assert.match(text, /שובר \| אירוע חברה/);
+  assert.match(text, /סדרה \| אירוע חברה/);
+  assert.match(text, /סוג שובר \| מזון/);
   assert.match(text, /תוקף \| עד 31\/12\/2026/);
-  assert.match(text, /שווי \| עד ₪40/);
-  assert.match(text, /סה״כ פריטים בשובר \| 1/);
-  assert.match(text, /מזון \| לבחירה: 1 פריטים/);
+  assert.match(text, /שווי בקופה \| עד ₪40/);
+  assert.match(text, /מכסה \| פריט אחד/);
+  assert.match(text, /מזון \| לבחירה: פריט אחד/);
   assert.match(text, /קטגוריות: מנות/);
-  assert.match(text, /פריטים: נקניקייה/);
-  assert.match(text, /לא כולל: קולה/);
+  assert.match(text, /מוצרים: נקניקייה/);
+  assert.match(text, /מוחרגים: קולה/);
 });
 
 test('what the voucher holds: a fixed list prints each item as on the voucher', () => {
@@ -222,4 +224,10 @@ test('what the voucher holds: a fixed list prints each item as on the voucher', 
     { category: () => undefined, product: () => undefined },
   );
   assert.deepEqual(rows.slice(-3), [['פריטים', ''], ['', 'פיצה'], ['', '2× שתייה']]);
+});
+
+test('{שוברים}: one voucher in the singular, as the server says it', () => {
+  assert.deepEqual([vouchersText(1), vouchersText(2), vouchersText(12)], ['שובר אחד', '2 שוברים', '12 שוברים']);
+  const v = { vouchers: vouchersText(1), count: 1, link: 'https://x.test/v/T' };
+  assert.equal(renderMessage('קיבלת {שוברים} ({vouchers}, {כמות})', v), 'קיבלת שובר אחד (שובר אחד, 1)\nhttps://x.test/v/T');
 });

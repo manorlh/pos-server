@@ -338,7 +338,9 @@ def create_type(db: Session, user: User, tenant_id, body, *, origin: str = "manu
 
 def update_type(db: Session, user: User, tenant_id, type_id, body) -> PrepaidVoucherType:
     """Name, code, description, active — in place; terms or goods — a new version (see the schema)."""
-    from app.schemas.prepaid_voucher import _check_prices, _check_terms
+    from fastapi import HTTPException
+
+    from app.schemas.prepaid_voucher import MaxUsesOverUses, _check_prices, _check_terms
 
     PV = _pv()
     t = get_type(db, user, tenant_id, type_id)
@@ -371,8 +373,10 @@ def update_type(db: Session, user: User, tenant_id, type_id, body) -> PrepaidVou
         if t.targets else None
     )
     try:
-        _check_terms(merged)
+        _check_terms(merged, strict_uses="max_uses_per_sale" in sent)
         _check_prices(merged, one_off=False)
+    except MaxUsesOverUses as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail)
     except ValueError as exc:
         raise PV._http(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
     products = PV._validate_products(db, tenant_id, t.company_id, merged.items) if t.kind not in RULES.DISCOUNT_KINDS else []
@@ -519,6 +523,8 @@ def type_out(db: Session, user: User, t: PrepaidVoucherType, batch_count: Option
         "splitAllowed": bool(t.split_allowed),
         "includeExtras": bool(t.include_extras),
         "printTillValue": bool(t.print_till_value),
+        # Groups: the names of what they choose (the editor's chips, "סיכום השובר"); null without groups.
+        "groupNames": PV.group_names_out(db, t),
         "batchCount": batch_count if batch_count is not None else _batch_counts(db, [t.id]).get(str(t.id), 0),
         "createdAt": PV._iso(t.created_at),
         "updatedAt": PV._iso(t.updated_at),

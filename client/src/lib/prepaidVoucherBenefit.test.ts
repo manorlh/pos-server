@@ -85,6 +85,11 @@ describe('discountDraftErrors', () => {
     assert.deepEqual(discountDraftErrors(draft({ kind: 'item_discount', targetCount: 1, maxUnits: '0' })), ['maxUnits']);
     assert.deepEqual(discountDraftErrors(draft({ usesPerVoucher: '1.5', maxUsesPerDay: '0' })), ['uses', 'usesPerDay']);
   });
+
+  it('uses per sale above the uses per voucher is an error, never lowered in silence', () => {
+    assert.deepEqual(discountDraftErrors(draft({ usesPerVoucher: '1', maxUsesPerSale: '10' })), ['usesPerSaleOverUses']);
+    assert.deepEqual(discountDraftErrors(draft({ usesPerVoucher: '5', maxUsesPerSale: '5' })), []);
+  });
 });
 
 describe('cardContents ("הצגת הפריטים על השובר", as the server PDF)', () => {

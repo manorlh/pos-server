@@ -38,12 +38,19 @@ class VoucherUsageRow(_Camel):
     previous: Optional[VoucherUsage] = None
     #: Per figure (vouchers, redemptions, units, value); null with no comparison.
     deltas: Optional[Dict[str, CompareDelta]] = None
+    #: "כמה מתוך כמה" (the owner, 11.10.2026): the batch's vouchers (not cancelled) — what
+    #: `current.vouchers` is out of — and how many of them were ever used (in part or in full).
+    issued: int = 0
+    used_ever: int = 0
 
 
 class VoucherBoardResponse(_Camel):
     window: ReportWindowOut
     compare_window: Optional[ReportWindowOut] = None
     totals: VoucherUsage
+    #: Σ the rows' `issued` / `used_ever` (the batches the board lists).
+    issued: int = 0
+    used_ever: int = 0
     previous: Optional[VoucherUsage] = None
     deltas: Optional[Dict[str, CompareDelta]] = None
     #: Most vouchers first; a voucher used only in the compared period is listed with zeros.

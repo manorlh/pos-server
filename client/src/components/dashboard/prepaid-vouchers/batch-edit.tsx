@@ -70,15 +70,28 @@ export function useEditValueFormat(batch: Pick<PrepaidVoucherBatch, 'shops'> | n
 /** A field's name as the owner reads it ("בתוקף עד"). */
 export function useEditFieldLabel() {
   const t = useTranslations('prepaidVouchers.edit');
-  return (field: string) => (t.has(`field.${field}`) ? t(`field.${field}`) : field);
+  // "מצב בדיקה"'s words live in their own namespace (components/dashboard/prepaid-vouchers/batch-test-mode.tsx).
+  const tm = useTranslations('prepaidVoucherTestMode.edit');
+  return (field: string) => (t.has(`field.${field}`) ? t(`field.${field}`) : tm.has(`field.${field}`) ? tm(`field.${field}`) : field);
+}
+
+/** A category's name as the confirmation heads it ("תוקף", "מצב בדיקה"). */
+export function useEditCategoryLabel() {
+  const t = useTranslations('prepaidVouchers.edit');
+  const tm = useTranslations('prepaidVoucherTestMode.edit');
+  return (category: PrepaidEditCategory) =>
+    t.has(`category.${category}`) ? t(`category.${category}`) : tm.has(`category.${category}`) ? tm(`category.${category}`) : category;
 }
 
 /** One category's effect, in words ("ישפיע על 340 שוברים שטרם מומשו"). */
-function useEffectLines() {
+export function useEffectLines() {
   const t = useTranslations('prepaidVouchers.edit.effect');
+  const tm = useTranslations('prepaidVoucherTestMode.edit');
   return (category: PrepaidEditCategory, plan: PrepaidBatchEditPlan): string[] => {
     const e = plan.effects;
     switch (category) {
+      case 'test':
+        return e.test ? [e.test.on ? tm('effectOn') : tm('effectOff')] : [];
       case 'free':
         return [t('free')];
       case 'validity':
@@ -119,6 +132,7 @@ export function BatchEditConfirm({
   const effects = useEffectLines();
   const fmt = useEditValueFormat(batch);
   const label = useEditFieldLabel();
+  const categoryLabel = useEditCategoryLabel();
   const groups = plan ? changesByCategory(plan) : [];
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v && !busy) onCancel(); }}>
@@ -130,7 +144,7 @@ export function BatchEditConfirm({
         <div className="space-y-3">
           {groups.map((g) => (
             <section key={g.category} className="space-y-1.5 rounded-lg border p-3">
-              <h3 className="text-sm font-semibold">{t(`category.${g.category}`)}</h3>
+              <h3 className="text-sm font-semibold">{categoryLabel(g.category)}</h3>
               <ul className="space-y-1 text-sm">
                 {g.changes.map((c) => (
                   <li key={c.field} className="flex flex-wrap items-baseline gap-x-1.5">

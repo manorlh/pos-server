@@ -341,11 +341,15 @@ class TestBatches:
 
     def test_the_rules_of_use_and_the_terms_change(self, w):
         b = make(w, usesPerVoucher=5)
+        # Per sale never more than the voucher has: asked for explicitly, it is refused with the limit
+        # (never lowered in silence — tests/test_prepaid_voucher_uses_rule.py).
+        with pytest.raises(HTTPException) as e:
+            R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(maxUsesPerSale=9), **_ctx(w))
+        assert (e.value.status_code, e.value.detail["limit"]) == (422, 5)
         out = R.update_prepaid_voucher_batch(
-            b["id"], PrepaidVoucherBatchUpdate(stacking="distinct_batches", promotionPolicy="best", maxUsesPerSale=9, maxUsesPerDay=2),
+            b["id"], PrepaidVoucherBatchUpdate(stacking="distinct_batches", promotionPolicy="best", maxUsesPerSale=5, maxUsesPerDay=2),
             **_ctx(w),
         )
-        # Per sale never more than the voucher has.
         assert (out["stacking"], out["promotionPolicy"], out["maxUsesPerSale"], out["maxUsesPerDay"]) == ("distinct_batches", "best", 5, 2)
         out = R.update_prepaid_voucher_batch(b["id"], PrepaidVoucherBatchUpdate(maxUsesPerDay=None), **_ctx(w))
         assert out["maxUsesPerDay"] is None

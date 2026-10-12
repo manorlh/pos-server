@@ -12,7 +12,7 @@ The rules, and why:
   till returns the first answer again, so a retry after a dropped response never takes
   the goods twice. The id is checked *under the lock*, so even two copies of the same
   request racing each other resolve to one redemption.
-* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש חד-פעמי"): one
+* **One-time or in parts, per batch.** `split_allowed=False` ("מימוש בעסקה אחת"): one
   redemption uses the voucher up. Taking only part of it is refused unless the till
   says the cashier confirmed the rest is forfeited (`forfeitRest`), and what was given
   up is logged. `split_allowed=True` ("מימוש בחלקים"): whatever is not taken stays.
@@ -58,7 +58,7 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
@@ -108,6 +108,10 @@ COMPANY_NOT_FOUND = "prepaid_voucher_company_not_found"
 SHOP_INVALID = "prepaid_voucher_shop_invalid"
 PRODUCT_INVALID = "prepaid_voucher_product_invalid"
 BATCH_CANCELLED = "prepaid_voucher_batch_cancelled"
+#: "הוסף שוברים לסדרה" to a batch whose validity has ended (409).
+BATCH_EXPIRED = "prepaid_voucher_batch_expired"
+#: An add that did not make every voucher it was asked for (500; nothing of it is kept).
+ADD_INCOMPLETE = "prepaid_voucher_add_incomplete"
 # Redemption refusals (409), also the `reason` of a lookup that cannot be redeemed.
 CANCELLED = "prepaid_voucher_cancelled"
 USED = "prepaid_voucher_used"
@@ -971,12 +975,17 @@ def create_batch(db: Session, user: User, tenant_id, body) -> PrepaidVoucherBatc
         PG.validate(db, tenant_id, company.id, stored)
         # `frozen`: the catalog as it is now — a product added to a category later does not join.
         batch.groups = PG.freeze(db, tenant_id, company.id, stored) if batch.catalog_mode == "frozen" else stored
+    # "להתחיל במצב בדיקה" (P:/specs/voucher-test-mode.md): off by default.
+    if getattr(body, "start_in_test_mode", False):
+        batch.test_mode, batch.test_mode_since, batch.test_mode_by = True, batch.created_at, _user_name(user)
     db.add(batch)
     db.flush()
     issued = _issue(db, batch, body.count, batch.group_size)
     details = _issued_details(issued, batch.group_size)
     details.update({"typeId": str(the_type.id), "typeVersion": batch.type_version})
     _event(db, batch, user, "create", count=body.count, details=details)
+    if batch.test_mode:
+        _event(db, batch, user, "test_mode_on", details={"atCreate": True})
     db.flush()
     return batch
 
@@ -988,6 +997,20 @@ def add_vouchers(
     More vouchers, with the next serials. A grouped batch issues them in groups too — of
     [group_size] when given, else of the batch's own size — starting a new group.
     """
+    return issue_more(db, user, tenant_id, batch_id, count, group_size)[0]
+
+
+def issue_more(
+    db: Session, user: User, tenant_id, batch_id, count: int, group_size: Optional[int] = None
+) -> Tuple[PrepaidVoucherBatch, Dict[str, Any]]:
+    """
+    "הוסף שוברים לסדרה" (the owner's spec of 11.10.2026 §11): [count] more vouchers of the batch —
+    its type, production, goods / groups, quotas, validity, shops and print settings are the batch's
+    own, so the new ones have them as the first ones do; each gets a new code and the next serial;
+    the vouchers already issued are not touched. Returns the batch and the run (`added`): its audit
+    line's id, how many, the serials (and groups), when and by whom — the audit line ("add") is the
+    run's record. 409 for a cancelled or expired batch; the caller commits.
+    """
     batch = get_batch(db, user, tenant_id, batch_id)
     # Serials are drawn under the batch's lock, so two clicks cannot hand out one twice.
     batch = (
@@ -998,13 +1021,40 @@ def add_vouchers(
     )
     if batch.status == "cancelled":
         raise _http(status.HTTP_409_CONFLICT, BATCH_CANCELLED)
+    if batch.valid_until is not None and _now() > _utc(batch.valid_until):
+        # Every voucher it would issue is refused at the till from the start (`expired`): extend the
+        # validity first ("ערוך סדרה"), then add. A batch has no other closed state.
+        raise _http(status.HTTP_409_CONFLICT, BATCH_EXPIRED)
     size = group_size or batch.group_size
     if size and not batch.group_size:
         batch.group_size = size
+    start = int(batch.next_serial or 1)
     issued = _issue(db, batch, count, size)
-    _event(db, batch, user, "add", count=count, details=_issued_details(issued, size))
+    ev = _event(db, batch, user, "add", count=count, details=_issued_details(issued, size))
     db.flush()
-    return batch
+    # All or nothing: the run is reported only when every one of its vouchers is in the batch, with
+    # a code of its own. Anything else fails the request, and its transaction takes the rest back.
+    made = (
+        db.query(func.count(func.distinct(PrepaidVoucher.code)))
+        .filter(
+            PrepaidVoucher.batch_id == batch.id,
+            PrepaidVoucher.serial >= start,
+            PrepaidVoucher.serial < start + count,
+        )
+        .scalar()
+    )
+    if len(issued) != count or int(made or 0) != count:
+        raise _http(status.HTTP_500_INTERNAL_SERVER_ERROR, ADD_INCOMPLETE)
+    added = {
+        "eventId": str(ev.id),
+        "count": count,
+        "fromSerial": issued[0].serial if issued else None,
+        "toSerial": issued[-1].serial if issued else None,
+        **{k: v for k, v in (ev.details or {}).items() if k in ("fromGroup", "toGroup", "groupSize")},
+        "createdAt": _iso(ev.created_at),
+        "userName": ev.user_name,
+    }
+    return batch, added
 
 
 def assign_groups(db: Session, user: User, tenant_id, batch_id, group_size: int) -> PrepaidVoucherBatch:
@@ -1045,14 +1095,19 @@ def _locked_batch(db: Session, user: User, tenant_id, batch_id) -> PrepaidVouche
     return db.query(PrepaidVoucherBatch).filter(PrepaidVoucherBatch.id == batch.id).with_for_update().one()
 
 
-def update_batch(db: Session, user: User, tenant_id, batch_id, body) -> PrepaidVoucherBatch:
+def update_batch(db: Session, user: User, tenant_id, batch_id, body, *, bulk=None) -> PrepaidVoucherBatch:
     """"ערוך סדרה": planned, checked and written as a whole (app/services/prepaid_voucher_edit.py)."""
+    return edit_batch(db, user, tenant_id, batch_id, body, bulk=bulk)[0]
+
+
+def edit_batch(db: Session, user: User, tenant_id, batch_id, body, *, bulk=None) -> Tuple[PrepaidVoucherBatch, Dict[str, Any]]:
+    """[update_batch] with the plan it applied (each change before → after, the effects)."""
     from app.services import prepaid_voucher_edit as PVE
 
     batch = _locked_batch(db, user, tenant_id, batch_id)
-    PVE.apply_edit(db, user, tenant_id, batch, body)
+    plan = PVE.apply_edit(db, user, tenant_id, batch, body, bulk=bulk)
     db.flush()
-    return batch
+    return batch, plan
 
 
 def preview_batch_edit(db: Session, user: User, tenant_id, batch_id, body) -> Dict[str, Any]:
@@ -1181,6 +1236,31 @@ def _stats(db: Session, batch_ids: List[uuid.UUID]) -> Dict[str, Dict[str, int]]
     return out
 
 
+def export_vouchers(
+    db: Session, batch: PrepaidVoucherBatch, *, include_used: bool = True, group: Optional[int] = None,
+    voucher_id=None,
+) -> List[PrepaidVoucher]:
+    """
+    The vouchers a file of [batch] holds (GET /prepaid-vouchers/batches/{id}/file), read once, in
+    serial order: every voucher of the batch — whichever run issued it — but the cancelled ones
+    (never printed); [include_used] False leaves the used ones out too; [group] / [voucher_id]
+    narrow it. With neither, this is "ייצוא כל הסדרה" and its size is `batch_out`'s `exportCount`.
+    """
+    q = db.query(PrepaidVoucher).filter(PrepaidVoucher.batch_id == batch.id, PrepaidVoucher.status != "cancelled")
+    if voucher_id:
+        q = q.filter(PrepaidVoucher.id == _as_uuid(voucher_id))
+    if not include_used:
+        q = q.filter(PrepaidVoucher.status != "used")
+    if group is not None:
+        q = q.filter(PrepaidVoucher.group_no == group)
+    return q.order_by(PrepaidVoucher.serial).all()
+
+
+def export_count(stats: Dict[str, int]) -> int:
+    """How many vouchers "ייצוא כל הסדרה" holds, from the batch's counts: every voucher but the cancelled."""
+    return int(stats.get("total", 0)) - int(stats.get("cancelled", 0))
+
+
 def _empty_counts() -> Dict[str, int]:
     return {"total": 0, "active": 0, "partiallyUsed": 0, "used": 0, "cancelled": 0}
 
@@ -1287,6 +1367,9 @@ def batch_out(
         "shops": [{"id": s, "name": shop_names.get(s)} for s in (batch.shop_ids or [])],
         "items": _batch_items_out(batch),
         "stats": stats or _empty_counts(),
+        # "ייצוא כל הסדרה ל-PDF": how many vouchers it holds now — the same rows the file reads
+        # (`export_vouchers`: every voucher of the batch, of every run, but the cancelled ones).
+        "exportCount": export_count(stats or _empty_counts()),
         "createdAt": _iso(batch.created_at),
         "cancelledAt": _iso(batch.cancelled_at),
         # Production (docs/SPEC_VOUCHER_PRODUCTION.md).
@@ -1328,9 +1411,24 @@ def batch_out(
         "discountBlockPolicy": _policy_out(batch),
         "offlineAllowed": bool(getattr(batch, "offline_allowed", False)),
         "printTillValue": bool(getattr(batch, "print_till_value", False)),
+        # Groups: the names of what they choose (the dashboard's "סיכום השובר"); null without groups.
+        "groupNames": group_names_out(db, batch),
+        # "מצב בדיקה" (P:/specs/voucher-test-mode.md): scans take nothing and count nowhere; since when, by whom.
+        "testMode": bool(getattr(batch, "test_mode", False)),
+        "testModeSince": _iso(getattr(batch, "test_mode_since", None)),
+        "testModeBy": getattr(batch, "test_mode_by", None),
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
+
+
+def group_names_out(db: Session, holder) -> Optional[Dict[str, Dict[str, str]]]:
+    """A batch's or a type's groups' product and category names (production_voucher_groups.names)."""
+    if (getattr(holder, "selection", None) or "items") != "groups":
+        return None
+    from app.services import production_voucher_groups as PG
+
+    return PG.names(db, holder.tenant_id, getattr(holder, "groups", None))
 
 
 def _production_ref(db: Session, batch: PrepaidVoucherBatch) -> Optional[Dict[str, Any]]:
@@ -1520,6 +1618,8 @@ def voucher_out(
         # A discount voucher: its uses left of the batch's per-voucher uses (null for goods).
         "usesLeft": voucher.uses_left,
         "usesPerVoucher": int(voucher.batch.uses_per_voucher or 1) if is_discount(voucher.batch) else None,
+        # "נותרו 44 מתוך 50 פריטים" in the dashboard's lists: the lookup's own numbers (`quota_of`).
+        **quota_of(voucher),
         "firstRedeemedAt": _iso(voucher.first_redeemed_at),
         "lastRedeemedAt": _iso(voucher.last_redeemed_at),
         "cancelledAt": _iso(voucher.cancelled_at),
@@ -1971,7 +2071,10 @@ def till_view(
             # (`prepaid_voucher_item_unusable`).
             "usable": unusable.get(row["productId"]) is None,
             "unusableReason": unusable.get(row["productId"]),
+            # What of this item was taken already ("מומשו"): quantity less remaining.
+            "used": qty_out(qty(row["quantity"]) - qty(row["remaining"])),
         })
+    groups_view = _groups_view(db, machine, batch, voucher)
     return {
         "id": str(voucher.id),
         "serial": int(voucher.serial),
@@ -2016,7 +2119,12 @@ def till_view(
         "offline": {"allowed": bool(getattr(batch, "offline_allowed", False)), "assignedMachineId": None,
                     "assignedKind": None},
         # Groups (§2): each with what is left and its products (the till's ids too); "items" else.
-        **_groups_view(db, machine, batch, voucher),
+        **groups_view,
+        # "מכסה 5 | מומשו 2 | נותרו 3" (the owner's spec of 11.10.2026 §5): the voucher's quota, what
+        # was taken and what is left — groups: units in all (`totalMax` / `totalRemaining`); a fixed
+        # list: its quantities summed; a discount: its uses. Live holds of other sales are not taken
+        # off here: the reserve answers `prepaid_voucher_in_use` for them.
+        **_quota_out(batch, voucher, items, groups_view),
         "message": message,
         "benefit": benefit_for_till(db, machine, batch),
         "usesLeft": voucher.uses_left,
@@ -2026,15 +2134,66 @@ def till_view(
         "maxUsesPerSale": int(batch.max_uses_per_sale or 1) if is_discount(batch) else None,
         "maxUsesPerDay": batch.max_uses_per_day if is_discount(batch) else None,
         **controls_extra,  # §18 (helper): isTest
+        # "מצב בדיקה" (P:/specs/voucher-test-mode.md): its batch is in test mode — a reserve / redeem
+        # runs every check, takes nothing and answers `testMode: true` (the till's orange bar).
+        "testMode": bool(getattr(batch, "test_mode", False)),
     }
+
+
+def _quota_out(
+    batch: PrepaidVoucherBatch, voucher: PrepaidVoucher, items: List[Dict[str, Any]], groups_view: Dict[str, Any],
+) -> Dict[str, Any]:
+    """`quota` / `used` / `remaining` of [voucher] and the unit they count (`quotaUnit`)."""
+    if is_discount(batch):
+        quota = int(batch.uses_per_voucher or 1)
+        left = int(voucher.uses_left or 0)
+        return {"quotaUnit": "uses", "quota": quota, "used": max(0, quota - left), "remaining": left}
+    if groups_view.get("selection") == "groups":
+        quota = int(groups_view.get("totalMax") or 0)
+        left = int(groups_view.get("totalRemaining") or 0)
+        return {"quotaUnit": "units", "quota": quota, "used": max(0, quota - left), "remaining": left}
+    quota = sum((qty(i["quantity"]) for i in items), Decimal(0))
+    left = sum((qty(i["remaining"]) for i in items), Decimal(0))
+    return {"quotaUnit": "units", "quota": qty_out(quota), "used": qty_out(max(Decimal(0), quota - left)),
+            "remaining": qty_out(left)}
+
+
+def quota_of(voucher: PrepaidVoucher) -> Dict[str, Any]:
+    """
+    `quotaUnit` / `quota` / `used` / `remaining` of [voucher] for the dashboard's voucher lists — the
+    same numbers the lookup sends (`_quota_out`): item groups in units of all ("כרטיסייה": 50 / 6 / 44),
+    a fixed list its quantities summed, a discount its uses. Read only.
+    """
+    batch = voucher.batch
+    groups = list(getattr(batch, "groups", None) or [])
+    view: Dict[str, Any] = {"selection": "items"}
+    if not is_discount(batch) and (getattr(batch, "selection", None) or "items") == "groups" and groups:
+        from app.services import production_voucher_groups as PG
+
+        view = {
+            "selection": "groups",
+            "totalMax": PG.total_max(groups, batch.total_qty),
+            "totalRemaining": PG.remaining_of(voucher, groups, batch.total_qty)[PG.TOTAL],
+        }
+    return _quota_out(batch, voucher, _remaining_out(batch, voucher), view)
 
 
 def lookup(
     db: Session, machine: POSMachine, raw_code: str, supported_kinds: Optional[Iterable[str]] = None,
     *, features: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
+    """
+    The voucher as this till sees it. Read only: nothing is held, taken or written — "בירור יתרת
+    שובר" calls it as often as it likes. With its redemptions, newest first (`redemptions`,
+    `redemptionsTotal`, `firstRedeemedAt`, `lastRedeemedAt`) and the shops it is valid in (`validShops`):
+    app/services/prepaid_voucher_lookup_extras.py.
+    """
+    from app.services.prepaid_voucher_lookup_extras import lookup_extras
+
     voucher = _locate(db, machine, raw_code, lock=False)
-    return till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
+    out = till_view(db, machine, voucher, supported_kinds, features=features, check_features=True)
+    out.update(lookup_extras(db, machine, voucher))
+    return out
 
 
 #: What the redemption re-checks: the product lost its identity (the general item) or left
@@ -2110,6 +2269,61 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
         return _redeem_out(db, machine, voucher, prior, replayed=True)
 
+    # "מצב בדיקה" (app/services/prepaid_voucher_test_mode.py): every check below, nothing taken.
+    from app.services import prepaid_voucher_test_mode as TM
+
+    test_prior = TM.prior(db, machine, TM.OP_REDEEM, request_id)
+    if test_prior is not None or TM.in_test_mode(voucher.batch):
+        return TM.redeem(db, machine, body, voucher, test_prior)
+
+    plan = redeem_checks(db, machine, body, voucher)
+    batch, sale_ref, wanted = plan["batch"], plan["sale_ref"], plan["wanted"]
+    names, order, left, forfeited = plan["names"], plan["order"], plan["left"], plan["forfeited"]
+
+    now = _now()
+    redemption = PrepaidVoucherRedemption(
+        id=uuid.uuid4(),
+        tenant_id=voucher.tenant_id,
+        voucher_id=voucher.id,
+        batch_id=batch.id,
+        machine_id=machine.id,
+        shop_id=machine.shop_id,
+        pos_user_id=(body.pos_user_id or None),
+        pos_user_name=(body.pos_user_name or None),
+        client_request_id=request_id,
+        transaction_id=(body.transaction_id or None),
+        sale_ref=sale_ref,
+        items=plan["items"],
+        forfeited=forfeited or None,
+        redeemed_at=now,
+        **record_snapshot(db, machine, batch, voucher, wanted, features=getattr(body, "features", None)),
+    )
+    # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
+    voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
+    voucher.status = "used" if not any(q > 0 for q in left.values()) else "partially_used"
+    voucher.first_redeemed_at = voucher.first_redeemed_at or now
+    voucher.last_redeemed_at = now
+    voucher.updated_at = now
+    db.add(redemption)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Only the (machine, request id) key can collide; the lock makes this a
+        # backstop for a database without row locks.
+        db.rollback()
+        raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
+    return _redeem_out(db, machine, voucher, redemption, replayed=False)
+
+
+def redeem_checks(db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, *, test: bool = False) -> Dict[str, Any]:
+    """
+    Every check of an immediate `/redeem`, in its order, nothing written: the voucher's state, the
+    client, the sale (a test-mode voucher never mixes with a real one; stacking), what is left, what
+    can be handed over, a one-time voucher taken in part. [test]: the voucher's batch is in test mode
+    — its other test scans in the same sale count for stacking as real ones would. Returns what the
+    write needs: `batch`, `sale_ref`, `wanted`, `left` (per product after it), `forfeited`, `items`,
+    `names`, `order`.
+    """
     reason = refusal_reason(db, machine, voucher)
     if reason is not None:
         raise _http(status.HTTP_409_CONFLICT, reason)
@@ -2128,7 +2342,13 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         raise _http(status.HTTP_409_CONFLICT, RESERVE_REQUIRED)
     sale_ref = (getattr(body, "sale_ref", None) or "").strip() or None
     if sale_ref:
-        refusal = RULES.stacking_refusal(_vouchers_in_sale(db, machine, sale_ref), _in_sale(voucher))
+        from app.services import prepaid_voucher_test_mode as TM
+
+        TM.check_mixed(db, machine, voucher, sale_ref, test=test)
+        others = _vouchers_in_sale(db, machine, sale_ref)
+        if test:
+            others = TM.with_test_vouchers(db, machine, sale_ref, others)
+        refusal = RULES.stacking_refusal(others, _in_sale(voucher))
         if refusal is not None:
             raise _http(status.HTTP_409_CONFLICT, refusal)
     remaining = {k: qty(v) for k, v in (voucher.remaining or {}).items()}
@@ -2156,44 +2376,20 @@ def redeem(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
             if left.get(pid, zero) > 0
         ]
         left = {pid: zero for pid in left}
-
-    now = _now()
-    redemption = PrepaidVoucherRedemption(
-        id=uuid.uuid4(),
-        tenant_id=voucher.tenant_id,
-        voucher_id=voucher.id,
-        batch_id=batch.id,
-        machine_id=machine.id,
-        shop_id=machine.shop_id,
-        pos_user_id=(body.pos_user_id or None),
-        pos_user_name=(body.pos_user_name or None),
-        client_request_id=request_id,
-        transaction_id=(body.transaction_id or None),
-        sale_ref=sale_ref,
-        items=[
+    return {
+        "batch": batch,
+        "sale_ref": sale_ref,
+        "wanted": wanted,
+        "left": left,
+        "forfeited": forfeited,
+        "names": names,
+        "order": order,
+        "items": [
             {"productId": pid, "name": names.get(pid), "quantity": qty_out(wanted[pid])}
             for pid in order
             if wanted.get(pid)
         ],
-        forfeited=forfeited or None,
-        redeemed_at=now,
-        **record_snapshot(db, machine, batch, voucher, wanted, features=getattr(body, "features", None)),
-    )
-    # A new dict (JSON columns only notice reassignment); ints stay ints, a weight "0.25".
-    voucher.remaining = {pid: qty_out(q) for pid, q in left.items()}
-    voucher.status = "used" if not any(q > 0 for q in left.values()) else "partially_used"
-    voucher.first_redeemed_at = voucher.first_redeemed_at or now
-    voucher.last_redeemed_at = now
-    voucher.updated_at = now
-    db.add(redemption)
-    try:
-        db.flush()
-    except IntegrityError:
-        # Only the (machine, request id) key can collide; the lock makes this a
-        # backstop for a database without row locks.
-        db.rollback()
-        raise _http(status.HTTP_409_CONFLICT, REQUEST_CONFLICT)
-    return _redeem_out(db, machine, voucher, redemption, replayed=False)
+    }
 
 
 def _type_name_of(db: Session, batch: PrepaidVoucherBatch) -> Optional[str]:
@@ -2330,6 +2526,10 @@ def reverse_redemption(db: Session, machine: POSMachine, redemption_id: str) -> 
     (and anything forfeited with it) go back on the voucher; the row stays, marked
     reversed. Idempotent: reversing twice answers the same. The caller commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(redemption_id):
+        return TM.reverse(db, machine, redemption_id)  # a test scan: nothing was taken, nothing goes back
     rid = _as_uuid(redemption_id)
     redemption = (
         db.query(PrepaidVoucherRedemption)
@@ -2363,6 +2563,7 @@ def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
     """
     from app.models.prepaid_voucher import PRODUCTION_VOUCHER_DEDUCTION
 
+    # A test scan's id ("test-…") never reads as a redemption's: a document naming one links nothing.
     ids = [r.redemption_id for r in rows if r.kind == PRODUCTION_VOUCHER_DEDUCTION and r.redemption_id is not None]
     if not ids or machine is None:
         return
@@ -2376,6 +2577,11 @@ def link_deductions(db: Session, machine, transaction_id: str, rows) -> None:
 
 def attach_transaction(db: Session, machine: POSMachine, redemption_id: str, transaction_id: str) -> None:
     """Name the sale document a redemption paid towards (set once). The caller commits."""
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(redemption_id):
+        TM.attach(db, machine, redemption_id, transaction_id)  # a test scan: noted on its log line only
+        return
     rid = _as_uuid(redemption_id)
     redemption = (
         db.query(PrepaidVoucherRedemption)
@@ -2601,37 +2807,22 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
         if prior.status == "released":
             raise _http(status.HTTP_409_CONFLICT, RESERVATION_RELEASED)
 
+    # "מצב בדיקה" (app/services/prepaid_voucher_test_mode.py): every check below, nothing held. A hold
+    # made before the batch went into test mode (a real `prior`) goes on as it began.
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if prior is None:
+        test_prior = TM.prior(db, machine, TM.OP_RESERVE, request_id)
+        if test_prior is not None or TM.in_test_mode(batch):
+            return TM.reserve(db, machine, body, voucher, test_prior, now, sale_ref)
+
     if not is_discount(batch):
         # Goods: held for the sale with their units valued (the production vouchers contract §3).
         from app.services import production_voucher_reserve as PVRG
 
         return PVRG.reserve_goods(db, machine, body, voucher, prior, now, sale_ref)
-    if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
-        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
-    reason = refusal_reason(db, machine, voucher, now)
-    if reason is not None:
-        raise _http(status.HTTP_409_CONFLICT, reason)
-    if missing_features(db, batch, getattr(body, "features", None)):  # §18 (helper): a test voucher's "training"
-        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
-
     exclude = prior.id if prior is not None else None
-    refusal = RULES.stacking_refusal(
-        _vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude, reported=body.other_vouchers),
-        _in_sale(voucher),
-    )
-    if refusal is not None:
-        raise _http(status.HTTP_409_CONFLICT, refusal)
-
-    uses = uses_open(db, voucher, now, exclude_id=exclude)
-    if uses["available"] <= 0:
-        raise _http(status.HTTP_409_CONFLICT, IN_USE if int(voucher.uses_left or 0) > 0 else USED)
-    if uses["today"] <= 0:
-        raise _http(status.HTTP_409_CONFLICT, DAILY_LIMIT)
-    granted = max(1, min(int(body.uses or 1), uses["perSale"], uses["available"], uses["today"]))
-
-    result = RULES.discount_for(_benefit_rules(db, batch), _basket(body.lines), granted)
-    if result.refusal is not None:
-        raise _http(status.HTTP_409_CONFLICT, result.refusal)
+    granted, result = reserve_discount_checks(db, machine, body, voucher, now, sale_ref, exclude_reservation=exclude)
 
     if prior is not None:
         # Renewed: held again for the full time, for what the basket comes to now.
@@ -2669,6 +2860,50 @@ def reserve(db: Session, machine: POSMachine, body) -> Dict[str, Any]:
     return _reservation_out(db, machine, voucher, r, replayed=False, result=result)
 
 
+def reserve_discount_checks(
+    db: Session, machine: POSMachine, body, voucher: PrepaidVoucher, now: datetime, sale_ref: str, *,
+    exclude_reservation=None, test: bool = False, exclude_test=None,
+) -> Tuple[int, RULES.DiscountResult]:
+    """
+    Every check of a discount voucher's hold, in its order, nothing written: the client's support of
+    its kind, the voucher's state, the client's features, the sale (a test-mode voucher never mixes with
+    a real one; stacking), the uses (left, held by other sales, per sale, per day) and what it takes off
+    the basket. Returns (uses granted, the shared rules' result). [test]: the batch is in test mode —
+    its other test scans in the sale count for stacking ([exclude_test]: this request's own).
+    """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    batch = voucher.batch
+    if not _supports(batch.kind, body.supported_kinds or ALL_KINDS):
+        raise _http(status.HTTP_409_CONFLICT, KIND_UNSUPPORTED)
+    reason = refusal_reason(db, machine, voucher, now)
+    if reason is not None:
+        raise _http(status.HTTP_409_CONFLICT, reason)
+    if missing_features(db, batch, getattr(body, "features", None)):  # §18 (helper): a test voucher's "training"
+        raise _http(status.HTTP_409_CONFLICT, UPDATE_REQUIRED)
+
+    TM.check_mixed(db, machine, voucher, sale_ref, body.other_vouchers, test=test, exclude_test=exclude_test,
+                   exclude_reservation=exclude_reservation)
+    others = _vouchers_in_sale(db, machine, sale_ref, exclude_reservation=exclude_reservation, reported=body.other_vouchers)
+    if test:
+        others = TM.with_test_vouchers(db, machine, sale_ref, others, exclude_id=exclude_test)
+    refusal = RULES.stacking_refusal(others, _in_sale(voucher))
+    if refusal is not None:
+        raise _http(status.HTTP_409_CONFLICT, refusal)
+
+    uses = uses_open(db, voucher, now, exclude_id=exclude_reservation)
+    if uses["available"] <= 0:
+        raise _http(status.HTTP_409_CONFLICT, IN_USE if int(voucher.uses_left or 0) > 0 else USED)
+    if uses["today"] <= 0:
+        raise _http(status.HTTP_409_CONFLICT, DAILY_LIMIT)
+    granted = max(1, min(int(body.uses or 1), uses["perSale"], uses["available"], uses["today"]))
+
+    result = RULES.discount_for(_benefit_rules(db, batch), _basket(body.lines), granted)
+    if result.refusal is not None:
+        raise _http(status.HTTP_409_CONFLICT, result.refusal)
+    return granted, result
+
+
 def _reservation(db: Session, machine: POSMachine, reservation_id, *, any_till: bool = False) -> PrepaidVoucherReservation:
     rid = _as_uuid(reservation_id)
     q = db.query(PrepaidVoucherReservation).filter(PrepaidVoucherReservation.id == rid) if rid else None
@@ -2685,6 +2920,10 @@ def release(db: Session, machine: POSMachine, reservation_id) -> Dict[str, Any]:
     Give a held voucher back (removed from the basket, the sale abandoned). Idempotent; a
     confirmed one stays confirmed (its sale was written). The caller commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(reservation_id):
+        return TM.release(db, machine, reservation_id)
     r = _reservation(db, machine, reservation_id)
     if r.status == "held":
         now = _now()
@@ -2728,6 +2967,12 @@ def confirm(
     promotion policy are checked again and a breach is flagged, never refused. The caller
     commits.
     """
+    from app.services import prepaid_voucher_test_mode as TM
+
+    if TM.is_fake(reservation_id):
+        # A test-mode hold ("test-…"): its log line is marked, nothing is taken or recorded. A document
+        # naming one (the outbox, [any_till]) never reaches here — the sync drops it first.
+        return TM.confirm(db, machine, reservation_id, transaction_id, amount_agorot, uses, any_till=any_till)
     r = _reservation(db, machine, reservation_id, any_till=any_till)
     transaction_id = str(transaction_id).strip()[:100]
     # The voucher first (as the reserve locks it), then the reservation again under its own lock:

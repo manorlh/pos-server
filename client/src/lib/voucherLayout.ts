@@ -66,8 +66,8 @@ const BASE = 0.8;
 export const VOUCHER_TEXT = {
   serial: 'מס׳ {n}',
   group: 'קבוצה {g}',
-  splitAllowed: 'ניתן לממש בחלקים',
-  oneTime: 'מימוש חד-פעמי',
+  splitAllowed: 'מימוש בחלקים',
+  oneTime: 'מימוש בעסקה אחת',
   validUntil: 'בתוקף עד {until}',
   validFrom: 'בתוקף מ-{since}',
   validBetween: 'בתוקף {since}-{until}',

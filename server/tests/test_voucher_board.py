@@ -306,3 +306,24 @@ def test_the_card_names_a_voucher_by_its_type_else_by_its_batch():
     assert VB.voucher_display_name(typed) == "שובר צוות"
     assert VB.voucher_display_name(PrepaidVoucherBatch(name="סדרה 7", type_name="  ")) == "סדרה 7"
     assert VB.voucher_display_name(PrepaidVoucherBatch(name=None, type_name=None)) == "—"
+
+
+def test_how_many_out_of_how_many(w, festival):
+    """"כמה מתוך כמה" (the owner, 11.10.2026): each row says how many vouchers its batch has (not
+    cancelled) and how many were ever used; the totals sum the listed rows."""
+    staff = festival["staff"]
+    before = {r.name: r for r in board(w).rows}["צוות הפקה"]
+    fresh = [voucher(w, staff) for _ in range(3)]
+    fresh[0].status = "used"
+    fresh[1].status = "partially_used"
+    voucher(w, staff).status = "cancelled"
+    w.db.flush()
+    out = board(w)
+    row = {r.name: r for r in out.rows}["צוות הפקה"]
+    assert row.issued == before.issued + 3  # the cancelled one is not "out of"
+    assert row.used_ever == before.used_ever + 2
+    assert row.issued >= row.current.vouchers
+    assert out.issued == sum(r.issued for r in out.rows)
+    assert out.used_ever == sum(r.used_ever for r in out.rows)
+    dumped = out.model_dump(by_alias=True)
+    assert "issued" in dumped and "usedEver" in dumped and "usedEver" in dumped["rows"][0]

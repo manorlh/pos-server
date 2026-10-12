@@ -51,13 +51,13 @@ SHOP_INVALID = "prepaid_voucher_simulate_shop_invalid"
 UNIT_TEXT = {
     "assigned": "נכלל בשובר",
     PR.UNIT_NOT_ELIGIBLE: "הפריט אינו כלול בשובר זה",
-    PR.UNIT_GROUP_FULL: "החלק הזה של השובר כבר מלא",
-    PR.UNIT_TOTAL_FULL: "השובר כבר מלא",
-    "ambiguous": "הפריט מתאים לכמה חלקים — הקופאי יתבקש לבחור",
+    PR.UNIT_GROUP_FULL: "קבוצת הפריטים הזו כבר מלאה",
+    PR.UNIT_TOTAL_FULL: "מכסת הפריטים של השובר מלאה",
+    "ambiguous": "הפריט מתאים לכמה קבוצות פריטים — הקופאי יתבקש לבחור",
     "unusable": "לא ניתן למסור את הפריט בשובר",
 }
 BOOKING_TEXT = {
-    "discount": "קיזוז מהחשבונית (כמו הנחה)",
+    "discount": "קיזוז מהחשבונית",
     "payment": "אמצעי תשלום \"שובר הפקה\"",
     "zero": "שורות ₪0 עם הצגת שווי",
 }

@@ -55,7 +55,7 @@ export const LIVE: Record<string, string> = {
   // "מזומן בקופה" and vouchers (as the browser kiosk's web-i18n.ts).
   placing: 'שולחים את ההזמנה לקופה…',
   placeFailed: 'ההזמנה לא נשלחה. נסו שוב או פנו לצוות.',
-  voucherOffline: 'תשלום בשובר אינו זמין כרגע — אין חיבור לרשת',
+  voucherOffline: 'תשלום בשובר אינו זמין כרגע (אין חיבור לרשת) — שלמו באמצעי אחר או הציגו את השובר בקופה',
   voucherAppliedNote: 'השובר נקלט · {amount}',
   voucherDiscountApplied: 'שובר #{serial}: הנחה של {amount}',
   voucherChecking: 'בודקים את השובר…',
@@ -68,7 +68,7 @@ export const LIVE: Record<string, string> = {
   'voucher.prepaid_voucher_expired': 'תוקף השובר פג',
   'voucher.prepaid_voucher_not_yet_valid': 'השובר עדיין לא בתוקף',
   'voucher.prepaid_voucher_wrong_shop': 'השובר אינו תקף בנקודת המכירה הזאת',
-  'voucher.prepaid_voucher_partial_not_allowed': 'שובר חד-פעמי: יש לממש את כולו בבת אחת',
+  'voucher.prepaid_voucher_partial_not_allowed': 'מימוש בעסקה אחת: יש לממש את כל השובר בבת אחת',
   'voucher.prepaid_voucher_insufficient': 'לא נשאר בשובר מספיק',
   'voucher.prepaid_voucher_item_not_on_voucher': 'הפריט אינו כלול בשובר',
   'voucher.prepaid_voucher_update_required': 'לא ניתן לממש שובר מסוג זה בעמדה — יש להציג אותו בקופה',

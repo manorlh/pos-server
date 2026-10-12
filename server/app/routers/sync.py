@@ -2325,9 +2325,19 @@ def get_settings_sync(
     # The till's point of sale has a settings layer of its own, between the shop and the
     # till (`shop_areas.settings`); its `settings_updated_at` moves the watermark too.
     area_layer = get_area(db, getattr(machine, "area_id", None))
-    watermark = max(
-        [as_utc(effective_settings_updated_at(company, shop, tenant, machine, area_layer))] + area_stamps
-    )
+    # Tenant → company → shop → area → this till: the till's own overrides win.
+    all_settings = merge_all_settings_layers(company, shop, tenant, machine, area_layer)
+    stamps = [as_utc(effective_settings_updated_at(company, shop, tenant, machine, area_layer))] + area_stamps
+    # "בירור יתרת שובר" on "auto" follows the production voucher batches that reach this till: one
+    # made, edited or cancelled, or whose validity ended, moves the watermark too, so the next delta
+    # pull carries `voucherBalanceCheckEnabled` recomputed (app/services/voucher_balance_check.py).
+    from app.services import voucher_balance_check as voucher_balance
+
+    if voucher_balance.resolve_mode(all_settings) == voucher_balance.AUTO:
+        batches_stamp = voucher_balance.batches_changed_at(db, machine.tenant_id, shop.company_id, server_time)
+        if batches_stamp is not None:
+            stamps.append(batches_stamp)
+    watermark = max(stamps)
     since_dt: Optional[datetime] = None
     if since:
         try:
@@ -2346,8 +2356,6 @@ def get_settings_sync(
             training_mode=bool(shop.training_mode),
         )
 
-    # Tenant → company → shop → area → this till: the till's own overrides win.
-    all_settings = merge_all_settings_layers(company, shop, tenant, machine, area_layer)
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
     # The payment option keys always go out, resolved, so the till never has to
     # guess what an absent key means. The legacy pair is overwritten with values
@@ -2362,6 +2370,23 @@ def get_settings_sync(
     # likewise always sent as real bools (unset -> on). With every option above off and
     # either of these on, the till is a voucher-only till.
     effective.update(resolve_voucher_options(all_settings))
+    # How the till enters a voucher's redemption ("דרך מימוש שובר", and whether eligible items
+    # not for sale show blocked or hidden): always sent resolved — unset = "items_first" / true,
+    # so a till keeps today's flow until someone changes it (app/services/voucher_redeem_settings.py).
+    from app.services.voucher_redeem_settings import resolve_voucher_flow
+
+    effective.update(resolve_voucher_flow(all_settings))
+    # "בירור יתרת שובר" in the till's menu: the mode ("auto" unset) and, decided for this till,
+    # whether it shows — "auto" = an active production voucher batch this till can redeem exists.
+    effective.update(voucher_balance.till_settings(db, machine, shop, all_settings, server_time))
+    # Closing on their own when vouchers cover the sale (unset = "on", today) and the scan-only
+    # voucher station (unset = "off"), and whether the station also sells items paid for at the
+    # regular price after the voucher (`voucherStationPaidItems`, unset = "off"): always sent
+    # resolved (app/services/voucher_station_settings.py).
+    from app.services.voucher_station_settings import resolve_station_paid_items, resolve_voucher_station
+
+    effective.update(resolve_voucher_station(all_settings))
+    effective.update(resolve_station_paid_items(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))

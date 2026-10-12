@@ -159,12 +159,18 @@ export interface VoucherUsageRow {
   current: VoucherUsage;
   previous?: VoucherUsage | null;
   deltas?: Record<keyof VoucherUsage, CompareDelta> | null;
+  /** "כמה מתוך כמה": the batch's vouchers (not cancelled), and those ever used. Absent: an older server. */
+  issued?: number;
+  usedEver?: number;
 }
 
 export interface VoucherBoardReport {
   window: ReportWindowOut;
   compareWindow?: ReportWindowOut | null;
   totals: VoucherUsage;
+  /** Σ the rows' issued / usedEver. */
+  issued?: number;
+  usedEver?: number;
   previous?: VoucherUsage | null;
   deltas?: Record<keyof VoucherUsage, CompareDelta> | null;
   rows: VoucherUsageRow[];

@@ -310,21 +310,21 @@ class Labels:
     #: The till value, when the type prints it (`print_till_value`): fixed / up to.
     value_fixed: str = "שווי השובר: {v}"
     value_cover: str = "השובר מכסה עד {v}"
-    split_allowed: str = "ניתן לממש בחלקים"
-    one_time: str = "מימוש חד-פעמי"
+    split_allowed: str = "מימוש בחלקים"
+    one_time: str = "מימוש בעסקה אחת"
     valid_until: str = "בתוקף עד {until}"
     valid_from: str = "בתוקף מ-{since}"
     valid_between: str = "בתוקף {since}-{until}"
     # Cover sheet ("דף שער") of a group.
-    cover_group: str = "קבוצה {g} מתוך {n}"
+    cover_group: str = "קבוצת שוברים {g} מתוך {n}"
     cover_serials: str = "שוברים {lo}-{hi}"
     cover_count: str = "{n} שוברים בקבוצה"
     cover_count_partial: str = "{n} שוברים מודפסים (מתוך {issued} בקבוצה)"
-    cover_customer: str = "לקוח: {v}"
+    cover_customer: str = "עבור: {v}"
     cover_order: str = "הזמנה: {v}"
     cover_per_voucher: str = "בכל שובר: {items}"
     cover_total: str = "סה״כ בקבוצה: {items}"
-    cover_made: str = "הופק: {date}"
+    cover_made: str = "הונפק: {date}"
     cover_handover: str = "נמסר ל: ____________   חתימה: ____________"
     # Discount vouchers (docs/SPEC_VOUCHER_PRODUCTION.md §7).
     uses_one: str = "שימוש אחד"
@@ -397,7 +397,7 @@ def validity_text(batch: PrepaidVoucherBatch, zone=None, labels: Labels = Labels
 
 
 def terms_line(batch: PrepaidVoucherBatch, labels: Labels = Labels()) -> str:
-    """The small print: goods "מימוש חד-פעמי" / "ניתן לממש בחלקים"; a discount its uses."""
+    """The small print: goods "מימוש בעסקה אחת" / "מימוש בחלקים"; a discount its uses."""
     if RULES.batch_benefit_text(batch):
         uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
         return labels.uses_one if uses == 1 else labels.uses_many.format(n=uses)
@@ -817,7 +817,7 @@ def render_groups_zip(
     return out.getvalue(), names
 
 
-STATUS_HE = {"active": "פעיל", "partially_used": "מומש חלקית", "used": "מומש", "cancelled": "בוטל"}
+STATUS_HE = {"active": "פתוח", "partially_used": "מומש חלקית", "used": "מומש", "cancelled": "בוטל"}
 
 
 def manifest_csv(batch: PrepaidVoucherBatch, vouchers: Sequence[PrepaidVoucher]) -> bytes:
@@ -830,7 +830,7 @@ def manifest_csv(batch: PrepaidVoucherBatch, vouchers: Sequence[PrepaidVoucher])
     order = [str(i.product_id) for i in batch.items]
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
-    w.writerow(["מס׳ שובר", "קבוצה", "קוד", "קוד מודפס", "תוכן הברקוד", "סטטוס", "נותר", "לקוח", "הזמנה", "הערה"])
+    w.writerow(["מספר שובר", "קבוצת שוברים", "קוד שובר", "קוד מודפס", "תוכן הברקוד", "סטטוס", "יתרה", "עבור מי", "מס׳ הזמנה", "הערה"])
     discount = bool(RULES.batch_benefit_text(batch))
     uses = int(getattr(batch, "uses_per_voucher", 1) or 1)
     for v in sorted(vouchers, key=lambda v: v.serial):

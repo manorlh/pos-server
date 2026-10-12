@@ -67,6 +67,7 @@ export function PrepaidProductionsView() {
         <input type="checkbox" className="h-4 w-4 accent-primary" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
         {t('showInactive')}
       </label>
+      {rows.length ? <p className="max-w-2xl text-xs text-muted-foreground">{t('activeHint')}</p> : null}
       {list.isPending ? (
         <Skeleton className="h-24 w-full rounded-xl" />
       ) : list.isError ? (

@@ -89,7 +89,8 @@ export function QuotasSection() {
                     <div className="absolute inset-y-0 w-px bg-foreground/40" style={{ insetInlineStart: `${q.warnPercent}%` }} aria-hidden />
                   </div>
                   <p className="flex flex-wrap justify-between gap-2 text-xs tabular-nums text-muted-foreground">
-                    <span>{q.used === null ? t('inactive') : t('used', { used: q.used, max: q.maxRedemptions })}</span>
+                    <span>{q.used === null ? t('inactive')
+                      : t('counts', { max: q.maxRedemptions, used: q.used, left: Math.max(0, q.maxRedemptions - q.used) })}</span>
                     <span>{q.percent !== null ? `${q.percent}%` : ''}</span>
                   </p>
                   {state === 'reached' ? <p className="text-xs text-destructive">{q.text}</p> : null}

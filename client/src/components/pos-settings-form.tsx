@@ -22,7 +22,18 @@ import { REFUND_SETTINGS, REFUND_SETTING_DEFAULT } from '@/lib/refundSettings';
 import { AUTO_REOPEN_DEFAULT, AUTO_REOPEN_MODES, type AutoReopenMode } from '@/lib/availabilityReopen';
 import { TIP_PRESETS_MAX } from '@/lib/types';
 import { DESKTOP_IDLE_RETURN_DEFAULT, idleReturnSwitchValue, idleReturnView, parseIdleReturnInput } from '@/lib/desktopIdleReturn';
-import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel } from '@/lib/types';
+import type { PosSettingsPatch, PosSettingsV1, ResettableSwitchKey, SettingsLevel, VoucherRedeemFlow } from '@/lib/types';
+import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnavailable } from '@/lib/voucherRedeemFlow';
+import {
+  VOUCHER_AUTO_CLOSE_VALUES,
+  VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_STATION_PAID_ITEMS_VALUES,
+  VOUCHER_STATION_VALUES,
+  resolveVoucherAutoClose,
+  resolveVoucherBalanceCheck,
+  resolveVoucherStation,
+  voucherStationPaidItemsView,
+} from '@/lib/voucherTillSettings';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
 
@@ -408,6 +419,164 @@ export function PosSettingsForm({
             </div>
           </div>
         ))}
+        {/* How the till enters a voucher's redemption (lib/voucherRedeemFlow.ts): "ירושה" sends null. */}
+        {(() => {
+          const flowLabel = (f: VoucherRedeemFlow) => t(`voucherFlow_${f}`);
+          const showLabel = (v: boolean) => t(v ? 'voucherUnavailableShow' : 'voucherUnavailableHide');
+          const flowItems = [
+            {
+              value: 'inherit',
+              label: t('voucherFlowInherit', {
+                value: flowLabel(resolveVoucherRedeemFlow(undefined, inherited?.voucherRedeemFlow)),
+              }),
+            },
+            ...VOUCHER_REDEEM_FLOWS.map((f) => ({ value: f as string, label: flowLabel(f) })),
+          ];
+          const showItems = [
+            {
+              value: 'inherit',
+              label: t('voucherUnavailableInherit', {
+                value: showLabel(resolveVoucherShowUnavailable(undefined, inherited?.voucherShowUnavailable)),
+              }),
+            },
+            { value: 'show', label: showLabel(true) },
+            { value: 'hide', label: showLabel(false) },
+          ];
+          const own = value.voucherShowUnavailable;
+          return (
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label>
+                  {t('voucherFlowLabel')}
+                  {overrideBadge('voucherRedeemFlow')}
+                </Label>
+                <Select
+                  value={value.voucherRedeemFlow ?? 'inherit'}
+                  onValueChange={(v) =>
+                    set('voucherRedeemFlow', v === 'inherit' ? null : (v as VoucherRedeemFlow))
+                  }
+                  items={flowItems}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {flowItems.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>
+                  {t('voucherUnavailableLabel')}
+                  {overrideBadge('voucherShowUnavailable')}
+                </Label>
+                <Select
+                  value={typeof own === 'boolean' ? (own ? 'show' : 'hide') : 'inherit'}
+                  onValueChange={(v) =>
+                    set('voucherShowUnavailable', v === 'inherit' ? null : v === 'show')
+                  }
+                  items={showItems}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {showItems.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherFlowHint')}</p>
+            </div>
+          );
+        })()}
+        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items
+            (lib/voucherTillSettings.ts): "ירושה" sends null. */}
+        {(() => {
+          const pick = (
+            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation' | 'voucherStationPaidItems',
+            values: readonly string[],
+            label: (v: string) => string,
+            inheritedValue: string,
+            extra?: ReactNode,
+          ) => {
+            const items = [
+              { value: 'inherit', label: t('voucherSettingInherit', { value: label(inheritedValue) }) },
+              ...values.map((v) => ({ value: v, label: label(v) })),
+            ];
+            const own = value[key];
+            return (
+              <div className="space-y-1">
+                <Label>
+                  {t(`${key}Label`)}
+                  {overrideBadge(key)}
+                </Label>
+                <Select
+                  value={typeof own === 'string' && values.includes(own) ? own : 'inherit'}
+                  onValueChange={(v) => set(key, (v === 'inherit' ? null : v) as never)}
+                  items={items}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {items.map((i) => (
+                      <SelectItem key={i.value} value={i.value} label={i.label}>
+                        {i.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {extra}
+              </div>
+            );
+          };
+          const paidItems = voucherStationPaidItemsView(value, inherited);
+          return (
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+              {pick(
+                'voucherBalanceCheck',
+                VOUCHER_BALANCE_CHECK_MODES,
+                (v) => t(`voucherBalanceCheck_${v}`),
+                resolveVoucherBalanceCheck(undefined, inherited?.voucherBalanceCheck),
+              )}
+              {pick(
+                'voucherAutoClose',
+                VOUCHER_AUTO_CLOSE_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherAutoClose(undefined, inherited?.voucherAutoClose),
+              )}
+              {pick(
+                'voucherStation',
+                VOUCHER_STATION_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherStation(undefined, inherited?.voucherStation),
+              )}
+              {pick(
+                'voucherStationPaidItems',
+                VOUCHER_STATION_PAID_ITEMS_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                paidItems.inheritedValue,
+                <>
+                  <p className="text-xs text-muted-foreground">{t('voucherStationPaidItemsHint')}</p>
+                  {paidItems.noPaymentWarning ? (
+                    <p role="alert" className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      {t('voucherStationPaidItemsNoPayment')}
+                    </p>
+                  ) : null}
+                </>,
+              )}
+              <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherTillHint')}</p>
+            </div>
+          );
+        })()}
         <p className="text-xs text-muted-foreground">{t('payVoucherOnlyHint')}</p>
         {voucherOnly(value, inherited) ? (
           <p className="text-sm font-medium text-primary">{t('payVoucherOnlyActive')}</p>

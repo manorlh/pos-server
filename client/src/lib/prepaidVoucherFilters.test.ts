@@ -30,6 +30,7 @@ describe('filtersFromQuery / filtersToQuery', () => {
       pricing: 'fixed',
       override: 'yes',
       offline: 'no',
+      testMode: 'yes',
       valueMin: '10',
       valueMax: '80.5',
       issuedFrom: '2026-10-01',
@@ -52,7 +53,7 @@ describe('filtersFromQuery / filtersToQuery', () => {
   it('drops what it cannot read, never guesses', () => {
     const f = filtersFromQuery({
       accounting: 'exempt', batchStatus: 'lost', state: 'gone', from: '2026-13-40', valueMin: '-5', valueMax: 'abc',
-      group: '0', kind: 'other', override: 'maybe',
+      group: '0', kind: 'other', override: 'maybe', testMode: 'perhaps',
     });
     assert.deepEqual(f, EMPTY_FILTERS);
   });

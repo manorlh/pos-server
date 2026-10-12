@@ -35,6 +35,8 @@ export interface VoucherFilters {
   pricing: '' | (typeof PRICING_FILTERS)[number];
   override: '' | (typeof YES_NO)[number];
   offline: '' | (typeof YES_NO)[number];
+  /** "מצב בדיקה": only the batches in test mode (yes) / not (no). */
+  testMode: '' | (typeof YES_NO)[number];
   valueMin: string;
   valueMax: string;
   priceMin: string;
@@ -58,7 +60,7 @@ export interface VoucherFilters {
 
 export const EMPTY_FILTERS: VoucherFilters = {
   customer: [], event: [], typeId: [], kind: '', batchId: [], shopId: [], accounting: '', pricing: '', override: '',
-  offline: '', valueMin: '', valueMax: '', priceMin: '', priceMax: '', createdBy: '', issuedFrom: '', issuedTo: '',
+  offline: '', testMode: '', valueMin: '', valueMax: '', priceMin: '', priceMax: '', createdBy: '', issuedFrom: '', issuedTo: '',
   validOn: '', batchStatus: '', from: '', to: '', machineId: [], employee: [], state: '', group: '', q: '',
 };
 
@@ -69,6 +71,7 @@ const CHOICES: Partial<Record<keyof VoucherFilters, readonly string[]>> = {
   pricing: PRICING_FILTERS,
   override: YES_NO,
   offline: YES_NO,
+  testMode: YES_NO,
   batchStatus: BATCH_STATUSES,
   state: VOUCHER_STATES,
 };

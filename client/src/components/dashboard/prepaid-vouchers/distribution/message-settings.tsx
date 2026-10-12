@@ -11,7 +11,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
-import { PLACEHOLDERS, renderMessage } from '@/lib/voucherDistribution';
+import { PLACEHOLDERS, renderMessage, vouchersText } from '@/lib/voucherDistribution';
 import { updateDistribution, type DistributionOverview } from '@/lib/voucherDistributionApi';
 import type { PrepaidVoucherBatch } from '@/lib/prepaidVouchersApi';
 import { formatDate, isoDate } from '@/lib/format';
@@ -80,7 +80,7 @@ export function MessageSettings({ batch, overview }: { batch: PrepaidVoucherBatc
 
   const event = batch.eventName || batch.name;
   const sample = {
-    name: t('sampleName'), event, count: 2, serials: '0001-0002', group: 3,
+    name: t('sampleName'), event, count: 2, vouchers: vouchersText(2), serials: '0001-0002', group: 3,
     link: `${overview.linkBase}/api/v1/public/vouchers/…`,
     validUntil: batch.validUntil ? formatDate(batch.validUntil) : '',
   };
