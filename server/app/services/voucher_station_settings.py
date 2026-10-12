@@ -7,11 +7,15 @@ deepest wins) like `voucherRedeemFlow` (app/services/voucher_redeem_settings.py)
     voucherAutoClose   "on"  — "סגירה אוטומטית כשהשובר מכסה הכל": vouchers that cover the whole sale
                                close it by themselves and the till goes on to a new order (today's
                                behaviour, the default)
-                       "off" — the green card with "סגור עסקה" stays; the sale closes on that press
+                       "off" — the green card with "סגור עסקה וממש שובר" stays; the sale closes on
+                               that press
     voucherStation     "off" — the usual sale screen (the default)
                        "on"  — "עמדת שובר": a scan-only screen (and typing the code when
                                payVoucherManualEnabled), then only what the voucher can redeem, with
-                               its terms; it always closes as if voucherAutoClose were "on"
+                               its terms; a voucher that covers the whole sale closes it by itself
+                               only while voucherAutoClose is "on", otherwise on a press of
+                               "סגור עסקה וממש שובר" (the owner, 12.10.2026: the station respects
+                               voucherAutoClose)
 
 And one more, added 12.10.2026 (the spec's §5), set and inherited the same way:
 
