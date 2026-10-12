@@ -247,6 +247,10 @@ app.include_router(z_participation_router.router, prefix=_prefix)
 from app.routers import work_config as work_config_router  # noqa: E402
 
 app.include_router(work_config_router.router, prefix=_prefix)
+# "תצורת עבודה של הסניף" (P:/specs/shop-work-config.md): the whole shop's way of working.
+from app.routers import work_profile as work_profile_router  # noqa: E402
+
+app.include_router(work_profile_router.router, prefix=_prefix)
 app.include_router(till_shop_z_local_router.router, prefix=_prefix)
 app.include_router(exceptions_router.router, prefix=_prefix)
 app.include_router(exceptions_router.till_router, prefix=_prefix)

@@ -12,7 +12,9 @@ PUT /machines/{machine_id}/work-config → `{preset?, tablesMode?, lanServerExcl
                                          services that own each value; a refusal is the service's
                                          own body (`detail`, Hebrew `message`) and `step`
 GET /shops/{shop_id}/work-config?role=&platform= → the same for a device still to pair there
-                                         (the add-device dialog's step "תצורת עבודה")
+                                         (the add-device dialog's step "תצורת עבודה"), and the
+                                         preset the shop's work profile suggests for it
+                                         (`suggestedPreset`, app/services/work_profile.py)
 
 Reading is for the shop's managers (the printers page's people); the Z, the LAN roles and the
 tables are the super admin's alone, the printing a manager's. The shop's tills are told.
@@ -117,7 +119,13 @@ def get_shop_work_config(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant_forbidden")
     ensure_same_tenant(shop.tenant_id, active_tenant_id)
     K.check_read(db, current_user, shop)
-    out = WC.view(db, current_user, WC.context_for_new(db, shop, role, platform))
+    ctx = WC.context_for_new(db, shop, role, platform)
+    out = WC.view(db, current_user, ctx)
     out["pairing"] = None
+    # "תצורת עבודה של הסניף": the preset the shop's profile gives this device, the plan to send
+    # for it and why (`suggestedPreset` / `suggestedPlan` / `suggestedReason`; null without one).
+    from app.services import work_profile as WP
+
+    out.update(WP.suggestion_fields(db, shop, ctx))
     db.commit()
     return out

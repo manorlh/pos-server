@@ -686,6 +686,8 @@ GET /shops/{shop_id}/training-mode/report -> till_settings:view
 GET /shops/{shop_id}/user-sessions -> pos_users:view
 POST /shops/{shop_id}/user-sessions/{session_id}/release -> pos_users:edit
 GET /shops/{shop_id}/work-config -> devices:view
+GET /shops/{shop_id}/work-profile -> organization|devices:view
+PUT /shops/{shop_id}/work-profile -> organization:edit
 GET /shops/{shop_id}/work-types -> products|till_settings:view
 PUT /shops/{shop_id}/work-types -> super_admin
 GET /shops/{shop_id}/z-candidates -> z:view
@@ -893,6 +895,7 @@ POST /vouchers -> vouchers:edit
 DELETE /vouchers/{voucher_id} -> vouchers:edit
 GET /vouchers/{voucher_id} -> vouchers|products:view
 PUT /vouchers/{voucher_id} -> vouchers:edit
+GET /work-profile/templates -> reference
 GET /workflow/config -> kds:view
 PUT /workflow/config -> kds:edit
 POST /workflow/config/preview -> kds:view

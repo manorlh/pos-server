@@ -232,5 +232,10 @@ def assign_machine(
     if settle_default_name(machine):
         db.commit()
         db.refresh(machine)
+    # "תצורת עבודה של הסניף": the preset the shop's work profile gives it (never fails the assignment).
+    from app.services import work_profile
+
+    if work_profile.apply_on_pairing(db, machine, user_id=current_user.id) is not None:
+        db.refresh(machine)
 
     return machine

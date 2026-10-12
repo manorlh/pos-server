@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 import uuid
 from datetime import date, datetime
 
@@ -27,6 +27,10 @@ class ShopCreate(ShopBase):
     #: "סוג אינטגרציית אשראי" for all the shop's tills (app/services/payment_integration.py),
     #: written on the shop's settings layer. Absent or "auto" = automatic (nothing stored).
     payment_integration: Optional[str] = Field(None, alias="paymentIntegration")
+    #: "תצורת עבודה של הסניף" (app/services/work_profile_templates.py), checked strictly; applied
+    #: once the shop exists. Or `copyWorkProfileFromShopId`: another shop's profile (no devices).
+    work_profile: Optional[Dict[str, Any]] = Field(None, alias="workProfile")
+    copy_work_profile_from_shop_id: Optional[uuid.UUID] = Field(None, alias="copyWorkProfileFromShopId")
 
     @field_validator("payment_integration")
     @classmethod
@@ -74,3 +78,11 @@ class ShopResponse(BaseModel):
     class Config:
         from_attributes = True
         populate_by_name = True
+
+
+class ShopCreateResponse(ShopResponse):
+    #: The work profile sent with the new shop (`workProfile` / `copyWorkProfileFromShopId`), as
+    #: `GET /shops/{id}/work-profile` answers it, with `applied` — and `refused` (`{status, code,
+    #: message, field, …}`) when the profile was not applied (the shop is created anyway). Null
+    #: when none was sent.
+    work_profile_status: Optional[Dict[str, Any]] = Field(None, alias="workProfileStatus")

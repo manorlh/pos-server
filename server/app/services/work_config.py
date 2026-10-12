@@ -29,7 +29,9 @@ guard. A refusal is answered with the service's own body (`detail`, Hebrew `mess
 At pairing the code may carry a plan (`pairing_codes.work_config`): checked when the code is
 generated (`check_pairing_request`), applied right after the new machine lands in its shop
 (`apply_on_pairing`) by the user who generated the code — never failing the pairing; the
-outcome is kept on the code (`work_config_result`) and shown on the device page.
+outcome is kept on the code (`work_config_result`) and shown on the device page. A code with no
+plan gives the device the preset of its shop's work profile, when the shop has one
+(app/services/work_profile.py).
 """
 from __future__ import annotations
 
@@ -1099,6 +1101,13 @@ def check_pairing_request(
             status.HTTP_400_BAD_REQUEST,
         )
     shop = db.get(Shop, shop_id)
+    if getattr(user, "role", None) != UserRole.SUPER_ADMIN:
+        # The preset the shop's work profile gives this device anyway: nothing to store — the
+        # profile applies itself as the device pairs (app/services/work_profile.py).
+        from app.services import work_profile as WP
+
+        if WP.plan_follows_profile(db, shop, role, platform, plan):
+            return None
     ctx = context_for_new(db, shop, role, platform)
     target = resolve_target(db, ctx, plan)
     changed = changes(ctx, target)
@@ -1127,10 +1136,14 @@ def apply_on_pairing(db: Session, pairing_code, machine: POSMachine) -> Optional
     page. None: nothing to apply; else whether it was applied. Commits.
     """
     plan = getattr(pairing_code, "work_config", None)
-    if not isinstance(plan, dict) or not plan:
-        return None
     if getattr(pairing_code, "target_machine_id", None) is not None:
         return None  # a replacement keeps the configuration of the till it replaces
+    if not isinstance(plan, dict) or not plan:
+        # No plan of its own: the shop's work profile gives it its preset, if the shop has one
+        # (app/services/work_profile.py) — the same way, never failing the pairing.
+        from app.services import work_profile as WP
+
+        return WP.apply_on_pairing(db, machine, user_id=pairing_code.distributor_id, pairing_code=pairing_code)
     code_id = pairing_code.id
     user = db.get(User, pairing_code.distributor_id)
     now = datetime.now(timezone.utc)
