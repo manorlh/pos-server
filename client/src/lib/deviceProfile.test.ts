@@ -202,7 +202,11 @@ describe('iMin / LANDI / Feitian docks (app/models/builtin_printers.py)', () => 
     assert.equal(capabilitiesOf('IMIN_FALCON2').paperWidthMm, 80);
     assert.equal(capabilitiesOf('IMIN_FALCON2').cashDrawerPort, true);
     assert.equal(capabilitiesOf('IMIN_FALCON2_58').paperWidthMm, 58);
-    assert.equal(capabilitiesOf('IMIN_FALCON1').cashDrawerPort, false);
+    // Android 11: the drawer is the board's GPIO, which the till switches itself.
+    assert.equal(capabilitiesOf('IMIN_FALCON1').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('IMIN_D4').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('IMIN_D1').cashDrawerPort, true);
+    assert.equal(capabilitiesOf('IMIN_M2').cashDrawerPort, false);
     assert.equal(capabilitiesOf('LANDI_M20').driverPending, true);
     assert.equal(capabilitiesOf('LANDI_M20').builtinPrinter, false);
     assert.equal(deviceModelIdOf(' imin_falcon2 '), 'IMIN_FALCON2');

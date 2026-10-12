@@ -289,16 +289,17 @@ export const DEVICE_MODEL_CAPABILITIES: Record<DeviceModelId, DeviceCapabilities
   // Agamento / TC on the device (like the F20); a 58 mm head; the Urovo has a scan head.
   PAX_A77: caps(true, true),
   UROVO_I9100: { ...caps(true, true), builtinScanner: true },
-  // iMin: Android 13+ through its print service (the drawer too); Android 11 prints, the drawer is the SDK's.
+  // iMin: Android 13+ through its print service (the drawer too); Android 11 prints, and the till
+  // opens the drawer on the board's GPIO itself (as iMin's own lib does — no vendor SDK).
   IMIN_FALCON2: builtin(80, true),
   IMIN_FALCON2_58: builtin(58, true),
   IMIN_FALCON2MAX: builtin(80, true),
   IMIN_D4_PRO: builtin(80, true),
   IMIN_SWAN2: builtin(80, true),
   IMIN_SWIFT2: builtin(58, false),
-  IMIN_FALCON1: builtin(80, false),
-  IMIN_D4: builtin(80, false),
-  IMIN_D1: builtin(58, false),
+  IMIN_FALCON1: builtin(80, true),
+  IMIN_D4: builtin(80, true),
+  IMIN_D1: builtin(58, true),
   IMIN_M2: builtin(58, false),
   IMIN_SWIFT1: builtin(58, false),
   IMIN: builtin(58, false),
