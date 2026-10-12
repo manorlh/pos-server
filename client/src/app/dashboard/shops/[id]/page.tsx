@@ -45,6 +45,7 @@ import { LocalShopZRequestCard } from '@/components/dashboard/local-shop-z-panel
 import { ShopZProducerCard } from '@/components/dashboard/shop-z-producer-card';
 import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { WorkTypesCard } from '@/components/dashboard/work-types-card';
+import { ShopWorkProfileCard } from '@/components/dashboard/shop-work-profile';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
 import { TrainingModeCard } from '@/components/dashboard/training-mode-card';
 import { DemoMenuCard } from '@/components/dashboard/demo-menu-card';
@@ -264,6 +265,9 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
       </div>
 
       <ShopAreasCard shopId={shop.id} machines={machines} />
+
+      {/* "תצורת עבודה": the whole shop's profile, each field applied / waiting for a till / blocked. */}
+      <ShopWorkProfileCard shopId={shop.id} shopName={shop.name} />
 
       <ZScopeCard shopId={shop.id} />
 
