@@ -190,3 +190,7 @@ class TillParametersSyncResponse(BaseModel):
 
     parameters: Dict[str, Any] = Field(default_factory=dict)
     updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+    #: "ניהול קטלוג מהקופה" (app/services/catalog_admin.py): what the till's catalog screen shows,
+    #: worked out by the cloud — `{"scope": "menu"|"shop"|"till", "menuId"?: str, "label": str}`.
+    #: Beside `parameters`, not in it: that map stays scalars for the tills that parse it so.
+    catalog_admin_view: Optional[Dict[str, Any]] = Field(None, alias="catalogAdminView")

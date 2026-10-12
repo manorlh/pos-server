@@ -310,15 +310,16 @@ def _closure_values(fn):
 
 
 @pytest.mark.parametrize(
-    "method, path",
+    "method, path, scope",
     [
-        ("POST", "/sync/{machine_id}/products"),
-        ("PUT", "/sync/{machine_id}/products/{product_id}"),
-        ("POST", "/sync/{machine_id}/products/{product_id}/image"),
-        ("DELETE", "/sync/{machine_id}/products/{product_id}/image"),
+        ("POST", "/sync/{machine_id}/products", Scope.CATALOG_CREATE),
+        # "ניהול קטלוג" (§6.2): by what the body changes — price, availability, edit.
+        ("PUT", "/sync/{machine_id}/products/{product_id}", None),
+        ("POST", "/sync/{machine_id}/products/{product_id}/image", Scope.CATALOG_EDIT),
+        ("DELETE", "/sync/{machine_id}/products/{product_id}/image", Scope.CATALOG_EDIT),
     ],
 )
-def test_every_product_write_from_a_till_needs_its_machine_token_and_a_managers_authority(method, path) -> None:
+def test_every_product_write_from_a_till_needs_its_machine_token_and_a_managers_authority(method, path, scope) -> None:
     """
     The till calls these with its own machine credentials (the machine JWT for this
     `machine_id`), and the write needs `catalog:write` — a signed-in shop manager, or a
@@ -328,7 +329,9 @@ def test_every_product_write_from_a_till_needs_its_machine_token_and_a_managers_
     assert get_pos_machine_for_sync_path in deps
     authority = [d for d in deps if getattr(d, "__qualname__", "").startswith("require_catalog_authority")]
     assert len(authority) == 1
-    assert Scope.CATALOG_WRITE in _closure_values(authority[0])
+    # Its own "ניהול קטלוג" scope (specs/till-catalog-management.md §6.2); a till's legacy
+    # `catalog:write` grant answers for each (tests/test_till_catalog_admin.py).
+    assert scope in _closure_values(authority[0])
 
 
 def test_a_cashier_at_the_till_is_sent_to_find_a_manager(monkeypatch) -> None:

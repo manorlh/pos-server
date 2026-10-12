@@ -36,6 +36,13 @@ class Scope(str, enum.Enum):
     """A named capability a till can be elevated to hold, as `resource:action`."""
 
     CATALOG_WRITE = "catalog:write"
+    #: "ניהול קטלוג" from the till, one scope per kind of change (specs/till-catalog-management.md
+    #: §6.2). A grant of `catalog:write` — what an older till asks for — still answers for all four
+    #: (`CATALOG_WRITE_COVERS`, app/middleware/auth.py `require_catalog_authority`).
+    CATALOG_AVAILABILITY = "catalog:availability"
+    CATALOG_PRICE = "catalog:price"
+    CATALOG_EDIT = "catalog:edit"
+    CATALOG_CREATE = "catalog:create"
     #: Give money back. The reason `PER_ACTION_SCOPES` exists.
     REFUND = "refund"
     #: Take money off a sale — a basket discount or a line discount.
@@ -58,6 +65,15 @@ class Scope(str, enum.Enum):
     #: Release an employee signed in at another till, so they can sign in here
     #: ("עובד מחובר בקופה אחת בלבד", docs/SPEC_EXCLUSIVE_LOGIN.md).
     USER_SESSION_RELEASE = "user-session:release"
+
+
+#: The catalog scopes a legacy `catalog:write` grant also answers for.
+CATALOG_WRITE_COVERS: FrozenSet[Scope] = frozenset({
+    Scope.CATALOG_AVAILABILITY,
+    Scope.CATALOG_PRICE,
+    Scope.CATALOG_EDIT,
+    Scope.CATALOG_CREATE,
+})
 
 
 #: Scopes that must be re-authorised for every single action rather than held for
@@ -88,6 +104,7 @@ PER_ACTION_SCOPES: FrozenSet[Scope] = frozenset({
 #: someone thinks about it.
 _MANAGER_SCOPES = frozenset({
     Scope.CATALOG_WRITE,
+    *CATALOG_WRITE_COVERS,
     Scope.REFUND,
     Scope.DISCOUNT,
     Scope.DAY_CLOSE,

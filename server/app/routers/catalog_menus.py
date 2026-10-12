@@ -12,6 +12,7 @@ PUT    /catalog-menus-order              → `{"ids": [...]}`, the list's drag o
 GET    /catalog-menus-targets            → companies, shops, points of sale and tills, with
                                            their menus, priorities and fallback
 PUT    /catalog-menus-targets            → one target's menus and fallback, replaced
+DELETE /catalog-menus/assignments?level=&id= → clear one level's menus and fallback (it inherits)
 GET    /catalog-menus-now                → what is active now (or `at`) on every shop, point
                                            of sale and till in scope, and when it changes
 GET    /catalog-menus-simulate           → "what is active for X at T": the menu, why, and
@@ -41,10 +42,36 @@ from app.services.reports import resolve_report_window
 router = APIRouter(tags=["catalog-menus"])
 
 
-def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks) -> None:
+def _changed(db: Session, tenant_id, background_tasks: BackgroundTasks, *, parameters: bool = False) -> None:
     targets = CM.notify_targets(db, tenant_id)
     db.commit()
     background_tasks.add_task(CM.publish_notify, targets)
+    if parameters:
+        # An assignment moved: the tills' `catalogAdminView` (in their parameters pull) may follow.
+        from app.services.till_parameters import publish_parameters_notify
+
+        background_tasks.add_task(publish_parameters_notify, targets)
+
+
+@router.delete("/catalog-menus/assignments")
+def clear_catalog_menu_assignments(
+    background_tasks: BackgroundTasks,
+    level: str = Query(..., description="company | shop | area | group | machine"),
+    target_id: uuid.UUID = Query(..., alias="id"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "נקה הגדרות תפריט ברמה זו": the menus and fallback set at exactly this level are removed, and
+    it inherits from the level above. Logged. Registered before `/catalog-menus/{menu_id}`.
+    """
+    out = CM.clear_target(db, current_user, active_tenant_id, level, target_id)
+    if out["removed"] or out["fallbackRemoved"]:
+        _changed(db, active_tenant_id, background_tasks, parameters=True)
+    else:
+        db.commit()
+    return out
 
 
 @router.get("/catalog-menus")
@@ -139,7 +166,7 @@ def set_catalog_menu_target(
     db: Session = Depends(get_db),
 ):
     CM.set_target(db, current_user, active_tenant_id, body)
-    _changed(db, active_tenant_id, background_tasks)
+    _changed(db, active_tenant_id, background_tasks, parameters=True)
     return {"ok": True}
 
 

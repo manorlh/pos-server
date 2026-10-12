@@ -964,6 +964,72 @@ def set_target(db: Session, user: User, tenant_id, body: TargetAssignmentsIn) ->
     bump(db, tenant_id)
 
 
+#: `parameter_key` of a menu clear's row in `till_parameter_changes` — the log the dashboard's
+#: level settings share (no table of its own for one action).
+CLEAR_AUDIT_KEY = "catalogMenus"
+
+
+def clear_target(db: Session, user: User, tenant_id, level: str, target_id) -> Dict[str, Any]:
+    """
+    "נקה הגדרות תפריט ברמה זו" (specs/till-catalog-management.md §6.3): remove the menus assigned
+    at exactly this company / shop / point of sale / device group / till, and its fallback, so it
+    inherits from the level above. Who may: as `set_target`. Logged — what was there, who, when —
+    in `till_parameter_changes` (`parameter_key` "catalogMenus", action "clear"). The caller
+    commits. `{"removed": n, "fallbackRemoved": bool}`.
+    """
+    from types import SimpleNamespace
+
+    from app.services import till_parameter_audit as AUDIT
+    from app.services.menu import _require_writer
+
+    if level not in ASSIGNMENT_LEVELS:
+        raise _bad("catalog_menu_bad_level", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    _require_writer(user)
+    resolve_menu_target(db, user, tenant_id, level, target_id)
+    ident = _as_uuid(target_id)
+    rows = (
+        db.query(CatalogMenuAssignment)
+        .filter(
+            CatalogMenuAssignment.tenant_id == tenant_id,
+            CatalogMenuAssignment.level == level,
+            CatalogMenuAssignment.target_id == ident,
+        )
+        .all()
+    )
+    fallback = (
+        db.query(CatalogMenuFallback)
+        .filter(
+            CatalogMenuFallback.tenant_id == tenant_id,
+            CatalogMenuFallback.level == level,
+            CatalogMenuFallback.target_id == ident,
+        )
+        .first()
+    )
+    if not rows and fallback is None:
+        return {"removed": 0, "fallbackRemoved": False}
+    before = {
+        "menus": sorted(
+            ({"menuId": str(r.menu_id), "priority": r.priority or 0} for r in rows), key=lambda m: m["menuId"]
+        ),
+        "fallback": fallback.mode if fallback is not None else None,
+    }
+    AUDIT.record_change(
+        db, parameter=SimpleNamespace(id=None, key=CLEAR_AUDIT_KEY), scope_type=level, scope_id=ident,
+        action=AUDIT.CLEAR, old_value=before, new_value=None, user=user,
+    )
+    for r in rows:
+        db.delete(r)
+    if fallback is not None:
+        db.delete(fallback)
+    db.flush()
+    bump(db, tenant_id)
+    logger.info(
+        "catalog menus cleared at %s %s: %s by %s", level, ident, before,
+        getattr(user, "email", None) or getattr(user, "id", None),
+    )
+    return {"removed": len(rows), "fallbackRemoved": fallback is not None}
+
+
 def _kiosk_ids(db: Session, machine_ids: Sequence) -> Set[str]:
     from app.models.kiosk import KioskDevice
 

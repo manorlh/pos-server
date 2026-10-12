@@ -1679,6 +1679,71 @@ from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ON
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
 
+# "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
+# what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
+# מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
+CATALOG_ADMIN_ENABLED_KEY = "catalogAdminEnabled"
+CATALOG_ADMIN_SCOPE_KEY = "catalogAdminScope"
+CATALOG_CREATE_FROM_TILL_KEY = "catalogCreateFromTill"
+CATALOG_WITHOUT_SHIFT_KEY = "catalogWithoutShift"
+CATALOG_ADMIN_SCOPES = ("auto", "area", "shop", "till")
+CATALOG_WITHOUT_SHIFT_OPTIONS = ("manager", "never")
+CATALOG_ADMIN_KEYS = (
+    CATALOG_ADMIN_ENABLED_KEY,
+    CATALOG_ADMIN_SCOPE_KEY,
+    CATALOG_CREATE_FROM_TILL_KEY,
+    CATALOG_WITHOUT_SHIFT_KEY,
+)
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=CATALOG_ADMIN_ENABLED_KEY,
+        label="ניהול קטלוג מהקופה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל, \"ניהול קטלוג\" מוצג בראש תפריט ☰ בקופה (לפי הרשאות התפקיד: צפייה, פעיל / לא פעיל ואזל, "
+            "מחיר, עריכה והוספה). כבוי — הכניסה לא מוצגת בקופה. ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+    BuiltinParameter(
+        key=CATALOG_ADMIN_SCOPE_KEY,
+        label="תחום ניהול קטלוג בקופה",
+        value_type="enum",
+        enum_options=CATALOG_ADMIN_SCOPES,
+        default_value="auto",
+        description=(
+            "מה הקופה רואה ועורכת בניהול הקטלוג. "
+            "«auto» (ברירת מחדל) — תפריט קטלוג שמשויך לקופה או לנקודת המכירה שלה; אחרת קטלוג הסניף. "
+            "«area» — התפריט של נקודת המכירה; נקודה בלי תפריט — קטלוג הסניף. "
+            "«shop» — תמיד כל קטלוג הסניף, גם כשיש תפריט. "
+            "«till» — רק מה שהקופה מוכרת: התפריט שלה, או רשימת המוצרים שלה. "
+            "אין שיוך מוצרים לנקודת מכירה: \"קטלוג הנקודה\" הוא תפריט הקטלוג שמשויך לה."
+        ),
+    ),
+    BuiltinParameter(
+        key=CATALOG_CREATE_FROM_TILL_KEY,
+        label="הוספת מוצרים מהקופה",
+        value_type="boolean",
+        default_value=True,
+        description=(
+            "כשמופעל, מי שמותר לו (הרשאת \"מוצר ומחלקה חדשים\") מוסיף מוצר או מחלקה מניהול הקטלוג בקופה. "
+            "כבוי — כפתור ההוספה לא מוצג."
+        ),
+    ),
+    BuiltinParameter(
+        key=CATALOG_WITHOUT_SHIFT_KEY,
+        label="ניהול קטלוג בלי משמרת פתוחה",
+        value_type="enum",
+        enum_options=CATALOG_WITHOUT_SHIFT_OPTIONS,
+        default_value="manager",
+        description=(
+            "«manager» (ברירת מחדל) — בלי משמרת פתוחה, מנהל נכנס לניהול הקטלוג בקוד שלו. "
+            "«never» — ניהול הקטלוג רק כשיש משמרת פתוחה."
+        ),
+    ),
+)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1912,3 +1977,32 @@ def publish_parameters_notify(targets: Iterable[NotifyTarget]) -> None:
     """One Ably `settings` notify per till; it then pulls `/sync/{id}/parameters`."""
     for tenant_id, machine_id in targets:
         publish_settings_notify(tenant_id, machine_id, reason=NOTIFY_REASON)
+
+
+# ── Reset to default ("שחזר ברירת מחדל") ───────────────────────────────────────
+
+
+def reset_values(
+    db: Session, scope_type: str, scope_id: Any, keys: Sequence[str], *, user: Any, now: Optional[datetime] = None,
+) -> List[str]:
+    """
+    `POST /till-parameters/reset` (specs/till-catalog-management.md §6.3): clear the values `keys`
+    set at one level, each with its `clear` row in `till_parameter_changes`, so the level inherits
+    again. Unknown keys raise `TillParameterValueError`; a key with no value there is skipped.
+    Returns the keys cleared. The caller commits.
+    """
+    from datetime import timezone as _tz
+
+    wanted = list(dict.fromkeys(str(k) for k in keys))
+    parameters = (
+        {p.key: p for p in db.query(TillParameter).filter(TillParameter.key.in_(wanted)).all()} if wanted else {}
+    )
+    unknown = [k for k in wanted if k not in parameters]
+    if unknown:
+        raise TillParameterValueError(f"unknown parameter {unknown[0]}")
+    now = now or datetime.now(_tz.utc)
+    cleared: List[str] = []
+    for key in wanted:
+        if write_value(db, parameters[key], scope_type, scope_id, None, user=user, now=now):
+            cleared.append(key)
+    return cleared

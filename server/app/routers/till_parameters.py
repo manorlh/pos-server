@@ -8,6 +8,9 @@ DELETE /till-parameters/{id}                     → remove it and all its value
 GET    /till-parameters/{id}/values              → its values per level, with names
 PUT    /till-parameters/{id}/values              → set the value at one level (upsert)
 DELETE /till-parameters/{id}/values/{value_id}   → remove one level's value
+GET    /till-parameters/catalog-admin?level=&id= → "ניהול קטלוג מהקופה": the four at one level
+PUT    /till-parameters/catalog-admin            → set / clear them at one level
+POST   /till-parameters/reset                    → `{level, id, keys}`: back to inherit at that level
 
 Every write tells the tills it may change what they get (Ably `settings` notify,
 reason `till_parameters_updated`) after the commit: all active tills for a definition,
@@ -17,9 +20,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, Dict, List, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -103,6 +107,95 @@ def _value_count(db: Session, parameter_id) -> int:
         .scalar()
         or 0
     )
+
+
+# ── "ניהול קטלוג מהקופה" and reset (specs/till-catalog-management.md §6.1, §6.3) ──
+# Registered before `/till-parameters/{parameter_id}`, whose path would otherwise take them.
+
+
+class LevelIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    level: Literal["company", "shop", "area", "machine"]
+    id: uuid.UUID
+
+
+class CatalogAdminValuesIn(LevelIn):
+    #: key → value; null clears the level's own value (it inherits again).
+    values: Dict[str, Any]
+
+
+class ResetIn(LevelIn):
+    keys: List[str] = Field(..., min_length=1, max_length=200)
+
+
+def _level_or_404(db: Session, level: str, ident: uuid.UUID) -> None:
+    if TP.scope_entity(db, level, ident) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"{level}_not_found")
+
+
+@router.get("/till-parameters/catalog-admin")
+def get_catalog_admin_parameters(
+    level: Literal["company", "shop", "area", "machine"] = Query(...),
+    ident: uuid.UUID = Query(..., alias="id"),
+    _admin: User = Depends(get_current_super_admin),
+    db: Session = Depends(get_db),
+):
+    """The four "ניהול קטלוג מהקופה" parameters at one level: own values, inherited, definitions."""
+    from app.services import catalog_admin as CA
+
+    _level_or_404(db, level, ident)
+    view = CA.level_view(db, level, ident)
+    db.commit()  # `ensure_builtin_parameters` may have created them
+    return view
+
+
+@router.put("/till-parameters/catalog-admin")
+def put_catalog_admin_parameters(
+    body: CatalogAdminValuesIn,
+    background_tasks: BackgroundTasks,
+    _admin: User = Depends(get_current_super_admin),
+    db: Session = Depends(get_db),
+):
+    """Set or clear (null) the four at one level; each change logged in `till_parameter_changes`."""
+    from app.services import catalog_admin as CA
+
+    _level_or_404(db, body.level, body.id)
+    try:
+        changed = CA.save_values(db, body.level, body.id, body.values, user=_admin, now=_now())
+    except TP.TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    if changed:
+        background_tasks.add_task(TP.publish_parameters_notify, TP.notify_targets_for_scope(db, body.level, body.id))
+    return CA.level_view(db, body.level, body.id)
+
+
+@router.post("/till-parameters/reset")
+def reset_till_parameters(
+    body: ResetIn,
+    background_tasks: BackgroundTasks,
+    _admin: User = Depends(get_current_super_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    "שחזר ברירת מחדל": clear `keys` at one level so it inherits again (the parameter's default
+    when nothing above sets it). Super admin only, like every value; each cleared value is a
+    `clear` row in `till_parameter_changes`. `{"cleared": [keys]}`.
+    """
+    _level_or_404(db, body.level, body.id)
+    for key in body.keys:
+        _refuse_restricted(key, _admin)
+    try:
+        cleared = TP.reset_values(db, body.level, body.id, body.keys, user=_admin, now=_now())
+    except TP.TillParameterValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    db.commit()
+    if cleared:
+        background_tasks.add_task(TP.publish_parameters_notify, TP.notify_targets_for_scope(db, body.level, body.id))
+    return {"cleared": cleared}
 
 
 # ── Definitions ──────────────────────────────────────────────────────────────
