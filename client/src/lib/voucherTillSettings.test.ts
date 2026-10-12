@@ -44,6 +44,22 @@ import {
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
   voucherStationPaidItemsView,
+  VOUCHER_FAST_CHOICES,
+  VOUCHER_FAST_CHOICE_KEYS,
+  VOUCHER_STATION_TITLE_DEFAULT,
+  VOUCHER_STATION_TITLE_KEY,
+  VOUCHER_STATION_TITLE_MAX,
+  isVoucherFastChoiceKey,
+  isVoucherFastChoiceValue,
+  isVoucherStationTitle,
+  normalizeVoucherStationTitle,
+  resolveVoucherFastChoice,
+  resolveVoucherStationTitle,
+  voucherFastChoiceDefault,
+  voucherFastChoiceValues,
+  voucherStationTitleLength,
+  voucherStationTitlePatch,
+  voucherStationTitleTooLong,
 } from './voucherTillSettings';
 import type { PosSettingsPatch, PosSettingsV1 } from './types';
 
@@ -276,4 +292,95 @@ test('voucher sounds: their own value, then the inherited one, then on; junk is 
     assert.equal(resolveVoucherSound(junk, junk), 'on');
     assert.equal(resolveVoucherSound(junk, 'off'), 'off');
   }
+});
+
+// ── The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0) ──
+
+/** server/app/services/voucher_station_settings.py VOUCHER_FAST_CHOICES — the contract with the till. */
+const FAST_CONTRACT: Record<string, [string[], string]> = {
+  voucherFastMode: [['off', 'station', 'all'], 'station'],
+  voucherFastAutoClose: [['on', 'off'], 'on'],
+  voucherStationCamera: [['off', 'always', 'tap'], 'tap'],
+  voucherStationCameraFacing: [['back', 'front'], 'back'],
+  voucherVibrate: [['off', 'approve', 'reject', 'both'], 'both'],
+  voucherSoundBoost: [['on', 'off'], 'on'],
+  voucherStationCatalogSwitch: [['off', 'manager', 'free'], 'manager'],
+  voucherStationHeader: [['logo', 'text', 'both', 'none'], 'logo'],
+};
+
+test("fast mode: the server's keys, values (in the dashboard's order) and defaults", () => {
+  assert.deepEqual([...VOUCHER_FAST_CHOICE_KEYS], Object.keys(FAST_CONTRACT));
+  assert.equal(VOUCHER_FAST_CHOICES.length, 8);
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    assert.deepEqual([...voucherFastChoiceValues(key)], values, key);
+    assert.equal(voucherFastChoiceDefault(key), fallback, key);
+    assert.equal(isVoucherFastChoiceKey(key), true);
+  }
+  assert.equal(isVoucherFastChoiceKey(VOUCHER_STATION_TITLE_KEY), false);
+  assert.equal(isVoucherFastChoiceKey('voucherSoundApprove'), false);
+  assert.equal(VOUCHER_STATION_TITLE_KEY, 'voucherStationTitle');
+  assert.equal(VOUCHER_STATION_TITLE_MAX, 40);
+  assert.equal(VOUCHER_STATION_TITLE_DEFAULT, 'עמדת מימוש שוברים');
+});
+
+test('fast mode: a choice is its own value, then the inherited one, then the default', () => {
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    for (const v of values) {
+      assert.equal(isVoucherFastChoiceValue(key, v), true);
+      assert.equal(resolveVoucherFastChoice(key, v, values[0]), v);
+      assert.equal(resolveVoucherFastChoice(key, undefined, v), v);
+      assert.equal(resolveVoucherFastChoice(key, null, v), v);
+    }
+    assert.equal(resolveVoucherFastChoice(key, undefined, undefined), fallback);
+  }
+  assert.equal(resolveVoucherFastChoice('voucherVibrate', 'off', 'approve'), 'off');
+  assert.equal(resolveVoucherFastChoice('voucherFastMode', null, 'all'), 'all');
+});
+
+test("fast mode: junk, or another key's value, counts as unset", () => {
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    for (const junk of ['ON', ' off', 'maybe', '', 0, 1, true, false, {}, [values[0]]]) {
+      assert.equal(isVoucherFastChoiceValue(key, junk), false, `${key} ${String(junk)}`);
+      assert.equal(resolveVoucherFastChoice(key, junk, junk), fallback);
+      assert.equal(resolveVoucherFastChoice(key, junk, values[values.length - 1]), values[values.length - 1]);
+    }
+  }
+  assert.equal(isVoucherFastChoiceValue('voucherStationCamera', 'front'), false);
+  assert.equal(isVoucherFastChoiceValue('voucherStationHeader', 'off'), false);
+  assert.equal(isVoucherFastChoiceValue('voucherFastMode', 'on'), false);
+});
+
+test('station title: one trimmed line, up to 40 characters, as the server stores it', () => {
+  assert.equal(normalizeVoucherStationTitle('  עמדת   מימוש \n שוברים\t'), 'עמדת מימוש שוברים');
+  assert.equal(normalizeVoucherStationTitle('א\u0000ב'), 'א ב');
+  assert.equal(normalizeVoucherStationTitle('   '), '');
+  assert.equal(voucherStationTitleLength('  ' + 'א'.repeat(40) + '  '), 40);
+  assert.equal(voucherStationTitleLength('😀'.repeat(3)), 3); // characters, not UTF-16 units
+  assert.equal(voucherStationTitleTooLong('א'.repeat(40)), false);
+  assert.equal(voucherStationTitleTooLong(' ' + 'א'.repeat(40) + ' '), false);
+  assert.equal(voucherStationTitleTooLong('א'.repeat(41)), true);
+  assert.equal(voucherStationTitleTooLong(undefined), false);
+});
+
+test('station title: its own, then the inherited one, then "עמדת מימוש שוברים"; blank or too long is unset', () => {
+  assert.equal(resolveVoucherStationTitle('דוכן 1', 'רשת'), 'דוכן 1');
+  assert.equal(resolveVoucherStationTitle(undefined, 'רשת'), 'רשת');
+  assert.equal(resolveVoucherStationTitle(null, ' רשת  ראשית '), 'רשת ראשית');
+  assert.equal(resolveVoucherStationTitle(undefined, undefined), 'עמדת מימוש שוברים');
+  for (const junk of ['', '   ', 'א'.repeat(41), 5, true, {}, ['x'], null]) {
+    assert.equal(isVoucherStationTitle(junk), false);
+    assert.equal(resolveVoucherStationTitle(junk, junk), 'עמדת מימוש שוברים');
+    assert.equal(resolveVoucherStationTitle(junk, 'רשת'), 'רשת');
+  }
+});
+
+test('station title: what a typed title sends — normalized, blank is null (inherit)', () => {
+  assert.equal(voucherStationTitlePatch('  עמדת  שוברים '), 'עמדת שוברים');
+  assert.equal(voucherStationTitlePatch(''), null);
+  assert.equal(voucherStationTitlePatch('  \n'), null);
+  assert.equal(voucherStationTitlePatch(null), null);
+  assert.equal(voucherStationTitlePatch(undefined), null);
 });

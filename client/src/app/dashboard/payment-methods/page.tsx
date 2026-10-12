@@ -33,6 +33,11 @@
  * "מימוש אוטומטי בסריקת שובר" (`voucherAutoApply`, on by default), "מסך הצלחה במימוש שובר"
  * (`voucherSuccessScreen`: always / only on an automatic close / off, "always" by default) and "משך מסך
  * ההצלחה (שניות)" (`voucherSuccessSeconds`, 1–10, 3 by default), and "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default), the same way.
+ * Then "מצב מהיר ועמדת שובר" (13.10.2026, P:/specs/voucher-fast-mode.md §0): the fast mode's eight
+ * choices (VOUCHER_FAST_CHOICES — `voucherFastMode`, `voucherFastAutoClose`, `voucherStationCamera`,
+ * `voucherStationCameraFacing`, `voucherVibrate`, `voucherSoundBoost`, `voucherStationCatalogSwitch`,
+ * `voucherStationHeader`) and "כיתוב בראש עמדת שובר" (`voucherStationTitle`, up to 40 characters; blank =
+ * inherit), the same way.
  *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
@@ -105,7 +110,14 @@ import {
   VOUCHER_SUCCESS_SCREEN_VALUES,
   VOUCHER_SUCCESS_SECONDS_KEY,
   VOUCHER_SUCCESS_SECONDS_VALUES,
+  VOUCHER_FAST_AUTO_CLOSE_KEY,
+  VOUCHER_FAST_CHOICE_KEYS,
+  VOUCHER_SOUND_BOOST_KEY,
+  VOUCHER_STATION_TITLE_KEY,
+  VOUCHER_STATION_TITLE_MAX,
   isVoucherBalanceCheckMode,
+  isVoucherFastChoiceKey,
+  isVoucherFastChoiceValue,
   isVoucherOnOff,
   isVoucherSuccessScreen,
   isVoucherSuccessSeconds,
@@ -117,9 +129,16 @@ import {
   resolveVoucherStation,
   resolveVoucherSuccessScreen,
   resolveVoucherSuccessSeconds,
+  resolveVoucherFastChoice,
+  resolveVoucherStationTitle,
   voucherBalanceCheckEnabled,
+  voucherFastChoiceValues,
   voucherStationNeedsAdvice,
   voucherStationPaidItemsView,
+  voucherStationTitleLength,
+  voucherStationTitlePatch,
+  voucherStationTitleTooLong,
+  type VoucherFastChoiceKey,
 } from '@/lib/voucherTillSettings';
 import {
   VOUCHER_REDEEM_FLOWS,
@@ -161,7 +180,10 @@ type PaymentKey =
   | typeof VOUCHER_SUCCESS_SCREEN_KEY
   | typeof VOUCHER_SUCCESS_SECONDS_KEY
   | typeof VOUCHER_SOUND_APPROVE_KEY
-  | typeof VOUCHER_SOUND_REJECT_KEY;
+  | typeof VOUCHER_SOUND_REJECT_KEY
+  | VoucherFastChoiceKey
+  | typeof VOUCHER_STATION_TITLE_KEY;
+/** `string`: the fast mode's choices, and the station's title as typed. */
 type DraftValue =
   | boolean
   | number
@@ -169,6 +191,7 @@ type DraftValue =
   | VoucherBalanceCheckMode
   | VoucherOnOff
   | VoucherSuccessScreen
+  | string
   | null;
 type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
@@ -198,6 +221,8 @@ const PAYMENT_KEYS: PaymentKey[] = [
   VOUCHER_SUCCESS_SECONDS_KEY,
   VOUCHER_SOUND_APPROVE_KEY,
   VOUCHER_SOUND_REJECT_KEY,
+  ...VOUCHER_FAST_CHOICE_KEYS,
+  VOUCHER_STATION_TITLE_KEY,
 ];
 
 /** Whether [v] is a value this page keeps for [key] (anything else reads as "inherits"). */
@@ -206,6 +231,8 @@ function ownValue(key: PaymentKey, v: unknown): v is Exclude<DraftValue, null> {
   if (key === VOUCHER_BALANCE_CHECK_KEY) return isVoucherBalanceCheckMode(v);
   if (key === VOUCHER_SUCCESS_SCREEN_KEY) return isVoucherSuccessScreen(v);
   if (key === VOUCHER_SUCCESS_SECONDS_KEY) return isVoucherSuccessSeconds(v);
+  if (isVoucherFastChoiceKey(key)) return isVoucherFastChoiceValue(key, v);
+  if (key === VOUCHER_STATION_TITLE_KEY) return typeof v === 'string';
   if (
     key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY
     || key === VOUCHER_SHOW_ENTITLEMENT_KEY || key === VOUCHER_AUTO_APPLY_KEY
@@ -346,7 +373,8 @@ function MethodsEditor({
     const out: PosSettingsPatch = {};
     for (const key of PAYMENT_KEYS) {
       const before = stored[key] ?? null;
-      const after = draft[key] ?? null;
+      // The title goes as the server stores it (trimmed, blank = inherit): a stray space is no change.
+      const after = key === VOUCHER_STATION_TITLE_KEY ? voucherStationTitlePatch(draft[key]) : (draft[key] ?? null);
       if (before !== after) (out as Record<string, unknown>)[key] = after;
     }
     if (!samePayOrder(storedOrder, orderDraft)) out.payOrder = orderDraft;
@@ -363,6 +391,7 @@ function MethodsEditor({
     (!Number.isInteger(installments) ||
       installments < INSTALLMENTS_MIN ||
       installments > INSTALLMENTS_MAX);
+  const titleInvalid = voucherStationTitleTooLong(draft[VOUCHER_STATION_TITLE_KEY]);
 
   const save = useMutation({
     mutationFn: () => saveLayer(level, entityId, changes),
@@ -689,6 +718,13 @@ function MethodsEditor({
           onSoundReject={(v) => setKey(VOUCHER_SOUND_REJECT_KEY, v)}
           onApplyAdvice={() => setKey(VOUCHER_REDEEM_FLOW_KEY, 'voucher_first')}
         />
+        <VoucherFastRows
+          draft={draft}
+          inherited={inherited}
+          sourceOf={(key) => levelName(layer.effectiveSources?.[key])}
+          disabled={!canWrite}
+          onChange={setKey}
+        />
       </Card>
 
       <PayOrderCard
@@ -714,7 +750,7 @@ function MethodsEditor({
       <div className="flex gap-2">
         <Button
           onClick={() => save.mutate()}
-          disabled={!canWrite || !dirty || noneAllowed || installmentsInvalid || save.isPending}
+          disabled={!canWrite || !dirty || noneAllowed || installmentsInvalid || titleInvalid || save.isPending}
         >
           {save.isPending ? tc('saving') : tc('save')}
         </Button>
@@ -1117,6 +1153,87 @@ function VoucherTillRows({
           {note(own, onOff(resolveVoucherSound(undefined, inheritedValue)), source)}
         </SettingRow>
       ))}
+    </div>
+  );
+}
+
+/**
+ * "מצב מהיר ועמדת שובר" (P:/specs/voucher-fast-mode.md §0): the fast mode's eight choices (each its values
+ * and inherit) and "כיתוב בראש עמדת שובר" (a text up to 40 characters; blank = inherit), each with what is
+ * in force and where it comes from.
+ */
+function VoucherFastRows({
+  draft,
+  inherited,
+  sourceOf,
+  disabled,
+  onChange,
+}: {
+  draft: Draft;
+  inherited: PosSettingsV1 | undefined;
+  /** The level a key's inherited value comes from, named. */
+  sourceOf: (key: PaymentKey) => string;
+  disabled: boolean;
+  onChange: (key: PaymentKey, value: DraftValue) => void;
+}) {
+  const t = useTranslations('paymentMethods');
+  const label = (key: VoucherFastChoiceKey, v: string) =>
+    key === VOUCHER_FAST_AUTO_CLOSE_KEY || key === VOUCHER_SOUND_BOOST_KEY ? t(`voucherOnOff.${v}`) : t(`${key}.${v}`);
+  const note = (own: unknown, state: string, source: string) =>
+    own === null ? <p className="text-muted-foreground text-xs">{t('inheritNote', { state, source })}</p> : null;
+  const typed = draft[VOUCHER_STATION_TITLE_KEY];
+  const title = typeof typed === 'string' ? typed : null;
+  const titleTooLong = voucherStationTitleTooLong(title);
+  const titleCount = title === null ? 0 : voucherStationTitleLength(title);
+  return (
+    <div className="space-y-4 border-t px-4 py-3">
+      <p className="font-medium">{t('voucherFastTitle')}</p>
+      {VOUCHER_FAST_CHOICE_KEYS.map((key) => {
+        const raw = draft[key];
+        const own = isVoucherFastChoiceValue(key, raw) ? raw : null;
+        return (
+          <SettingRow
+            key={key}
+            label={t(`${key}Label`)}
+            badge={label(key, resolveVoucherFastChoice(key, own, inherited?.[key]))}
+            desc={<p>{t(`${key}Desc`)}</p>}
+          >
+            <Segmented<string | null>
+              value={own}
+              onChange={(v) => onChange(key, v)}
+              disabled={disabled}
+              choices={[
+                ...voucherFastChoiceValues(key).map((v) => ({ v: v as string | null, label: label(key, v) })),
+                { v: null, label: t('inheritShort') },
+              ]}
+            />
+            {note(own, label(key, resolveVoucherFastChoice(key, undefined, inherited?.[key])), sourceOf(key))}
+          </SettingRow>
+        );
+      })}
+      <SettingRow
+        label={t('voucherStationTitleLabel')}
+        badge={resolveVoucherStationTitle(title, inherited?.voucherStationTitle)}
+        desc={<p>{t('voucherStationTitleDesc')}</p>}
+      >
+        <Input
+          value={title ?? ''}
+          placeholder={resolveVoucherStationTitle(undefined, inherited?.voucherStationTitle)}
+          disabled={disabled}
+          aria-invalid={titleTooLong}
+          // Empty = inherit again; the server trims and collapses the spaces.
+          onChange={(e) => onChange(VOUCHER_STATION_TITLE_KEY, e.target.value === '' ? null : e.target.value)}
+        />
+        {title === null ? (
+          note(null, resolveVoucherStationTitle(undefined, inherited?.voucherStationTitle), sourceOf(VOUCHER_STATION_TITLE_KEY))
+        ) : (
+          <p className={cn('text-xs', titleTooLong ? 'text-destructive' : 'text-muted-foreground')}>
+            {titleTooLong
+              ? t('voucherStationTitleTooLong', { count: titleCount, max: VOUCHER_STATION_TITLE_MAX })
+              : t('voucherStationTitleCount', { count: titleCount, max: VOUCHER_STATION_TITLE_MAX })}
+          </p>
+        )}
+      </SettingRow>
     </div>
   );
 }

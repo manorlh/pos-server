@@ -43,6 +43,16 @@ import {
   resolveVoucherBalanceCheck,
   resolveVoucherStation,
   voucherStationPaidItemsView,
+  VOUCHER_FAST_CHOICE_KEYS,
+  VOUCHER_FAST_AUTO_CLOSE_KEY,
+  VOUCHER_SOUND_BOOST_KEY,
+  VOUCHER_STATION_TITLE_MAX,
+  resolveVoucherFastChoice,
+  resolveVoucherStationTitle,
+  voucherFastChoiceValues,
+  voucherStationTitleLength,
+  voucherStationTitleTooLong,
+  type VoucherFastChoiceKey,
 } from '@/lib/voucherTillSettings';
 import { PaymentIntegrationSection } from '@/components/payment-integration-section';
 import { PaymentDevicesSettingsSection } from '@/components/dashboard/payment-devices/payment-devices-settings-section';
@@ -523,7 +533,8 @@ export function PosSettingsForm({
               | 'voucherSuccessScreen'
               | 'voucherSuccessSeconds'
               | 'voucherSoundApprove'
-              | 'voucherSoundReject',
+              | 'voucherSoundReject'
+              | VoucherFastChoiceKey,
             values: readonly string[],
             label: (v: string) => string,
             inheritedValue: string,
@@ -538,7 +549,7 @@ export function PosSettingsForm({
             const ownRaw = value[key];
             const own = typeof ownRaw === 'number' ? String(ownRaw) : ownRaw;
             return (
-              <div className="space-y-1">
+              <div key={key} className="space-y-1">
                 <Label>
                   {t(`${key}Label`)}
                   {overrideBadge(key)}
@@ -640,6 +651,46 @@ export function PosSettingsForm({
                 resolveVoucherSound(undefined, inherited?.voucherSoundReject),
                 <p className="text-xs text-muted-foreground">{t('voucherSoundRejectHint')}</p>,
               )}
+              {/* The voucher fast mode (P:/specs/voucher-fast-mode.md §0): eight choices and the
+                  station's title. */}
+              {VOUCHER_FAST_CHOICE_KEYS.map((key) => {
+                const onOff = key === VOUCHER_FAST_AUTO_CLOSE_KEY || key === VOUCHER_SOUND_BOOST_KEY;
+                return pick(
+                  key,
+                  voucherFastChoiceValues(key),
+                  (v) => (onOff ? t(`voucherOnOff_${v}`) : t(`${key}_${v}`)),
+                  resolveVoucherFastChoice(key, undefined, inherited?.[key]),
+                  <p className="text-xs text-muted-foreground">{t(`${key}Hint`)}</p>,
+                );
+              })}
+              {(() => {
+                const typed = value.voucherStationTitle;
+                const tooLong = voucherStationTitleTooLong(typed);
+                const count = typeof typed === 'string' ? voucherStationTitleLength(typed) : 0;
+                return (
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label>
+                      {t('voucherStationTitleLabel')}
+                      {overrideBadge('voucherStationTitle')}
+                    </Label>
+                    <Input
+                      value={typed ?? ''}
+                      placeholder={resolveVoucherStationTitle(undefined, inherited?.voucherStationTitle)}
+                      aria-invalid={tooLong}
+                      // Empty = inherit again (`null`); the server trims and collapses the spaces.
+                      onChange={(e) => set('voucherStationTitle', e.target.value === '' ? null : e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('voucherStationTitleHint')}</p>
+                    {typeof typed === 'string' ? (
+                      <p className={tooLong ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+                        {tooLong
+                          ? t('voucherStationTitleTooLong', { count, max: VOUCHER_STATION_TITLE_MAX })
+                          : t('voucherStationTitleCount', { count, max: VOUCHER_STATION_TITLE_MAX })}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherTillHint')}</p>
             </div>
           );

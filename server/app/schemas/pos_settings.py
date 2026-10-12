@@ -143,6 +143,59 @@ class PosSettingsV1Patch(BaseModel):
     #: voucher is accepted / refused) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_sound_approve: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundApprove")
     voucher_sound_reject: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundReject")
+    # ── The voucher fast mode, 13.10.2026 (P:/specs/voucher-fast-mode.md §0; resolved in
+    # app/services/voucher_station_settings.py). Anything outside a choice's values is a 422; `null`
+    # in a PATCH resets the layer to inherit.
+    #: "מצב מהיר: מימוש בלי בחירה כשהשובר ברור": "off", "station" (unset — at the voucher station only)
+    #: or "all".
+    voucher_fast_mode: Optional[Literal["off", "station", "all"]] = Field(None, alias="voucherFastMode")
+    #: "סגירה לבד במצב מהיר": "on" (unset) or "off".
+    voucher_fast_auto_close: Optional[Literal["on", "off"]] = Field(None, alias="voucherFastAutoClose")
+    #: "מצלמה בעמדת שובר": "off", "always" (a live camera all the time) or "tap" (unset — on a tap).
+    voucher_station_camera: Optional[Literal["off", "always", "tap"]] = Field(None, alias="voucherStationCamera")
+    #: "איזו מצלמה בעמדת שובר": "back" (unset) or "front".
+    voucher_station_camera_facing: Optional[Literal["back", "front"]] = Field(
+        None, alias="voucherStationCameraFacing"
+    )
+    #: "רטט במימוש שובר": "off", "approve", "reject" or "both" (unset) — a device with a vibrator only.
+    voucher_vibrate: Optional[Literal["off", "approve", "reject", "both"]] = Field(None, alias="voucherVibrate")
+    #: "הגברת צליל שובר לעוצמה מקסימלית": "on" (unset) or "off".
+    voucher_sound_boost: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundBoost")
+    #: "מעבר מעמדת שובר לקטלוג רגיל": "off", "manager" (unset — with a manager's code) or "free".
+    voucher_station_catalog_switch: Optional[Literal["off", "manager", "free"]] = Field(
+        None, alias="voucherStationCatalogSwitch"
+    )
+    #: "כותרת במסך עמדת שובר": "logo" (unset), "text", "both" or "none".
+    voucher_station_header: Optional[Literal["logo", "text", "both", "none"]] = Field(
+        None, alias="voucherStationHeader"
+    )
+    #: "כיתוב בראש עמדת שובר": free text, whitespace collapsed and trimmed; over 40 characters is a 422
+    #: with a Hebrew message (`voucher_station_title_too_long`); blank = `null`, the layer inherits.
+    voucher_station_title: Optional[str] = Field(None, alias="voucherStationTitle")
+
+    @field_validator("voucher_station_title")
+    @classmethod
+    def _check_voucher_station_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        from pydantic_core import PydanticCustomError
+
+        from app.services.voucher_station_settings import (
+            STATION_TITLE_MAX,
+            STATION_TITLE_TOO_LONG,
+            normalize_station_title,
+            station_title_too_long_message,
+        )
+
+        v = normalize_station_title(v)
+        if len(v) > STATION_TITLE_MAX:
+            raise PydanticCustomError(
+                STATION_TITLE_TOO_LONG,
+                station_title_too_long_message(len(v)),
+                {"value": len(v), "limit": STATION_TITLE_MAX},
+            )
+        return v or None
+
     #: The most instalments the till's instalments picker (the `card` option) offers,
     #: 2–36. Unset = the card terminal decides; `null` in a PATCH resets the layer to
     #: inherit (TIP_RESETTABLE_KEYS in app/routers/settings.py).
