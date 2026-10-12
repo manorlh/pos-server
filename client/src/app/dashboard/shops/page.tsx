@@ -16,6 +16,7 @@ import { useTranslations } from 'next-intl';
 import { NumberPill } from '@/components/dashboard/number-pill';
 import { LicenseBadge } from '@/components/dashboard/license-fields';
 import { TrainingBadge } from '@/components/dashboard/training-badge';
+import { ShopInactiveBadge } from '@/components/dashboard/shop-active';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchCompanies, fetchMachines, fetchShops } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
@@ -182,9 +183,8 @@ export default function ShopsPage() {
                     <TableCell>{s.city ?? '—'}</TableCell>
                     <TableCell className="tabular-nums">{machineCount(s.id)}</TableCell>
                     <TableCell>
-                      <Badge variant={s.isActive ? 'outline' : 'destructive'}>
-                        {s.isActive ? tc('active') : tc('inactive')}
-                      </Badge>
+                      {/* "לא פעיל": its devices are locked; the shop and its reports stay listed. */}
+                      {s.isActive ? <Badge variant="outline">{tc('active')}</Badge> : <ShopInactiveBadge shop={s} />}
                     </TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       <div className="flex gap-1">
