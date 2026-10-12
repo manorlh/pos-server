@@ -79,6 +79,16 @@ export function isDiscountVoucher(kind: string | null | undefined): boolean {
   return kind === 'order_discount' || kind === 'item_discount';
 }
 
+/**
+ * Next to "כמה שוברים בעסקה (גם מאותה סדרה)": an order discount ("הנחה על כל העסקה") takes one voucher of a
+ * batch per sale whatever the stacking — two would discount the same order twice (the cloud's and the tills'
+ * `stacking_refusal`, server/app/services/prepaid_voucher_rules.py) — so the form says so there. An item
+ * discount follows its stacking (each voucher on its own items), goods too.
+ */
+export function oneOfBatchPerSale(kind: string | null | undefined): boolean {
+  return kind === 'order_discount';
+}
+
 function usesOf(v: VoucherFieldContext['usesPerVoucher']): number {
   const n = typeof v === 'number' ? v : parseInt(String(v ?? '1'), 10);
   return Number.isFinite(n) && n > 0 ? n : 1;

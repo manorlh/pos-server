@@ -1196,6 +1196,10 @@ class PrepaidBasketLineIn(BaseModel):
     promotion_agorot: int = Field(0, alias="promotionAgorot", ge=0)
     #: What vouchers applied before this one already took off the line.
     voucher_agorot: int = Field(0, alias="voucherAgorot", ge=0)
+    #: The line's units (kg when weighed) item-discount vouchers before this one took — never
+    #: discounted again — and what they took off them (a part of `voucherAgorot`). Absent from older tills.
+    voucher_units: float = Field(0.0, alias="voucherUnits", ge=0, le=100_000)
+    voucher_units_agorot: int = Field(0, alias="voucherUnitsAgorot", ge=0)
     discountable: bool = True
     #: Sold by weight: an item discount takes it per kg, pro rata (§7.14). Absent from older tills.
     weighed: bool = False

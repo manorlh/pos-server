@@ -55,7 +55,27 @@
       "text": "ניתן לממש שובר אחד בלבד בעסקה"
     },
     {
-      "name": "two discount vouchers of one batch, never",
+      "name": "two item discounts of one batch, unlimited: both (each on its own units)",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "unlimited"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "B",
+        "kind": "item_discount",
+        "stacking": "unlimited"
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "two order discounts of one batch, never (the same order twice)",
       "existing": [
         {
           "voucherId": "v2",
@@ -72,7 +92,98 @@
       },
       "refusal": "prepaid_voucher_same_batch",
       "limit": null,
+      "text": "שובר הנחה על כל העסקה — ניתן לממש שובר אחד מכל סדרה בעסקה"
+    },
+    {
+      "name": "two order discounts of one batch, distinct batches: the order discount's words",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "order_discount",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "B",
+        "kind": "order_discount",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
+      "text": "שובר הנחה על כל העסקה — ניתן לממש שובר אחד מכל סדרה בעסקה"
+    },
+    {
+      "name": "two item discounts of one batch, distinct batches: refused",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "distinct_batches"
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "B",
+        "kind": "item_discount",
+        "stacking": "distinct_batches"
+      },
+      "refusal": "prepaid_voucher_same_batch",
+      "limit": null,
       "text": null
+    },
+    {
+      "name": "item discounts of one batch, a maximum of 2: the second fits",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v3",
+        "batchId": "B",
+        "kind": "item_discount",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": null,
+      "limit": null,
+      "text": null
+    },
+    {
+      "name": "item discounts of one batch, a maximum of 2: the third is refused",
+      "existing": [
+        {
+          "voucherId": "v2",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        },
+        {
+          "voucherId": "v3",
+          "batchId": "B",
+          "kind": "item_discount",
+          "stacking": "unlimited",
+          "maxVouchersPerSale": 2
+        }
+      ],
+      "incoming": {
+        "voucherId": "v4",
+        "batchId": "B",
+        "kind": "item_discount",
+        "stacking": "unlimited",
+        "maxVouchersPerSale": 2
+      },
+      "refusal": "prepaid_voucher_max_per_sale",
+      "limit": 2,
+      "text": "הגעת למספר השוברים המקסימלי בעסקה (2)"
     },
     {
       "name": "goods of one batch, unlimited",
@@ -525,6 +636,7 @@
           "L1": 1125,
           "L2": 1875
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -577,6 +689,7 @@
         "shares": {
           "L2": 800
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -632,6 +745,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -690,6 +804,7 @@
           "L1": 115,
           "L2": 385
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -743,6 +858,7 @@
           "L1": 1421,
           "L2": 1579
         },
+        "units": {},
         "dropPromotion": [
           "L1"
         ],
@@ -797,6 +913,7 @@
         "shares": {
           "L2": 3000
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -852,6 +969,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -896,6 +1014,7 @@
         "shares": {
           "L1": 4000
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -949,6 +1068,7 @@
           "L1": 1500,
           "L2": 2500
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -988,6 +1108,7 @@
         "shares": {
           "L1": 250
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1040,6 +1161,7 @@
         "shares": {
           "L2": 100
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -1098,6 +1220,9 @@
         "amountAgorot": 500,
         "shares": {
           "L1": 500
+        },
+        "units": {
+          "L1": 1
         },
         "dropPromotion": [],
         "skipped": [],
@@ -1173,6 +1298,10 @@
           "L1": 720,
           "L2": 200
         },
+        "units": {
+          "L1": 3,
+          "L2": 1
+        },
         "dropPromotion": [],
         "skipped": [
           {
@@ -1217,6 +1346,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -1262,6 +1392,9 @@
         "amountAgorot": 600,
         "shares": {
           "L1": 600
+        },
+        "units": {
+          "L1": 1
         },
         "dropPromotion": [
           "L1"
@@ -1319,6 +1452,9 @@
         "shares": {
           "L2": 1000
         },
+        "units": {
+          "L2": 1
+        },
         "dropPromotion": [],
         "skipped": [
           {
@@ -1363,6 +1499,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [
           {
@@ -1435,6 +1572,9 @@
         "shares": {
           "L3": 200
         },
+        "units": {
+          "L3": 1
+        },
         "dropPromotion": [],
         "skipped": [
           {
@@ -1485,6 +1625,9 @@
         "shares": {
           "L1": 1200
         },
+        "units": {
+          "L1": 1
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1524,6 +1667,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": "prepaid_voucher_no_eligible_items"
@@ -1566,6 +1710,9 @@
         "shares": {
           "L1": 500
         },
+        "units": {
+          "L1": 1
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1605,6 +1752,7 @@
       "expect": {
         "amountAgorot": 0,
         "shares": {},
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": "prepaid_voucher_no_eligible_items"
@@ -1645,6 +1793,9 @@
         "amountAgorot": 300,
         "shares": {
           "L1": 300
+        },
+        "units": {
+          "L1": 3
         },
         "dropPromotion": [],
         "skipped": [],
@@ -1688,6 +1839,9 @@
         "shares": {
           "L1": 300
         },
+        "units": {
+          "L1": 0.75
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1729,6 +1883,9 @@
         "amountAgorot": 375,
         "shares": {
           "L1": 375
+        },
+        "units": {
+          "L1": 0.75
         },
         "dropPromotion": [],
         "skipped": [],
@@ -1772,6 +1929,9 @@
         "shares": {
           "L1": 500
         },
+        "units": {
+          "L1": 1
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1813,6 +1973,9 @@
         "amountAgorot": 1400,
         "shares": {
           "L1": 1400
+        },
+        "units": {
+          "L1": 1.4
         },
         "dropPromotion": [],
         "skipped": [],
@@ -1869,6 +2032,9 @@
         "amountAgorot": 1000,
         "shares": {
           "L2": 1000
+        },
+        "units": {
+          "L2": 1
         },
         "dropPromotion": [],
         "skipped": [
@@ -1933,6 +2099,10 @@
           "L2": 700,
           "L1": 300
         },
+        "units": {
+          "L2": 0.7,
+          "L1": 0.3
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -1992,6 +2162,9 @@
         "shares": {
           "L2": 100
         },
+        "units": {
+          "L2": 1
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -2046,6 +2219,7 @@
           "L1": 1000,
           "L2": 200
         },
+        "units": {},
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
@@ -2086,6 +2260,9 @@
         "amountAgorot": 1500,
         "shares": {
           "L1": 1500
+        },
+        "units": {
+          "L1": 1
         },
         "dropPromotion": [],
         "skipped": [],
@@ -2128,10 +2305,1066 @@
         "shares": {
           "L1": 1140
         },
+        "units": {
+          "L1": 2
+        },
         "dropPromotion": [],
         "skipped": [],
         "refusal": null
       }
+    },
+    {
+      "name": "item: a unit an earlier voucher took is never taken again — the other pizza, in full",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 10000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-pizza",
+          "p-popcorn",
+          "p-hotdog"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 9000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 4500,
+          "voucherUnits": 1,
+          "voucherUnitsAgorot": 4500,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 4500,
+        "shares": {
+          "L1": 4500
+        },
+        "units": {
+          "L1": 1
+        },
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": null
+      }
+    },
+    {
+      "name": "item: every unit taken already (50% before) — no eligible item",
+      "benefit": {
+        "kind": "item_discount",
+        "discountType": "percent",
+        "value": 5000,
+        "minPurchaseAgorot": null,
+        "maxDiscountAgorot": null,
+        "maxUnits": 1,
+        "productIds": [
+          "p-pizza",
+          "p-popcorn",
+          "p-hotdog"
+        ],
+        "categoryIds": [],
+        "promotionPolicy": "exclude"
+      },
+      "uses": 1,
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 6000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 3000,
+          "voucherUnits": 1,
+          "voucherUnitsAgorot": 3000,
+          "discountable": true
+        }
+      ],
+      "expect": {
+        "amountAgorot": 0,
+        "shares": {},
+        "units": {},
+        "dropPromotion": [],
+        "skipped": [],
+        "refusal": "prepaid_voucher_no_eligible_items"
+      }
+    }
+  ],
+  "inOrder": [
+    {
+      "name": "two 100% vouchers of one batch, two pizzas on one line: a pizza each",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 9000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "two 100% vouchers of one batch, two pizzas on two lines: a pizza each",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [
+            {
+              "lineId": "L2",
+              "reason": "max_units"
+            }
+          ],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L2": 4500
+          },
+          "units": {
+            "L2": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "two 100% vouchers of one batch, one pizza: the second is refused (no eligible item)",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-cola"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 1200,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 0,
+          "shares": {},
+          "units": {},
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": "prepaid_voucher_no_eligible_items"
+        }
+      ]
+    },
+    {
+      "name": "two 100% vouchers, a pizza and a popcorn: each on its own item",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 4500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-popcorn"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [
+            {
+              "lineId": "L2",
+              "reason": "max_units"
+            }
+          ],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 2000,
+          "shares": {
+            "L2": 2000
+          },
+          "units": {
+            "L2": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "50% of another batch never takes the unit the first discounted: the popcorn, not the pizza again",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 6000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-popcorn"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 5000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 5000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 3000,
+          "shares": {
+            "L1": 3000
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [
+            {
+              "lineId": "L2",
+              "reason": "max_units"
+            }
+          ],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 1000,
+          "shares": {
+            "L2": 1000
+          },
+          "units": {
+            "L2": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "50% twice on two pizzas of one line: the second takes the other pizza at its full price",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 8000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 5000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 5000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 2000,
+          "shares": {
+            "L1": 2000
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 2000,
+          "shares": {
+            "L1": 2000
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "₪10 a unit twice: never the same unit twice",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 6000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-popcorn"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "fixed",
+            "value": 1000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "fixed",
+            "value": 1000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 1000,
+          "shares": {
+            "L1": 1000
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [
+            {
+              "lineId": "L2",
+              "reason": "max_units"
+            }
+          ],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 1000,
+          "shares": {
+            "L2": 1000
+          },
+          "units": {
+            "L2": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "an order discount, then two 100% vouchers: a pizza each, net of the order's share",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 2,
+          "grossAgorot": 8000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        },
+        {
+          "id": "L2",
+          "productIds": [
+            "p-cola"
+          ],
+          "categoryIds": [],
+          "quantity": 1,
+          "grossAgorot": 2000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "order_discount",
+            "discountType": "fixed",
+            "value": 1000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": null,
+            "productIds": [],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 1000,
+          "shares": {
+            "L1": 800,
+            "L2": 200
+          },
+          "units": {},
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 3600,
+          "shares": {
+            "L1": 3600
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 3600,
+          "shares": {
+            "L1": 3600
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
+    },
+    {
+      "name": "by weight, 1.5 kg at ₪5 a kg: a kg, then the half kg, then nothing",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-olives"
+          ],
+          "categoryIds": [],
+          "quantity": 1.5,
+          "grossAgorot": 6000,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true,
+          "weighed": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "fixed",
+            "value": 500,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-olives"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "fixed",
+            "value": 500,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-olives"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "fixed",
+            "value": 500,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-olives"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 1
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 500,
+          "shares": {
+            "L1": 500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 250,
+          "shares": {
+            "L1": 250
+          },
+          "units": {
+            "L1": 0.5
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 0,
+          "shares": {},
+          "units": {},
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": "prepaid_voucher_no_eligible_items"
+        }
+      ]
+    },
+    {
+      "name": "two uses, then two uses, on three pizzas: the second takes the one left",
+      "lines": [
+        {
+          "id": "L1",
+          "productIds": [
+            "p-pizza"
+          ],
+          "categoryIds": [],
+          "quantity": 3,
+          "grossAgorot": 13500,
+          "lineDiscountAgorot": 0,
+          "promotionAgorot": 0,
+          "voucherAgorot": 0,
+          "discountable": true
+        }
+      ],
+      "vouchers": [
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 2
+        },
+        {
+          "benefit": {
+            "kind": "item_discount",
+            "discountType": "percent",
+            "value": 10000,
+            "minPurchaseAgorot": null,
+            "maxDiscountAgorot": null,
+            "maxUnits": 1,
+            "productIds": [
+              "p-pizza",
+              "p-popcorn",
+              "p-hotdog"
+            ],
+            "categoryIds": [],
+            "promotionPolicy": "exclude"
+          },
+          "uses": 2
+        }
+      ],
+      "expect": [
+        {
+          "amountAgorot": 9000,
+          "shares": {
+            "L1": 9000
+          },
+          "units": {
+            "L1": 2
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        },
+        {
+          "amountAgorot": 4500,
+          "shares": {
+            "L1": 4500
+          },
+          "units": {
+            "L1": 1
+          },
+          "dropPromotion": [],
+          "skipped": [],
+          "refusal": null
+        }
+      ]
     }
   ],
   "usesWanted": [
