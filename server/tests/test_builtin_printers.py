@@ -6,7 +6,8 @@ iMin, LANDI and Feitian printer docks in the device-model list (app/models/built
   is the generic "IMIN". A LANDI the table does not name stays the generic "LANDI"; the F20
   stays a 55F; SUNMI / PAX / Urovo / SynqPay are asked first.
 * Capabilities: a model the till prints on by itself (auto / partial) has a printer at its
-  width and — where the till opens the drawer through the head — a drawer port; a model only
+  width and — where the till opens the drawer itself, through the head or (iMin on Android 11)
+  the board's GPIO — a drawer port; a model only
   its vendor's SDK reaches (LANDI's handhelds) has neither and reads "בקרוב". None has a card
   terminal of its own.
 * The dashboard's choice wins at pairing only where it names the unit more closely (a Falcon 2
@@ -53,7 +54,7 @@ from shift_world import accept_str_uuids, make_world
 GOLDEN = Path(__file__).parent / "fixtures" / "builtin_printers_golden.json"
 #: The file's SHA-256 (line endings read as LF) — the same constant in pos-android's
 #: BuiltinPrinterModelsTest. Change the fixture in both repositories, and both constants, together.
-GOLDEN_SHA256 = "0854e577cf99e8ccef2592dc69ed2e5b97f4e36db96120c9bd6dbda9da9c2f35"
+GOLDEN_SHA256 = "ec708f52a2a83af63ac7f0db6a7dd8b9ed3e7934e605a85cf4b5b9500e972f88"
 #: pos-android beside pos-server (as on the developers' machines): the two copies must be equal.
 SIBLING = Path(__file__).resolve().parents[3] / "pos-android" / "app" / "src" / "test" / "resources" / GOLDEN.name
 
@@ -121,8 +122,11 @@ class TestTable:
             ("IMIN_FALCON2", True, 80, True, False),
             ("IMIN_FALCON2_58", True, 58, True, False),
             ("IMIN_FALCON2MAX", True, 80, True, False),
-            # Falcon 1 prints; its drawer is the board's (IminLibs), not the head's.
-            ("IMIN_FALCON1", True, 80, False, False),
+            # Android 11: the drawer is the board's GPIO, which the till switches itself (sysfs, as
+            # iMin's own lib does) — so "פתיחת מגירה" shows for them too.
+            ("IMIN_FALCON1", True, 80, True, False),
+            ("IMIN_D4", True, 80, True, False),
+            ("IMIN_D1", True, 58, True, False),
             ("IMIN_M2", True, 58, False, False),
             ("LANDI_C20_PRO", True, 80, True, False),
             # Only LANDI's USDK reaches the handhelds' head: no printer for the till, "בקרוב".

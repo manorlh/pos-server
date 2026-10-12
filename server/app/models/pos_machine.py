@@ -120,7 +120,8 @@ _DRIVER_PENDING_MODELS = frozenset({
 _CASH_DRAWER_PORT_MODELS: frozenset = frozenset(
     [m.id for m in SUNMI_MODELS if m.drawer_port]
     # iMin Falcon 2 / D4 Pro / Swan 2, LANDI C20 Pro, a Feitian printer dock: `ESC p` (or the
-    # print service's drawer call) through the head (app/models/builtin_printers.py).
+    # print service's drawer call) through the head; iMin Falcon 1 / D4 / D1 (Android 11): the
+    # board's GPIO, switched by the till itself (app/models/builtin_printers.py).
     + [m.id for m in BUILTIN_PRINTER_MODELS if m.till_drawer_port]
 )
 
