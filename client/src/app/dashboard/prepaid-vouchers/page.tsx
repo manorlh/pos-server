@@ -27,6 +27,8 @@ import {
   Plus,
   FileSpreadsheet,
   Printer,
+  CheckCheck,
+  HandCoins,
   TicketCheck,
   X,
 } from 'lucide-react';
@@ -159,6 +161,12 @@ import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/
 import { VoucherDistributionView } from '@/components/dashboard/prepaid-vouchers/distribution/distribution-view';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
 import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
+import {
+  BulkRedeemDialog,
+  ManualRedeemActions,
+  MarkRedeemedDialog,
+  useCanRedeemManually,
+} from '@/components/dashboard/prepaid-vouchers/manual-redeem';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1311,6 +1319,11 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
+  // "מימוש ידני מהענן": the vouchers ticked for "סמן כמומשו", and "מימוש ידני לפי רשימה".
+  const mayRedeem = useCanRedeemManually();
+  const [picked, setPicked] = useState<string[]>([]);
+  const [markOpen, setMarkOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [view, setView] = useState<'vouchers' | 'groups' | 'report' | 'distribution'>('vouchers');
   const td = useTranslations('voucherDistribution');
   // "ערוך סדרה": the batch's form, opened with its own settings.
@@ -1832,6 +1845,16 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             </Button>
           ) : null}
           <span className="ms-auto text-xs text-muted-foreground">{list.data ? t('count', { n: list.data.total }) : null}</span>
+          {mayRedeem && batch.status !== 'cancelled' ? (
+            <>
+              <Button size="sm" variant="outline" disabled={!picked.length} onClick={() => setMarkOpen(true)}>
+                <CheckCheck className="h-4 w-4" /> {t('manualMarkMany', { n: picked.length })}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+                <HandCoins className="h-4 w-4" /> {t('manualBulk')}
+              </Button>
+            </>
+          ) : null}
           <Button size="sm" variant="outline" onClick={() => void exportVouchers()} disabled={exporting || !list.data?.total}>
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {ta('export')}
           </Button>
@@ -1846,6 +1869,12 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             {list.data!.items.map((v) => (
               <li key={v.id} className="space-y-2 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
+                  {mayRedeem ? (
+                    <input type="checkbox" aria-label={t('manualPick', { serial: v.serial })}
+                      disabled={v.status !== 'active' && v.status !== 'partially_used'}
+                      checked={picked.includes(v.id)}
+                      onChange={(e) => setPicked(e.target.checked ? [...picked, v.id] : picked.filter((x) => x !== v.id))} />
+                  ) : null}
                   <span className="w-14 font-semibold tabular-nums">#{v.serial}</span>
                   {v.groupNo ? (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums">{t('groupBadge', { g: v.groupNo })}</span>
@@ -1864,6 +1893,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
                       })).join(' · ')}
                   </span>
                   <div className="flex gap-1">
+                    <ManualRedeemActions voucher={v} />
                     <VoucherNoteButton voucher={v} onEdit={() => setEditingNote(editingNote === v.id ? null : v.id)} />
                     <Button size="icon-sm" variant="ghost" aria-label={t('history.title')} title={t('history.title')}
                       onClick={() => setOpenHistory(openHistory === v.id ? null : v.id)}>
@@ -1900,6 +1930,10 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             ) : null}
           </ul>
         )}
+        {markOpen ? (
+          <MarkRedeemedDialog voucherIds={picked} open={markOpen} onOpenChange={setMarkOpen} onDone={() => setPicked([])} />
+        ) : null}
+        {bulkOpen ? <BulkRedeemDialog batchName={batch.name} open={bulkOpen} onOpenChange={setBulkOpen} /> : null}
         {list.data && list.data.total > PAGE_SIZE ? (
           <div className="flex items-center justify-center gap-2">
             <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>

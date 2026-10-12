@@ -20,6 +20,7 @@ import { DEFAULT_WEIGHT_UNIT, quantityNumberText } from '@/lib/prepaidVoucherPro
 import { filtersToQuery, type VoucherFilters, type VoucherState } from '@/lib/prepaidVoucherFilters';
 import { fetchPrepaidVoucherRows, type PrepaidVoucherRow } from '@/lib/prepaidVouchersApi';
 import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
+import { ManualRedeemActions } from '@/components/dashboard/prepaid-vouchers/manual-redeem';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -151,6 +152,7 @@ export function VoucherRowsTable({
                 ) : null}
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{remainingText(v, t)}</span>
                 {v.lastRedeemedAt ? <span className="text-xs text-muted-foreground">{when(v.lastRedeemedAt)}</span> : null}
+                <ManualRedeemActions voucher={v} />
                 <Button size="icon-sm" variant="ghost" aria-label={t('history')} title={t('history')}
                   onClick={() => setOpenHistory(openHistory === v.id ? null : v.id)}>
                   <History className="h-4 w-4" />
