@@ -1,0 +1,140 @@
+[
+  {
+    "id": "restaurant_tables",
+    "name": "מסעדה עם שולחנות",
+    "description": "Z סניפי בשרת מקומי: הקופה הראשית מנהלת את השולחנות ברשת המקומית ומפיקה את ה-Z של כל הסניף, גם בלי אינטרנט. הבונים יוצאים במדפסות.",
+    "profile": {
+      "templateId": "restaurant_tables",
+      "zType": "shop_local",
+      "shopZFrom": "main_only",
+      "localServer": true,
+      "tablesMode": "lan",
+      "kitchen": "printer",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": false,
+        "balanceCheck": "auto"
+      }
+    }
+  },
+  {
+    "id": "restaurant_kds",
+    "name": "מסעדה עם מסך מטבח",
+    "description": "כמו מסעדה עם שולחנות — שרת מקומי ושולחנות ברשת המקומית — וההזמנות מגיעות למסך מטבח (KDS) במקום לבונים.",
+    "profile": {
+      "templateId": "restaurant_kds",
+      "zType": "shop_local",
+      "shopZFrom": "main_only",
+      "localServer": true,
+      "tablesMode": "lan",
+      "kitchen": "kds",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": false,
+        "balanceCheck": "auto"
+      }
+    }
+  },
+  {
+    "id": "quick_counter",
+    "name": "דוכן / קופה מהירה",
+    "description": "מכירה מהירה בלי שולחנות. Z סניפי אחד לכל הקופות מהענן, והבונים יוצאים במדפסות.",
+    "profile": {
+      "templateId": "quick_counter",
+      "zType": "shop_cloud",
+      "shopZFrom": "main_only",
+      "localServer": false,
+      "tablesMode": "off",
+      "kitchen": "printer",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": false,
+        "balanceCheck": "auto"
+      }
+    }
+  },
+  {
+    "id": "kiosks",
+    "name": "קיוסקים",
+    "description": "עמדות הזמנה עצמית בלי שולחנות. Z סניפי מהענן, וההזמנות מגיעות למסך מטבח (KDS).",
+    "profile": {
+      "templateId": "kiosks",
+      "zType": "shop_cloud",
+      "shopZFrom": "main_only",
+      "localServer": false,
+      "tablesMode": "off",
+      "kitchen": "kds",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": false,
+        "balanceCheck": "auto"
+      }
+    }
+  },
+  {
+    "id": "independent_till",
+    "name": "קופה עצמאית",
+    "description": "כל קופה מפיקה Z משלה ומנהלת את השולחנות שלה בעצמה. הבונים יוצאים במדפסות.",
+    "profile": {
+      "templateId": "independent_till",
+      "zType": "per_till",
+      "shopZFrom": "main_only",
+      "localServer": false,
+      "tablesMode": "single",
+      "kitchen": "printer",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": false,
+        "balanceCheck": "auto"
+      }
+    }
+  },
+  {
+    "id": "event",
+    "name": "אירוע / הפקה",
+    "description": "אירוע או הפקה עם שוברים: עמדת שובר דלוקה, Z סניפי מהענן, בלי שולחנות, והבונים יוצאים במדפסות.",
+    "profile": {
+      "templateId": "event",
+      "zType": "shop_cloud",
+      "shopZFrom": "main_only",
+      "localServer": false,
+      "tablesMode": "off",
+      "kitchen": "printer",
+      "customerDisplay": false,
+      "attendance": false,
+      "tips": {
+        "enabled": false,
+        "distribution": "direct"
+      },
+      "vouchers": {
+        "station": true,
+        "balanceCheck": "auto"
+      }
+    }
+  }
+]

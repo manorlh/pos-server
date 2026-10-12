@@ -363,7 +363,7 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Printer,
         gate: 'settingsWrite',
       },
-      // "תצורת עבודה" (direct sale / order process, targets) per level, and the KDS screens.
+      // "תצורת מטבח" (direct sale / order process, targets) per level, and the KDS screens.
       { href: '/dashboard/workflow', labelKey: 'workflowMode', icon: Workflow, gate: 'settingsWrite' },
       // "מסך לקוח": the customer-facing screen — a till's second screen or a paired device — per level.
       { href: '/dashboard/customer-display', labelKey: 'customerDisplay', icon: MonitorSmartphone, gate: 'settingsWrite' },

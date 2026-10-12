@@ -1743,6 +1743,63 @@ def ensure_builtin_parameters(db: Session) -> List[str]:
     return created
 
 
+def write_value(
+    db: Session,
+    parameter: TillParameter,
+    scope_type: str,
+    scope_id: Any,
+    value: Any,
+    *,
+    user: Any,
+    now: datetime,
+) -> bool:
+    """
+    One level's value as the parameters page writes it (`PUT` / `DELETE
+    /till-parameters/{id}/values`): upserted — or removed, `value` None — with its row in the
+    change log (`till_parameter_changes`), in the caller's transaction. The value is already
+    valid. True when it changed. A removal moves the parameter's own stamp, so the tills'
+    watermark never goes backwards.
+    """
+    from app.services import till_parameter_audit as AUDIT
+
+    ident = as_uuid(scope_id)
+    row = (
+        db.query(TillParameterValue)
+        .filter(
+            TillParameterValue.parameter_id == parameter.id,
+            TillParameterValue.scope_type == scope_type,
+            TillParameterValue.scope_id == ident,
+        )
+        .first()
+    )
+    if value is None:
+        if row is None:
+            return False
+        AUDIT.record_change(
+            db, parameter=parameter, scope_type=scope_type, scope_id=ident,
+            action=AUDIT.CLEAR, old_value=row.value, new_value=None, user=user, now=now,
+        )
+        db.delete(row)
+        parameter.updated_at = now
+        return True
+    previous = None if row is None else row.value
+    if row is not None and previous == value and type(previous) is type(value):
+        return False
+    AUDIT.record_change(
+        db, parameter=parameter, scope_type=scope_type, scope_id=ident,
+        action=AUDIT.SET, old_value=previous, new_value=value, user=user, now=now,
+    )
+    if row is None:
+        db.add(TillParameterValue(
+            id=uuid.uuid4(), parameter_id=parameter.id, scope_type=scope_type, scope_id=ident,
+            value=value, created_at=now, updated_at=now,
+        ))
+    else:
+        row.value = value
+        row.updated_at = now
+    return True
+
+
 # ── Scope entities ───────────────────────────────────────────────────────────
 
 _SCOPE_MODELS = {

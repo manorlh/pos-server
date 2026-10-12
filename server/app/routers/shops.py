@@ -11,7 +11,7 @@ from app.models.company import Company
 from app.models.product import Product, CatalogLevel
 from app.models.shop_product_override import ShopProductOverride
 from app.models.user import User, UserRole
-from app.schemas.shop import ShopCreate, ShopUpdate, ShopResponse
+from app.schemas.shop import ShopCreate, ShopCreateResponse, ShopUpdate, ShopResponse
 from app.schemas.shop_product_override import (
     ShopProductCatalogCandidate,
     ShopProductCatalogCandidateListResponse,
@@ -423,7 +423,41 @@ def list_shops(
     return query.all()
 
 
-@router.post("", response_model=ShopResponse, status_code=status.HTTP_201_CREATED)
+def _work_profile_for_new_shop(data: ShopCreate, current_user: User, active_tenant_id, db: Session):
+    """
+    The work profile a new shop is set up with — sent, or copied from a shop this user sees (the
+    profile only, never its devices) — checked strictly before anything is created (422 / 403 / 404).
+    None: none asked for.
+    """
+    from app.services import work_profile as WP
+    from app.services import work_profile_templates as T
+
+    if data.work_profile is not None and data.copy_work_profile_from_shop_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "work_profile_invalid",
+                "field": "copyWorkProfileFromShopId",
+                "message": "בחרו תצורת עבודה או סניף להעתקה ממנו — לא את שניהם.",
+            },
+        )
+    raw = data.work_profile
+    if data.copy_work_profile_from_shop_id is not None:
+        source = db.query(Shop).filter(Shop.id == data.copy_work_profile_from_shop_id).first()
+        if source is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+        ensure_same_tenant(source.tenant_id, active_tenant_id)
+        _check_shop_access(current_user, source, db)
+        raw = WP.profile_of(db, source)
+    if raw is None:
+        return None
+    try:
+        return T.validate(raw)
+    except T.ProfileInvalid as exc:
+        raise WP.invalid(exc)
+
+
+@router.post("", response_model=ShopCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_shop(
     data: ShopCreate,
     current_user: User = Depends(get_current_user),
@@ -446,6 +480,8 @@ def create_shop(
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
+    # "תצורת עבודה של הסניף" (P:/specs/shop-work-config.md): checked now, applied once the shop exists.
+    work_profile = _work_profile_for_new_shop(data, current_user, active_tenant_id, db)
     # "קוד סניף" is mandatory, digits, unique in the company (400 / 409, Hebrew).
     branch_id = branch_code.check_branch_code(db, company.id, data.branch_id)
     shop = Shop(
@@ -483,6 +519,12 @@ def create_shop(
     reconcile_shops(db, [shop])
     db.commit()
     db.refresh(shop)
+    if work_profile is not None:
+        # Applied as a save of the shop's "תצורת עבודה" is; a refusal never fails the creation —
+        # the answer says why (`workProfileStatus.refused`). Not a column: read by the response.
+        from app.services import work_profile as WP
+
+        shop.work_profile_status = WP.apply_on_create(db, current_user, shop, work_profile)
     return shop
 
 
