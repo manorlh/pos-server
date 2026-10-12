@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { Building2, ChevronDown, ChevronLeft, Layers, MapPin, Monitor, MonitorSmartphone, Pencil, Store, X } from 'lucide-react';
 import { usePageScope } from '@/lib/scope';
 import {
+  clearMenuTarget,
   fetchMenuTargets,
   saveMenuTarget,
   type CatalogMenu,
@@ -328,6 +329,18 @@ function NodeEditor({
     onError: (err) => toast.error(errorText(err)),
   });
 
+  // "נקה הגדרות תפריט ברמה זו": this level's menus and fallback go; it inherits from above.
+  const hasOwn = initial.length > 0 || initialFallback !== null;
+  const clear = useMutation({
+    mutationFn: () => clearMenuTarget(node.level, node.id),
+    onSuccess: () => {
+      toast.success(t('cleared'));
+      invalidate();
+      onDone();
+    },
+    onError: (err) => toast.error(errorText(err)),
+  });
+
   return (
     <div
       className="space-y-3 border-t border-black/[0.06] bg-[#F9F9FB] px-4 py-3 dark:border-white/[0.08] dark:bg-white/[0.03]"
@@ -404,7 +417,19 @@ function NodeEditor({
         </select>
       </label>
       {badPriority ? <p className="text-[12px] text-[#FF3B30]">{t('badPriority')}</p> : null}
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="me-auto text-[#FF3B30]"
+          disabled={!hasOwn || clear.isPending}
+          title={hasOwn ? undefined : t('clearNothing')}
+          onClick={() => {
+            if (window.confirm(t('clearConfirm', { name: node.name }))) clear.mutate();
+          }}
+        >
+          {t('clear')}
+        </Button>
         <Button variant="outline" size="sm" onClick={onDone}>
           {tc('cancel')}
         </Button>

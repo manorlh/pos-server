@@ -190,6 +190,15 @@ export async function saveMenuTarget(body: TargetAssignmentsInput): Promise<void
   await api.put('/catalog-menus-targets', body);
 }
 
+/**
+ * "נקה הגדרות תפריט ברמה זו": the menus and fallback set at exactly this level go, and it
+ * inherits from the level above (`DELETE /catalog-menus/assignments`, logged by the server).
+ */
+export async function clearMenuTarget(level: MenuLevel, id: string): Promise<{ removed: number; fallbackRemoved: boolean }> {
+  return (await api.delete<{ removed: number; fallbackRemoved: boolean }>('/catalog-menus/assignments', { params: { level, id } }))
+    .data;
+}
+
 /* ---------------- what is active ---------------- */
 
 export interface MenuNextChange {
