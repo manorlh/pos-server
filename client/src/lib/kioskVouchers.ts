@@ -103,6 +103,10 @@ export interface VoucherBasketLine {
   promotion: number;
   /** What vouchers applied before this one took off the line. */
   voucher: number;
+  /** The line's units (kg when weighed) item discounts before this one took — never discounted again. Absent: none. */
+  voucherUnits?: number;
+  /** What those item discounts took off those units (a part of [voucher]). */
+  voucherUnitsAgorot?: number;
   /** False: "לא מקבל הנחות" (or a line given free). */
   discountable: boolean;
   /** Sold by weight: [quantity] is a decimal (kg), an item discount takes it per kg, pro rata (a kiosk sells none). */
@@ -115,6 +119,8 @@ export interface VoucherDiscountResult {
   amount: number;
   /** By line id; sums to [amount]. */
   shares: Record<string, number>;
+  /** An item discount: by line id, the units it took (kg when weighed) — never taken again. */
+  units: Record<string, number>;
   /** "The better of the two": the lines whose promotion gives way to the voucher. */
   dropPromotion: string[];
   /** (line id, why), in line order. */
@@ -147,9 +153,10 @@ export interface StackingRefusal {
 /**
  * Why [incoming] may not join a sale that holds [existing], or null. The same voucher again is not
  * "another voucher": goods may be redeemed again (the rest of them), a discount voucher is refused (its
- * uses in a sale are taken in one go). Two discount vouchers of one batch never share a sale, whatever the
- * stacking. Then the count: the smallest `max_vouchers_per_sale` of the sale's vouchers and the new one,
- * every kind counted.
+ * uses in a sale are taken in one go). Vouchers of one batch follow its stacking — two item discounts of one
+ * batch share a sale under `unlimited`, each on its own units — except an order discount: two of one batch
+ * never share a sale, whatever the stacking (the same order twice). Then the count: the smallest
+ * `max_vouchers_per_sale` of the sale's vouchers and the new one, every kind counted.
  */
 export function stackingRefusal(existing: readonly VoucherInSale[], incoming: VoucherInSale): StackingRefusal | null {
   const discount = isDiscountKind(incoming.kind);
@@ -159,7 +166,11 @@ export function stackingRefusal(existing: readonly VoucherInSale[], incoming: Vo
   if (incoming.stacking === 'single') return { code: VOUCHER_NOT_STACKABLE, limit: null };
   if (others.some((v) => v.stacking === 'single')) return { code: VOUCHER_OTHER_NOT_STACKABLE, limit: null };
   const same = others.filter((v) => v.batchId === incoming.batchId);
-  if (same.length > 0 && (discount || same.some((v) => isDiscountKind(v.kind)) || incoming.stacking === 'distinct_batches' || same.some((v) => v.stacking === 'distinct_batches'))) {
+  if (
+    same.length > 0 &&
+    // An order discount: one of a batch per sale, whatever the stacking (never the same order twice).
+    (incoming.kind === 'order_discount' || same.some((v) => v.kind === 'order_discount') || incoming.stacking === 'distinct_batches' || same.some((v) => v.stacking === 'distinct_batches'))
+  ) {
     return { code: VOUCHER_SAME_BATCH, limit: null };
   }
   const held = distinctBy(others, (v) => v.voucherId);
@@ -169,8 +180,15 @@ export function stackingRefusal(existing: readonly VoucherInSale[], incoming: Vo
   return null;
 }
 
-/** "ניתן לממש שובר אחד בלבד בעסקה" / "הגעת למספר השוברים המקסימלי בעסקה (2)"; null — the kiosk's own words for the code. */
-export function stackingText(code: string, limit: number | null): string | null {
+/** `same_batch` of an order discount (two of one batch would discount the same order twice). */
+export const VOUCHER_ORDER_SAME_BATCH_TEXT = 'שובר הנחה על כל העסקה — ניתן לממש שובר אחד מכל סדרה בעסקה';
+
+/**
+ * "ניתן לממש שובר אחד בלבד בעסקה" / "הגעת למספר השוברים המקסימלי בעסקה (2)"; null — the kiosk's own words for the
+ * code. [kind]: the incoming voucher's — `same_batch` of an order discount has its own words.
+ */
+export function stackingText(code: string, limit: number | null, kind: VoucherKind | null = null): string | null {
+  if (code === VOUCHER_SAME_BATCH && kind === 'order_discount') return VOUCHER_ORDER_SAME_BATCH_TEXT;
   switch (code) {
     case VOUCHER_NOT_STACKABLE:
     case VOUCHER_OTHER_NOT_STACKABLE:
@@ -213,8 +231,21 @@ const milli = (quantity: number): number => Math.round(quantity * MILLI);
 /** What the discount takes off one whole unit whose net price is [unit]. */
 const unitOff = (b: VoucherBenefit, unit: number): number => (b.discountType === 'fixed' ? Math.min(b.value, unit) : Math.floor((unit * b.value) / BASIS));
 
-/** Something an item discount can count: a whole unit, or any weight of a weighed product. */
-const hasUnits = (line: VoucherBasketLine): boolean => (line.weighed ? milli(line.quantity) >= 1 : wholeUnits(line.quantity) >= 1);
+/** The line's units earlier item discounts took, in thousandths — the cloud's `_taken`. */
+const taken = (line: VoucherBasketLine): number => ((line.voucherUnits ?? 0) > 0 ? milli(line.voucherUnits ?? 0) : 0);
+
+/**
+ * What an item discount may still take of the line, in thousandths: its whole units (any weight of a weighed
+ * product) less what earlier item discounts took — the cloud's `_free`.
+ */
+function free(line: VoucherBasketLine): number {
+  if (line.weighed) return Math.max(0, milli(line.quantity) - taken(line));
+  const q = wholeUnits(line.quantity);
+  return Math.max(0, q - Math.floor((taken(line) + MILLI - 1) / MILLI)) * MILLI;
+}
+
+/** Something an item discount can count: a whole unit, or any weight of a weighed product, not taken yet. */
+const hasUnits = (line: VoucherBasketLine): boolean => free(line) >= 1;
 
 type Active = Array<[VoucherBasketLine, number]>;
 
@@ -246,38 +277,42 @@ interface Slot {
  * Per unit, the most valuable first, at most `maxUnits` × uses units — the cloud's `_item_shares`. Units are
  * counted in thousandths so a weighed line's kg are units too: its whole kg, then what is left of a kg (its
  * discount pro rata, half up). A unit sold by the piece needs a whole unit of room; a weighed slot takes what
- * room is left, pro rata.
+ * room is left, pro rata. Only the units no earlier item discount took (`free`), each at the unit's price before
+ * those took theirs. Returns the shares and, by line, the thousandths taken.
  */
-function itemShares(b: VoucherBenefit, active: Active, uses: number): Record<string, number> {
+function itemShares(b: VoucherBenefit, active: Active, uses: number): { shares: Record<string, number>; units: Record<string, number> } {
   const slots: Slot[] = [];
   active.forEach(([line, net], pos) => {
+    const left = free(line);
+    if (left < 1) return;
+    // The line's net before the item discounts that took some of its units (after any order discount).
+    const before = net + Math.max(0, Math.trunc(line.voucherUnitsAgorot ?? 0));
     if (line.weighed) {
       const mq = milli(line.quantity);
-      if (mq < 1) return;
-      const unit = Math.floor((2 * net * MILLI + mq) / (2 * mq)); // the net price of one kg, half up
+      const unit = Math.floor((2 * before * MILLI + mq) / (2 * mq)); // the net price of one kg, half up
       const off = unitOff(b, unit);
       if (off <= 0) return;
-      for (let i = 0; i < Math.floor(mq / MILLI); i++) slots.push({ take: off, pos, size: MILLI, perUnit: off });
-      const rest = mq % MILLI;
+      for (let i = 0; i < Math.floor(left / MILLI); i++) slots.push({ take: off, pos, size: MILLI, perUnit: off });
+      const rest = left % MILLI;
       if (rest > 0) slots.push({ take: Math.floor((off * rest + MILLI / 2) / MILLI), pos, size: rest, perUnit: off });
     } else {
       const q = wholeUnits(line.quantity);
-      if (q < 1) return;
-      const unit = Math.floor((2 * net + q) / (2 * q)); // the unit's net price, half up
+      const unit = Math.floor((2 * before + q) / (2 * q)); // the unit's net price, half up
       const off = unitOff(b, unit);
-      if (off > 0) for (let i = 0; i < q; i++) slots.push({ take: off, pos, size: MILLI, perUnit: off });
+      if (off > 0) for (let i = 0; i < Math.floor(left / MILLI); i++) slots.push({ take: off, pos, size: MILLI, perUnit: off });
     }
   });
   // Stable: within one discount, the basket's order (a line's whole kg before its fraction).
   const sorted = slots.map((slot, i) => ({ slot, i })).sort((x, y) => y.slot.take - x.slot.take || x.slot.pos - y.slot.pos || x.i - y.i).map((x) => x.slot);
   let room: number | null = b.maxUnits === null ? null : Math.max(0, b.maxUnits * uses) * MILLI;
   const shares: Record<string, number> = {};
+  const units: Record<string, number> = {};
   for (const slot of sorted) {
     const line = active[slot.pos][0];
     let take = slot.take;
+    let size = slot.size;
     if (room !== null) {
       if (room <= 0) break;
-      let size = slot.size;
       if (size > room) {
         if (!line.weighed) continue; // a whole unit needs a whole unit of room
         take = Math.floor((slot.perUnit * room + MILLI / 2) / MILLI);
@@ -285,13 +320,16 @@ function itemShares(b: VoucherBenefit, active: Active, uses: number): Record<str
       }
       room -= size;
     }
-    if (take > 0) shares[line.id] = (shares[line.id] ?? 0) + take;
+    if (take > 0) {
+      shares[line.id] = (shares[line.id] ?? 0) + take;
+      units[line.id] = (units[line.id] ?? 0) + size;
+    }
   }
   for (const [line, net] of active) {
     const s = shares[line.id];
     if (s !== undefined && s > net) shares[line.id] = net;
   }
-  return shares;
+  return { shares, units };
 }
 
 const sum = (shares: Record<string, number>): number => Object.values(shares).reduce((s, v) => s + v, 0);
@@ -321,9 +359,11 @@ export function discountFor(benefit: VoucherBenefit, lines: readonly VoucherBask
     if (net > 0) candidates.push([line, net]);
   }
 
-  const done = (amount = 0, shares: Record<string, number> = {}, drop: string[] = [], refusal: string | null = null): VoucherDiscountResult => ({
+  const done = (amount = 0, shares: Record<string, number> = {}, drop: string[] = [], refusal: string | null = null, units: Record<string, number> = {}): VoucherDiscountResult => ({
     amount,
     shares,
+    // In the line's measure (whole units; kg when weighed), only where the voucher took something.
+    units: Object.fromEntries(Object.entries(units).filter(([id]) => (shares[id] ?? 0) > 0).map(([id, m]) => [id, m / MILLI])),
     dropPromotion: drop,
     skipped: [...skipped.entries()].sort((a, b) => (order.get(a[0]) ?? 0) - (order.get(b[0]) ?? 0)),
     refusal,
@@ -334,6 +374,7 @@ export function discountFor(benefit: VoucherBenefit, lines: readonly VoucherBask
   const excluded = new Set<string>();
   let active: Active;
   let shares: Record<string, number>;
+  let units: Record<string, number> = {};
   for (;;) {
     active = candidates.filter(([line]) => !excluded.has(line.id));
     if (active.length === 0) return nothing();
@@ -343,7 +384,7 @@ export function discountFor(benefit: VoucherBenefit, lines: readonly VoucherBask
       if (min !== null && min > 0 && base < min) return done(0, {}, [], VOUCHER_MIN_PURCHASE);
       shares = orderShares(benefit, active, n, base);
     } else {
-      shares = itemShares(benefit, active, n);
+      ({ shares, units } = itemShares(benefit, active, n));
     }
     if (policy !== 'best') break;
     const losers = active.map(([line]) => line).filter((l) => l.promotion > 0 && (shares[l.id] ?? 0) >= 1 && (shares[l.id] ?? 0) <= l.promotion).map((l) => l.id);
@@ -359,7 +400,45 @@ export function discountFor(benefit: VoucherBenefit, lines: readonly VoucherBask
   const amount = sum(shares);
   if (amount <= 0) return nothing();
   const drop = policy === 'best' ? active.map(([line]) => line).filter((l) => l.promotion > 0 && (shares[l.id] ?? 0) > 0).map((l) => l.id) : [];
-  return done(amount, shares, drop);
+  return done(amount, shares, drop, null, units);
+}
+
+/**
+ * [lines] as the next voucher sees them once [result] (of [benefit]) is taken off — the cloud's `lines_after`: each
+ * share on the line's `voucher`, a promotion that gave way off its line, and an item discount's units taken
+ * (`voucherUnits` + its units, `voucherUnitsAgorot` + its share) — never discounted again.
+ */
+export function linesAfter(benefit: VoucherBenefit, lines: readonly VoucherBasketLine[], result: VoucherDiscountResult): VoucherBasketLine[] {
+  if (result.amount <= 0) return [...lines];
+  const drop = new Set(result.dropPromotion);
+  const item = benefit.kind === 'item_discount';
+  return lines.map((line) => {
+    const share = result.shares[line.id] ?? 0;
+    if (share <= 0 && !drop.has(line.id)) return line;
+    const took = item && share > 0 ? milli(result.units[line.id] ?? 0) : 0;
+    const out: VoucherBasketLine = { ...line, voucher: line.voucher + share, promotion: drop.has(line.id) ? 0 : line.promotion };
+    if (took > 0) {
+      out.voucherUnits = (taken(line) + took) / MILLI;
+      out.voucherUnitsAgorot = (line.voucherUnitsAgorot ?? 0) + share;
+    }
+    return out;
+  });
+}
+
+/**
+ * A sale's discount vouchers ([benefit, uses], in the order applied) on [lines], each on the basket as the ones
+ * before left it ([linesAfter]) — the cloud's `discounts_in_order`. A voucher with nothing left to take is refused
+ * (`no_eligible_items` …), as alone.
+ */
+export function discountsInOrder(vouchers: ReadonlyArray<readonly [VoucherBenefit, number]>, lines: readonly VoucherBasketLine[]): VoucherDiscountResult[] {
+  const results: VoucherDiscountResult[] = [];
+  let current: VoucherBasketLine[] = [...lines];
+  for (const [benefit, uses] of vouchers) {
+    const r = discountFor(benefit, current, uses);
+    results.push(r);
+    current = linesAfter(benefit, current, r);
+  }
+  return results;
 }
 
 /**
@@ -446,6 +525,10 @@ export interface VoucherLineOut {
   promotionAgorot: number;
   /** The promotion's share that gave way to a voucher on this line ("ההטבה הטובה מבין השתיים"). */
   promotionYieldedAgorot: number;
+  /** The units item-discount vouchers took (kg when weighed) — never discounted again. Absent: none. */
+  voucherUnits?: number;
+  /** What those vouchers took off those units (a part of [voucherAgorot]). Absent: none. */
+  voucherUnitsAgorot?: number;
 }
 
 export interface VouchersApplied {
@@ -455,24 +538,35 @@ export interface VouchersApplied {
   yielded: Record<string, number>;
 }
 
-/** The sale lines as the rules see them, net of what came before ([voucherAgorot]: the vouchers applied so far, by line id). */
+/**
+ * The sale lines as the rules see them, net of what came before ([now]: the vouchers applied so far, by line id —
+ * what they took, and the units item discounts took, never discounted again).
+ */
 export function voucherBasketLines(lines: readonly VoucherLineIn[], now: Readonly<Record<string, VoucherLineOut>> = {}): VoucherBasketLine[] {
   return lines
     .filter((l) => l.qty > 0)
-    .map((l) => ({
-      id: l.id,
-      productIds: [...l.productIds],
-      categoryIds: l.categoryId ? [l.categoryId] : [],
-      quantity: l.qty,
-      gross: l.grossAgorot,
-      lineDiscount: 0,
-      promotion: now[l.id] ? now[l.id].promotionAgorot : l.promotionAgorot,
-      voucher: now[l.id]?.voucherAgorot ?? 0,
-      // A product that takes no discount takes none; a kiosk sells nothing weighed or general.
-      discountable: !l.noDiscount,
-      weighed: false,
-      general: false,
-    }));
+    .map((l) => {
+      const out: VoucherBasketLine = {
+        id: l.id,
+        productIds: [...l.productIds],
+        categoryIds: l.categoryId ? [l.categoryId] : [],
+        quantity: l.qty,
+        gross: l.grossAgorot,
+        lineDiscount: 0,
+        promotion: now[l.id] ? now[l.id].promotionAgorot : l.promotionAgorot,
+        voucher: now[l.id]?.voucherAgorot ?? 0,
+        // A product that takes no discount takes none; a kiosk sells nothing weighed or general.
+        discountable: !l.noDiscount,
+        weighed: false,
+        general: false,
+      };
+      const units = now[l.id]?.voucherUnits ?? 0;
+      if (units > 0) {
+        out.voucherUnits = units;
+        out.voucherUnitsAgorot = now[l.id]?.voucherUnitsAgorot ?? 0;
+      }
+      return out;
+    });
 }
 
 /**
@@ -492,12 +586,20 @@ export function applyVoucherDiscounts(lines: readonly VoucherLineIn[], vouchers:
     for (const l of lines) {
       const cur = state[l.id];
       const share = r.shares[l.id] ?? 0;
+      let next: VoucherLineOut | null = null;
       if (drop.has(l.id)) {
         if (l.promotionId) yielded[l.promotionId] = (yielded[l.promotionId] ?? 0) + cur.promotionAgorot;
-        state[l.id] = { voucherAgorot: cur.voucherAgorot + share, promotionYieldedAgorot: cur.promotionYieldedAgorot + cur.promotionAgorot, promotionAgorot: 0 };
+        next = { ...cur, voucherAgorot: cur.voucherAgorot + share, promotionYieldedAgorot: cur.promotionYieldedAgorot + cur.promotionAgorot, promotionAgorot: 0 };
       } else if (share > 0) {
-        state[l.id] = { ...cur, voucherAgorot: cur.voucherAgorot + share };
+        next = { ...cur, voucherAgorot: cur.voucherAgorot + share };
       }
+      // An item discount's units: never discounted again by the vouchers after it (`linesAfter`).
+      const took = v.benefit.kind === 'item_discount' && share > 0 ? milli(r.units[l.id] ?? 0) : 0;
+      if (next && took > 0) {
+        next.voucherUnits = (milli(cur.voucherUnits ?? 0) + took) / MILLI;
+        next.voucherUnitsAgorot = (cur.voucherUnitsAgorot ?? 0) + share;
+      }
+      if (next) state[l.id] = next;
     }
   }
   return { lines: state, outcomes, yielded };
@@ -565,6 +667,8 @@ export function basketLineWire(l: VoucherBasketLine): Record<string, unknown> {
     lineDiscountAgorot: l.lineDiscount,
     promotionAgorot: l.promotion,
     voucherAgorot: l.voucher,
+    // The units earlier item discounts took (never discounted again): only when there are some.
+    ...((l.voucherUnits ?? 0) > 0 ? { voucherUnits: l.voucherUnits, voucherUnitsAgorot: l.voucherUnitsAgorot ?? 0 } : {}),
     discountable: l.discountable,
     weighed: l.weighed,
     general: l.general,

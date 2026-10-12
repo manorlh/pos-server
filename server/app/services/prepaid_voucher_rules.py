@@ -23,8 +23,11 @@ with a maximum is honoured — the smallest wins ("הגעת למספר השוב�
 
 The same voucher again is not "another voucher": a goods voucher may be redeemed twice in
 one sale (the rest of its goods), a discount voucher is refused (`already_applied` — its
-uses in one sale are taken in one go). Two discount vouchers of one batch never share a
-sale, whatever the stacking.
+uses in one sale are taken in one go). Vouchers of one batch follow its stacking — two item
+discounts of one batch share a sale under `unlimited` (each on its own units, below) — except
+an order discount: two of one batch never share a sale, whatever the stacking (the same order
+discounted twice): `same_batch`, worded "שובר הנחה על כל העסקה — ניתן לממש שובר אחד מכל סדרה
+בעסקה".
 
 **The discount** (`discount_for`) — on the sale lines as they stand (after line discounts
 and promotions, and after the vouchers applied before this one), per the batch's
@@ -46,6 +49,15 @@ than the base, shared over the lines in proportion (largest remainder, ties by l
 An item discount is per unit — fixed (up to the unit's price) or a percent — on the most
 valuable units first, at most `max_units` × uses units.
 
+**Every unit once** (several item discounts in one sale, of one batch or of several): a unit an
+earlier item discount took is never discounted again. The line says how many of its units the
+vouchers before took (`voucher_units`) and what they took off them (`voucher_units_amount`, a
+part of `voucher`); the next item discount takes the line's other units only, each at the
+unit's price before those vouchers (after the order discounts before it, as before). A line
+with no unit left is not the voucher's; none left anywhere: `no_eligible_items`. The result
+says which units each voucher took (`units`), and `discounts_in_order` applies a sale's
+vouchers one after another exactly so (`lines_after`).
+
 **Every product type** (docs/SPEC_VOUCHER_PRODUCTION.md §7.14): a line is its actual price
 (shop / menu price, with its options and a meal's upcharges, after its line discount and
 promotion). A product sold by weight (`weighed`) is discounted per unit of its measure
@@ -57,7 +69,7 @@ category); an order discount takes it like any line.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -110,6 +122,9 @@ STACKING_TEXT = {
     MAX_PER_SALE: "הגעת למספר השוברים המקסימלי בעסקה ({n})",
 }
 
+#: `same_batch` of an order discount (two of one batch would discount the same order twice).
+ORDER_SAME_BATCH_TEXT = "שובר הנחה על כל העסקה — ניתן לממש שובר אחד מכל סדרה בעסקה"
+
 
 def sale_limit(existing: Iterable[VoucherInSale], incoming: VoucherInSale) -> Optional[int]:
     """
@@ -125,8 +140,13 @@ def sale_limit(existing: Iterable[VoucherInSale], incoming: VoucherInSale) -> Op
     return None
 
 
-def stacking_text(code: Optional[str], limit: Optional[int] = None) -> Optional[str]:
-    """The cloud's words for a stacking refusal, or None (the till's own text for the code)."""
+def stacking_text(code: Optional[str], limit: Optional[int] = None, kind: Optional[str] = None) -> Optional[str]:
+    """
+    The cloud's words for a stacking refusal, or None (the till's own text for the code). [kind]:
+    the incoming voucher's — `same_batch` of an order discount has its own words.
+    """
+    if code == SAME_BATCH and kind == "order_discount":
+        return ORDER_SAME_BATCH_TEXT
     text = STACKING_TEXT.get(code or "")
     if text is None:
         return None
@@ -148,8 +168,9 @@ def stacking_refusal(existing: Iterable[VoucherInSale], incoming: VoucherInSale)
         return OTHER_NOT_STACKABLE
     same = [v for v in others if v.batch_id == incoming.batch_id]
     if same and (
-        discount
-        or any(v.kind in DISCOUNT_KINDS for v in same)
+        # An order discount: one of a batch per sale, whatever the stacking (never the same order twice).
+        incoming.kind == "order_discount"
+        or any(v.kind == "order_discount" for v in same)
         or incoming.stacking == "distinct_batches"
         or any(v.stacking == "distinct_batches" for v in same)
     ):
@@ -195,6 +216,11 @@ class BasketLine:
     promotion: int = 0
     #: What vouchers applied before this one already took off the line.
     voucher: int = 0
+    #: The line's units (its measure: kg when weighed) item discounts before this one took —
+    #: never discounted again.
+    voucher_units: float = 0.0
+    #: What those item discounts took off those units (a part of [voucher]).
+    voucher_units_amount: int = 0
     #: False: "לא מקבל הנחות".
     discountable: bool = True
     #: Sold by weight or measure: [quantity] is a decimal (kg), discounted pro rata.
@@ -214,6 +240,8 @@ class DiscountResult:
     skipped: List[Tuple[str, str]] = field(default_factory=list)
     #: Why nothing was taken off, or None.
     refusal: Optional[str] = None
+    #: An item discount: {line id: the units it took} (kg when weighed) — never taken again.
+    units: Dict[str, float] = field(default_factory=dict)
 
 
 def _targets(benefit: Benefit, line: BasketLine) -> bool:
@@ -249,9 +277,25 @@ def _unit_off(benefit: Benefit, unit: int) -> int:
     return unit * benefit.value // BASIS
 
 
+def _taken(line: BasketLine) -> int:
+    """The line's units earlier item discounts took, in thousandths."""
+    return _milli(line.voucher_units) if line.voucher_units > 0 else 0
+
+
+def _free(line: BasketLine) -> int:
+    """
+    What an item discount may still take of the line, in thousandths: its whole units (any weight
+    of a weighed product) less what earlier item discounts took.
+    """
+    if line.weighed:
+        return max(0, _milli(line.quantity) - _taken(line))
+    q = _whole_units(line.quantity)
+    return max(0, q - (_taken(line) + MILLI - 1) // MILLI) * MILLI
+
+
 def _has_units(line: BasketLine) -> bool:
-    """Something an item discount can count: a whole unit, or any weight of a weighed product."""
-    return _milli(line.quantity) >= 1 if line.weighed else _whole_units(line.quantity) >= 1
+    """Something an item discount can count: a whole unit, or any weight of a weighed product, not taken yet."""
+    return _free(line) >= 1
 
 
 def _order_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: int, base: int) -> Dict[str, int]:
@@ -276,39 +320,45 @@ def _order_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: 
     return shares
 
 
-def _item_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: int) -> Dict[str, int]:
+def _item_shares(
+    benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: int
+) -> Tuple[Dict[str, int], Dict[str, int]]:
     """
     Per unit, the most valuable first, at most `max_units` × uses units. Units are counted in
     thousandths ([MILLI]) so a weighed line's kg are units too: its whole kg, then what is
     left of a kg (its discount pro rata, half up). A unit sold by the piece needs a whole
-    unit of room; a weighed slot takes what room is left, pro rata.
+    unit of room; a weighed slot takes what room is left, pro rata. Only the units no earlier
+    item discount took ([_free]), each at the unit's price before those took theirs.
+    Returns ({line id: agorot}, {line id: thousandths taken}).
     """
     # (what this slot takes off, position in active, its size in thousandths, a whole unit's discount)
     slots: List[Tuple[int, int, int, int]] = []
     for pos, (line, net) in enumerate(active):
+        free = _free(line)
+        if free < 1:
+            continue
+        # The line's net before the item discounts that took some of its units (after any order discount).
+        before = net + max(0, int(line.voucher_units_amount))
         if line.weighed:
             mq = _milli(line.quantity)
-            if mq < 1:
-                continue
-            unit = (2 * net * MILLI + mq) // (2 * mq)  # the net price of one kg, half up
+            unit = (2 * before * MILLI + mq) // (2 * mq)  # the net price of one kg, half up
             off = _unit_off(benefit, unit)
             if off <= 0:
                 continue
-            whole, rest = divmod(mq, MILLI)
+            whole, rest = divmod(free, MILLI)
             slots.extend([(off, pos, MILLI, off)] * whole)
             if rest:
                 slots.append(((off * rest + MILLI // 2) // MILLI, pos, rest, off))
         else:
             q = _whole_units(line.quantity)
-            if q < 1:
-                continue
-            unit = (2 * net + q) // (2 * q)  # the unit's net price, half up
+            unit = (2 * before + q) // (2 * q)  # the unit's net price, half up
             off = _unit_off(benefit, unit)
             if off > 0:
-                slots.extend([(off, pos, MILLI, off)] * q)
+                slots.extend([(off, pos, MILLI, off)] * (free // MILLI))
     slots.sort(key=lambda s: (-s[0], s[1]))
     room = None if benefit.max_units is None else max(0, benefit.max_units * uses) * MILLI
     shares: Dict[str, int] = {}
+    units: Dict[str, int] = {}
     for take, pos, size, per_unit in slots:
         line = active[pos][0]
         if room is not None:
@@ -321,10 +371,11 @@ def _item_shares(benefit: Benefit, active: List[Tuple[BasketLine, int]], uses: i
             room -= size
         if take > 0:
             shares[line.id] = shares.get(line.id, 0) + take
+            units[line.id] = units.get(line.id, 0) + size
     for line, net in active:
         if shares.get(line.id, 0) > net:
             shares[line.id] = net
-    return shares
+    return shares, units
 
 
 def discount_for(benefit: Benefit, lines: Sequence[BasketLine], uses: int = 1) -> DiscountResult:
@@ -351,18 +402,20 @@ def discount_for(benefit: Benefit, lines: Sequence[BasketLine], uses: int = 1) -
         if net > 0:
             candidates.append((line, net))
 
-    def done(amount=0, shares=None, drop=None, refusal=None) -> DiscountResult:
+    def done(amount=0, shares=None, drop=None, refusal=None, units=None) -> DiscountResult:
         return DiscountResult(
             amount=amount,
             shares=shares or {},
             drop_promotion=drop or [],
             skipped=sorted(skipped.items(), key=lambda kv: order[kv[0]]),
             refusal=refusal,
+            units={k: v / MILLI for k, v in (units or {}).items() if (shares or {}).get(k, 0) > 0},
         )
 
     if not candidates:
         return done(refusal=NO_ELIGIBLE)
     excluded: set = set()
+    units: Dict[str, int] = {}
     while True:
         active = [(line, net) for line, net in candidates if line.id not in excluded]
         if not active:
@@ -373,7 +426,7 @@ def discount_for(benefit: Benefit, lines: Sequence[BasketLine], uses: int = 1) -
                 return done(refusal=MIN_PURCHASE)
             shares = _order_shares(benefit, active, uses, base)
         else:
-            shares = _item_shares(benefit, active, uses)
+            shares, units = _item_shares(benefit, active, uses)
         if policy != "best":
             break
         losers = [
@@ -396,7 +449,52 @@ def discount_for(benefit: Benefit, lines: Sequence[BasketLine], uses: int = 1) -
         [line.id for line, _ in active if line.promotion > 0 and shares.get(line.id, 0) > 0]
         if policy == "best" else []
     )
-    return done(amount=amount, shares=shares, drop=drop)
+    return done(amount=amount, shares=shares, drop=drop, units=units)
+
+
+def lines_after(benefit: Benefit, lines: Sequence[BasketLine], result: DiscountResult) -> List[BasketLine]:
+    """
+    [lines] as the next voucher sees them once [result] (of [benefit]) is taken off: each share on
+    the line's `voucher`, a promotion that gave way (`drop_promotion`) off its line, and an item
+    discount's units taken (`voucher_units` + its units, `voucher_units_amount` + its share) —
+    never discounted again.
+    """
+    if result.amount <= 0:
+        return list(lines)
+    drop = set(result.drop_promotion)
+    item = benefit.kind == "item_discount"
+    out: List[BasketLine] = []
+    for line in lines:
+        share = result.shares.get(line.id, 0)
+        if share <= 0 and line.id not in drop:
+            out.append(line)
+            continue
+        taken = _milli(result.units.get(line.id, 0.0)) if item and share > 0 else 0
+        out.append(replace(
+            line,
+            voucher=line.voucher + share,
+            promotion=0 if line.id in drop else line.promotion,
+            voucher_units=(_taken(line) + taken) / MILLI if taken else line.voucher_units,
+            voucher_units_amount=line.voucher_units_amount + (share if taken else 0),
+        ))
+    return out
+
+
+def discounts_in_order(
+    vouchers: Sequence[Tuple[Benefit, int]], lines: Sequence[BasketLine]
+) -> List[DiscountResult]:
+    """
+    A sale's discount vouchers ((benefit, uses), in the order applied) on [lines], each on the
+    basket as the ones before left it ([lines_after]) — what the till's basket shows, voucher by
+    voucher. A voucher with nothing left to take is refused (`no_eligible_items` …), as alone.
+    """
+    results: List[DiscountResult] = []
+    current = list(lines)
+    for benefit, uses in vouchers:
+        r = discount_for(benefit, current, uses)
+        results.append(r)
+        current = lines_after(benefit, current, r)
+    return results
 
 
 def uses_wanted(benefit: Benefit, lines: Sequence[BasketLine], allowed: int) -> int:
@@ -504,5 +602,6 @@ def batch_benefit_text(batch) -> Optional[str]:
 __all__ = [
     "Benefit", "BasketLine", "DiscountResult", "VoucherInSale",
     "stacking_refusal", "sale_limit", "stacking_text", "discount_for", "uses_wanted", "benefit_text", "benefit_of",
+    "lines_after", "discounts_in_order",
     "batch_benefit_text", "money_text", "percent_text",
 ]

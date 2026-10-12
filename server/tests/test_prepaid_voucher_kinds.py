@@ -64,7 +64,7 @@ from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 FIXTURE = Path(__file__).parent / "fixtures" / "prepaid_voucher_rules.json"
 #: The fixture's SHA-256 with line endings as LF — the till's test pins the same value.
-FIXTURE_SHA256 = "cccdd917a08d9e88b411dceff44e0faa3e066b290dea1f6924d0b4b1cd64ff24"
+FIXTURE_SHA256 = "789948ec1f0ff2f0690aacfa46fd47660df314af80979b69463b5e9f27c70cdb"
 KINDS = ["items", "order_discount", "item_discount"]
 
 
@@ -200,6 +200,8 @@ def _lines(ls):
             id=l["id"], product_ids=tuple(l["productIds"]), category_ids=tuple(l["categoryIds"]),
             quantity=l["quantity"], gross=l["grossAgorot"], line_discount=l["lineDiscountAgorot"],
             promotion=l["promotionAgorot"], voucher=l["voucherAgorot"], discountable=l["discountable"],
+            # The units earlier item discounts took (absent: none).
+            voucher_units=l.get("voucherUnits", 0), voucher_units_amount=l.get("voucherUnitsAgorot", 0),
             # Every product type (§7.14): absent on the older cases — a line sold by the piece.
             weighed=l.get("weighed", False), general=l.get("general", False),
         )
@@ -224,7 +226,8 @@ class TestRules:
         others = [e for e in existing if e.voucher_id != incoming.voucher_id]
         limit = RULES.sale_limit(others, incoming) if refusal == RULES.MAX_PER_SALE else None
         assert limit == case["limit"]
-        assert RULES.stacking_text(refusal, limit) == case["text"]
+        # An order discount's `same_batch` has its own words.
+        assert RULES.stacking_text(refusal, limit, incoming.kind) == case["text"]
 
     @pytest.mark.parametrize("case", _rules_fixture()["discount"], ids=lambda c: c["name"])
     def test_discount(self, case):
@@ -235,7 +238,23 @@ class TestRules:
         assert got.drop_promotion == want["dropPromotion"]
         assert [{"lineId": a, "reason": b} for a, b in got.skipped] == want["skipped"]
         assert got.refusal == want["refusal"]
+        assert got.units == want["units"]
         assert sum(got.shares.values()) == got.amount
+
+    @pytest.mark.parametrize("case", _rules_fixture()["inOrder"], ids=lambda c: c["name"])
+    def test_in_order(self, case):
+        # A sale's vouchers one after another: every unit discounted once, by one voucher.
+        got = RULES.discounts_in_order(
+            [(_benefit(v["benefit"]), v["uses"]) for v in case["vouchers"]], _lines(case["lines"])
+        )
+        want = [
+            {
+                "amountAgorot": r.amount, "shares": r.shares, "units": r.units, "dropPromotion": r.drop_promotion,
+                "skipped": [{"lineId": a, "reason": b} for a, b in r.skipped], "refusal": r.refusal,
+            }
+            for r in got
+        ]
+        assert want == case["expect"]
 
     @pytest.mark.parametrize("case", _rules_fixture()["usesWanted"], ids=lambda c: c["name"])
     def test_uses_wanted(self, case):
@@ -476,6 +495,22 @@ class TestReserve:
         reserve(w, two[0], lines)
         assert refused(reserve, w, two[1], lines).detail == RULES.SAME_BATCH
         assert refused(reserve, w, two[0], lines).detail == RULES.ALREADY_APPLIED
+
+    def test_item_discounts_of_one_batch_share_a_sale_each_on_its_own_unit(self, w):
+        # The owner (12.10.2026): "כמה שוברים בעסקה (גם מאותה סדרה)", 100% off a hot dog, two vouchers, two hot dogs.
+        four = codes(w, make(w, kind="item_discount", count=4, stacking="unlimited", discountValue=100, maxUnits=1,
+                             targets={"productIds": [w.hotdog.id]}))
+        lines = basket(("L1", w.hotdog, 2, 50))
+        assert reserve(w, four[0], lines)["amountAgorot"] == 2500
+        # The second sees the hot dog the first took (the till says so): the other one, in full.
+        after = [{**lines[0], "voucherAgorot": 2500, "voucherUnits": 1, "voucherUnitsAgorot": 2500}]
+        second = reserve(w, four[1], after)
+        assert (second["status"], second["amountAgorot"]) == ("held", 2500)
+        # One hot dog: nothing is left for the second voucher.
+        one = basket(("L1", w.hotdog, 1, 25))
+        reserve(w, four[2], one, sale="sale-2")
+        taken = [{**one[0], "voucherAgorot": 2500, "voucherUnits": 1, "voucherUnitsAgorot": 2500}]
+        assert refused(reserve, w, four[3], taken, sale="sale-2").detail == RULES.NO_ELIGIBLE
 
     def test_a_goods_voucher_already_in_the_sale(self, w):
         goods = codes(w, make(w, kind="items", stacking="single"))[0]

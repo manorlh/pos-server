@@ -13,6 +13,7 @@ import {
   USES_FIELDS,
   commonVoucherFields,
   maxVouchersProblem,
+  oneOfBatchPerSale,
   usesPerSaleProblem,
   voucherFieldsFor,
   type VoucherField,
@@ -61,6 +62,13 @@ describe('voucherFieldsFor', () => {
   it('uses per sale is fixed at 1 while a voucher has one use', () => {
     assert.ok(voucherFieldsFor({ kind: 'order_discount', usesPerVoucher: '1' }).disabled.has('maxUsesPerSale'));
     assert.ok(!voucherFieldsFor({ kind: 'order_discount', usesPerVoucher: '3' }).disabled.has('maxUsesPerSale'));
+  });
+
+  it('"גם מאותה סדרה": an order discount says one of a batch per sale; an item discount and goods follow the stacking', () => {
+    assert.equal(oneOfBatchPerSale('order_discount'), true);
+    assert.equal(oneOfBatchPerSale('item_discount'), false);
+    assert.equal(oneOfBatchPerSale('items'), false);
+    assert.equal(oneOfBatchPerSale(null), false);
   });
 
   it('every field is either shown or hidden', () => {

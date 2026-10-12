@@ -16,7 +16,9 @@ import {
   applyVoucherDiscounts,
   basketLineWire,
   discountFor,
+  discountsInOrder,
   inSaleWire,
+  linesAfter,
   stackingRefusal,
   stackingText,
   usesWanted,
@@ -35,7 +37,7 @@ import {
 } from './kioskVouchers';
 
 /** The fixture's SHA-256, its line endings read as LF — the same constant as pos-server's and pos-android's tests. */
-const RULES_SHA256 = 'cccdd917a08d9e88b411dceff44e0faa3e066b290dea1f6924d0b4b1cd64ff24';
+const RULES_SHA256 = '789948ec1f0ff2f0690aacfa46fd47660df314af80979b69463b5e9f27c70cdb';
 
 function fixtureText(): string {
   const name = 'prepaid_voucher_rules.json';
@@ -46,9 +48,11 @@ function fixtureText(): string {
 }
 
 const text = fixtureText();
+type Expect = { amountAgorot: number; shares: Record<string, number>; units: Record<string, number>; dropPromotion: string[]; skipped: Array<{ lineId: string; reason: string }>; refusal: string | null };
 const fixture = JSON.parse(text) as {
   stacking: Array<{ name: string; existing: Array<Record<string, unknown>>; incoming: Record<string, unknown>; refusal: string | null; limit: number | null; text: string | null }>;
-  discount: Array<{ name: string; benefit: Record<string, unknown>; uses: number; lines: Array<Record<string, unknown>>; expect: { amountAgorot: number; shares: Record<string, number>; dropPromotion: string[]; skipped: Array<{ lineId: string; reason: string }>; refusal: string | null } }>;
+  discount: Array<{ name: string; benefit: Record<string, unknown>; uses: number; lines: Array<Record<string, unknown>>; expect: Expect }>;
+  inOrder: Array<{ name: string; lines: Array<Record<string, unknown>>; vouchers: Array<{ benefit: Record<string, unknown>; uses: number }>; expect: Expect[] }>;
   usesWanted: Array<{ name: string; benefit: Record<string, unknown>; allowed: number; lines: Array<Record<string, unknown>>; uses: number }>;
 };
 
@@ -75,6 +79,8 @@ const lineOf = (l: Record<string, unknown>): VoucherBasketLine => ({
   lineDiscount: l.lineDiscountAgorot as number,
   promotion: l.promotionAgorot as number,
   voucher: l.voucherAgorot as number,
+  // The units earlier item discounts took (absent: none).
+  ...(typeof l.voucherUnits === 'number' ? { voucherUnits: l.voucherUnits, voucherUnitsAgorot: l.voucherUnitsAgorot as number } : {}),
   discountable: l.discountable === true,
   weighed: l.weighed === true,
   general: l.general === true,
@@ -83,7 +89,7 @@ const lineOf = (l: Record<string, unknown>): VoucherBasketLine => ({
 describe('the shared voucher rules fixture', () => {
   it('is the pinned file', () => {
     assert.equal(createHash('sha256').update(text, 'utf8').digest('hex'), RULES_SHA256);
-    assert.ok(fixture.stacking.length >= 20 && fixture.discount.length >= 30 && fixture.usesWanted.length >= 5);
+    assert.ok(fixture.stacking.length >= 20 && fixture.discount.length >= 30 && fixture.usesWanted.length >= 5 && fixture.inOrder.length >= 10);
   });
 
   for (const c of fixture.stacking) {
@@ -91,8 +97,8 @@ describe('the shared voucher rules fixture', () => {
       const r = stackingRefusal(c.existing.map(inSale), inSale(c.incoming));
       assert.equal(r?.code ?? null, c.refusal);
       assert.equal(r?.limit ?? null, c.limit);
-      // The words, as the cloud says them (null: the kiosk's own for the code).
-      assert.equal(r ? stackingText(r.code, r.limit) : null, c.text);
+      // The words, as the cloud says them (null: the kiosk's own for the code); an order discount's "one of a batch" its own.
+      assert.equal(r ? stackingText(r.code, r.limit, voucherKindOf(c.incoming.kind)) : null, c.text);
     });
   }
 
@@ -108,8 +114,20 @@ describe('the shared voucher rules fixture', () => {
         'skipped',
       );
       assert.equal(r.refusal, c.expect.refusal, 'refusal');
+      assert.deepEqual(r.units, c.expect.units, 'units');
       // The shares always add up to the amount, line by line.
       assert.equal(Object.values(r.shares).reduce((s, v) => s + v, 0), r.amount);
+    });
+  }
+
+  for (const c of fixture.inOrder) {
+    it(`in order: ${c.name}`, () => {
+      // A sale's vouchers one after another: every unit discounted once, by one voucher.
+      const got = discountsInOrder(c.vouchers.map((v) => [benefitOf(v.benefit), v.uses] as const), c.lines.map(lineOf));
+      assert.deepEqual(
+        got.map((r) => ({ amountAgorot: r.amount, shares: r.shares, units: r.units, dropPromotion: r.dropPromotion, skipped: r.skipped.map(([lineId, reason]) => ({ lineId, reason })), refusal: r.refusal })),
+        c.expect,
+      );
     });
   }
 
@@ -154,6 +172,18 @@ describe('the wire', () => {
       id: 'L1', productIds: ['p-coffee'], categoryIds: [], quantity: 2, grossAgorot: 2400, lineDiscountAgorot: 0, promotionAgorot: 0, voucherAgorot: 0, discountable: true, weighed: false, general: false,
     });
     assert.deepEqual(inSaleWire({ voucherId: 'v', batchId: 'b', kind: 'items', stacking: 'unlimited' }), { voucherId: 'v', batchId: 'b', kind: 'items', stacking: 'unlimited', maxVouchersPerSale: null });
+  });
+
+  it('the units earlier item discounts took go up with the line (never discounted again)', () => {
+    const [l] = linesAfter(
+      order('item_discount', 'percent', 10000, { productIds: ['p-pizza'], maxUnits: 1 }),
+      [lineOf({ id: 'L1', productIds: ['p-pizza'], categoryIds: [], quantity: 2, grossAgorot: 9000, lineDiscountAgorot: 0, promotionAgorot: 0, voucherAgorot: 0, discountable: true })],
+      { amount: 4500, shares: { L1: 4500 }, units: { L1: 1 }, dropPromotion: [], skipped: [], refusal: null },
+    );
+    assert.deepEqual(basketLineWire(l), {
+      id: 'L1', productIds: ['p-pizza'], categoryIds: [], quantity: 2, grossAgorot: 9000, lineDiscountAgorot: 0, promotionAgorot: 0, voucherAgorot: 4500,
+      voucherUnits: 1, voucherUnitsAgorot: 4500, discountable: true, weighed: false, general: false,
+    });
   });
 
   it('the receipt line: "שובר #12 — פסטיבל הקיץ"', () => {
@@ -202,6 +232,25 @@ describe('the order with its discount vouchers', () => {
     // Half of each cola's price net of that share (₪11.07 a unit, half up), not half of its gross: 2 × 5.53.
     assert.equal(r.outcomes[1].amountAgorot, 1106);
     assert.equal(r.lines.B.voucherAgorot, 187 + 1106);
+  });
+
+  it('two 100% vouchers of one batch on two pizzas of one line: a pizza each, and the next order sees both taken', () => {
+    // The owner (12.10.2026): "כמה שוברים בעסקה (גם מאותה סדרה)", 100% off a pizza, two vouchers, two pizzas.
+    const pizza = order('item_discount', 'percent', 10000, { productIds: ['pizza'], maxUnits: 1 });
+    const same = (id: string): AppliedDiscountVoucher => ({ ...applied(id, pizza), batchId: 'B' });
+    const lines = [L('A', 'pizza', 2, 4500)];
+    const r = applyVoucherDiscounts(lines, [same('v1'), same('v2')]);
+    assert.deepEqual(r.outcomes.map((o) => o.amountAgorot), [4500, 4500]);
+    assert.equal(r.lines.A.voucherAgorot, 9000);
+    assert.equal(r.lines.A.voucherUnits, 2);
+    // A third finds no pizza left: refused, not applied for nothing.
+    const third = applyVoucherDiscounts(lines, [same('v1'), same('v2'), same('v3')]);
+    assert.equal(third.outcomes[2].amountAgorot, 0);
+    assert.equal(third.outcomes[2].refusal, 'prepaid_voucher_no_eligible_items');
+    // The basket a reserve sends after the first: one pizza taken.
+    const [a] = voucherBasketLines(lines, applyVoucherDiscounts(lines, [same('v1')]).lines);
+    assert.equal(a.voucherUnits, 1);
+    assert.equal(a.voucherUnitsAgorot, 4500);
   });
 
   it('best: a voucher that beats the promotion takes the promotion off the line', () => {

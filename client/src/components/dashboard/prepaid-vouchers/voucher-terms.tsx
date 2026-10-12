@@ -30,7 +30,7 @@ import {
   type PrepaidStacking,
   type PrepaidVoucherKind,
 } from '@/lib/prepaidVoucherBenefit';
-import { maxVouchersProblem, usesPerSaleProblem, voucherFieldsFor } from '@/lib/voucherFields';
+import { maxVouchersProblem, oneOfBatchPerSale, usesPerSaleProblem, voucherFieldsFor } from '@/lib/voucherFields';
 import {
   fetchPrepaidCategories,
   searchPrepaidProducts,
@@ -341,7 +341,7 @@ export function RulesFields({
 }) {
   const t = useTranslations('prepaidVouchers.kinds');
   const set = (patch: Partial<RulesState>) => onChange({ ...value, ...patch });
-  const discount = isDiscountKind(kind);
+  const sameBatchHint = oneOfBatchPerSale(kind);
   const fields = voucherFieldsFor({ kind, stacking: value.stacking, usesPerVoucher: value.usesPerVoucher });
   const perSaleFixed = fields.disabled.has('maxUsesPerSale');
   const over = perSaleFixed ? null : usesPerSaleProblem(value.maxUsesPerSale, value.usesPerVoucher);
@@ -355,15 +355,21 @@ export function RulesFields({
         <div className="space-y-2">
           <Label>{t('stackingLabel')}</Label>
           <div className="grid gap-1" role="radiogroup" aria-label={t('stackingLabel')}>
-            {STACKING_CHOICES.map((choice) => {
+            {STACKING_CHOICES.flatMap((choice) => {
               const on = value.stacking === choice;
-              return (
+              // An order discount: one voucher of a batch per sale even "גם מאותה סדרה" — said right under it.
+              const hint = choice === 'unlimited' && sameBatchHint;
+              const button = (
                 <Button key={choice} type="button" size="sm" variant={on ? 'default' : 'outline'} role="radio" aria-checked={on}
+                  aria-describedby={hint ? 'pv-stacking-same-batch' : undefined}
                   className="h-auto justify-start whitespace-normal py-1.5 text-start"
                   onClick={() => set(choice === 'single' ? { stacking: 'single', maxVouchersPerSale: '' } : { stacking: choice })}>
                   {t(`stacking.${choice}`)}
                 </Button>
               );
+              return hint
+                ? [button, <p key={`${choice}-hint`} id="pv-stacking-same-batch" className="px-1 text-xs text-muted-foreground">{t('stackingHint')}</p>]
+                : [button];
             })}
           </div>
           <p className="text-xs text-muted-foreground">{t('stackingExplain')}</p>
@@ -380,7 +386,6 @@ export function RulesFields({
               ) : null}
             </div>
           ) : null}
-          {discount && !stackingOnly ? <p className="text-xs text-muted-foreground">{t('stackingHint')}</p> : null}
         </div>
         {fields.visible.has('promotionPolicy') && !stackingOnly ? (
           <div className="space-y-1">
