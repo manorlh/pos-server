@@ -15,9 +15,23 @@ a kiosk with a battery…) running down tells the main till, at 15 %, 10 % and �
 * **The settings** are till parameters (company / shop / point of sale / device):
   `lowBatteryThresholds` ("15,10,5") and `lowBatterySound` (the 2-second alarm, on by default —
   read by the devices themselves).
-* **To the staff**: the open alerts go to the tills by the kiosk alerts' routing settings
-  (`alerts.battery` of the device's kiosk config layers — main till / all / selected, everyone or
-  managers; app/services/kiosk_ops.py), with the till's other kiosk alerts (`GET /sync/{m}/kiosk/alerts`):
+* **Which devices** ("ניטור סוללה", the owner: "אפשר לבטל מצב סוללה על קופות כי אין בהם סוללות"): the
+  till parameter `batteryMonitoring` — "auto" (the default), "on", "off" — decided per device by
+  `battery_monitored` from the device's model (`device_is_mains_only`: the SUNMI / iMin desktops,
+  the SUNMI K2) and its own `batteryPresent` (Android's EXTRA_PRESENT, on the heartbeat, kept in
+  `device_info`). The tills get the answer, "on" or "off" (`apply_to_parameters`). A device not
+  watched raises nothing; an open cycle of it ends quietly; the dashboard says "ללא סוללה" /
+  "ניטור סוללה כבוי" instead of its battery.
+* **On the device itself** — always, whatever the routing: its own strip and alarm (the till's
+  LowBatteryBanner, the Windows kiosk's batteryAlerts.ts), from its own reading, local.
+* **To the other tills** (the owner 12.10.2026: "התראת סוללה תגדיר ברירת מחדל רק למכשיר עצמו, ודינמי
+  אפשר שכולם יקבלו"): by the kiosk alerts' routing setting `alerts.battery` of the device's kiosk
+  config layers (company → shop → device; app/services/kiosk_config.py, routed in kiosk_ops.py).
+  `self` — "רק המכשיר עצמו", the DEFAULT: no other till gets it (no wake-up, nothing in their list).
+  Or, chosen on the dashboard: `main` (the main till, else all the shop's) / `all` / `selected`,
+  for everyone or managers. A layer that sets no `tills` inherits its parent's, down to the
+  default; a stored `main` (before 12.10.2026) stays `main` — saved data is never rewritten.
+  Routed, they come with the till's other kiosk alerts (`GET /sync/{m}/kiosk/alerts`):
   "המסופון קופה 2 — סוללה 10%", the critical one marked `severity: critical`. A till's "הבנתי"
   marks it (`battery:<id>`); it clears by itself when the device charges.
 * **The dashboard** ("תקינות מכשירים") shows each device's battery and the history (`history`).
@@ -48,6 +62,19 @@ ID_PREFIX = "battery:"
 
 THRESHOLDS_KEY = "lowBatteryThresholds"
 SOUND_KEY = "lowBatterySound"
+#: "ניטור סוללה": whether a device's battery is watched at all — on the device and in the cloud.
+MONITORING_KEY = "batteryMonitoring"
+MONITORING_AUTO = "auto"
+MONITORING_ON = "on"
+MONITORING_OFF = "off"
+MONITORING_OPTIONS = (MONITORING_AUTO, MONITORING_ON, MONITORING_OFF)
+#: The device's own word on whether it has a battery, kept in `pos_machines.device_info`.
+PRESENT_KEY = "batteryPresent"
+#: Why a device's battery is not watched (the dashboard's part code): it has none / set off.
+REASON_NO_BATTERY = "no_battery"
+REASON_MONITORING_OFF = "monitoring_off"
+#: How an open alert of a device no longer watched ends (no push, no "recovered").
+CLEAR_NOT_MONITORED = "not_monitored"
 
 BATTERY_PARAMETER_SPECS = (
     dict(
@@ -73,6 +100,17 @@ BATTERY_PARAMETER_SPECS = (
             "אזעקה של 2 שניות (חזק ודחוף יותר בסף הקריטי), בערוץ ההתראות כך שנשמע גם כשעוצמת המדיה נמוכה. "
             "פעם אחת לכל סף בכל פריקה, ולעולם לא באמצע תשלום (מיד אחריו). כבוי — בלי צליל. "
             "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר."
+        ),
+    ),
+    dict(
+        key=MONITORING_KEY,
+        label="ניטור סוללה (סוללה חלשה והתראות)",
+        value_type="enum",
+        enum_options=MONITORING_OPTIONS,
+        default_value=MONITORING_AUTO,
+        description=(
+            "אוטומטי — רק במכשיר שיש בו סוללה. כבוי — לקופה קבועה בלי סוללה: בלי פס 'סוללה חלשה', "
+            "בלי אזעקה ובלי התראות סוללה על המכשיר הזה. פעיל — תמיד"
         ),
     ),
 )
@@ -163,16 +201,26 @@ def severity_of(level: int, thresholds: Sequence[int]) -> str:
 # ── The device's settings ────────────────────────────────────────────────────
 
 
-def settings_of(db: Session, machine: POSMachine) -> Tuple[Tuple[int, ...], bool]:
-    """(thresholds, sound) from the till parameters of the device; the defaults when unset."""
+def _params_of(db: Session, machine: POSMachine) -> Dict[str, Any]:
     try:
         from app.services.till_parameters import till_parameters_for_machine
 
-        params = till_parameters_for_machine(db, machine).parameters
+        return till_parameters_for_machine(db, machine).parameters
     except Exception:  # noqa: BLE001 - never fail a heartbeat over a setting
-        params = {}
+        return {}
+
+
+def settings_of(db: Session, machine: POSMachine, params: Optional[Dict[str, Any]] = None) -> Tuple[Tuple[int, ...], bool]:
+    """(thresholds, sound) from the till parameters of the device; the defaults when unset."""
+    params = _params_of(db, machine) if params is None else params
     sound = params.get(SOUND_KEY)
     return parse_thresholds(params.get(THRESHOLDS_KEY)), (sound is not False and str(sound).lower() not in ("false", "לא", "0"))
+
+
+def monitored(db: Session, machine: POSMachine, params: Optional[Dict[str, Any]] = None) -> bool:
+    """Whether this device's battery is watched (`batteryMonitoring` of its till parameters)."""
+    params = _params_of(db, machine) if params is None else params
+    return not_monitored_reason(params.get(MONITORING_KEY), machine) is None
 
 
 def device_label(db: Session, machine: POSMachine) -> str:
@@ -195,6 +243,88 @@ def alert_text(label: str, name: str, percent: int, critical: bool) -> str:
     head = f"{label} {name}".strip()
     text = f"{head} — סוללה {percent}%"
     return (text + " · קריטי: חברו למטען מיד" if critical else text + " · חברו למטען")[:300]
+
+
+# ── Which devices are watched ("ניטור סוללה") ────────────────────────────────
+
+
+def battery_monitored(param: Any, model: Any, battery_present: Optional[bool]) -> bool:
+    """
+    Whether a device's battery is watched (pure). "on": always; "off": never; "auto" — and an
+    unset or unknown value — only on a device that has a battery: not when it says it has none
+    (`battery_present` False), nor on a model that runs on mains only (`device_is_mains_only`).
+    """
+    from app.models.pos_machine import device_is_mains_only
+
+    value = param.strip().lower() if isinstance(param, str) else None
+    if value == MONITORING_ON:
+        return True
+    if value == MONITORING_OFF:
+        return False
+    if battery_present is False:
+        return False
+    return not device_is_mains_only(model)
+
+
+def battery_present_of(machine: Any) -> Optional[bool]:
+    """The device's last word on its battery (heartbeat `batteryPresent`); None: never said."""
+    info = getattr(machine, "device_info", None)
+    value = info.get(PRESENT_KEY) if isinstance(info, dict) else None
+    return value if isinstance(value, bool) else None
+
+
+def not_monitored_reason(param: Any, machine: Any) -> Optional[str]:
+    """None while watched; else "no_battery" (it has none) or "monitoring_off" (set off)."""
+    model = getattr(machine, "device_model", None)
+    present = battery_present_of(machine)
+    if battery_monitored(param, model, present):
+        return None
+    from app.models.pos_machine import device_is_mains_only
+
+    return REASON_NO_BATTERY if present is False or device_is_mains_only(model) else REASON_MONITORING_OFF
+
+
+def apply_to_parameters(machine: Any, parameters: Dict[str, Any]) -> None:
+    """The tills get the answer, never "auto": `batteryMonitoring` resolved to "on" / "off" in place."""
+    if MONITORING_KEY not in parameters:
+        return  # switched off by a super admin: nothing sent, the till goes by its own battery
+    on = battery_monitored(parameters.get(MONITORING_KEY), getattr(machine, "device_model", None), battery_present_of(machine))
+    parameters[MONITORING_KEY] = MONITORING_ON if on else MONITORING_OFF
+
+
+def monitoring_by_machine(db: Session, machines: Iterable[POSMachine]) -> Dict[Any, Optional[str]]:
+    """
+    `not_monitored_reason` for many devices at once (the dashboard, the tills' alerts): the
+    parameter's values read once and resolved per device's chain (till → area → shop → company).
+    """
+    from app.models.shop import Shop
+    from app.models.till_parameter import TillParameter, TillParameterValue
+    from app.services.till_parameters import TillScopeChain, resolve_till_parameters
+
+    machines = list(machines)
+    if not machines:
+        return {}
+    parameter, values, companies = None, [], {}
+    try:
+        parameter = db.query(TillParameter).filter(TillParameter.key == MONITORING_KEY).first()
+        if parameter is not None:
+            values = db.query(TillParameterValue).filter(TillParameterValue.parameter_id == parameter.id).all()
+        shop_ids = list({m.shop_id for m in machines if m.shop_id is not None})
+        if shop_ids:
+            companies = dict(db.query(Shop.id, Shop.company_id).filter(Shop.id.in_(shop_ids)).all())
+    except Exception:  # noqa: BLE001 - never fail a view over a setting: "auto" then
+        logger.exception("battery monitoring lookup failed")
+        parameter, values = None, []
+    out: Dict[Any, Optional[str]] = {}
+    for m in machines:
+        raw = None
+        if parameter is not None:
+            chain = TillScopeChain(
+                machine_id=m.id, area_id=getattr(m, "area_id", None), shop_id=m.shop_id, company_id=companies.get(m.shop_id),
+            )
+            raw = resolve_till_parameters([parameter], values, chain).parameters.get(MONITORING_KEY)
+        out[m.id] = not_monitored_reason(raw, m)
+    return out
 
 
 # ── The heartbeat ────────────────────────────────────────────────────────────
@@ -242,15 +372,40 @@ def evaluate(db: Session, machine: POSMachine, percent: Optional[int], charging:
     return fired
 
 
+def end_quietly(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> int:
+    """
+    A device no longer watched ("ניטור סוללה" off, or it has no battery): its open cycle ends and
+    its open alert goes, with no push and no "recovered" — the tills just stop getting it. The rows
+    ended. The caller commits.
+    """
+    now = _now(now)
+    _latest, rows = _cycle(db, machine.id)
+    for r in rows:
+        if r.cleared_at is None:
+            r.cleared_at = now
+            r.clear_reason = CLEAR_NOT_MONITORED
+        r.cycle_ended_at = now
+    if rows:
+        db.flush()
+    return len(rows)
+
+
 def on_heartbeat(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> Optional[DeviceBatteryAlert]:
     """After a heartbeat stored the battery: the rule applied; a new alert wakes its tills. The caller commits."""
     percent = machine.battery_percent
-    if percent is None and not db.query(DeviceBatteryAlert.id).filter(
+    open_cycle = db.query(DeviceBatteryAlert.id).filter(
         DeviceBatteryAlert.machine_id == machine.id, DeviceBatteryAlert.cycle_ended_at.is_(None)
-    ).first():
+    ).first() is not None
+    if percent is None and not open_cycle:
+        return None
+    params = _params_of(db, machine)
+    # "ניטור סוללה": a till on mains (or set off) raises nothing; what was open ends quietly.
+    if not monitored(db, machine, params):
+        if open_cycle:
+            end_quietly(db, machine, now=now)
         return None
     charging = (machine.battery_status or "") in CHARGING_STATUSES
-    thresholds, _sound = settings_of(db, machine)
+    thresholds, _sound = settings_of(db, machine, params)
     fired = evaluate(db, machine, percent, charging, thresholds, now=now)
     if fired is not None:
         try:
@@ -292,7 +447,10 @@ def alert_out(db: Session, row: DeviceBatteryAlert, machine: POSMachine, audienc
 
 
 def alerts_for_till(db: Session, till: POSMachine, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The open battery alerts routed to [till] (`alerts.battery`), never its own."""
+    """
+    The open battery alerts routed to [till] (`alerts.battery`), never its own (the device shows
+    that one itself); none from a device left on "self" ("רק המכשיר עצמו", the default).
+    """
     from app.services import kiosk_config as KC
     from app.services import kiosk_ops as OPS
 
@@ -306,9 +464,11 @@ def alerts_for_till(db: Session, till: POSMachine, *, now: Optional[datetime] = 
     )
     out: List[Dict[str, Any]] = []
     machines = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_([r.machine_id for r in rows])).all()} if rows else {}
+    # A device set to "ניטור סוללה: כבוי" since its alert opened: gone at once, before its next beat ends it.
+    unwatched = {mid for mid, reason in monitoring_by_machine(db, machines.values()).items() if reason is not None}
     for row in rows:
         source = machines.get(row.machine_id)
-        if source is None or source.id == till.id or not source.is_active:
+        if source is None or source.id == till.id or not source.is_active or source.id in unwatched:
             continue
         try:
             cfg = KC.effective_config(db, source)

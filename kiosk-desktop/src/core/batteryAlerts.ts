@@ -26,6 +26,15 @@ export function parseThresholds(raw: unknown): number[] {
   return list.length > 0 ? list : [...DEFAULT_THRESHOLDS];
 }
 
+/**
+ * "ניטור סוללה" (the till parameter `batteryMonitoring`, resolved by the cloud to "on" / "off" for this
+ * device — pos-server battery_alerts.battery_monitored): "off" — no strip and no alarm here. Anything
+ * else, or nothing (an older cloud), watches: a PC on mains reports no battery anyway.
+ */
+export function batteryMonitoredParam(raw: unknown): boolean {
+  return !(typeof raw === 'string' && raw.trim().toLowerCase() === 'off');
+}
+
 export interface BatteryCycle {
   /** A discharge cycle is under way. */
   open: boolean;

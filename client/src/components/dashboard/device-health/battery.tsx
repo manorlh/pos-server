@@ -8,9 +8,9 @@
 
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BellRing, WifiOff } from 'lucide-react';
+import { Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BellRing, Plug, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { deviceKind, levelTone, type BatteryEvent, type BatteryEventRow, type HealthBattery, type HealthDevice, type HealthLevel } from '@/lib/kioskInsights';
+import { batteryNotWatched, deviceKind, levelTone, type BatteryEvent, type BatteryEventRow, type HealthBattery, type HealthDevice, type HealthLevel } from '@/lib/kioskInsights';
 import { OverallBadge, TONE, agoText, type HealthLabels } from './health-ui';
 
 /** A battery icon that shows the charge (and charging), coloured by the part's level, and its percent. */
@@ -34,6 +34,21 @@ export function BatteryGauge({
       <Icon className={cn('shrink-0', big ? 'h-6 w-6' : 'h-4 w-4', tone === 'muted' ? 'text-muted-foreground' : TONE[tone].text)} aria-hidden />
       <span className={cn('font-semibold tabular-nums', big ? 'text-xl' : 'text-sm')}>{pct !== null ? `${pct}%` : t('none')}</span>
       {battery?.charging ? <span className="text-xs text-muted-foreground">{t('charging')}</span> : null}
+    </span>
+  );
+}
+
+/**
+ * "ניטור סוללה": a device whose battery is not watched — a till on mains ("ללא סוללה") or one set off
+ * ("ניטור סוללה כבוי") — in place of the gauge: no percent, no history.
+ */
+export function BatteryNotWatched({ part, L, big = false }: { part: HealthDevice['batteryPart']; L: HealthLabels; big?: boolean }) {
+  // On mains: a plug; set off: a plain battery.
+  const Icon = part.code === 'no_battery' ? Plug : Battery;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+      <Icon className={cn('shrink-0', big ? 'h-6 w-6' : 'h-4 w-4')} aria-hidden />
+      <span className={cn('font-semibold', big ? 'text-base' : 'text-sm')}>{L.code(part)}</span>
     </span>
   );
 }
@@ -73,8 +88,14 @@ export function DeviceBatteryCard({
         <OverallBadge overall={device.overall} L={L} />
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <BatteryGauge battery={device.battery} level={part.level} big />
-        {part.code !== 'discharging' && part.code !== 'charging' ? <span className="text-xs text-muted-foreground">{L.code(part)}</span> : null}
+        {batteryNotWatched(part) ? (
+          <BatteryNotWatched part={part} L={L} big />
+        ) : (
+          <>
+            <BatteryGauge battery={device.battery} level={part.level} big />
+            {part.code !== 'discharging' && part.code !== 'charging' ? <span className="text-xs text-muted-foreground">{L.code(part)}</span> : null}
+          </>
+        )}
       </div>
       {device.battery?.stale && device.battery.reportedAt ? (
         <p className="text-xs text-amber-700 dark:text-amber-400" title={formatTime(device.battery.reportedAt)}>

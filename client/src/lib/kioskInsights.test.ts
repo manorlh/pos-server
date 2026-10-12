@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   abandonmentRows,
   batteryHistoryRows,
+  batteryNotWatched,
   bucketMinutes,
   buildKioskCsv,
   cardLockKey,
@@ -397,6 +398,25 @@ describe('battery (סוללה חלשה)', () => {
       ],
     });
     assert.deepEqual(orderedParts(row).map((p) => p.key), ['app', 'battery']);
+  });
+
+  it('a device whose battery is not watched says why: no battery / monitoring off (ניטור סוללה)', () => {
+    assert.equal(partCode({ key: 'battery', code: 'no_battery' }), 'no_battery');
+    assert.equal(partCode({ key: 'battery', code: 'monitoring_off' }), 'monitoring_off');
+    assert.equal(batteryNotWatched({ key: 'battery', code: 'no_battery' }), true);
+    assert.equal(batteryNotWatched({ key: 'battery', code: 'monitoring_off' }), true);
+    assert.equal(batteryNotWatched({ key: 'battery', code: 'none' }), false);
+    assert.equal(batteryNotWatched({ key: 'battery', code: 'discharging' }), false);
+    assert.equal(batteryNotWatched({ key: 'printer', code: 'no_battery' }), false);
+    assert.equal(batteryNotWatched(undefined), false);
+    // Not watched is not a problem: an online till on mains is "ok", sorted with the healthy ones.
+    const mains = device({
+      machineId: 'd9',
+      battery: null,
+      batteryPart: { key: 'battery', level: 'off', code: 'no_battery', detail: {} },
+      batteryMonitored: false,
+    });
+    assert.deepEqual(sortDevices([mains, devices[3]]).map((d) => d.machineId), ['d4', 'd9']);
   });
 
   it('filterDevices filters by state, shop and search over name, kind and model', () => {

@@ -10,7 +10,7 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, BellRing, ChevronLeft, EthernetPort, PauseCircle, Signal, Wifi, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
-import { OVERALL_STATES, orderedParts, overallTone, type HealthOverall, type KioskHealthRow } from '@/lib/kioskInsights';
+import { OVERALL_STATES, batteryNotWatched, orderedParts, overallTone, type HealthOverall, type KioskHealthRow } from '@/lib/kioskInsights';
 import { OverallBadge, PartPill, TONE, ToneIcon, agoText, detailLines, type HealthLabels } from './health-ui';
 
 export function HealthSummaryChips({
@@ -91,8 +91,8 @@ export function KioskHealthCard({
   const tone = overallTone(row.overall);
   const contact = agoText(row.lastContactAt, nowMs);
   const platform = L.platform(row.platform);
-  // Most kiosks run on mains power: "אין סוללה" is left to the drawer, not a pill on every card.
-  const parts = orderedParts(row).filter((p) => !(p.key === 'battery' && p.code === 'none'));
+  // Most kiosks run on mains power: "אין סוללה" / "ללא סוללה" is left to the drawer, not a pill on every card.
+  const parts = orderedParts(row).filter((p) => !(p.key === 'battery' && (p.code === 'none' || batteryNotWatched(p))));
   const sub = [
     row.shopName,
     row.posNumber ? t('pos', { n: row.posNumber }) : null,

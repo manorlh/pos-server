@@ -651,9 +651,15 @@ export interface KioskOperations {
 
 /** "התראות לקופות" (docs/SPEC_KIOSK.md §16): which tills, and who on them. */
 export type KioskAlertTills = 'main' | 'all' | 'selected';
+/**
+ * "רק המכשיר עצמו" (`self`): no other till hears of it — only the device's own strip and alarm.
+ * `alerts.battery` only, and its default (the owner 12.10.2026); the server refuses it on the
+ * kiosk's printer / terminal / help alerts (`self_battery_only`).
+ */
+export type KioskBatteryAlertTills = 'self' | KioskAlertTills;
 export type KioskAlertAudience = 'everyone' | 'managers';
-export interface KioskAlertRoute {
-  tills: KioskAlertTills;
+export interface KioskAlertRoute<T extends string = KioskAlertTills> {
+  tills: T;
   machineIds: string[];
   audience: KioskAlertAudience;
 }
@@ -662,12 +668,23 @@ export interface KioskAlerts {
   terminal: KioskAlertRoute;
   help: KioskAlertRoute & { clearAfterMin: number };
   /** "סוללה חלשה" of any device of the shop (pos-server app/services/battery_alerts.py); absent from an older server. */
-  battery?: KioskAlertRoute;
+  battery?: KioskAlertRoute<KioskBatteryAlertTills>;
 }
 export const ALERT_KINDS = ['printer', 'terminal', 'help', 'battery'] as const;
 export type KioskAlertKind = (typeof ALERT_KINDS)[number];
 export const ALERT_TILLS: KioskAlertTills[] = ['main', 'all', 'selected'];
+export const ALERT_TILLS_SELF = 'self' as const;
 export const ALERT_AUDIENCES: KioskAlertAudience[] = ['everyone', 'managers'];
+
+/** The `tills` a kind may choose (the server's ALERT_TILLS_BY_KIND): "self" first, for battery only. */
+export function alertTillsOf(kind: KioskAlertKind): KioskBatteryAlertTills[] {
+  return kind === 'battery' ? [ALERT_TILLS_SELF, ...ALERT_TILLS] : [...ALERT_TILLS];
+}
+
+/** Whether the alert of [kind] reaches other tills at all ("self": only the device itself) — the editor shows "למי" only then. */
+export function alertGoesToTills(kind: KioskAlertKind, tills: unknown): boolean {
+  return !(kind === 'battery' && tills === ALERT_TILLS_SELF);
+}
 
 /**
  * "הנפשות ומעברים" (config `motion`): one choice per transition, each style's preset choosing
@@ -1018,7 +1035,8 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     printer: { tills: 'main', machineIds: [], audience: 'everyone' },
     terminal: { tills: 'main', machineIds: [], audience: 'everyone' },
     help: { tills: 'main', machineIds: [], audience: 'everyone', clearAfterMin: 10 },
-    battery: { tills: 'main', machineIds: [], audience: 'everyone' },
+    // "רק המכשיר עצמו": only a fallback — the editor shows what the server says this level inherits.
+    battery: { tills: 'self', machineIds: [], audience: 'everyone' },
   },
   upsell: { maxShown: 2 },
   success: { message: '', image: null },
@@ -1989,7 +2007,9 @@ export function validateKioskConfig(
     const route = cfg.alerts?.[kind];
     if (!route) continue;
     const p = `alerts.${kind}`;
-    checkEnum(e, `${p}.tills`, route.tills, ALERT_TILLS);
+    // "רק המכשיר עצמו" is battery's only: said so, as the server's `self_battery_only`.
+    if (route.tills === ALERT_TILLS_SELF && kind !== 'battery') e.push({ path: `${p}.tills`, code: 'selfBatteryOnly' });
+    else checkEnum(e, `${p}.tills`, route.tills, alertTillsOf(kind));
     checkEnum(e, `${p}.audience`, route.audience, ALERT_AUDIENCES);
     const ids = Array.isArray(route.machineIds) ? route.machineIds : [];
     if (!Array.isArray(route.machineIds) || !uniq(ids)) e.push({ path: `${p}.machineIds`, code: 'enum' });

@@ -903,6 +903,7 @@ def update_machine_heartbeat(
     clock_skew_ms: Optional[int] = None,
     pending_count: Optional[int] = None,
     pending_documents: Optional[int] = None,
+    battery_present: Optional[bool] = None,
 ) -> None:
     """
     Record a heartbeat, plus whatever device health came with it.
@@ -947,6 +948,16 @@ def update_machine_heartbeat(
         reported_health = True
     if battery_status is not None:
         machine.battery_status = normalize_battery_status(battery_status)
+        reported_health = True
+    if battery_present is not None:
+        # "ניטור סוללה" (app/services/battery_alerts.py): whether it has a battery at all, beside
+        # what it named itself at pairing — a new dict, so the JSON column sees the change.
+        info = machine.device_info if isinstance(machine.device_info, dict) else {}
+        if info.get("batteryPresent") is not battery_present:
+            machine.device_info = {**info, "batteryPresent": battery_present}
+        if battery_present is False:
+            # No battery: no reading either, never the last one it made up (a fake 100 %).
+            machine.battery_percent = None
         reported_health = True
     if clock_skew_ms is not None:
         machine.clock_skew_ms = normalize_clock_skew_ms(clock_skew_ms)

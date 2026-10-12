@@ -473,8 +473,9 @@ export const PART_CODES: Record<HealthPartKey, readonly string[]> = {
   kds: ['bon', 'no_screens', 'screens_offline', 'down', 'ok'],
   media: ['not_reported', 'missing', 'ready', 'loading'],
   uploads: ['not_reported', 'none', 'stuck', 'pending'],
-  // "סוללה חלשה" (pos-server app/services/battery_alerts.py): the open alert first, then the reading.
-  battery: ['critical', 'low', 'charging', 'discharging', 'none'],
+  // "סוללה חלשה" (pos-server app/services/battery_alerts.py): the open alert first, then the reading —
+  // or, on a device whose battery is not watched ("ניטור סוללה"), why: no battery / monitoring off.
+  battery: ['critical', 'low', 'charging', 'discharging', 'none', 'no_battery', 'monitoring_off'],
   // "גשר Windows" of a browser kiosk (docs/SPEC_KIOSK.md §28; kiosk_health.bridge_part) — only when it has one.
   bridge: ['ok', 'down', 'not_paired', 'not_linked'],
 };
@@ -566,6 +567,13 @@ export interface KioskHealthRow {
   salesTodayAgorot: number | null;
   lastOrderAt: string | null;
   battery?: HealthBattery | null;
+  /** "ניטור סוללה": false on a kiosk on mains (or set off) — no battery, no history, the part says why. */
+  batteryMonitored?: boolean;
+}
+
+/** The battery part of a device whose battery is not watched ("ללא סוללה" / "ניטור סוללה כבוי"). */
+export function batteryNotWatched(part: Pick<HealthPart, 'key' | 'code'> | null | undefined): boolean {
+  return !!part && part.key === 'battery' && (part.code === 'no_battery' || part.code === 'monitoring_off');
 }
 
 /** Any other active device of the scope (tills, handhelds, tablets) — for its battery. */
@@ -583,6 +591,8 @@ export interface HealthDevice {
   lastHeartbeatAt: string | null;
   battery: HealthBattery | null;
   batteryPart: HealthPart;
+  /** "ניטור סוללה": false on a till on mains (or set off) — `battery` is null, the part says why. */
+  batteryMonitored?: boolean;
   overall: 'ok' | 'warn' | 'error' | 'offline';
 }
 

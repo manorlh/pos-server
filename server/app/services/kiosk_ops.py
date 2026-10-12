@@ -226,9 +226,13 @@ def _shop_tills(db: Session, shop_id: Any, tenant_id: Any) -> List[POSMachine]:
 
 
 def route_of(cfg: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    """`alerts.<kind>` of [cfg]; a value the kind cannot take (absent, or "self" off battery) is its default."""
+    from app.services.kiosk_config import ALERT_TILLS, ALERT_TILLS_BY_KIND, DEFAULT_CONFIG
+
     route = ((cfg or {}).get("alerts") or {}).get(kind) or {}
+    default = (DEFAULT_CONFIG["alerts"].get(kind) or {}).get("tills", "main")
     return {
-        "tills": route.get("tills") if route.get("tills") in ("main", "all", "selected") else "main",
+        "tills": route.get("tills") if route.get("tills") in ALERT_TILLS_BY_KIND.get(kind, ALERT_TILLS) else default,
         "machineIds": [str(x) for x in route.get("machineIds") or []],
         "audience": route.get("audience") if route.get("audience") in ("everyone", "managers") else "everyone",
         "clearAfterMin": route.get("clearAfterMin") if isinstance(route.get("clearAfterMin"), int) else 10,
@@ -236,8 +240,15 @@ def route_of(cfg: Dict[str, Any], kind: str) -> Dict[str, Any]:
 
 
 def targets(db: Session, kiosk: POSMachine, cfg: Dict[str, Any], kind: str) -> List[POSMachine]:
-    """The tills an alert of [kind] goes to, by the kiosk's `alerts.<kind>`. Never a kiosk."""
+    """
+    The tills an alert of [kind] goes to, by the kiosk's (the device's) `alerts.<kind>`. Never a
+    kiosk, never the device itself; none at all for "self" ("רק המכשיר עצמו", battery only).
+    """
+    from app.services.kiosk_config import ALERT_TILLS_SELF
+
     route = route_of(cfg, kind)
+    if route["tills"] == ALERT_TILLS_SELF:
+        return []
     if route["tills"] == "selected":
         ids = []
         for raw in route["machineIds"]:
