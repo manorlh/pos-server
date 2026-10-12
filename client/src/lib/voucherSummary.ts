@@ -18,10 +18,13 @@ export interface SummaryGroup {
   maxQty: number;
   allowRepeat?: boolean;
   allItems?: boolean;
-  /** The chosen products' and categories' names. */
+  /** The chosen products' and departments' names. */
   names: string[];
-  /** The excluded products' and categories' names. */
+  /** The excluded products' and departments' names. */
   excluded?: string[];
+  /** Of [names], the departments ("מחלקת משקאות") and the products, apart; absent — [names] are products. */
+  categories?: string[];
+  products?: string[];
 }
 
 export interface SummaryItem {
@@ -123,6 +126,31 @@ export function summaryIsPunchCard(s: SummaryInput): boolean {
   return g.maxQty > 1 && total === g.maxQty && g.minQty <= 1 && g.allowRepeat !== false;
 }
 
+/**
+ * "פריט אחד מכל קבוצה" (the owner, 13.10.2026): two groups or more, each up to one item, at least one
+ * of them not a must, as many items in all as groups. A meal (every group a must) keeps its package words.
+ */
+export function summaryIsPerGroup(s: SummaryInput): boolean {
+  const gs = s.groups ?? [];
+  if ((s.kind ?? 'items') !== 'items' || s.selection !== 'groups' || gs.length < 2) return false;
+  const total = s.totalQty ?? gs.reduce((a, g) => a + g.maxQty, 0);
+  return gs.every((g) => g.maxQty === 1) && total === gs.length && gs.some((g) => g.minQty === 0);
+}
+
+/** Names shown for one group in a sentence, then "+N" (the cashier's card says the same). */
+export const GROUP_NAMES_SHOWN = 3;
+
+/** What one group takes, in brackets: "(נקניקייה, המבורגר)", "(מחלקת משקאות, בלי בירה)", "(קולה, ספרייט, מים +4)". */
+function perGroupSource(g: SummaryGroup): string {
+  const departments = (g.categories ?? []).map((n) => n.trim()).filter(Boolean).map((n) => `מחלקת ${n}`);
+  const products = (g.products ?? (g.categories ? [] : g.names)).map((n) => n.trim()).filter(Boolean);
+  const all = [...departments, ...products];
+  let base = g.allItems ? 'כל התפריט' : all.slice(0, GROUP_NAMES_SHOWN).join(', ') || 'פריטים שעוד לא נבחרו';
+  if (!g.allItems && all.length > GROUP_NAMES_SHOWN) base += ` +${all.length - GROUP_NAMES_SHOWN}`;
+  const excluded = (g.excluded ?? []).map((n) => n.trim()).filter(Boolean);
+  return excluded.length ? `${base}, בלי ${excluded.join(', ')}` : base;
+}
+
 function contents(s: SummaryInput): string {
   const kind = s.kind ?? 'items';
   if (kind !== 'items') {
@@ -153,6 +181,10 @@ function contents(s: SummaryInput): string {
     if (total === 1) {
       const names = gs.map(groupSource).join(' או ');
       return `פריט אחד לבחירה מתוך ${names}.`;
+    }
+    if (summaryIsPerGroup(s)) {
+      const list = gs.map((g) => `${g.name || 'פריטים'} (${perGroupSource(g)})`).join(', ');
+      return `עד ${total} פריטים · פריט אחד מכל קבוצה: ${list} · לא ניתן לממש שני פריטים מאותה קבוצה · ${split ? 'מימוש בחלקים' : 'מימוש בעסקה אחת'}.`;
     }
     const parts = gs.map((g) => `${qtyText(g.minQty, g.maxQty)} ${g.name || 'פריטים'} (מתוך ${groupSource(g)}${g.allowRepeat === false ? ', כל פריט פעם אחת' : ''})`);
     const head = gs.length === 1 ? `שובר פריטים: ${parts[0]}` : `חבילה: ${parts.join(' + ')}`;

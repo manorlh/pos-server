@@ -27,9 +27,11 @@ import { VOUCHER_REDEEM_FLOWS, resolveVoucherRedeemFlow, resolveVoucherShowUnava
 import {
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_SHOW_ENTITLEMENT_VALUES,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
   resolveVoucherAutoClose,
+  resolveVoucherShowEntitlement,
   resolveVoucherBalanceCheck,
   resolveVoucherStation,
   voucherStationPaidItemsView,
@@ -497,11 +499,11 @@ export function PosSettingsForm({
             </div>
           );
         })()}
-        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items
-            (lib/voucherTillSettings.ts): "ירושה" sends null. */}
+        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items, and the
+            cashier's "מה מגיע ללקוח" card (lib/voucherTillSettings.ts): "ירושה" sends null. */}
         {(() => {
           const pick = (
-            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation' | 'voucherStationPaidItems',
+            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation' | 'voucherStationPaidItems' | 'voucherShowEntitlement',
             values: readonly string[],
             label: (v: string) => string,
             inheritedValue: string,
@@ -572,6 +574,13 @@ export function PosSettingsForm({
                     </p>
                   ) : null}
                 </>,
+              )}
+              {pick(
+                'voucherShowEntitlement',
+                VOUCHER_SHOW_ENTITLEMENT_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherShowEntitlement(undefined, inherited?.voucherShowEntitlement),
+                <p className="text-xs text-muted-foreground">{t('voucherShowEntitlementHint')}</p>,
               )}
               <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherTillHint')}</p>
             </div>

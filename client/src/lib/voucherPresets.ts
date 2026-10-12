@@ -10,6 +10,10 @@
  * "כרטיסייה — מכסת שימושים" (the owner, 12.10.2026; P:\specs\voucher-punch-card.md): a goods voucher
  * of ONE group "פריטים" (min 1, max N, the same item more than once), N items in all, redeemed in
  * parts — one scan takes every approved item of the sale, up to what is left.
+ *
+ * "פריט אחד מכל קבוצה" (the owner, 13.10.2026; P:\specs\voucher-one-per-group.md): two groups or more,
+ * each up to one item and none a must, as many items in all as groups — "מזון" and "שתייה", so the
+ * customer never takes two drinks or two hot dogs. The groups' switch keeps it so as groups come and go.
  */
 
 import type { PrepaidDiscountType, PrepaidVoucherKind } from './prepaidVoucherBenefit';
@@ -20,8 +24,8 @@ export const MAX_GROUP_QTY = 100;
 export const MAX_GROUPS = 20;
 
 export type VoucherSelection = 'items' | 'groups';
-export type VoucherPreset = 'choice' | 'meal' | 'punch' | 'discount';
-export const VOUCHER_PRESETS: readonly VoucherPreset[] = ['choice', 'meal', 'punch', 'discount'];
+export type VoucherPreset = 'choice' | 'meal' | 'perGroup' | 'punch' | 'discount';
+export const VOUCHER_PRESETS: readonly VoucherPreset[] = ['choice', 'meal', 'perGroup', 'punch', 'discount'];
 
 /** A chosen product or category, with its name for the chips and the summary. */
 export interface NamedRef {
@@ -109,6 +113,7 @@ export interface PresetValues {
  * The values of [preset]:
  * * `choice` — "פריט אחד מתוך מגוון": one group "פריט לבחירה" of 1, one item in all, in one sale;
  * * `meal` — "ארוחה: מנה + תוספת + משקה": three groups of one each, the package whole in one sale;
+ * * `perGroup` — "פריט אחד מכל קבוצה": "מזון" and "שתייה", each 0–1, two items in all, in one sale;
  * * `punch` — "כרטיסייה — מכסת שימושים": one group "פריטים" of 1–[uses], the same item again, [uses]
  *   items in all, redeemed in parts;
  * * `discount` — "הנחה בש״ח או באחוזים": a discount on the whole sale (₪ by default).
@@ -126,6 +131,11 @@ export function presetValues(preset: VoucherPreset, uses = 50, keep?: DraftGroup
       return {
         kind: 'items', selection: 'groups', totalQty: '', splitAllowed: false,
         groups: [picks(emptyGroup('מנה')), emptyGroup('תוספת'), emptyGroup('משקה')],
+      };
+    case 'perGroup':
+      return {
+        kind: 'items', selection: 'groups', totalQty: '2', splitAllowed: false,
+        groups: [{ ...picks(emptyGroup('מזון')), minQty: '0' }, { ...emptyGroup('שתייה'), minQty: '0' }],
       };
     case 'punch': {
       const n = String(Math.max(1, Math.min(MAX_GROUP_QTY, Math.round(uses) || 1)));
@@ -149,6 +159,35 @@ function whole(text: string): number | null {
   const t = String(text ?? '').trim();
   if (!/^\d+$/.test(t)) return null;
   return parseInt(t, 10);
+}
+
+// ── "פריט אחד מכל קבוצה" ──────────────────────────────────────────────────────
+
+/**
+ * The switch's state for a voucher as it is (an existing type or batch): two groups or more, every one
+ * "עד 1", and the total typed as their number. A voucher with an empty total (the groups' maxima, as the
+ * meal) reads as off.
+ */
+export function isPerGroup(groups: readonly { maxQty: number | string }[], totalQty: number | string | null | undefined): boolean {
+  if (groups.length < 2) return false;
+  const total = totalQty == null || totalQty === '' ? null : typeof totalQty === 'number' ? totalQty : whole(totalQty);
+  return total === groups.length && groups.every((g) => (typeof g.maxQty === 'number' ? g.maxQty : whole(g.maxQty)) === 1);
+}
+
+/**
+ * The switch on: every group "עד 1" (a "לפחות" above 1 comes down to 1) and the total the number of
+ * groups. Called again whenever a group is added or removed, so the total follows.
+ */
+export function withPerGroup(groups: readonly DraftGroup[]): { groups: DraftGroup[]; totalQty: string } {
+  return {
+    groups: groups.map((g) => ({ ...g, maxQty: '1', minQty: (whole(g.minQty) ?? 0) > 1 ? '1' : g.minQty })),
+    totalQty: String(groups.length),
+  };
+}
+
+/** A group added with the switch on: a must for none ("לפחות 0"), up to one. */
+export function perGroupNewGroup(name = ''): DraftGroup {
+  return { ...emptyGroup(name), minQty: '0', maxQty: '1' };
 }
 
 /**
@@ -196,7 +235,7 @@ export function groupProblems(groups: readonly DraftGroup[], totalQty: string): 
       out.push({ group: i, text: `${label}: לפחות ${min} פריטים גבוה מ"עד ${max} פריטים". המינימום לא יכול לעלות על המקסימום.` });
     }
     if (!g.allItems && !g.products.length && !g.categories.length) {
-      out.push({ group: i, text: `${label}: לא נבחרו פריטים. בחרו מוצרים, קטגוריות או "כל התפריט".` });
+      out.push({ group: i, text: `${label}: לא נבחרו פריטים. בחרו מוצרים, מחלקות או 'כל התפריט'.` });
     }
     least += min ?? 0;
     most += max ?? 0;
@@ -210,7 +249,7 @@ export function groupProblems(groups: readonly DraftGroup[], totalQty: string): 
       out.push({
         group: null,
         text: total > most
-          ? `לא ניתן לשמור ${total} פריטים בשובר: הקבוצות נותנות יחד עד ${most} פריטים. הגדילו את "עד" בקבוצה או הקטינו את הסה״כ.`
+          ? `סה״כ ${total} פריטים גבוה מסכום ה'עד' של הקבוצות (${most})`
           : `לא ניתן לשמור ${total} פריטים בשובר: הקבוצות דורשות יחד לפחות ${least} פריטים.`,
       });
     }
@@ -250,6 +289,80 @@ export function groupsBody(groups: readonly DraftGroup[]): GroupBody[] {
 /** "סה״כ פריטים בשובר" as the API takes it: null — the groups' maxima. */
 export function totalQtyBody(totalQty: string): number | null {
   return whole(totalQty);
+}
+
+// ── Warnings from the catalog (POST /prepaid-vouchers/groups/check) ───────────
+
+/** The cloud's check of the groups being set up: never a refusal, only what to warn about. */
+export interface GroupsCheck {
+  overlaps: { productId: string; name: string | null; groups: string[]; groupIndexes: number[] }[];
+  /** Every overlap; `overlaps` lists at most 100. */
+  overlapCount: number;
+  emptyGroups: { group: string; groupIndex: number; reason: 'empty_department' | 'empty_group' | string; categoryId?: string; categoryName?: string | null }[];
+}
+
+/**
+ * What the check is sent: the groups the cloud would accept as they are (something chosen, numbers in
+ * range, "לפחות" at most "עד"; an unnamed one as "קבוצה N"), and for each its place in the form —
+ * a group still being filled in is left out rather than failing the whole check.
+ */
+export function groupsCheckBody(groups: readonly DraftGroup[]): { groups: GroupBody[]; indexes: number[] } {
+  const body = groupsBody(groups);
+  const out: GroupBody[] = [];
+  const indexes: number[] = [];
+  groups.forEach((g, i) => {
+    const min = whole(g.minQty);
+    const max = whole(g.maxQty);
+    const chosen = g.allItems || g.products.length > 0 || g.categories.length > 0;
+    if (!chosen || min === null || max === null || max < 1 || max > MAX_GROUP_QTY || min > max) return;
+    out.push({ ...body[i], name: body[i].name || `קבוצה ${i + 1}`, value: null });
+    indexes.push(i);
+  });
+  return { groups: out, indexes };
+}
+
+/** "גם ב'מזון' וגם ב'שתייה'", "גם ב'מזון', גם ב'שתייה' וגם ב'קינוח'". */
+function inGroups(names: readonly string[]): string {
+  const each = names.map((n) => `ב'${n}'`);
+  if (each.length <= 1) return `גם ${each[0] ?? ''}`;
+  return `גם ${each.slice(0, -1).join(', גם ')} וגם ${each[each.length - 1]}`;
+}
+
+/** Overlap warnings shown under one group; past these, "ועוד …". */
+export const OVERLAPS_SHOWN = 3;
+
+/**
+ * The check's warnings next to each group of the form ([indexes]: the form's place of each group sent):
+ * "נקניקייה נמצאת גם ב'מזון' וגם ב'שתייה' — בקופה הקופאי יישאל לאיזו קבוצה לשייך" under every group it is
+ * in, and "במחלקה 'משקאות' אין כרגע מוצרים פעילים". Warnings only: saving stays allowed.
+ */
+export function groupWarnings(check: GroupsCheck | null | undefined, indexes: readonly number[]): GroupProblem[] {
+  if (!check) return [];
+  const at = (i: number) => (i >= 0 && i < indexes.length ? indexes[i] : null);
+  const out: GroupProblem[] = [];
+  const capped = (check.overlapCount ?? 0) > check.overlaps.length;
+  const formGroups = new Set<number>();
+  check.overlaps.forEach((o) => o.groupIndexes.forEach((i) => { const g = at(i); if (g !== null) formGroups.add(g); }));
+  [...formGroups].sort((a, b) => a - b).forEach((g) => {
+    const mine = check.overlaps.filter((o) => o.groupIndexes.some((i) => at(i) === g));
+    mine.slice(0, OVERLAPS_SHOWN).forEach((o) => {
+      out.push({ group: g, text: `${o.name ?? o.productId} נמצאת ${inGroups(o.groups)} — בקופה הקופאי יישאל לאיזו קבוצה לשייך` });
+    });
+    const more = mine.length - OVERLAPS_SHOWN;
+    if (capped) out.push({ group: g, text: 'ועוד מוצרים שנמצאים גם בקבוצה אחרת' });
+    else if (more > 0) out.push({ group: g, text: more === 1 ? 'ועוד מוצר אחד שנמצא גם בקבוצה אחרת' : `ועוד ${more} מוצרים שנמצאים גם בקבוצה אחרת` });
+  });
+  check.emptyGroups.forEach((e) => {
+    const g = at(e.groupIndex);
+    if (g === null) return;
+    out.push({
+      group: g,
+      text: e.reason === 'empty_department'
+        ? `במחלקה '${e.categoryName ?? ''}' אין כרגע מוצרים פעילים`
+        : `בקבוצה '${e.group}' אין כרגע מוצרים פעילים`,
+    });
+  });
+  return out;
 }
 
 /** A type's / batch's groups as the form edits them, named by the cloud's `groupNames` (an id when unnamed). */

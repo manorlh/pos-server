@@ -10,9 +10,9 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
-import { useQuery } from '@tanstack/react-query';
-import { Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
-import { searchPrepaidProducts } from '@/lib/prepaidVouchersApi';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { AlertTriangle, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { checkPrepaidGroups, searchPrepaidProducts, type PrepaidGroupBody } from '@/lib/prepaidVouchersApi';
 import type { PrepaidProductOption } from '@/lib/prepaidVoucherProducts';
 import {
   MAX_GROUP_QTY,
@@ -20,10 +20,15 @@ import {
   VOUCHER_PRESETS,
   emptyGroup,
   groupProblems,
+  groupWarnings,
+  groupsCheckBody,
   isPunchCard,
+  perGroupNewGroup,
   punchUsesProblem,
+  withPerGroup,
   withPunchUses,
   type DraftGroup,
+  type GroupProblem,
   type NamedRef,
   type VoucherPreset,
   type VoucherSelection,
@@ -227,20 +232,89 @@ export function GroupItemsPicker({ companyId, shopIds, group, onChange, idPrefix
 
 // ── The groups ────────────────────────────────────────────────────────────────
 
-/** Each group: its name, at least / up to, "אותו פריט יותר מפעם אחת", and what it takes. */
-export function GroupsEditor({ companyId, shopIds, groups, onChange, totalQty, onTotalQty }: {
+/**
+ * The groups checked against the catalog (POST /prepaid-vouchers/groups/check), a moment after the
+ * last change: a product in two groups, a department with no active products — warnings by the
+ * form's group, never a refusal. A failed check shows nothing.
+ */
+function useGroupWarnings(companyId: string, shopIds: string[] | undefined, groups: DraftGroup[]): GroupProblem[] {
+  const key = JSON.stringify(groupsCheckBody(groups));
+  const [debounced, setDebounced] = useState(key);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(key), 600);
+    return () => window.clearTimeout(id);
+  }, [key]);
+  const ids = shopIds ?? [];
+  const check = useQuery({
+    queryKey: ['prepaid-groups-check', companyId, ids, debounced],
+    queryFn: async () => {
+      const sent = JSON.parse(debounced) as { groups: PrepaidGroupBody[]; indexes: number[] };
+      return { result: await checkPrepaidGroups({ companyId, shopIds: ids, groups: sent.groups }), indexes: sent.indexes };
+    },
+    enabled: !!companyId && (JSON.parse(debounced) as { groups: unknown[] }).groups.length > 0,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+    retry: false,
+  });
+  return check.data ? groupWarnings(check.data.result, check.data.indexes) : [];
+}
+
+/** The catalog's warnings under a group: amber, saving stays allowed. */
+function GroupWarnings({ items }: { items: GroupProblem[] }) {
+  if (!items.length) return null;
+  return (
+    <div role="status" className="space-y-0.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+      {items.map((w) => (
+        <p key={w.text} className="flex items-start gap-1.5"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> {w.text}</p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Each group: its name, at least / up to, "אותו פריט יותר מפעם אחת" (only when a group gives more than
+ * one), and what it takes. "פריט אחד מכל קבוצה" ([perGroup]): every group "עד 1", locked, and the total
+ * the number of groups — kept so as groups are added or removed.
+ */
+export function GroupsEditor({ companyId, shopIds, groups, onChange, totalQty, onTotalQty, perGroup = false, onPerGroup }: {
   companyId: string;
   shopIds?: string[];
   groups: DraftGroup[];
   onChange: (next: DraftGroup[]) => void;
   totalQty: string;
   onTotalQty: (v: string) => void;
+  perGroup?: boolean;
+  onPerGroup?: (v: boolean) => void;
 }) {
   const t = useTranslations('prepaidVouchers.setup');
   const problems = groupProblems(groups, totalQty);
+  const warnings = useGroupWarnings(companyId, shopIds, groups);
   const setGroup = (i: number, g: DraftGroup) => onChange(groups.map((x, n) => (n === i ? g : x)));
+  const setGroups = (next: DraftGroup[]) => {
+    if (!perGroup) return onChange(next);
+    const kept = withPerGroup(next);
+    onChange(kept.groups);
+    onTotalQty(kept.totalQty);
+  };
+  const switchPerGroup = (on: boolean) => {
+    onPerGroup?.(on);
+    if (on) {
+      const kept = withPerGroup(groups);
+      onChange(kept.groups);
+      onTotalQty(kept.totalQty);
+    }
+  };
   return (
     <div className="space-y-3">
+      {onPerGroup ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-muted/30 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{t('perGroup')}</p>
+            <p className="text-xs text-muted-foreground">{t('perGroupHint')}</p>
+          </div>
+          <Switch checked={perGroup} onCheckedChange={(v) => switchPerGroup(!!v)} aria-label={t('perGroup')} />
+        </div>
+      ) : null}
       {groups.map((g, i) => (
         <div key={g.key ?? i} className="space-y-2 rounded-lg border p-3">
           <div className="grid gap-2 sm:grid-cols-[1fr_7rem_7rem_auto] sm:items-end">
@@ -256,37 +330,41 @@ export function GroupsEditor({ companyId, shopIds, groups, onChange, totalQty, o
             </div>
             <div className="space-y-1">
               <Label htmlFor={`pv-g${i}-max`}>{t('maxQty')}</Label>
-              <Input id={`pv-g${i}-max`} type="number" min={1} max={MAX_GROUP_QTY} value={g.maxQty}
+              <Input id={`pv-g${i}-max`} type="number" min={1} max={MAX_GROUP_QTY} value={g.maxQty} disabled={perGroup}
+                title={perGroup ? t('perGroupLocked') : undefined}
                 onChange={(e) => setGroup(i, { ...g, maxQty: e.target.value })} />
             </div>
             <Button type="button" size="icon-sm" variant="ghost" aria-label={t('removeGroup', { name: g.name || String(i + 1) })}
-              disabled={groups.length <= 1} onClick={() => onChange(groups.filter((_, n) => n !== i))}>
+              disabled={groups.length <= 1} onClick={() => setGroups(groups.filter((_, n) => n !== i))}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">{t('qtyHint')}</p>
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{t('allowRepeat')}</p>
-              <p className="text-xs text-muted-foreground">{t('allowRepeatHint')}</p>
+          <p className="text-xs text-muted-foreground">{perGroup ? t('perGroupLocked') : t('qtyHint')}</p>
+          {parseInt(g.maxQty, 10) === 1 ? null : (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">{t('allowRepeat')}</p>
+                <p className="text-xs text-muted-foreground">{t('allowRepeatHint')}</p>
+              </div>
+              <Switch checked={g.allowRepeat} onCheckedChange={(v) => setGroup(i, { ...g, allowRepeat: !!v })} aria-label={t('allowRepeat')} />
             </div>
-            <Switch checked={g.allowRepeat} onCheckedChange={(v) => setGroup(i, { ...g, allowRepeat: !!v })} aria-label={t('allowRepeat')} />
-          </div>
+          )}
           <GroupItemsPicker companyId={companyId} shopIds={shopIds} group={g} onChange={(next) => setGroup(i, next)} idPrefix={`pv-g${i}`} />
           {problems.filter((p) => p.group === i).map((p) => (
             <p key={p.text} className="text-xs text-destructive" role="alert">{p.text}</p>
           ))}
+          <GroupWarnings items={warnings.filter((w) => w.group === i)} />
         </div>
       ))}
       <Button type="button" size="sm" variant="outline" disabled={groups.length >= MAX_GROUPS}
-        onClick={() => onChange([...groups, emptyGroup()])}>
+        onClick={() => setGroups([...groups, perGroup ? perGroupNewGroup() : emptyGroup()])}>
         <Plus className="h-4 w-4" /> {t('addGroup')}
       </Button>
       <div className="space-y-1">
         <Label htmlFor="pv-total-qty">{t('totalQty')}</Label>
         <Input id="pv-total-qty" type="number" min={1} className="h-9 w-32" value={totalQty} placeholder={t('totalQtyPlaceholder')}
-          onChange={(e) => onTotalQty(e.target.value)} />
-        <p className="text-xs text-muted-foreground">{t('totalQtyHint')}</p>
+          disabled={perGroup} onChange={(e) => onTotalQty(e.target.value)} />
+        <p className="text-xs text-muted-foreground">{perGroup ? t('totalQtyHintPerGroup') : t('totalQtyHint')}</p>
       </div>
       {problems.filter((p) => p.group === null).map((p) => (
         <p key={p.text} className="text-xs text-destructive" role="alert">{p.text}</p>
@@ -360,6 +438,7 @@ export function PunchCardFields({ companyId, shopIds, groups, onChange, totalQty
  */
 export function GoodsContents({
   companyId, shopIds, selection, onSelection, items, onItems, groups, onGroups, totalQty, onTotalQty, punch, onPunch, enabled = true,
+  perGroup, onPerGroup,
 }: {
   companyId: string;
   shopIds?: string[];
@@ -374,6 +453,9 @@ export function GoodsContents({
   punch: boolean;
   onPunch: (v: boolean) => void;
   enabled?: boolean;
+  /** "פריט אחד מכל קבוצה" in the group editor (lib/voucherPresets.ts `isPerGroup` / `withPerGroup`). */
+  perGroup?: boolean;
+  onPerGroup?: (v: boolean) => void;
 }) {
   const t = useTranslations('prepaidVouchers.setup');
   return (
@@ -397,7 +479,8 @@ export function GoodsContents({
           {isPunchCard('groups', groups, totalQty) ? (
             <Button type="button" size="sm" variant="ghost" onClick={() => onPunch(true)}>{t('punchSimple')}</Button>
           ) : null}
-          <GroupsEditor companyId={companyId} shopIds={shopIds} groups={groups} onChange={onGroups} totalQty={totalQty} onTotalQty={onTotalQty} />
+          <GroupsEditor companyId={companyId} shopIds={shopIds} groups={groups} onChange={onGroups} totalQty={totalQty} onTotalQty={onTotalQty}
+            perGroup={perGroup} onPerGroup={onPerGroup} />
         </>
       )}
     </div>
@@ -418,5 +501,7 @@ export function summaryGroupsOf(groups: readonly DraftGroup[]): SummaryGroup[] {
     allItems: g.allItems,
     names: g.allItems ? [] : [...g.categories, ...g.products].map((x) => x.name),
     excluded: [...g.excludeCategories, ...g.excludeProducts].map((x) => x.name),
+    categories: g.allItems ? [] : g.categories.map((x) => x.name),
+    products: g.allItems ? [] : g.products.map((x) => x.name),
   }));
 }

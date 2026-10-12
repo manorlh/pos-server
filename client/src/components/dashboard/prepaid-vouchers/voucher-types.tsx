@@ -38,6 +38,7 @@ import {
   emptyGroup,
   groupProblems,
   groupsBody,
+  isPerGroup,
   isPunchCard,
   presetValues,
   totalQtyBody,
@@ -89,6 +90,8 @@ export function summaryInputOf(t: SummarySource): SummaryInput {
       .filter((x): x is string => !!x),
     excluded: [...(g.excludeCategoryIds ?? []).map((id) => name(t.groupNames?.categories, id)), ...(g.excludeProductIds ?? []).map((id) => name(t.groupNames?.products, id))]
       .filter((x): x is string => !!x),
+    categories: (g.categoryIds ?? []).map((id) => name(t.groupNames?.categories, id)).filter((x): x is string => !!x),
+    products: (g.productIds ?? []).map((id) => name(t.groupNames?.products, id)).filter((x): x is string => !!x),
   }));
   return {
     kind: t.kind ?? 'items', selection: t.selection ?? 'items',
@@ -290,6 +293,8 @@ function TypeForm({
   // The quick start picked (new types), and the punch card's simple view.
   const [preset, setPreset] = useState<VoucherPreset | null>(null);
   const [punchView, setPunchView] = useState(() => isPunchCard(initial?.selection, initial?.groups ?? [], initial?.totalQty));
+  // "פריט אחד מכל קבוצה": on for that quick start; for a saved type, read from its groups and total.
+  const [perGroup, setPerGroup] = useState(() => initial?.selection === 'groups' && isPerGroup(initial?.groups ?? [], initial?.totalQty));
   const [terms, setTerms] = useState<DiscountTermsState>({
     ...EMPTY_DISCOUNT_TERMS,
     discountType: initial?.discountType ?? 'fixed',
@@ -407,6 +412,7 @@ function TypeForm({
       setTotalQty(v.totalQty);
       setSplitAllowed(v.splitAllowed);
       setPunchView(p === 'punch');
+      setPerGroup(p === 'perGroup');
       // A punch card covers each item at its menu price unless a value is set (section 5).
       if (p === 'punch' && !tillValue.trim()) setPricing('cover');
     } else if (v.discountType) {
@@ -540,7 +546,7 @@ function TypeForm({
                 items={items} onItems={(v) => { setItems(v); setGoodsTouched(true); }}
                 groups={groups} onGroups={(v) => { setGroups(v); setGoodsTouched(true); }}
                 totalQty={totalQty} onTotalQty={(v) => { setTotalQty(v); setGoodsTouched(true); }}
-                punch={punchView} onPunch={setPunchView} />
+                punch={punchView} onPunch={setPunchView} perGroup={perGroup} onPerGroup={setPerGroup} />
             )}
             {fields.visible.has('includeExtras') ? (
               <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">

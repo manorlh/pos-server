@@ -380,6 +380,8 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const [totalQty, setTotalQty] = useState('');
   const [preset, setPreset] = useState<VoucherPreset | null>(null);
   const [punchView, setPunchView] = useState(false);
+  // "פריט אחד מכל קבוצה" in the group editor: on for that quick start.
+  const [perGroup, setPerGroup] = useState(false);
   // The company's active types (its own and its parents').
   const types = useQuery({
     queryKey: ['prepaid-voucher-types', companyId, 'active'],
@@ -454,6 +456,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
     setTotalQty('');
     setPreset(null);
     setPunchView(false);
+    setPerGroup(false);
   };
 
   const n = parseInt(count, 10);
@@ -676,6 +679,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       setTotalQty(v.totalQty);
       setSplitAllowed(v.splitAllowed);
       setPunchView(p === 'punch');
+      setPerGroup(p === 'perGroup');
     } else if (v.discountType) {
       setTerms((cur) => ({ ...cur, discountType: v.discountType! }));
     }
@@ -844,7 +848,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
               ) : (
                 <GoodsContents companyId={companyId} shopIds={shopIds} selection={selection} onSelection={pickSelection}
                   items={items} onItems={setItems} groups={groups} onGroups={setGroups} totalQty={totalQty} onTotalQty={setTotalQty}
-                  punch={punchView} onPunch={setPunchView} enabled={open} />
+                  punch={punchView} onPunch={setPunchView} enabled={open} perGroup={perGroup} onPerGroup={setPerGroup} />
               )) : null}
               {fields.visible.has('includeExtras') ? (
                 <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">

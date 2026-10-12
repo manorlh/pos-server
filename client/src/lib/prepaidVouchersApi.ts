@@ -9,6 +9,7 @@ import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
 import type { BulkApplyResult, BulkPreviewResult } from './prepaidBatchBulkEdit';
 import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
+import type { GroupsCheck } from './voucherPresets';
 import type {
   PrepaidDiscountType,
   PrepaidPromotionPolicy,
@@ -972,6 +973,24 @@ export async function fetchPrepaidCategories(companyId: string): Promise<Prepaid
     params: { companyId },
   });
   return data.items ?? [];
+}
+
+/**
+ * The item groups being set up against the company's catalog (`POST /prepaid-vouchers/groups/check`,
+ * read only): a product more than one group takes, and a department with no active products — the
+ * warnings next to the group (lib/voucherPresets.ts `groupWarnings`). Never a refusal.
+ */
+export async function checkPrepaidGroups(body: {
+  companyId: string;
+  shopIds?: string[];
+  groups: PrepaidGroupBody[];
+}): Promise<GroupsCheck> {
+  const { data } = await api.post<GroupsCheck>('/prepaid-vouchers/groups/check', {
+    companyId: body.companyId,
+    ...(body.shopIds?.length ? { shopIds: body.shopIds } : {}),
+    groups: body.groups,
+  });
+  return { overlaps: data.overlaps ?? [], overlapCount: data.overlapCount ?? 0, emptyGroups: data.emptyGroups ?? [] };
 }
 
 /**
