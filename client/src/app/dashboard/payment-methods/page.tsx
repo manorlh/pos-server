@@ -30,7 +30,9 @@
  * switches do not suit a station) and, next to it, "רכישה נוספת בתשלום בעמדת שובר"
  * (`voucherStationPaidItems`, with a warning when it is on and no cash or card method is left to
  * pay with), "הצג לקופאי מה מגיע ללקוח בסריקת שובר" (`voucherShowEntitlement`, on by default),
- * "מימוש אוטומטי בסריקת שובר" (`voucherAutoApply`, on by default), and "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default), the same way.
+ * "מימוש אוטומטי בסריקת שובר" (`voucherAutoApply`, on by default), "מסך הצלחה במימוש שובר"
+ * (`voucherSuccessScreen`: always / only on an automatic close / off, "always" by default) and "משך מסך
+ * ההצלחה (שניות)" (`voucherSuccessSeconds`, 1–10, 3 by default), and "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default), the same way.
  *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
@@ -80,6 +82,7 @@ import type {
   VoucherOnOff,
   VoucherRedeemFlow,
   VoucherSettingKey,
+  VoucherSuccessScreen,
 } from '@/lib/types';
 import {
   VOUCHER_AUTO_APPLY_KEY,
@@ -98,14 +101,22 @@ import {
   VOUCHER_STATION_PAID_ITEMS_KEY,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
+  VOUCHER_SUCCESS_SCREEN_KEY,
+  VOUCHER_SUCCESS_SCREEN_VALUES,
+  VOUCHER_SUCCESS_SECONDS_KEY,
+  VOUCHER_SUCCESS_SECONDS_VALUES,
   isVoucherBalanceCheckMode,
   isVoucherOnOff,
+  isVoucherSuccessScreen,
+  isVoucherSuccessSeconds,
   resolveVoucherAutoApply,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
   resolveVoucherStation,
+  resolveVoucherSuccessScreen,
+  resolveVoucherSuccessSeconds,
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
   voucherStationPaidItemsView,
@@ -147,9 +158,18 @@ type PaymentKey =
   | typeof VOUCHER_STATION_PAID_ITEMS_KEY
   | typeof VOUCHER_SHOW_ENTITLEMENT_KEY
   | typeof VOUCHER_AUTO_APPLY_KEY
+  | typeof VOUCHER_SUCCESS_SCREEN_KEY
+  | typeof VOUCHER_SUCCESS_SECONDS_KEY
   | typeof VOUCHER_SOUND_APPROVE_KEY
   | typeof VOUCHER_SOUND_REJECT_KEY;
-type DraftValue = boolean | number | VoucherRedeemFlow | VoucherBalanceCheckMode | VoucherOnOff | null;
+type DraftValue =
+  | boolean
+  | number
+  | VoucherRedeemFlow
+  | VoucherBalanceCheckMode
+  | VoucherOnOff
+  | VoucherSuccessScreen
+  | null;
 type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
 const INSTALLMENTS_KEY = 'payInstallmentsMax';
@@ -174,6 +194,8 @@ const PAYMENT_KEYS: PaymentKey[] = [
   VOUCHER_STATION_PAID_ITEMS_KEY,
   VOUCHER_SHOW_ENTITLEMENT_KEY,
   VOUCHER_AUTO_APPLY_KEY,
+  VOUCHER_SUCCESS_SCREEN_KEY,
+  VOUCHER_SUCCESS_SECONDS_KEY,
   VOUCHER_SOUND_APPROVE_KEY,
   VOUCHER_SOUND_REJECT_KEY,
 ];
@@ -182,6 +204,8 @@ const PAYMENT_KEYS: PaymentKey[] = [
 function ownValue(key: PaymentKey, v: unknown): v is Exclude<DraftValue, null> {
   if (key === VOUCHER_REDEEM_FLOW_KEY) return isVoucherRedeemFlow(v);
   if (key === VOUCHER_BALANCE_CHECK_KEY) return isVoucherBalanceCheckMode(v);
+  if (key === VOUCHER_SUCCESS_SCREEN_KEY) return isVoucherSuccessScreen(v);
+  if (key === VOUCHER_SUCCESS_SECONDS_KEY) return isVoucherSuccessSeconds(v);
   if (
     key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY
     || key === VOUCHER_SHOW_ENTITLEMENT_KEY || key === VOUCHER_AUTO_APPLY_KEY
@@ -632,6 +656,16 @@ function MethodsEditor({
           showEntitlementSource={levelName(layer.effectiveSources?.[VOUCHER_SHOW_ENTITLEMENT_KEY])}
           autoApply={isVoucherOnOff(draft[VOUCHER_AUTO_APPLY_KEY]) ? (draft[VOUCHER_AUTO_APPLY_KEY] as VoucherOnOff) : null}
           autoApplySource={levelName(layer.effectiveSources?.[VOUCHER_AUTO_APPLY_KEY])}
+          successScreen={
+            isVoucherSuccessScreen(draft[VOUCHER_SUCCESS_SCREEN_KEY])
+              ? (draft[VOUCHER_SUCCESS_SCREEN_KEY] as VoucherSuccessScreen)
+              : null
+          }
+          successScreenSource={levelName(layer.effectiveSources?.[VOUCHER_SUCCESS_SCREEN_KEY])}
+          successSeconds={
+            isVoucherSuccessSeconds(draft[VOUCHER_SUCCESS_SECONDS_KEY]) ? (draft[VOUCHER_SUCCESS_SECONDS_KEY] as number) : null
+          }
+          successSecondsSource={levelName(layer.effectiveSources?.[VOUCHER_SUCCESS_SECONDS_KEY])}
           soundApprove={isVoucherOnOff(draft[VOUCHER_SOUND_APPROVE_KEY]) ? (draft[VOUCHER_SOUND_APPROVE_KEY] as VoucherOnOff) : null}
           soundReject={isVoucherOnOff(draft[VOUCHER_SOUND_REJECT_KEY]) ? (draft[VOUCHER_SOUND_REJECT_KEY] as VoucherOnOff) : null}
           soundApproveSource={levelName(layer.effectiveSources?.[VOUCHER_SOUND_APPROVE_KEY])}
@@ -649,6 +683,8 @@ function MethodsEditor({
           onPaidItems={(v) => setKey(VOUCHER_STATION_PAID_ITEMS_KEY, v)}
           onShowEntitlement={(v) => setKey(VOUCHER_SHOW_ENTITLEMENT_KEY, v)}
           onAutoApply={(v) => setKey(VOUCHER_AUTO_APPLY_KEY, v)}
+          onSuccessScreen={(v) => setKey(VOUCHER_SUCCESS_SCREEN_KEY, v)}
+          onSuccessSeconds={(v) => setKey(VOUCHER_SUCCESS_SECONDS_KEY, v)}
           onSoundApprove={(v) => setKey(VOUCHER_SOUND_APPROVE_KEY, v)}
           onSoundReject={(v) => setKey(VOUCHER_SOUND_REJECT_KEY, v)}
           onApplyAdvice={() => setKey(VOUCHER_REDEEM_FLOW_KEY, 'voucher_first')}
@@ -788,7 +824,9 @@ function VoucherFlowRows({
  * level now), "סגירה אוטומטית כשהשובר מכסה הכל" (on / off / inherit), "עמדת שובר (מסך סריקה בלבד)"
  * (off / on / inherit, with its recommendation) and "רכישה נוספת בתשלום בעמדת שובר" (off / on /
  * inherit, with a warning when on and no cash or card method is left), "הצג לקופאי מה מגיע ללקוח
- * בסריקת שובר", "מימוש אוטומטי בסריקת שובר" and the approve / reject sounds (on / off / inherit) —
+ * בסריקת שובר", "מימוש אוטומטי בסריקת שובר" and the approve / reject sounds (on / off / inherit),
+ * "מסך הצלחה במימוש שובר" (always / only on an automatic close / off / inherit) and "משך מסך ההצלחה
+ * (שניות)" (1–10 / inherit) —
  * each with what is in force and where it comes from. `null` = this level does not set it (inherits).
  */
 function VoucherTillRows({
@@ -806,6 +844,10 @@ function VoucherTillRows({
   showEntitlementSource,
   autoApply,
   autoApplySource,
+  successScreen,
+  successScreenSource,
+  successSeconds,
+  successSecondsSource,
   soundApprove,
   soundReject,
   soundApproveSource,
@@ -818,6 +860,8 @@ function VoucherTillRows({
   onPaidItems,
   onShowEntitlement,
   onAutoApply,
+  onSuccessScreen,
+  onSuccessSeconds,
   onSoundApprove,
   onSoundReject,
   onApplyAdvice,
@@ -838,6 +882,12 @@ function VoucherTillRows({
   /** "מימוש אוטומטי בסריקת שובר" (`voucherAutoApply`, on by default). */
   autoApply: VoucherOnOff | null;
   autoApplySource: string;
+  /** "מסך הצלחה במימוש שובר" (`voucherSuccessScreen`, "always" by default). */
+  successScreen: VoucherSuccessScreen | null;
+  successScreenSource: string;
+  /** "משך מסך ההצלחה (שניות)" (`voucherSuccessSeconds`, 1–10, 3 by default). */
+  successSeconds: number | null;
+  successSecondsSource: string;
   /** "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default). */
   soundApprove: VoucherOnOff | null;
   soundReject: VoucherOnOff | null;
@@ -851,6 +901,8 @@ function VoucherTillRows({
   onPaidItems: (value: VoucherOnOff | null) => void;
   onShowEntitlement: (value: VoucherOnOff | null) => void;
   onAutoApply: (value: VoucherOnOff | null) => void;
+  onSuccessScreen: (value: VoucherSuccessScreen | null) => void;
+  onSuccessSeconds: (value: number | null) => void;
   onSoundApprove: (value: VoucherOnOff | null) => void;
   onSoundReject: (value: VoucherOnOff | null) => void;
   onApplyAdvice: () => void;
@@ -867,6 +919,10 @@ function VoucherTillRows({
   const effectiveShowEntitlement = resolveVoucherShowEntitlement(showEntitlement, inherited?.voucherShowEntitlement);
   const inheritedAutoApply = resolveVoucherAutoApply(undefined, inherited?.voucherAutoApply);
   const effectiveAutoApply = resolveVoucherAutoApply(autoApply, inherited?.voucherAutoApply);
+  const inheritedSuccessScreen = resolveVoucherSuccessScreen(undefined, inherited?.voucherSuccessScreen);
+  const effectiveSuccessScreen = resolveVoucherSuccessScreen(successScreen, inherited?.voucherSuccessScreen);
+  const inheritedSuccessSeconds = resolveVoucherSuccessSeconds(undefined, inherited?.voucherSuccessSeconds);
+  const effectiveSuccessSeconds = resolveVoucherSuccessSeconds(successSeconds, inherited?.voucherSuccessSeconds);
   const onOff = (v: VoucherOnOff) => t(`voucherOnOff.${v}`);
   const note = (own: unknown, state: string, source: string) =>
     own === null ? <p className="text-muted-foreground text-xs">{t('inheritNote', { state, source })}</p> : null;
@@ -1000,6 +1056,42 @@ function VoucherTillRows({
           ]}
         />
         {note(autoApply, onOff(inheritedAutoApply), autoApplySource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherSuccessScreenLabel')}
+        badge={t(`voucherSuccessScreen.${effectiveSuccessScreen}`)}
+        desc={<p>{t('voucherSuccessScreenDesc')}</p>}
+      >
+        <Segmented<VoucherSuccessScreen | null>
+          value={successScreen}
+          onChange={onSuccessScreen}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_SUCCESS_SCREEN_VALUES.map((v) => ({
+              v: v as VoucherSuccessScreen | null,
+              label: t(`voucherSuccessScreen.${v}`),
+            })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(successScreen, t(`voucherSuccessScreen.${inheritedSuccessScreen}`), successScreenSource)}
+      </SettingRow>
+      <SettingRow
+        label={t('voucherSuccessSecondsLabel')}
+        badge={String(effectiveSuccessSeconds)}
+        desc={<p>{t('voucherSuccessSecondsDesc')}</p>}
+      >
+        {/* 1–10 as choices, so nothing outside the range can be typed. */}
+        <Segmented<string | null>
+          value={successSeconds === null ? null : String(successSeconds)}
+          onChange={(v) => onSuccessSeconds(v === null ? null : Number(v))}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_SUCCESS_SECONDS_VALUES.map((n) => ({ v: String(n) as string | null, label: String(n) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(successSeconds, String(inheritedSuccessSeconds), successSecondsSource)}
       </SettingRow>
       {(
         [

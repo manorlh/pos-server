@@ -2441,21 +2441,25 @@ def get_settings_sync(
     # voucher station (unset = "off"), and whether the station also sells items paid for at the
     # regular price after the voucher (`voucherStationPaidItems`, unset = "off"), and the cashier's
     # "מה מגיע ללקוח" card on a voucher scan (`voucherShowEntitlement`, unset = "on"), a voucher
-    # scanned over a cart applied at once with no redeem sheet (`voucherAutoApply`, unset = "on"), and
-    # the strong approve / reject sounds of a voucher redemption (`voucherSoundApprove` /
-    # `voucherSoundReject`, unset = "on"): always sent resolved (app/services/voucher_station_settings.py).
+    # scanned over a cart applied at once with no redeem sheet (`voucherAutoApply`, unset = "on"), the
+    # green success screen after a voucher sale and how long it stays (`voucherSuccessScreen`, unset =
+    # "always"; `voucherSuccessSeconds`, an int, unset = 3), and the strong approve / reject sounds of
+    # a voucher redemption (`voucherSoundApprove` / `voucherSoundReject`, unset = "on"): always sent
+    # resolved (app/services/voucher_station_settings.py).
     from app.services.voucher_station_settings import (
         resolve_auto_apply,
         resolve_show_entitlement,
         resolve_station_paid_items,
         resolve_voucher_sounds,
         resolve_voucher_station,
+        resolve_voucher_success,
     )
 
     effective.update(resolve_voucher_station(all_settings))
     effective.update(resolve_station_paid_items(all_settings))
     effective.update(resolve_show_entitlement(all_settings))
     effective.update(resolve_auto_apply(all_settings))
+    effective.update(resolve_voucher_success(all_settings))
     effective.update(resolve_voucher_sounds(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.

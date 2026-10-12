@@ -32,7 +32,11 @@ import {
   VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
+  VOUCHER_SUCCESS_SCREEN_VALUES,
+  VOUCHER_SUCCESS_SECONDS_VALUES,
   resolveVoucherAutoApply,
+  resolveVoucherSuccessScreen,
+  resolveVoucherSuccessSeconds,
   resolveVoucherAutoClose,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
@@ -504,8 +508,8 @@ export function PosSettingsForm({
           );
         })()}
         {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items, the
-            cashier's "מה מגיע ללקוח" card, the auto apply on a scan over a cart and the approve /
-            reject sounds (lib/voucherTillSettings.ts):
+            cashier's "מה מגיע ללקוח" card, the auto apply on a scan over a cart, the success screen
+            and its seconds, and the approve / reject sounds (lib/voucherTillSettings.ts):
             "ירושה" sends null. */}
         {(() => {
           const pick = (
@@ -516,6 +520,8 @@ export function PosSettingsForm({
               | 'voucherStationPaidItems'
               | 'voucherShowEntitlement'
               | 'voucherAutoApply'
+              | 'voucherSuccessScreen'
+              | 'voucherSuccessSeconds'
               | 'voucherSoundApprove'
               | 'voucherSoundReject',
             values: readonly string[],
@@ -527,7 +533,10 @@ export function PosSettingsForm({
               { value: 'inherit', label: t('voucherSettingInherit', { value: label(inheritedValue) }) },
               ...values.map((v) => ({ value: v, label: label(v) })),
             ];
-            const own = value[key];
+            // The seconds are a number on the wire; the select works in strings.
+            const numeric = key === 'voucherSuccessSeconds';
+            const ownRaw = value[key];
+            const own = typeof ownRaw === 'number' ? String(ownRaw) : ownRaw;
             return (
               <div className="space-y-1">
                 <Label>
@@ -536,7 +545,7 @@ export function PosSettingsForm({
                 </Label>
                 <Select
                   value={typeof own === 'string' && values.includes(own) ? own : 'inherit'}
-                  onValueChange={(v) => set(key, (v === 'inherit' ? null : v) as never)}
+                  onValueChange={(v) => set(key, (v === 'inherit' ? null : numeric ? Number(v) : v) as never)}
                   items={items}
                 >
                   <SelectTrigger>
@@ -602,6 +611,20 @@ export function PosSettingsForm({
                 (v) => t(`voucherOnOff_${v}`),
                 resolveVoucherAutoApply(undefined, inherited?.voucherAutoApply),
                 <p className="text-xs text-muted-foreground">{t('voucherAutoApplyHint')}</p>,
+              )}
+              {pick(
+                'voucherSuccessScreen',
+                VOUCHER_SUCCESS_SCREEN_VALUES,
+                (v) => t(`voucherSuccessScreen_${v}`),
+                resolveVoucherSuccessScreen(undefined, inherited?.voucherSuccessScreen),
+                <p className="text-xs text-muted-foreground">{t('voucherSuccessScreenHint')}</p>,
+              )}
+              {pick(
+                'voucherSuccessSeconds',
+                VOUCHER_SUCCESS_SECONDS_VALUES.map(String),
+                (v) => v,
+                String(resolveVoucherSuccessSeconds(undefined, inherited?.voucherSuccessSeconds)),
+                <p className="text-xs text-muted-foreground">{t('voucherSuccessSecondsHint')}</p>,
               )}
               {pick(
                 'voucherSoundApprove',

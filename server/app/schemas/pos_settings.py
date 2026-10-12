@@ -130,6 +130,15 @@ class PosSettingsV1Patch(BaseModel):
     #: the matching lines, no redeem sheet, when no choice is needed) or "off" (the sheet opens, as
     #: before). Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_auto_apply: Optional[Literal["on", "off"]] = Field(None, alias="voucherAutoApply")
+    #: "מסך הצלחה במימוש שובר": "always" (unset — a large green screen after every sale that redeemed a
+    #: voucher), "auto_close" (only when the voucher closed the sale by itself) or "off". Anything else
+    #: is a 422; `null` in a PATCH resets the layer.
+    voucher_success_screen: Optional[Literal["always", "auto_close", "off"]] = Field(
+        None, alias="voucherSuccessScreen"
+    )
+    #: "משך מסך ההצלחה (שניות)": 1–10 (unset — 3). Outside the range is a 422; `null` in a PATCH resets
+    #: the layer.
+    voucher_success_seconds: Optional[int] = Field(None, alias="voucherSuccessSeconds", ge=1, le=10)
     #: "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": "on" (unset — a strong sound when a
     #: voucher is accepted / refused) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_sound_approve: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundApprove")

@@ -19,6 +19,7 @@ from app.services.voucher_station_settings import (
     VOUCHER_SOUND_SETTING_KEYS,
     VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
     VOUCHER_STATION_SETTING_KEYS,
+    VOUCHER_SUCCESS_SETTING_KEYS,
 )
 
 MANAGED_SETTING_KEYS = (
@@ -93,6 +94,9 @@ MANAGED_SETTING_KEYS = (
     # voucherAutoApply — a voucher scanned over a cart applied at once to the matching lines, no
     # redeem sheet, when no choice is needed (same module, 12.10.2026).
     *VOUCHER_AUTO_APPLY_SETTING_KEYS,
+    # voucherSuccessScreen, voucherSuccessSeconds — the green success screen after a voucher
+    # redemption and how long it stays (same module, 12.10.2026).
+    *VOUCHER_SUCCESS_SETTING_KEYS,
     # voucherSoundApprove, voucherSoundReject — the strong approve / reject sounds of a voucher
     # redemption (same module, 12.10.2026).
     *VOUCHER_SOUND_SETTING_KEYS,

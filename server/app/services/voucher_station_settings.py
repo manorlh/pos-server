@@ -37,6 +37,17 @@ And one more, added 12.10.2026 ("מימוש אוטומטי בסריקת שובר
                               one is (the default)
                       "off" — the redeem sheet opens as before
 
+And two more, added 12.10.2026 (the green success screen after a voucher redemption), set and
+inherited the same way:
+
+    voucherSuccessScreen   "always"     — "מסך הצלחה במימוש שובר": a large green screen after every
+                                          sale in which a voucher was redeemed (the default)
+                           "auto_close" — only when the voucher closed the sale by itself
+                           "off"        — the usual end-of-sale screen only
+    voucherSuccessSeconds  1–10         — "משך מסך ההצלחה (שניות)": how long it stays (default 3);
+                                          an integer outside 1–10 is a 422 on write, and anything
+                                          but such an integer reads as 3
+
 And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירוב חזק, אפשר לבטל אותם בפרמטרים — לגבי
 השוברים במימוש"), set and inherited the same way:
 
@@ -99,6 +110,20 @@ DEFAULT_AUTO_APPLY = ON
 
 VOUCHER_AUTO_APPLY_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_AUTO_APPLY_KEY,)
 
+#: 12.10.2026: the green success screen after a voucher redemption, and how long it stays.
+VOUCHER_SUCCESS_SCREEN_KEY = "voucherSuccessScreen"
+VOUCHER_SUCCESS_SECONDS_KEY = "voucherSuccessSeconds"
+SUCCESS_ALWAYS = "always"
+SUCCESS_AUTO_CLOSE = "auto_close"
+SUCCESS_SCREEN_VALUES: Tuple[str, ...] = (SUCCESS_ALWAYS, SUCCESS_AUTO_CLOSE, OFF)
+SUCCESS_SECONDS_MIN = 1
+SUCCESS_SECONDS_MAX = 10
+#: Unset everywhere: the screen after every voucher sale, for 3 seconds.
+DEFAULT_SUCCESS_SCREEN = SUCCESS_ALWAYS
+DEFAULT_SUCCESS_SECONDS = 3
+
+VOUCHER_SUCCESS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_SCREEN_KEY, VOUCHER_SUCCESS_SECONDS_KEY)
+
 #: 12.10.2026: the strong approve / reject sounds when a voucher is redeemed.
 VOUCHER_SOUND_APPROVE_KEY = "voucherSoundApprove"
 VOUCHER_SOUND_REJECT_KEY = "voucherSoundReject"
@@ -151,6 +176,25 @@ def resolve_auto_apply(merged: Mapping[str, Any]) -> Dict[str, Any]:
         VOUCHER_AUTO_APPLY_KEY: auto_apply
         if isinstance(auto_apply, str) and auto_apply in AUTO_APPLY_VALUES
         else DEFAULT_AUTO_APPLY,
+    }
+
+
+def _success_seconds(value: Any) -> int:
+    """An int (not a bool) in 1–10 as is; anything else = 3."""
+    if isinstance(value, int) and not isinstance(value, bool) and SUCCESS_SECONDS_MIN <= value <= SUCCESS_SECONDS_MAX:
+        return value
+    return DEFAULT_SUCCESS_SECONDS
+
+
+def resolve_voucher_success(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherSuccessScreen` / `voucherSuccessSeconds` resolved from a merged settings dict; unknown or
+    missing = "always" / 3. A view only."""
+    screen = merged.get(VOUCHER_SUCCESS_SCREEN_KEY)
+    return {
+        VOUCHER_SUCCESS_SCREEN_KEY: screen
+        if isinstance(screen, str) and screen in SUCCESS_SCREEN_VALUES
+        else DEFAULT_SUCCESS_SCREEN,
+        VOUCHER_SUCCESS_SECONDS_KEY: _success_seconds(merged.get(VOUCHER_SUCCESS_SECONDS_KEY)),
     }
 
 
