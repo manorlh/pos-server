@@ -7,9 +7,10 @@
  * same operations for the same voucher, so the two can never disagree.
  *
  * The design: logo (optional), the voucher type's name small, the title large, what the voucher
- * gives in a framed box (unless hidden), the till value when printed, free text, validity in a
- * strong line, terms; the QR / Code 128 large with a quiet
- * zone, the code in monospace, the short service number prominent ("מס׳ 0008"); "נוצר על ידי
+ * gives in a framed box (unless hidden; a long list or benefit shrinks so the free text keeps its
+ * first lines), the till value when printed, free text (`layoutVoucher` says when the card cuts
+ * it: the dashboard warns beside the field), validity in a strong line, terms; the QR / Code 128
+ * large with a quiet zone, the code in monospace, the short service number prominent ("מס׳ 0008"); "נוצר על ידי
  * Runner Systems" at the very bottom (`showCredit`). RTL, pure black (thermal heads).
  *
  * All measures in mm from the card's top left; a text op's `y` is its baseline.
@@ -43,10 +44,15 @@ const QTY_GAP = 1.2;
 const BENEFIT = 3.3;
 const BENEFIT_LH = 1.2;
 const BENEFIT_LINES = 3;
+/** A long benefit shrinks down to this share of BENEFIT when the free text needs the room. */
+const BENEFIT_MIN = 0.62;
 const FREE = 2.5;
 const FREE_LH = 1.25;
 const FREE_MAX_LINES = 12;
+/** Free-text lines kept for it however long the list of goods or the benefit. */
 const FREE_RESERVE = 2;
+/** A shrunk benefit box fits its room by this much (mm), so rounding never costs a free-text line. */
+const FIT_EPS = 1e-6;
 const VALID = 2.6;
 const TERMS = 2.1;
 const SMALL_LH = 1.25;
@@ -111,6 +117,20 @@ export interface Code128Op { op: 'code128'; x: number; y: number; w: number; h: 
 export interface LogoOp { op: 'logo'; x: number; y: number; w: number; h: number; align: 'right' | 'center' }
 export type VoucherOp = TextOp | BoxOp | QrOp | Code128Op | LogoOp;
 
+/** How much of the free text the card prints: [shown] of its [total] wrapped lines (the server's `FreeTextFit`). */
+export interface FreeTextFit {
+  shown: number;
+  total: number;
+  /** Not all of it: lines left out, or a line too wide for the card cut with "…". */
+  cut: boolean;
+}
+
+/** The card's drawing operations, and how much of the free text they print (the server's `CardLayout`). */
+export interface CardLayout {
+  ops: VoucherOp[];
+  freeText: FreeTextFit;
+}
+
 function r3(v: number): number {
   return Math.round(v * 1000) / 1000;
 }
@@ -135,9 +155,8 @@ function splitLines(t: string): string[] {
   return t.split(/\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]/);
 }
 
-/** Word-wrapped lines (its own line breaks kept), at most [maxLines], the last cut with "…". */
-export function wrap(measure: Measure, t: string, size: number, bold: boolean, maxW: number, maxLines: number): string[] {
-  if (maxLines <= 0) return [];
+/** Every word-wrapped line (its own line breaks kept), uncut — a word wider than [maxW] alone on its line. */
+function allLines(measure: Measure, t: string, size: number, bold: boolean, maxW: number): string[] {
   const lines: string[] = [];
   for (const para of splitLines(t || '')) {
     let line = '';
@@ -152,6 +171,13 @@ export function wrap(measure: Measure, t: string, size: number, bold: boolean, m
     }
     if (line) lines.push(line);
   }
+  return lines;
+}
+
+/** Word-wrapped lines (its own line breaks kept), at most [maxLines], the last cut with "…". */
+export function wrap(measure: Measure, t: string, size: number, bold: boolean, maxW: number, maxLines: number): string[] {
+  if (maxLines <= 0) return [];
+  const lines = allLines(measure, t, size, bold, maxW);
   const out = lines.slice(0, maxLines).map((l) => fit(measure, l, size, bold, maxW));
   if (lines.length > maxLines && out.length) out[out.length - 1] = fit(measure, lines[maxLines - 1] + '…', size, bold, maxW);
   return out;
@@ -162,7 +188,7 @@ interface Row { kind: 'benefit' | 'item' | 'more'; text: string; size: number; l
 function textBlock(
   c: CardContent, measure: Measure,
   { left, right, area, landscape, t }: { left: number; right: number; area: number; landscape: boolean; t: number },
-): [VoucherOp[], number] {
+): [VoucherOp[], number, FreeTextFit] {
   const col = right - left;
   const gap = GAP * t;
   const align: Align = landscape ? 'right' : 'center';
@@ -196,12 +222,25 @@ function textBlock(
   let boxH = 0;
   let qtyW = 0;
   const items = c.items ?? [];
+  // The free text's own lines (up to FREE_RESERVE) and the gap above them, kept from the box.
+  const reserve = freeAll.length ? Math.min(freeAll.length, FREE_RESERVE) * freeLh + gap : 0;
   if (c.benefit) {
-    const bSize = BENEFIT * t;
-    rows = wrap(measure, c.benefit, bSize, true, inner, BENEFIT_LINES).map((x) => ({ kind: 'benefit', text: x, size: bSize, lh: bSize * BENEFIT_LH }));
+    let bSize = BENEFIT * t;
+    let bLines = wrap(measure, c.benefit, bSize, true, inner, BENEFIT_LINES);
+    if (freeAll.length) {
+      // A long benefit on a small card shrinks (down to BENEFIT_MIN) rather than leave the free
+      // text no line at all; the same box as before whenever the reserve fits.
+      const room = avail - gap - reserve - 2 * pad;
+      const full = bLines.length * bSize * BENEFIT_LH;
+      if (full > room) {
+        const factor = room > 0 ? Math.max(BENEFIT_MIN, (room - FIT_EPS) / full) : BENEFIT_MIN;
+        bSize = BENEFIT * t * factor;
+        bLines = wrap(measure, c.benefit, bSize, true, inner, BENEFIT_LINES);
+      }
+    }
+    rows = bLines.map((x) => ({ kind: 'benefit', text: x, size: bSize, lh: bSize * BENEFIT_LH }));
     boxH = rows.reduce((sum, row) => sum + row.lh, 0) + 2 * pad;
   } else if (items.length) {
-    const reserve = freeAll.length ? Math.min(freeAll.length, FREE_RESERVE) * freeLh + gap : 0;
     const room = avail - gap - reserve - 2 * pad;
     const n = items.length;
     const full = n * ITEM * t * ITEM_LH;
@@ -219,6 +258,13 @@ function textBlock(
   const rem = avail - (boxH ? gap + boxH : 0);
   const freeN = freeAll.length ? Math.min(freeAll.length, Math.max(0, Math.floor((rem - gap) / freeLh))) : 0;
   const free = freeN >= freeAll.length ? freeAll : wrap(measure, c.freeText ?? '', freeSize, false, col, freeN);
+  // Printed whole, or not: lines left out (here or past FREE_MAX_LINES), or one cut to the width.
+  const freeLines = c.freeText ? allLines(measure, c.freeText, freeSize, false, col) : [];
+  const freeFit: FreeTextFit = {
+    shown: free.length,
+    total: freeLines.length,
+    cut: free.length < freeLines.length || freeLines.slice(0, free.length).some((l) => measure(l, freeSize, false, false) > col),
+  };
 
   let y = 0;
   if (c.logo) {
@@ -275,7 +321,7 @@ function textBlock(
     ops.push(text(c.terms, ax, y + termsSize * BASE, termsSize, { align }));
     y += termsSize * SMALL_LH;
   }
-  return [ops, y];
+  return [ops, y, freeFit];
 }
 
 function rounded(op: VoucherOp): VoucherOp {
@@ -286,6 +332,11 @@ function rounded(op: VoucherOp): VoucherOp {
 
 /** The card's drawing operations, in mm (the server's `layout`). */
 export function layoutCard(w: number, h: number, c: CardContent, measure: Measure): VoucherOp[] {
+  return layoutVoucher(w, h, c, measure).ops;
+}
+
+/** The card's drawing operations, in mm, and how much of the free text they print (the server's `layout_card`). */
+export function layoutVoucher(w: number, h: number, c: CardContent, measure: Measure): CardLayout {
   const s = Math.min(w, h) / 50;
   const t = Math.min(s, TEXT_SCALE_MAX);
   const linear = c.barcode === 'code128';
@@ -350,10 +401,10 @@ export function layoutCard(w: number, h: number, c: CardContent, measure: Measur
 
   // The text column, centred in the height it has.
   const area = textBottom - top;
-  const [block, height] = textBlock(c, measure, { left, right, area, landscape, t });
+  const [block, height, freeText] = textBlock(c, measure, { left, right, area, landscape, t });
   const dy = top + Math.max(0, (area - height) / 2);
   for (const op of block) ops.push({ ...op, y: op.y + dy });
-  return ops.map(rounded);
+  return { ops: ops.map(rounded), freeText };
 }
 
 /** A fixed width per character — what the golden fixture is computed with, in both languages. */

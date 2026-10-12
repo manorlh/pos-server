@@ -144,6 +144,7 @@ import {
   VoucherPreview,
   geometryOf,
   printVouchers,
+  useFreeTextCut,
   type PagePresetId,
   type PrintLayout,
 } from '@/components/dashboard/prepaid-vouchers/voucher-print';
@@ -664,6 +665,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const draftVoucher = {
     id: 'draft', serial: 1, displayCode: 'XXXX-XXXX-XXXX-XXXX', qrPayload: 'PV:SAMPLE', groupNo: groupSize ? 1 : null,
   };
+  const draftLayout: PrintLayout = { preset: 'ticket80x50' };
+  // The preview's card cannot hold all of the free text: said beside the field, not left to the print.
+  const freeTextCut = useFreeTextCut(draft, draftVoucher, draftLayout);
 
   // A quick start: the form filled with values the owner could set by hand (lib/voucherPresets.ts).
   const applyPreset = (p: VoucherPreset) => {
@@ -1010,6 +1014,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
                 placeholder={t('freeTextPlaceholder')}
                 className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
               />
+              {freeTextCut ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('freeTextCut')}</p> : null}
             </div>
             <div className="space-y-1">
               <Label>{t('logo')}</Label>
@@ -1032,7 +1037,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
             <div className="space-y-1">
               <Label>{t('preview')}</Label>
               <div className="overflow-x-auto rounded-lg border bg-muted/30 p-2">
-                <VoucherPreview batch={draft} voucher={draftVoucher} layout={{ preset: 'ticket80x50' }} />
+                <VoucherPreview batch={draft} voucher={draftVoucher} layout={draftLayout} />
               </div>
             </div>
           </FormSection>
@@ -1498,6 +1503,10 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
   const cancelled = batch.status === 'cancelled';
   const grouped = (batch.groupCount ?? 0) > 0;
   const narrowLine = batch.barcodeType === 'code128' && geometryOf(layout).cardW < 70;
+  // The free text as being typed: the preview shows what saving it will print, and the note
+  // beside the field says when the picked format cannot hold all of it.
+  const previewBatch: PrepaidVoucherBatch = { ...batch, freeText: freeText.trim() || null };
+  const freeTextCut = useFreeTextCut(previewBatch, sample, layout);
 
   return (
     <div className="space-y-4">
@@ -1665,11 +1674,11 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
                 {t('production.freeTextSave')}
               </Button>
             </div>
+            {freeTextCut ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('create.freeTextCut')}</p> : null}
           </div>
           {narrowLine ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('production.code128Narrow')}</p> : null}
           <div className="overflow-x-auto py-1">
-            {/* The free text as being typed: the preview shows what saving it will print. */}
-            <VoucherPreview batch={{ ...batch, freeText: freeText.trim() || null }} voucher={sample} layout={layout} />
+            <VoucherPreview batch={previewBatch} voucher={sample} layout={layout} />
           </div>
           <p className="text-xs text-muted-foreground">{t('printHint')}</p>
           <div className="flex flex-wrap gap-2">

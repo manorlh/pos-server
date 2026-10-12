@@ -227,7 +227,12 @@
      "align": "right",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 3,
+    "total": 3,
+    "cut": false
+   }
   },
   {
    "name": "card 54x86, logo, type and value",
@@ -407,7 +412,12 @@
      "align": "center",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 0,
+    "total": 3,
+    "cut": true
+   }
   },
   {
    "name": "card 86x54, discount",
@@ -572,7 +582,12 @@
      "align": "right",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 3,
+    "total": 3,
+    "cut": false
+   }
   },
   {
    "name": "ticket 80x120, Code 128, many goods",
@@ -982,7 +997,12 @@
      "align": "center",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 2,
+    "total": 3,
+    "cut": true
+   }
   },
   {
    "name": "A6, goods hidden, long free text",
@@ -1192,7 +1212,12 @@
      "align": "center",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 11,
+    "total": 19,
+    "cut": true
+   }
   },
   {
    "name": "A4 sheet cell, no credit, no code, no validity",
@@ -1394,7 +1419,12 @@
      "align": "right",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 4,
+    "total": 4,
+    "cut": false
+   }
   },
   {
    "name": "custom 30x30",
@@ -1541,7 +1571,12 @@
      "align": "center",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 0,
+    "total": 3,
+    "cut": true
+   }
   },
   {
    "name": "ticket 80x120, validity hidden",
@@ -1732,7 +1767,610 @@
      "align": "center",
      "rtl": true
     }
-   ]
+   ],
+   "freeText": {
+    "shown": 3,
+    "total": 3,
+    "cut": false
+   }
+  },
+  {
+   "name": "ticket 80x50, logo, long benefit, short free text",
+   "w": 80,
+   "h": 50,
+   "content": {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": "שימוש אחד",
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": [],
+    "freeText": "יחידה אחת!!!!!!!",
+    "validity": "בתוקף עד 14/08/2026",
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems",
+    "logo": true,
+    "benefit": "100% הנחה על פיצה, פופקורן, נקניקייה בלחמניה ועוד"
+   },
+   "ops": [
+    {
+     "op": "text",
+     "text": "נוצר על ידי Runner Systems",
+     "x": 40.0,
+     "y": 46.435,
+     "size": 1.7,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "qr",
+     "x": 2.8,
+     "y": 3.575,
+     "side": 32.0
+    },
+    {
+     "op": "text",
+     "text": "ABCD-EFGH-2345-6789",
+     "x": 18.8,
+     "y": 38.375,
+     "size": 2.5,
+     "bold": true,
+     "mono": true,
+     "align": "center",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "מס׳ 0008 · קבוצה 3",
+     "x": 18.8,
+     "y": 42.06,
+     "size": 3.2,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "logo",
+     "x": 37.3,
+     "y": 2.8,
+     "w": 39.9,
+     "h": 8.0,
+     "align": "right"
+    },
+    {
+     "op": "text",
+     "text": "פסטיבל הקיץ 2026",
+     "x": 77.2,
+     "y": 15.2,
+     "size": 4.0,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "box",
+     "x": 37.3,
+     "y": 18.1,
+     "w": 39.9,
+     "h": 14.175,
+     "stroke": 0.35,
+     "radius": 1.2
+    },
+    {
+     "op": "text",
+     "text": "100% הנחה על פיצה,",
+     "x": 75.8,
+     "y": 22.028,
+     "size": 3.16,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "פופקורן, נקניקייה",
+     "x": 75.8,
+     "y": 25.819,
+     "size": 3.16,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בלחמניה ועוד",
+     "x": 75.8,
+     "y": 29.611,
+     "size": 3.16,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "יחידה אחת!!!!!!!",
+     "x": 77.2,
+     "y": 35.775,
+     "size": 2.5,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בתוקף עד 14/08/2026",
+     "x": 77.2,
+     "y": 40.48,
+     "size": 2.6,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "שימוש אחד",
+     "x": 77.2,
+     "y": 43.33,
+     "size": 2.1,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    }
+   ],
+   "freeText": {
+    "shown": 1,
+    "total": 1,
+    "cut": false
+   }
+  },
+  {
+   "name": "ticket 80x50, logo, long benefit, short free text, validity hidden",
+   "w": 80,
+   "h": 50,
+   "content": {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": null,
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": [],
+    "freeText": "יחידה אחת!!!!!!!",
+    "validity": null,
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems",
+    "logo": true,
+    "benefit": "100% הנחה על פיצה, פופקורן, נקניקייה בלחמניה ועוד"
+   },
+   "ops": [
+    {
+     "op": "text",
+     "text": "נוצר על ידי Runner Systems",
+     "x": 40.0,
+     "y": 46.435,
+     "size": 1.7,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "qr",
+     "x": 2.8,
+     "y": 3.575,
+     "side": 32.0
+    },
+    {
+     "op": "text",
+     "text": "ABCD-EFGH-2345-6789",
+     "x": 18.8,
+     "y": 38.375,
+     "size": 2.5,
+     "bold": true,
+     "mono": true,
+     "align": "center",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "מס׳ 0008 · קבוצה 3",
+     "x": 18.8,
+     "y": 42.06,
+     "size": 3.2,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "logo",
+     "x": 37.3,
+     "y": 6.235,
+     "w": 39.9,
+     "h": 8.0,
+     "align": "right"
+    },
+    {
+     "op": "text",
+     "text": "פסטיבל הקיץ 2026",
+     "x": 77.2,
+     "y": 18.635,
+     "size": 4.0,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "box",
+     "x": 37.3,
+     "y": 21.535,
+     "w": 39.9,
+     "h": 14.68,
+     "stroke": 0.35,
+     "radius": 1.2
+    },
+    {
+     "op": "text",
+     "text": "100% הנחה על פיצה,",
+     "x": 75.8,
+     "y": 25.575,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "פופקורן, נקניקייה",
+     "x": 75.8,
+     "y": 29.535,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בלחמניה ועוד",
+     "x": 75.8,
+     "y": 33.495,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "יחידה אחת!!!!!!!",
+     "x": 77.2,
+     "y": 39.715,
+     "size": 2.5,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    }
+   ],
+   "freeText": {
+    "shown": 1,
+    "total": 1,
+    "cut": false
+   }
+  },
+  {
+   "name": "ticket 80x50, logo, long benefit, free text cut",
+   "w": 80,
+   "h": 50,
+   "content": {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": "שימוש אחד",
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": [],
+    "freeText": "שורה 1 של הטקסט החופשי\nשורה 2 של הטקסט החופשי\nשורה 3 של הטקסט החופשי\nשורה 4 של הטקסט החופשי\nשורה 5 של הטקסט החופשי\nשורה 6 של הטקסט החופשי",
+    "validity": "בתוקף עד 14/08/2026",
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems",
+    "logo": true,
+    "benefit": "100% הנחה על פיצה, פופקורן, נקניקייה בלחמניה ועוד"
+   },
+   "ops": [
+    {
+     "op": "text",
+     "text": "נוצר על ידי Runner Systems",
+     "x": 40.0,
+     "y": 46.435,
+     "size": 1.7,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "qr",
+     "x": 2.8,
+     "y": 3.575,
+     "side": 32.0
+    },
+    {
+     "op": "text",
+     "text": "ABCD-EFGH-2345-6789",
+     "x": 18.8,
+     "y": 38.375,
+     "size": 2.5,
+     "bold": true,
+     "mono": true,
+     "align": "center",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "מס׳ 0008 · קבוצה 3",
+     "x": 18.8,
+     "y": 42.06,
+     "size": 3.2,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "logo",
+     "x": 37.3,
+     "y": 4.175,
+     "w": 39.9,
+     "h": 8.0,
+     "align": "right"
+    },
+    {
+     "op": "text",
+     "text": "פסטיבל הקיץ 2026",
+     "x": 77.2,
+     "y": 16.575,
+     "size": 4.0,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "box",
+     "x": 37.3,
+     "y": 19.475,
+     "w": 39.9,
+     "h": 8.3,
+     "stroke": 0.35,
+     "radius": 1.2
+    },
+    {
+     "op": "text",
+     "text": "100% הנחה על פיצה, פופקורן,",
+     "x": 75.8,
+     "y": 22.708,
+     "size": 2.292,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "נקניקייה בלחמניה ועוד",
+     "x": 75.8,
+     "y": 25.458,
+     "size": 2.292,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "שורה 1 של הטקסט החופשי",
+     "x": 77.2,
+     "y": 31.275,
+     "size": 2.5,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "שורה 2 של הטקסט החופשי…",
+     "x": 77.2,
+     "y": 34.4,
+     "size": 2.5,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בתוקף עד 14/08/2026",
+     "x": 77.2,
+     "y": 39.105,
+     "size": 2.6,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "שימוש אחד",
+     "x": 77.2,
+     "y": 41.955,
+     "size": 2.1,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    }
+   ],
+   "freeText": {
+    "shown": 2,
+    "total": 6,
+    "cut": true
+   }
+  },
+  {
+   "name": "ticket 80x50, long benefit, short free text, room enough",
+   "w": 80,
+   "h": 50,
+   "content": {
+    "title": "פסטיבל הקיץ 2026",
+    "terms": "שימוש אחד",
+    "serial": "מס׳ 0008 · קבוצה 3",
+    "items": [],
+    "freeText": "יחידה אחת!!!!!!!",
+    "validity": "בתוקף עד 14/08/2026",
+    "code": "ABCD-EFGH-2345-6789",
+    "credit": "נוצר על ידי Runner Systems",
+    "logo": false,
+    "benefit": "100% הנחה על פיצה, פופקורן, נקניקייה בלחמניה ועוד"
+   },
+   "ops": [
+    {
+     "op": "text",
+     "text": "נוצר על ידי Runner Systems",
+     "x": 40.0,
+     "y": 46.435,
+     "size": 1.7,
+     "bold": false,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "qr",
+     "x": 2.8,
+     "y": 3.575,
+     "side": 32.0
+    },
+    {
+     "op": "text",
+     "text": "ABCD-EFGH-2345-6789",
+     "x": 18.8,
+     "y": 38.375,
+     "size": 2.5,
+     "bold": true,
+     "mono": true,
+     "align": "center",
+     "rtl": false
+    },
+    {
+     "op": "text",
+     "text": "מס׳ 0008 · קבוצה 3",
+     "x": 18.8,
+     "y": 42.06,
+     "size": 3.2,
+     "bold": true,
+     "mono": false,
+     "align": "center",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "פסטיבל הקיץ 2026",
+     "x": 77.2,
+     "y": 10.348,
+     "size": 4.0,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "box",
+     "x": 37.3,
+     "y": 13.248,
+     "w": 39.9,
+     "h": 14.68,
+     "stroke": 0.35,
+     "radius": 1.2
+    },
+    {
+     "op": "text",
+     "text": "100% הנחה על פיצה,",
+     "x": 75.8,
+     "y": 17.288,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "פופקורן, נקניקייה",
+     "x": 75.8,
+     "y": 21.248,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בלחמניה ועוד",
+     "x": 75.8,
+     "y": 25.208,
+     "size": 3.3,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "יחידה אחת!!!!!!!",
+     "x": 77.2,
+     "y": 31.428,
+     "size": 2.5,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "בתוקף עד 14/08/2026",
+     "x": 77.2,
+     "y": 36.133,
+     "size": 2.6,
+     "bold": true,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    },
+    {
+     "op": "text",
+     "text": "שימוש אחד",
+     "x": 77.2,
+     "y": 38.983,
+     "size": 2.1,
+     "bold": false,
+     "mono": false,
+     "align": "right",
+     "rtl": true
+    }
+   ],
+   "freeText": {
+    "shown": 1,
+    "total": 1,
+    "cut": false
+   }
   }
  ]
 }
