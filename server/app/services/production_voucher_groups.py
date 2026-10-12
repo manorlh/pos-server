@@ -20,10 +20,13 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from fastapi import status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.category import Category
-from app.models.product import Product
+from app.models.pos_machine import POSMachine
+from app.models.product import CatalogLevel, Product
+from app.models.shop import Shop
 from app.services import production_voucher_rules as PR
 
 GROUPS = "groups"
@@ -118,20 +121,65 @@ def selection_of(g: Dict[str, Any]) -> PR.Selection:
     )
 
 
-def catalog_of(db: Session, tenant_id, company_id) -> PR.Catalog:
-    """The batch's company catalog as the rules read it: its products (in name order) and the tenant's categories."""
+def batch_products(db: Session, tenant_id, company_id) -> List[tuple]:
+    """
+    The products a batch of [company_id] may name — (id, categoryId), in name order — the same
+    products its picker lists (`GET /prepaid-vouchers/products`, unsearched):
+
+    * the catalog products of the company's group (its parents and children);
+    * the tenant-wide catalog products (no company — the business's general catalog). Leaving these
+      out refused a group naming one with "unknown product" while the picker offered it (12.10.2026);
+    * the products made on the tills (or in a shop) of the company's group, with no catalog product
+      behind them.
+
+    A till's local copy of a catalog product is the catalog product's, never another.
+    """
     PV = _pv()
-    related = [uuid.UUID(c) for c in PV._related_companies(db, company_id)]
-    products = (
-        db.query(Product.id, Product.category_id)
+    related = [uuid.UUID(c) for c in PV._related_companies(db, company_id)] or [PV._as_uuid(company_id)]
+    rows = (
+        db.query(Product.id, Product.category_id, Product.name)
         .filter(
             Product.tenant_id == tenant_id,
-            Product.company_id.in_(related or [company_id]),
-            Product.pos_machine_id.is_(None),  # a till's own copy is the global product's, not another
+            Product.pos_machine_id.is_(None),
+            or_(
+                Product.company_id.in_(related),
+                and_(Product.company_id.is_(None), Product.catalog_level == CatalogLevel.GLOBAL),
+            ),
         )
-        .order_by(Product.name, Product.id)
         .all()
     )
+    seen = {r[0] for r in rows}
+    group = PV._company_group(db, company_id)
+    own = (
+        db.query(Product.id, Product.category_id, Product.name, Product.pos_machine_id, Product.shop_id)
+        .filter(
+            Product.tenant_id == tenant_id,
+            Product.catalog_level != CatalogLevel.GLOBAL,
+            Product.global_product_id.is_(None),
+        )
+        .all()
+    )
+    if own:
+        machine_ids = {r[3] for r in own if r[3] is not None}
+        machine_shop = dict(
+            db.query(POSMachine.id, POSMachine.shop_id).filter(POSMachine.id.in_(machine_ids)).all()
+        ) if machine_ids else {}
+        shop_ids = {machine_shop.get(r[3]) if r[3] is not None else r[4] for r in own} - {None}
+        shop_company = dict(
+            db.query(Shop.id, Shop.company_id).filter(Shop.id.in_(shop_ids)).all()
+        ) if shop_ids else {}
+        for pid, cid, name, machine_id, shop_id in own:
+            sid = machine_shop.get(machine_id) if machine_id is not None else shop_id
+            if pid not in seen and sid is not None and str(shop_company.get(sid)) in group:
+                seen.add(pid)
+                rows.append((pid, cid, name))
+    rows.sort(key=lambda r: ((r[2] or ""), str(r[0])))
+    return [(r[0], r[1]) for r in rows]
+
+
+def catalog_of(db: Session, tenant_id, company_id) -> PR.Catalog:
+    """The batch's company catalog as the rules read it: its products (in name order, `batch_products`) and the tenant's categories."""
+    products = batch_products(db, tenant_id, company_id)
     categories = db.query(Category.id, Category.parent_id).filter(Category.tenant_id == tenant_id).all()
     return PR.Catalog(
         products=tuple((str(p).lower(), str(c).lower() if c else None) for p, c in products),
