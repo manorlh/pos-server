@@ -312,8 +312,14 @@ def uploads_part(summary: Dict[str, Any], health: Dict[str, Any], online: bool, 
     return _part("uploads", "info", "pending", count=count, oldestAt=pending.get("oldestAt"))
 
 
-def battery_part(battery: Optional[Dict[str, Any]], alert: Any) -> Dict[str, Any]:
-    """"סוללה" (app/services/battery_alerts.py): the open low-battery alert first, then the reading."""
+def battery_part(battery: Optional[Dict[str, Any]], alert: Any, monitoring: Optional[str] = None) -> Dict[str, Any]:
+    """
+    "סוללה" (app/services/battery_alerts.py): a device whose battery is not watched says why
+    ("no_battery" — "ללא סוללה", "monitoring_off" — "ניטור סוללה כבוי"); else the open
+    low-battery alert first, then the reading.
+    """
+    if monitoring is not None:
+        return _part("battery", "off", monitoring)
     if alert is not None:
         critical = alert.severity == "critical"
         percent = alert.last_percent if alert.last_percent is not None else alert.percent
@@ -362,10 +368,12 @@ def kds_screens(db: Session, shop_ids: Sequence[Any], *, now: Optional[datetime]
 
 
 def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POSMachine,
-         screens: List[Dict[str, Any]], now: datetime, battery_alert: Any = None) -> Dict[str, Any]:
+         screens: List[Dict[str, Any]], now: datetime, battery_alert: Any = None,
+         battery_monitoring: Optional[str] = None) -> Dict[str, Any]:
     from app.services import battery_alerts
 
-    battery = battery_alerts.battery_of(machine, now=now)
+    # "ניטור סוללה": a kiosk on mains (or set off) shows why instead of a battery.
+    battery = battery_alerts.battery_of(machine, now=now) if battery_monitoring is None else None
     status = device.status if isinstance(device.status, dict) else {}
     health = status.get("health") if isinstance(status.get("health"), dict) else {}
     seen = _aware(device.last_kiosk_sync_at)
@@ -378,7 +386,7 @@ def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POS
         kds_part(summary, health, screens, now),
         media_part(summary),
         uploads_part(summary, health, online, now),
-        battery_part(battery, battery_alert),
+        battery_part(battery, battery_alert, battery_monitoring),
     ]
     bridge = bridge_part(health)
     if bridge is not None:
@@ -412,6 +420,7 @@ def _row(db: Session, summary: Dict[str, Any], device: KioskDevice, machine: POS
         "unprintedOrders": summary.get("unprintedOrders") or [],
         "kdsScreens": screens if summary.get("fulfillmentMode") == "KDS" else [],
         "battery": battery,
+        "batteryMonitored": battery_monitoring is None,
         "ordersToday": summary.get("ordersToday"),
         "salesTodayAgorot": summary.get("salesTodayAgorot"),
         "lastOrderAt": summary.get("lastOrderAt"),
@@ -432,6 +441,7 @@ def health_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None, 
     from app.services import battery_alerts
 
     open_battery = battery_alerts.open_by_machine(db, [m.id for m in machines.values()])
+    unwatched = battery_alerts.monitoring_by_machine(db, machines.values())
     # The cloud's own alerts ("offline for N minutes", "KDS לא מחובר") beside the stored ones.
     cloud = cloud_alerts_by_kiosk(db, [d for d in devices.values()], now=now)
     rows = []
@@ -440,7 +450,8 @@ def health_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None, 
         if device is None or machine is None:
             continue
         s = {**s, "alerts": list(s.get("alerts") or []) + cloud.get(s["machineId"], [])}
-        rows.append(_row(db, s, device, machine, screens.get(machine.shop_id, []), now, open_battery.get(machine.id)))
+        rows.append(_row(db, s, device, machine, screens.get(machine.shop_id, []), now, open_battery.get(machine.id),
+                         unwatched.get(machine.id)))
     counts = {k: 0 for k in ("ok", "warn", "error", "offline", "off")}
     for r in rows:
         counts[r["overall"]] = counts.get(r["overall"], 0) + 1
@@ -449,11 +460,16 @@ def health_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None, 
         shops.append({"shopId": str(sid), "kdsScreens": screens.get(sid, [])})
     devices = devices_view(db, user, tenant_id, company_id=company_id, shop_id=shop_id,
                            skip=[m.id for m in machines.values()], now=now)
-    history = battery_alerts.history(db, [d["machineId"] for d in devices] + [r["machineId"] for r in rows], limit=50)
+    # No history of a device whose battery is not watched ("ניטור סוללה"): it says why instead.
+    history = battery_alerts.history(
+        db,
+        [d["machineId"] for d in devices if d["batteryMonitored"]] + [r["machineId"] for r in rows if r["batteryMonitored"]],
+        limit=50,
+    )
     return {
         "generatedAt": _iso(now), "kiosks": rows, "counts": counts, "shops": shops,
-        # "סוללה חלשה": every other device of the scope (tills, handhelds, tablets) with its battery,
-        # and the low-battery events of them all (app/services/battery_alerts.py).
+        # "סוללה חלשה": every other device of the scope (tills, handhelds, tablets) with its battery
+        # (or why it has none watched), and the low-battery events of them all (app/services/battery_alerts.py).
         "devices": devices,
         "batteryHistory": history,
     }
@@ -480,11 +496,15 @@ def devices_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None,
     machines = [m for m in query.all() if m.id not in skipped]
     shops = {s.id: s.name for s in db.query(Shop).filter(Shop.id.in_([m.shop_id for m in machines])).all()} if machines else {}
     open_battery = battery_alerts.open_by_machine(db, [m.id for m in machines])
+    unwatched = battery_alerts.monitoring_by_machine(db, machines)
     out = []
     for m in machines:
         online = is_online(m.last_heartbeat_at, now=now)
         alert = open_battery.get(m.id)
-        part = battery_part(battery_alerts.battery_of(m, now=now), alert)
+        # "ניטור סוללה": a till on mains (or set off) says "ללא סוללה" / "ניטור סוללה כבוי", no percent.
+        monitoring = unwatched.get(m.id)
+        battery = battery_alerts.battery_of(m, now=now) if monitoring is None else None
+        part = battery_part(battery, alert, monitoring)
         out.append({
             "machineId": str(m.id),
             "name": m.name,
@@ -496,8 +516,9 @@ def devices_view(db: Session, user, tenant_id, *, company_id=None, shop_id=None,
             "appVersion": getattr(m, "app_version", None),
             "online": online,
             "lastHeartbeatAt": _iso(m.last_heartbeat_at),
-            "battery": battery_alerts.battery_of(m, now=now),
+            "battery": battery,
             "batteryPart": part,
+            "batteryMonitored": monitoring is None,
             "overall": "offline" if not online else ("error" if part["level"] == "error" else "warn" if part["level"] == "warn" else "ok"),
         })
     out.sort(key=lambda d: (d["shopName"] or "", d["name"] or ""))
@@ -516,9 +537,10 @@ def kiosk_detail(db: Session, user, tenant_id, machine_id: Any, *, now: Optional
     summary = svc.summary(db, device, now=now)
     screens = kds_screens(db, [machine.shop_id], now=now).get(machine.shop_id, [])
     cloud = cloud_alerts_by_kiosk(db, [device], now=now).get(str(machine.id), [])
+    monitoring = battery_alerts.monitoring_by_machine(db, [machine]).get(machine.id)
     row = _row(
         db, {**summary, "alerts": list(summary.get("alerts") or []) + cloud}, device, machine, screens, now,
-        battery_alerts.open_by_machine(db, [machine.id]).get(machine.id),
+        battery_alerts.open_by_machine(db, [machine.id]).get(machine.id), monitoring,
     )
     alerts = (
         db.query(KioskAlert)
@@ -561,7 +583,7 @@ def kiosk_detail(db: Session, user, tenant_id, machine_id: Any, *, now: Optional
         "kiosk": row,
         "events": events[:60],
         "sessions": kiosk_funnel.recent_sessions(db, machine.id, limit=10),
-        "batteryHistory": battery_alerts.history(db, [machine.id], limit=20),
+        "batteryHistory": battery_alerts.history(db, [machine.id], limit=20) if monitoring is None else [],
         "terminalIdentity": summary.get("terminalIdentity"),
         "health": (device.status or {}).get("health") if isinstance(device.status, dict) else None,
     }

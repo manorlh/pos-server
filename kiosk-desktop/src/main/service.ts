@@ -90,7 +90,7 @@ import {
   type CloudVerdict,
 } from '../core/basketCheck';
 import type { FunnelEvent } from '../core/kioskFunnel';
-import { applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
+import { applyBatteryStep, batteryMonitoredParam, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryAlertView, type BatteryCycle } from '../core/batteryAlerts';
 import { buildKioskCatalog, catalogMedia, moneyGroupOf, type KGroup, type KProduct } from './kiosk/catalog';
 import { basketSold } from '@dash-lib/kioskBasketSold';
 import { basePriceOf, hasMenus, keptListPrice, menuById, menuKeyAt, menuPriceSets, msToNextMinute, noMenuState, pricesNow } from '@dash-lib/kioskMenus';
@@ -852,6 +852,11 @@ export class KioskService extends EventEmitter {
     const thresholds = parseThresholds(params.lowBatteryThresholds);
     const sound = params.lowBatterySound === undefined || params.lowBatterySound === null ? true : parameterOn(params.lowBatterySound);
     const kept = this.kv.getJson<{ cycle: BatteryCycle; seq: number }>('battery.cycle') ?? { cycle: NO_CYCLE, seq: 0 };
+    // "ניטור סוללה" off for this device: no strip, no alarm; a cycle that was open ends quietly.
+    if (!batteryMonitoredParam(params.batteryMonitoring)) {
+      if (kept.cycle.open) this.kv.setJson('battery.cycle', { cycle: NO_CYCLE, seq: kept.seq });
+      return { level: null, percent, charging, critical: false, alarmSeq: kept.seq, sound: false };
+    }
     const step = batteryStep(kept.cycle, percent, charging, thresholds);
     const cycle = applyBatteryStep(kept.cycle, step);
     const seq = kept.seq + (step.fire !== null ? 1 : 0);

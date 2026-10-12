@@ -415,6 +415,11 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
 
     if z_shift_guard.KEY in resolved.parameters and not z_shift_guard.flag_on():
         resolved.parameters[z_shift_guard.KEY] = False
+    # "ניטור סוללה" (app/services/battery_alerts.py): the till gets the answer for itself — "on" or
+    # "off", never "auto" — from its model and its own `batteryPresent`.
+    from app.services.battery_alerts import apply_to_parameters as _battery_monitoring
+
+    _battery_monitoring(machine, resolved.parameters)
     return resolved
 
 
