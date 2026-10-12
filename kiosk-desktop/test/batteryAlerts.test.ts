@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AlarmGate, applyBatteryStep, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryCycle } from '../src/core/batteryAlerts';
+import { AlarmGate, applyBatteryStep, batteryMonitoredParam, batteryStep, isCritical, NO_CYCLE, parseThresholds, type BatteryCycle } from '../src/core/batteryAlerts';
 
 /** The rule over (percent, charging) readings: the level fired at each, or null. */
 function run(readings: Array<[number | null, boolean]>, thresholds = [15, 10, 5]) {
@@ -52,5 +52,14 @@ describe('"סוללה חלשה" (core/batteryAlerts.ts — the cloud battery_ale
     const again = new AlarmGate();
     again.seen(2);
     expect(again.next({ alarmSeq: 2, critical: true, sound: true }, false)).toBeNull();
+  });
+
+  it('"ניטור סוללה": only the cloud\'s "off" stops the strip and the alarm here', () => {
+    expect(batteryMonitoredParam('off')).toBe(false);
+    expect(batteryMonitoredParam(' OFF ')).toBe(false);
+    expect(batteryMonitoredParam('on')).toBe(true);
+    expect(batteryMonitoredParam('auto')).toBe(true);
+    expect(batteryMonitoredParam(undefined)).toBe(true);
+    expect(batteryMonitoredParam(false)).toBe(true);
   });
 });

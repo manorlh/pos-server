@@ -261,6 +261,11 @@ def claim_device_pairing(
     session.default_company_id = resolved_company_id or company_id
     session.default_shop_id = resolved_shop_id
     db.commit()
+    # "תצורת עבודה של הסניף": a till paired by QR follows its shop's work profile too (the
+    # preset it suggests — app/services/work_profile.py). Never fails the pairing.
+    from app.services import work_profile
+
+    work_profile.apply_on_pairing(db, assigned, user_id=distributor.id)
     db.refresh(row)
     db.refresh(session)
     return row, assigned, company, shop

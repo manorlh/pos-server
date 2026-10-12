@@ -124,6 +124,44 @@ def test_the_setting_defaults_to_the_main_till_for_everyone():
     assert cfg["alerts"]["printer"] == {"tills": "main", "machineIds": [], "audience": "everyone"}
     assert cfg["alerts"]["help"]["clearAfterMin"] == 10
     assert cfg["operations"]["closeWithShopZ"] is False
+    # "סוללה חלשה": "רק המכשיר עצמו" by default (app/services/battery_alerts.py).
+    assert cfg["alerts"]["battery"] == {"tills": "self", "machineIds": [], "audience": "everyone"}
+    assert C.limits()["alerts"]["tillsByKind"] == {
+        "printer": ["main", "all", "selected"], "terminal": ["main", "all", "selected"],
+        "help": ["main", "all", "selected"], "battery": ["self", "main", "all", "selected"],
+    }
+
+
+@pytest.mark.parametrize("kind", ["printer", "terminal", "help"])
+def test_only_the_device_itself_is_refused_on_a_kiosk_alert(w, kind):
+    e = refused(put, w, {"alerts": {kind: {"tills": "self"}}})
+    (issue,) = [x for x in e.detail["errors"] if x["path"] == f"alerts.{kind}.tills"]
+    assert issue["code"] == "self_battery_only"
+    # The value, why, and what it may be.
+    assert '"self"' in issue["message"] and "alerts.battery only" in issue["message"]
+    assert f"a kiosk's {kind} alert is for the staff at a till" in issue["message"]
+    assert issue["message"].endswith("must be one of: main, all, selected")
+    # The same in a layer check, and in a full config.
+    _, issues = C.validate_layer({"alerts": {kind: {"tills": "self"}}})
+    assert [(i.path, i.code) for i in issues] == [(f"alerts.{kind}.tills", "self_battery_only")]
+    cfg = C.default_config()
+    cfg["alerts"][kind]["tills"] = "self"
+    assert [(i.path, i.code) for i in C.validate_config(cfg)] == [(f"alerts.{kind}.tills", "self_battery_only")]
+    # A stored layer that somehow says so: dropped when read — the kind's default ("main") instead.
+    assert C.resolve({"alerts": {kind: {"tills": "self", "audience": "managers"}}})["alerts"][kind] == {
+        **C.DEFAULT_CONFIG["alerts"][kind], "audience": "managers",
+    }
+    # Any other unknown value is the plain enum error.
+    e = refused(put, w, {"alerts": {kind: {"tills": "nobody"}}})
+    assert {x["path"]: x["code"] for x in e.detail["errors"]}[f"alerts.{kind}.tills"] == "invalid_value"
+
+
+def test_only_the_device_itself_is_a_battery_choice(w):
+    put(w, {"alerts": {"battery": {"tills": "self"}}})
+    put(w, {"alerts": {"battery": {"tills": "all", "audience": "managers"}}})
+    e = refused(put, w, {"alerts": {"battery": {"tills": "nobody"}}})
+    issue = {x["path"]: x for x in e.detail["errors"]}["alerts.battery.tills"]
+    assert issue["code"] == "invalid_value" and issue["message"] == "must be one of: self, main, all, selected"
 
 
 def test_the_setting_is_validated_with_paths(w):

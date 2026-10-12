@@ -195,6 +195,10 @@ class MachineHeartbeatBody(BaseModel):
     # service, not rejected. See MachineHeartbeatBody's docstring.
     battery_percent: Optional[int] = Field(None, alias="batteryPercent")
     battery_status: Optional[str] = Field(None, alias="batteryStatus")
+    #: Whether the device has a battery at all (Android's BatteryManager.EXTRA_PRESENT), kept in
+    #: `device_info["batteryPresent"]` ("ניטור סוללה", app/services/battery_alerts.py). Absent or
+    #: null (an older build, or a device that cannot tell): as it was.
+    battery_present: Optional[bool] = Field(None, alias="batteryPresent")
     # Signed; negative means the device is behind the server.
     clock_skew_ms: Optional[int] = Field(None, alias="clockSkewMs")
 

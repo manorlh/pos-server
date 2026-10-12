@@ -121,8 +121,18 @@ ALERT_TILLS = ("main", "all", "selected")
 #: …and who on them: everyone signed in, or only a manager signed in.
 ALERT_AUDIENCES = ("everyone", "managers")
 #: "battery": a device's low battery (app/services/battery_alerts.py) — any device of the shop,
-#: routed with the same settings.
+#: routed with the same settings, plus "self" below.
 ALERT_KINDS = ("printer", "terminal", "help", "battery")
+#: "רק המכשיר עצמו" (the owner 12.10.2026: "התראת סוללה תגדיר ברירת מחדל רק למכשיר עצמו, ודינמי
+#: אפשר שכולם יקבלו"): no other till hears of it — only the device's own strip and alarm, which
+#: are local anyway. `alerts.battery`'s choice and its default; a kiosk's printer / terminal /
+#: help alert exists for the staff at a till, so those kinds refuse it.
+ALERT_TILLS_SELF = "self"
+ALERT_SELF_KINDS = ("battery",)
+#: The `tills` each kind may choose.
+ALERT_TILLS_BY_KIND: Dict[str, Tuple[str, ...]] = {
+    kind: ((ALERT_TILLS_SELF,) + ALERT_TILLS if kind in ALERT_SELF_KINDS else ALERT_TILLS) for kind in ALERT_KINDS
+}
 ALERT_MACHINES_MAX = 50
 #: A help request clears by itself after this many minutes (staff said "בדרך" or not).
 HELP_CLEAR_MIN = 1
@@ -551,8 +561,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "printer": {"tills": "main", "machineIds": [], "audience": "everyone"},
         "terminal": {"tills": "main", "machineIds": [], "audience": "everyone"},
         "help": {"tills": "main", "machineIds": [], "audience": "everyone", "clearAfterMin": 10},
-        # "סוללה חלשה" of any device of the shop (a handheld, a tablet, a kiosk with a battery).
-        "battery": {"tills": "main", "machineIds": [], "audience": "everyone"},
+        # "סוללה חלשה" of any device of the shop (a handheld, a tablet, a kiosk with a battery):
+        # by default "self" — "רק המכשיר עצמו", no other till. A layer that sets nothing here
+        # inherits it; a layer that stored "main" (before 12.10.2026) keeps it.
+        "battery": {"tills": ALERT_TILLS_SELF, "machineIds": [], "audience": "everyone"},
     },
     # "מבנה הקיוסק" (kiosk_layout.py): standard — the layout of today.
     "layout": copy.deepcopy(layouts.LAYOUT_DEFAULTS),
@@ -1110,16 +1122,33 @@ def _motion_event_node(event: str) -> PartialObj:
 ID = Str(ID_MAX, min_len=1)
 PRINTER_ID = Str(36, min_len=36, pattern=_UUID, pattern_message="must be a printer id (UUID)", nullable=True)
 
-#: "התראות לקופות": one route per alert kind (printer / terminal / help).
-ALERT_ROUTE_FIELDS = {
-    "tills": Enum(ALERT_TILLS),
-    "machineIds": UList(
-        Str(36, min_len=36, pattern=_UUID, pattern_message="must be a till id (UUID)"),
-        max_len=ALERT_MACHINES_MAX, unique=True,
-    ),
-    "audience": Enum(ALERT_AUDIENCES),
-}
-ALERT_ROUTE = Obj(dict(ALERT_ROUTE_FIELDS))
+class AlertTills(Enum):
+    """`alerts.<kind>.tills`: the kind's own choices (ALERT_TILLS_BY_KIND); "self" elsewhere said why."""
+
+    def __init__(self, kind: str):
+        super().__init__(ALERT_TILLS_BY_KIND[kind])
+        self.kind = kind
+
+    def check(self, value, path, errors):
+        if value == ALERT_TILLS_SELF and value not in self.values:
+            return _fail(
+                errors, path, "self_battery_only",
+                f'"{ALERT_TILLS_SELF}" (only the device itself) is for alerts.battery only: a kiosk\'s {self.kind} '
+                f"alert is for the staff at a till — must be one of: {', '.join(self.values)}",
+            )
+        return super().check(value, path, errors)
+
+
+def _alert_route_fields(kind: str) -> Dict[str, Node]:
+    """"התראות לקופות": one route per alert kind — which tills, the chosen ones, who on them."""
+    return {
+        "tills": AlertTills(kind),
+        "machineIds": UList(
+            Str(36, min_len=36, pattern=_UUID, pattern_message="must be a till id (UUID)"),
+            max_len=ALERT_MACHINES_MAX, unique=True,
+        ),
+        "audience": Enum(ALERT_AUDIENCES),
+    }
 
 MESSAGE = Obj(
     {
@@ -1400,10 +1429,11 @@ SCHEMA = Obj({
         "closeWithShopZ": Bool(),
     }),
     "alerts": Obj({
-        "printer": ALERT_ROUTE,
-        "terminal": ALERT_ROUTE,
-        "help": Obj({**ALERT_ROUTE_FIELDS, "clearAfterMin": Int(HELP_CLEAR_MIN, HELP_CLEAR_MAX)}),
-        "battery": ALERT_ROUTE,
+        "printer": Obj(_alert_route_fields("printer")),
+        "terminal": Obj(_alert_route_fields("terminal")),
+        "help": Obj({**_alert_route_fields("help"), "clearAfterMin": Int(HELP_CLEAR_MIN, HELP_CLEAR_MAX)}),
+        # …and "self" ("רק המכשיר עצמו", its default).
+        "battery": Obj(_alert_route_fields("battery")),
     }),
     # "מבנה הקיוסק" (kiosk_layout.py): where things sit and how the order goes.
     "layout": Obj({
@@ -1471,6 +1501,8 @@ def limits() -> Dict[str, Any]:
         "alerts": {
             "kinds": list(ALERT_KINDS),
             "tills": list(ALERT_TILLS),
+            # "self" ("רק המכשיר עצמו"): `alerts.battery` only.
+            "tillsByKind": {kind: list(values) for kind, values in ALERT_TILLS_BY_KIND.items()},
             "audiences": list(ALERT_AUDIENCES),
             "machinesMax": ALERT_MACHINES_MAX,
             "helpClearAfterMin": {"min": HELP_CLEAR_MIN, "max": HELP_CLEAR_MAX},
@@ -1886,6 +1918,8 @@ def repair(cfg: Dict[str, Any]) -> Dict[str, Any]:
         split["counts"] = list(DEFAULT_CONFIG["payment"]["splitCard"]["counts"])
     if cfg["hours"].get("enabled") and not cfg["hours"].get("ranges"):
         cfg["hours"]["enabled"] = False
+    # A chosen list a parent's change left empty: the main till — battery too (someone chose to
+    # tell other tills; "self" is never a fallback, only a choice or the default).
     for kind in ALERT_KINDS:
         route = (cfg.get("alerts") or {}).get(kind)
         if isinstance(route, dict) and route.get("tills") == "selected" and not route.get("machineIds"):

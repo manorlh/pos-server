@@ -3,6 +3,12 @@
 /**
  * Create / edit a shop. Shared by the shops list and the shop drill-down page.
  *
+ * Creating is two steps: the shop's details, then "תצורת עבודה" — how the whole shop works with
+ * its tills (a template, a copy of another shop's, or the fields; spec shop-work-config.md),
+ * sent with `POST /shops`. "דלג" creates the shop as before, with no profile. After creating
+ * with a profile the dialog shows what the server applied and what waits for the first till.
+ * Editing an existing shop is the details alone; its profile is on the shop page.
+ *
  * The company field here is part of the record being edited — which company the
  * shop belongs to — and is not the dashboard's shared scope. It stays a field on
  * the form for that reason; it is not one of the per-page scope pickers that were
@@ -19,9 +25,25 @@ import { branchCodeError, branchCodeInput, normalizeBranchCode } from '@/lib/bra
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
 import { TRAINING_MODE_AVAILABLE, withoutTrainingFields } from '@/lib/trainingMode';
-import type { PaymentIntegration } from '@/lib/paymentIntegration';
+import { INTEGRATION_LABELS, type PaymentIntegration } from '@/lib/paymentIntegration';
+import {
+  createPayloadOf,
+  createdWorkProfileOf,
+  type CreateChoice,
+  type CreatedWorkProfile as CreatedProfile,
+  type WorkProfile,
+} from '@/lib/shopWorkProfile';
 import type { Company, Shop } from '@/lib/types';
 import { ShopPaymentIntegrationSelect } from '@/components/payment-integration-section';
+import {
+  CreatedWorkProfile,
+  EMPTY_STEP_VALUE,
+  OpenShopLink,
+  ShopWorkProfileStep,
+  stepChoice,
+  stepReady,
+  type WorkProfileStepValue,
+} from '@/components/dashboard/shop-work-profile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,8 +69,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 
 const EMPTY: Partial<Shop> = { name: '', branchId: '', address: '', city: '' };
+
+/** details → "תצורת עבודה" → done (the new shop's profile as applied). */
+type Step = 'details' | 'profile' | 'done';
 
 export function ShopFormDialog({
   shop,
@@ -64,9 +90,16 @@ export function ShopFormDialog({
   onSaved?: (saved: Shop) => void;
   defaultCompanyId?: string | null;
 }) {
+  // The step decides the dialog's width, so it lives here; it starts afresh on each opening.
+  const [step, setStep] = useState<Step>('details');
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setStep('details');
+  }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className={cn(step === 'details' ? 'max-w-sm' : 'max-h-[92dvh] max-w-3xl overflow-y-auto')}>
         {/*
           Mounted only while open: the form seeds its draft in `useState`, so no
           effect is needed to re-sync it, and closing discards the draft.
@@ -77,10 +110,38 @@ export function ShopFormDialog({
             defaultCompanyId={defaultCompanyId}
             onOpenChange={onOpenChange}
             onSaved={onSaved}
+            step={step}
+            setStep={setStep}
           />
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function StepHeader({ step }: { step: Step }) {
+  const t = useTranslations('shopWorkProfile');
+  const items: { id: Step; label: string }[] = [
+    { id: 'details', label: t('stepDetails') },
+    { id: 'profile', label: t('stepProfile') },
+  ];
+  const at = step === 'details' ? 0 : 1;
+  return (
+    <ol className="flex flex-wrap items-center gap-2 text-xs" aria-label={t('stepsLabel')}>
+      {items.map((it, i) => (
+        <li
+          key={it.id}
+          aria-current={i === at ? 'step' : undefined}
+          className={cn(
+            'flex items-center gap-1.5 rounded-full border px-2.5 py-0.5',
+            i === at ? 'border-primary bg-primary/10 font-medium text-primary' : 'text-muted-foreground',
+          )}
+        >
+          <span className="tabular-nums">{i + 1}</span>
+          {it.label}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -89,15 +150,20 @@ function ShopForm({
   defaultCompanyId,
   onOpenChange,
   onSaved,
+  step,
+  setStep,
 }: {
   shop: Partial<Shop> | null;
   defaultCompanyId?: string | null;
   onOpenChange: (open: boolean) => void;
   onSaved?: (saved: Shop) => void;
+  step: Step;
+  setStep: (step: Step) => void;
 }) {
   const t = useTranslations('shops');
   const tc = useTranslations('common');
   const tTraining = useTranslations('trainingMode');
+  const tw = useTranslations('shopWorkProfile');
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Partial<Shop>>(
     () => shop ?? { ...EMPTY, companyId: defaultCompanyId ?? undefined },
@@ -113,6 +179,12 @@ function ShopForm({
   // "קוד סניף": mandatory, digits 1–7 (the server also checks it is unique in the company).
   const [branchTouched, setBranchTouched] = useState(false);
   const branchError = branchCodeError(draft.branchId);
+  // Step 2: "תצורת עבודה" of the new shop.
+  const [profileStep, setProfileStep] = useState<WorkProfileStepValue>(EMPTY_STEP_VALUE);
+  // After creating with a profile: the shop, what the server said of the profile, what was sent.
+  const [created, setCreated] = useState<{ shop: Shop; result: CreatedProfile | null; sent: WorkProfile | null } | null>(
+    null,
+  );
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -121,7 +193,7 @@ function ShopForm({
   const tree = buildCompanyTree(companies);
 
   const save = useMutation({
-    mutationFn: async (s: Partial<Shop>) => {
+    mutationFn: async ({ s, choice }: { s: Partial<Shop>; choice: CreateChoice }) => {
       // The draft is the row as read, license included; only a super admin may send that
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
       const payload = {
@@ -132,25 +204,91 @@ function ShopForm({
         ...(s.id || !TRAINING_MODE_AVAILABLE ? {} : { trainingMode }),
         // "אוטומטי" stores nothing, so it is not sent.
         ...(s.id || paymentIntegration === 'auto' ? {} : { paymentIntegration }),
+        // "תצורת עבודה": `workProfile` or `copyWorkProfileFromShopId`; nothing on "דלג".
+        ...(s.id ? {} : createPayloadOf(choice)),
       };
       const { data } = s.id
         ? await api.put<Shop>(`/shops/${s.id}`, payload)
         : await api.post<Shop>('/shops', payload);
-      return data;
+      return { data, choice };
     },
-    onSuccess: (data) => {
+    onSuccess: ({ data, choice }) => {
       qc.invalidateQueries({ queryKey: ['shops'] });
       toast.success(isNew ? t('created') : t('updated'));
-      onOpenChange(false);
       onSaved?.(data);
+      if (isNew && choice.kind !== 'skip') {
+        setCreated({ shop: data, result: createdWorkProfileOf(data), sent: createPayloadOf(choice).workProfile ?? null });
+        setStep('done');
+        return;
+      }
+      onOpenChange(false);
     },
     onError: (err: unknown) => toast.error(axiosErrorToToastMessage(err, tc('error'))),
   });
+
+  const detailsBlocked = licenseIncomplete(draft, isSuperAdmin) || branchError !== null;
+
+  if (step === 'done' && created) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>{tw('createdTitle', { name: created.shop.name })}</DialogTitle>
+        </DialogHeader>
+        <CreatedWorkProfile shopId={created.shop.id} created={created.result} sent={created.sent} />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {tw('close')}
+          </Button>
+          <OpenShopLink shopId={created.shop.id} onClick={() => onOpenChange(false)} />
+        </DialogFooter>
+      </>
+    );
+  }
+
+  if (isNew && step === 'profile') {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>
+            {t('addTitle')} — {tw('stepProfile')}
+          </DialogTitle>
+          <StepHeader step={step} />
+        </DialogHeader>
+        <ShopWorkProfileStep
+          value={profileStep}
+          onChange={setProfileStep}
+          paymentLabel={INTEGRATION_LABELS[paymentIntegration]}
+        />
+        <p className="text-xs text-muted-foreground">{tw('skipHint')}</p>
+        <DialogFooter className="sm:justify-between">
+          <Button variant="outline" onClick={() => setStep('details')} disabled={save.isPending}>
+            {tw('back')}
+          </Button>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button
+              variant="ghost"
+              disabled={save.isPending}
+              onClick={() => save.mutate({ s: draft, choice: { kind: 'skip' } })}
+            >
+              {tw('skip')}
+            </Button>
+            <Button
+              disabled={save.isPending || !stepReady(profileStep) || detailsBlocked}
+              onClick={() => save.mutate({ s: draft, choice: stepChoice(profileStep) })}
+            >
+              {save.isPending ? tw('creating') : tw('create')}
+            </Button>
+          </div>
+        </DialogFooter>
+      </>
+    );
+  }
 
   return (
     <>
       <DialogHeader>
         <DialogTitle>{isNew ? t('addTitle') : t('editTitle')}</DialogTitle>
+        {isNew ? <StepHeader step={step} /> : null}
       </DialogHeader>
       <div className="space-y-3">
         <div className="space-y-1">
@@ -266,12 +404,24 @@ function ShopForm({
         <Button variant="outline" onClick={() => onOpenChange(false)}>
           {tc('cancel')}
         </Button>
-        <Button
-          onClick={() => save.mutate(draft)}
-          disabled={save.isPending || licenseIncomplete(draft, isSuperAdmin) || branchError !== null}
-        >
-          {save.isPending ? tc('saving') : tc('save')}
-        </Button>
+        {isNew ? (
+          <Button
+            onClick={() => {
+              setBranchTouched(true);
+              if (!detailsBlocked) setStep('profile');
+            }}
+            disabled={licenseIncomplete(draft, isSuperAdmin)}
+          >
+            {tw('next')}
+          </Button>
+        ) : (
+          <Button
+            onClick={() => save.mutate({ s: draft, choice: { kind: 'skip' } })}
+            disabled={save.isPending || detailsBlocked}
+          >
+            {save.isPending ? tc('saving') : tc('save')}
+          </Button>
+        )}
       </DialogFooter>
     </>
   );

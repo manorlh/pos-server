@@ -679,9 +679,13 @@ def post_my_heartbeat(
         clock_skew_ms=body.clock_skew_ms if body is not None else None,
         pending_count=body.pending_count if body is not None else None,
         pending_documents=body.pending_documents if body is not None else None,
+        battery_present=body.battery_present if body is not None else None,
     )
-    # "סוללה חלשה" (app/services/battery_alerts.py): a threshold crossed, cleared, routed to the tills.
-    if body is not None and (body.battery_percent is not None or body.battery_status is not None):
+    # "סוללה חלשה" (app/services/battery_alerts.py): a threshold crossed, cleared, routed to the tills —
+    # or, on a device not watched ("ניטור סוללה"), what was open ended quietly.
+    if body is not None and (
+        body.battery_percent is not None or body.battery_status is not None or body.battery_present is not None
+    ):
         try:
             from app.services import battery_alerts
 

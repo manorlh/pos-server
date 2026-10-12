@@ -11,9 +11,11 @@ printer docks.
 * Routes, best first, decided on the device: an inner USB printer (`usb:VVVV:PPPP`, or any
   printer-class device `usb:class`), a print service through its published AIDL (`aidl:imin2`,
   the till's own stub), the unit's virtual Bluetooth printer (`bt:NAME`). Raw ESC/POS on every
-  route; the drawer through the head.
+  route; the drawer through the head — except on iMin's Android 11 models (Falcon 1, D4, D1 /
+  D1 Pro), whose drawer port is the board's GPIO: the till writes the board's sysfs switch
+  itself, as iMin's own library does (IminLibs 3.0 `opencashBox`), with no vendor library.
 * `support`: "auto" prints and drives the drawer by itself; "partial" prints, but something
-  (the drawer, a route not confirmed on a unit) needs the vendor SDK; "sdk" — only the vendor's
+  (a route not confirmed on a unit) needs the vendor SDK; "sdk" — only the vendor's
   SDK reaches the head: the till does not print there (no printer for the cloud, "בקרוב") until
   the owner approves it.
 * `dock`: the head is in a dock the tablet sits in (Falcon 2, a Feitian tablet) — the till prints
@@ -51,7 +53,7 @@ class BuiltinPrinterModel:
     #: 58 (384 dots) or 80 (576 dots).
     paper_mm: int
     cutter: bool
-    #: A drawer port the till opens through the head.
+    #: A drawer port the till opens by itself: through the head, or (iMin on Android 11) the board's GPIO.
     drawer_port: bool
     customer_display: bool
     #: The head lives in a dock the tablet sits in.
@@ -77,7 +79,7 @@ class BuiltinPrinterModel:
 
     @property
     def till_drawer_port(self) -> bool:
-        """The till opens a drawer on a port of the model's own, through its head."""
+        """The till opens a drawer on a port of the model's own (through its head, or the board's GPIO)."""
         return self.drawer_port and self.prints
 
 
@@ -90,7 +92,6 @@ _IMIN_V2 = ("aidl:imin2", "bt:InnerPrinter", "bt:BluetoothPrinter")
 #: iMin on Android 11 (Printer SDK 1.0, the head on USB): a printer-class USB head, then Bluetooth.
 _IMIN_V1 = ("usb:class", "bt:BluetoothPrinter", "bt:InnerPrinter")
 
-_IMIN_LIBS = "iMin IminLibs (IminSDKManager.opencashBox) — the drawer is the board's GPIO, not the head's"
 _LANDI_USDK = "LANDI USDK (com.usdk.apiservice AIDL: UPrinter, UCashBox) — from LANDI, not public"
 _FT_SDK = "Feitian FT SDK (com.ftpos.apiservice) — already in the app for the F20"
 
@@ -112,11 +113,12 @@ BUILTIN_PRINTER_MODELS: Tuple[BuiltinPrinterModel, ...] = (
          SUPPORT_AUTO, _IMIN_V2, None),
     _row("IMIN_SWAN2", "iMin Swan 2 (Printer)", _IMIN, ("SWAN2", "I23M02", "DS2"), 80, True, True, True, False, SUPPORT_AUTO, _IMIN_V2, None),
     _row("IMIN_SWIFT2", "iMin Swift 2", _IMIN, ("SWIFT2", "MS2"), 58, False, False, False, False, SUPPORT_AUTO, _IMIN_V2, None),
-    # ── iMin, Android 11 (Printer SDK 1.0): the drawer is the board's GPIO (IminLibs) ──
-    _row("IMIN_FALCON1", "iMin Falcon 1", _IMIN, ("FALCON1", "I22T01", "TF111"), 80, True, False, True, False, SUPPORT_PARTIAL,
-         _IMIN_V1, _IMIN_LIBS),
-    _row("IMIN_D4", "iMin D4", _IMIN, ("D4",), 80, True, False, True, False, SUPPORT_PARTIAL, _IMIN_V1, _IMIN_LIBS),
-    _row("IMIN_D1", "iMin D1 / D1 Pro", _IMIN, ("D1",), 58, False, False, True, False, SUPPORT_PARTIAL, _IMIN_V1, _IMIN_LIBS),
+    # ── iMin, Android 11 (Printer SDK 1.0): the drawer is the board's GPIO — the till writes its
+    # sysfs switch itself, as iMin's own lib does (pos-android hardware/builtin/IminGpioCashBox.kt) ──
+    _row("IMIN_FALCON1", "iMin Falcon 1", _IMIN, ("FALCON1", "I22T01", "TF111"), 80, True, True, True, False, SUPPORT_AUTO,
+         _IMIN_V1, None),
+    _row("IMIN_D4", "iMin D4", _IMIN, ("D4",), 80, True, True, True, False, SUPPORT_AUTO, _IMIN_V1, None),
+    _row("IMIN_D1", "iMin D1 / D1 Pro", _IMIN, ("D1",), 58, False, True, True, False, SUPPORT_AUTO, _IMIN_V1, None),
     _row("IMIN_M2", "iMin M2", _IMIN, ("M2",), 58, False, False, False, False, SUPPORT_AUTO, _IMIN_V1, None),
     _row("IMIN_SWIFT1", "iMin Swift 1", _IMIN, ("SWIFT1", "I22M01", "MS111"), 58, False, False, False, False, SUPPORT_AUTO, _IMIN_V1, None),
     _row("IMIN", "iMin", _IMIN, (), 58, False, False, False, False, SUPPORT_AUTO, _IMIN_V2 + ("usb:class",), None, generic=True),

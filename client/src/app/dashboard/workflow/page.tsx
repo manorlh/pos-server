@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * "תצורת עבודה" — how a till works (pos-server docs/SPEC_KDS.md §1–2): direct sale or
+ * "תצורת מטבח" (formerly "תצורת עבודה") — how a till works (pos-server docs/SPEC_KDS.md §1–2): direct sale or
  * an order process, where orders go (printer, KDS, Expo, pickup screen), per company,
  * shop, point of sale or till — the most specific level winning. Stored as till
  * parameters the tills already sync; this card is the only place that edits them.

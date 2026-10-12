@@ -357,6 +357,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/shops", REFERENCE),
     (_GET, "/shops/{}", REFERENCE),
     (_GET, "/shops/{}/areas", REFERENCE),
+    # The work profile's six ready-made templates: fixed texts, the shop-setup form's.
+    (_GET, "/work-profile/templates", REFERENCE),
     (_GET, "/machines", REFERENCE),
     (_GET, "/machines/search", REFERENCE),
     (_GET, "/machines/{}", REFERENCE),
@@ -611,6 +613,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/shops/{}/till-z", S("z")),
     (_GET, "/shops/{}/tips/report", S("reports")),
     (_GET, "/shops/{}/work-types", S("products", "till_settings", level=VIEW)),
+    # "תצורת עבודה של הסניף" (P:/specs/shop-work-config.md): set with the shop (organization),
+    # read on the shop's page and by the add-device dialog's people too.
+    (_GET, "/shops/{}/work-profile", S("organization", "devices", level=VIEW)),
+    ("PUT", "/shops/{}/work-profile", S("organization")),
     (_GET, "/shops/{}/z-candidates", S("z")),
     (_ALL, "/shops/{}/z-mode", S("z")),
     (_ALL, "/shops/{}/z-participation", S("z")),

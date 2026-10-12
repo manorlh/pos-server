@@ -1618,24 +1618,87 @@ def work_types_out(db: Session, shop: Shop, user: User) -> Dict[str, Any]:
     }
 
 
-def _upsert_value(db: Session, parameter: TillParameter, scope_type: str, scope_id, value: Any, now: datetime) -> None:
-    row = (
-        db.query(TillParameterValue)
-        .filter(
-            TillParameterValue.parameter_id == parameter.id,
-            TillParameterValue.scope_type == scope_type,
-            TillParameterValue.scope_id == scope_id,
-        )
-        .first()
-    )
-    if row is None:
-        db.add(TillParameterValue(
-            id=uuid.uuid4(), parameter_id=parameter.id, scope_type=scope_type, scope_id=scope_id,
-            value=value, created_at=now, updated_at=now,
-        ))
-    else:
-        row.value = value
-        row.updated_at = now
+def _upsert_value(
+    db: Session, parameter: TillParameter, scope_type: str, scope_id, value: Any, now: datetime, user: Any,
+) -> bool:
+    """The level's value, written like the parameters page writes it — audited in `till_parameter_changes`."""
+    from app.services.till_parameters import write_value
+
+    return write_value(db, parameter, scope_type, scope_id, value, user=user, now=now)
+
+
+def write_shop_tables(
+    db: Session,
+    shop: Shop,
+    user: User,
+    *,
+    tables: Optional[bool] = None,
+    tables_mode: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> bool:
+    """
+    The shop's own `tablesMode`, as the card "סוגי עבודה" writes it: off — «כבוי» for the shop,
+    and the shop's points of sale and tills let go of their own value (or they would keep tables
+    on); on — `tables_mode` (default «קופה אחת») when the shop has no tables yet, or when another
+    mode is asked for. Every value written or removed is in the change log. Flushed, not
+    committed, and no role check: the callers decide who may (the card: the super admin; the
+    shop's work profile: app/services/work_profile.py). True when it wrote (the tills are told).
+    """
+    from app.models.shop_area import ShopArea
+    from app.services.till_parameters import write_value
+
+    if tables is None and tables_mode is None:
+        return False
+    now = now or _now()
+    parameter = _parameter(db, TABLES_MODE_KEY)
+    if parameter is None:  # pragma: no cover - created just above
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tablesMode_parameter_missing")
+    on_modes, off, default_on = _tables_options(parameter)
+    if tables is False:
+        if off is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bad_tables_mode")
+        _upsert_value(db, parameter, "shop", shop.id, off, now, user)
+        area_ids = [a for (a,) in db.query(ShopArea.id).filter(ShopArea.shop_id == shop.id).all()]
+        till_ids = [m for (m,) in db.query(POSMachine.id).filter(POSMachine.shop_id == shop.id).all()]
+        below = [*area_ids, *till_ids]
+        if below:
+            rows = (
+                db.query(TillParameterValue)
+                .filter(
+                    TillParameterValue.parameter_id == parameter.id,
+                    TillParameterValue.scope_type.in_(("area", "machine")),
+                    TillParameterValue.scope_id.in_(below),
+                )
+                .all()
+            )
+            for row in rows:
+                write_value(db, parameter, row.scope_type, row.scope_id, None, user=user, now=now)
+        parameter.updated_at = now
+        db.flush()
+        # The card always counted a save of "off" as a change (the tills are told).
+        return True
+    before = review_state(db, shop)
+    wanted = tables_mode or (None if before.tables_enabled else default_on)
+    if wanted is None:
+        return False
+    if wanted not in on_modes:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bad_tables_mode")
+    if before.shop_tables_mode == wanted and before.tables_enabled:
+        return False
+    _upsert_value(db, parameter, "shop", shop.id, wanted, now, user)
+    db.flush()
+    return True
+
+
+def settle_review(db: Session, shop: Shop, before: "ReviewState", after: "ReviewState") -> None:
+    """
+    After the commit: entering review mode makes the first publication now (the live catalog as
+    it stands); leaving it closes the open one. Commits.
+    """
+    if after.enabled and not before.enabled:
+        ensure_publication(db, shop)
+    elif before.enabled and not after.enabled:
+        note_live(db, shop.id)
 
 
 def set_work_types(
@@ -1660,42 +1723,12 @@ def set_work_types(
     catalog as it stands); leaving it closes the open one. Commits. True when a till
     parameter changed (the tills are told by the caller).
     """
-    from app.models.shop_area import ShopArea
-
     if getattr(user, "role", None) != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
     now = _now()
     before = review_state(db, shop)
-    parameters_changed = False
-
-    if tables is not None or tables_mode is not None:
-        parameter = _parameter(db, TABLES_MODE_KEY)
-        if parameter is None:  # pragma: no cover - created just above
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tablesMode_parameter_missing")
-        on_modes, off, default_on = _tables_options(parameter)
-        if tables is False:
-            if off is None:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bad_tables_mode")
-            _upsert_value(db, parameter, "shop", shop.id, off, now)
-            area_ids = [a for (a,) in db.query(ShopArea.id).filter(ShopArea.shop_id == shop.id).all()]
-            till_ids = [m for (m,) in db.query(POSMachine.id).filter(POSMachine.shop_id == shop.id).all()]
-            below = [*area_ids, *till_ids]
-            if below:
-                db.query(TillParameterValue).filter(
-                    TillParameterValue.parameter_id == parameter.id,
-                    TillParameterValue.scope_type.in_(("area", "machine")),
-                    TillParameterValue.scope_id.in_(below),
-                ).delete(synchronize_session=False)
-            parameter.updated_at = now
-            parameters_changed = True
-        else:
-            wanted = tables_mode or (None if before.tables_enabled else default_on)
-            if wanted is not None:
-                if wanted not in on_modes:
-                    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="bad_tables_mode")
-                if not (before.shop_tables_mode == wanted and before.tables_enabled):
-                    _upsert_value(db, parameter, "shop", shop.id, wanted, now)
-                    parameters_changed = True
+    # Audited in `till_parameter_changes`, like the parameters page (P:/specs/shop-work-config.md §6).
+    parameters_changed = write_shop_tables(db, shop, user, tables=tables, tables_mode=tables_mode, now=now)
 
     if review_override is not None:
         if review_override not in REVIEW_OPTIONS:
@@ -1704,7 +1737,7 @@ def set_work_types(
         if parameter is None:  # pragma: no cover - created just above
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="menuBroadcastReview_parameter_missing")
         if review_override != before.override:
-            _upsert_value(db, parameter, "shop", shop.id, review_override, now)
+            _upsert_value(db, parameter, "shop", shop.id, review_override, now, user)
             parameters_changed = True
 
     if take_away is not None or quick_order is not None or delivery is not None:
@@ -1724,8 +1757,5 @@ def set_work_types(
     db.flush()
     after = review_state(db, shop)
     db.commit()
-    if after.enabled and not before.enabled:
-        ensure_publication(db, shop)
-    elif before.enabled and not after.enabled:
-        note_live(db, shop.id)
+    settle_review(db, shop, before, after)
     return parameters_changed

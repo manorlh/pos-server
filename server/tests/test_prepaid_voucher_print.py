@@ -13,7 +13,9 @@ What each class pins:
   benefit); set at creation, changed later, logged; the migration adds it once.
 * **Free text** — editable after creation (and cleared); several lines, Hebrew, long lines
   wrapped inside the card, in every layout (the 80 mm tickets included), never pushing the
-  validity and the terms off the voucher.
+  validity and the terms off the voucher; beside a long benefit too (the owner, 12.10.2026: a
+  three-line benefit left it no line on the 80×50 ticket — the benefit now shrinks for it), and
+  the layout says when the card cuts it (the dashboard warns).
 * **The design** ("שיהיה מקצועי") — one layout (app/services/prepaid_voucher_layout.py) that the
   dashboard runs too (client/src/lib/voucherLayout.ts): the golden fixture
   tests/fixtures/prepaid_voucher_layout.json pins its operations for both; the code in Geist
@@ -351,6 +353,38 @@ class TestFreeText:
         assert "…" in out
         assert PDF._visual("בתוקף עד 14/08/2026") in out and PDF._visual("מימוש בעסקה אחת") in out
 
+    def test_a_long_benefit_leaves_the_80mm_ticket_its_free_text(self, drawn, monkeypatch):
+        # The owner (12.10.2026): "יחידה אחת!!!!!!!" saved, but not on the 80×50 ticket's preview
+        # nor its print — a three-line benefit (and the logo) took all the room.
+        from PIL import Image
+
+        monkeypatch.setattr(PDF, "card_contents", lambda batch, opts: (OWNER_BENEFIT, []))
+        b = batch_obj(items=(), free_text="יחידה אחת!!!!!!!")
+        g = PDF.geometry("ticket80x50")
+        logo = Image.new("RGB", (60, 30), "black")
+        PDF._draw_card(b, VOUCHER, g.card_w, g.card_h, logo, PDF.Labels(), False, PDF.options_for(b))
+        assert shows(drawn, "יחידה אחת")
+        assert shows(drawn, "פופקורן") and shows(drawn, "בלחמניה ועוד")
+        assert PDF._visual("בתוקף עד 14/08/2026") in texts(drawn)
+
+    def test_the_layout_says_when_the_free_text_is_cut(self):
+        owner = _content(OWNER)
+        out = L.layout_card(80, 50, owner, PDF.measure)
+        assert out.free_text == L.FreeTextFit(shown=1, total=1, cut=False)
+        # The benefit shrank a little for it (one size for its lines, never below BENEFIT_MIN).
+        words = set(OWNER_BENEFIT.split())
+        sizes = {o["size"] for o in out.ops if o["op"] == "text" and o["bold"] and set(o["text"].split()) & words}
+        assert len(sizes) == 1 and L.BENEFIT * L.BENEFIT_MIN <= sizes.pop() < L.BENEFIT
+        assert out.ops == L.layout(80, 50, owner, PDF.measure)
+        # Six lines on the same ticket: two printed (the last with "…"), and the layout says so.
+        long = _content({**OWNER, "freeText": "\n".join(f"שורה {i} של הטקסט החופשי" for i in range(1, 7))})
+        fit = L.layout_card(80, 50, long, PDF.measure).free_text
+        assert fit.cut and fit.shown == L.FREE_RESERVE and fit.total == 6
+        # A word wider than the card: one line, cut with "…" — cut too.
+        assert L.layout_card(80, 50, _content({**OWNER, "freeText": "א" * 200}), PDF.measure).free_text.cut
+        # Nothing to print: nothing cut.
+        assert L.layout_card(80, 50, _content({**OWNER, "freeText": None}), PDF.measure).free_text == L.FreeTextFit()
+
     def test_many_goods_still_leave_room_for_it(self, drawn):
         goods = tuple((f"מוצר {chr(0x05d0 + i)}", 1) for i in range(12))
         card(batch_obj(items=goods))
@@ -373,6 +407,10 @@ BASE = {
     "code": "ABCD-EFGH-2345-6789",
     "credit": "נוצר על ידי Runner Systems",
 }
+OWNER_BENEFIT = "100% הנחה על פיצה, פופקורן, נקניקייה בלחמניה ועוד"
+OWNER = {
+    **BASE, "items": [], "logo": True, "benefit": OWNER_BENEFIT, "freeText": "יחידה אחת!!!!!!!", "terms": "שימוש אחד",
+}
 #: The inputs in the dashboard's words (camelCase): src/lib/voucherLayout.test.ts runs the same.
 CASES = [
     {"name": "ticket 80x50, goods", "w": 80, "h": 50, "content": BASE},
@@ -389,6 +427,15 @@ CASES = [
      "content": {**BASE, "credit": None, "code": None, "validity": None}},
     {"name": "custom 30x30", "w": 30, "h": 30, "content": BASE},
     {"name": "ticket 80x120, validity hidden", "w": 80, "h": 120, "content": {**BASE, "validity": None, "terms": None}},
+    # The owner's voucher (12.10.2026): a three-line benefit on the 80×50 ticket left the free
+    # text no line at all — now the benefit shrinks a little and the free text prints.
+    {"name": "ticket 80x50, logo, long benefit, short free text", "w": 80, "h": 50, "content": OWNER},
+    {"name": "ticket 80x50, logo, long benefit, short free text, validity hidden", "w": 80, "h": 50,
+     "content": {**OWNER, "validity": None, "terms": None}},
+    {"name": "ticket 80x50, logo, long benefit, free text cut", "w": 80, "h": 50,
+     "content": {**OWNER, "freeText": "\n".join(f"שורה {i} של הטקסט החופשי" for i in range(1, 7))}},
+    {"name": "ticket 80x50, long benefit, short free text, room enough", "w": 80, "h": 50,
+     "content": {**OWNER, "logo": False}},
 ]
 
 
@@ -418,13 +465,12 @@ class TestDesign:
         src/lib/voucherLayout.test.ts checks its port against the same file: a change to the
         design is made in both and regenerated here (UPDATE_PREPAID_VOUCHER_LAYOUT=1).
         """
-        data = {
-            "labels": _labels(),
-            "cases": [
-                {**case, "ops": L.layout(case["w"], case["h"], _content(case["content"]), L.fake_measure)}
-                for case in CASES
-            ],
-        }
+        def golden(case):
+            out = L.layout_card(case["w"], case["h"], _content(case["content"]), L.fake_measure)
+            fit = out.free_text
+            return {**case, "ops": out.ops, "freeText": {"shown": fit.shown, "total": fit.total, "cut": fit.cut}}
+
+        data = {"labels": _labels(), "cases": [golden(case) for case in CASES]}
         if os.environ.get("UPDATE_PREPAID_VOUCHER_LAYOUT"):
             GOLDEN.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         assert json.loads(GOLDEN.read_text(encoding="utf-8")) == json.loads(json.dumps(data, ensure_ascii=False))

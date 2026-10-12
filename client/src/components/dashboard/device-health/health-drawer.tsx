@@ -32,10 +32,10 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Dialog, DialogOverlay, DialogPortal } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
-import { durationText, levelTone, orderedParts, type KioskHealthEvent, type KioskHealthRow } from '@/lib/kioskInsights';
+import { batteryNotWatched, durationText, levelTone, orderedParts, type KioskHealthEvent, type KioskHealthRow } from '@/lib/kioskInsights';
 import { fetchKioskHealth } from '@/lib/kioskInsightsApi';
 import { OverallBadge, PART_ICON, TONE, ToneIcon, agoText, detailLines, type HealthLabels } from './health-ui';
-import { BatteryGauge, BatteryHistoryTable, BatterySettingsNote } from './battery';
+import { BatteryGauge, BatteryHistoryTable, BatteryNotWatched, BatterySettingsNote } from './battery';
 
 function Section({ title, icon, children, trailing }: { title: string; icon?: React.ReactNode; children: React.ReactNode; trailing?: React.ReactNode }) {
   return (
@@ -101,6 +101,7 @@ export function KioskHealthDrawer({
   const events = detail.data?.events ?? [];
   const sessions = detail.data?.sessions ?? [];
   const batteryHistory = detail.data?.batteryHistory ?? [];
+  const batteryPart = kiosk?.parts.find((p) => p.key === 'battery');
   const tb = useTranslations('deviceHealth.battery');
   const tTerminal = useTranslations('cardTerminal');
 
@@ -242,8 +243,16 @@ export function KioskHealthDrawer({
                   </p>
                 </Section>
 
-                {/* "סוללה חלשה": the kiosk's battery (when it has one) and its low-battery history */}
-                {kiosk.battery || batteryHistory.length > 0 ? (
+                {/* "סוללה חלשה": the kiosk's battery (when it has one) and its low-battery history —
+                    or, when its battery is not watched ("ניטור סוללה"), why, with no history */}
+                {batteryNotWatched(batteryPart) && batteryPart ? (
+                  <Section title={tb('title')}>
+                    <div className="rounded-2xl border px-3 py-2.5">
+                      <BatteryNotWatched part={batteryPart} L={L} big />
+                    </div>
+                    <BatterySettingsNote isSuperAdmin={isSuperAdmin} />
+                  </Section>
+                ) : kiosk.battery || batteryHistory.length > 0 ? (
                   <Section title={tb('title')}>
                     {kiosk.battery ? (
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl border px-3 py-2.5">

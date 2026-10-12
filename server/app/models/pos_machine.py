@@ -120,8 +120,27 @@ _DRIVER_PENDING_MODELS = frozenset({
 _CASH_DRAWER_PORT_MODELS: frozenset = frozenset(
     [m.id for m in SUNMI_MODELS if m.drawer_port]
     # iMin Falcon 2 / D4 Pro / Swan 2, LANDI C20 Pro, a Feitian printer dock: `ESC p` (or the
-    # print service's drawer call) through the head (app/models/builtin_printers.py).
+    # print service's drawer call) through the head; iMin Falcon 1 / D4 / D1 (Android 11): the
+    # board's GPIO, switched by the till itself (app/models/builtin_printers.py).
     + [m.id for m in BUILTIN_PRINTER_MODELS if m.till_drawer_port]
+)
+
+#: Models that run on mains only — no battery at all ("ניטור סוללה", app/services/battery_alerts.py
+#: `battery_monitored`): on "auto" the cloud raises no low-battery alert for them and tells the till
+#: to show no strip and sound no alarm. Many of them still report a battery to Android (a fake
+#: 100 %, or "present"), so the model is what tells. A model we are not sure of is left out: "auto"
+#: then goes by the device's own `batteryPresent`.
+_MAINS_ONLY_MODELS: frozenset = frozenset(
+    # SUNMI desktops on a 24 V adapter: the rows with a drawer port (T1, T2, T2 mini, T2s, T3,
+    # D2 mini, D2s, D2s Plus, D3) — but not the D3 mini, whose 58 mm version has a built-in battery.
+    [m.id for m in SUNMI_MODELS if m.drawer_port and m.id != "SUNMI_D3_MINI"]
+    # The SUNMI K2 (and K2 mini) self-service kiosk: floor / wall / counter, on mains.
+    + ["SUNMI_K2"]
+    # iMin desktops with no dock: D4 / D4 Pro (15.6"), Swan 2, Falcon 1 (a 24 V adapter, no
+    # battery). Not the Falcon 2 family — a tablet that lifts out of its dock, on its own
+    # battery — nor the D1, M2 and Swift handhelds.
+    + ["IMIN_D4", "IMIN_D4_PRO", "IMIN_SWAN2", "IMIN_FALCON1"]
+    # Not the LANDI C20 Pro (a battery on some configurations), the Feitian M500 (not known).
 )
 
 #: What a till reports as its model (Android's `Build.MODEL`, `device_info["model"]`),
@@ -174,6 +193,11 @@ def device_has_builtin_terminal(device_model) -> bool:
 def device_has_cash_drawer_port(device_model) -> bool:
     """Whether a till of this model opens a drawer on a port of its own (the SUNMI desktops)."""
     return device_model in _CASH_DRAWER_PORT_MODELS
+
+
+def device_is_mains_only(device_model) -> bool:
+    """A model with no battery at all (the SUNMI / iMin desktops, the SUNMI K2 kiosk)."""
+    return device_model in _MAINS_ONLY_MODELS
 
 
 def device_paper_width_mm(device_model) -> "int | None":

@@ -6,8 +6,11 @@ docs/SPEC_KIOSK_INSIGHTS.md §6).
   escalates; cleared when charging or 5 points above the threshold; the cycle ends when charging or
   5 above the highest; a skipped level fires the worse one only; a reading with no percent does nothing.
 * **The settings**: `lowBatteryThresholds` per shop / device; bad values fall back to the default.
-* **The heartbeat** writes the rows; the tills get them by `alerts.battery` (main till / all /
-  selected, everyone / managers), never the device itself; "הבנתי" marks one; charging clears it.
+* **The heartbeat** writes the rows; by default (`alerts.battery.tills: "self"`, "רק המכשיר עצמו") no
+  other till gets them — the device's own strip and alarm only. Chosen on the dashboard, the tills get
+  them by `alerts.battery` (main till / all / selected, everyone / managers), never the device itself;
+  "הבנתי" marks one; charging clears it. A layer that sets no `tills` inherits, down to "self"; a stored
+  "main" is kept; "self" is refused on the kiosk's printer / terminal / help alerts.
 * **The dashboard**: the device's battery, the open alert and the history in "תקינות מכשירים".
 """
 from __future__ import annotations
@@ -16,6 +19,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from fastapi import HTTPException
 
 from app.models.device_battery import DeviceBatteryAlert
 from app.models.pos_machine import POSMachine
@@ -134,11 +138,103 @@ def put(w, overrides, level="shop", entity=None):
     )
 
 
+def battery_on(w, till):
+    return [a for a in OPS.alerts_for_till(w.db, till, now=NOW) if a["kind"] == "battery"]
+
+
+class TestOnlyTheDeviceItself:
+    """The owner 12.10.2026: "התראת סוללה תגדיר ברירת מחדל רק למכשיר עצמו, ודינמי אפשר שכולם יקבלו"."""
+
+    def test_by_default_no_other_till_hears_of_it(self, w, monkeypatch):
+        from app.services import kiosk_config as KC
+        from app.services import main_till as MT
+
+        monkeypatch.setattr(MT, "main_till_of_shop", lambda db, shop_id: w.main)
+        assert KC.effective_config(w.db, w.handheld)["alerts"]["battery"]["tills"] == "self"
+        fired = beat(w, w.handheld, 10)
+        # Raised and kept (the device's own strip, the dashboard's history) …
+        assert fired is not None and fired.level == 10
+        assert w.db.query(DeviceBatteryAlert).count() == 1
+        # … but no till is woken, and none lists it — not the main till, not another, not the device.
+        assert [r for _, r in w.woken if r == "battery_alert"] == []
+        for till in (w.main, w.third, w.handheld, w.other_till):
+            assert battery_on(w, till) == []
+        assert OPS.targets(w.db, w.handheld, KC.effective_config(w.db, w.handheld), "battery") == []
+        # "הבנתי" from a till it never reached: not found.
+        row = w.db.query(DeviceBatteryAlert).one()
+        with pytest.raises(HTTPException) as caught:
+            OPS.acknowledge(w.db, w.main, f"battery:{row.id}", pos_user_name="דנה")
+        assert caught.value.status_code == 404
+        # Critical too: still only the device.
+        beat(w, w.handheld, 4, now=NOW + timedelta(minutes=1))
+        assert [r for _, r in w.woken if r == "battery_alert"] == [] and battery_on(w, w.main) == []
+
+    def test_chosen_self_after_main_stops_routing_at_once(self, w, monkeypatch):
+        from app.services import main_till as MT
+
+        monkeypatch.setattr(MT, "main_till_of_shop", lambda db, shop_id: w.main)
+        put(w, {"alerts": {"battery": {"tills": "main"}}})
+        beat(w, w.handheld, 9)
+        assert len(battery_on(w, w.main)) == 1
+        put(w, {"alerts": {"battery": {"tills": "self"}}})
+        assert battery_on(w, w.main) == [] and battery_on(w, w.third) == []
+
+    def test_a_stored_main_is_kept_and_a_layer_without_tills_inherits(self, w, monkeypatch):
+        from app.services import kiosk_config as KC
+        from app.services import main_till as MT
+
+        monkeypatch.setattr(MT, "main_till_of_shop", lambda db, shop_id: w.main)
+        # A shop layer saved "main" (as before 12.10.2026): read back as it was, never rewritten.
+        put(w, {"alerts": {"battery": {"tills": "main"}}})
+        w.db.commit()
+        assert KC.layer_row(w.db, "shop", w.shop.id).overrides == {"alerts": {"battery": {"tills": "main"}}}
+        # A device with no layer of its own: the shop's "main".
+        assert KC.effective_config(w.db, w.handheld)["alerts"]["battery"]["tills"] == "main"
+        # A kiosk (with a battery) whose own layer sets only who: it inherits the shop's "main".
+        KR.create_kiosk(
+            body=KioskCreateIn(machineId=w.third.id, name="קיוסק"), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+        )
+        put(w, {"alerts": {"battery": {"audience": "managers"}}}, level="machine", entity=w.third)
+        w.db.commit()
+        cfg = KC.effective_config(w.db, w.third)
+        assert cfg["alerts"]["battery"] == {"tills": "main", "machineIds": [], "audience": "managers"}
+        assert KC.layer_row(w.db, "shop", w.shop.id).overrides == {"alerts": {"battery": {"tills": "main"}}}
+        beat(w, w.third, 14)
+        got = battery_on(w, w.main)
+        assert len(got) == 1 and got[0]["audience"] == "managers" and got[0]["kioskMachineId"] == str(w.third.id)
+        assert battery_on(w, w.handheld) == []
+
+    def test_layers_merge_down_to_self(self):
+        from app.services import kiosk_config as KC
+
+        assert KC.DEFAULT_CONFIG["alerts"]["battery"]["tills"] == "self"
+        assert KC.resolve()["alerts"]["battery"]["tills"] == "self"
+        # Layers that set other keys (or nothing) of the route inherit the default.
+        merged = KC.resolve({"alerts": {"battery": {"audience": "managers"}}}, {}, {"alerts": {"printer": {"tills": "all"}}})
+        assert merged["alerts"]["battery"] == {"tills": "self", "machineIds": [], "audience": "managers"}
+        # A parent's choice reaches the layers below that set nothing; a lower choice wins.
+        merged = KC.resolve({"alerts": {"battery": {"tills": "all"}}}, {"alerts": {"battery": {"audience": "managers"}}})
+        assert merged["alerts"]["battery"]["tills"] == "all"
+        merged = KC.resolve({"alerts": {"battery": {"tills": "all"}}}, {}, {"alerts": {"battery": {"tills": "self"}}})
+        assert merged["alerts"]["battery"]["tills"] == "self"
+        # `null` in a layer = inherit.
+        merged = KC.resolve({"alerts": {"battery": {"tills": "main"}}}, {"alerts": {"battery": {"tills": None}}})
+        assert merged["alerts"]["battery"]["tills"] == "main"
+        # The other kinds keep "main" by default.
+        kinds = ("printer", "terminal", "help")
+        assert {k: KC.resolve()["alerts"][k]["tills"] for k in kinds} == dict.fromkeys(kinds, "main")
+        # The routing's own reading of a route: absent (or "self" off battery) → the kind's default.
+        assert OPS.route_of({}, "battery")["tills"] == "self" and OPS.route_of({}, "printer")["tills"] == "main"
+        assert OPS.route_of({"alerts": {"printer": {"tills": "self"}}}, "printer")["tills"] == "main"
+
+
 class TestOnTheTills:
     def test_the_handheld_tells_the_main_till_and_charging_clears_it(self, w, monkeypatch):
         from app.services import main_till as MT
 
         monkeypatch.setattr(MT, "main_till_of_shop", lambda db, shop_id: w.main)
+        # Chosen on the dashboard: "הקופה הראשית".
+        put(w, {"alerts": {"battery": {"tills": "main"}}})
         assert beat(w, w.handheld, 40) is None
         fired = beat(w, w.handheld, 10, now=NOW + timedelta(minutes=1))
         assert fired.level == 10 and fired.severity == "warning"
@@ -148,7 +244,7 @@ class TestOnTheTills:
         a = alerts[0]
         assert a["text"] == "המסופון Till 1 — סוללה 10% · חברו למטען" and a["severity"] == "warning"
         assert a["detail"] == {"percent": 10, "level": 10, "critical": False, "device": "המסופון"}
-        # Only the main till (the default route); never the device itself.
+        # Only the main till (the route chosen); never the device itself.
         assert not [x for x in OPS.alerts_for_till(w.db, w.third, now=NOW) if x["kind"] == "battery"]
         assert not [x for x in OPS.alerts_for_till(w.db, w.handheld, now=NOW) if x["kind"] == "battery"]
         # Down to 5: critical, the 10 escalated — one open alert.
@@ -175,6 +271,10 @@ class TestOnTheTills:
         put(w, {"alerts": {"battery": {"tills": "selected", "machineIds": [str(w.third.id)]}}})
         assert [a for a in OPS.alerts_for_till(w.db, w.third, now=NOW) if a["kind"] == "battery"]
         assert not [a for a in OPS.alerts_for_till(w.db, w.main, now=NOW) if a["kind"] == "battery"]
+        # A chosen list whose tills are all gone: as "main" (never nobody), as before.
+        w.third.is_active = False
+        w.db.commit()
+        assert len(battery_on(w, w.main)) == 1
 
     def test_thresholds_per_device(self, w):
         set_param(w, B.THRESHOLDS_KEY, "machine", w.handheld.id, "30,20")
