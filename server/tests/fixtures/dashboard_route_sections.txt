@@ -447,6 +447,7 @@ POST /prepaid-vouchers/batches/{batch_id}/distribution/recipients/{recipient_id}
 POST /prepaid-vouchers/batches/{batch_id}/distribution/recipients/{recipient_id}/sent -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/distribution/recipients/{recipient_id}/unassign -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/distribution/send-api -> prepaid_vouchers:edit
+POST /prepaid-vouchers/batches/{batch_id}/duplicate -> prepaid_vouchers:edit
 POST /prepaid-vouchers/batches/{batch_id}/edit-preview -> prepaid_vouchers:edit
 GET /prepaid-vouchers/batches/{batch_id}/events -> prepaid_vouchers:view
 GET /prepaid-vouchers/batches/{batch_id}/file -> prepaid_vouchers:view

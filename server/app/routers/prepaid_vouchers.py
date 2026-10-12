@@ -22,6 +22,9 @@ POST   /prepaid-vouchers/batches/bulk-edit-preview    → the same change on man
 POST   /prepaid-vouchers/batches/bulk-edit            → applied per batch through the single edit;
                                                         idempotent by `clientRequestId`
 POST   /prepaid-vouchers/batches/{id}/vouchers        → issue more vouchers (next serials)
+POST   /prepaid-vouchers/batches/{id}/duplicate       → "שכפול סדרה": a new batch with its terms and N new
+                                                        vouchers; idempotent by `Idempotency-Key` /
+                                                        `clientRequestId`
 POST   /prepaid-vouchers/batches/{id}/cancel          → cancel the batch and its open vouchers
 GET    /prepaid-vouchers/batches/{id}/vouchers        → its vouchers (codes for printing)
 GET    /prepaid-vouchers/batches/{id}/file            → PDF / ZIP (a PDF per voucher, or per group
@@ -64,6 +67,7 @@ from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
     PrepaidBatchBulkEditIn,
+    PrepaidBatchDuplicateIn,
     PrepaidProductionCreate,
     PrepaidProductionUpdate,
     PrepaidVoucherAddIn,
@@ -647,6 +651,38 @@ def add_prepaid_vouchers(
 
     key = PBC.add_key_of(_given(idempotency_key), body)
     out, replayed = PBC.add(db, current_user, active_tenant_id, batch_id, body, key=key)
+    if replayed and response is not None:
+        response.status_code = status.HTTP_200_OK
+        response.headers[idem.REPLAY_HEADER] = "true"
+    return out
+
+
+@router.post("/prepaid-vouchers/batches/{batch_id}/duplicate", status_code=status.HTTP_201_CREATED)
+def duplicate_prepaid_voucher_batch(
+    batch_id: str,
+    body: PrepaidBatchDuplicateIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+    response: Response = None,
+    idempotency_key: Annotated[Optional[str], Header(alias="Idempotency-Key")] = None,
+):
+    """
+    "שכפול סדרה" (app/services/prepaid_batch_duplicate.py): a new batch with the source's terms,
+    made through batch create (its checks, numbering, groups frozen by today's catalog,
+    permissions), and `count` new vouchers. `name` and `count` are required (422 with the value and
+    the limit); `validFrom` / `validUntil`, `productionId` / `customerName`, `reportEventId` /
+    `eventName` are the source's unless sent; `startInTestMode` is off unless sent. The answer is the
+    new batch, with `duplicatedFrom` ({id, name}). `Idempotency-Key` (or `clientRequestId`): a retry
+    gets the same batch back (200 + `Idempotent-Replayed`); the same key with another body → 422.
+    """
+    from app.services import command_idempotency as idem
+    from app.services import prepaid_batch_duplicate as PBD
+
+    key = PBD.key_of(_given(idempotency_key), body)
+    out, replayed = PBD.duplicate(db, current_user, active_tenant_id, batch_id, body, key=key)
+    if not replayed:
+        _wake_tills(db, out)
     if replayed and response is not None:
         response.status_code = status.HTTP_200_OK
         response.headers[idem.REPLAY_HEADER] = "true"

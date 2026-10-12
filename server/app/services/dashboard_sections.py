@@ -419,6 +419,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/prepaid-vouchers/simulate", S("prepaid_vouchers", level=VIEW)),
     # The item groups' check (products in two groups, empty departments) only reads the catalog.
     ("POST", "/prepaid-vouchers/groups/check", S("prepaid_vouchers", level=VIEW)),
+    # "שכפול סדרה" makes a batch: the same section and level as batch create (POST /prepaid-vouchers/batches).
+    ("POST", "/prepaid-vouchers/batches/{}/duplicate", S("prepaid_vouchers")),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──

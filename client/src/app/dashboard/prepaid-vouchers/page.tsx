@@ -76,6 +76,13 @@ import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/compone
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import { BatchTestModePanel, TestModeTag } from '@/components/dashboard/prepaid-vouchers/batch-test-mode';
 import {
+  BatchRowMenu,
+  BatchTitle,
+  DuplicateBatchButton,
+  DuplicateBatchDialog,
+  RenameBatchDialog,
+} from '@/components/dashboard/prepaid-vouchers/batch-duplicate';
+import {
   BATCH_SORTS,
   EMPTY_FILTERS,
   VOUCHER_STATES,
@@ -1149,12 +1156,15 @@ function validityText(b: PrepaidVoucherBatch, t: (k: string, v?: Record<string, 
   return t('row.noValidity');
 }
 
-function BatchCard({ b, onOpen, selected, onSelect }: {
+function BatchCard({ b, onOpen, selected, onSelect, onDuplicate, onRename }: {
   b: PrepaidVoucherBatch;
   onOpen: () => void;
   /** "שינוי הגדרות לסדרות שנבחרו": the card's own box. */
   selected?: boolean;
   onSelect?: (on: boolean) => void;
+  /** The row's menu: "שכפול סדרה" and "שינוי שם" (components/dashboard/prepaid-vouchers/batch-duplicate.tsx). */
+  onDuplicate?: () => void;
+  onRename?: () => void;
 }) {
   const t = useTranslations('prepaidVouchers');
   const ts = useTranslations('prepaidVouchers.scope');
@@ -1206,6 +1216,7 @@ function BatchCard({ b, onOpen, selected, onSelect }: {
           {b.shops.length ? b.shops.map((s) => s.name).join(', ') : t('allShopsOf', { company: b.companyName ?? '' })}
         </p>
       </button>
+      {onDuplicate && onRename ? <BatchRowMenu batch={b} onDuplicate={onDuplicate} onRename={onRename} /> : null}
     </li>
   );
 }
@@ -1260,7 +1271,12 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
   );
 }
 
-function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: () => void }) {
+function BatchDetail({ batch, onBack, onOpenBatch }: {
+  batch: PrepaidVoucherBatch;
+  onBack: () => void;
+  /** Another batch: the one "שכפול סדרה" made, or the one an audit line names. */
+  onOpenBatch: (id: string) => void;
+}) {
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
   const ta = useTranslations('prepaidVouchers.allVouchers');
@@ -1511,7 +1527,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
           {t('back')}
         </Button>
         <div className="min-w-0 flex-1">
-          <h2 className="text-xl font-bold">{batch.eventName || batch.name}</h2>
+          <BatchTitle batch={batch} />
           <p className="text-sm text-muted-foreground">
             {batch.eventName ? `${batch.name} · ` : ''}
             {contentsText(batch, termsText.benefit)}
@@ -1557,7 +1573,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             </p>
           ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {batch.testMode ? <TestModeTag /> : null}
           <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${batch.status}`)}
@@ -1566,6 +1582,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
             <Pencil className="h-4 w-4" />
             {t('edit.button')}
           </Button>
+          <DuplicateBatchButton batch={batch} onCreated={(b) => onOpenBatch(b.id)} className="print:hidden" />
         </div>
       </div>
       {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
@@ -1599,7 +1616,7 @@ function BatchDetail({ batch, onBack }: { batch: PrepaidVoucherBatch; onBack: ()
       </div>
 
       {view === 'distribution' ? <VoucherDistributionView batch={batch} /> : view === 'report' ? <PrepaidBatchReportView batch={batch} /> : view === 'groups' ? (
-        <PrepaidBatchGroupsView batch={batch} busy={!!busy} onGroupPdf={(g, r) => void groupPdf(g, r)} />
+        <PrepaidBatchGroupsView batch={batch} busy={!!busy} onGroupPdf={(g, r) => void groupPdf(g, r)} onOpenBatch={onOpenBatch} />
       ) : (<>
       <Card>
         <CardHeader>
@@ -2037,6 +2054,9 @@ export default function PrepaidVouchersPage() {
   // The answer of a new batch named an identical one made a moment ago (a lost answer retried
   // without its key — an old tab, a reload): offered for cancelling, never blocked.
   const [duplicate, setDuplicate] = useState<PrepaidDuplicateRef | null>(null);
+  // A row's menu in the list: "שכפול סדרה" (the new batch opens) and "שינוי שם".
+  const [duplicating, setDuplicating] = useState<PrepaidVoucherBatch | null>(null);
+  const [renaming, setRenaming] = useState<PrepaidVoucherBatch | null>(null);
   // The view, the sort and every filter live in the URL (lib/prepaidVoucherFilters.ts): a filtered
   // view is a link, and the views share one set of filters.
   const [page, setPage] = useVoucherPageState();
@@ -2114,7 +2134,7 @@ export default function PrepaidVouchersPage() {
       ) : null}
 
       {selected ? (
-        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} />
+        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} onOpenBatch={setSelectedId} />
       ) : view === 'types' ? (
         <PrepaidTypesView />
       ) : view === 'productions' ? (
@@ -2176,7 +2196,8 @@ export default function PrepaidVouchersPage() {
             <ul className="space-y-2">
               {shown.data!.items.map((b) => (
                 <BatchCard key={b.id} b={b} onOpen={() => setSelectedId(b.id)}
-                  selected={picked.has(b.id)} onSelect={(on) => setPicked(toggleOne(picked, b.id, on))} />
+                  selected={picked.has(b.id)} onSelect={(on) => setPicked(toggleOne(picked, b.id, on))}
+                  onDuplicate={() => setDuplicating(b)} onRename={() => setRenaming(b)} />
               ))}
             </ul>
           ) : (
@@ -2208,6 +2229,11 @@ export default function PrepaidVouchersPage() {
         onOpenChange={setCreating}
         onCreated={(b) => { setSelectedId(b.id); setDuplicate(duplicateOf(b)); }}
       />
+      {duplicating ? (
+        <DuplicateBatchDialog batch={duplicating} onOpenChange={(v) => { if (!v) setDuplicating(null); }}
+          onCreated={(b) => setSelectedId(b.id)} />
+      ) : null}
+      {renaming ? <RenameBatchDialog batch={renaming} onOpenChange={(v) => { if (!v) setRenaming(null); }} /> : null}
     </div>
   );
 }

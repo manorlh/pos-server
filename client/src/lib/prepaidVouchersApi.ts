@@ -8,6 +8,7 @@ import { api } from './api';
 import type { PrepaidBatchEditPlan } from './prepaidBatchEdit';
 import type { BulkApplyResult, BulkPreviewResult } from './prepaidBatchBulkEdit';
 import type { PrepaidDuplicateRef } from './prepaidBatchSubmit';
+import type { DuplicateBody } from './prepaidBatchDuplicate';
 import type { BatchSort, VoucherState } from './prepaidVoucherFilters';
 import type { GroupsCheck } from './voucherPresets';
 import type {
@@ -161,6 +162,8 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   exportCount?: number;
   /** Only on the answer of POST /prepaid-vouchers/batches/{id}/vouchers: what this run made. */
   added?: PrepaidAddedRun | null;
+  /** Only on the answer of POST /prepaid-vouchers/batches/{id}/duplicate: the source batch. */
+  duplicatedFrom?: { id: string; name: string } | null;
   /** "מצב בדיקה" (lib/prepaidVoucherTestMode.ts): scans take nothing and count nowhere; since when, by whom. */
   testMode?: boolean;
   testModeSince?: string | null;
@@ -747,6 +750,26 @@ export async function addPrepaidVouchers(
   return data;
 }
 
+/**
+ * "שכפול סדרה": a new batch with the source's terms and `count` new vouchers (lib/prepaidBatchDuplicate.ts
+ * builds the body). `idempotencyKey` (one per submission, lib/prepaidBatchSubmit.ts): a retry gets the
+ * same new batch back, never a second one — sent in the header and, for proxies that drop it, the body.
+ */
+export async function duplicatePrepaidBatch(
+  id: string,
+  body: DuplicateBody,
+  opts: { idempotencyKey?: string; timeoutMs?: number } = {},
+): Promise<PrepaidVoucherBatch> {
+  const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/duplicate`, {
+    ...body,
+    ...(opts.idempotencyKey ? { clientRequestId: opts.idempotencyKey } : {}),
+  }, {
+    headers: opts.idempotencyKey ? { 'Idempotency-Key': opts.idempotencyKey } : undefined,
+    timeout: opts.timeoutMs,
+  });
+  return data;
+}
+
 export async function cancelPrepaidBatch(id: string, reason?: string | null): Promise<PrepaidVoucherBatch> {
   const { data } = await api.post<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}/cancel`, reason ? { reason } : undefined);
   return data;
@@ -791,7 +814,9 @@ export async function cancelPrepaidGroup(
 
 export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
-  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off';
+  | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off'
+  /** "שכפול סדרה": on the new batch (`details.batchId` / `batchName`: the source) and on the source (the new one). */
+  | 'duplicated_from' | 'duplicated_to';
 
 export interface PrepaidBatchEvent {
   id: string;
