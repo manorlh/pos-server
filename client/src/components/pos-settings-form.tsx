@@ -28,10 +28,12 @@ import {
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_MODES,
   VOUCHER_SHOW_ENTITLEMENT_VALUES,
+  VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
   resolveVoucherAutoClose,
   resolveVoucherShowEntitlement,
+  resolveVoucherSound,
   resolveVoucherBalanceCheck,
   resolveVoucherStation,
   voucherStationPaidItemsView,
@@ -499,11 +501,19 @@ export function PosSettingsForm({
             </div>
           );
         })()}
-        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items, and the
-            cashier's "מה מגיע ללקוח" card (lib/voucherTillSettings.ts): "ירושה" sends null. */}
+        {/* "בירור יתרת שובר", the auto close, the voucher station and its paid items, the
+            cashier's "מה מגיע ללקוח" card and the approve / reject sounds (lib/voucherTillSettings.ts):
+            "ירושה" sends null. */}
         {(() => {
           const pick = (
-            key: 'voucherBalanceCheck' | 'voucherAutoClose' | 'voucherStation' | 'voucherStationPaidItems' | 'voucherShowEntitlement',
+            key:
+              | 'voucherBalanceCheck'
+              | 'voucherAutoClose'
+              | 'voucherStation'
+              | 'voucherStationPaidItems'
+              | 'voucherShowEntitlement'
+              | 'voucherSoundApprove'
+              | 'voucherSoundReject',
             values: readonly string[],
             label: (v: string) => string,
             inheritedValue: string,
@@ -581,6 +591,20 @@ export function PosSettingsForm({
                 (v) => t(`voucherOnOff_${v}`),
                 resolveVoucherShowEntitlement(undefined, inherited?.voucherShowEntitlement),
                 <p className="text-xs text-muted-foreground">{t('voucherShowEntitlementHint')}</p>,
+              )}
+              {pick(
+                'voucherSoundApprove',
+                VOUCHER_SOUND_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherSound(undefined, inherited?.voucherSoundApprove),
+                <p className="text-xs text-muted-foreground">{t('voucherSoundApproveHint')}</p>,
+              )}
+              {pick(
+                'voucherSoundReject',
+                VOUCHER_SOUND_VALUES,
+                (v) => t(`voucherOnOff_${v}`),
+                resolveVoucherSound(undefined, inherited?.voucherSoundReject),
+                <p className="text-xs text-muted-foreground">{t('voucherSoundRejectHint')}</p>,
               )}
               <p className="text-xs text-muted-foreground sm:col-span-2">{t('voucherTillHint')}</p>
             </div>

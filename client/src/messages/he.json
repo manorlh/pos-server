@@ -3140,7 +3140,11 @@
     "voucherStationPaidItemsHint": "אחרי מימוש השובר הלקוח יכול להוסיף לאותה עסקה פריטים בתשלום רגיל.",
     "voucherStationPaidItemsNoPayment": "אין אמצעי תשלום פעיל בקופה — רכישה נוספת לא תוצג",
     "voucherShowEntitlementLabel": "הצג לקופאי מה מגיע ללקוח בסריקת שובר",
-    "voucherShowEntitlementHint": "בסריקת שובר נפתח כרטיס קטן עם מה שהשובר נותן ומה נשאר — לא עוצר את המימוש"
+    "voucherShowEntitlementHint": "בסריקת שובר נפתח כרטיס קטן עם מה שהשובר נותן ומה נשאר — לא עוצר את המימוש",
+    "voucherSoundApproveLabel": "צליל אישור במימוש שובר",
+    "voucherSoundApproveHint": "צליל חזק כשהשובר התקבל ומומש",
+    "voucherSoundRejectLabel": "צליל סירוב במימוש שובר",
+    "voucherSoundRejectHint": "צליל חזק כשהשובר נדחה — מומש כבר, פג תוקף, לא מתאים, אין חיבור"
   },
   "shops": {
     "title": "סניפים",
@@ -8001,7 +8005,11 @@
     "voucherStationPaidItemsDesc": "אחרי מימוש השובר הלקוח יכול להוסיף לאותה עסקה פריטים בתשלום רגיל.",
     "voucherStationPaidItemsNoPayment": "אין אמצעי תשלום פעיל בקופה — רכישה נוספת לא תוצג",
     "voucherShowEntitlementLabel": "הצג לקופאי מה מגיע ללקוח בסריקת שובר",
-    "voucherShowEntitlementDesc": "בסריקת שובר נפתח כרטיס קטן עם מה שהשובר נותן ומה נשאר — לא עוצר את המימוש"
+    "voucherShowEntitlementDesc": "בסריקת שובר נפתח כרטיס קטן עם מה שהשובר נותן ומה נשאר — לא עוצר את המימוש",
+    "voucherSoundApproveLabel": "צליל אישור במימוש שובר",
+    "voucherSoundApproveDesc": "צליל חזק כשהשובר התקבל ומומש",
+    "voucherSoundRejectLabel": "צליל סירוב במימוש שובר",
+    "voucherSoundRejectDesc": "צליל חזק כשהשובר נדחה — מומש כבר, פג תוקף, לא מתאים, אין חיבור"
   },
   "paymentDevices": {
     "title": "מכשירי תשלום",
