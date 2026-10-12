@@ -111,6 +111,8 @@ from app.models.product_cost import ProductCost
 from app.models.insight_quick_action import InsightQuickAction
 from app.models.report_event import ReportEvent, ReportEventMachine, ReportEventMachineChange
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
+# "סניף לא פעיל": who turned a shop off or back on, when and why (app/services/shop_active.py).
+from app.models.shop_active_log import ShopActiveLog
 from app.models.pos_user_session import PosUserSession
 # "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
 from app.models.attendance import AttendanceAdjustment, AttendanceBreak, AttendanceShift, EmployeeRole
@@ -255,7 +257,7 @@ __all__ = [
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
     "ReportEvent", "ReportEventMachine", "ReportEventMachineChange",
     "InsightQuickAction",
-    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
+    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem", "ShopActiveLog",
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",

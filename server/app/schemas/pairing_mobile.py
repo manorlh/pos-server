@@ -88,6 +88,8 @@ class MobileShopRow(BaseModel):
     id: uuid.UUID
     name: str
     company_id: uuid.UUID = Field(..., alias="companyId")
+    #: "סניף לא פעיל": a claim into it is refused (409 `shop_inactive`); shown so the page can say so.
+    is_active: bool = Field(True, alias="isActive")
 
 
 class MobileContextResponse(BaseModel):

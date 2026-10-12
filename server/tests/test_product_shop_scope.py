@@ -147,6 +147,10 @@ class _FakeDb:
     def query(self, model):
         return _Query(self.rows.get(model, []))
 
+    def execute(self, _statement):
+        # A row lock (`branch_code.lock_company` on a new shop): nothing to hold in a fake.
+        return _Query([])
+
     def add(self, obj):
         # A real flush fills the column default; the hooks read `shop.id` right after.
         if getattr(obj, "id", "absent") is None:
@@ -556,8 +560,10 @@ class TestShopHooks:
     def test_reactivating_a_shop_runs_the_rules_for_it(self, world, monkeypatch):
         p = _product(world, world.A, mode="company", scope_company=world.A)
         closed = world.shops.a_closed
+        # Back on is the super admin's, with a reason (P:/specs/shop-code-and-inactive.md §3).
         shops_router.update_shop(
-            str(closed.id), ShopUpdate(isActive=True), _distributor(), world.tenant, world.db
+            str(closed.id), ShopUpdate(isActive=True, activeReason="חזרה לפעילות"),
+            _user(UserRole.SUPER_ADMIN), world.tenant, world.db,
         )
         assert _rows(world, p)[str(closed.id)].is_listed is True
         assert str(closed.id) in world.notified

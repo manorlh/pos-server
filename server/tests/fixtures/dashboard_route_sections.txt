@@ -622,9 +622,11 @@ GET /shifts -> z:view
 GET /shifts/{shift_id} -> z:view
 GET /shops -> reference
 POST /shops -> organization:edit
+GET /shops/next-branch-code -> organization:view
 DELETE /shops/{shop_id} -> organization:edit
 GET /shops/{shop_id} -> reference
 PUT /shops/{shop_id} -> organization:edit
+GET /shops/{shop_id}/active-log -> organization:view
 GET /shops/{shop_id}/areas -> reference
 POST /shops/{shop_id}/areas -> organization:edit
 PUT /shops/{shop_id}/kitchen-stations/{station_id}/printers -> printers:edit

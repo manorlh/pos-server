@@ -21,6 +21,13 @@ class ShopBase(BaseModel):
 
 class ShopCreate(ShopBase):
     company_id: uuid.UUID = Field(..., alias="companyId")
+    #: "אוטומטי: הבא בתור. אפשר לשנות" — `branchId` is the suggestion the form was pre-filled
+    #: with (`GET /shops/next-branch-code`), left as it was: taken meanwhile, the shop gets the
+    #: next code instead of a 409. Without `branchId` at all the next code is given anyway
+    #: (app/services/branch_code.py).
+    branch_id_auto: bool = Field(False, alias="branchIdAuto")
+    #: Why the shop opens inactive (`isActive: false` — the super admin's only, with a reason).
+    active_reason: Optional[str] = Field(None, alias="activeReason", max_length=500)
     #: Open the shop in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md). The dashboard's form
     #: sends it on by default; absent (an older client, an API caller) is off.
     training_mode: bool = Field(False, alias="trainingMode")
@@ -45,7 +52,11 @@ class ShopUpdate(BaseModel):
     branch_id: Optional[str] = Field(None, alias="branchId")
     address: Optional[str] = None
     city: Optional[str] = None
+    #: "סניף פעיל" — a change is the super admin's only, with `activeReason`; off locks every
+    #: device of the shop (app/services/shop_active.py). The same value again changes nothing.
     is_active: Optional[bool] = Field(None, alias="isActive")
+    #: Why the shop is turned off or back on — required with a change, kept in the log.
+    active_reason: Optional[str] = Field(None, alias="activeReason", max_length=500)
     #: "permanent" | "temporary" (a short-term customer, an event) — super admin only.
     license_type: Optional[Literal["permanent", "temporary"]] = Field(None, alias="licenseType")
     #: A temporary customer's last day of sales.

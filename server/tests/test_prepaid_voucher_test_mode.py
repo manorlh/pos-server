@@ -600,4 +600,6 @@ class TestMigration:
 
         script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
         heads = script.get_heads()
-        assert heads == ["c7e4a2f9d1b6"]
+        assert len(heads) == 1
+        # Later migrations chain on top (the shop active log, e5a1c9d3b7f2, is the first).
+        assert "c7e4a2f9d1b6" in {r.revision for r in script.walk_revisions("base", heads[0])}
