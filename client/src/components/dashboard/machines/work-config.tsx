@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * "תצורת עבודה למכשיר" (pos-server docs/SPEC_DEVICE_WORK_CONFIG.md): how one device works — in
+ * "תצורת מכשיר" (formerly "תצורת עבודה למכשיר"; pos-server docs/SPEC_DEVICE_WORK_CONFIG.md): how one device works — in
  * the shop Z or not, the shop's main till (local server) or a member of its LAN, remote, its
  * tables, its receipt printer and KDS targets — in one place, written at the device's level (it
  * overrides the shop).
@@ -9,7 +9,7 @@
  * * `WorkConfigStep` — the add-device dialog's step after the shop and role: "לפי הסניף" by
  *   default, a preset, and "מתקדם"; the code carries the plan and the device gets it as it pairs.
  * * `WorkConfigCard` — the device page: each value with where it comes from ("נקבע במכשיר" /
- *   "לפי הסניף / החברה"), "חזרה לירושה", and "שינוי תצורת עבודה".
+ *   "לפי הסניף / החברה"), "חזרה לירושה", and "שינוי תצורת מכשיר".
  *
  * Every change goes through the services that own it on the server, with their refusals (the
  * super admin alone for the Z, the LAN and the tables; a clean break; the main till; the shop
@@ -282,7 +282,7 @@ function Advanced({
           ) : null}
           {targets ? (
             <div className="space-y-1">
-              <span className="text-xs font-medium">יעדי KDS (תצורת עבודה)</span>
+              <span className="text-xs font-medium">יעדי KDS (תצורת מטבח)</span>
               <select
                 className={SELECT}
                 value={targetsMode}
@@ -324,7 +324,7 @@ function Advanced({
               ) : null}
               {!view.values.workflowEnabled ? (
                 <span className="block text-xs text-muted-foreground">
-                  תצורת העבודה (KDS) כבויה כאן — היעדים יחולו כשיופעלו בכרטיס &quot;תצורת עבודה&quot;.
+                  תצורת המטבח (KDS) כבויה כאן — היעדים יחולו כשיופעלו ב&quot;תצורת מטבח&quot;.
                 </span>
               ) : null}
             </div>
@@ -370,7 +370,7 @@ export function WorkConfigEditor({
   return (
     <div className="space-y-3">
       {view.fiscal ? (
-        <div role="radiogroup" aria-label="תצורת עבודה" className="grid gap-2 sm:grid-cols-2">
+        <div role="radiogroup" aria-label="תצורת מכשיר" className="grid gap-2 sm:grid-cols-2">
           {options.map((o) => {
             const selected = draft.preset === o.id;
             const current = mode === 'device' && (o.id === BY_SHOP ? view.isInherited : view.currentPreset === o.id);
@@ -413,7 +413,7 @@ export function WorkConfigEditor({
 // ── The add-device step ──────────────────────────────────────────────────────
 
 /**
- * "תצורת עבודה" in the add-device dialog, once the shop and the role are chosen: "לפי הסניף"
+ * "תצורת מכשיר" in the add-device dialog, once the shop and the role are chosen: "לפי הסניף"
  * unless the operator picks otherwise. Not shown without a shop (a device paired with no shop
  * works by its shop once assigned).
  */
@@ -440,7 +440,7 @@ export function WorkConfigStep({
     <div className="space-y-2 rounded-lg border border-dashed p-3">
       <div>
         <p className="flex items-center gap-1.5 text-sm font-medium">
-          <Settings2 className="h-4 w-4" aria-hidden /> תצורת עבודה
+          <Settings2 className="h-4 w-4" aria-hidden /> תצורת מכשיר
         </p>
         <p className="text-xs text-muted-foreground">
           איך המכשיר יעבוד בסניף: ה-Z, הרשת המקומית, השולחנות וההדפסה. נשמר במכשיר עצמו ודורס את הסניף; אפשר לשנות
@@ -497,7 +497,7 @@ export function WorkConfigCard({ machineId }: { machineId: string }) {
       setBusy(null);
       setConfirmForce(false);
       setEditing(false);
-      toast.success(out.changes?.length ? 'תצורת העבודה נשמרה' : 'אין מה לשנות — המכשיר כבר כך');
+      toast.success(out.changes?.length ? 'תצורת המכשיר נשמרה' : 'אין מה לשנות — המכשיר כבר כך');
     },
     onError: (err: unknown, vars) => {
       const info = producerBusyOf(err);
@@ -572,7 +572,7 @@ export function WorkConfigCard({ machineId }: { machineId: string }) {
           ? [{
               key: 'targets',
               label: 'יעדי KDS',
-              value: targetsText(v.workflowTargets.value) + (v.workflowEnabled ? '' : ' (תצורת העבודה כבויה)'),
+              value: targetsText(v.workflowTargets.value) + (v.workflowEnabled ? '' : ' (תצורת המטבח כבויה)'),
               source: v.workflowTargets.source,
               onReset: view.canEditPrinting && isOwn(v.workflowTargets.source) ? () => reset({ workflowTargets: INHERIT }) : undefined,
             }]
@@ -586,7 +586,7 @@ export function WorkConfigCard({ machineId }: { machineId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Settings2 className="h-4 w-4" aria-hidden />
-            תצורת עבודה
+            תצורת מכשיר
           </CardTitle>
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="secondary">{view.currentPreset ? PRESET_LABELS[view.currentPreset] : 'מותאם'}</Badge>
@@ -651,7 +651,7 @@ export function WorkConfigCard({ machineId }: { machineId: string }) {
                 setEditing(true);
               }}
             >
-              שינוי תצורת עבודה
+              שינוי תצורת מכשיר
             </Button>
             {/* The main till gets no other configuration until another is chosen (the server says so too). */}
             {view.canEdit && !view.isInherited && !v.mainTill.value ? (
@@ -667,7 +667,7 @@ export function WorkConfigCard({ machineId }: { machineId: string }) {
       <Dialog open={editing} onOpenChange={(open) => !save.isPending && setEditing(open)}>
         <DialogContent className="max-h-[92dvh] max-w-2xl overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>תצורת עבודה</DialogTitle>
+            <DialogTitle>תצורת מכשיר</DialogTitle>
           </DialogHeader>
           {draft ? <WorkConfigEditor view={view} draft={draft} onChange={setDraft} mode="device" /> : null}
           {draft && draftError(draft, view) ? <p className="text-xs text-destructive">{draftError(draft, view)}</p> : null}
