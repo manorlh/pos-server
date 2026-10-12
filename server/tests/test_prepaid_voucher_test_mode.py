@@ -600,4 +600,6 @@ class TestMigration:
 
         script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
         heads = script.get_heads()
-        assert heads == ["c7e4a2f9d1b6"]
+        # One head, with this migration on its line (the manual redemption, d1a5c3e7f902, chains on top).
+        assert len(heads) == 1
+        assert "c7e4a2f9d1b6" in {r.revision for r in script.walk_revisions("base", heads[0])}

@@ -482,10 +482,14 @@ PUT /prepaid-vouchers/distribution/whatsapp-config -> prepaid_vouchers:edit
 GET /prepaid-vouchers/events -> prepaid_vouchers:view
 GET /prepaid-vouchers/facets -> prepaid_vouchers:view
 POST /prepaid-vouchers/groups/check -> prepaid_vouchers:view
+POST /prepaid-vouchers/manual-redeem -> prepaid_voucher_redeem|prepaid_vouchers:edit
+POST /prepaid-vouchers/manual-redeem/bulk -> prepaid_voucher_redeem|prepaid_vouchers:edit
+POST /prepaid-vouchers/manual-redeem/preview -> prepaid_voucher_redeem|prepaid_vouchers:edit
 GET /prepaid-vouchers/productions -> prepaid_vouchers:view
 POST /prepaid-vouchers/productions -> prepaid_vouchers:edit
 PATCH /prepaid-vouchers/productions/{production_id} -> prepaid_vouchers:edit
 GET /prepaid-vouchers/products -> prepaid_vouchers:view
+POST /prepaid-vouchers/redemptions/{redemption_id}/reverse -> prepaid_voucher_redeem|prepaid_vouchers:edit
 GET /prepaid-vouchers/replacements -> prepaid_vouchers:view
 GET /prepaid-vouchers/reports/catalog -> prepaid_vouchers:view
 GET /prepaid-vouchers/reports/exceptions -> prepaid_vouchers:view

@@ -468,6 +468,11 @@ class PrepaidVoucherRedemption(Base):
         Index("ix_prepaid_voucher_redemptions_machine_time", "machine_id", "redeemed_at"),
         # An offline redemption is synced once, by the device's own id — per device (§7, review 09.10).
         Index("ux_prepaid_voucher_redemptions_device_client", "tenant_id", "machine_id", "client_redemption_id", unique=True),
+        # A manual redemption from the dashboard is idempotent by its request id (no till to key on).
+        Index(
+            "ux_prepaid_voucher_redemptions_manual_request", "tenant_id", "client_request_id", unique=True,
+            postgresql_where=text("source = 'dashboard'"), sqlite_where=text("source = 'dashboard'"),
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -534,6 +539,18 @@ class PrepaidVoucherRedemption(Base):
     #: The manager who approved a forced discount (§6).
     approved_by_pos_user_id = Column(String(100), nullable=True)
     approved_by_pos_user_name = Column(String(200), nullable=True)
+    # ── "מימוש ידני מהענן" (app/services/prepaid_voucher_manual.py) ──
+    #: Where it was recorded: "dashboard" for a manual redemption; null: a till.
+    source = Column(String(16), nullable=True)
+    manual = Column(Boolean, nullable=False, default=False, server_default="false")
+    manual_reason = Column(String(200), nullable=True)
+    manual_by_user_id = Column(UUID(as_uuid=True), nullable=True)
+    manual_by_user_name = Column(String(200), nullable=True)
+    #: The rules a super admin forced past ("כפייה"): ["prepaid_voucher_expired", …]; null: none.
+    manual_override = Column(JSON, nullable=True)
+    #: An undo from the dashboard: why, and who.
+    reverse_reason = Column(String(200), nullable=True)
+    reversed_by_user_name = Column(String(200), nullable=True)
 
     voucher = relationship("PrepaidVoucher", back_populates="redemptions")
     machine = relationship("POSMachine")

@@ -152,6 +152,12 @@ SECTIONS: Tuple[Section, ...] = (
         (),
     ),
     Section(
+        "prepaid_voucher_redeem", "מימוש ידני של שוברים",
+        "מימוש ידני של שוברי הפקה מהענן כשהסורק לא עבד: שובר בודד, \"סמן כמומש\", רשימת קודים וביטול מימוש "
+        "ידני. עריכה: מממש. מי שיש לו עריכה ב\"שוברי הפקה\" מורשה גם כן.",
+        (),
+    ),
+    Section(
         "prepaid_voucher_controls", "בקרת מימוש שוברי הפקה",
         "השהיית מימושים, מכסות מימוש, אצוות בדיקה לצוות ושובר חלופי. צפייה: רואה; עריכה: משהה, "
         "קובע מכסות, מנפיק שוברי בדיקה ושוברים חלופיים.",
@@ -423,6 +429,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/prepaid-vouchers/groups/check", S("prepaid_vouchers", level=VIEW)),
     # "שכפול סדרה" makes a batch: the same section and level as batch create (POST /prepaid-vouchers/batches).
     ("POST", "/prepaid-vouchers/batches/{}/duplicate", S("prepaid_vouchers")),
+    # "מימוש ידני מהענן" (app/services/prepaid_voucher_manual.py): its own permission, or edit on the vouchers;
+    # the preview too (it is the redeem's first step). The till's reverse is `/sync/…` (TILL).
+    (_ALL, "/prepaid-vouchers/manual-redeem*", S("prepaid_voucher_redeem", "prepaid_vouchers", level=EDIT)),
+    ("POST", "/prepaid-vouchers/redemptions/{}/reverse", S("prepaid_voucher_redeem", "prepaid_vouchers", level=EDIT)),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──
