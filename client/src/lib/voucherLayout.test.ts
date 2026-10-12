@@ -10,7 +10,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { VOUCHER_TEXT, fakeMeasure, fit, layoutCard, wrap, type CardContent, type VoucherOp } from './voucherLayout';
+import {
+  VOUCHER_TEXT, fakeMeasure, fit, layoutCard, layoutVoucher, wrap, type CardContent, type FreeTextFit, type VoucherOp,
+} from './voucherLayout';
 
 interface GoldenCase {
   name: string;
@@ -18,6 +20,7 @@ interface GoldenCase {
   h: number;
   content: CardContent & { items?: [string, string, boolean][] };
   ops: VoucherOp[];
+  freeText: FreeTextFit;
 }
 
 const golden = JSON.parse(
@@ -40,12 +43,46 @@ function same(actual: VoucherOp[], expected: VoucherOp[], name: string) {
 describe('voucher layout (the server draws the same)', () => {
   for (const c of golden.cases) {
     it(c.name, () => {
-      same(layoutCard(c.w, c.h, c.content, fakeMeasure), c.ops, c.name);
+      const out = layoutVoucher(c.w, c.h, c.content, fakeMeasure);
+      same(out.ops, c.ops, c.name);
+      // How much of the free text is printed — what the dashboard warns about.
+      assert.deepEqual(out.freeText, c.freeText, `${c.name}: free text`);
+      assert.deepEqual(layoutCard(c.w, c.h, c.content, fakeMeasure), out.ops);
     });
   }
 
   it('prints the same words', () => {
     assert.deepEqual({ ...VOUCHER_TEXT }, golden.labels);
+  });
+});
+
+describe('a long benefit and the free text (the owner, 12.10.2026)', () => {
+  const byName = (name: string) => golden.cases.find((c) => c.name === name)!;
+  const freeOps = (c: GoldenCase, ops: VoucherOp[]) =>
+    ops.filter((o) => o.op === 'text' && !o.bold && (c.content.freeText ?? '').split(/\s+/).some((w) => w && o.text.includes(w)));
+
+  it('the 80×50 ticket prints the free text beside a three-line benefit', () => {
+    const c = byName('ticket 80x50, logo, long benefit, short free text');
+    const out = layoutVoucher(c.w, c.h, c.content, fakeMeasure);
+    assert.deepEqual(freeOps(c, out.ops).map((o) => (o as { text: string }).text), ['יחידה אחת!!!!!!!']);
+    assert.deepEqual(out.freeText, { shown: 1, total: 1, cut: false });
+    // The benefit shrank a little for it — no more than BENEFIT_MIN.
+    const benefit = out.ops.filter((o) => o.op === 'text' && o.bold && o.text.includes('הנחה'));
+    assert.ok(benefit.length > 0 && benefit.every((o) => o.op === 'text' && o.size < 3.3 && o.size >= 3.3 * 0.62));
+  });
+
+  it('a free text the card cannot hold whole says so', () => {
+    const c = byName('ticket 80x50, logo, long benefit, free text cut');
+    const out = layoutVoucher(c.w, c.h, c.content, fakeMeasure);
+    assert.equal(out.freeText.cut, true);
+    assert.equal(out.freeText.shown, 2);
+    assert.ok(out.freeText.total > out.freeText.shown);
+  });
+
+  it('a word too wide for the card is cut too', () => {
+    const c = byName('ticket 80x50, long benefit, short free text, room enough');
+    const out = layoutVoucher(c.w, c.h, { ...c.content, freeText: 'א'.repeat(200) }, fakeMeasure);
+    assert.deepEqual(out.freeText, { shown: 1, total: 1, cut: true });
   });
 });
 

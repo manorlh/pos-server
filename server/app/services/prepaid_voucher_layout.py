@@ -14,9 +14,12 @@ The design (the owner, 08.10.2026: "שיהיה מקצועי"):
   the spec's §9), then the title (the event's name) large;
 * what the voucher gives in a framed box — the goods with their quantities, or the discount
   in words — unless the batch hides it ("הצגת הפריטים על השובר" off); a long list shrinks,
-  then ends with "ועוד N פריטים" rather than overflow;
+  then ends with "ועוד N פריטים" rather than overflow; a long benefit shrinks too, so the
+  free text keeps its first lines (`FREE_RESERVE`) on a small ticket;
 * the till value when the type prints it ("שווי השובר: ₪80"; never the production price);
-* the free text, then the validity in a strong line, then the terms in small print;
+* the free text, then the validity in a strong line, then the terms in small print — what
+  the card cannot hold of the free text is cut with "…", and `layout_card` says so
+  (`FreeTextFit`: the dashboard warns beside the field);
 * the QR (or the Code 128 line) large, with a quiet zone, the code in monospace under it,
   and the short service number prominent ("מס׳ 0008");
 * "נוצר על ידי Runner Systems" small at the very bottom (`show_credit`, on by default).
@@ -67,11 +70,15 @@ QTY_GAP = 1.2
 BENEFIT = 3.3
 BENEFIT_LH = 1.2
 BENEFIT_LINES = 3
+#: A long benefit shrinks down to this share of BENEFIT when the free text needs the room.
+BENEFIT_MIN = 0.62
 FREE = 2.5
 FREE_LH = 1.25
 FREE_MAX_LINES = 12
-#: Free-text lines kept for it however long the list of goods.
+#: Free-text lines kept for it however long the list of goods or the benefit.
 FREE_RESERVE = 2
+#: A shrunk benefit box fits its room by this much (mm), so rounding never costs a free-text line.
+FIT_EPS = 1e-6
 VALID = 2.6
 TERMS = 2.1
 SMALL_LH = 1.25
@@ -118,6 +125,24 @@ class CardContent:
     value_line: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class FreeTextFit:
+    """How much of the free text the card prints: [shown] of its [total] wrapped lines."""
+
+    shown: int = 0
+    total: int = 0
+    #: Not all of it: lines left out, or a line too wide for the card cut with "…".
+    cut: bool = False
+
+
+@dataclass(frozen=True)
+class CardLayout:
+    """The card's drawing operations, and how much of the free text they print."""
+
+    ops: List[Dict[str, Any]]
+    free_text: FreeTextFit = field(default_factory=FreeTextFit)
+
+
 def _r(v: float) -> float:
     return round(v, 3)
 
@@ -139,10 +164,8 @@ def fit(measure: Measure, text: str, size: float, bold: bool, max_w: float, mono
     return cut + "…"
 
 
-def wrap(measure: Measure, text: str, size: float, bold: bool, max_w: float, max_lines: int) -> List[str]:
-    """Word-wrapped lines (its own line breaks kept), at most [max_lines], the last cut with "…"."""
-    if max_lines <= 0:
-        return []
+def _lines(measure: Measure, text: str, size: float, bold: bool, max_w: float) -> List[str]:
+    """Every word-wrapped line (its own line breaks kept), uncut — a word wider than [max_w] alone on its line."""
     lines: List[str] = []
     for para in (text or "").splitlines():
         line = ""
@@ -155,6 +178,14 @@ def wrap(measure: Measure, text: str, size: float, bold: bool, max_w: float, max
                 line = word
         if line:
             lines.append(line)
+    return lines
+
+
+def wrap(measure: Measure, text: str, size: float, bold: bool, max_w: float, max_lines: int) -> List[str]:
+    """Word-wrapped lines (its own line breaks kept), at most [max_lines], the last cut with "…"."""
+    if max_lines <= 0:
+        return []
+    lines = _lines(measure, text, size, bold, max_w)
     out = [fit(measure, l, size, bold, max_w) for l in lines[:max_lines]]
     if len(lines) > max_lines and out:
         out[-1] = fit(measure, lines[max_lines - 1] + "…", size, bold, max_w)
@@ -163,10 +194,10 @@ def wrap(measure: Measure, text: str, size: float, bold: bool, max_w: float, max
 
 def _text_block(
     c: CardContent, measure: Measure, *, left: float, right: float, area: float, landscape: bool, t: float,
-) -> Tuple[List[Dict[str, Any]], float]:
+) -> Tuple[List[Dict[str, Any]], float, FreeTextFit]:
     """
     The text column — logo, title, the box, free text, validity, terms — laid out from y = 0
-    in [area] mm of height: (its ops, the height it takes).
+    in [area] mm of height: (its ops, the height it takes, how much of the free text it prints).
     """
     col = right - left
     gap = GAP * t
@@ -200,13 +231,23 @@ def _text_block(
     box_rows: List[Dict[str, Any]] = []
     box_h = 0.0
     qty_w = 0.0
+    # The free text's own lines (up to FREE_RESERVE) and the gap above them, kept from the box.
+    reserve = (min(len(free_all), FREE_RESERVE) * free_lh + gap) if free_all else 0.0
     if c.benefit:
         b_size = BENEFIT * t
         b_lines = wrap(measure, c.benefit, b_size, True, inner, BENEFIT_LINES)
+        if free_all:
+            # A long benefit on a small card shrinks (down to BENEFIT_MIN) rather than leave
+            # the free text no line at all; the same box as before whenever the reserve fits.
+            room = avail - gap - reserve - 2 * pad
+            full = len(b_lines) * b_size * BENEFIT_LH
+            if full > room:
+                factor = max(BENEFIT_MIN, (room - FIT_EPS) / full) if room > 0 else BENEFIT_MIN
+                b_size = BENEFIT * t * factor
+                b_lines = wrap(measure, c.benefit, b_size, True, inner, BENEFIT_LINES)
         box_rows = [{"text": x, "size": b_size, "lh": b_size * BENEFIT_LH, "kind": "benefit"} for x in b_lines]
         box_h = sum(r["lh"] for r in box_rows) + 2 * pad
     elif c.items:
-        reserve = (min(len(free_all), FREE_RESERVE) * free_lh + gap) if free_all else 0.0
         room = avail - gap - reserve - 2 * pad
         n = len(c.items)
         full = n * ITEM * t * ITEM_LH
@@ -225,6 +266,12 @@ def _text_block(
     rem = avail - ((gap + box_h) if box_h else 0.0)
     free_n = min(len(free_all), max(0, math.floor((rem - gap) / free_lh))) if free_all else 0
     free = free_all if free_n >= len(free_all) else wrap(measure, c.free_text or "", free_size, False, col, free_n)
+    # Printed whole, or not: lines left out (here or past FREE_MAX_LINES), or one cut to the width.
+    free_lines = _lines(measure, c.free_text, free_size, False, col) if c.free_text else []
+    free_fit = FreeTextFit(
+        shown=len(free), total=len(free_lines),
+        cut=len(free) < len(free_lines) or any(measure(l, free_size, False, False) > col for l in free_lines[:len(free)]),
+    )
 
     y = 0.0
     if c.logo:
@@ -276,7 +323,7 @@ def _text_block(
     if c.terms:
         ops.append(_text(c.terms, ax, y + terms_size * BASE, terms_size, align=align))
         y += terms_size * SMALL_LH
-    return ops, y
+    return ops, y, free_fit
 
 
 def _shift(op: Dict[str, Any], dy: float) -> Dict[str, Any]:
@@ -291,6 +338,11 @@ def _rounded(op: Dict[str, Any]) -> Dict[str, Any]:
 
 def layout(w: float, h: float, c: CardContent, measure: Measure) -> List[Dict[str, Any]]:
     """The card's drawing operations, in mm. See the module docstring for the design."""
+    return layout_card(w, h, c, measure).ops
+
+
+def layout_card(w: float, h: float, c: CardContent, measure: Measure) -> CardLayout:
+    """The card's drawing operations, in mm, and how much of the free text they print."""
     s = min(w, h) / 50.0
     t = min(s, TEXT_SCALE_MAX)
     linear = c.barcode == "code128"
@@ -332,7 +384,7 @@ def layout(w: float, h: float, c: CardContent, measure: Measure) -> List[Dict[st
         # The QR takes what the text leaves, between a floor and a ceiling: big on a tall card,
         # never so big that the text runs into it.
         left, right, top = m, w - m, m
-        _, natural = _text_block(c, measure, left=left, right=right, area=1e6, landscape=False, t=t)
+        _, natural, _ = _text_block(c, measure, left=left, right=right, area=1e6, landscape=False, t=t)
         most = min(w - 2 * m, h * QR_PORTRAIT_MAX)
         least = min(most, h * QR_PORTRAIT_MIN)
         side = max(least, min(most, bottom - top - under_h - gap - natural))
@@ -349,10 +401,10 @@ def layout(w: float, h: float, c: CardContent, measure: Measure) -> List[Dict[st
 
     # ── The text column, centred in the height it has ───────────────────────
     area = text_bottom - top
-    block, height = _text_block(c, measure, left=left, right=right, area=area, landscape=landscape, t=t)
+    block, height, free_fit = _text_block(c, measure, left=left, right=right, area=area, landscape=landscape, t=t)
     dy = top + max(0.0, (area - height) / 2)
     ops.extend(_shift(op, dy) for op in block)
-    return [_rounded(op) for op in ops]
+    return CardLayout([_rounded(op) for op in ops], free_fit)
 
 
 def fake_measure(text: str, size: float, bold: bool, mono: bool) -> float:

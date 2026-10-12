@@ -28,7 +28,7 @@ import type { PrepaidVoucher, PrepaidVoucherBatch } from '@/lib/prepaidVouchersA
 import { cardContents, isDiscountKind, moneyText } from '@/lib/prepaidVoucherBenefit';
 import { quantityText } from '@/lib/prepaidVoucherProducts';
 import { code128Bars } from '@/lib/barcode128';
-import { VOUCHER_TEXT, layoutCard, type CardContent, type Measure, type VoucherOp } from '@/lib/voucherLayout';
+import { VOUCHER_TEXT, layoutCard, layoutVoucher, type CardContent, type Measure, type VoucherOp } from '@/lib/voucherLayout';
 
 export type PagePresetId = 'ticket80x50' | 'card86x54' | 'card54x86' | 'ticket80x120' | 'a6' | 'a4grid' | 'custom';
 
@@ -377,6 +377,18 @@ export function VoucherPreview({
       )}
     </div>
   );
+}
+
+/**
+ * True when [layout]'s card cannot print the batch's free text whole (lines left out, or one cut
+ * to the card's width) — the preview's own layout, so the warning beside the field and the
+ * preview always agree. False until the fonts are in (nothing measured yet).
+ */
+export function useFreeTextCut(batch: PrepaidVoucherBatch, voucher: CardVoucher, layout: PrintLayout): boolean {
+  const ready = useVoucherFonts();
+  if (!ready || !batch.freeText) return false;
+  const g = geometryOf(layout);
+  return layoutVoucher(g.cardW, g.cardH, cardContentOf(batch, voucher, !!batch.logoUrl), browserMeasure).freeText.cut;
 }
 
 /** The logo as a data URL, so print never waits for (or loses) a network image. */
