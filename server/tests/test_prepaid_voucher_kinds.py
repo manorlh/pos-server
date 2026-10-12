@@ -64,7 +64,7 @@ from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 FIXTURE = Path(__file__).parent / "fixtures" / "prepaid_voucher_rules.json"
 #: The fixture's SHA-256 with line endings as LF — the till's test pins the same value.
-FIXTURE_SHA256 = "2576f9361a559d34e9d8c472307cebb16de4404ed4a8c52f7f6bca54ae4f5bdb"
+FIXTURE_SHA256 = "63bd23c7977e96a76afb33bec38e91027d2b4da401405ff97a17f9abf242171c"
 KINDS = ["items", "order_discount", "item_discount"]
 
 

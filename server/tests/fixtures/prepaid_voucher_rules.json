@@ -3364,6 +3364,199 @@
           "zero"
         ]
       }
+    },
+    {
+      "name": "one per group 9.7: the drinks department with its sub-department, less the beer (9.8)",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [
+          "beer"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "juices",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "drinks"
+          ],
+          [
+            "water",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "juice",
+            "juices"
+          ],
+          [
+            "hotdog",
+            "food"
+          ],
+          [
+            "burger",
+            "food"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "juice"
+        ]
+      }
+    },
+    {
+      "name": "one per group 9.7: without its sub-departments the juice is not in it",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": false,
+        "excludeProductIds": [
+          "beer"
+        ],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "juices",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "drinks"
+          ],
+          [
+            "water",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "juice",
+            "juices"
+          ],
+          [
+            "hotdog",
+            "food"
+          ],
+          [
+            "burger",
+            "food"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water"
+        ]
+      }
+    },
+    {
+      "name": "one per group 9.8: without the exclusion the beer is in it",
+      "mode": "live",
+      "selection": {
+        "allItems": false,
+        "productIds": [],
+        "categoryIds": [
+          "drinks"
+        ],
+        "includeSubcategories": true,
+        "excludeProductIds": [],
+        "excludeCategoryIds": []
+      },
+      "catalogNow": {
+        "categories": [
+          [
+            "drinks",
+            null
+          ],
+          [
+            "juices",
+            "drinks"
+          ],
+          [
+            "food",
+            null
+          ]
+        ],
+        "products": [
+          [
+            "cola",
+            "drinks"
+          ],
+          [
+            "water",
+            "drinks"
+          ],
+          [
+            "beer",
+            "drinks"
+          ],
+          [
+            "juice",
+            "juices"
+          ],
+          [
+            "hotdog",
+            "food"
+          ],
+          [
+            "burger",
+            "food"
+          ]
+        ]
+      },
+      "expect": {
+        "productIds": [
+          "cola",
+          "water",
+          "beer",
+          "juice"
+        ]
+      }
     }
   ],
   "assignment": [
@@ -3684,6 +3877,281 @@
         ],
         "ambiguous": []
       }
+    },
+    {
+      "name": "one per group 9.1: two hot dogs and a cola",
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 2,
+      "units": [
+        [
+          "u1",
+          "hotdog"
+        ],
+        [
+          "u2",
+          "hotdog"
+        ],
+        [
+          "u3",
+          "cola"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "food",
+          "u3": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "one per group 9.2: two colas",
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 2,
+      "units": [
+        [
+          "u1",
+          "cola"
+        ],
+        [
+          "u2",
+          "cola"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u2",
+            "reason": "group_full"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "one per group 9.7: a juice of the sub-department",
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 2,
+      "units": [
+        [
+          "u1",
+          "juice"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "drink"
+        },
+        "unassigned": [],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "one per group 9.8: the beer is not on the voucher",
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 2,
+      "units": [
+        [
+          "u1",
+          "beer"
+        ],
+        [
+          "u2",
+          "hotdog"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u2": "food"
+        },
+        "unassigned": [
+          {
+            "ref": "u1",
+            "reason": "not_eligible"
+          }
+        ],
+        "ambiguous": []
+      }
+    },
+    {
+      "name": "one per group 9.9: a product in both groups is the cashier's choice",
+      "totalRemaining": 2,
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger",
+            "water"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "units": [
+        [
+          "u1",
+          "water"
+        ],
+        [
+          "u2",
+          "hotdog"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u2": "food"
+        },
+        "unassigned": [],
+        "ambiguous": [
+          {
+            "ref": "u1",
+            "groupKeys": [
+              "food",
+              "drink"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "one per group 9.10: a third item after the total of 2",
+      "groups": [
+        {
+          "key": "food",
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "remaining": 1
+        },
+        {
+          "key": "drink",
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "remaining": 1
+        }
+      ],
+      "totalRemaining": 2,
+      "units": [
+        [
+          "u1",
+          "hotdog"
+        ],
+        [
+          "u2",
+          "cola"
+        ],
+        [
+          "u3",
+          "burger"
+        ]
+      ],
+      "expect": {
+        "assigned": {
+          "u1": "food",
+          "u2": "drink"
+        },
+        "unassigned": [
+          {
+            "ref": "u3",
+            "reason": "total_full"
+          }
+        ],
+        "ambiguous": []
+      }
     }
   ],
   "selection": [
@@ -3828,7 +4296,7 @@
       "expect": {
         "refusal": {
           "code": "prepaid_voucher_group_over",
-          "text": "ניתן לבחור פריט אחד בלבד מ\"משקה\"",
+          "text": "מקבוצת \"משקה\" אפשר לממש עוד פריט אחד בשובר זה",
           "groupKey": "drink"
         }
       }
@@ -4404,6 +4872,373 @@
           "code": "prepaid_voucher_package_incomplete",
           "text": "חסר תוספת להשלמת השובר",
           "groupKey": "side"
+        }
+      }
+    },
+    {
+      "name": "one per group 9.1: a hot dog and a cola",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "beer"
+          ]
+        }
+      ],
+      "totalMax": 2,
+      "totalRemaining": 2,
+      "wholeAtOnce": true,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "hotdog",
+          "food",
+          1
+        ],
+        [
+          "cola",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "one per group 9.1: a second hot dog is the food group's over",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "beer"
+          ]
+        }
+      ],
+      "totalMax": 2,
+      "totalRemaining": 2,
+      "wholeAtOnce": true,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "hotdog",
+          "food",
+          2
+        ],
+        [
+          "cola",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "מקבוצת \"מזון\" אפשר לממש עוד פריט אחד בשובר זה",
+          "groupKey": "food"
+        }
+      }
+    },
+    {
+      "name": "one per group 9.2: only a drink, in one sale",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "beer"
+          ]
+        }
+      ],
+      "totalMax": 2,
+      "totalRemaining": 2,
+      "wholeAtOnce": true,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": null
+      }
+    },
+    {
+      "name": "one per group 9.6: two drinks chosen by hand",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "beer"
+          ]
+        }
+      ],
+      "totalMax": 2,
+      "totalRemaining": 2,
+      "wholeAtOnce": true,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "cola",
+          "drink",
+          1
+        ],
+        [
+          "water",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "מקבוצת \"שתייה\" אפשר לממש עוד פריט אחד בשובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "one per group 9.8: the beer chosen as the drink",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": [
+            "beer"
+          ]
+        }
+      ],
+      "totalMax": 2,
+      "totalRemaining": 2,
+      "wholeAtOnce": true,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "beer",
+          "drink",
+          1
+        ]
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_item_excluded",
+          "text": "הפריט הוחרג משובר זה",
+          "groupKey": "drink"
+        }
+      }
+    },
+    {
+      "name": "one per group 9.1: a hot dog once the food is taken",
+      "totalMax": 2,
+      "totalRemaining": 1,
+      "wholeAtOnce": false,
+      "typeName": "פריט אחד מכל קבוצה",
+      "chosen": [
+        [
+          "hotdog",
+          "food",
+          1
+        ]
+      ],
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 0,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "מקבוצת \"מזון\" כבר מומש כל מה שבשובר זה",
+          "groupKey": "food"
+        }
+      }
+    },
+    {
+      "name": "two groups: three of a group with two left",
+      "totalMax": 4,
+      "totalRemaining": 4,
+      "wholeAtOnce": false,
+      "typeName": null,
+      "chosen": [
+        [
+          "hotdog",
+          "food",
+          3
+        ]
+      ],
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "minQty": 0,
+          "maxQty": 3,
+          "remaining": 2,
+          "productIds": [
+            "hotdog",
+            "burger"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "minQty": 0,
+          "maxQty": 1,
+          "remaining": 1,
+          "productIds": [
+            "cola",
+            "water",
+            "juice"
+          ],
+          "allowRepeat": true,
+          "excludedIds": []
+        }
+      ],
+      "expect": {
+        "refusal": {
+          "code": "prepaid_voucher_group_over",
+          "text": "מקבוצת \"מזון\" אפשר לממש עוד 2 פריטים בשובר זה",
+          "groupKey": "food"
         }
       }
     }
@@ -5351,6 +6186,390 @@
         ],
         "needsApproval": false,
         "refusal": null
+      }
+    }
+  ],
+  "entitlementLeft": [
+    {
+      "name": "9.2 and 9.4: only a drink, in one sale — the food is offered, and given up on closing",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        }
+      ],
+      "totalRemainingAfterThisSale": 1,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 1,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד פריט מהשובר: מזון ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד פריט מהשובר: מזון ×1 — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (מזון ×1)",
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "9.5: only a drink, in parts — the food stays for next time",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        }
+      ],
+      "totalRemainingAfterThisSale": 1,
+      "splitAllowed": true,
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 1,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד פריט מהשובר: מזון ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד פריט מהשובר: מזון ×1 — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": "מה שלא מומש יישאר בשובר לפעם הבאה (מזון ×1)"
+        }
+      }
+    },
+    {
+      "name": "two groups open within the total: each of them",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "remainingAfterThisSale": 1
+        }
+      ],
+      "totalRemainingAfterThisSale": 2,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 2,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 1
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשובר: מזון ×1 · קינוח ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשובר: מזון ×1 · קינוח ×1 — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (מזון ×1 · קינוח ×1)",
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "two of a group and one of another: plural",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 2
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 1
+        }
+      ],
+      "totalRemainingAfterThisSale": 3,
+      "splitAllowed": true,
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 3,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 2
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 3 פריטים מהשובר: מזון ×2 · שתייה ×1 — הציעו לו",
+          "kioskText": "מגיע לך עוד 3 פריטים מהשובר: מזון ×2 · שתייה ×1 — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": "מה שלא מומש יישאר בשובר לפעם הבאה (מזון ×2 · שתייה ×1)"
+        }
+      }
+    },
+    {
+      "name": "the open groups depend on the total: one more",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "remainingAfterThisSale": 1
+        }
+      ],
+      "totalRemainingAfterThisSale": 1,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": {
+          "kind": "upTo",
+          "count": 1,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 1
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 1
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד פריט מהשובר, מתוך: מזון / קינוח — הציעו לו",
+          "kioskText": "מגיע לך עוד פריט מהשובר, מתוך: מזון / קינוח — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (פריט אחד מתוך: מזון / קינוח)",
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "the open groups depend on the total: two more, in parts",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 2
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "remainingAfterThisSale": 2
+        }
+      ],
+      "totalRemainingAfterThisSale": 2,
+      "splitAllowed": true,
+      "expect": {
+        "entitlement": {
+          "kind": "upTo",
+          "count": 2,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 2
+            },
+            {
+              "key": "drink",
+              "name": "שתייה",
+              "count": 1
+            },
+            {
+              "key": "dessert",
+              "name": "קינוח",
+              "count": 2
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשובר, מתוך: מזון / שתייה / קינוח — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשובר, מתוך: מזון / שתייה / קינוח — להוסיף?",
+          "closeConfirm": null,
+          "closeNote": "מה שלא מומש יישאר בשובר לפעם הבאה (2 פריטים מתוך: מזון / שתייה / קינוח)"
+        }
+      }
+    },
+    {
+      "name": "a single open group above the total: up to the total",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 3
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        }
+      ],
+      "totalRemainingAfterThisSale": 2,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": {
+          "kind": "upTo",
+          "count": 2,
+          "groups": [
+            {
+              "key": "food",
+              "name": "מזון",
+              "count": 2
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 2 פריטים מהשובר, מתוך: מזון — הציעו לו",
+          "kioskText": "מגיע לך עוד 2 פריטים מהשובר, מתוך: מזון — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (2 פריטים מתוך: מזון)",
+          "closeNote": null
+        }
+      }
+    },
+    {
+      "name": "9.1: a hot dog and a cola — everything taken",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 0
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        }
+      ],
+      "totalRemainingAfterThisSale": 0,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": null
+      }
+    },
+    {
+      "name": "the total used up with groups still open",
+      "groups": [
+        {
+          "key": "drink",
+          "name": "משקה",
+          "remainingAfterThisSale": 1
+        },
+        {
+          "key": "dessert",
+          "name": "קינוח",
+          "remainingAfterThisSale": 1
+        }
+      ],
+      "totalRemainingAfterThisSale": 0,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": null
+      }
+    },
+    {
+      "name": "no group open with the total left",
+      "groups": [
+        {
+          "key": "food",
+          "name": "מזון",
+          "remainingAfterThisSale": 0
+        },
+        {
+          "key": "drink",
+          "name": "שתייה",
+          "remainingAfterThisSale": 0
+        }
+      ],
+      "totalRemainingAfterThisSale": 1,
+      "splitAllowed": true,
+      "expect": {
+        "entitlement": null
+      }
+    },
+    {
+      "name": "9.15: a punch card of 50 in parts — nothing to offer",
+      "groups": [
+        {
+          "key": "items",
+          "name": "פריטים",
+          "remainingAfterThisSale": 44
+        }
+      ],
+      "totalRemainingAfterThisSale": 44,
+      "splitAllowed": true,
+      "expect": {
+        "entitlement": null
+      }
+    },
+    {
+      "name": "one group in one sale: what would be given up",
+      "groups": [
+        {
+          "key": "items",
+          "name": "פריטים",
+          "remainingAfterThisSale": 3
+        }
+      ],
+      "totalRemainingAfterThisSale": 3,
+      "splitAllowed": false,
+      "expect": {
+        "entitlement": {
+          "kind": "each",
+          "count": 3,
+          "groups": [
+            {
+              "key": "items",
+              "name": "פריטים",
+              "count": 3
+            }
+          ],
+          "tillText": "הלקוח זכאי לעוד 3 פריטים מהשובר: פריטים ×3 — הציעו לו",
+          "kioskText": "מגיע לך עוד 3 פריטים מהשובר: פריטים ×3 — להוסיף?",
+          "closeConfirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד (פריטים ×3)",
+          "closeNote": null
+        }
       }
     }
   ]

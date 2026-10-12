@@ -7,7 +7,7 @@ and how a product that takes no discounts ("לא מקבל הנחות") is treate
 
 Every function here is pinned, case by case, by the shared golden fixture
 tests/fixtures/prepaid_voucher_rules.json (sections `eligibility`, `assignment`, `selection`,
-`splitValue`, `fixedShare`, `cover`, `override`) — the same bytes in pos-android's
+`entitlementLeft`, `splitValue`, `fixedShare`, `cover`, `override`) — the same bytes in pos-android's
 app/src/test/resources, SHA-256 pinned on both sides (P:\\specs\\production-vouchers-api.md).
 No database, no I/O: ids are strings, money is integer agorot, percents are basis points.
 """
@@ -42,6 +42,10 @@ TEXT = {
     "one_only": "ניתן לבחור פריט אחד בלבד בשובר זה",
     GROUP_OVER: "ניתן לבחור עד {n} פריטים מ\"{group}\"",
     "group_one": "ניתן לבחור פריט אחד בלבד מ\"{group}\"",
+    # A voucher of two groups or more (the owner, 13.10.2026: "פריט אחד מכל קבוצה"): the group and
+    # what is left of it. `{n}` is "פריט אחד" / "3 פריטים" (units_text).
+    "group_left": "מקבוצת \"{group}\" אפשר לממש עוד {n} בשובר זה",
+    "group_used": "מקבוצת \"{group}\" כבר מומש כל מה שבשובר זה",
     TOTAL_OVER: "ניתן לבחור עד {n} פריטים בשובר זה",
     REPEAT: "אי אפשר לבחור את אותו פריט פעמיים ב{group}",
     PACKAGE_INCOMPLETE: "חסר {group} להשלמת {type}",
@@ -65,6 +69,11 @@ def money_text(agorot: int) -> str:
     if agorot % 100 == 0:
         return f"₪{agorot // 100}"
     return f"₪{agorot // 100}.{agorot % 100:02d}"
+
+
+def units_text(n: int) -> str:
+    """"פריט אחד", "3 פריטים" — the glossary's units, always said."""
+    return "פריט אחד" if int(n) == 1 else f"{int(n)} פריטים"
 
 
 # ── Eligibility: which products a group takes (the spec's §6) ──────────────────
@@ -232,7 +241,9 @@ def check_selection(
     The first thing wrong with redeeming [chosen] — (productId, groupKey, quantity) — or None:
 
     1. nothing chosen; 2. a product its group does not take (an excluded one says so);
-    3. a group over what it has left ("ניתן לבחור פריט אחד בלבד בשובר זה" on a one-of-N voucher);
+    3. a group over what it has left ("ניתן לבחור פריט אחד בלבד בשובר זה" on a one-of-N voucher;
+       on a voucher of two groups or more the group and what is left of it — 'מקבוצת "שתייה"
+       אפשר לממש עוד פריט אחד בשובר זה', or 'מקבוצת "שתייה" כבר מומש כל מה שבשובר זה');
     4. a product twice in a group that does not allow it; 5. the voucher's total over;
     6. `wholeAtOnce` and a group short of its minimum — "חסר משקה להשלמת שובר הארוחה".
     """
@@ -254,6 +265,11 @@ def check_selection(
         if taken.get(g.key, 0) > g.remaining:
             if total_max == 1:
                 text = TEXT["one_only"]
+            elif len(groups) >= 2:
+                text = (
+                    TEXT["group_left"].format(group=g.name, n=units_text(g.remaining)) if g.remaining >= 1
+                    else TEXT["group_used"].format(group=g.name)
+                )
             elif g.remaining == 1:
                 text = TEXT["group_one"].format(group=g.name)
             else:
@@ -276,6 +292,98 @@ def check_selection(
                     g.key,
                 )
     return None
+
+
+# ── Entitlement left in this sale: "הלקוח זכאי לעוד פריט" (the owner, 13.10.2026) ──
+
+ENTITLEMENT_EACH = "each"
+ENTITLEMENT_UP_TO = "upTo"
+
+#: The texts of the entitlement left (P:/specs/voucher-one-per-group.md §8.2). `{units}` is "עוד פריט" /
+#: "עוד 2 פריטים"; `{list}` is "מזון ×1 · קינוח ×1", or "פריט אחד מתוך: מזון / קינוח" when the open
+#: groups depend on the voucher's total; `{names}` is "מזון / קינוח".
+ENTITLEMENT_TEXT = {
+    "till_each": "הלקוח זכאי ל{units} מהשובר: {list} — הציעו לו",
+    "till_upTo": "הלקוח זכאי ל{units} מהשובר, מתוך: {names} — הציעו לו",
+    "kiosk_each": "מגיע לך {units} מהשובר: {list} — להוסיף?",
+    "kiosk_upTo": "מגיע לך {units} מהשובר, מתוך: {names} — להוסיף?",
+    "close_confirm": "סגירה עכשיו — מה שלא מומש מהשובר יאבד ({list})",
+    "close_note": "מה שלא מומש יישאר בשובר לפעם הבאה ({list})",
+}
+
+
+@dataclass(frozen=True)
+class GroupLeft:
+    """A group of the voucher, in the voucher's order, with what it has left after this sale."""
+
+    key: str
+    name: str
+    remaining: int
+
+
+@dataclass(frozen=True)
+class EntitlementLeft:
+    kind: str                                   # "each" | "upTo"
+    count: int                                  # units the customer may still take in this sale
+    groups: Tuple[Tuple[str, str, int], ...]    # (key, name, units of it) — the open groups, in order
+    till_text: str
+    kiosk_text: str
+    #: "מימוש בעסקה אחת": the one confirmation that closing gives the rest up; else None.
+    close_confirm: Optional[str]
+    #: "מימוש בחלקים": what stays on the voucher (no question); else None.
+    close_note: Optional[str]
+
+
+def entitlement_left(groups: Sequence[GroupLeft], total_remaining: int, split_allowed: bool) -> Optional[EntitlementLeft]:
+    """
+    What the customer may still take from a grouped voucher in this sale — the till's orange alert
+    ("הלקוח זכאי לעוד פריט מהשובר: מזון ×1 — הציעו לו"), the kiosk's question and the closing words —
+    or None when there is nothing to offer. [groups] and [total_remaining] are after this sale.
+
+    * the voucher's total used up → None;
+    * a punch card (one group) redeemed in parts → None: there is nothing to offer;
+    * no group with anything left → None;
+    * the open groups fit in the total → "each": every open group with what it has left
+      ("מזון ×1 · קינוח ×1"), the count their sum;
+    * they do not → "upTo": the count is the total, said "מתוך: מזון / קינוח"; each group's count
+      is what it has left, at most the total.
+
+    Closing is always allowed; the voucher's own rule says what becomes of the rest: in one sale
+    it is given up (one confirmation, `close_confirm`), in parts it stays (`close_note`). There
+    `{list}` is "מזון ×1 · קינוח ×1", or for "upTo" "פריט אחד מתוך: מזון / קינוח".
+    """
+    total = int(total_remaining)
+    if total <= 0:
+        return None
+    if split_allowed and len(groups) == 1:
+        return None
+    open_ = [(g.key, g.name, int(g.remaining)) for g in groups if int(g.remaining) > 0]
+    if not open_:
+        return None
+    if sum(n for _, _, n in open_) <= total:
+        kind, count = ENTITLEMENT_EACH, sum(n for _, _, n in open_)
+    else:
+        kind, count = ENTITLEMENT_UP_TO, total
+        open_ = [(key, name, min(n, total)) for key, name, n in open_]
+    units = "עוד פריט" if count == 1 else f"עוד {count} פריטים"
+    names = " / ".join(name for _, name, _ in open_)
+    if kind == ENTITLEMENT_EACH:
+        listed = " · ".join(f"{name} ×{n}" for _, name, n in open_)
+        till = ENTITLEMENT_TEXT["till_each"].format(units=units, list=listed)
+        kiosk = ENTITLEMENT_TEXT["kiosk_each"].format(units=units, list=listed)
+    else:
+        listed = f"{units_text(count)} מתוך: {names}"
+        till = ENTITLEMENT_TEXT["till_upTo"].format(units=units, names=names)
+        kiosk = ENTITLEMENT_TEXT["kiosk_upTo"].format(units=units, names=names)
+    return EntitlementLeft(
+        kind=kind,
+        count=count,
+        groups=tuple(open_),
+        till_text=till,
+        kiosk_text=kiosk,
+        close_confirm=None if split_allowed else ENTITLEMENT_TEXT["close_confirm"].format(list=listed),
+        close_note=ENTITLEMENT_TEXT["close_note"].format(list=listed) if split_allowed else None,
+    )
 
 
 # ── Value: a fixed value split between the units, to the agora (§5) ────────────
