@@ -2728,6 +2728,9 @@ def _basket(lines) -> List[RULES.BasketLine]:
             line_discount=int(line.line_discount_agorot),
             promotion=int(line.promotion_agorot),
             voucher=int(line.voucher_agorot),
+            # The units earlier item discounts of this sale took: never discounted again (§7).
+            voucher_units=float(getattr(line, "voucher_units", 0) or 0),
+            voucher_units_amount=int(getattr(line, "voucher_units_agorot", 0) or 0),
             discountable=bool(line.discountable),
             weighed=bool(getattr(line, "weighed", False)),
             general=bool(getattr(line, "general", False)),

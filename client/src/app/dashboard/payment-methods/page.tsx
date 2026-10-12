@@ -29,7 +29,8 @@
  * בלבד)" (`voucherStation`, with a non-blocking recommendation when the level's flow or voucher
  * switches do not suit a station) and, next to it, "רכישה נוספת בתשלום בעמדת שובר"
  * (`voucherStationPaidItems`, with a warning when it is on and no cash or card method is left to
- * pay with), the same way.
+ * pay with), "הצג לקופאי מה מגיע ללקוח בסריקת שובר" (`voucherShowEntitlement`, on by default),
+ * and "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default), the same way.
  *
  * With a shop in scope, "מכשירי תשלום" (PaymentDevicesCard) follows: the shop's payment
  * devices for tills without built-in clearing, its switch and default device — saved at once.
@@ -86,6 +87,11 @@ import {
   VOUCHER_BALANCE_ACTIVE_KEY,
   VOUCHER_BALANCE_CHECK_KEY,
   VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_SHOW_ENTITLEMENT_KEY,
+  VOUCHER_SHOW_ENTITLEMENT_VALUES,
+  VOUCHER_SOUND_APPROVE_KEY,
+  VOUCHER_SOUND_REJECT_KEY,
+  VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_KEY,
   VOUCHER_STATION_PAID_ITEMS_KEY,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
@@ -94,6 +100,8 @@ import {
   isVoucherOnOff,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
+  resolveVoucherShowEntitlement,
+  resolveVoucherSound,
   resolveVoucherStation,
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
@@ -133,7 +141,10 @@ type PaymentKey =
   | typeof VOUCHER_BALANCE_CHECK_KEY
   | typeof VOUCHER_AUTO_CLOSE_KEY
   | typeof VOUCHER_STATION_KEY
-  | typeof VOUCHER_STATION_PAID_ITEMS_KEY;
+  | typeof VOUCHER_STATION_PAID_ITEMS_KEY
+  | typeof VOUCHER_SHOW_ENTITLEMENT_KEY
+  | typeof VOUCHER_SOUND_APPROVE_KEY
+  | typeof VOUCHER_SOUND_REJECT_KEY;
 type DraftValue = boolean | number | VoucherRedeemFlow | VoucherBalanceCheckMode | VoucherOnOff | null;
 type Draft = Partial<Record<PaymentKey, DraftValue>>;
 
@@ -157,13 +168,19 @@ const PAYMENT_KEYS: PaymentKey[] = [
   VOUCHER_AUTO_CLOSE_KEY,
   VOUCHER_STATION_KEY,
   VOUCHER_STATION_PAID_ITEMS_KEY,
+  VOUCHER_SHOW_ENTITLEMENT_KEY,
+  VOUCHER_SOUND_APPROVE_KEY,
+  VOUCHER_SOUND_REJECT_KEY,
 ];
 
 /** Whether [v] is a value this page keeps for [key] (anything else reads as "inherits"). */
 function ownValue(key: PaymentKey, v: unknown): v is Exclude<DraftValue, null> {
   if (key === VOUCHER_REDEEM_FLOW_KEY) return isVoucherRedeemFlow(v);
   if (key === VOUCHER_BALANCE_CHECK_KEY) return isVoucherBalanceCheckMode(v);
-  if (key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY) {
+  if (
+    key === VOUCHER_AUTO_CLOSE_KEY || key === VOUCHER_STATION_KEY || key === VOUCHER_STATION_PAID_ITEMS_KEY
+    || key === VOUCHER_SHOW_ENTITLEMENT_KEY || key === VOUCHER_SOUND_APPROVE_KEY || key === VOUCHER_SOUND_REJECT_KEY
+  ) {
     return isVoucherOnOff(v);
   }
   return typeof v === 'boolean' || typeof v === 'number';
@@ -598,11 +615,19 @@ function MethodsEditor({
             isVoucherOnOff(draft[VOUCHER_STATION_PAID_ITEMS_KEY]) ? (draft[VOUCHER_STATION_PAID_ITEMS_KEY] as VoucherOnOff) : null
           }
           paidItemsView={voucherStationPaidItemsView(draft as PosSettingsPatch, inherited)}
+          showEntitlement={
+            isVoucherOnOff(draft[VOUCHER_SHOW_ENTITLEMENT_KEY]) ? (draft[VOUCHER_SHOW_ENTITLEMENT_KEY] as VoucherOnOff) : null
+          }
           inherited={inherited}
           balanceSource={levelName(layer.effectiveSources?.[VOUCHER_BALANCE_CHECK_KEY])}
           autoCloseSource={levelName(layer.effectiveSources?.[VOUCHER_AUTO_CLOSE_KEY])}
           stationSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_KEY])}
           paidItemsSource={levelName(layer.effectiveSources?.[VOUCHER_STATION_PAID_ITEMS_KEY])}
+          showEntitlementSource={levelName(layer.effectiveSources?.[VOUCHER_SHOW_ENTITLEMENT_KEY])}
+          soundApprove={isVoucherOnOff(draft[VOUCHER_SOUND_APPROVE_KEY]) ? (draft[VOUCHER_SOUND_APPROVE_KEY] as VoucherOnOff) : null}
+          soundReject={isVoucherOnOff(draft[VOUCHER_SOUND_REJECT_KEY]) ? (draft[VOUCHER_SOUND_REJECT_KEY] as VoucherOnOff) : null}
+          soundApproveSource={levelName(layer.effectiveSources?.[VOUCHER_SOUND_APPROVE_KEY])}
+          soundRejectSource={levelName(layer.effectiveSources?.[VOUCHER_SOUND_REJECT_KEY])}
           stationNeedsAdvice={voucherStationNeedsAdvice(
             resolveVoucherStation(draft[VOUCHER_STATION_KEY], inherited?.voucherStation),
             resolveVoucherRedeemFlow(draft[VOUCHER_REDEEM_FLOW_KEY], inherited?.voucherRedeemFlow),
@@ -614,6 +639,9 @@ function MethodsEditor({
           onAutoClose={(v) => setKey(VOUCHER_AUTO_CLOSE_KEY, v)}
           onStation={(v) => setKey(VOUCHER_STATION_KEY, v)}
           onPaidItems={(v) => setKey(VOUCHER_STATION_PAID_ITEMS_KEY, v)}
+          onShowEntitlement={(v) => setKey(VOUCHER_SHOW_ENTITLEMENT_KEY, v)}
+          onSoundApprove={(v) => setKey(VOUCHER_SOUND_APPROVE_KEY, v)}
+          onSoundReject={(v) => setKey(VOUCHER_SOUND_REJECT_KEY, v)}
           onApplyAdvice={() => setKey(VOUCHER_REDEEM_FLOW_KEY, 'voucher_first')}
         />
       </Card>
@@ -759,17 +787,26 @@ function VoucherTillRows({
   station,
   paidItems,
   paidItemsView,
+  showEntitlement,
   inherited,
   balanceSource,
   autoCloseSource,
   stationSource,
   paidItemsSource,
+  showEntitlementSource,
+  soundApprove,
+  soundReject,
+  soundApproveSource,
+  soundRejectSource,
   stationNeedsAdvice,
   disabled,
   onBalance,
   onAutoClose,
   onStation,
   onPaidItems,
+  onShowEntitlement,
+  onSoundApprove,
+  onSoundReject,
   onApplyAdvice,
 }: {
   balance: VoucherBalanceCheckMode | null;
@@ -778,17 +815,27 @@ function VoucherTillRows({
   paidItems: VoucherOnOff | null;
   /** lib/voucherTillSettings.ts: the value in force, what is inherited, and whether to warn. */
   paidItemsView: ReturnType<typeof voucherStationPaidItemsView>;
+  showEntitlement: VoucherOnOff | null;
   inherited: PosSettingsV1 | undefined;
   balanceSource: string;
   autoCloseSource: string;
   stationSource: string;
   paidItemsSource: string;
+  showEntitlementSource: string;
+  /** "צליל אישור / סירוב במימוש שובר" (`voucherSoundApprove` / `voucherSoundReject`, on by default). */
+  soundApprove: VoucherOnOff | null;
+  soundReject: VoucherOnOff | null;
+  soundApproveSource: string;
+  soundRejectSource: string;
   stationNeedsAdvice: boolean;
   disabled: boolean;
   onBalance: (value: VoucherBalanceCheckMode | null) => void;
   onAutoClose: (value: VoucherOnOff | null) => void;
   onStation: (value: VoucherOnOff | null) => void;
   onPaidItems: (value: VoucherOnOff | null) => void;
+  onShowEntitlement: (value: VoucherOnOff | null) => void;
+  onSoundApprove: (value: VoucherOnOff | null) => void;
+  onSoundReject: (value: VoucherOnOff | null) => void;
   onApplyAdvice: () => void;
 }) {
   const t = useTranslations('paymentMethods');
@@ -799,6 +846,8 @@ function VoucherTillRows({
   const effectiveAutoClose = resolveVoucherAutoClose(autoClose, inherited?.voucherAutoClose);
   const inheritedStation = resolveVoucherStation(undefined, inherited?.voucherStation);
   const effectiveStation = resolveVoucherStation(station, inherited?.voucherStation);
+  const inheritedShowEntitlement = resolveVoucherShowEntitlement(undefined, inherited?.voucherShowEntitlement);
+  const effectiveShowEntitlement = resolveVoucherShowEntitlement(showEntitlement, inherited?.voucherShowEntitlement);
   const onOff = (v: VoucherOnOff) => t(`voucherOnOff.${v}`);
   const note = (own: unknown, state: string, source: string) =>
     own === null ? <p className="text-muted-foreground text-xs">{t('inheritNote', { state, source })}</p> : null;
@@ -901,6 +950,46 @@ function VoucherTillRows({
         />
         {note(paidItems, onOff(paidItemsView.inheritedValue), paidItemsSource)}
       </SettingRow>
+      <SettingRow
+        label={t('voucherShowEntitlementLabel')}
+        badge={onOff(effectiveShowEntitlement)}
+        desc={<p>{t('voucherShowEntitlementDesc')}</p>}
+      >
+        <Segmented<VoucherOnOff | null>
+          value={showEntitlement}
+          onChange={onShowEntitlement}
+          disabled={disabled}
+          choices={[
+            ...VOUCHER_SHOW_ENTITLEMENT_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+            { v: null, label: t('inheritShort') },
+          ]}
+        />
+        {note(showEntitlement, onOff(inheritedShowEntitlement), showEntitlementSource)}
+      </SettingRow>
+      {(
+        [
+          ['Approve', soundApprove, inherited?.voucherSoundApprove, soundApproveSource, onSoundApprove],
+          ['Reject', soundReject, inherited?.voucherSoundReject, soundRejectSource, onSoundReject],
+        ] as const
+      ).map(([name, own, inheritedValue, source, onChange]) => (
+        <SettingRow
+          key={name}
+          label={t(`voucherSound${name}Label`)}
+          badge={onOff(resolveVoucherSound(own, inheritedValue))}
+          desc={<p>{t(`voucherSound${name}Desc`)}</p>}
+        >
+          <Segmented<VoucherOnOff | null>
+            value={own}
+            onChange={onChange}
+            disabled={disabled}
+            choices={[
+              ...VOUCHER_SOUND_VALUES.map((v) => ({ v: v as VoucherOnOff | null, label: onOff(v) })),
+              { v: null, label: t('inheritShort') },
+            ]}
+          />
+          {note(own, onOff(resolveVoucherSound(undefined, inheritedValue)), source)}
+        </SettingRow>
+      ))}
     </div>
   );
 }

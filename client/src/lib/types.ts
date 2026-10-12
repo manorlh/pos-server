@@ -333,6 +333,17 @@ export interface PosSettingsV1 {
    */
   voucherStationPaidItems?: VoucherOnOff;
   /**
+   * "הצג לקופאי מה מגיע ללקוח בסריקת שובר": on (unset — a card with what the voucher gives on every
+   * voucher scan, never stopping the redemption) or off. In `effective` always resolved.
+   */
+  voucherShowEntitlement?: VoucherOnOff;
+  /**
+   * "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": on (unset — a strong sound once when a
+   * voucher is accepted / refused) or off. In `effective` always resolved.
+   */
+  voucherSoundApprove?: VoucherOnOff;
+  voucherSoundReject?: VoucherOnOff;
+  /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
    */
@@ -420,7 +431,7 @@ export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
 /** "בירור יתרת שובר" — server/app/services/voucher_balance_check.py. */
 export type VoucherBalanceCheckMode = 'auto' | 'on' | 'off';
 
-/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` — server/app/services/voucher_station_settings.py. */
+/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` / `voucherShowEntitlement` / `voucherSound*` — server/app/services/voucher_station_settings.py. */
 export type VoucherOnOff = 'on' | 'off';
 
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
@@ -467,6 +478,9 @@ export type PosSettingsPatch = Partial<
     | 'voucherAutoClose'
     | 'voucherStation'
     | 'voucherStationPaidItems'
+    | 'voucherShowEntitlement'
+    | 'voucherSoundApprove'
+    | 'voucherSoundReject'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -489,6 +503,9 @@ export type PosSettingsPatch = Partial<
   voucherAutoClose?: VoucherOnOff | null;
   voucherStation?: VoucherOnOff | null;
   voucherStationPaidItems?: VoucherOnOff | null;
+  voucherShowEntitlement?: VoucherOnOff | null;
+  voucherSoundApprove?: VoucherOnOff | null;
+  voucherSoundReject?: VoucherOnOff | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;

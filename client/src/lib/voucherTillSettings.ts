@@ -13,6 +13,11 @@
  * - `voucherStationPaidItems` (12.10.2026, the spec's §5) — "רכישה נוספת בתשלום בעמדת שובר": `off`
  *   (unset: the station redeems vouchers only) or `on` (after the voucher, items paid for at the
  *   regular price can join the same sale). The till shows it only with a cash or card option on.
+ * - `voucherShowEntitlement` (13.10.2026, P:/specs/voucher-one-per-group.md §5) — "הצג לקופאי מה מגיע
+ *   ללקוח בסריקת שובר": `on` (unset: every voucher scan opens a small card with what the voucher gives
+ *   and what is left, never stopping the redemption) or `off` (the till as before).
+ * - `voucherSoundApprove` / `voucherSoundReject` (12.10.2026) — "צליל אישור במימוש שובר" / "צליל סירוב
+ *   במימוש שובר": `on` (unset: a strong sound once when a voucher is accepted / refused in red) or `off`.
  *
  * A layer's own value wins; else what it inherits (the server sends `effective` resolved); else the
  * default. `null` in a PATCH = this layer inherits again.
@@ -25,16 +30,23 @@ export const VOUCHER_BALANCE_ACTIVE_KEY = 'voucherBalanceCheckActiveVouchers' as
 export const VOUCHER_AUTO_CLOSE_KEY = 'voucherAutoClose' as const;
 export const VOUCHER_STATION_KEY = 'voucherStation' as const;
 export const VOUCHER_STATION_PAID_ITEMS_KEY = 'voucherStationPaidItems' as const;
+export const VOUCHER_SHOW_ENTITLEMENT_KEY = 'voucherShowEntitlement' as const;
+export const VOUCHER_SOUND_APPROVE_KEY = 'voucherSoundApprove' as const;
+export const VOUCHER_SOUND_REJECT_KEY = 'voucherSoundReject' as const;
 
 export const VOUCHER_BALANCE_CHECK_MODES: readonly VoucherBalanceCheckMode[] = ['auto', 'on', 'off'];
 export const VOUCHER_AUTO_CLOSE_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_STATION_VALUES: readonly VoucherOnOff[] = ['off', 'on'];
 export const VOUCHER_STATION_PAID_ITEMS_VALUES: readonly VoucherOnOff[] = ['off', 'on'];
+export const VOUCHER_SHOW_ENTITLEMENT_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
+export const VOUCHER_SOUND_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 
 export const VOUCHER_BALANCE_CHECK_DEFAULT: VoucherBalanceCheckMode = 'auto';
 export const VOUCHER_AUTO_CLOSE_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_STATION_DEFAULT: VoucherOnOff = 'off';
 export const VOUCHER_STATION_PAID_ITEMS_DEFAULT: VoucherOnOff = 'off';
+export const VOUCHER_SHOW_ENTITLEMENT_DEFAULT: VoucherOnOff = 'on';
+export const VOUCHER_SOUND_DEFAULT: VoucherOnOff = 'on';
 
 export function isVoucherBalanceCheckMode(value: unknown): value is VoucherBalanceCheckMode {
   return typeof value === 'string' && (VOUCHER_BALANCE_CHECK_MODES as readonly string[]).includes(value);
@@ -74,6 +86,20 @@ export function resolveVoucherStationPaidItems(own: unknown, inherited: unknown)
   if (isVoucherOnOff(own)) return own;
   if (isVoucherOnOff(inherited)) return inherited;
   return VOUCHER_STATION_PAID_ITEMS_DEFAULT;
+}
+
+/** "הצג לקופאי מה מגיע ללקוח בסריקת שובר" at a layer: its own, else the inherited one, else "on". */
+export function resolveVoucherShowEntitlement(own: unknown, inherited: unknown): VoucherOnOff {
+  if (isVoucherOnOff(own)) return own;
+  if (isVoucherOnOff(inherited)) return inherited;
+  return VOUCHER_SHOW_ENTITLEMENT_DEFAULT;
+}
+
+/** "צליל אישור / סירוב במימוש שובר" at a layer: its own, else the inherited one, else "on". */
+export function resolveVoucherSound(own: unknown, inherited: unknown): VoucherOnOff {
+  if (isVoucherOnOff(own)) return own;
+  if (isVoucherOnOff(inherited)) return inherited;
+  return VOUCHER_SOUND_DEFAULT;
 }
 
 /**

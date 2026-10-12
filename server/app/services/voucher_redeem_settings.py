@@ -61,6 +61,8 @@ def _audited_keys() -> Tuple[str, ...]:
     from app.services.payment_options import VOUCHER_SETTING_KEYS
     from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
     from app.services.voucher_station_settings import (
+        VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+        VOUCHER_SOUND_SETTING_KEYS,
         VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
         VOUCHER_STATION_SETTING_KEYS,
     )
@@ -71,6 +73,8 @@ def _audited_keys() -> Tuple[str, ...]:
         *VOUCHER_BALANCE_SETTING_KEYS,
         *VOUCHER_STATION_SETTING_KEYS,
         *VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
+        *VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+        *VOUCHER_SOUND_SETTING_KEYS,
     )
 
 

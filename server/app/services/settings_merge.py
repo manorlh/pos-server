@@ -14,6 +14,8 @@ from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 from app.services.voucher_redeem_settings import VOUCHER_FLOW_SETTING_KEYS
 from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
 from app.services.voucher_station_settings import (
+    VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+    VOUCHER_SOUND_SETTING_KEYS,
     VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
     VOUCHER_STATION_SETTING_KEYS,
 )
@@ -84,6 +86,12 @@ MANAGED_SETTING_KEYS = (
     # voucherStationPaidItems — items paid for at the regular price added at the voucher station
     # after the voucher (same module, the spec's §5).
     *VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
+    # voucherShowEntitlement — the cashier's "what the customer gets" card on every voucher scan
+    # (same module, 13.10.2026).
+    *VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+    # voucherSoundApprove, voucherSoundReject — the strong approve / reject sounds of a voucher
+    # redemption (same module, 12.10.2026).
+    *VOUCHER_SOUND_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).

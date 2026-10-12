@@ -41,6 +41,7 @@ import {
   type AppliedDiscountVoucher,
   type StackingRefusal,
   type VoucherInSale,
+  type VoucherKind,
   type VoucherLineIn,
   type VoucherOutcome,
 } from './kioskVouchers';
@@ -119,8 +120,9 @@ function distinct(list: readonly VoucherInSale[]): VoucherInSale[] {
 }
 
 /** A refusal the rules made, in the voucher result's shape (their own words where the cloud has them). */
-const stackingRefused = (r: StackingRefusal): VoucherResult => {
-  const message = stackingText(r.code, r.limit);
+const stackingRefused = (r: StackingRefusal, kind: VoucherKind | null = null): VoucherResult => {
+  // [kind]: the incoming voucher's — an order discount's "one of a batch" has its own words.
+  const message = stackingText(r.code, r.limit, kind);
   return message ? { kind: 'refused', reason: r.code, message } : { kind: 'refused', reason: r.code };
 };
 
@@ -183,7 +185,7 @@ async function applyDiscount(post: VoucherPost, input: RedeemInput, dto: Record<
   const benefit = voucherBenefitOf(dto.benefit, dto.kind);
   if (!benefit) return { kind: 'refused', reason: VOUCHER_NO_ELIGIBLE };
   const refusal = stackingRefusal(inOrder, incoming);
-  if (refusal) return stackingRefused(refusal);
+  if (refusal) return stackingRefused(refusal, incoming.kind);
   // The basket the rules see: what the promotions took, and what the vouchers already on the order took.
   const lines = input.lines.map(voucherLineOf);
   const now = applyVoucherDiscounts(lines, input.discounts).lines;
@@ -283,7 +285,7 @@ async function redeemGoods(post: VoucherPost, input: RedeemInput, dto: Record<st
   if (dto.isTest === true) return { kind: 'refused', reason: VOUCHER_SHOW_AT_TILL };
   // The order's other vouchers first: the batch's stacking (the cloud checks too).
   const refusal = stackingRefusal(inOrder, incoming);
-  if (refusal) return stackingRefused(refusal);
+  if (refusal) return stackingRefused(refusal, incoming.kind);
   const items: VoucherItem[] = (Array.isArray(dto.items) ? (dto.items as Array<Record<string, unknown>>) : [])
     .filter((it) => typeof it.productId === 'string')
     .map((it) => ({

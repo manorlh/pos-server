@@ -49,23 +49,45 @@ function useActionText() {
   const tm = useTranslations('prepaidVoucherTestMode.events');
   return (e: PrepaidBatchEvent) =>
     (t.has(`action.${e.action}`) || !tm.has(e.action)
-      ? t(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '' })
+      ? t(`action.${e.action}`, { count: e.count ?? 0, group: e.group ?? '', name: otherBatchOf(e)?.name ?? '' })
       : tm(e.action));
 }
 
-function EventLine({ e, batch }: { e: PrepaidBatchEvent; batch: PrepaidVoucherBatch }) {
+/** "שכפול סדרה": the other batch an audit line names (the source on the new one, the new one on the source). */
+function otherBatchOf(e: PrepaidBatchEvent): { id: string; name: string } | null {
+  if (e.action !== 'duplicated_from' && e.action !== 'duplicated_to') return null;
+  const id = e.details?.batchId;
+  const name = e.details?.batchName;
+  return typeof id === 'string' && id ? { id, name: typeof name === 'string' ? name : '' } : null;
+}
+
+function EventLine({ e, batch, onOpenBatch }: {
+  e: PrepaidBatchEvent;
+  batch: PrepaidVoucherBatch;
+  onOpenBatch?: (id: string) => void;
+}) {
   const t = useTranslations('prepaidVouchers.events');
   const actionText = useActionText();
   const fmt = useEditValueFormat(batch);
   const label = useEditFieldLabel();
   const serial = typeof e.details?.serial === 'number' ? ` #${e.details.serial}` : '';
   const changes = e.action === 'update' ? changesOf(e) : [];
+  const other = otherBatchOf(e);
   return (
     <li className="rounded border px-2 py-1 text-xs">
       <span className="font-medium tabular-nums">{when(e.createdAt)}</span>
       {' · '}
       {actionText(e)}
       {serial}
+      {other && onOpenBatch ? (
+        <>
+          {' · '}
+          <button type="button" className="text-primary underline underline-offset-2 hover:no-underline"
+            onClick={() => onOpenBatch(other.id)}>
+            {t('openBatch')}
+          </button>
+        </>
+      ) : null}
       {e.userName ? <span className="text-muted-foreground"> · {t('by', { name: e.userName })}</span> : null}
       {e.reason ? <span className="block text-muted-foreground">{t('reason', { reason: e.reason })}</span> : null}
       {changes.length ? (
@@ -86,11 +108,14 @@ export function PrepaidBatchGroupsView({
   batch,
   busy,
   onGroupPdf,
+  onOpenBatch,
 }: {
   batch: PrepaidVoucherBatch;
   busy: boolean;
   /** Download one group's PDF (cover sheet first) at the layout picked on the vouchers tab. */
   onGroupPdf: (group: number, range: [number, number]) => void;
+  /** Open the batch an audit line names ("שוכפלה מסדרה …" / "שוכפלה לסדרה …"). */
+  onOpenBatch?: (id: string) => void;
 }) {
   const t = useTranslations('prepaidVouchers.groups');
   const tp = useTranslations('prepaidVouchers');
@@ -291,7 +316,7 @@ export function PrepaidBatchGroupsView({
             <p className="text-sm text-muted-foreground">{te('empty')}</p>
           ) : (
             <ul className="space-y-1">
-              {events.data!.map((e) => <EventLine key={e.id} e={e} batch={batch} />)}
+              {events.data!.map((e) => <EventLine key={e.id} e={e} batch={batch} onOpenBatch={onOpenBatch} />)}
             </ul>
           )}
         </CardContent>

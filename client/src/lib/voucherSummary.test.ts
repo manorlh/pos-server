@@ -6,7 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { namesText, summaryIsPunchCard, validityText, voucherSummary, voucherSummaryText, type SummaryInput } from './voucherSummary';
+import { namesText, summaryIsPerGroup, summaryIsPunchCard, validityText, voucherSummary, voucherSummaryText, type SummaryInput } from './voucherSummary';
 
 const punch: SummaryInput = {
   kind: 'items', selection: 'groups', totalQty: 50, splitAllowed: true,
@@ -111,5 +111,46 @@ describe('helpers', () => {
     assert.equal(namesText(['מזון']), "'מזון'");
     assert.equal(namesText(['א', 'ב', 'ג', 'ד', 'ה']), "'א', 'ב', 'ג' ועוד 2");
     assert.equal(namesText([]), '');
+  });
+});
+
+describe('"פריט אחד מכל קבוצה" (P:/specs/voucher-one-per-group.md §4.5)', () => {
+  const perGroup: SummaryInput = {
+    kind: 'items', selection: 'groups', totalQty: 2, splitAllowed: false, groups: [
+      { name: 'מזון', minQty: 0, maxQty: 1, names: ['נקניקייה', 'המבורגר'], categories: [], products: ['נקניקייה', 'המבורגר'] },
+      { name: 'שתייה', minQty: 0, maxQty: 1, names: ['משקאות'], categories: ['משקאות'], products: [] },
+    ],
+  };
+
+  it('the spec\'s line: the groups, departments as "מחלקת …", one from each, in one sale', () => {
+    assert.ok(summaryIsPerGroup(perGroup));
+    assert.equal(voucherSummary(perGroup)[0],
+      'עד 2 פריטים · פריט אחד מכל קבוצה: מזון (נקניקייה, המבורגר), שתייה (מחלקת משקאות) · לא ניתן לממש שני פריטים מאותה קבוצה · מימוש בעסקה אחת.');
+  });
+
+  it('in parts; more than three names "+N"; an exclusion; the whole menu', () => {
+    const [what] = voucherSummary({
+      ...perGroup, splitAllowed: true, groups: [
+        { name: 'שתייה', minQty: 0, maxQty: 1, names: [], products: ['קולה', 'ספרייט', 'מים', 'סודה', 'תה', 'קפה', 'מיץ'] },
+        { name: 'מזון', minQty: 0, maxQty: 1, names: [], categories: ['משקאות'], products: [], excluded: ['בירה'] },
+        { name: 'קינוח', minQty: 0, maxQty: 1, names: [], allItems: true },
+      ], totalQty: 3,
+    });
+    assert.equal(what, 'עד 3 פריטים · פריט אחד מכל קבוצה: שתייה (קולה, ספרייט, מים +4), מזון (מחלקת משקאות, בלי בירה), קינוח (כל התפריט) '
+      + '· לא ניתן לממש שני פריטים מאותה קבוצה · מימוש בחלקים.');
+  });
+
+  it('the meal (every group a must), one of several and free numbers keep their own words', () => {
+    const meal = { ...perGroup, totalQty: null, groups: perGroup.groups!.map((g) => ({ ...g, minQty: 1 })) };
+    assert.equal(summaryIsPerGroup(meal), false);
+    assert.match(voucherSummary(meal)[0], /^חבילה: /);
+    assert.equal(summaryIsPerGroup({ ...perGroup, totalQty: 1 }), false);
+    assert.equal(summaryIsPerGroup({ ...perGroup, totalQty: 3, groups: [{ ...perGroup.groups![0], maxQty: 2 }, perGroup.groups![1]] }), false);
+    assert.equal(summaryIsPerGroup({ ...perGroup, kind: 'order_discount' }), false);
+  });
+
+  it('names without the split say them as products', () => {
+    const [what] = voucherSummary({ ...perGroup, groups: perGroup.groups!.map((g) => ({ name: g.name, minQty: 0, maxQty: 1, names: g.names })) });
+    assert.match(what, /מזון \(נקניקייה, המבורגר\), שתייה \(משקאות\)/);
   });
 });

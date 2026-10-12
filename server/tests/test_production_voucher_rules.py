@@ -1,7 +1,7 @@
 """
 Production vouchers — the shared rules (app/services/production_voucher_rules.py), pinned by the
 golden fixture tests/fixtures/prepaid_voucher_rules.json: sections `eligibility`, `assignment`,
-`selection`, `splitValue`, `fixedShare`, `cover`, `override` (the till runs the same cases from
+`selection`, `entitlementLeft`, `entitlementLeftMany`, `splitValue`, `fixedShare`, `cover`, `override` (the till runs the same cases from
 its copy; the file's SHA-256 is pinned in tests/test_prepaid_voucher_kinds.py and in pos-android).
 
 The inputs live here; `UPDATE_PREPAID_VOUCHER_RULES=1` writes their answers into the fixture (the
@@ -61,6 +61,24 @@ ELIGIBILITY = [
      "selection": sel(categoryIds=["soft"], productIds=["rings"]), "catalogAtIssue": CATALOG, "catalogNow": CATALOG_LATER},
 ]
 
+# "פריט אחד מכל קבוצה" — the example of P:/specs/voucher-one-per-group.md §9: food = hot dog and burger;
+# drinks = the "משקאות" department (cola, water, beer) with its sub-department "מיצים" (juice), less the beer.
+# The case names carry the scenario's number.
+PER_GROUP_CATALOG = {
+    "categories": [["drinks", None], ["juices", "drinks"], ["food", None]],
+    "products": [["cola", "drinks"], ["water", "drinks"], ["beer", "drinks"], ["juice", "juices"],
+                 ["hotdog", "food"], ["burger", "food"]],
+}
+ELIGIBILITY += [
+    {"name": "one per group 9.7: the drinks department with its sub-department, less the beer (9.8)", "mode": "live",
+     "selection": sel(categoryIds=["drinks"], excludeProductIds=["beer"]), "catalogNow": PER_GROUP_CATALOG},
+    {"name": "one per group 9.7: without its sub-departments the juice is not in it", "mode": "live",
+     "selection": sel(categoryIds=["drinks"], includeSubcategories=False, excludeProductIds=["beer"]),
+     "catalogNow": PER_GROUP_CATALOG},
+    {"name": "one per group 9.8: without the exclusion the beer is in it", "mode": "live",
+     "selection": sel(categoryIds=["drinks"]), "catalogNow": PER_GROUP_CATALOG},
+]
+
 MEAL = [
     {"key": "main", "productIds": ["burger", "schnitzel"], "remaining": 1},
     {"key": "side", "productIds": ["fries", "rings"], "remaining": 1},
@@ -80,6 +98,28 @@ ASSIGNMENT = [
     {"name": "one of several: the first takes the voucher", "totalRemaining": 1,
      "groups": [{"key": "drink", "productIds": ["cola", "water"], "remaining": 1}, {"key": "dessert", "productIds": ["cake"], "remaining": 1}],
      "units": [["u1", "cola"], ["u2", "cake"]]},
+]
+
+# The §9 example's groups, the drinks expanded as above (cola, water, juice; no beer).
+PER_GROUP = [
+    {"key": "food", "productIds": ["hotdog", "burger"], "remaining": 1},
+    {"key": "drink", "productIds": ["cola", "water", "juice"], "remaining": 1},
+]
+ASSIGNMENT += [
+    {"name": "one per group 9.1: two hot dogs and a cola", "groups": PER_GROUP, "totalRemaining": 2,
+     "units": [["u1", "hotdog"], ["u2", "hotdog"], ["u3", "cola"]]},
+    {"name": "one per group 9.2: two colas", "groups": PER_GROUP, "totalRemaining": 2,
+     "units": [["u1", "cola"], ["u2", "cola"]]},
+    {"name": "one per group 9.7: a juice of the sub-department", "groups": PER_GROUP, "totalRemaining": 2,
+     "units": [["u1", "juice"]]},
+    {"name": "one per group 9.8: the beer is not on the voucher", "groups": PER_GROUP, "totalRemaining": 2,
+     "units": [["u1", "beer"], ["u2", "hotdog"]]},
+    {"name": "one per group 9.9: a product in both groups is the cashier's choice", "totalRemaining": 2,
+     "groups": [{"key": "food", "productIds": ["hotdog", "burger", "water"], "remaining": 1},
+                {"key": "drink", "productIds": ["cola", "water", "juice"], "remaining": 1}],
+     "units": [["u1", "water"], ["u2", "hotdog"]]},
+    {"name": "one per group 9.10: a third item after the total of 2", "groups": PER_GROUP, "totalRemaining": 2,
+     "units": [["u1", "hotdog"], ["u2", "cola"], ["u3", "burger"]]},
 ]
 
 
@@ -119,6 +159,92 @@ SELECTION = [
      "chosen": []},
     {"name": "a package without a type name", "groups": MEAL_GROUPS, "totalMax": 3, "totalRemaining": 3, "wholeAtOnce": True,
      "typeName": None, "chosen": [["burger", "main", 1]]},
+]
+
+PER_GROUP_DRINKS = ["cola", "water", "juice"]
+PER_GROUP_GROUPS = [
+    grp("food", "מזון", 0, 1, 1, ["hotdog", "burger"]),
+    grp("drink", "שתייה", 0, 1, 1, PER_GROUP_DRINKS, excluded=["beer"]),
+]
+SELECTION += [
+    {"name": "one per group 9.1: a hot dog and a cola", "groups": PER_GROUP_GROUPS, "totalMax": 2, "totalRemaining": 2,
+     "wholeAtOnce": True, "typeName": "פריט אחד מכל קבוצה", "chosen": [["hotdog", "food", 1], ["cola", "drink", 1]]},
+    {"name": "one per group 9.1: a second hot dog is the food group's over", "groups": PER_GROUP_GROUPS, "totalMax": 2,
+     "totalRemaining": 2, "wholeAtOnce": True, "typeName": "פריט אחד מכל קבוצה",
+     "chosen": [["hotdog", "food", 2], ["cola", "drink", 1]]},
+    {"name": "one per group 9.2: only a drink, in one sale", "groups": PER_GROUP_GROUPS, "totalMax": 2, "totalRemaining": 2,
+     "wholeAtOnce": True, "typeName": "פריט אחד מכל קבוצה", "chosen": [["cola", "drink", 1]]},
+    {"name": "one per group 9.6: two drinks chosen by hand", "groups": PER_GROUP_GROUPS, "totalMax": 2, "totalRemaining": 2,
+     "wholeAtOnce": True, "typeName": "פריט אחד מכל קבוצה", "chosen": [["cola", "drink", 1], ["water", "drink", 1]]},
+    {"name": "one per group 9.8: the beer chosen as the drink", "groups": PER_GROUP_GROUPS, "totalMax": 2, "totalRemaining": 2,
+     "wholeAtOnce": True, "typeName": "פריט אחד מכל קבוצה", "chosen": [["beer", "drink", 1]]},
+    {"name": "one per group 9.1: a hot dog once the food is taken", "totalMax": 2, "totalRemaining": 1,
+     "wholeAtOnce": False, "typeName": "פריט אחד מכל קבוצה", "chosen": [["hotdog", "food", 1]],
+     "groups": [grp("food", "מזון", 0, 1, 0, ["hotdog", "burger"]), grp("drink", "שתייה", 0, 1, 1, PER_GROUP_DRINKS)]},
+    {"name": "two groups: three of a group with two left", "totalMax": 4, "totalRemaining": 4, "wholeAtOnce": False,
+     "typeName": None, "chosen": [["hotdog", "food", 3]],
+     "groups": [grp("food", "מזון", 0, 3, 2, ["hotdog", "burger"]), grp("drink", "שתייה", 0, 1, 1, PER_GROUP_DRINKS)]},
+]
+
+
+def left(key, name, remaining):
+    return {"key": key, "name": name, "remainingAfterThisSale": remaining}
+
+
+# "הלקוח זכאי לעוד פריט" (the owner, 13.10.2026): what is left after this sale, and what the till,
+# the kiosk and the closing say about it.
+ENTITLEMENT_LEFT = [
+    {"name": "9.2 and 9.4: only a drink, in one sale — the food is offered, and given up on closing",
+     "groups": [left("food", "מזון", 1), left("drink", "שתייה", 0)], "totalRemainingAfterThisSale": 1, "splitAllowed": False},
+    {"name": "9.5: only a drink, in parts — the food stays for next time",
+     "groups": [left("food", "מזון", 1), left("drink", "שתייה", 0)], "totalRemainingAfterThisSale": 1, "splitAllowed": True},
+    {"name": "two groups open within the total: each of them",
+     "groups": [left("food", "מזון", 1), left("drink", "שתייה", 0), left("dessert", "קינוח", 1)],
+     "totalRemainingAfterThisSale": 2, "splitAllowed": False},
+    {"name": "two of a group and one of another: plural",
+     "groups": [left("food", "מזון", 2), left("drink", "שתייה", 1)], "totalRemainingAfterThisSale": 3, "splitAllowed": True},
+    {"name": "the open groups depend on the total: one more",
+     "groups": [left("food", "מזון", 1), left("drink", "שתייה", 0), left("dessert", "קינוח", 1)],
+     "totalRemainingAfterThisSale": 1, "splitAllowed": False},
+    {"name": "the open groups depend on the total: two more, in parts",
+     "groups": [left("food", "מזון", 2), left("drink", "שתייה", 1), left("dessert", "קינוח", 2)],
+     "totalRemainingAfterThisSale": 2, "splitAllowed": True},
+    {"name": "a single open group above the total: up to the total",
+     "groups": [left("food", "מזון", 3), left("drink", "שתייה", 0)], "totalRemainingAfterThisSale": 2, "splitAllowed": False},
+    {"name": "9.1: a hot dog and a cola — everything taken",
+     "groups": [left("food", "מזון", 0), left("drink", "שתייה", 0)], "totalRemainingAfterThisSale": 0, "splitAllowed": False},
+    {"name": "the total used up with groups still open",
+     "groups": [left("drink", "משקה", 1), left("dessert", "קינוח", 1)], "totalRemainingAfterThisSale": 0, "splitAllowed": False},
+    {"name": "no group open with the total left",
+     "groups": [left("food", "מזון", 0), left("drink", "שתייה", 0)], "totalRemainingAfterThisSale": 1, "splitAllowed": True},
+    {"name": "9.15: a punch card of 50 in parts — nothing to offer",
+     "groups": [left("items", "פריטים", 44)], "totalRemainingAfterThisSale": 44, "splitAllowed": True},
+    {"name": "one group in one sale: what would be given up",
+     "groups": [left("items", "פריטים", 3)], "totalRemainingAfterThisSale": 3, "splitAllowed": False},
+]
+
+
+def three(food, drink, dessert, total, split=False):
+    """A voucher of "פריט אחד מכל קבוצה" with three groups, as it stands after this sale."""
+    return {"groups": [left("food", "מזון", food), left("drink", "שתייה", drink), left("dessert", "קינוח", dessert)],
+            "totalRemainingAfterThisSale": total, "splitAllowed": split}
+
+
+# Several vouchers in one sale (the spec's §6.6): each voucher's entitlement_left, in scan order, said once.
+ENTITLEMENT_LEFT_MANY = [
+    {"name": "6.6: 3 hot dogs, 2 colas and a dessert on two vouchers — only B is owed the dessert",
+     "vouchers": [three(0, 0, 0, 0), three(0, 0, 1, 1)]},
+    {"name": "6.6: both vouchers without their dessert — dessert ×2 from the vouchers",
+     "vouchers": [three(0, 0, 1, 1), three(0, 0, 1, 1)]},
+    {"name": "6.6: A is owed the dessert and B the drink",
+     "vouchers": [three(0, 0, 1, 1), three(0, 1, 0, 1, split=True)]},
+    {"name": "6.6: one each and one up to the total — up to",
+     "vouchers": [three(1, 0, 0, 1), three(1, 0, 1, 1)]},
+    {"name": "6.6: a punch card in parts and a voucher owed the food — only the food",
+     "vouchers": [{"groups": [left("items", "פריטים", 44)], "totalRemainingAfterThisSale": 44, "splitAllowed": True},
+                  three(1, 0, 0, 1, split=True)]},
+    {"name": "6.6: both vouchers taken in full — nothing",
+     "vouchers": [three(0, 0, 0, 0), three(0, 0, 0, 0)]},
 ]
 
 SPLIT_VALUE = [
@@ -237,6 +363,33 @@ def run_selection(c):
     return {"refusal": _refusal(r)}
 
 
+def _entitlement_of(v):
+    groups = [P.GroupLeft(g["key"], g["name"], g["remainingAfterThisSale"]) for g in v["groups"]]
+    return P.entitlement_left(groups, v["totalRemainingAfterThisSale"], v["splitAllowed"])
+
+
+def _entitlement_out(e):
+    if e is None:
+        return {"entitlement": None}
+    return {"entitlement": {
+        "kind": e.kind,
+        "count": e.count,
+        "groups": [{"key": k, "name": name, "count": n} for k, name, n in e.groups],
+        "tillText": e.till_text,
+        "kioskText": e.kiosk_text,
+        "closeConfirm": e.close_confirm,
+        "closeNote": e.close_note,
+    }}
+
+
+def run_entitlement_left(c):
+    return _entitlement_out(_entitlement_of(c))
+
+
+def run_entitlement_left_many(c):
+    return _entitlement_out(P.entitlement_left_many([_entitlement_of(v) for v in c["vouchers"]]))
+
+
 def run_split_value(c):
     out = P.split_value(c["totalAgorot"], [tuple(u) for u in c["units"]])
     return {"valuesAgorot": out, "refusal": None if out is not None else P.VALUE_MISMATCH}
@@ -274,6 +427,8 @@ SECTIONS = {
     "eligibility": (ELIGIBILITY, run_eligibility),
     "assignment": (ASSIGNMENT, run_assignment),
     "selection": (SELECTION, run_selection),
+    "entitlementLeft": (ENTITLEMENT_LEFT, run_entitlement_left),
+    "entitlementLeftMany": (ENTITLEMENT_LEFT_MANY, run_entitlement_left_many),
     "splitValue": (SPLIT_VALUE, run_split_value),
     "fixedShare": (FIXED_SHARE, run_fixed_share),
     "cover": (COVER, run_cover),
@@ -327,10 +482,81 @@ def test_three_drinks_never_make_a_meal():
     groups = [P.Group(g["key"], g["name"], g["minQty"], g["maxQty"], g["remaining"], tuple(g["productIds"])) for g in MEAL_GROUPS]
     r = P.check_selection(groups, [("cola", "drink", 1), ("water", "drink", 1), ("sprite", "drink", 1)],
                           total_max=3, total_remaining=3, whole_at_once=True, type_name="שובר ארוחה")
-    assert r.code == P.GROUP_OVER and r.text == 'ניתן לבחור פריט אחד בלבד מ"משקה"'
+    assert r.code == P.GROUP_OVER and r.text == 'מקבוצת "משקה" אפשר לממש עוד פריט אחד בשובר זה'
     r = P.check_selection(groups, [("burger", "main", 1), ("fries", "side", 1)],
                           total_max=3, total_remaining=3, whole_at_once=True, type_name="שובר ארוחה")
     assert r.text == "חסר משקה להשלמת שובר ארוחה"
+
+
+def test_one_item_of_each_group_by_hand():
+    def g(key, name, max_qty, remaining, ids):
+        return P.Group(key, name, 0, max_qty, remaining, tuple(ids))
+
+    food, drink = g("food", "מזון", 1, 1, ["hotdog"]), g("drink", "שתייה", 1, 1, ["cola", "water"])
+    r = P.check_selection([food, drink], [("cola", "drink", 1), ("water", "drink", 1)],
+                          total_max=2, total_remaining=2, whole_at_once=True)
+    assert (r.code, r.text, r.group_key) == (P.GROUP_OVER, 'מקבוצת "שתייה" אפשר לממש עוד פריט אחד בשובר זה', "drink")
+    r = P.check_selection([food, g("drink", "שתייה", 1, 0, ["cola"])], [("cola", "drink", 1)],
+                          total_max=2, total_remaining=1, whole_at_once=False)
+    assert r.text == 'מקבוצת "שתייה" כבר מומש כל מה שבשובר זה'
+    r = P.check_selection([g("food", "מזון", 3, 2, ["hotdog"]), drink], [("hotdog", "food", 3)],
+                          total_max=4, total_remaining=4, whole_at_once=False)
+    assert r.text == 'מקבוצת "מזון" אפשר לממש עוד 2 פריטים בשובר זה'
+    # One group keeps its words; a one-of-N voucher too.
+    r = P.check_selection([g("drink", "שתייה", 1, 1, ["cola"])], [("cola", "drink", 2)],
+                          total_max=2, total_remaining=2, whole_at_once=False)
+    assert r.text == 'ניתן לבחור פריט אחד בלבד מ"שתייה"'
+    r = P.check_selection([food, drink], [("cola", "drink", 2)], total_max=1, total_remaining=1, whole_at_once=False)
+    assert r.text == "ניתן לבחור פריט אחד בלבד בשובר זה"
+    assert P.check_selection([food, drink], [("cola", "drink", 1)], total_max=2, total_remaining=2, whole_at_once=True) is None
+
+
+def test_the_entitlement_left_by_hand():
+    L = P.GroupLeft
+    e = P.entitlement_left([L("food", "מזון", 1), L("drink", "שתייה", 0)], 1, False)
+    assert (e.kind, e.count, e.groups) == ("each", 1, (("food", "מזון", 1),))
+    assert e.till_text == "הלקוח זכאי לעוד פריט מהשובר: מזון ×1 — הציעו לו"
+    assert e.kiosk_text == "מגיע לך עוד פריט מהשובר: מזון ×1 — להוסיף?"
+    assert (e.close_confirm, e.close_note) == ("סגירה עכשיו — מה שלא מומש מהשובר יאבד (מזון ×1)", None)
+    e = P.entitlement_left([L("food", "מזון", 1), L("drink", "שתייה", 0)], 1, True)
+    assert (e.close_confirm, e.close_note) == (None, "מה שלא מומש יישאר בשובר לפעם הבאה (מזון ×1)")
+    e = P.entitlement_left([L("food", "מזון", 1), L("dessert", "קינוח", 1)], 2, False)
+    assert e.till_text == "הלקוח זכאי לעוד 2 פריטים מהשובר: מזון ×1 · קינוח ×1 — הציעו לו"
+    e = P.entitlement_left([L("food", "מזון", 1), L("dessert", "קינוח", 1)], 1, False)
+    assert (e.kind, e.count) == ("upTo", 1)
+    assert e.till_text == "הלקוח זכאי לעוד פריט מהשובר, מתוך: מזון / קינוח — הציעו לו"
+    assert e.kiosk_text == "מגיע לך עוד פריט מהשובר, מתוך: מזון / קינוח — להוסיף?"
+    assert e.close_confirm == "סגירה עכשיו — מה שלא מומש מהשובר יאבד (פריט אחד מתוך: מזון / קינוח)"
+    e = P.entitlement_left([L("food", "מזון", 2), L("dessert", "קינוח", 2)], 3, True)
+    assert e.till_text == "הלקוח זכאי לעוד 3 פריטים מהשובר, מתוך: מזון / קינוח — הציעו לו"
+    assert e.close_note == "מה שלא מומש יישאר בשובר לפעם הבאה (3 פריטים מתוך: מזון / קינוח)"
+    assert P.entitlement_left([L("food", "מזון", 1)], 0, False) is None
+    assert P.entitlement_left([L("food", "מזון", 0), L("drink", "שתייה", 0)], 1, False) is None
+    assert P.entitlement_left([L("items", "פריטים", 44)], 44, True) is None
+
+
+def test_the_entitlement_of_several_vouchers_by_hand():
+    L = P.GroupLeft
+
+    def voucher(food, drink, dessert, split=False):
+        return P.entitlement_left([L("f", "מזון", food), L("d", "שתייה", drink), L("k", "קינוח", dessert)],
+                                  food + drink + dessert, split)
+
+    only_b = P.entitlement_left_many([voucher(0, 0, 0), voucher(0, 0, 1)])
+    assert only_b == voucher(0, 0, 1)  # one contributor: exactly its own, closing words included
+    assert only_b.till_text == "הלקוח זכאי לעוד פריט מהשובר: קינוח ×1 — הציעו לו"
+    both = P.entitlement_left_many([voucher(0, 0, 1), voucher(0, 0, 1)])
+    assert (both.kind, both.count, both.groups) == ("each", 2, (("k", "קינוח", 2),))
+    assert both.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×2 — הציעו לו"
+    assert both.kiosk_text == "מגיע לך עוד 2 פריטים מהשוברים: קינוח ×2 — להוסיף?"
+    assert (both.close_confirm, both.close_note) == (None, None)  # each voucher's own, composed by the till
+    two = P.entitlement_left_many([voucher(0, 0, 1), voucher(0, 1, 0, split=True)])
+    assert two.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים: קינוח ×1 · שתייה ×1 — הציעו לו"
+    up_to = P.entitlement_left([L("f", "מזון", 1), L("k", "קינוח", 1)], 1, False)
+    mixed = P.entitlement_left_many([voucher(1, 0, 0), up_to])
+    assert (mixed.kind, mixed.count) == ("upTo", 2)
+    assert mixed.till_text == "הלקוח זכאי לעוד 2 פריטים מהשוברים, מתוך: מזון / קינוח — הציעו לו"
+    assert P.entitlement_left_many([None, None]) is None and P.entitlement_left_many([]) is None
 
 
 def test_a_fixed_value_sums_exactly():
