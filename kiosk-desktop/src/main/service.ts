@@ -705,7 +705,8 @@ export class KioskService extends EventEmitter {
           ...(this.opts.deviceInfo.serial ? { serialNumber: this.opts.deviceInfo.serial } : {}),
           // "עקיפת בדיקת מספר מסוף" as this kiosk applies it (core/terminalCheckBypass.ts).
           terminalNumberCheckBypass: this.parameterOn(TERMINAL_CHECK_BYPASS_KEY),
-          // "סוללה חלשה" (pos-server battery_alerts.py): the cloud tells the tills.
+          // "סוללה חלשה" (pos-server battery_alerts.py): the cloud tells the tills `alerts.battery` names
+          // (by default none: "רק המכשיר עצמו" — this kiosk's own strip and alarm only).
           ...(this.batteryNow && this.batteryNow.percent !== null
             ? { batteryPercent: this.batteryNow.percent, batteryStatus: this.batteryNow.charging ? 'charging' : 'discharging' }
             : {}),

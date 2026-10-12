@@ -29,6 +29,8 @@ import {
 import {
   FONT_CATALOG,
   KIOSK_DEFAULTS,
+  alertGoesToTills,
+  alertTillsOf,
   buttonRadius,
   categoryProductIds,
   cloneJson,
@@ -1305,6 +1307,44 @@ describe('"התראות לקופות" and "סגירה יחד עם ה-Z הסני�
     const c = resolveKioskConfig({ alerts: { printer: { tills: 'selected', machineIds: [] } } });
     assert.equal(c.alerts.printer.tills, 'main');
   });
+  it('"סוללה חלשה": "רק המכשיר עצמו" by default, a battery-only choice; the others as they were', () => {
+    assert.deepEqual(KIOSK_DEFAULTS.alerts.battery, { tills: 'self', machineIds: [], audience: 'everyone' });
+    assert.deepEqual(alertTillsOf('battery'), ['self', 'main', 'all', 'selected']);
+    for (const kind of ['printer', 'terminal', 'help'] as const) assert.deepEqual(alertTillsOf(kind), ['main', 'all', 'selected']);
+    // "למי" is asked only when it reaches other tills.
+    assert.equal(alertGoesToTills('battery', 'self'), false);
+    for (const tills of ['main', 'all', 'selected']) assert.equal(alertGoesToTills('battery', tills), true);
+    assert.equal(alertGoesToTills('printer', 'main'), true);
+    // Validation: "self" on a kiosk alert says why (the server's self_battery_only); on battery it is fine.
+    const c = cfg({ alerts: { printer: { tills: 'self' }, help: { tills: 'self' }, battery: { tills: 'self' } } });
+    assert.deepEqual(codes(c).sort(), ['alerts.help.tills:selfBatteryOnly', 'alerts.printer.tills:selfBatteryOnly']);
+    assert.deepEqual(codes(cfg({ alerts: { battery: { tills: 'nobody' } } })), ['alerts.battery.tills:enum']);
+    for (const tills of ['main', 'all']) assert.deepEqual(codes(cfg({ alerts: { battery: { tills } } })), []);
+  });
+  it('"סוללה חלשה": layers inherit down to "self", a stored "main" is kept, and the editor saves only a change', () => {
+    // A layer that sets no `tills` inherits the default.
+    assert.equal(resolveKioskConfig({ alerts: { battery: { audience: 'managers' } } }).alerts.battery?.tills, 'self');
+    // A parent's stored "main" stays "main" below (never rewritten), with a child's own audience.
+    const kept = resolveKioskConfig({ alerts: { battery: { tills: 'main' } } }, {}, { alerts: { battery: { audience: 'managers' } } });
+    assert.deepEqual(kept.alerts.battery, { tills: 'main', machineIds: [], audience: 'managers' });
+    // The editor compares with what the server says this level inherits, not a hard-coded value:
+    // an untouched draft saves nothing, whether the parents say "self" or "main".
+    for (const parent of ['self', 'main'] as const) {
+      const inherited = deepMergeKiosk(KIOSK_DEFAULTS, { alerts: { battery: { tills: parent } } });
+      assert.equal(inherited.alerts.battery?.tills, parent);
+      assert.deepEqual(pruneOverrides(inherited, cloneJson(inherited)), {});
+    }
+    // An older server's inherited config without `battery`: the fallback is "self".
+    const legacy = deepMergeKiosk(KIOSK_DEFAULTS, { alerts: { printer: { tills: 'all' } } });
+    assert.equal(legacy.alerts.battery?.tills, 'self');
+    // Choosing another route saves just that key.
+    const inherited = deepMergeKiosk(KIOSK_DEFAULTS, {});
+    const draft = setPath(inherited, 'alerts.battery.tills', 'main');
+    assert.deepEqual(pruneOverrides(inherited, draft), { alerts: { battery: { tills: 'main' } } });
+    // Back to "self" under a "main" parent: saved as "self" (a choice, not a reset).
+    const mainParent = deepMergeKiosk(KIOSK_DEFAULTS, { alerts: { battery: { tills: 'main' } } });
+    assert.deepEqual(pruneOverrides(mainParent, setPath(mainParent, 'alerts.battery.tills', 'self')), { alerts: { battery: { tills: 'self' } } });
+  });
   it('every alert text the editor asks exists in he.json', () => {
     const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
     const a = he.kiosks.alerts;
@@ -1313,7 +1353,12 @@ describe('"התראות לקופות" and "סגירה יחד עם ה-Z הסני�
       'clearAfterMin', 'clearAfterMinHint', 'minutes', 'open']) {
       assert.equal(typeof a[key], 'string', key);
     }
-    for (const kind of ['printer', 'terminal', 'help']) assert.equal(typeof a[kind].title, 'string', kind);
+    for (const kind of ['printer', 'terminal', 'help', 'battery']) assert.equal(typeof a[kind].title, 'string', kind);
+    // "רק המכשיר עצמו (ברירת מחדל)" and its one-line hint; the refusal in words, client and server.
+    assert.equal(a.tillsSelf, 'רק המכשיר עצמו (ברירת מחדל)');
+    assert.equal(typeof a.battery.tillsHint, 'string');
+    assert.equal(typeof he.kiosks.validation.selfBatteryOnly, 'string');
+    assert.equal(typeof he.kiosks.validation.server.self_battery_only, 'string');
     for (const state of ['pending', 'delivered', 'done', 'doneZ', 'failed', 'expired']) assert.equal(typeof a.shopZClose[state], 'string', state);
     assert.equal(typeof he.kiosks.settings.sections.alerts, 'string');
     assert.equal(typeof he.kiosks.fields.operations.closeWithShopZ, 'string');

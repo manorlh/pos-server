@@ -22,9 +22,16 @@ a kiosk with a battery…) running down tells the main till, at 15 %, 10 % and �
   `device_info`). The tills get the answer, "on" or "off" (`apply_to_parameters`). A device not
   watched raises nothing; an open cycle of it ends quietly; the dashboard says "ללא סוללה" /
   "ניטור סוללה כבוי" instead of its battery.
-* **To the staff**: the open alerts go to the tills by the kiosk alerts' routing settings
-  (`alerts.battery` of the device's kiosk config layers — main till / all / selected, everyone or
-  managers; app/services/kiosk_ops.py), with the till's other kiosk alerts (`GET /sync/{m}/kiosk/alerts`):
+* **On the device itself** — always, whatever the routing: its own strip and alarm (the till's
+  LowBatteryBanner, the Windows kiosk's batteryAlerts.ts), from its own reading, local.
+* **To the other tills** (the owner 12.10.2026: "התראת סוללה תגדיר ברירת מחדל רק למכשיר עצמו, ודינמי
+  אפשר שכולם יקבלו"): by the kiosk alerts' routing setting `alerts.battery` of the device's kiosk
+  config layers (company → shop → device; app/services/kiosk_config.py, routed in kiosk_ops.py).
+  `self` — "רק המכשיר עצמו", the DEFAULT: no other till gets it (no wake-up, nothing in their list).
+  Or, chosen on the dashboard: `main` (the main till, else all the shop's) / `all` / `selected`,
+  for everyone or managers. A layer that sets no `tills` inherits its parent's, down to the
+  default; a stored `main` (before 12.10.2026) stays `main` — saved data is never rewritten.
+  Routed, they come with the till's other kiosk alerts (`GET /sync/{m}/kiosk/alerts`):
   "המסופון קופה 2 — סוללה 10%", the critical one marked `severity: critical`. A till's "הבנתי"
   marks it (`battery:<id>`); it clears by itself when the device charges.
 * **The dashboard** ("תקינות מכשירים") shows each device's battery and the history (`history`).
@@ -440,7 +447,10 @@ def alert_out(db: Session, row: DeviceBatteryAlert, machine: POSMachine, audienc
 
 
 def alerts_for_till(db: Session, till: POSMachine, *, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
-    """The open battery alerts routed to [till] (`alerts.battery`), never its own."""
+    """
+    The open battery alerts routed to [till] (`alerts.battery`), never its own (the device shows
+    that one itself); none from a device left on "self" ("רק המכשיר עצמו", the default).
+    """
     from app.services import kiosk_config as KC
     from app.services import kiosk_ops as OPS
 

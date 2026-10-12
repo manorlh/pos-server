@@ -6,22 +6,40 @@
  * card result left for staff) and the customer's "בקשת עזרה" — each to its own tills (the
  * shop's main till, else all its tills; all the shop's tills; chosen tills) and to whom on
  * them (everyone signed in, or managers only). A help request clears by itself after
- * `clearAfterMin`. The server validates the same rules (app/services/kiosk_config.py).
+ * `clearAfterMin`. "סוללה חלשה" also has "רק המכשיר עצמו" (`self`, its default): no other till,
+ * so neither the tills nor "למי" are asked. The server validates the same rules
+ * (app/services/kiosk_config.py).
  */
 
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { useScope } from '@/lib/scope';
-import { ALERT_KINDS, KIOSK_LIMITS, type KioskAlertAudience, type KioskAlertKind, type KioskAlertTills } from '@/lib/kioskConfig';
+import {
+  ALERT_KINDS,
+  KIOSK_LIMITS,
+  alertGoesToTills,
+  alertTillsOf,
+  type KioskAlertAudience,
+  type KioskAlertKind,
+  type KioskBatteryAlertTills,
+} from '@/lib/kioskConfig';
 import { useKioskEditor, useKioskField } from './editor-context';
 import { FieldShell, NumberField, SectionCard, SegmentField } from './fields';
+
+/** Each choice's label key under `kiosks.alerts`. */
+const TILLS_LABEL: Record<KioskBatteryAlertTills, string> = {
+  self: 'tillsSelf',
+  main: 'tillsMain',
+  all: 'tillsAll',
+  selected: 'tillsSelected',
+};
 
 function TillsPicker({ kind }: { kind: KioskAlertKind }) {
   const t = useTranslations('kiosks.alerts');
   const ed = useKioskEditor();
   const scope = useScope();
-  const tills = useKioskField<KioskAlertTills>(`alerts.${kind}.tills`);
+  const tills = useKioskField<KioskBatteryAlertTills>(`alerts.${kind}.tills`);
   const ids = useKioskField<string[]>(`alerts.${kind}.machineIds`);
   // The tills of the kiosk's company (its shop first), never a kiosk: the server checks again.
   const options = useMemo(() => {
@@ -52,29 +70,28 @@ function TillsPicker({ kind }: { kind: KioskAlertKind }) {
 
 function RouteCard({ kind }: { kind: KioskAlertKind }) {
   const t = useTranslations('kiosks.alerts');
+  const tills = useKioskField<KioskBatteryAlertTills>(`alerts.${kind}.tills`);
   const paths = [`alerts.${kind}.tills`, `alerts.${kind}.machineIds`, `alerts.${kind}.audience`];
   if (kind === 'help') paths.push('alerts.help.clearAfterMin');
   return (
     <SectionCard title={t(`${kind}.title`)} description={t(`${kind}.description`)} paths={paths}>
-      <SegmentField<KioskAlertTills>
+      <SegmentField<KioskBatteryAlertTills>
         path={`alerts.${kind}.tills`}
         label={t('tills')}
-        hint={t('tillsHint')}
-        options={[
-          { value: 'main', label: t('tillsMain') },
-          { value: 'all', label: t('tillsAll') },
-          { value: 'selected', label: t('tillsSelected') },
-        ]}
+        hint={kind === 'battery' ? t('battery.tillsHint') : t('tillsHint')}
+        options={alertTillsOf(kind).map((value) => ({ value, label: t(TILLS_LABEL[value]) }))}
       />
       <TillsPicker kind={kind} />
-      <SegmentField<KioskAlertAudience>
-        path={`alerts.${kind}.audience`}
-        label={t('audience')}
-        options={[
-          { value: 'everyone', label: t('audienceEveryone') },
-          { value: 'managers', label: t('audienceManagers') },
-        ]}
-      />
+      {alertGoesToTills(kind, tills.value) ? (
+        <SegmentField<KioskAlertAudience>
+          path={`alerts.${kind}.audience`}
+          label={t('audience')}
+          options={[
+            { value: 'everyone', label: t('audienceEveryone') },
+            { value: 'managers', label: t('audienceManagers') },
+          ]}
+        />
+      ) : null}
       {kind === 'help' ? (
         <NumberField
           path="alerts.help.clearAfterMin"

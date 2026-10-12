@@ -24,9 +24,11 @@ from app.models.device_battery import DeviceBatteryAlert
 from app.models.pos_machine import DEVICE_MODELS, device_is_mains_only
 from app.models.till_parameter import TillParameter, TillParameterChange
 from app.models.user import User, UserRole
+from app.routers import kiosks as KR
 from app.routers import machines as MR
 from app.routers import till_parameters as R
 from app.routers.sync import get_till_parameters_sync
+from app.schemas.kiosk import KioskSettingsIn
 from app.schemas.pos_machine import MachineHeartbeatBody
 from app.schemas.till_parameter import TillParameterValueIn
 from app.services import ably_notify
@@ -102,6 +104,11 @@ def w(monkeypatch):
     from app.services import main_till as MT
 
     monkeypatch.setattr(MT, "main_till_of_shop", lambda db, shop_id: world.main)
+    # The shop chose "הקופה הראשית" (the default is "רק המכשיר עצמו" — no other till would hear).
+    KR.put_settings(
+        body=KioskSettingsIn(overrides={"alerts": {"battery": {"tills": "main"}}}), level="shop", scope_id=world.shop.id,
+        current_user=world.admin, active_tenant_id=world.tenant.id, db=world.db,
+    )
     world.db.commit()
     return world
 
