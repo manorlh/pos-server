@@ -30,7 +30,7 @@ import {
   createPayloadOf,
   createdWorkProfileOf,
   type CreateChoice,
-  type FieldStatus,
+  type CreatedWorkProfile as CreatedProfile,
   type WorkProfile,
 } from '@/lib/shopWorkProfile';
 import type { Company, Shop } from '@/lib/types';
@@ -181,12 +181,10 @@ function ShopForm({
   const branchError = branchCodeError(draft.branchId);
   // Step 2: "תצורת עבודה" of the new shop.
   const [profileStep, setProfileStep] = useState<WorkProfileStepValue>(EMPTY_STEP_VALUE);
-  // After creating with a profile: the shop, and what the server said of the profile.
-  const [created, setCreated] = useState<{
-    shop: Shop;
-    status: Partial<Record<string, FieldStatus>> | null;
-    profile: WorkProfile | null;
-  } | null>(null);
+  // After creating with a profile: the shop, what the server said of the profile, what was sent.
+  const [created, setCreated] = useState<{ shop: Shop; result: CreatedProfile | null; sent: WorkProfile | null } | null>(
+    null,
+  );
 
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ['companies'],
@@ -219,9 +217,7 @@ function ShopForm({
       toast.success(isNew ? t('created') : t('updated'));
       onSaved?.(data);
       if (isNew && choice.kind !== 'skip') {
-        const fromServer = createdWorkProfileOf(data);
-        const sent = createPayloadOf(choice).workProfile ?? null;
-        setCreated({ shop: data, status: fromServer?.status ?? null, profile: fromServer?.profile ?? sent });
+        setCreated({ shop: data, result: createdWorkProfileOf(data), sent: createPayloadOf(choice).workProfile ?? null });
         setStep('done');
         return;
       }
@@ -238,7 +234,7 @@ function ShopForm({
         <DialogHeader>
           <DialogTitle>{tw('createdTitle', { name: created.shop.name })}</DialogTitle>
         </DialogHeader>
-        <CreatedWorkProfile shopId={created.shop.id} status={created.status} profile={created.profile} />
+        <CreatedWorkProfile shopId={created.shop.id} created={created.result} sent={created.sent} />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {tw('close')}

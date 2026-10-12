@@ -25,6 +25,9 @@ import {
   normalizeProfile,
   normalizeView,
   profileChanges,
+  refusalFieldLabel,
+  refusalOf,
+  tablesChoiceDisabled,
   statusCounts,
   statusCountsText,
   templatesOrFallback,
@@ -141,12 +144,8 @@ test('validation mirrors the server: the local server goes with the local Z, LAN
 });
 
 test('changing a field keeps the profile valid', () => {
-  // The local Z, the local server and LAN tables bring the other two.
-  for (const p of [
-    withField(DEFAULT_PROFILE, 'zType', 'shop_local'),
-    withField(DEFAULT_PROFILE, 'localServer', true),
-    withField(DEFAULT_PROFILE, 'tablesMode', 'lan'),
-  ]) {
+  // The local server follows the Z: "Z סניפי בשרת מקומי" turns it on (and the other way round).
+  for (const p of [withField(DEFAULT_PROFILE, 'zType', 'shop_local'), withField(DEFAULT_PROFILE, 'localServer', true)]) {
     assert.equal(p.localServer, true);
     assert.equal(p.zType, 'shop_local');
     assert.deepEqual(validateProfile(p), []);
@@ -168,18 +167,27 @@ test('changing a field keeps the profile valid', () => {
     for (const z of ['per_till', 'shop_cloud', 'shop_local'] as const) {
       assert.deepEqual(validateProfile(withField(t.profile, 'zType', z)), [], `${t.id} ${z}`);
     }
+    // The tables the editor offers (LAN only with the local server).
     for (const m of ['off', 'single', 'synced', 'lan'] as const) {
+      if (tablesChoiceDisabled(t.profile, m)) continue;
       assert.deepEqual(validateProfile(withField(t.profile, 'tablesMode', m)), [], `${t.id} ${m}`);
     }
     for (const b of [true, false]) {
       assert.deepEqual(validateProfile(withField(t.profile, 'localServer', b)), [], `${t.id} ${b}`);
     }
   }
-  // A field the user may not change is never changed by the cascade.
-  const locked = withField(DEFAULT_PROFILE, 'tablesMode', 'lan', (f) => f === 'localServer');
+  // LAN tables cascade nothing: offered only with the local server on.
+  assert.equal(tablesChoiceDisabled(DEFAULT_PROFILE, 'lan'), true);
+  assert.equal(tablesChoiceDisabled(DEFAULT_PROFILE, 'synced'), false);
+  assert.equal(tablesChoiceDisabled(tpl('restaurant_tables').profile, 'lan'), false);
+  const lanAlone = withField(DEFAULT_PROFILE, 'tablesMode', 'lan');
+  assert.equal(lanAlone.localServer, false);
+  assert.deepEqual(validateProfile(lanAlone).map((i) => i.field), ['tablesMode']);
+  // A field the user may not change is never changed by the cascade, and nothing moves with it.
+  const locked = withField(DEFAULT_PROFILE, 'zType', 'shop_local', (f) => f === 'localServer');
   assert.equal(locked.localServer, false);
-  assert.equal(locked.zType, 'shop_cloud');
-  assert.deepEqual(validateProfile(locked).map((i) => i.field), ['tablesMode']);
+  assert.equal(locked.zType, 'shop_local');
+  assert.deepEqual(validateProfile(locked).map((i) => i.field), ['localServer']);
 });
 
 test('applying a template, and what changed since', () => {
@@ -258,7 +266,19 @@ test('the view, defensively', () => {
   assert.deepEqual(v.status, { zType: { state: 'pending', reason: 'יופעל כשתצומד הקופה הראשונה' } });
   assert.deepEqual(v.canEdit, { zType: false, kitchen: true });
   assert.equal(normalizeView({ profile: null }).profile, null);
-  assert.deepEqual(normalizeView(undefined), { profile: null, status: {}, canEdit: {} });
+  assert.deepEqual(normalizeView(undefined), {
+    profile: null,
+    status: {},
+    canEdit: {},
+    stored: null,
+    hasTills: null,
+    changes: null,
+  });
+  assert.deepEqual(normalizeView({ changes: ['ניהול שולחנות: כבוי ← קופה אחת', 3] }).changes, ['ניהול שולחנות: כבוי ← קופה אחת']);
+  // Nothing saved yet: the profile is the shop as it stands.
+  const derived = normalizeView({ profile: DEFAULT_PROFILE, stored: false, hasTills: true, status: {}, canEdit: {} });
+  assert.equal(derived.stored, false);
+  assert.equal(derived.hasTills, true);
 });
 
 test('a field\'s status and whether it may be changed', () => {
@@ -305,4 +325,47 @@ test('what POST /shops says of the new shop\'s profile', () => {
   });
   assert.equal(view?.profile?.kitchen, 'kds');
   assert.deepEqual(view?.status, { kitchen: { state: 'applied', reason: null } });
+  assert.equal(view?.applied, null);
+  assert.equal(view?.refused, null);
+  // The server's answer: the GET view with `applied`, and `refused` when it was not applied.
+  const refused = createdWorkProfileOf({
+    id: 's',
+    workProfileStatus: {
+      profile: DEFAULT_PROFILE,
+      stored: false,
+      status: { zType: { state: 'applied' } },
+      canEdit: {},
+      applied: false,
+      refused: { status: 409, code: 'z_run_in_progress', message: 'יש הפקת Z בתהליך', field: 'zType' },
+    },
+  });
+  assert.equal(refused?.applied, false);
+  assert.deepEqual(refused?.refused, { status: 409, code: 'z_run_in_progress', message: 'יש הפקת Z בתהליך', field: 'zType' });
+  const ok = createdWorkProfileOf({ id: 's', workProfileStatus: { profile: DEFAULT_PROFILE, status: {}, applied: true } });
+  assert.equal(ok?.applied, true);
+  assert.equal(ok?.refused, null);
+});
+
+test('a refusal as the server words it', () => {
+  const err = {
+    response: { status: 409, data: { detail: { code: 'till_open', message: 'יש קופה פתוחה', field: 'tips.distribution' } } },
+  };
+  const r = refusalOf(err);
+  assert.deepEqual(r, { status: 409, code: 'till_open', message: 'יש קופה פתוחה', field: 'tips.distribution' });
+  assert.equal(refusalFieldLabel(r), 'טיפים');
+  assert.equal(refusalFieldLabel({ status: 422, code: null, message: null, field: 'copyWorkProfileFromShopId' }), null);
+  // A plain-text detail: the status alone (the toast helper words it).
+  assert.deepEqual(refusalOf({ response: { status: 403, data: { detail: 'Insufficient permissions' } } }), {
+    status: 403,
+    code: null,
+    message: null,
+    field: null,
+  });
+  assert.equal(refusalOf(new Error('network')), null);
+  // 403 `work_profile_forbidden`: the fields as a list.
+  const forbidden = refusalOf({
+    response: { status: 403, data: { detail: { code: 'work_profile_forbidden', message: 'רק מנהל-על', fields: ['zType', 'localServer'] } } },
+  });
+  assert.equal(forbidden?.field, 'zType');
+  assert.equal(refusalFieldLabel(forbidden), 'סוג Z');
 });

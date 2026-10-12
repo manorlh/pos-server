@@ -62,12 +62,16 @@ import {
   fieldValueText,
   matchingTemplate,
   profileChanges,
+  refusalFieldLabel,
+  refusalOf,
   statusCounts,
+  tablesChoiceDisabled,
   statusCountsText,
   validateProfile,
   withField,
   type Choice,
   type CreateChoice,
+  type CreatedWorkProfile as CreatedProfile,
   type FieldState,
   type FieldStatus,
   type ProfileIssue,
@@ -105,11 +109,10 @@ const STATE_STYLE: Record<FieldState, string> = {
 
 type OnField = <K extends WorkProfileField>(field: K, value: WorkProfile[K]) => void;
 
+const LAN_TABLES_HINT = '"רשת מקומית" זמין רק עם שרת מקומי — בחרו "Z סניפי בשרת מקומי".';
+
 const ALL_EDITABLE = () => true;
 
-function isConflict(err: unknown): boolean {
-  return (err as { response?: { status?: number } } | null)?.response?.status === 409;
-}
 
 // ── Small pieces ─────────────────────────────────────────────────────────────
 
@@ -149,33 +152,42 @@ function Pills<V extends string>({
   value,
   onChange,
   disabled,
+  isDisabled,
+  disabledHint,
 }: {
   label: string;
   choices: readonly Choice<V>[];
   value: V;
   onChange: (v: V) => void;
   disabled: boolean;
+  /** A choice not offered now (the current one stays shown). */
+  isDisabled?: (v: V) => boolean;
+  /** Why, under the choices, when some are not offered. */
+  disabledHint?: string;
 }) {
   const hint = choices.find((c) => c.value === value)?.hint;
+  const someOff = !disabled && !!isDisabled && choices.some((c) => c.value !== value && isDisabled(c.value));
   return (
     <div className="space-y-1">
       <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
         {choices.map((c) => {
           const selected = c.value === value;
+          const off = disabled || (!selected && !!isDisabled?.(c.value));
           return (
             <button
               key={c.value}
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={disabled}
+              disabled={off}
+              title={off && !disabled ? disabledHint : undefined}
               onClick={() => {
                 if (!selected) onChange(c.value);
               }}
               className={cn(
                 'rounded-full border px-3 py-1 text-xs transition-colors',
                 selected ? 'border-primary bg-primary/10 font-medium text-primary ring-1 ring-primary' : 'hover:bg-muted/60',
-                disabled && 'cursor-not-allowed opacity-60',
+                off && 'cursor-not-allowed opacity-60',
               )}
             >
               {c.label}
@@ -184,6 +196,7 @@ function Pills<V extends string>({
         })}
       </div>
       {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {someOff && disabledHint ? <p className="text-xs text-muted-foreground">{disabledHint}</p> : null}
     </div>
   );
 }
@@ -241,18 +254,28 @@ function FieldControl({
         />
       );
     case 'localServer':
+      // Follows the Z choice (on exactly with "Z סניפי בשרת מקומי"): shown, never switched here.
       return (
-        <OnOff
-          id="wp-local-server"
-          label="שרת מקומי"
-          checked={profile.localServer}
-          onChange={(v) => onField('localServer', v)}
-          disabled={disabled}
-        />
+        <div className="space-y-1">
+          <OnOff id="wp-local-server" label="שרת מקומי" checked={profile.localServer} onChange={() => undefined} disabled />
+          <p className="text-xs text-muted-foreground">
+            {profile.localServer
+              ? 'דלוק כי נבחר "Z סניפי בשרת מקומי".'
+              : 'כבוי: נדלק רק עם "Z סניפי בשרת מקומי" (בסוג Z שלמעלה).'}
+          </p>
+        </div>
       );
     case 'tablesMode':
       return (
-        <Pills label={label} choices={TABLES_CHOICES} value={profile.tablesMode} onChange={(v) => onField('tablesMode', v)} disabled={disabled} />
+        <Pills
+          label={label}
+          choices={TABLES_CHOICES}
+          value={profile.tablesMode}
+          onChange={(v) => onField('tablesMode', v)}
+          disabled={disabled}
+          isDisabled={(v) => tablesChoiceDisabled(profile, v)}
+          disabledHint={LAN_TABLES_HINT}
+        />
       );
     case 'kitchen':
       return <Pills label={label} choices={KITCHEN_CHOICES} value={profile.kitchen} onChange={(v) => onField('kitchen', v)} disabled={disabled} />;
@@ -735,14 +758,17 @@ function StatusRows({
  */
 export function CreatedWorkProfile({
   shopId,
-  status,
-  profile,
+  created,
+  sent,
 }: {
   shopId: string;
-  status: WorkProfileView['status'] | null;
-  profile: WorkProfile | null;
+  /** `workProfileStatus` of the `POST /shops` answer, if any. */
+  created: CreatedProfile | null;
+  /** The profile sent (null for a copy the server made). */
+  sent: WorkProfile | null;
 }) {
   const t = useTranslations('shopWorkProfile');
+  const status = created && Object.keys(created.status).length ? created.status : null;
   const query = useQuery({
     queryKey: workProfileKeys.shop(shopId),
     queryFn: () => getWorkProfile(shopId),
@@ -750,17 +776,30 @@ export function CreatedWorkProfile({
     retry: false,
   });
   const shownStatus = status ?? query.data?.status ?? null;
-  const shownProfile = profile ?? query.data?.profile ?? null;
+  const shownProfile = created?.profile ?? query.data?.profile ?? sent;
+  const refused = created?.refused ?? null;
   if (!status && query.isLoading) return <Skeleton className="h-40 w-full" />;
-  if (!shownStatus || !Object.keys(shownStatus).length) {
-    return <p className="text-sm text-muted-foreground">{t('createdNoStatus')}</p>;
-  }
-  const counts = statusCountsText(statusCounts(shownStatus));
+  const field = refusalFieldLabel(refused);
   return (
     <div className="space-y-2">
-      <p className="text-sm">{t('createdHint')}</p>
-      {counts ? <p className="text-xs text-muted-foreground">{counts}</p> : null}
-      <StatusRows profile={shownProfile} status={shownStatus} />
+      {refused ? (
+        <div role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <p className="font-medium">
+            {t('createdRefused')} {refused.message ?? ''}
+            {field ? ` (${field})` : ''}
+          </p>
+          <p className="text-xs">{t('createdRefusedHint')}</p>
+        </div>
+      ) : null}
+      {!shownStatus || !Object.keys(shownStatus).length ? (
+        <p className="text-sm text-muted-foreground">{t('createdNoStatus')}</p>
+      ) : (
+        <>
+          {refused ? null : <p className="text-sm">{t('createdHint')}</p>}
+          <p className="text-xs text-muted-foreground">{statusCountsText(statusCounts(shownStatus))}</p>
+          <StatusRows profile={shownProfile} status={shownStatus} />
+        </>
+      )}
     </div>
   );
 }
@@ -808,6 +847,7 @@ export function ShopWorkProfileCard({ shopId, shopName }: { shopId: string; shop
           <>
             {profile ? (
               <>
+                {view.stored === false ? <p className="text-sm text-muted-foreground">{t('notStored')}</p> : null}
                 {counts ? <p className="text-xs text-muted-foreground">{counts}</p> : null}
                 <StatusRows profile={profile} status={view.status} canEdit={view.canEdit} />
               </>
@@ -816,7 +856,7 @@ export function ShopWorkProfileCard({ shopId, shopName }: { shopId: string; shop
             )}
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="outline" disabled={!anyEditable} onClick={() => setEditing(true)}>
-                {profile ? t('edit') : t('setUp')}
+                {profile && view.stored !== false ? t('edit') : t('setUp')}
               </Button>
               {!anyEditable ? <span className="text-xs text-muted-foreground">{SUPER_ADMIN_ONLY}</span> : null}
             </div>
@@ -871,7 +911,7 @@ function WorkProfileEditDialogBody({
         : { ...saved, templateId: matchingTemplate(saved, templates)?.id ?? null },
   );
   const [draft, setDraft] = useState<WorkProfile>(seed);
-  const [refusal, setRefusal] = useState<{ text: string; conflict: boolean } | null>(null);
+  const [refusal, setRefusal] = useState<{ text: string; field: string | null; conflict: boolean } | null>(null);
   const [copyFrom, setCopyFrom] = useState<{ shopId: string; note: string; error: boolean } | null>(null);
   const locked = (f: WorkProfileField) => !fieldEditable(view.canEdit, f);
   const editable = (f: WorkProfileField) => !locked(f);
@@ -879,7 +919,9 @@ function WorkProfileEditDialogBody({
 
   // Only what the user may change is sent; the rest stays as saved.
   const toSend = editableOnly(draft, seed, view.canEdit);
-  const dirty = !saved || profileChanges(seed, toSend).length > 0 || seed.templateId !== toSend.templateId;
+  // Nothing saved yet (the profile shown is the shop as it stands): saving it stores it.
+  const dirty =
+    !saved || view.stored === false || profileChanges(seed, toSend).length > 0 || seed.templateId !== toSend.templateId;
   const issues = validateProfile(toSend);
   const willChange = new Set(saved ? profileChanges(saved, draft) : []);
 
@@ -893,11 +935,20 @@ function WorkProfileEditDialogBody({
       });
       void qc.invalidateQueries({ queryKey: ['work-config'] });
       const pending = statusCounts(out.status).pending;
-      toast.success(pending ? t('savedPending', { count: pending }) : t('saved'));
+      if (out.changes && out.changes.length === 0) toast.info(t('noChanges'));
+      else toast.success(pending ? t('savedPending', { count: pending }) : t('saved'));
       onClose();
     },
     // A refusal (409: an open till, a Z in progress…) changes nothing: the draft stays, the server's words shown.
-    onError: (err: unknown) => setRefusal({ text: axiosErrorToToastMessage(err, tc('error')), conflict: isConflict(err) }),
+    onError: (err: unknown) => {
+      const r = refusalOf(err);
+      setRefusal({
+        text: r?.message ?? axiosErrorToToastMessage(err, tc('error')),
+        field: refusalFieldLabel(r),
+        // 409 / 403 / 422: refused before anything is written (all or nothing).
+        conflict: r?.status === 409 || r?.status === 403 || r?.status === 422,
+      });
+    },
   });
 
   const pickCopy = async (shop: Shop | null) => {
@@ -927,7 +978,10 @@ function WorkProfileEditDialogBody({
       </DialogHeader>
       {refusal ? (
         <div role="alert" className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          <p className="font-medium">{refusal.text}</p>
+          <p className="font-medium">
+            {refusal.text}
+            {refusal.field ? ` (${refusal.field})` : ''}
+          </p>
           {refusal.conflict ? <p className="text-xs">{t('refusedNothingChanged')}</p> : null}
         </div>
       ) : null}
@@ -935,6 +989,8 @@ function WorkProfileEditDialogBody({
         <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           {t('noSavedWarning')}
         </p>
+      ) : view.stored === false ? (
+        <p className="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">{t('notStoredEdit')}</p>
       ) : null}
       <WorkProfileEditor
         profile={draft}

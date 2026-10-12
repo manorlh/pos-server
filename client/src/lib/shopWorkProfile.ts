@@ -79,10 +79,28 @@ export interface FieldStatus {
 
 /** `GET` / `PUT /shops/{id}/work-profile`. */
 export interface WorkProfileView {
-  /** null: no profile saved for the shop yet (a shop from before, or created with "דלג"). */
+  /**
+   * The shop's profile: as saved, else as the shop stands (`stored: false`). null only from a
+   * server that sends none.
+   */
   profile: WorkProfile | null;
   status: Partial<Record<string, FieldStatus>>;
   canEdit: Partial<Record<string, boolean>>;
+  /** false: nothing saved yet — `profile` is the shop as it stands. null: the server did not say. */
+  stored: boolean | null;
+  /** The shop has tills (then the Z and the local server are the super admin's). */
+  hasTills: boolean | null;
+  /** `PUT` only: what was written (Hebrew lines); empty — nothing to change. null: not said. */
+  changes: string[] | null;
+}
+
+/** A refusal of the server: 409 (the rules), 403 (a field not the user's), 422 (not a profile). */
+export interface Refusal {
+  status: number | null;
+  code: string | null;
+  message: string | null;
+  /** The field the server names (`zType`, `tips.distribution`…), when it does. */
+  field: string | null;
 }
 
 // ── Values, labels, hints ────────────────────────────────────────────────────
@@ -168,7 +186,7 @@ export const FIELD_HINTS: Record<WorkProfileField, string> = {
   zType: 'איך נסגר היום: Z לכל קופה, או Z אחד לכל הסניף.',
   shopZFrom: 'מאיפה מותר להפיק את ה-Z הסניפי.',
   localServer:
-    'קופה אחת שכל הסניף נשען עליה ברשת: שולחנות, הדפסות ו-Z סניפי, גם בלי אינטרנט. הולך יחד עם "Z סניפי בשרת מקומי"; הקופה הראשונה שתצומד תוצע כקופה הראשית.',
+    'קופה אחת שכל הסניף נשען עליה ברשת: שולחנות, הדפסות ו-Z סניפי, גם בלי אינטרנט. נקבע לפי סוג ה-Z: דלוק רק ב"Z סניפי בשרת מקומי". הקופה הראשונה שתצומד תוצע כקופה הראשית.',
   tablesMode: 'איפה נשמרים השולחנות וההזמנות הפתוחות.',
   kitchen: 'לאן הולכות ההזמנות למטבח.',
   customerDisplay: 'מסך שני מול הלקוח: הסל, הסכום והתשלום.',
@@ -344,7 +362,33 @@ export function normalizeView(raw: unknown): WorkProfileView {
     profile: isObject(r.profile) ? normalizeProfile(r.profile) : null,
     status: normalizeStatus(r.status),
     canEdit: normalizeCanEdit(r.canEdit),
+    stored: typeof r.stored === 'boolean' ? r.stored : null,
+    hasTills: typeof r.hasTills === 'boolean' ? r.hasTills : null,
+    changes: Array.isArray(r.changes) ? r.changes.filter((c): c is string => typeof c === 'string') : null,
   };
+}
+
+function refusalBody(raw: unknown, status: number | null): Refusal | null {
+  if (!isObject(raw)) return null;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+  // 403 `work_profile_forbidden` names its fields as a list (`fields`): the first is shown.
+  const fields = Array.isArray(raw.fields) ? raw.fields.map(str).filter((f): f is string => !!f) : [];
+  return { status, code: str(raw.code), message: str(raw.message), field: str(raw.field) ?? fields[0] ?? null };
+}
+
+/** A failed `PUT` (or any call) as the server words it: `{detail: {code, message, field}}`. */
+export function refusalOf(err: unknown): Refusal | null {
+  const res = isObject(err) && isObject(err.response) ? err.response : null;
+  if (!res) return null;
+  const status = typeof res.status === 'number' ? res.status : null;
+  const data = isObject(res.data) ? res.data : null;
+  return refusalBody(data?.detail, status) ?? (status != null ? { status, code: null, message: null, field: null } : null);
+}
+
+/** The field a refusal names, in words ("סוג Z"), when it is one of the profile's. */
+export function refusalFieldLabel(r: Refusal | null | undefined): string | null {
+  const top = r?.field?.split('.')[0];
+  return top && (WORK_PROFILE_FIELDS as readonly string[]).includes(top) ? FIELD_LABELS[top as WorkProfileField] : null;
 }
 
 /**
@@ -372,19 +416,35 @@ export function templatesOrFallback(raw: unknown): { templates: WorkProfileTempl
  * What `POST /shops` says of the new shop's profile (`workProfileStatus`): the per-field status,
  * whether it came as the map itself or inside a `{profile, status, canEdit}` view. Null when absent.
  */
-export function createdWorkProfileOf(
-  data: unknown,
-): { status: Partial<Record<string, FieldStatus>>; profile: WorkProfile | null } | null {
+export interface CreatedWorkProfile {
+  status: Partial<Record<string, FieldStatus>>;
+  profile: WorkProfile | null;
+  /** false: the profile was refused (the shop was created anyway) — `refused` says why. */
+  applied: boolean | null;
+  refused: Refusal | null;
+}
+
+/**
+ * What `POST /shops` says of the new shop's profile (`workProfileStatus`): the `GET` view with
+ * `applied` and, when it was not applied, `refused` — or the status map alone. Null when absent.
+ */
+export function createdWorkProfileOf(data: unknown): CreatedWorkProfile | null {
   if (!isObject(data)) return null;
   const raw = data.workProfileStatus;
   if (!isObject(raw)) return null;
-  if (isObject(raw.status)) {
+  const sent = isObject(data.workProfile) ? normalizeProfile(data.workProfile) : null;
+  if (isObject(raw.status) || 'applied' in raw || 'refused' in raw) {
+    const refused = isObject(raw.refused)
+      ? refusalBody(raw.refused, typeof raw.refused.status === 'number' ? raw.refused.status : null)
+      : null;
     return {
       status: normalizeStatus(raw.status),
-      profile: isObject(raw.profile) ? normalizeProfile(raw.profile) : isObject(data.workProfile) ? normalizeProfile(data.workProfile) : null,
+      profile: isObject(raw.profile) ? normalizeProfile(raw.profile) : sent,
+      applied: typeof raw.applied === 'boolean' ? raw.applied : refused ? false : null,
+      refused,
     };
   }
-  return { status: normalizeStatus(raw), profile: isObject(data.workProfile) ? normalizeProfile(data.workProfile) : null };
+  return { status: normalizeStatus(raw), profile: sent, applied: null, refused: null };
 }
 
 // ── Editing ──────────────────────────────────────────────────────────────────
@@ -428,15 +488,14 @@ export function applyTemplate(
 
 /**
  * One field changed, and what follows from it so the profile stays valid. The server's rules
- * (server app/services/work_profile_templates.py): a local server is the main till with "רשת
- * מקומית" on, and then the main till produces the shop Z — so `localServer` is on exactly with
- * "Z סניפי בשרת מקומי"; and tables on the LAN live on that main till. So:
- * - "Z סניפי בשרת מקומי", the local server, or tables on the LAN → all three need the other two
- *   (the local server on, the local Z);
- * - another Z type, or the local server off → the local server off, the Z from the cloud, and
- *   tables on the LAN move to "מסונכרן בין הקופות".
- * A field in `locked` is never changed by the cascade, and then nothing else moves with it (the
- * check says what is missing).
+ * (spec "שינויים בחוזה" 1): a local server is the main till with "רשת מקומית" on, and then the main
+ * till produces the shop Z — so `localServer` is on exactly with "Z סניפי בשרת מקומי"; and tables
+ * on the LAN live on that main till. The editor makes the local server follow the Z choice:
+ * - "Z סניפי בשרת מקומי" → the local server on;
+ * - another Z type → the local server off, and tables on the LAN move to "מסונכרן בין הקופות".
+ * (`localServer` set directly moves the Z the same way.) Tables on the LAN cascade nothing: the
+ * editor offers them only with the local server on. A field in `locked` is never changed by the
+ * cascade, and then nothing else moves with it (the check says what is missing).
  */
 export function withField<K extends WorkProfileField>(
   p: WorkProfile,
@@ -447,10 +506,7 @@ export function withField<K extends WorkProfileField>(
   const out: WorkProfile = { ...p, [field]: value };
   // The Z type and the local server move together, or not at all.
   const free = (...fs: WorkProfileField[]) => fs.every((f) => f === field || !locked(f));
-  const goesLocal =
-    (field === 'zType' && value === 'shop_local') ||
-    (field === 'localServer' && value === true) ||
-    (field === 'tablesMode' && value === 'lan');
+  const goesLocal = (field === 'zType' && value === 'shop_local') || (field === 'localServer' && value === true);
   const leavesLocal = (field === 'zType' && value !== 'shop_local') || (field === 'localServer' && value === false);
   if (goesLocal && free('zType', 'localServer')) {
     out.localServer = true;
@@ -461,6 +517,11 @@ export function withField<K extends WorkProfileField>(
     if (out.tablesMode === 'lan' && free('tablesMode')) out.tablesMode = 'synced';
   }
   return out;
+}
+
+/** The tables choices the editor offers: "רשת מקומית" only with the local server on. */
+export function tablesChoiceDisabled(p: WorkProfile, v: ProfileTablesMode): boolean {
+  return v === 'lan' && !p.localServer;
 }
 
 export interface ProfileIssue {
