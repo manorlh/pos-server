@@ -77,6 +77,9 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
             "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
+            # "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone — its
+            # routes (`/till-parameters/catalog-admin`) stay SUPER_ADMIN in ROUTE_RULES.
+            "/dashboard/catalog-admin",
         ),
     ),
     # "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the digital menu's and the
