@@ -248,6 +248,11 @@ function ServerStep({ state, form, set }: StepProps) {
             : t('neverHeard')}
         </p>
         {s.lastHeartbeatAt ? <p className="text-xs text-muted-foreground">{t('lastHeardAt', { at: formatDateTime(s.lastHeartbeatAt) })}</p> : null}
+        {s.deviceRole === 'local_server' ? (
+          // A dedicated local server has no shift and no documents (P:/specs/dedicated-local-server.md).
+          <p>{t('serverNoShift')}</p>
+        ) : (
+        <>
         <p>
           {s.openShift
             ? s.openShift.sequenceNumber
@@ -263,6 +268,8 @@ function ServerStep({ state, form, set }: StepProps) {
             : t('pending', { n: s.pendingDocuments })}
           {s.pendingAt ? ` ${t('pendingAt', { at: formatDateTime(s.pendingAt) })}` : ''}
         </p>
+        </>
+        )}
         {s.lanPending ? <p className="text-amber-700 dark:text-amber-400">{t('lanPending', { n: s.lanPending })}</p> : null}
       </div>
       {state.lastSwitch ? (
@@ -328,6 +335,11 @@ function TargetStep({ state, form, set }: StepProps) {
                 />
                 <span>
                   <span className="font-medium">{label(c)}</span>
+                  {c.deviceRole === 'local_server' ? (
+                    <span className="ms-1 rounded bg-violet-100 px-1 text-[10px] text-violet-900 dark:bg-violet-950 dark:text-violet-200">
+                      {t('device.server')}
+                    </span>
+                  ) : null}
                   <span className="block text-xs text-muted-foreground">
                     {ok
                       ? t('wizard.lastHeardShort', { ago: ago(secondsSince(c.lastHeartbeatAt)) })
@@ -396,7 +408,9 @@ function ShiftStep({ state, form, set }: StepProps) {
           ) : null}
         </div>
       ) : (
-        <p className="text-muted-foreground">{s ? t('noOpenShift') : t('noServer')}</p>
+        <p className="text-muted-foreground">
+          {s?.deviceRole === 'local_server' ? t('serverNoShift') : s ? t('noOpenShift') : t('noServer')}
+        </p>
       )}
       <div className="space-y-2 rounded-md border p-3">
         <p className="font-medium">{t('zTitle')}</p>

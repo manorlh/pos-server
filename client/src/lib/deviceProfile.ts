@@ -12,11 +12,25 @@
  * tests (here and tests/test_device_profile.py) pin the same table.
  */
 
-export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display'] as const;
+export const DEVICE_ROLES = ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display', 'local_server'] as const;
 export type DeviceRole = (typeof DEVICE_ROLES)[number];
 
-/** The display devices: "מסך — לא קופה, בלי מכירות ובלי חשבונאות". */
-export const NON_FISCAL_ROLES = ['kds', 'order_status_board', 'customer_display'] as const satisfies readonly DeviceRole[];
+/**
+ * Not tills — no sales, shifts, Z or payments: the display devices ("מסך — לא קופה, בלי מכירות ובלי
+ * חשבונאות"), and the dedicated local server ("שרת מקומי", P:/specs/dedicated-local-server.md), which
+ * serves the shop's tables, printing and local shop Z and is never counted as a till license.
+ */
+export const NON_FISCAL_ROLES = [
+  'kds', 'order_status_board', 'customer_display', 'local_server',
+] as const satisfies readonly DeviceRole[];
+
+/** "שרת מקומי": an Android device that does not sell — the shop's preferred host. */
+export const LOCAL_SERVER_ROLE = 'local_server' as const;
+
+/** A dedicated local server (the server's `deviceRole: "local_server"`). */
+export function isLocalServer(m: { deviceRole?: unknown } | null | undefined): boolean {
+  return m?.deviceRole === LOCAL_SERVER_ROLE;
+}
 
 /** A till or a kiosk (or no role yet: a till); not a KDS / the board. */
 export function isFiscalRole(role: unknown): boolean {
@@ -53,6 +67,8 @@ export const WEB_ROLES = ['kiosk', 'kds', 'order_status_board', 'customer_displa
 
 /** The platforms a role may be added on: the browser runs a kiosk, a KDS or a board — not a till. */
 export function platformsFor(role: DeviceRole | ''): DevicePlatform[] {
+  // "שרת מקומי" is the Android app in its server role (the server says so too: local_server_android_only).
+  if (role === LOCAL_SERVER_ROLE) return ['android'];
   return (WEB_ROLES as readonly string[]).includes(role) ? [...DEVICE_PLATFORMS] : ['android', 'windows'];
 }
 
@@ -430,7 +446,10 @@ export interface AddDeviceDraft {
 
 /** Every role but a plain till opens in one shop: its code is pre-assigned (the server says so too). */
 export function roleNeedsShop(role: DeviceRole | ''): boolean {
-  return role === 'kiosk' || role === 'kds' || role === 'order_status_board' || role === 'customer_display';
+  return (
+    role === 'kiosk' || role === 'kds' || role === 'order_status_board' || role === 'customer_display'
+    || role === LOCAL_SERVER_ROLE
+  );
 }
 
 /**
@@ -520,7 +539,7 @@ export function pairingRequestBody(d: AddDeviceDraft, kiosk: KioskDraft): Record
   };
   // "שם המכשיר — לא חובה": a till's own name; blank sends none and the server names it.
   const name = cleanDeviceName(d.name);
-  if (d.role === 'till' && name) body.name = name.slice(0, DEVICE_NAME_MAX);
+  if ((d.role === 'till' || d.role === LOCAL_SERVER_ROLE) && name) body.name = name.slice(0, DEVICE_NAME_MAX);
   if (d.role === 'kiosk') body.kiosk = kioskBody(kiosk);
   if (d.role === 'kds' || d.role === 'order_status_board') body.kds = kdsBody(d.role, d.kds);
   // A customer display's options ride on the screen's object: its name and the till it mirrors.

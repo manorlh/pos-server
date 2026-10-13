@@ -140,7 +140,9 @@ export default function MachinesPage() {
   /** "מסך לקוח": the till it mirrors ('' = chosen later on the customer-display page). */
   const [pairMirrorTill, setPairMirrorTill] = useState('');
   /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
-  const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole);
+  // "שרת מקומי" (P:/specs/dedicated-local-server.md) is not a till either, but no screen: its own notes.
+  const pairIsServer = pairDeviceRole === 'local_server';
+  const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole) && !pairIsServer;
   /**
    * "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): "לפי הסניף" unless chosen; the code carries
    * it and the device gets it as it pairs. Starts over when the shop, role or platform change.
@@ -350,9 +352,11 @@ export default function MachinesPage() {
       : pairMissing === 'model'
         ? t('deviceModel.required')
         : pairMissing === 'shop'
-          ? pairIsDisplay
-            ? t('deviceRole.displayNeedsShop')
-            : t('deviceRole.kioskNeedsShop')
+          ? pairIsServer
+            ? t('deviceRole.localServerNeedsShop')
+            : pairIsDisplay
+              ? t('deviceRole.displayNeedsShop')
+              : t('deviceRole.kioskNeedsShop')
           : pairMissing === 'stations'
             ? t('deviceRole.stationsRequired')
             : undefined;
@@ -1003,6 +1007,9 @@ export default function MachinesPage() {
               {pairIsDisplay ? (
                 <p className="text-sm text-muted-foreground">{t('deviceRole.displayReady')}</p>
               ) : null}
+              {pairIsServer ? (
+                <p className="text-sm text-muted-foreground">{t('deviceRole.localServerReady')}</p>
+              ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
                   shop's next number moves on the moment this one is taken. A screen gets none. */}
               {!pairingComplete && pairExpectedNumber !== null ? (
@@ -1046,6 +1053,11 @@ export default function MachinesPage() {
                     {t('deviceRole.kdsNote')}
                   </p>
                 ) : null}
+                {pairIsServer ? (
+                  <p className="rounded-md bg-violet-50 p-2 text-xs text-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+                    {t('deviceRole.localServerNote')}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label>{t('deviceRole.platform')}</Label>
@@ -1067,7 +1079,7 @@ export default function MachinesPage() {
                     value={pairDeviceModel}
                     onChange={setPairDeviceModel}
                   />
-                  {pairDeviceModel && !pairIsDisplay ? (
+                  {pairDeviceModel && !pairIsDisplay && !pairIsServer ? (
                     <DeviceCapabilityList model={pairDeviceModel} kiosk={pairDeviceRole === 'kiosk'} />
                   ) : !pairDeviceModel ? (
                     <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
@@ -1080,8 +1092,8 @@ export default function MachinesPage() {
                       : t('deviceRole.webNoModel')
                     : t('deviceRole.windowsNoModel')}</p>
               )}
-              {/* "שם המכשיר" — optional, a till's. Blank: the server names it "קופה N" once it has its number. */}
-              {pairDeviceRole === 'till' ? (
+              {/* "שם המכשיר" — optional, a till's (and a local server's). Blank: "קופה N" / "שרת מקומי". */}
+              {pairDeviceRole === 'till' || pairIsServer ? (
                 <div className="space-y-2">
                   <Label htmlFor="pair-device-name">{t('deviceName.label')}</Label>
                   <Input
@@ -1090,9 +1102,11 @@ export default function MachinesPage() {
                     maxLength={DEVICE_NAME_MAX}
                     onChange={(e) => setPairName(e.target.value)}
                     placeholder={
-                      pairExpectedNumber !== null
-                        ? t('registerLabel', { number: pairExpectedNumber })
-                        : t('deviceName.placeholder')
+                      pairIsServer
+                        ? t('deviceRole.local_server')
+                        : pairExpectedNumber !== null
+                          ? t('registerLabel', { number: pairExpectedNumber })
+                          : t('deviceName.placeholder')
                     }
                     autoComplete="off"
                   />
@@ -1104,7 +1118,9 @@ export default function MachinesPage() {
                   <p className="text-sm font-medium">
                     {pairDeviceRole === 'kiosk'
                       ? t('deviceRole.kioskNeedsShop')
-                      : roleNeedsShop(pairDeviceRole)
+                      : pairIsServer
+                        ? t('deviceRole.localServerNeedsShop')
+                        : roleNeedsShop(pairDeviceRole)
                         ? t('deviceRole.displayNeedsShop')
                         : t('pairAssignOptional')}
                   </p>
@@ -1200,7 +1216,7 @@ export default function MachinesPage() {
                 />
               ) : null}
               {/* "תצורת עבודה": after the shop and the role — "לפי הסניף" unless chosen. */}
-              {pairShopId && pairDeviceRole && pairDeviceRole !== 'customer_display' ? (
+              {pairShopId && pairDeviceRole && pairDeviceRole !== 'customer_display' && !pairIsServer ? (
                 <WorkConfigStep
                   shopId={pairShopId}
                   role={pairDeviceRole}

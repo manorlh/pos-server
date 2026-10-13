@@ -34,6 +34,7 @@ import {
   Store,
   Tv,
   X,
+  Server,
 } from 'lucide-react';
 import { api, fetchMachines } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
@@ -88,6 +89,7 @@ const ROLE_ICONS: Record<DeviceRole, typeof Store> = {
   kds: ChefHat,
   order_status_board: Tv,
   customer_display: Monitor,
+  local_server: Server,
 };
 
 /** קופה / קיוסק / מסך מטבח / מסך מוכן-לא מוכן, each with its one line (`roles`: the ones offered). */
@@ -411,6 +413,15 @@ export function KdsScreenFields({
 /** "מסך — לא קופה": what a display device is, on its row or page. */
 export function DisplayDeviceNote({ m }: { m: Pick<PosMachine, 'fiscal' | 'deviceRole' | 'kdsScreen'> }) {
   const t = useTranslations('machines.deviceRole');
+  if (m.deviceRole === 'local_server') {
+    // "שרת מקומי": not a till, not a screen — the shop's server (P:/specs/dedicated-local-server.md).
+    return (
+      <div className="space-y-1 rounded-md bg-violet-50 p-2 text-xs text-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+        <p className="font-medium">{t('localServerNotTill')}</p>
+        <p>{t('localServerNotTillHint')}</p>
+      </div>
+    );
+  }
   if (isDisplayDevice(m)) {
     return (
       <div className="space-y-1 rounded-md bg-sky-50 p-2 text-xs text-sky-900 dark:bg-sky-950/40 dark:text-sky-200">
@@ -441,6 +452,18 @@ export function DeviceRoleBadge({
   showTill?: boolean;
 }) {
   const t = useTranslations('machines.deviceRole');
+  if (m.deviceRole === 'local_server') {
+    return (
+      <Badge
+        variant="secondary"
+        className="h-4 gap-0.5 bg-violet-100 px-1 text-[10px] font-normal text-violet-900 dark:bg-violet-950 dark:text-violet-200"
+        title={t('localServerNotTillHint')}
+      >
+        <Server className="h-2.5 w-2.5" aria-hidden />
+        {t('badge.local_server')}
+      </Badge>
+    );
+  }
   if (isDisplayDevice(m)) {
     const role = m.deviceRole === 'order_status_board' || m.deviceRole === 'customer_display' ? m.deviceRole : 'kds';
     const Icon = ROLE_ICONS[role];
@@ -603,14 +626,22 @@ function DeviceProfileForm({ machine, onOpenChange }: { machine: PosMachine; onO
   // A display device trades places with the other screen only; a till with a kiosk only —
   // between the two kinds it is a new pairing (the server says so too).
   const display = isDisplayDevice(machine);
-  const currentRole: DeviceRole = display
-    ? machine.deviceRole === 'order_status_board'
-      ? 'order_status_board'
-      : 'kds'
-    : deviceRoleOf(machine.deviceRole) === 'kiosk'
-      ? 'kiosk'
-      : 'till';
-  const roles: readonly DeviceRole[] = display ? ['kds', 'order_status_board'] : ['till', 'kiosk'];
+  // "שרת מקומי" keeps its role (a new pairing makes it anything else); only its model changes here.
+  const server = machine.deviceRole === 'local_server';
+  const currentRole: DeviceRole = server
+    ? 'local_server'
+    : display
+      ? machine.deviceRole === 'order_status_board'
+        ? 'order_status_board'
+        : 'kds'
+      : deviceRoleOf(machine.deviceRole) === 'kiosk'
+        ? 'kiosk'
+        : 'till';
+  const roles: readonly DeviceRole[] = server
+    ? ['local_server']
+    : display
+      ? ['kds', 'order_status_board']
+      : ['till', 'kiosk'];
   const currentModel = deviceModelIdOf(machine.deviceModel);
   const [role, setRole] = useState<DeviceRole>(currentRole);
   const [model, setModel] = useState<DeviceModel | ''>(machine.deviceModel ?? '');

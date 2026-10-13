@@ -50,6 +50,10 @@ export const EXCEPTION_TYPES = [
   'till_replaced',
   // "העברת שרת מקומי" from the cloud (P:/specs/local-server-switch.md): who, from, to, forced or not.
   'local_server_switched',
+  // "גיבוי אוטומטי לשרת המקומי" (P:/specs/dedicated-local-server.md §11.7): the cloud moved it by itself.
+  'local_server_failover',
+  // Its setting changed (on / off, the target, the minutes).
+  'local_server_failover_changed',
   // "סגירת משמרת מהענן": a till not heard for 5 minutes had its shift closed from the cloud.
   'shift_closed_from_cloud',
   // Documents of such a shift that arrived after the close (late documents).
