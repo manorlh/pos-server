@@ -149,6 +149,8 @@ GET /dashboard-access/users/{user_id} -> users:view
 PUT /dashboard-access/users/{user_id} -> users:edit
 GET /dashboard/breakdown -> reports:view
 GET /dashboard/stats -> reports:view
+GET /demo-company -> super_admin
+POST /demo-company/build -> super_admin
 POST /demo-menu/load -> products:edit
 POST /demo-menu/loads/{load_id}/remove -> products:edit
 GET /demo-menu/loads/{load_id}/remove-preview -> products:view

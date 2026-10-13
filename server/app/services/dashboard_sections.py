@@ -355,6 +355,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/notifications/mock-inbox", SUPER_ADMIN),
     ("POST", "/notifications/worker/run-once", SUPER_ADMIN),
     ("PUT", "/shops/{}/work-types", SUPER_ADMIN),
+    # "בניית חברת הדגמה" (app/routers/demo_company.py).
+    (_ALL, "/demo-company*", SUPER_ADMIN),
     # Permissions of the users one manages: the users section (and only what one holds — the router).
     (_ALL, "/dashboard-access/users*", S("users")),
     (_GET, "/dashboard-access/catalog", S("users")),

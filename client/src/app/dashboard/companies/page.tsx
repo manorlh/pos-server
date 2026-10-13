@@ -29,6 +29,7 @@ import {
 import { sameId } from '@/lib/entityLookup';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { CompanyFormDialog } from '@/components/dashboard/company-form-dialog';
+import { DemoCompanyButton } from '@/components/dashboard/demo-company-dialog';
 import { LicenseBadge } from '@/components/dashboard/license-fields';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
 import { ScopeIgnoredNote } from '@/components/dashboard/scope-gate';
@@ -109,15 +110,19 @@ export default function CompaniesPage() {
           <h1 className="text-2xl font-bold">{t('title')}</h1>
           <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
         </div>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setEditOpen(true);
-          }}
-          size="sm"
-        >
-          <Plus className="h-4 w-4 ms-1" /> {t('add')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* "בניית חברת הדגמה": the super admin's only (renders nothing for anyone else). */}
+          <DemoCompanyButton />
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setEditOpen(true);
+            }}
+            size="sm"
+          >
+            <Plus className="h-4 w-4 ms-1" /> {t('add')}
+          </Button>
+        </div>
       </div>
 
       {scopedCompany ? (

@@ -283,6 +283,7 @@ def build_business_info(
         # `businessInfo` override in settings does not change the dealer type
         # (docs/SPEC_BUSINESS_TYPE.md, open question 7).
         dealer_type=dealer_type_of(company),
+        phone=str(bi_override.get("phone") or "").strip() or None,
     )
 
 
