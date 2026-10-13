@@ -3,27 +3,32 @@
 /**
  * Before a save: what changes at this level (before → after, in words), how small the saved
  * layer is, and — at a shop or a point of sale — which of its tills get each change (a till or
- * its point of sale that sets the value itself keeps its own).
+ * its point of sale that sets the value itself keeps its own). Phase 2: next to each till whose
+ * version predates phase 2's templates, "גרסה 0.1.NNN — תציג 'נקי' עד עדכון"; and, for the
+ * visual menu, "רוב המוצרים בלי תמונה — 'מגע גדול' יתאים יותר".
  */
 
 import { useMemo, useState } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ValueView } from '@/components/dashboard/kiosks/review-dialog';
 import {
+  ACCENT_BRAND,
+  AS_BASE,
   actionLabelOf,
   diffConfigs,
   getPath,
+  usesPhase2Template,
   type ActionItem,
   type ConfigChange,
   type TillDesignConfig,
   type TillDesignLayer,
 } from '@/lib/tillDesign';
-import { fetchTillDesignSettings, type TillDesignLevel, type TillDesignTargets } from '@/lib/tillDesignApi';
+import { fetchTillDesignSettings, shownVersion, type TillDesignLevel, type TillDesignTargets } from '@/lib/tillDesignApi';
 
 const MAX_TILLS = 12;
 
@@ -40,6 +45,8 @@ const VOCAB_OF: Record<string, string> = {
   'behavior.summary': 'summary',
   'tables.mapStyle': 'mapStyle',
   'tables.showChairs': 'showChairs',
+  'night.hand': 'nightHand',
+  'visual.dietary': 'visualDietary',
 };
 
 /** A config path in words ("profiles.handheld.template" → "מסופון F20 · תבנית"). */
@@ -52,7 +59,9 @@ export function useTillPathLabel() {
     const parts = path.split('.');
     if (parts[0] === 'profiles' && parts.length >= 3) {
       const key = parts[2];
-      return `${tp.has(parts[1]) ? tp(parts[1]) : parts[1]} · ${key === 'template' ? t('template') : tl.has(key) ? tl(key) : key}`;
+      const where = tp.has(parts[1]) ? tp(parts[1]) : parts[1];
+      if (key === 'actionBar' && parts[3] && t.has(`actionBar.${parts[3]}`)) return `${where} · ${t(`actionBar.${parts[3]}`)}`;
+      return `${where} · ${key === 'template' ? t('template') : tl.has(key) ? tl(key) : key}`;
     }
     if (parts[0] === 'texts' && parts[1]) return `${t('texts')} · ${tx.has(parts[1]) ? tx(parts[1]) : parts[1]}`;
     const head = parts.slice(0, 2).join('.');
@@ -70,10 +79,13 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   const parts = path.split('.');
   const last = parts[parts.length - 1];
   if (value === null || value === undefined) return <span className="text-muted-foreground">{tr('asBase')}</span>;
+  // "כמו הבסיס" / "צבע המותג" over a value the level above set (phase 2 §3.10).
+  if (value === AS_BASE && parts[0] === 'profiles') return <span className="text-muted-foreground">{tr('asBaseOver')}</span>;
+  if (value === ACCENT_BRAND && path === 'colors.accent') return <span className="text-muted-foreground">{tr('brand')}</span>;
   if ((path === 'template' || (parts[0] === 'profiles' && last === 'template')) && typeof value === 'string' && tt.has(`${value}.name`)) {
     return <span>{tt(`${value}.name`)}</span>;
   }
-  if (parts[0] === 'actionBar' && Array.isArray(value)) {
+  if (parts.includes('actionBar') && Array.isArray(value)) {
     if (value.length === 0) return <span className="text-muted-foreground">{tr('auto')}</span>;
     return <span>{(value as ActionItem[]).map((a) => actionLabelOf(a, cfg)).join(' · ')}</span>;
   }
@@ -85,6 +97,8 @@ function TillValue({ path, value, cfg }: { path: string; value: unknown; cfg: Ti
   }
   if (parts[0] === 'fields' && typeof value === 'string' && tf.has(value)) return <span>{tf(value)}</span>;
   if (path.endsWith('columns') && value === 0) return <span>{tr('auto')}</span>;
+  if (path === 'courses.fireGapMinutes' && typeof value === 'number') return <span>{value === 0 ? tr('off') : tr('minutes', { n: value })}</span>;
+  if (path === 'orderNumber.prefix' && value === '') return <span className="text-muted-foreground">{tr('auto')}</span>;
   const vocab = VOCAB_OF[`${parts[0]}.${last}`] ?? VOCAB_OF[last];
   if (vocab && typeof value === 'string' && tv.has(`${vocab}.${value}`)) return <span>{tv(`${vocab}.${value}`)}</span>;
   return <ValueView value={value} />;
@@ -138,6 +152,8 @@ export function ReviewDialog({
   targets,
   saving,
   onConfirm,
+  phase2MinVersion,
+  mostlyWithoutPhotos = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -149,8 +165,13 @@ export function ReviewDialog({
   targets: TillDesignTargets | null;
   saving: boolean;
   onConfirm: () => void;
+  /** The first till version that shows phase 2's templates ("0.1.576"). */
+  phase2MinVersion?: string | null;
+  /** "תפריט ויזואלי" with fewer than 30% of the catalogue photographed. */
+  mostlyWithoutPhotos?: boolean;
 }) {
   const t = useTranslations('tillDesign.review');
+  const tt = useTranslations('tillDesign.templates');
   const label = useTillPathLabel();
   const [showJson, setShowJson] = useState(false);
   const here = useMemo(() => diffConfigs(saved, draft), [saved, draft]);
@@ -179,6 +200,12 @@ export function ReviewDialog({
     })),
   });
   const loading = machineQueries.some((q) => q.isLoading) || areaQueries.some((q) => q.isLoading);
+  // Phase 2's templates where a till reads them: an older till shows "נקי" until it updates.
+  const newTemplates = usesPhase2Template(draft);
+  const oldVersion = (m: { appVersion?: string | null; phase2Templates?: boolean | null }) =>
+    newTemplates.length > 0 && m.phase2Templates === false ? t('oldVersion', { version: shownVersion(m.appVersion) ?? '?' }) : null;
+  const thisTill = level === 'machine' ? targets?.machines.find((m) => m.id === targetId) : undefined;
+  const oldTills = tills.filter((m) => m.phase2Templates === false).length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -193,6 +220,22 @@ export function ReviewDialog({
           <ChangeList changes={here} label={label} cfg={draft} />
           <p className="text-xs text-muted-foreground">{t('layerSize', { n: layerCount })}</p>
         </section>
+
+        {newTemplates.length > 0 ? (
+          <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            <p className="flex items-center gap-1.5 font-medium">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {t('phase2Note', { templates: newTemplates.map((x) => tt(`${x}.name`)).join(', '), version: phase2MinVersion ?? '' })}
+            </p>
+            {thisTill && oldVersion(thisTill) ? <p>{`${thisTill.name}: ${oldVersion(thisTill)}`}</p> : null}
+            {oldTills > 0 && (level === 'shop' || level === 'area') ? <p>{t('oldTills', { n: oldTills })}</p> : null}
+          </div>
+        ) : null}
+        {mostlyWithoutPhotos ? (
+          <p className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+            <AlertTriangle className="h-3.5 w-3.5" /> {t('mostlyWithoutPhotos')}
+          </p>
+        ) : null}
 
         {level === 'company' ? <p className="text-sm text-muted-foreground">{t('companyScope')}</p> : null}
         {level === 'shop' || level === 'area' ? (
@@ -230,6 +273,7 @@ export function ReviewDialog({
                       {known && kept.length > 0 ? (
                         <p className="mt-1 text-xs text-muted-foreground">{t('keepsOwn', { list: kept.map((c) => label(c.path)).join(' · ') })}</p>
                       ) : null}
+                      {oldVersion(m) ? <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">{oldVersion(m)}</p> : null}
                     </li>
                   );
                 })}

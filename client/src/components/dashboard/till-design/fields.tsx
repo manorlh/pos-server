@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
-import { getPath } from '@/lib/tillDesign';
+import { asBaseValue, getPath, isSet } from '@/lib/tillDesign';
 import { Segmented, type SegmentOption } from '@/components/dashboard/kiosks/fields';
 import { sameSetting, useFieldErrors, useTillEditor, useTillField } from './editor-context';
 
@@ -144,48 +144,66 @@ export function SegmentField<V extends string>({
   label,
   hint,
   options,
+  valueAsNumber = false,
 }: {
   path: string;
   label: ReactNode;
   hint?: ReactNode;
   options: SegmentOption<V>[];
+  /** The value is a number (`visual.descriptionLines`); the options carry it as text. */
+  valueAsNumber?: boolean;
 }) {
-  const f = useTillField<V>(path);
-  return (
-    <FieldShell path={path} label={label} hint={hint}>
-      <Segmented value={f.value} options={options} onChange={f.set} disabled={f.disabled} ariaLabel={String(label)} />
-    </FieldShell>
-  );
-}
-
-/** A value that may be null ("כמו הבסיס") — a profile's override; `null` stands as the "" option. */
-export function NullableSegmentField<V extends string>({
-  path,
-  label,
-  hint,
-  nullLabel,
-  options,
-}: {
-  path: string;
-  label: ReactNode;
-  hint?: ReactNode;
-  nullLabel: string;
-  options: SegmentOption<V>[];
-}) {
-  const f = useTillField<V | null>(path);
-  const all: SegmentOption<string>[] = [{ value: '', label: nullLabel }, ...options];
+  const f = useTillField<V | number>(path);
   return (
     <FieldShell path={path} label={label} hint={hint}>
       <Segmented
-        value={f.value ?? ''}
-        options={all}
-        onChange={(v) => f.set(v === '' ? null : (v as V))}
+        value={String(f.value) as V}
+        options={options}
+        onChange={(v) => f.set(valueAsNumber ? Number(v) : v)}
         disabled={f.disabled}
         ariaLabel={String(label)}
       />
     </FieldShell>
   );
 }
+
+/**
+ * A profile's override: "כמו הבסיס" (the "" option) or one of the values. "כמו הבסיס" saves
+ * null (inherit), or "base" when the level above set the value itself — "כמו הבסיס (גם אם
+ * נקבע ברמה שמעל)" (phase 2 §3.10).
+ */
+export function NullableSegmentField<V extends string>({
+  path,
+  label,
+  hint,
+  nullLabel,
+  nullOverLabel,
+  options,
+}: {
+  path: string;
+  label: ReactNode;
+  hint?: ReactNode;
+  nullLabel: string;
+  /** The "" option's words when the level above set the value. */
+  nullOverLabel?: string;
+  options: SegmentOption<V>[];
+}) {
+  const f = useTillField<V | null>(path);
+  const over = isSet(f.inheritedValue);
+  const all: SegmentOption<string>[] = [{ value: '', label: over && nullOverLabel ? nullOverLabel : nullLabel }, ...options];
+  return (
+    <FieldShell path={path} label={label} hint={hint}>
+      <Segmented
+        value={isSet(f.value) ? (f.value as string) : ''}
+        options={all}
+        onChange={(v) => f.set(v === '' ? (asBaseValue(f.inheritedValue) as V | null) : (v as V))}
+        disabled={f.disabled}
+        ariaLabel={String(label)}
+      />
+    </FieldShell>
+  );
+}
+
 
 export function SwitchField({ path, label, hint }: { path: string; label: ReactNode; hint?: ReactNode }) {
   const f = useTillField<boolean>(path);

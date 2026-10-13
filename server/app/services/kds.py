@@ -38,6 +38,7 @@ The rules, in one place:
 """
 from __future__ import annotations
 
+import re
 import secrets
 import types
 import uuid
@@ -1558,8 +1559,58 @@ def public_pickup(db: Session, token: str) -> Dict[str, Any]:
     return {"shopName": shop.name if shop else None, "version": state.version, **pickup_board(db, state.shop_id)}
 
 
-def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[str]) -> Dict[str, Any]:
-    """The till's badges: per source ref, where the kitchen is with it."""
+#: A remake's line key: the line's own with "~r<n>" (`remake`): the same line on the till.
+_REMAKE_SUFFIX = re.compile(r"~r\d+$")
+
+
+def line_states(tasks: Sequence[KitchenTask]) -> List[Dict[str, Any]]:
+    """
+    "מוכן" per order line (till design phase 2 §2.1, "לוח מנות": "מוכן 3/4" on a course's lane):
+    the order's tasks of each `line_key` ("<cart line id>:<component>"; a remake counts with its
+    line) that are still active, as one state —
+
+        ready      every released one is ready (`readyAt`: the last of them)
+        preparing  one is being prepared, or some are ready and some not
+        queued     released, none started
+        held       none released yet (the course is held)
+
+    The required tasks only, when the line has any (an expo or info target never holds it up).
+    Sorted by line key.
+    """
+    by_line: Dict[str, List[KitchenTask]] = {}
+    for t in tasks:
+        if active_qty(t) <= ZERO or not t.line_key:
+            continue
+        by_line.setdefault(_REMAKE_SUFFIX.sub("", t.line_key), []).append(t)
+    out: List[Dict[str, Any]] = []
+    for key in sorted(by_line):
+        group = by_line[key]
+        required = [t for t in group if t.required]
+        group = required or group
+        released = [t for t in group if t.release_state == "released"]
+        ready_at = None
+        if not released:
+            state = "held"
+        elif all(t.prep_state == "ready" for t in released):
+            state = "ready"
+            stamps = [as_utc(t.ready_at) for t in released if t.ready_at is not None]
+            ready_at = _iso(max(stamps)) if stamps else None
+        elif any(t.prep_state in ("preparing", "ready") for t in released):
+            state = "preparing"
+        else:
+            state = "queued"
+        out.append({"lineKey": key, "state": state, "readyAt": ready_at})
+    return out
+
+
+def order_states(
+    db: Session, machine: POSMachine, source: str, refs: Sequence[str], *, with_lines: bool = False
+) -> Dict[str, Any]:
+    """
+    The till's badges: per source ref, where the kitchen is with it. `with_lines` (the till asks
+    `?lines=1` — "לוח מנות" while its screen is open) adds each order's `lines` (`line_states`);
+    without it the answer is as it always was.
+    """
     refs = [r for r in refs if r][:200]
     if not refs or machine.shop_id is None:
         return {"orders": {}}
@@ -1589,6 +1640,8 @@ def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[s
             "preparing": len([t for t in req if t.prep_state == "preparing"]),
             "held": len([t for t in tasks.get(order.id, []) if t.release_state == "hold" and active_qty(t) > ZERO]),
         }
+        if with_lines:
+            out[order.source_ref]["lines"] = line_states(tasks.get(order.id, []))
     return {"orders": out}
 
 

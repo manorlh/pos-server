@@ -4,15 +4,20 @@
 Till (`get_pos_machine_for_sync_path`: the machine token, path machine = token machine):
 
 GET  /sync/{machine_id}/till-design     the effective design (company → shop → area → till),
-                                        `{schemaVersion, configVersion, config, updatedAt}`;
-                                        ETag = configVersion, 304 on If-None-Match
+                                        `{schemaVersion, configVersion, config, updatedAt,
+                                        orderNumberPrefix}`; ETag = configVersion (with the
+                                        till's order-number prefix, when it has one), 304 on
+                                        If-None-Match
 
 Dashboard (Clerk; read and write: super admin, distributor (own tills), company manager
 (company tree), shop manager (own shop, its points of sale and tills) — never a cashier or a
 shift supervisor; the company layer is not a shop manager's):
 
-GET  /till-design/defaults              `{defaults, catalog}` (vocabularies, templates, profiles)
+GET  /till-design/defaults              `{defaults, catalog, phase2MinVersion}` (vocabularies,
+                                        templates, profiles; the first till version that shows
+                                        phase 2's templates)
 GET  /till-design/targets?shopId=       the shop's points of sale and tills, for the level pickers
+                                        (each till's version and whether it shows phase 2)
 GET  /till-design/settings?level=company|shop|area|machine&id=
 PUT  /till-design/settings?level=&id=   `{overrides}` — replaces that level's partial layer
 """
@@ -76,7 +81,7 @@ def get_till_design_sync(
     `settings` notify with reason `till_design_updated`); a bare 304 when unchanged.
     """
     bundle = design.sync_bundle(db, machine)
-    etag = f'"{bundle["configVersion"]}"'
+    etag = design.bundle_etag(bundle)
     if request is not None and request.headers.get("if-none-match") == etag:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
     return JSONResponse(content=bundle, headers={"ETag": etag})
@@ -260,7 +265,11 @@ def publish_design_notify(targets) -> None:
 @router.get("/defaults")
 def get_defaults(current_user: User = Depends(get_current_user)):
     access.require_kiosk_role(current_user)
-    return {"defaults": design.default_config(), "catalog": design.catalog()}
+    return {
+        "defaults": design.default_config(),
+        "catalog": design.catalog(),
+        "phase2MinVersion": design.phase2_min_version(),
+    }
 
 
 @router.get("/targets")
@@ -270,7 +279,11 @@ def get_targets(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """The shop's points of sale (not archived) and active tills, for the area / till pickers."""
+    """
+    The shop's points of sale (not archived) and active tills, for the area / till pickers —
+    each till with its version (`appVersion`, as it reported it) and `phase2Templates`: whether
+    it shows phase 2's templates (false: it shows "נקי" until it updates; null: unknown).
+    """
     scope = resolve_scope(db, current_user, "shop", shop_id, active_tenant_id)
     areas = (
         db.query(ShopArea)
@@ -294,6 +307,8 @@ def get_targets(
                 "areaId": str(m.area_id) if getattr(m, "area_id", None) else None,
                 "areaName": names.get(getattr(m, "area_id", None)),
                 "deviceModel": getattr(m, "device_model", None),
+                "appVersion": getattr(m, "app_version", None),
+                "phase2Templates": design.shows_phase2(m),
             }
             for m in machines
         ],

@@ -3,8 +3,12 @@
 docs/SPEC_TILL_DESIGN.md).
 
 * The schema: the defaults validate and ARE today's screens (template clean, every overlap
-  "auto"); strict validation with paths and stable codes (phase-2 templates refused, the
+  "auto"); strict validation with paths and stable codes (an unknown template refused, the
   action bars keep pay / send, presets keep 1…).
+* Phase 2 (P:\\specs\\till-design-phase2.md): the four templates and their rows, a profile's own
+  bars, "base" / "brand", the new sections and buttons, the till parameters "מנות בשולחן" and
+  "סימוני תזונה" in `legacy`, each till's version and whether it shows phase 2, the order-number
+  prefix in the sync payload.
 * The shared contract (tests/fixtures/till_design_contract.json, same bytes in pos-android):
   this implementation reproduces every case — `for_profile`, merges, banknotes, the legacy
   quick-pay mapping, validation, defaults and the template table.
@@ -143,7 +147,15 @@ def test_defaults_validate_and_are_todays_screens():
     assert cfg["fields"] == {"customerName": "auto", "serviceType": "auto", "guests": "auto"}
     assert cfg["colors"] == {"accent": None, "mode": "auto"}
     assert cfg["tables"] == {"mapStyle": "auto", "showChairs": "auto"}
-    assert all(v is None for p in T.PROFILES for v in cfg["profiles"][p].values())
+    for p in T.PROFILES:
+        over = cfg["profiles"][p]
+        assert all(over[k] is None for k in T.PROFILE_FIELDS)
+        assert over["actionBar"] == {"table": None, "quick": None}
+    # Phase 2's sections: nothing new shows until it is chosen.
+    assert cfg["bar"]["openTabs"] is False
+    assert cfg["courses"] == {"fireGapMinutes": 0, "autoFireFirst": True}
+    assert cfg["orderNumber"] == {"atOpen": False, "prefix": ""}
+    assert cfg["professional"] == {"keyboard": False, "fKeys": False}
 
 
 def test_default_view_per_profile_is_todays_layout():
@@ -161,14 +173,20 @@ def test_default_view_per_profile_is_todays_layout():
 
 
 def test_every_template_has_a_complete_row():
+    assert set(T.TEMPLATE_DEFAULTS) == set(T.TEMPLATES)
     for template in T.TEMPLATES:
         row = T.TEMPLATE_DEFAULTS[template]
-        assert row["tileStyle"] in T.TILE_STYLES and row["tileStyle"] != "auto"
+        assert row["tileStyle"] in T.TILE_STYLES + T.TEMPLATE_TILE_STYLES and row["tileStyle"] != "auto"
         for mode in T.MODES:
             assert set(row["billPosition"][mode]) == set(T.PROFILES)
+            assert set(row["billPosition"][mode].values()) <= set(T.BILL_POSITIONS + T.TEMPLATE_BILL_POSITIONS) - {"auto"}
         assert row["tableActions"][0] == "send"
         assert set(row["tableActions"]) <= set(T.TABLE_ACTIONS)
-    assert not set(T.PHASE2_TEMPLATES) & set(T.TEMPLATES)
+        assert not row["quickActions"] or "pay" in row["quickActions"]
+        assert set(row["quickActions"]) <= set(T.QUICK_ACTIONS)
+    # "להסתיר את מה שעוד לא בנוי" (decision 1): nothing refused as "בקרוב" any more.
+    assert T.PHASE2_TEMPLATES == ()
+    assert set(T.PHASE2_NEW_TEMPLATES) <= set(T.TEMPLATES)
 
 
 def test_profile_overrides_and_handheld_never_has_a_side_panel():
@@ -192,7 +210,9 @@ def test_aliases_and_phase2_read_as_a_template_on_the_wire():
     assert T.canonical_template("classic") == "clean"
     assert T.canonical_template("nightBar") == "fast"
     assert T.canonical_template("seats") == "seated"
-    assert T.canonical_template("courses") == "clean"
+    assert T.canonical_template("courses") == "courses"
+    assert T.canonical_template("fancy") == "clean"
+    assert T.canonical_template("base") == "clean"
     assert T.canonical_template(None) == "clean"
 
 
@@ -202,9 +222,21 @@ def test_aliases_and_phase2_read_as_a_template_on_the_wire():
 @pytest.mark.parametrize(
     "layer,path,code",
     [
-        ({"template": "visual"}, "template", "template_not_available"),
-        ({"profiles": {"handheld": {"template": "payDock"}}}, "profiles.handheld.template", "template_not_available"),
         ({"template": "fancy"}, "template", "invalid_value"),
+        ({"profiles": {"handheld": {"template": "fancy"}}}, "profiles.handheld.template", "invalid_value"),
+        ({"layout": {"tileSize": "base"}}, "layout.tileSize", "invalid_value"),
+        ({"layout": {"tileStyle": "dish"}}, "layout.tileStyle", "invalid_value"),
+        ({"profiles": {"tabletLandscape": {"billPosition": "drawer"}}}, "profiles.tabletLandscape.billPosition", "invalid_value"),
+        ({"profiles": {"handheld": {"actionBar": {"quick": [{"action": "cashNotes"}]}}}},
+         "profiles.handheld.actionBar.quick", "action_bar_missing_pay"),
+        ({"profiles": {"handheld": {"actionBar": {"table": [{"action": "send"}, {"action": "send"}]}}}},
+         "profiles.handheld.actionBar.table[1]", "duplicate"),
+        ({"actionBar": {"quick": [{"action": "pay"}, {"action": "fire"}]}}, "actionBar.quick[1].action", "invalid_value"),
+        ({"courses": {"fireGapMinutes": 4}}, "courses.fireGapMinutes", "out_of_range"),
+        ({"night": {"hand": "both"}}, "night.hand", "invalid_value"),
+        ({"visual": {"descriptionLines": 5}}, "visual.descriptionLines", "invalid_value"),
+        ({"orderNumber": {"prefix": "2-"}}, "orderNumber.prefix", "invalid_format"),
+        ({"colors": {"accent": "base"}}, "colors.accent", "invalid_color"),
         ({"actionBar": {"quick": [{"action": "cashNotes"}]}}, "actionBar.quick", "action_bar_missing_pay"),
         ({"actionBar": {"table": [{"action": "bill"}]}}, "actionBar.table", "action_bar_missing_send"),
         ({"actionBar": {"quick": [{"action": "pay"}, {"action": "pay"}]}}, "actionBar.quick[1]", "duplicate"),
@@ -237,12 +269,18 @@ def test_a_layer_drops_nulls_and_empty_objects():
 
 def test_a_stored_layer_that_no_longer_validates_is_sanitised():
     stored = {
-        "template": "courses",  # phase 2: refused on save, but a script could have put it there
+        "template": "fancy",  # refused on save, but a script could have put it there
         "actionBar": {"quick": [{"action": "fastCard"}]},  # lost its "pay"
         "bar": {"quantityPresets": [2, 3]},
         "layout": {"density": "compact"},
+        # A profile's bar that lost its "send": back to the base's bar, the profile kept.
+        "profiles": {"handheld": {"actionBar": {"table": [{"action": "bill"}]}, "density": "spacious"},
+                     "tabletPortrait": {"actionBar": {"table": [{"action": "bill"}]}}},
     }
-    assert T.sanitize_stored_layer(stored) == {"layout": {"density": "compact"}}
+    assert T.sanitize_stored_layer(stored) == {
+        "layout": {"density": "compact"},
+        "profiles": {"handheld": {"density": "spacious"}},
+    }
     assert T.sanitize_stored_layer("junk") == {}
 
 
@@ -338,11 +376,11 @@ def test_a_save_replaces_the_layer(w):
 
 
 def test_invalid_layer_is_a_422_with_paths(w):
-    err = refused(put, w, "shop", w.shop.id, {"template": "night", "actionBar": {"table": [{"action": "bill"}]}})
+    err = refused(put, w, "shop", w.shop.id, {"template": "fancy", "actionBar": {"table": [{"action": "bill"}]}})
     assert err.status_code == 422
     assert err.detail["code"] == "invalid_till_design"
     codes = {(e["path"], e["code"]) for e in err.detail["errors"]}
-    assert ("template", "template_not_available") in codes
+    assert ("template", "invalid_value") in codes
     assert ("actionBar.table", "action_bar_missing_send") in codes
     assert w.db.query(TillDesignSettings).count() == 0
 
@@ -390,7 +428,8 @@ def test_defaults_endpoint(w):
     out = R.get_defaults(current_user=w.manager)
     assert out["defaults"] == T.default_config()
     assert out["catalog"]["templates"] == list(T.TEMPLATES)
-    assert out["catalog"]["phase2Templates"] == list(T.PHASE2_TEMPLATES)
+    assert out["catalog"]["phase2Templates"] == []
+    assert out["phase2MinVersion"] == f"0.1.{T.PHASE2_MIN_VERSION_CODE}"
     assert refused(R.get_defaults, current_user=w.cashier).status_code == 403
 
 
@@ -404,6 +443,7 @@ def test_a_till_with_nothing_set_gets_the_defaults(w, contract):
     assert body["config"] == T.default_config()
     assert body["configVersion"] == contract["defaultsVersion"]
     assert body["updatedAt"] is None
+    assert body["orderNumberPrefix"] == ""
     assert response.headers["ETag"] == f'"{body["configVersion"]}"'
 
 
@@ -424,7 +464,7 @@ def test_etag_and_304(w):
 def test_a_stored_bad_layer_never_reaches_a_till(w):
     w.db.add(TillDesignSettings(
         id=uuid.uuid4(), tenant_id=w.tenant.id, level="machine", machine_id=w.counter_till.id,
-        overrides={"template": "visual", "layout": {"tileSize": "huge", "density": "compact"}, "junk": True},
+        overrides={"template": "fancy", "layout": {"tileSize": "huge", "density": "compact"}, "junk": True},
     ))
     w.db.commit()
     cfg = body_of(sync(w, w.counter_till))["config"]
@@ -438,6 +478,160 @@ def test_a_save_notifies_the_tills_it_reaches(w):
     w.notified.clear()
     put_and_run(w, "shop", w.shop.id, {"template": "touch"})
     assert sorted(w.notified) == sorted([(str(t.id), "till_design_updated") for t in w.tills])
+
+
+# ── Phase 2 (P:\specs\till-design-phase2.md) ─────────────────────────────────────
+
+
+def test_the_four_templates_save_and_settle_per_profile():
+    for template in T.PHASE2_NEW_TEMPLATES:
+        layer, errors = T.validate_layer({"template": template, "profiles": {"handheld": {"template": template}}})
+        assert errors == [] and layer["template"] == template
+    cfg = T.default_config()
+    # "לוח מנות": lanes, "הוצא הבא" on the table bar; the side bill as the spec's table.
+    courses = T.for_profile({**cfg, "template": "courses"}, "tabletLandscape")
+    assert courses["billStyle"] == "courses" and courses["features"] == ["courseLanes"]
+    assert [a["action"] for a in courses["actions"]["table"]] == ["send", "fire", "bill"]
+    assert courses["billPosition"] == {"table": "end", "quick": "end"}
+    # "עגינת תשלום": its own quick "auto" is in its row; the view still leaves it to the till.
+    dock = T.for_profile({**cfg, "template": "payDock"}, "tabletPortrait")
+    assert dock["actions"]["quick"] == [] and dock["features"] == ["payDock", "selectedLine"]
+    assert T.TEMPLATE_DEFAULTS["payDock"]["quickActions"] == ["fastCard", "fastCash", "cashNotes", "pay"]
+    # "לילה": dark, large text, no images — whatever the layout says.
+    night_cfg = T.resolve({"template": "night", "layout": {"images": "show", "textSize": "normal"}})
+    night = T.for_profile(night_cfg, "tabletLandscape")
+    assert night["images"] == "hide" and night["textSize"] == "large" and night["tileStyle"] == "key"
+    assert "quickAddons" in night["features"] and "thumbs" in night["features"]
+    # "תפריט ויזואלי": dish cards and the floating drawer; the handheld keeps its summary bar.
+    visual = {p: T.for_profile({**cfg, "template": "visual"}, p) for p in T.PROFILES}
+    assert visual["tabletLandscape"]["tileStyle"] == "dish"
+    assert visual["tabletLandscape"]["billPosition"] == {"table": "drawer", "quick": "drawer"}
+    assert visual["handheld"]["billPosition"] == {"table": "bottom", "quick": "bottom"}
+
+
+def test_a_profiles_own_action_bar():
+    layer, errors = T.validate_layer({
+        "template": "fast",
+        "actionBar": {"table": [{"action": "send"}, {"action": "bill"}, {"action": "split"}]},
+        "profiles": {
+            "handheld": {"actionBar": {"table": [{"action": "send"}, {"action": "fire", "label": "הוצא"}]}},
+            "tabletPortrait": {"actionBar": {"table": []}},
+            "tabletLandscape": {"actionBar": {"table": "base", "quick": None}},
+        },
+    })
+    assert errors == []
+    assert layer["profiles"]["tabletLandscape"] == {"actionBar": {"table": "base"}}
+    cfg = T.resolve(layer)
+    actions = {p: [a["action"] for a in T.for_profile(cfg, p)["actions"]["table"]] for p in T.ANDROID_PROFILES}
+    assert actions == {
+        "handheld": ["send", "fire"],  # "במסופון 3 כפתורים, ובטאבלט 6"
+        "tabletPortrait": ["send", "repeatRound", "bill"],  # [] = the template's "auto"
+        "tabletLandscape": ["send", "bill", "split"],  # "base" = the base's bar
+    }
+    assert T.for_profile(cfg, "handheld")["actions"]["table"][1]["label"] == "הוצא"
+    # The new buttons: the table's tenders and "הוצא הבא"; a quick order's "עוד סבב".
+    _l, errors = T.validate_layer({"actionBar": {
+        "table": [{"action": a} for a in ("send", "fire", "cashWithChange", "cashNotes", "fastCash", "fastCard")],
+        "quick": [{"action": "repeatRound"}, {"action": "pay"}],
+    }})
+    assert errors == []
+
+
+def test_as_base_undoes_a_parents_value(w):
+    """§3.10: "כמו הבסיס (גם אם נקבע ברמה שמעל)" — a till takes back what its shop set."""
+    put(w, "shop", w.shop.id, {
+        "template": "touch",
+        "profiles": {"handheld": {"template": "mobile", "tileSize": "l", "columns": 3}},
+        "colors": {"accent": "#1663D6"},
+    })
+    view = put(w, "machine", w.bar_till.id, {
+        "profiles": {"handheld": {"template": "base", "tileSize": "base", "columns": None}},
+        "colors": {"accent": "brand"},
+    })
+    eff = view["effective"]
+    assert eff["profiles"]["handheld"]["template"] == "base" and eff["profiles"]["handheld"]["columns"] == 3
+    assert eff["colors"]["accent"] == "brand"
+    hand = T.for_profile(eff, "handheld")
+    assert hand["template"] == "touch" and hand["tileSize"] == "auto" and hand["columns"] == 3
+    # What the till receives is that same config; the other till keeps the shop's values.
+    assert body_of(sync(w, w.bar_till))["config"] == eff
+    counter = body_of(sync(w, w.counter_till))["config"]
+    assert T.for_profile(counter, "handheld")["template"] == "mobile" and counter["colors"]["accent"] == "#1663D6"
+    # "base" never in the base layout, "brand" only in the accent.
+    assert refused(put, w, "machine", w.bar_till.id, {"layout": {"density": "base"}}).status_code == 422
+
+
+def test_phase2_sections_validate_and_merge():
+    layer, errors = T.validate_layer({
+        "courses": {"fireGapMinutes": 10, "autoFireFirst": False},
+        "payDock": {"savings": False},
+        "night": {"hand": "left", "quickAddons": False},
+        "visual": {"descriptionLines": 0, "dietary": "hide"},
+        "professional": {"keyboard": True, "fKeys": True},
+        "orderNumber": {"atOpen": True, "prefix": "ב2"},
+        "bar": {"openTabs": True},
+    })
+    assert errors == []
+    cfg = T.resolve(layer)
+    assert T.validate_config(cfg) == []
+    assert cfg["bar"] == {"quantityPresets": [1, 2, 3, 5], "favorites": [], "repeatRound": True, "openTabs": True}
+    assert cfg["courses"]["fireGapMinutes"] == 10 and cfg["night"]["hand"] == "left"
+    for gap in (0, 5, 60):
+        assert T.validate_layer({"courses": {"fireGapMinutes": gap}})[1] == []
+    for gap in (1, 4, 61):
+        assert [e.code for e in T.validate_layer({"courses": {"fireGapMinutes": gap}})[1]] == ["out_of_range"]
+
+
+def test_legacy_has_courses_and_dietary_marks(w):
+    assert get(w, "shop", w.shop.id)["legacy"]["coursesEnabled"] is False
+    set_param(w, "coursesEnabled", True, "shop", w.shop.id)
+    set_param(w, "showDietaryMarks", True, "area", w.area.id)
+    shop = get(w, "shop", w.shop.id)["legacy"]
+    assert shop["coursesEnabled"] is True and shop["showDietaryMarks"] is False
+    assert get(w, "machine", w.bar_till.id)["legacy"]["showDietaryMarks"] is True
+
+
+def test_targets_say_which_tills_show_phase2(w):
+    w.bar_till.app_version = f"0.1.{T.PHASE2_MIN_VERSION_CODE}+abc1234-device"
+    w.counter_till.app_version = "0.1.552+b6e07db"
+    w.db.commit()
+    out = R.get_targets(shop_id=w.shop.id, current_user=w.manager, active_tenant_id=w.tenant.id, db=w.db)
+    by_name = {m["name"]: m for m in out["machines"]}
+    assert by_name["Till 1"]["phase2Templates"] is True
+    assert by_name["Till 2"]["phase2Templates"] is False and by_name["Till 2"]["appVersion"] == "0.1.552+b6e07db"
+    # The first build that ships the till side: 0.1.576 (integration/2026-10-13 @ 9baed71b).
+    assert T.PHASE2_MIN_VERSION_CODE == 576
+    w.counter_till.app_version = "0.1.575+aaaaaaa-device"
+    assert T.shows_phase2(w.counter_till) is False
+    w.counter_till.app_version = "0.1.576+9baed71-device"
+    assert T.shows_phase2(w.counter_till) is True
+    # Never said, or not an Android till: unknown.
+    w.counter_till.app_version = None
+    assert T.shows_phase2(w.counter_till) is None
+    w.counter_till.app_version, w.counter_till.platform = "0.4.2", "windows"
+    assert T.shows_phase2(w.counter_till) is None
+
+
+def test_the_order_number_prefix_is_the_tills_own(w):
+    # Off: no prefix, and the ETag stays the config version.
+    first = sync(w, w.bar_till)
+    assert body_of(first)["orderNumberPrefix"] == "" and first.headers["ETag"] == f'"{body_of(first)["configVersion"]}"'
+    # "auto": the till's register number, the shop having two tills.
+    put(w, "shop", w.shop.id, {"orderNumber": {"atOpen": True}})
+    bar, counter = sync(w, w.bar_till), sync(w, w.counter_till)
+    assert body_of(bar)["orderNumberPrefix"] == w.bar_till.pos_number
+    assert body_of(counter)["orderNumberPrefix"] == w.counter_till.pos_number
+    assert bar.headers["ETag"] != counter.headers["ETag"]
+    assert sync(w, w.bar_till, bar.headers["ETag"]).status_code == 304
+    # One till left in the shop: no prefix.
+    w.counter_till.is_active = False
+    w.db.commit()
+    assert body_of(sync(w, w.bar_till))["orderNumberPrefix"] == ""
+    # A prefix of its own (Hebrew too: the ETag stays ASCII).
+    put(w, "machine", w.bar_till.id, {"orderNumber": {"prefix": "ב"}})
+    own = sync(w, w.bar_till)
+    assert body_of(own)["orderNumberPrefix"] == "ב"
+    own.headers["ETag"].encode("ascii")
 
 
 # ── The migration ─────────────────────────────────────────────────────────────

@@ -3,16 +3,17 @@
 /**
  * "עיצוב קופה" — the till design at one level (company → shop → point of sale → till), every
  * field marked "עובר בירושה" or "נקבע כאן" with a reset, the device profile being designed
- * (the F20 handheld, a tablet sideways or upright, the iPad sizes; Windows later), the live
- * preview beside the form, and the review of the changes before a save. The saved layer is the
- * minimal one: only what differs from what the level inherits.
+ * (the F20 handheld, a tablet sideways or upright, the iPad sizes), the live preview beside the
+ * form, and the review of the changes before a save. The saved layer is the minimal one: only
+ * what differs from what the level inherits. The Windows profile is not built yet and is not
+ * shown (the owner: "להסתיר את מה שעוד לא בנוי", P:\specs\till-design-phase2.md decision 1).
  */
 
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { AlertTriangle, Building2, Eye, EyeOff, MapPin, Monitor, Smartphone, Store, Tablet } from 'lucide-react';
+import { AlertTriangle, Building2, Eye, EyeOff, Info, MapPin, Monitor, Smartphone, Store, Tablet } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,10 +26,13 @@ import {
   cloneJson,
   deepMerge,
   diffConfigs,
+  forProfile,
   getPath,
+  imageCoverage,
   jsonEqual,
   pruneOverrides,
   setPath,
+  templatesInUse,
   validateTillDesign,
   type Mode,
   type Profile,
@@ -47,6 +51,7 @@ import {
   type TillDesignSettings,
   type TillDesignTargets,
 } from '@/lib/tillDesignApi';
+import { fetchCourses } from '@/lib/menuApi';
 import { TillEditorContext, useIssueText, type TillEditorValue } from './editor-context';
 import { OptionSelect, Segmented } from './fields';
 import { ReviewDialog } from './review-dialog';
@@ -56,24 +61,25 @@ import { LayoutSection } from './section-layout';
 import { LookSection } from './section-look';
 import { MenuSection } from './section-menu';
 import { TemplateSection } from './section-template';
+import { CoursesOffNote, CoverageSummary } from './section-template-options';
 import { TillPreview } from './till-preview';
 
 type SectionKey = 'template' | 'layout' | 'menu' | 'actions' | 'look' | 'fields';
 
 const SECTIONS: { key: SectionKey; paths: string[] }[] = [
-  { key: 'template', paths: ['template', 'profiles'] },
+  { key: 'template', paths: ['template', 'profiles', 'courses', 'payDock', 'night', 'visual', 'professional', 'bar.openTabs'] },
   { key: 'layout', paths: ['layout', 'profiles'] },
   { key: 'menu', paths: ['menu', 'bar.favorites'] },
-  { key: 'actions', paths: ['actionBar', 'quickCash', 'bar'] },
+  { key: 'actions', paths: ['actionBar', 'quickCash', 'bar.quantityPresets', 'bar.repeatRound'] },
   { key: 'look', paths: ['colors', 'texts'] },
-  { key: 'fields', paths: ['fields', 'tables', 'behavior'] },
+  { key: 'fields', paths: ['fields', 'tables', 'behavior', 'orderNumber'] },
 ];
 
 /** Who may write a level (the server's machine-admin set, then its scope check). */
 export const COMPANY_WRITERS = ['super_admin', 'distributor', 'company_manager'];
 export const SHOP_WRITERS = [...COMPANY_WRITERS, 'shop_manager'];
 
-/** The profile switcher's order, and Windows ("בקרוב", not in the schema). */
+/** The profile switcher's order (Windows is not built yet: not shown). */
 const PROFILE_ICONS: Record<Profile, ReactNode> = {
   handheld: <Smartphone className="h-4 w-4" />,
   tabletLandscape: <Tablet className="h-4 w-4 rotate-90" />,
@@ -95,9 +101,13 @@ interface EditorBodyProps {
   catalogMachineId: string | null;
   targets: TillDesignTargets | null;
   dirtyRef: MutableRefObject<boolean>;
+  /** The first till version that shows phase 2's templates (the server's constant). */
+  phase2MinVersion?: string | null;
+  /** The company whose courses ("שלבי הגשה") the courses board shows. */
+  companyId?: string | null;
 }
 
-export function EditorBody({ level, targetId, settings, base, canEdit, catalogMachineId, targets, dirtyRef }: EditorBodyProps) {
+export function EditorBody({ level, targetId, settings, base, canEdit, catalogMachineId, targets, dirtyRef, phase2MinVersion, companyId }: EditorBodyProps) {
   const t = useTranslations('tillDesign.settings');
   const tp = useTranslations('tillDesign.profiles');
   const tm = useTranslations('tillDesign.mode');
@@ -136,6 +146,19 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
     retry: false,
   });
   const catalog = catalogQuery.data ?? null;
+  const used = useMemo(() => templatesInUse(draft), [draft]);
+  // "לוח מנות": the company's courses, when the template is in use (else the sample's names).
+  const coursesQuery = useQuery({ queryKey: ['menu-courses'], queryFn: fetchCourses, enabled: used.includes('courses'), staleTime: 5 * 60_000, retry: false });
+  const courseNames = useMemo(() => {
+    const data = coursesQuery.data;
+    if (!data) return [];
+    const group = data.groups?.find((g) => g.companyId === companyId) ?? data.groups?.find((g) => g.companyId === null);
+    const list = group?.courses ?? data.items ?? [];
+    return list.filter((c) => c.isActive).sort((a, b) => a.sortOrder - b.sortOrder).map((c) => c.name);
+  }, [coursesQuery.data, companyId]);
+  const view = forProfile(draft, profile);
+  // "תפריט ויזואלי": fewer than 30% of the catalogue photographed — said again before a save.
+  const mostlyWithoutPhotos = used.includes('visual') && !!catalog && catalog.products.length > 0 && imageCoverage(catalog.categories, catalog.products).mostlyWithout;
 
   const save = useMutation({
     mutationFn: () => saveTillDesignSettings(level, targetId, layer),
@@ -232,12 +255,6 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
                 {PROFILE_ICONS[p]} {tp(p)}
               </button>
             ))}
-            <span aria-disabled className="flex cursor-not-allowed items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground/70">
-              <Monitor className="h-4 w-4" /> {tp('windows')}
-              <Badge variant="outline" className="ms-1">
-                {t('soon')}
-              </Badge>
-            </span>
           </div>
         </div>
 
@@ -314,14 +331,22 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
                   {catalog && catalog.products.length > 0 ? t('previewReal', { name: catalog.machineName }) : t('previewSample')}
                 </span>
               </div>
+              {view.template === 'courses' ? <CoursesOffNote /> : null}
+              {view.template === 'courses' && mode === 'quick' ? (
+                <p className="flex items-start gap-2 rounded-lg border bg-background p-2.5 text-xs text-muted-foreground">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" /> {t('coursesQuickClean')}
+                </p>
+              ) : null}
+              {view.template === 'visual' ? <CoverageSummary compact /> : null}
               <TillPreview
-                key={`${mode}:${catalog?.machineId ?? 'sample'}`}
+                key={`${mode}:${catalog?.machineId ?? 'sample'}:${view.template === 'courses' ? 'courses' : ''}`}
                 cfg={draft}
                 profile={profile}
                 mode={mode}
                 catalog={catalog}
                 legacy={settings.legacy ?? null}
                 maxHeight={previewMaxHeight}
+                courseNames={courseNames}
               />
               <p className="text-center text-xs text-muted-foreground">{t('previewSize', { profile: tp(profile) })}</p>
             </div>
@@ -363,6 +388,8 @@ export function EditorBody({ level, targetId, settings, base, canEdit, catalogMa
             targets={targets}
             saving={save.isPending}
             onConfirm={() => save.mutate()}
+            phase2MinVersion={phase2MinVersion ?? null}
+            mostlyWithoutPhotos={mostlyWithoutPhotos}
           />
         ) : null}
       </div>
@@ -512,6 +539,8 @@ export function TillDesignEditor({
           catalogMachineId={catalogMachineId}
           targets={targets}
           dirtyRef={dirtyRef}
+          phase2MinVersion={defaults.data?.phase2MinVersion ?? null}
+          companyId={companyId}
         />
       )}
     </div>
