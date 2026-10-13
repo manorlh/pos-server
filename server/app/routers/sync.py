@@ -2443,16 +2443,23 @@ def get_settings_sync(
     # "מה מגיע ללקוח" card on a voucher scan (`voucherShowEntitlement`, unset = "on"), a voucher
     # scanned over a cart applied at once with no redeem sheet (`voucherAutoApply`, unset = "on"), the
     # green success screen after a voucher sale and how long it stays (`voucherSuccessScreen`, unset =
-    # "always"; `voucherSuccessSeconds`, an int, unset = 3), and the strong approve / reject sounds of
-    # a voucher redemption (`voucherSoundApprove` / `voucherSoundReject`, unset = "on"): always sent
+    # "always"; `voucherSuccessSeconds`, an int, unset = 3) and how it closes (`voucherSuccessDismiss`,
+    # unset = "auto"), and the strong approve / reject sounds of
+    # a voucher redemption (`voucherSoundApprove` / `voucherSoundReject`, unset = "on"), and the
+    # voucher fast mode with its station (`voucherFastMode` unset = "station", `voucherFastAutoClose`
+    # "on", `voucherStationCamera` "tap", `voucherStationCameraFacing` "back", `voucherVibrate` "both",
+    # `voucherSoundBoost` "on", `voucherStationCatalogSwitch` "manager", `voucherStationHeader` "logo",
+    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0): always sent
     # resolved (app/services/voucher_station_settings.py).
     from app.services.voucher_station_settings import (
         resolve_auto_apply,
         resolve_show_entitlement,
         resolve_station_paid_items,
+        resolve_voucher_fast_mode,
         resolve_voucher_sounds,
         resolve_voucher_station,
         resolve_voucher_success,
+        resolve_voucher_success_dismiss,
     )
 
     effective.update(resolve_voucher_station(all_settings))
@@ -2460,7 +2467,9 @@ def get_settings_sync(
     effective.update(resolve_show_entitlement(all_settings))
     effective.update(resolve_auto_apply(all_settings))
     effective.update(resolve_voucher_success(all_settings))
+    effective.update(resolve_voucher_success_dismiss(all_settings))
     effective.update(resolve_voucher_sounds(all_settings))
+    effective.update(resolve_voucher_fast_mode(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))

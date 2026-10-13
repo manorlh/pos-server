@@ -52,6 +52,16 @@ inherited the same way:
                                           an integer outside 1–10 is a 422 on write, and anything
                                           but such an integer reads as 3
 
+And one more, added 13.10.2026 (P:/specs/voucher-fast-mode.md §0 item 11, "פיצ'ר דינמי"), set and
+inherited the same way:
+
+    voucherSuccessDismiss  "auto"    — "סגירת מסך 'שובר מומש'": the green screen closes by itself after
+                                       voucherSuccessSeconds, or on a touch (the default)
+                           "confirm" — it stays until the cashier presses a large "אישור", so they know
+                                       the voucher went through; a new scan counts as that press and
+                                       goes on to the next voucher, so the queue never stalls
+    It applies to every voucher success screen: the usual till (the auto apply's too) and the station.
+
 And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירוב חזק, אפשר לבטל אותם בפרמטרים — לגבי
 השוברים במימוש"), set and inherited the same way:
 
@@ -67,12 +77,49 @@ And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירו�
                          "off" — silent
     The till never plays either over a card payment in progress.
 
+And nine more, added 13.10.2026 (P:/specs/voucher-fast-mode.md §0, "מצב מהיר כשהעובד לא צריך לבחור
+פריט" — "המכשיר עובר להיות בקר סריקה"), set and inherited the same way:
+
+    voucherFastMode             "off"     — "מצב מהיר: מימוש בלי בחירה כשהשובר ברור": as before
+                                "station" — only on the voucher station screen (the default): a clear
+                                            voucher (no choice for the cashier — §1) is redeemed on
+                                            the scan, no redeem sheet, its own sale, the green screen
+                                "all"     — on the usual order screen too (the spec's §3)
+    voucherFastAutoClose        "on"      — "סגירה לבד במצב מהיר": in fast mode a sale the clear voucher
+                                            covers (₪0 left) closes and is saved by itself with the green
+                                            screen (the default; voucherAutoClose rules the usual flow only)
+                                "off"     — the cashier presses "סגור עסקה וממש שובר"
+    voucherStationCamera        "off"     — "מצלמה בעמדת שובר": the scanner head / keyboard scanner only
+                                "always"  — a live camera on the station screen; the same code within 3
+                                            seconds is ignored; off while paying, on leaving the screen
+                                            or with the screen off
+                                "tap"     — opened by a tap (the default)
+    voucherStationCameraFacing  "back" | "front" — "איזו מצלמה בעמדת שובר" (default "back"; "front"
+                                            for a fixed station the customer shows the voucher to)
+    voucherVibrate              "off" | "approve" | "reject" | "both" — "רטט במימוש שובר" (default
+                                            "both"): a short buzz on approve, three long ones on reject;
+                                            only a device with a vibrator (hasVibrator()) does anything
+    voucherSoundBoost           "on"      — "הגברת צליל שובר לעוצמה מקסימלית": the notification volume up
+                                            to the maximum for the voucher sound, back right after (the
+                                            default)
+                                "off"     — the device's volume as is
+    voucherStationCatalogSwitch "off" | "manager" | "free" — "מעבר מעמדת שובר לקטלוג רגיל": never,
+                                            with a manager's code (the default, as before), or freely
+    voucherStationHeader        "logo" | "text" | "both" | "none" — "כותרת במסך עמדת שובר" (default
+                                            "logo": the shop's or company's brand logo, the receipt's and
+                                            the kiosk's)
+    voucherStationTitle         free text — "כיתוב בראש עמדת שובר": up to 40 characters, whitespace
+                                            collapsed and trimmed on write (blank = reset to inherit);
+                                            longer is a 422 in Hebrew; unset, blank or junk reads as
+                                            "עמדת מימוש שוברים"
+
 They go to the till always resolved (GET /sync/{id}/settings, `settings.<key>`): anything but a known
 value counts as unset. A change is written to the till parameters' change log
 (voucher_redeem_settings.audit_patch).
 """
 from __future__ import annotations
 
+import unicodedata
 from typing import Any, Dict, Mapping, Tuple
 
 VOUCHER_AUTO_CLOSE_KEY = "voucherAutoClose"
@@ -128,6 +175,16 @@ DEFAULT_SUCCESS_SECONDS = 3
 
 VOUCHER_SUCCESS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_SCREEN_KEY, VOUCHER_SUCCESS_SECONDS_KEY)
 
+#: 13.10.2026 (P:/specs/voucher-fast-mode.md §0 item 11): how the green "שובר מומש" screen closes.
+VOUCHER_SUCCESS_DISMISS_KEY = "voucherSuccessDismiss"
+SUCCESS_DISMISS_AUTO = "auto"
+SUCCESS_DISMISS_CONFIRM = "confirm"
+SUCCESS_DISMISS_VALUES: Tuple[str, ...] = (SUCCESS_DISMISS_AUTO, SUCCESS_DISMISS_CONFIRM)
+#: Unset everywhere: by itself after voucherSuccessSeconds (or on a touch).
+DEFAULT_SUCCESS_DISMISS = SUCCESS_DISMISS_AUTO
+
+VOUCHER_SUCCESS_DISMISS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_DISMISS_KEY,)
+
 #: 12.10.2026: the strong approve / reject sounds when a voucher is redeemed.
 VOUCHER_SOUND_APPROVE_KEY = "voucherSoundApprove"
 VOUCHER_SOUND_REJECT_KEY = "voucherSoundReject"
@@ -137,6 +194,67 @@ DEFAULT_SOUND_APPROVE = ON
 DEFAULT_SOUND_REJECT = ON
 
 VOUCHER_SOUND_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SOUND_APPROVE_KEY, VOUCHER_SOUND_REJECT_KEY)
+
+#: 13.10.2026 (P:/specs/voucher-fast-mode.md §0): the voucher fast mode — "המכשיר עובר להיות בקר סריקה".
+VOUCHER_FAST_MODE_KEY = "voucherFastMode"
+VOUCHER_FAST_AUTO_CLOSE_KEY = "voucherFastAutoClose"
+VOUCHER_STATION_CAMERA_KEY = "voucherStationCamera"
+VOUCHER_STATION_CAMERA_FACING_KEY = "voucherStationCameraFacing"
+VOUCHER_VIBRATE_KEY = "voucherVibrate"
+VOUCHER_SOUND_BOOST_KEY = "voucherSoundBoost"
+VOUCHER_STATION_CATALOG_SWITCH_KEY = "voucherStationCatalogSwitch"
+VOUCHER_STATION_HEADER_KEY = "voucherStationHeader"
+VOUCHER_STATION_TITLE_KEY = "voucherStationTitle"
+
+FAST_MODE_VALUES: Tuple[str, ...] = (OFF, "station", "all")
+FAST_AUTO_CLOSE_VALUES: Tuple[str, ...] = (ON, OFF)
+STATION_CAMERA_VALUES: Tuple[str, ...] = (OFF, "always", "tap")
+STATION_CAMERA_FACING_VALUES: Tuple[str, ...] = ("back", "front")
+VIBRATE_VALUES: Tuple[str, ...] = (OFF, "approve", "reject", "both")
+SOUND_BOOST_VALUES: Tuple[str, ...] = (ON, OFF)
+STATION_CATALOG_SWITCH_VALUES: Tuple[str, ...] = (OFF, "manager", "free")
+STATION_HEADER_VALUES: Tuple[str, ...] = ("logo", "text", "both", "none")
+#: "כיתוב בראש עמדת שובר": "טקסט חופשי עד 40 תווים".
+STATION_TITLE_MAX = 40
+
+#: Unset everywhere — the owner's defaults (§0): fast at the station only, closing by itself, the
+#: camera on a tap, the back one, both buzzes, the boost on, the catalog behind a manager's code, the
+#: logo on top and "עמדת מימוש שוברים" as the title.
+DEFAULT_FAST_MODE = "station"
+DEFAULT_FAST_AUTO_CLOSE = ON
+DEFAULT_STATION_CAMERA = "tap"
+DEFAULT_STATION_CAMERA_FACING = "back"
+DEFAULT_VIBRATE = "both"
+DEFAULT_SOUND_BOOST = ON
+DEFAULT_STATION_CATALOG_SWITCH = "manager"
+DEFAULT_STATION_HEADER = "logo"
+DEFAULT_STATION_TITLE = "עמדת מימוש שוברים"
+
+#: The eight choices: key -> (the values it takes, its default). The title is free text, apart.
+VOUCHER_FAST_CHOICES: Dict[str, Tuple[Tuple[str, ...], str]] = {
+    VOUCHER_FAST_MODE_KEY: (FAST_MODE_VALUES, DEFAULT_FAST_MODE),
+    VOUCHER_FAST_AUTO_CLOSE_KEY: (FAST_AUTO_CLOSE_VALUES, DEFAULT_FAST_AUTO_CLOSE),
+    VOUCHER_STATION_CAMERA_KEY: (STATION_CAMERA_VALUES, DEFAULT_STATION_CAMERA),
+    VOUCHER_STATION_CAMERA_FACING_KEY: (STATION_CAMERA_FACING_VALUES, DEFAULT_STATION_CAMERA_FACING),
+    VOUCHER_VIBRATE_KEY: (VIBRATE_VALUES, DEFAULT_VIBRATE),
+    VOUCHER_SOUND_BOOST_KEY: (SOUND_BOOST_VALUES, DEFAULT_SOUND_BOOST),
+    VOUCHER_STATION_CATALOG_SWITCH_KEY: (STATION_CATALOG_SWITCH_VALUES, DEFAULT_STATION_CATALOG_SWITCH),
+    VOUCHER_STATION_HEADER_KEY: (STATION_HEADER_VALUES, DEFAULT_STATION_HEADER),
+}
+
+VOUCHER_FAST_MODE_SETTING_KEYS: Tuple[str, ...] = (*VOUCHER_FAST_CHOICES, VOUCHER_STATION_TITLE_KEY)
+
+#: `code` of the 422 for a title over STATION_TITLE_MAX characters.
+STATION_TITLE_TOO_LONG = "voucher_station_title_too_long"
+
+
+def station_title_too_long_message(length: int) -> str:
+    return f"לא ניתן לשמור כיתוב של {length} תווים: הכיתוב בראש עמדת שובר יכול להיות עד {STATION_TITLE_MAX} תווים."
+
+
+def normalize_station_title(value: str) -> str:
+    """One line as the till shows it: control characters as spaces, runs of whitespace as one, trimmed."""
+    return " ".join("".join(" " if unicodedata.category(ch) == "Cc" else ch for ch in value).split())
 
 
 def resolve_voucher_station(merged: Mapping[str, Any]) -> Dict[str, Any]:
@@ -202,6 +320,16 @@ def resolve_voucher_success(merged: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def resolve_voucher_success_dismiss(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherSuccessDismiss` resolved from a merged settings dict; unknown or missing = "auto". A view only."""
+    dismiss = merged.get(VOUCHER_SUCCESS_DISMISS_KEY)
+    return {
+        VOUCHER_SUCCESS_DISMISS_KEY: dismiss
+        if isinstance(dismiss, str) and dismiss in SUCCESS_DISMISS_VALUES
+        else DEFAULT_SUCCESS_DISMISS,
+    }
+
+
 def resolve_voucher_sounds(merged: Mapping[str, Any]) -> Dict[str, Any]:
     """`voucherSoundApprove` / `voucherSoundReject` resolved from a merged settings dict; unknown or
     missing = "on". A view only."""
@@ -211,3 +339,17 @@ def resolve_voucher_sounds(merged: Mapping[str, Any]) -> Dict[str, Any]:
         VOUCHER_SOUND_APPROVE_KEY: approve if isinstance(approve, str) and approve in SOUND_VALUES else DEFAULT_SOUND_APPROVE,
         VOUCHER_SOUND_REJECT_KEY: reject if isinstance(reject, str) and reject in SOUND_VALUES else DEFAULT_SOUND_REJECT,
     }
+
+
+def resolve_voucher_fast_mode(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """The fast mode's nine keys resolved from a merged settings dict: a choice outside its values, or
+    missing, = its default; the title a non-blank string of at most 40 characters (normalized as on
+    write), else "עמדת מימוש שוברים". A view only."""
+    out: Dict[str, Any] = {}
+    for key, (values, default) in VOUCHER_FAST_CHOICES.items():
+        value = merged.get(key)
+        out[key] = value if isinstance(value, str) and value in values else default
+    title = merged.get(VOUCHER_STATION_TITLE_KEY)
+    title = normalize_station_title(title) if isinstance(title, str) else ""
+    out[VOUCHER_STATION_TITLE_KEY] = title if title and len(title) <= STATION_TITLE_MAX else DEFAULT_STATION_TITLE
+    return out

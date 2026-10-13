@@ -25,8 +25,23 @@
  *   sale by itself) or `off` (the usual end-of-sale screen only).
  * - `voucherSuccessSeconds` (12.10.2026) — "משך מסך ההצלחה (שניות)": an integer 1–10 (unset: 3);
  *   anything else counts as unset.
+ * - `voucherSuccessDismiss` (13.10.2026, P:/specs/voucher-fast-mode.md §0 item 11) — "סגירת מסך 'שובר
+ *   מומש'": `auto` (unset: by itself after the seconds, or on a touch) or `confirm` (until the cashier
+ *   presses "אישור"; a new scan counts as the press and goes on to the next voucher).
  * - `voucherSoundApprove` / `voucherSoundReject` (12.10.2026) — "צליל אישור במימוש שובר" / "צליל סירוב
  *   במימוש שובר": `on` (unset: a strong sound once when a voucher is accepted / refused in red) or `off`.
+ * - The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0 — "המכשיר עובר להיות בקר
+ *   סריקה"): eight choices (VOUCHER_FAST_CHOICES) and a title —
+ *   `voucherFastMode` "מצב מהיר: מימוש בלי בחירה כשהשובר ברור": `off`, `station` (unset: at the voucher
+ *   station only) or `all`; `voucherFastAutoClose` "סגירה לבד במצב מהיר": `on` (unset) or `off`;
+ *   `voucherStationCamera` "מצלמה בעמדת שובר": `off`, `always` or `tap` (unset);
+ *   `voucherStationCameraFacing` "איזו מצלמה בעמדת שובר": `back` (unset) or `front`;
+ *   `voucherVibrate` "רטט במימוש שובר": `off`, `approve`, `reject` or `both` (unset);
+ *   `voucherSoundBoost` "הגברת צליל שובר לעוצמה מקסימלית": `on` (unset) or `off`;
+ *   `voucherStationCatalogSwitch` "מעבר מעמדת שובר לקטלוג רגיל": `off`, `manager` (unset) or `free`;
+ *   `voucherStationHeader` "כותרת במסך עמדת שובר": `logo` (unset), `text`, `both` or `none`;
+ *   `voucherStationTitle` "כיתוב בראש עמדת שובר": up to 40 characters as one trimmed line (unset, blank
+ *   or longer: "עמדת מימוש שוברים"; the server refuses a longer one, in Hebrew).
  *
  * A layer's own value wins; else what it inherits (the server sends `effective` resolved); else the
  * default. `null` in a PATCH = this layer inherits again.
@@ -36,9 +51,16 @@ import type {
   PosSettingsPatch,
   PosSettingsV1,
   VoucherBalanceCheckMode,
+  VoucherFastMode,
   VoucherOnOff,
   VoucherRedeemFlow,
+  VoucherStationCamera,
+  VoucherStationCameraFacing,
+  VoucherStationCatalogSwitch,
+  VoucherStationHeader,
+  VoucherSuccessDismiss,
   VoucherSuccessScreen,
+  VoucherVibrate,
 } from './types';
 
 export const VOUCHER_BALANCE_CHECK_KEY = 'voucherBalanceCheck' as const;
@@ -50,6 +72,7 @@ export const VOUCHER_SHOW_ENTITLEMENT_KEY = 'voucherShowEntitlement' as const;
 export const VOUCHER_AUTO_APPLY_KEY = 'voucherAutoApply' as const;
 export const VOUCHER_SUCCESS_SCREEN_KEY = 'voucherSuccessScreen' as const;
 export const VOUCHER_SUCCESS_SECONDS_KEY = 'voucherSuccessSeconds' as const;
+export const VOUCHER_SUCCESS_DISMISS_KEY = 'voucherSuccessDismiss' as const;
 export const VOUCHER_SOUND_APPROVE_KEY = 'voucherSoundApprove' as const;
 export const VOUCHER_SOUND_REJECT_KEY = 'voucherSoundReject' as const;
 
@@ -60,6 +83,7 @@ export const VOUCHER_STATION_PAID_ITEMS_VALUES: readonly VoucherOnOff[] = ['off'
 export const VOUCHER_SHOW_ENTITLEMENT_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_AUTO_APPLY_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_SUCCESS_SCREEN_VALUES: readonly VoucherSuccessScreen[] = ['always', 'auto_close', 'off'];
+export const VOUCHER_SUCCESS_DISMISS_VALUES: readonly VoucherSuccessDismiss[] = ['auto', 'confirm'];
 export const VOUCHER_SUCCESS_SECONDS_MIN = 1;
 export const VOUCHER_SUCCESS_SECONDS_MAX = 10;
 /** 1, 2, …, 10: every choice the dashboard offers. */
@@ -77,6 +101,7 @@ export const VOUCHER_SHOW_ENTITLEMENT_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_AUTO_APPLY_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_SUCCESS_SCREEN_DEFAULT: VoucherSuccessScreen = 'always';
 export const VOUCHER_SUCCESS_SECONDS_DEFAULT = 3;
+export const VOUCHER_SUCCESS_DISMISS_DEFAULT: VoucherSuccessDismiss = 'auto';
 export const VOUCHER_SOUND_DEFAULT: VoucherOnOff = 'on';
 
 export function isVoucherBalanceCheckMode(value: unknown): value is VoucherBalanceCheckMode {
@@ -161,6 +186,17 @@ export function resolveVoucherSuccessSeconds(own: unknown, inherited: unknown): 
   return VOUCHER_SUCCESS_SECONDS_DEFAULT;
 }
 
+export function isVoucherSuccessDismiss(value: unknown): value is VoucherSuccessDismiss {
+  return typeof value === 'string' && (VOUCHER_SUCCESS_DISMISS_VALUES as readonly string[]).includes(value);
+}
+
+/** "סגירת מסך 'שובר מומש'" at a layer: its own, else the inherited one, else "auto". */
+export function resolveVoucherSuccessDismiss(own: unknown, inherited: unknown): VoucherSuccessDismiss {
+  if (isVoucherSuccessDismiss(own)) return own;
+  if (isVoucherSuccessDismiss(inherited)) return inherited;
+  return VOUCHER_SUCCESS_DISMISS_DEFAULT;
+}
+
 /** "צליל אישור / סירוב במימוש שובר" at a layer: its own, else the inherited one, else "on". */
 export function resolveVoucherSound(own: unknown, inherited: unknown): VoucherOnOff {
   if (isVoucherOnOff(own)) return own;
@@ -200,4 +236,141 @@ export function voucherStationNeedsAdvice(
 ): boolean {
   if (station !== 'on') return false;
   return flow === 'items_first' || (!voucherScanOn && !voucherManualOn);
+}
+
+// ── The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0) ──
+
+export const VOUCHER_FAST_MODE_KEY = 'voucherFastMode' as const;
+export const VOUCHER_FAST_AUTO_CLOSE_KEY = 'voucherFastAutoClose' as const;
+export const VOUCHER_STATION_CAMERA_KEY = 'voucherStationCamera' as const;
+export const VOUCHER_STATION_CAMERA_FACING_KEY = 'voucherStationCameraFacing' as const;
+export const VOUCHER_VIBRATE_KEY = 'voucherVibrate' as const;
+export const VOUCHER_SOUND_BOOST_KEY = 'voucherSoundBoost' as const;
+export const VOUCHER_STATION_CATALOG_SWITCH_KEY = 'voucherStationCatalogSwitch' as const;
+export const VOUCHER_STATION_HEADER_KEY = 'voucherStationHeader' as const;
+export const VOUCHER_STATION_TITLE_KEY = 'voucherStationTitle' as const;
+
+export const VOUCHER_FAST_MODE_VALUES: readonly VoucherFastMode[] = ['off', 'station', 'all'];
+export const VOUCHER_FAST_AUTO_CLOSE_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
+export const VOUCHER_STATION_CAMERA_VALUES: readonly VoucherStationCamera[] = ['off', 'always', 'tap'];
+export const VOUCHER_STATION_CAMERA_FACING_VALUES: readonly VoucherStationCameraFacing[] = ['back', 'front'];
+export const VOUCHER_VIBRATE_VALUES: readonly VoucherVibrate[] = ['off', 'approve', 'reject', 'both'];
+export const VOUCHER_SOUND_BOOST_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
+export const VOUCHER_STATION_CATALOG_SWITCH_VALUES: readonly VoucherStationCatalogSwitch[] = ['off', 'manager', 'free'];
+export const VOUCHER_STATION_HEADER_VALUES: readonly VoucherStationHeader[] = ['logo', 'text', 'both', 'none'];
+
+/** Unset everywhere — the owner's defaults (§0). */
+export const VOUCHER_FAST_MODE_DEFAULT: VoucherFastMode = 'station';
+export const VOUCHER_FAST_AUTO_CLOSE_DEFAULT: VoucherOnOff = 'on';
+export const VOUCHER_STATION_CAMERA_DEFAULT: VoucherStationCamera = 'tap';
+export const VOUCHER_STATION_CAMERA_FACING_DEFAULT: VoucherStationCameraFacing = 'back';
+export const VOUCHER_VIBRATE_DEFAULT: VoucherVibrate = 'both';
+export const VOUCHER_SOUND_BOOST_DEFAULT: VoucherOnOff = 'on';
+export const VOUCHER_STATION_CATALOG_SWITCH_DEFAULT: VoucherStationCatalogSwitch = 'manager';
+export const VOUCHER_STATION_HEADER_DEFAULT: VoucherStationHeader = 'logo';
+
+/** "כיתוב בראש עמדת שובר": "טקסט חופשי עד 40 תווים", "עמדת מימוש שוברים" by default. */
+export const VOUCHER_STATION_TITLE_MAX = 40;
+export const VOUCHER_STATION_TITLE_DEFAULT = 'עמדת מימוש שוברים';
+
+/** The fast mode's eight choices, in the dashboard's order: the key, its values and its default. */
+export const VOUCHER_FAST_CHOICES = [
+  { key: VOUCHER_FAST_MODE_KEY, values: VOUCHER_FAST_MODE_VALUES, fallback: VOUCHER_FAST_MODE_DEFAULT },
+  { key: VOUCHER_FAST_AUTO_CLOSE_KEY, values: VOUCHER_FAST_AUTO_CLOSE_VALUES, fallback: VOUCHER_FAST_AUTO_CLOSE_DEFAULT },
+  { key: VOUCHER_STATION_CAMERA_KEY, values: VOUCHER_STATION_CAMERA_VALUES, fallback: VOUCHER_STATION_CAMERA_DEFAULT },
+  {
+    key: VOUCHER_STATION_CAMERA_FACING_KEY,
+    values: VOUCHER_STATION_CAMERA_FACING_VALUES,
+    fallback: VOUCHER_STATION_CAMERA_FACING_DEFAULT,
+  },
+  { key: VOUCHER_VIBRATE_KEY, values: VOUCHER_VIBRATE_VALUES, fallback: VOUCHER_VIBRATE_DEFAULT },
+  { key: VOUCHER_SOUND_BOOST_KEY, values: VOUCHER_SOUND_BOOST_VALUES, fallback: VOUCHER_SOUND_BOOST_DEFAULT },
+  {
+    key: VOUCHER_STATION_CATALOG_SWITCH_KEY,
+    values: VOUCHER_STATION_CATALOG_SWITCH_VALUES,
+    fallback: VOUCHER_STATION_CATALOG_SWITCH_DEFAULT,
+  },
+  { key: VOUCHER_STATION_HEADER_KEY, values: VOUCHER_STATION_HEADER_VALUES, fallback: VOUCHER_STATION_HEADER_DEFAULT },
+] as const;
+
+export type VoucherFastChoiceKey = (typeof VOUCHER_FAST_CHOICES)[number]['key'];
+/** The values one choice takes (`voucherVibrate` → 'off' | 'approve' | 'reject' | 'both'). */
+export type VoucherFastChoiceValue<K extends VoucherFastChoiceKey> = NonNullable<PosSettingsV1[K]>;
+
+export const VOUCHER_FAST_CHOICE_KEYS: readonly VoucherFastChoiceKey[] = VOUCHER_FAST_CHOICES.map((c) => c.key);
+
+function fastChoice(key: VoucherFastChoiceKey) {
+  return VOUCHER_FAST_CHOICES.find((c) => c.key === key)!;
+}
+
+export function isVoucherFastChoiceKey(key: unknown): key is VoucherFastChoiceKey {
+  return typeof key === 'string' && (VOUCHER_FAST_CHOICE_KEYS as readonly string[]).includes(key);
+}
+
+/** The values [key] takes, in the dashboard's order. */
+export function voucherFastChoiceValues<K extends VoucherFastChoiceKey>(key: K): readonly VoucherFastChoiceValue<K>[] {
+  return fastChoice(key).values as readonly VoucherFastChoiceValue<K>[];
+}
+
+export function voucherFastChoiceDefault<K extends VoucherFastChoiceKey>(key: K): VoucherFastChoiceValue<K> {
+  return fastChoice(key).fallback as VoucherFastChoiceValue<K>;
+}
+
+/** Whether [value] is one of [key]'s values — exactly: "ON" or " on" is not. */
+export function isVoucherFastChoiceValue<K extends VoucherFastChoiceKey>(
+  key: K,
+  value: unknown,
+): value is VoucherFastChoiceValue<K> {
+  return typeof value === 'string' && (fastChoice(key).values as readonly string[]).includes(value);
+}
+
+/** One fast-mode choice at a layer: its own, else the inherited one, else the default; junk is unset. */
+export function resolveVoucherFastChoice<K extends VoucherFastChoiceKey>(
+  key: K,
+  own: unknown,
+  inherited: unknown,
+): VoucherFastChoiceValue<K> {
+  if (isVoucherFastChoiceValue(key, own)) return own;
+  if (isVoucherFastChoiceValue(key, inherited)) return inherited;
+  return voucherFastChoiceDefault(key);
+}
+
+/** A title as the server stores it: control characters as spaces, runs of whitespace as one, trimmed. */
+export function normalizeVoucherStationTitle(value: string): string {
+  return value
+    // Exactly the control characters, as the server's "Cc".
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ');
+}
+
+/** Its length as the server counts it once normalized — characters, not UTF-16 units. */
+export function voucherStationTitleLength(value: string): number {
+  return Array.from(normalizeVoucherStationTitle(value)).length;
+}
+
+/** Whether a typed title is over 40 characters (the server would refuse it). */
+export function voucherStationTitleTooLong(value: unknown): boolean {
+  return typeof value === 'string' && voucherStationTitleLength(value) > VOUCHER_STATION_TITLE_MAX;
+}
+
+/** A title the till would show: text, non-blank and at most 40 characters once normalized. */
+export function isVoucherStationTitle(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const n = voucherStationTitleLength(value);
+  return n > 0 && n <= VOUCHER_STATION_TITLE_MAX;
+}
+
+/** "כיתוב בראש עמדת שובר" at a layer: its own, else the inherited one, else "עמדת מימוש שוברים". */
+export function resolveVoucherStationTitle(own: unknown, inherited: unknown): string {
+  if (isVoucherStationTitle(own)) return normalizeVoucherStationTitle(own);
+  if (isVoucherStationTitle(inherited)) return normalizeVoucherStationTitle(inherited);
+  return VOUCHER_STATION_TITLE_DEFAULT;
+}
+
+/** What a typed title sends: the normalized text, or `null` (inherit again) when blank. */
+export function voucherStationTitlePatch(typed: unknown): string | null {
+  const v = typeof typed === 'string' ? normalizeVoucherStationTitle(typed) : '';
+  return v === '' ? null : v;
 }

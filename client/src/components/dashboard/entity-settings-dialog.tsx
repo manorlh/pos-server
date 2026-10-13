@@ -27,10 +27,11 @@ import {
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { useAuth } from '@/lib/auth';
 import { isNoPaymentOptionAllowedError, noPaymentOptionAllowed } from '@/lib/paymentOptions';
+import { voucherStationTitleTooLong } from '@/lib/voucherTillSettings';
 import { PosSettingsForm, type PosSettingsFormState } from '@/components/pos-settings-form';
 import { usePaymentIntegrationValidation } from '@/components/payment-integration-section';
 import { PI_TEXT, paymentIntegrationErrorMessage, withSendableSecrets } from '@/lib/paymentIntegration';
-import type { PosSettingsV1 } from '@/lib/types';
+import type { EffectiveSources, PosSettingsV1 } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -59,6 +60,8 @@ export function EntityPosSettingsDialog({
   const twf = useTranslations('kds.workflow');
   const [value, setValue] = useState<PosSettingsFormState>({});
   const [inherited, setInherited] = useState<PosSettingsV1 | undefined>();
+  // Per key, the level above that set the inherited value ("נקבע ב" in the voucher settings).
+  const [inheritedSources, setInheritedSources] = useState<EffectiveSources | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [paymentOptionsRejected, setPaymentOptionsRejected] = useState(false);
@@ -73,6 +76,7 @@ export function EntityPosSettingsDialog({
     let cancelled = false;
     setValue({});
     setInherited(undefined);
+    setInheritedSources(null);
     setPaymentOptionsRejected(false);
     setLoading(true);
     const load = async () => {
@@ -91,6 +95,7 @@ export function EntityPosSettingsDialog({
           if (!cancelled) {
             setValue(res.settings ?? {});
             setInherited(res.effective);
+            setInheritedSources(res.effectiveSources ?? null);
           }
         }
       } catch (err: unknown) {
@@ -115,6 +120,8 @@ export function EntityPosSettingsDialog({
   const showsInherited = level === 'shop' || level === 'machine';
   const inheritedForForm = showsInherited ? inherited : undefined;
   const noneAllowed = noPaymentOptionAllowed(value, inheritedForForm);
+  // "כיתוב בראש עמדת שובר" over 40 characters: the form says so in red; the server would refuse it.
+  const titleTooLong = voucherStationTitleTooLong(value.voucherStationTitle);
   // "סוג אינטגרציית אשראי": the same checks the section shows; Save waits for them.
   const qc = useQueryClient();
   const payment = usePaymentIntegrationValidation({
@@ -131,7 +138,7 @@ export function EntityPosSettingsDialog({
   };
 
   const handleSave = async () => {
-    if (!entityId || noneAllowed || !payment.valid) return;
+    if (!entityId || noneAllowed || titleTooLong || !payment.valid) return;
     // The form round-trips whatever the layer holds, including the legacy tip
     // switches it no longer shows. Leaving them out of the PATCH keeps their
     // stored value (the server's fallback) without the dashboard writing them.
@@ -196,6 +203,7 @@ export function EntityPosSettingsDialog({
           value={value}
           onChange={handleChange}
           inherited={inheritedForForm}
+          inheritedSources={showsInherited ? inheritedSources : null}
           showOverrideHints={showsInherited}
           paymentOptionsRejected={paymentOptionsRejected}
           tenantLevel={level === 'tenant'}
@@ -232,7 +240,7 @@ export function EntityPosSettingsDialog({
           </Button>
           <Button
             onClick={() => void handleSave()}
-            disabled={saving || loading || !entityId || noneAllowed || !payment.valid}
+            disabled={saving || loading || !entityId || noneAllowed || titleTooLong || !payment.valid}
           >
             {saving ? tc('saving') : tc('save')}
           </Button>

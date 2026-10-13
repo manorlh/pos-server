@@ -352,11 +352,38 @@ export interface PosSettingsV1 {
   /** "משך מסך ההצלחה (שניות)": an integer 1–10 (unset — 3). In `effective` always resolved. */
   voucherSuccessSeconds?: number;
   /**
+   * "סגירת מסך 'שובר מומש'": auto (unset — by itself after the seconds above, or on a touch) or confirm
+   * (until the cashier presses "אישור"; a new scan counts as the press). In `effective` always resolved.
+   */
+  voucherSuccessDismiss?: VoucherSuccessDismiss;
+  /**
    * "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": on (unset — a strong sound once when a
    * voucher is accepted / refused) or off. In `effective` always resolved.
    */
   voucherSoundApprove?: VoucherOnOff;
   voucherSoundReject?: VoucherOnOff;
+  /**
+   * The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0; lib/voucherTillSettings.ts).
+   * In `effective` always resolved.
+   * "מצב מהיר: מימוש בלי בחירה כשהשובר ברור": off, station (unset — at the voucher station only) or all.
+   */
+  voucherFastMode?: VoucherFastMode;
+  /** "סגירה לבד במצב מהיר": on (unset) or off. */
+  voucherFastAutoClose?: VoucherOnOff;
+  /** "מצלמה בעמדת שובר": off, always or tap (unset). */
+  voucherStationCamera?: VoucherStationCamera;
+  /** "איזו מצלמה בעמדת שובר": back (unset) or front. */
+  voucherStationCameraFacing?: VoucherStationCameraFacing;
+  /** "רטט במימוש שובר": off, approve, reject or both (unset) — a device with a vibrator only. */
+  voucherVibrate?: VoucherVibrate;
+  /** "הגברת צליל שובר לעוצמה מקסימלית": on (unset) or off. */
+  voucherSoundBoost?: VoucherOnOff;
+  /** "מעבר מעמדת שובר לקטלוג רגיל": off, manager (unset — with a manager's code) or free. */
+  voucherStationCatalogSwitch?: VoucherStationCatalogSwitch;
+  /** "כותרת במסך עמדת שובר": logo (unset), text, both or none. */
+  voucherStationHeader?: VoucherStationHeader;
+  /** "כיתוב בראש עמדת שובר": up to 40 characters (unset — "עמדת מימוש שוברים"). */
+  voucherStationTitle?: string;
   /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
@@ -451,6 +478,17 @@ export type VoucherOnOff = 'on' | 'off';
 /** `voucherSuccessScreen` — server/app/services/voucher_station_settings.py. */
 export type VoucherSuccessScreen = 'always' | 'auto_close' | 'off';
 
+/** `voucherSuccessDismiss` (P:/specs/voucher-fast-mode.md §0 item 11) — server/app/services/voucher_station_settings.py. */
+export type VoucherSuccessDismiss = 'auto' | 'confirm';
+
+/** The voucher fast mode's choices (P:/specs/voucher-fast-mode.md §0) — server/app/services/voucher_station_settings.py. */
+export type VoucherFastMode = 'off' | 'station' | 'all';
+export type VoucherStationCamera = 'off' | 'always' | 'tap';
+export type VoucherStationCameraFacing = 'back' | 'front';
+export type VoucherVibrate = 'off' | 'approve' | 'reject' | 'both';
+export type VoucherStationCatalogSwitch = 'off' | 'manager' | 'free';
+export type VoucherStationHeader = 'logo' | 'text' | 'both' | 'none';
+
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
   | PaymentOptionSettingKey
@@ -499,8 +537,18 @@ export type PosSettingsPatch = Partial<
     | 'voucherAutoApply'
     | 'voucherSuccessScreen'
     | 'voucherSuccessSeconds'
+    | 'voucherSuccessDismiss'
     | 'voucherSoundApprove'
     | 'voucherSoundReject'
+    | 'voucherFastMode'
+    | 'voucherFastAutoClose'
+    | 'voucherStationCamera'
+    | 'voucherStationCameraFacing'
+    | 'voucherVibrate'
+    | 'voucherSoundBoost'
+    | 'voucherStationCatalogSwitch'
+    | 'voucherStationHeader'
+    | 'voucherStationTitle'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -527,8 +575,19 @@ export type PosSettingsPatch = Partial<
   voucherAutoApply?: VoucherOnOff | null;
   voucherSuccessScreen?: VoucherSuccessScreen | null;
   voucherSuccessSeconds?: number | null;
+  voucherSuccessDismiss?: VoucherSuccessDismiss | null;
   voucherSoundApprove?: VoucherOnOff | null;
   voucherSoundReject?: VoucherOnOff | null;
+  /** `null` = inherit the fast mode's settings from the level above again (a blank title too). */
+  voucherFastMode?: VoucherFastMode | null;
+  voucherFastAutoClose?: VoucherOnOff | null;
+  voucherStationCamera?: VoucherStationCamera | null;
+  voucherStationCameraFacing?: VoucherStationCameraFacing | null;
+  voucherVibrate?: VoucherVibrate | null;
+  voucherSoundBoost?: VoucherOnOff | null;
+  voucherStationCatalogSwitch?: VoucherStationCatalogSwitch | null;
+  voucherStationHeader?: VoucherStationHeader | null;
+  voucherStationTitle?: string | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;
