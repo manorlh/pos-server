@@ -10,6 +10,8 @@ POST /device-commands           {action, message?, params?, machineIds? | shopId
                                 (fire-and-forget; header Idempotency-Key: a retry never sends twice)
 GET  /device-commands/status    ?ids= → {items: [Command]} — the background status read
 GET  /device-commands           ?machineId=&shopId=&limit= → the audit, newest first
+GET  /device-commands/{id}      → one command now (a table's remote cancel `cancel_table`: for the
+                                shop's tables readers, followed to the host it went on to, with its outcome)
 POST /device-commands/{id}/cancel
 
 Remote close / Z (REMOTE_TILL_Z_ENABLED; app/services/remote_till_z.py):
@@ -41,7 +43,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response, status
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
@@ -750,20 +752,8 @@ def get_commands_status(
 
 
 def _as_of(row: DeviceCommand, now) -> dict:
-    """
-    The command as it stands at [now], computed without writing: one past its end reads
-    `expired` (`not_answered` when delivered), as `svc.expire_old` would make it.
-    """
-    out = svc.command_out(row)
-    if row.status == "pending" and row.expires_at is not None and svc._aware(row.expires_at) <= now:
-        out["status"] = "expired"
-    elif (
-        row.status == "delivered" and row.delivered_at is not None
-        and svc._aware(row.delivered_at) + svc.answer_window(row.action) <= now
-    ):
-        out["status"] = "expired"
-        out["detail"] = out["detail"] or "not_answered"
-    return out
+    """The command as it stands at [now], computed without writing (`svc.as_of`)."""
+    return svc.as_of(row, now)
 
 
 def _reread(db: Session, first: list) -> list:
@@ -821,6 +811,37 @@ def cancel_command(
     return svc.command_out(row)
 
 
+@router.get("/{command_id}")
+def get_command(
+    command_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    One command as it stands now, read only. A table's remote cancel ("ביטול שולחן מהדשבורד",
+    `cancel_table`) for whoever may read the shop's tables — followed to the host it was sent on
+    to, with its outcome (app/services/remote_table_cancel.py `view`); any other in the remote
+    control's scope, as `GET /device-commands/status` reads it.
+    """
+    row = db.get(DeviceCommand, command_id)
+    if row is None or str(row.tenant_id) != str(active_tenant_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="command_not_found")
+    now = svc.utc_now()
+    from app.services import remote_table_cancel as RTC
+
+    if row.action == RTC.ACTION:
+        from app.routers.tables import _readable_shop
+
+        _readable_shop(db, row.shop_id, current_user, active_tenant_id)
+        return RTC.view(db, row, now)
+    kiosk_control.require_kiosk_role(current_user)
+    machine = db.get(POSMachine, row.machine_id)
+    kiosk_control.check_machine_scope(db, current_user, machine, active_tenant_id)
+    _check_covered(db, _narrowing(db, current_user), machine)
+    return _as_of(row, now)
+
+
 # ── The till ─────────────────────────────────────────────────────────────────
 
 
@@ -856,9 +877,20 @@ def till_ack(
     body: AckIn,
     machine: POSMachine = Depends(get_pos_machine_for_sync_path),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None,
 ):
-    row = svc.ack(db, machine, command_id, body.status, body.detail, result=body.result_out())
+    from app.services import remote_table_cancel as RTC
+
+    row = svc.ack(db, machine, command_id, body.status, body.detail, result=body.result_out(), raw_result=body.result)
+    # "הקופה כבר אינה המארחת": a table's remote cancel goes on to the current host, once.
+    onward = RTC.on_answer(db, row)
     db.commit()
+    if onward is not None:
+        host = db.get(POSMachine, onward.machine_id)
+        if background_tasks is not None:
+            background_tasks.add_task(svc.wake, [host])
+        else:
+            svc.wake([host])
     return svc.command_out(row)
 
 

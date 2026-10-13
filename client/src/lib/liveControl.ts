@@ -359,11 +359,20 @@ export const DEVICE_ACTIONS: { action: DeviceAction; label: string; hint: string
   { action: 'install_update', label: 'התקן עדכון עכשיו', hint: 'רק אם יש עדכון מוכן, ורק כשהקופה פנויה', danger: true },
 ];
 
+/** Commands the panel lists but never sends itself (made elsewhere: the tables' remote cancel). */
+const OTHER_ACTION_LABELS: Record<string, string> = {
+  cancel_table: 'ביטול שולחן מהדשבורד',
+};
+
 export function actionLabel(action: string): string {
-  return DEVICE_ACTIONS.find((a) => a.action === action)?.label ?? action;
+  return DEVICE_ACTIONS.find((a) => a.action === action)?.label ?? OTHER_ACTION_LABELS[action] ?? action;
 }
 
 const REFUSALS: Record<string, string> = {
+  // A table's remote cancel (P:/specs/remote-table-cancel.md).
+  table_not_open: 'השולחן כבר נסגר או שולם',
+  not_host: 'הקופה כבר אינה המארחת',
+  order_changed: 'השולחן השתנה בינתיים',
   sale_in_progress: 'באמצע מכירה',
   payment_in_progress: 'באמצע תשלום',
   no_update: 'אין עדכון מוכן',

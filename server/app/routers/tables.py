@@ -885,13 +885,40 @@ def dashboard_cancel_table(
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
+    response: Response = None,
 ):
-    """A manager cancels a stuck open table (409 `table_locked` while a till is inside)."""
+    """
+    A manager cancels a stuck open table, by the tables mode (P:/specs/remote-table-cancel.md):
+
+    * the cloud's tables (and a LAN copy no host serves): 200, cancelled here; the kitchen gets a
+      void ticket of what it had, through the relay (`voidTickets`). 409 `table_locked` while a till
+      is inside.
+    * the LAN mode with a host: 202 `{commandId}` — the host cancels it as at a till; follow it with
+      `GET /device-commands/{commandId}` (the outcome, or "timeout" after `remoteCancelTimeoutSeconds`).
+    * 409 `remote_cancel_blocked` (the LAN mode, `dashboardTableCancel` blocked or a host build that
+      cannot), 409 `order_changed` (the dashboard showed another order or version).
+    """
+    from app.services import device_commands as DC
+    from app.services import printers as K
+    from app.services import remote_table_cancel as RTC
+    from app.services import table_void_tickets as VT
+
     table = T._live_table(db, table_id, active_tenant_id)
     shop = _writable_shop(db, table.shop_id, current_user, active_tenant_id)
     out = T.dashboard_cancel(db, current_user, shop, table, body)
+    if out.get("mode") == RTC.VIA_TILL:
+        db.commit()
+        host = db.get(POSMachine, uuid.UUID(out["hostMachineId"]))
+        background_tasks.add_task(DC.wake, [host])
+        if response is not None:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return out
+    printing = VT.notify_targets(db, out.get("voidTickets") or [])
     db.commit()
     _wake_shop(background_tasks, db, shop.id)
+    if printing:
+        # The tills that print the void tickets: woken now (they also look on their heartbeat).
+        background_tasks.add_task(K.publish_job_notify, printing)
     return out
 
 

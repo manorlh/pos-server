@@ -28,6 +28,8 @@ DEVICE_ACTIONS = (
     # "שרת מקומי ייעודי" only (P:/specs/dedicated-local-server.md §11.5, app/services/local_server_device.py):
     "print_test_page",  # "הדפס דף בדיקה" on one printer (params {printerId})
     "clear_print_queue",  # "ניקוי תור תקוע", confirmed on the dashboard (params {printerId | null, scope})
+    # The LAN mode's tables host only (P:/specs/remote-table-cancel.md, app/services/remote_table_cancel.py):
+    "cancel_table",     # "ביטול שולחן מהדשבורד": the host cancels it as at a till, within its timeout
 )
 OPEN_STATUSES = ("pending", "delivered")
 FINAL_STATUSES = ("done", "refused", "failed", "cancelled", "expired")
@@ -65,9 +67,11 @@ class DeviceCommand(Base):
     #: a cancel to put back exactly (app/services/device_commands.py `cancel`).
     prev_state = Column(JSONB, nullable=True)
     #: The action's parameters: `upload_logs` → {"minutes": 15–1440}; a local server's `print_test_page`
-    #: → {"printerId"}, `clear_print_queue` → {"printerId" | null, "scope": "failed" | "all"}.
+    #: → {"printerId"}, `clear_print_queue` → {"printerId" | null, "scope": "failed" | "all"};
+    #: `cancel_table` → {orderId, tableId, tableLabel, orderVersion, reason, requestedBy, voidJobKey…}.
     params = Column(JSONB, nullable=True)
-    #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py).
+    #: What the device's answer carried: `upload_logs` → {"log_id": …} (app/services/device_logs.py);
+    #: `cancel_table` → {voidedPrinters, kds} / {reason}, and {retargetedTo} when sent on to the new host.
     result = Column(JSONB, nullable=True)
 
 

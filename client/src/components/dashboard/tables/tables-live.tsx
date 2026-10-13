@@ -4,18 +4,22 @@
  * Open tables now ("שולחנות פתוחים — חי"): every table of the shop in its state's colour,
  * its order's total, guests and time open, and which till is inside it. Refreshed every
  * ten seconds. A manager can free a table a till left locked, or cancel a stuck order
- * (a till gone, the mode switched off) with a reason — recorded like a till's cancel.
+ * (a till gone, the mode switched off) with a reason — recorded like a till's cancel, and the
+ * kitchen gets a void ticket of what it had ("בון ביטול"), shown here until it is on paper.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatCurrency, formatDateTime } from '@/lib/format';
+import { remoteCancelView, stillSending } from '@/lib/remoteTableCancel';
 import {
   cancelOpenTable,
   fetchCancelReasons,
+  fetchRemoteCancel,
   fetchTablesLive,
   forceReleaseTable,
   tablesErrorCode,
@@ -64,6 +68,8 @@ export function TablesLive({ shopId }: { shopId: string }) {
   const [picked, setPicked] = useState<LiveTable | null>(null);
   const [reasonId, setReasonId] = useState<string>('');
   const [reasonText, setReasonText] = useState('');
+  /** A cancel sent to the LAN host ("שולח לקופה המארחת…"), followed until it answers or times out. */
+  const [remote, setRemote] = useState<{ commandId: string; startedAt: number; timeoutSeconds: number } | null>(null);
 
   const tables = useMemo(
     () => (data?.tables ?? []).filter((tb) => zoneId === 'all' || tb.zoneId === zoneId),
@@ -73,6 +79,30 @@ export function TablesLive({ shopId }: { shopId: string }) {
   const fail = (err: unknown) => {
     const code = tablesErrorCode(err);
     toast.error(code && t.has(`errors.${code}`) ? t(`errors.${code}`) : axiosErrorToToastMessage(err, tc('error')));
+    // The floor the dashboard showed is stale: read it again.
+    if (code === 'order_changed' || code === 'table_order_not_open') refresh();
+  };
+
+  const { data: remoteStatus, dataUpdatedAt: remoteReadAt } = useQuery({
+    queryKey: ['remote-table-cancel', remote?.commandId],
+    queryFn: () => fetchRemoteCancel(remote!.commandId),
+    enabled: remote !== null,
+    refetchInterval: (q) =>
+      remote && stillSending(remoteCancelView(q.state.data ?? null, remote.startedAt, remote.timeoutSeconds, Date.now()))
+        ? 1000
+        : false,
+  });
+  const remoteView = remote
+    ? remoteCancelView(remoteStatus ?? null, remote.startedAt, remote.timeoutSeconds, Math.max(remoteReadAt, remote.startedAt))
+    : null;
+  const remoteDone = remoteView !== null && !stillSending(remoteView);
+  const remoteRefresh = remoteDone && remoteView.refresh;
+  useEffect(() => {
+    if (remoteRefresh) qc.invalidateQueries({ queryKey: ['tables-live', shopId] });
+  }, [remoteRefresh, qc, shopId]);
+  const closeDialog = () => {
+    setPicked(null);
+    setRemote(null);
   };
 
   const releaseMut = useMutation({
@@ -85,10 +115,23 @@ export function TablesLive({ shopId }: { shopId: string }) {
     onError: fail,
   });
   const cancelMut = useMutation({
-    mutationFn: (id: string) => cancelOpenTable(id, { reasonId, reasonText: reasonText.trim() || null }),
-    onSuccess: () => {
-      toast.success(t('cancelledToast'));
-      setPicked(null);
+    mutationFn: (tb: LiveTable) =>
+      cancelOpenTable(tb.id, {
+        reasonId,
+        reasonText: reasonText.trim() || null,
+        // As shown: another order or version now is "order_changed" (the floor is read again).
+        ...(tb.order ? { orderId: tb.order.id, expectedVersion: tb.order.version } : {}),
+      }),
+    onSuccess: (out) => {
+      if (out?.mode === 'via_till') {
+        // The LAN host cancels it: followed in the dialog until it answers.
+        setRemote({ commandId: out.commandId, startedAt: Date.now(), timeoutSeconds: out.timeoutSeconds });
+        return;
+      }
+      if (out?.voidTicketsError || out?.kdsError) toast.warning(t('voidTicket.notQueued'));
+      else if (out?.voidTickets?.length) toast.success(t('cancelledWithVoid'));
+      else toast.success(t('cancelledToast'));
+      closeDialog();
       refresh();
     },
     onError: fail,
@@ -97,6 +140,7 @@ export function TablesLive({ shopId }: { shopId: string }) {
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const summary = data?.summary;
+  const voidTickets = data?.voidTickets ?? [];
 
   return (
     <div className="space-y-3">
@@ -114,6 +158,20 @@ export function TablesLive({ shopId }: { shopId: string }) {
           <div className="text-2xl font-bold">{summary?.guests ?? 0}</div>
         </div>
       </div>
+
+      {voidTickets.length > 0 ? (
+        // "בון ביטול ממתין למדפסת": a void of a table cancelled here, not on paper yet.
+        <div className="space-y-1 rounded-lg border border-amber-500 bg-amber-50 p-3 text-sm dark:bg-amber-950/40">
+          {voidTickets.map((v) => (
+            <div key={v.id} className={v.state === 'failed' ? 'font-medium text-destructive' : undefined}>
+              {t(v.state === 'failed' ? 'voidTicket.failed' : 'voidTicket.waiting', {
+                table: v.tableName ?? '?',
+                printer: v.printerName ?? '?',
+              })}
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant={zoneId === 'all' ? 'default' : 'outline'} onClick={() => setZoneId('all')}>
@@ -173,7 +231,7 @@ export function TablesLive({ shopId }: { shopId: string }) {
         </div>
       )}
 
-      <Dialog open={picked !== null} onOpenChange={(o) => !o && setPicked(null)}>
+      <Dialog open={picked !== null} onOpenChange={(o) => !o && closeDialog()}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{picked ? t('tableTitle', { number: picked.number }) : ''}</DialogTitle>
@@ -185,7 +243,11 @@ export function TablesLive({ shopId }: { shopId: string }) {
                   <div>{t('openedBy', { name: picked.order.openedByName ?? '—', at: formatDateTime(picked.order.openedAt) })}</div>
                   <div>{t('orderTotal', { total: formatCurrency(picked.order.total) })}</div>
                   <div>{t(`state.${picked.state}`)}</div>
-                  {picked.order.source === 'local' ? <div className="text-muted-foreground">{t('localOrderHint')}</div> : null}
+                  {picked.order.source === 'local' ? (
+                    <div className="text-muted-foreground">
+                      {t(picked.cancel && picked.cancel.why !== 'single' ? 'lanOrderHint' : 'localOrderHint')}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               {picked.lock ? (
@@ -205,10 +267,38 @@ export function TablesLive({ shopId }: { shopId: string }) {
                   </Button>
                 </div>
               ) : null}
-              {picked.order ? (
+              {picked.order && picked.cancel?.mode === 'blocked' ? (
+                // The LAN mode, blocked (the setting, or a host build that cannot): no cancel here.
+                <div className="space-y-1 rounded border p-2">
+                  <div className="font-medium">{t('cancelStuck')}</div>
+                  <p className="text-xs text-muted-foreground">
+                    {t(picked.cancel.why === 'no_capability' ? 'remoteCancel.noCapabilityHint' : 'remoteCancel.blockedHint')}
+                  </p>
+                </div>
+              ) : null}
+              {picked.order && remoteView ? (
+                // Sent to the LAN host: "שולח לקופה המארחת…", then its answer.
+                <div
+                  className={`flex items-center gap-2 rounded border p-2 ${
+                    remoteView.phase === 'done'
+                      ? 'border-green-600 text-green-700 dark:text-green-400'
+                      : remoteView.phase === 'sending'
+                        ? ''
+                        : 'border-amber-500 text-amber-700 dark:text-amber-400'
+                  }`}
+                >
+                  {stillSending(remoteView) ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+                  <span>{t(`remoteCancel.${remoteView.key}`, remoteView.values)}</span>
+                </div>
+              ) : null}
+              {picked.order && picked.cancel?.mode !== 'blocked' && !remoteView ? (
                 <div className="space-y-2 rounded border p-2">
                   <div className="font-medium">{t('cancelStuck')}</div>
-                  <p className="text-xs text-muted-foreground">{t('cancelStuckHint')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {picked.cancel?.mode === 'via_till'
+                      ? t('remoteCancel.viaTillHint', { host: picked.cancel.hostName ?? '?' })
+                      : t('cancelStuckHint')}
+                  </p>
                   <div className="flex flex-wrap gap-1">
                     {reasons.map((r) => (
                       <Button
@@ -230,16 +320,16 @@ export function TablesLive({ shopId }: { shopId: string }) {
             </div>
           ) : null}
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setPicked(null)}>
-              {tc('cancel')}
+            <Button variant="outline" onClick={closeDialog}>
+              {remoteDone ? t('remoteCancel.close') : tc('cancel')}
             </Button>
-            {picked?.order ? (
+            {picked?.order && picked.cancel?.mode !== 'blocked' && !remoteView ? (
               <Button
                 variant="destructive"
                 disabled={
                   cancelMut.isPending || !reasonId || (reason?.requiresNote === true && !reasonText.trim())
                 }
-                onClick={() => picked && cancelMut.mutate(picked.id)}
+                onClick={() => picked && cancelMut.mutate(picked)}
               >
                 {t('cancelTable')}
               </Button>

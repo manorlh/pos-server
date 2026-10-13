@@ -1862,6 +1862,51 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "ביטול שולחן מהדשבורד" in the LAN mode (P:/specs/remote-table-cancel.md, app/services/remote_table_cancel.py):
+# read on the shop's tables host, so a company or a shop sets it (a till's own level is the host's).
+DASHBOARD_TABLE_CANCEL_KEY = "dashboardTableCancel"
+DASHBOARD_TABLE_CANCEL_VIA_TILL = "via_till"
+DASHBOARD_TABLE_CANCEL_BLOCKED = "blocked"
+DASHBOARD_TABLE_CANCEL_OPTIONS = (DASHBOARD_TABLE_CANCEL_VIA_TILL, DASHBOARD_TABLE_CANCEL_BLOCKED)
+DASHBOARD_TABLE_CANCEL_LABELS = {
+    DASHBOARD_TABLE_CANCEL_VIA_TILL: "פקודה לקופה המארחת",
+    DASHBOARD_TABLE_CANCEL_BLOCKED: "חסום: מבטלים בקופה",
+}
+REMOTE_CANCEL_TIMEOUT_KEY = "remoteCancelTimeoutSeconds"
+REMOTE_CANCEL_TIMEOUT_DEFAULT = 20
+REMOTE_CANCEL_TIMEOUT_MIN = 5
+REMOTE_CANCEL_TIMEOUT_MAX = 120
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=DASHBOARD_TABLE_CANCEL_KEY,
+        label="ביטול שולחן מהדשבורד (רשת מקומית)",
+        value_type="enum",
+        enum_options=DASHBOARD_TABLE_CANCEL_OPTIONS,
+        enum_labels=DASHBOARD_TABLE_CANCEL_LABELS,
+        default_value=DASHBOARD_TABLE_CANCEL_VIA_TILL,
+        description=(
+            "במצב «רשת מקומית (קופה ראשית)» השולחנות נמצאים בקופה המארחת. "
+            f"«{DASHBOARD_TABLE_CANCEL_LABELS[DASHBOARD_TABLE_CANCEL_VIA_TILL]}» (ברירת מחדל): ביטול שולחן "
+            "מהדשבורד נשלח לקופה המארחת, והיא מבטלת אותו כמו ביטול בקופה (בון ביטול, KDS, כל הקופות). "
+            "אם היא לא עונה בזמן, הביטול לא מתבצע והדשבורד אומר לבטל בקופה. "
+            f"«{DASHBOARD_TABLE_CANCEL_LABELS[DASHBOARD_TABLE_CANCEL_BLOCKED]}»: בדשבורד אין כפתור ביטול במצב הזה. "
+            "במצב שולחנות בענן הביטול מהדשבורד ישיר, בלי קשר להגדרה. ניתן לקבוע לפי חברה או סניף."
+        ),
+    ),
+    BuiltinParameter(
+        key=REMOTE_CANCEL_TIMEOUT_KEY,
+        label="ביטול שולחן מהדשבורד: זמן המתנה לקופה המארחת (שניות)",
+        value_type="integer",
+        default_value=REMOTE_CANCEL_TIMEOUT_DEFAULT,
+        description=(
+            "כמה שניות הדשבורד מחכה שהקופה המארחת תבצע ביטול שולחן במצב «רשת מקומית» "
+            f"({REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX}, ברירת מחדל {REMOTE_CANCEL_TIMEOUT_DEFAULT}). "
+            "אחרי הזמן הזה הפקודה פגה ולא תבוצע גם אם תגיע לקופה מאוחר יותר. ניתן לקבוע לפי חברה או סניף."
+        ),
+    ),
+)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
 
@@ -1903,6 +1948,17 @@ def validate_keyed_value(key: str, value: Any) -> Any:
     # The till knows these three and no other, even if the definition's options were re-edited.
     if key == SELL_ALL_TAB_KEY and value is not None and value not in SELL_ALL_TAB_OPTIONS:
         raise TillParameterValueError(f"{SELL_ALL_TAB_KEY} must be one of {', '.join(SELL_ALL_TAB_OPTIONS)}")
+    if key == DASHBOARD_TABLE_CANCEL_KEY and value is not None and value not in DASHBOARD_TABLE_CANCEL_OPTIONS:
+        raise TillParameterValueError(
+            f"{DASHBOARD_TABLE_CANCEL_KEY} must be one of {', '.join(DASHBOARD_TABLE_CANCEL_OPTIONS)}"
+        )
+    if key == REMOTE_CANCEL_TIMEOUT_KEY and value is not None and not (
+        isinstance(value, int) and not isinstance(value, bool)
+        and REMOTE_CANCEL_TIMEOUT_MIN <= value <= REMOTE_CANCEL_TIMEOUT_MAX
+    ):
+        raise TillParameterValueError(
+            f"{REMOTE_CANCEL_TIMEOUT_KEY} must be {REMOTE_CANCEL_TIMEOUT_MIN}–{REMOTE_CANCEL_TIMEOUT_MAX} seconds"
+        )
     return value
 
 
