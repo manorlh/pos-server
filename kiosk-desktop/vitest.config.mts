@@ -1,8 +1,9 @@
 import { defineConfig } from 'vitest/config';
-import { sharedAlias } from './vite.config.mts';
+import { sharedAlias, sharedDedupe } from './vite.config.mts';
 
 export default defineConfig({
-  resolve: { alias: sharedAlias },
+  // As the renderer's build: the shared screens' imports resolve to this package's React (their hooks render here).
+  resolve: { alias: sharedAlias, dedupe: sharedDedupe },
   test: {
     include: ['test/**/*.test.ts'],
     environment: 'node',

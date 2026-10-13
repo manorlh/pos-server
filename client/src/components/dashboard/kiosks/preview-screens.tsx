@@ -102,6 +102,7 @@ import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/
 import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
 import { catalogContinuous, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
+import { catalogSearch } from '@/lib/kioskTopBar';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
 import { EntryHeader, EntryWindow } from './preview-entry';
@@ -284,8 +285,14 @@ export interface KioskLive {
   /**
    * "סרגל עליון" (layout.topBar): what the club, search and language buttons do on this kiosk. A real
    * kiosk shows only the buttons it can honour (cancel is startOver); the preview shows them all.
+   * `nextLang`: the language a tap switches to (the button's label). The hosts' hook: kiosk-shared/top-bar.tsx.
    */
-  topBar?: { club?: () => void; search?: () => void; lang?: () => void };
+  topBar?: { club?: () => void; search?: () => void; lang?: () => void; nextLang?: string };
+  /**
+   * The top bar's search, while open: its field under the bar (`onEdit` — the kiosk's keyboard, `onClear` — the
+   * field's ✕) and the menu showing the dishes that match `query` (searchedModel, the layouts' one switch point).
+   */
+  search?: { query: string; onEdit: () => void; onClear: () => void };
   /** "עזרה" on the attract screen calls the staff (a help request to the tills). */
   help?: () => void;
   /** "רוצים להוסיף טיפ לצוות?" — the real tip step (TipScreen); the preview keeps its own. */
@@ -1403,26 +1410,7 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
       });
     }
     if (s === 'club' && cfg.club.enabled) {
-      items.push({
-        key: s,
-        node: (
-          <div className="flex items-center gap-3 p-3" style={cardStyle(m)}>
-            <div className="rounded-xl bg-white p-1.5">
-              {/^https?:\/\//i.test(cfg.club.joinUrl) ? (
-                <QRCodeSVG value={cfg.club.joinUrl} size={64} level="M" />
-              ) : (
-                <div className="h-16 w-16 rounded bg-neutral-200" />
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="text-sm font-bold">{cfg.club.title || m.t('clubTitle')}</div>
-              <div className="text-xs" style={{ color: m.c.mutedText }}>
-                {cfg.club.body || m.t('clubScan')}
-              </div>
-            </div>
-          </div>
-        ),
-      });
+      items.push({ key: s, node: <ClubQrCard m={m} /> });
     }
   }
 
@@ -1481,6 +1469,63 @@ export function AttractScreen({ m }: { m: PreviewModel }) {
         items={items}
         measureKey={[m.txt('attractTitle'), m.txt('attractSubtitle'), m.categories.length, cfg.club.title, cfg.club.body, m.screen.w, cfg.theme.typeScale, cfg.theme.font, JSON.stringify(welcome)].join('|')}
       />
+    </div>
+  );
+}
+
+/**
+ * "מועדון": the club's card (the Android kiosk's ClubQrCard) — the QR to join from the phone, the club's title and its
+ * words. On the attract screen (its "club" section) and in the top bar's club window.
+ */
+export function ClubQrCard({ m, size = 64 }: { m: PreviewModel; size?: number }) {
+  const club = m.cfg.club;
+  return (
+    <div data-club-card className="flex items-center gap-3 p-3 text-start" style={cardStyle(m)}>
+      <div className="rounded-xl bg-white p-1.5">
+        {/^https?:\/\//i.test(club.joinUrl) ? (
+          <QRCodeSVG value={club.joinUrl} size={size} level="M" />
+        ) : (
+          <div className="rounded bg-neutral-200" style={{ width: size, height: size }} />
+        )}
+      </div>
+      <div className="min-w-0">
+        <div className="text-sm font-bold">{club.title || m.t('clubTitle')}</div>
+        <div className="text-xs" style={{ color: m.c.mutedText }}>
+          {club.body || m.t('clubScan')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The top bar's "חבר מועדון / קופונים" (layout.topBar, the Android kiosk's KioskClubWindow): a window rising as the
+ * kiosk's windows do — the club's card (where the club is on) and, where a voucher pays, where it is entered; "הבנתי".
+ */
+export function ClubWindow({ m, onClose }: { m: PreviewModel; onClose: () => void }) {
+  const fx = sheetEnter(m.transitions);
+  const vouchers = (m.cfg.payment?.methods ?? []).includes('voucher');
+  return (
+    <div data-club-window className="absolute inset-0 z-30 flex flex-col items-center justify-center p-3">
+      <div className={cn('absolute inset-0 bg-black/40', fx.scrim)} style={fx.style} onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={regText(m, 'clubTitle')}
+        className={cn('relative w-full max-w-[460px] space-y-4 p-5 text-center', fx.panel)}
+        style={{ ...fx.style, background: m.c.surface, color: m.c.text, borderRadius: Math.max(16, m.radius) }}
+      >
+        <h2 className="text-xl font-extrabold">{regText(m, 'clubTitle')}</h2>
+        {m.cfg.club.enabled ? <ClubQrCard m={m} size={120} /> : null}
+        {vouchers ? (
+          <p data-club-vouchers className="kt-13 font-medium" style={{ color: m.c.mutedText }}>
+            {m.t('clubVouchersNote')}
+          </p>
+        ) : null}
+        <BigButton m={m} onClick={onClose}>
+          {regText(m, 'helpClose')}
+        </BigButton>
+      </div>
     </div>
   );
 }
@@ -2001,9 +2046,20 @@ export function TopBar({ m, items: configured }: { m: PreviewModel; items: Layou
       );
     }
     if (item === 'search') {
+      // Open (a real kiosk's search field under the bar): ✕ closes it, as the Android kiosk's.
+      const open = !!m.live?.search;
       return (
-        <button key={item} type="button" data-top="search" onClick={m.live?.topBar?.search} aria-label={regText(m, 'searchTitle')} className={cn(pill, 'w-10 justify-center px-0')} style={cardStyle(m)}>
-          <Search className="h-4 w-4" />
+        <button
+          key={item}
+          type="button"
+          data-top="search"
+          aria-pressed={open || undefined}
+          onClick={m.live?.topBar?.search}
+          aria-label={open ? m.t('close') : regText(m, 'searchTitle')}
+          className={cn(pill, 'w-10 justify-center px-0')}
+          style={cardStyle(m)}
+        >
+          {open ? <X className="h-4 w-4" /> : <Search className="h-4 w-4" />}
         </button>
       );
     }
@@ -2011,7 +2067,7 @@ export function TopBar({ m, items: configured }: { m: PreviewModel; items: Layou
     return (
       <button key={item} type="button" data-top="lang" onClick={m.live?.topBar?.lang} className={pill} style={cardStyle(m)}>
         <Languages className="h-4 w-4" />
-        <span className="uppercase">{langs[1] ?? langs[0] ?? 'he'}</span>
+        <span className="uppercase">{m.live?.topBar?.nextLang ?? langs[1] ?? langs[0] ?? 'he'}</span>
       </button>
     );
   };
@@ -2030,7 +2086,8 @@ export function CatalogHeader({ m, children, search = true }: { m: PreviewModel;
   const bar = topBarItems(m.cfg);
   return (
     <div className="z-10 shrink-0 space-y-2 pb-1 pt-3 backdrop-blur-md" style={{ background: `${m.c.background}E6` }}>
-      {bar !== null ? <TopBar m={m} items={bar} /> : (
+      {/* A screen with its own search field (the list) keeps it: the bar has no search there (the Android kiosk's). */}
+      {bar !== null ? <TopBar m={m} items={search ? bar : bar.filter((i) => i !== 'search')} /> : (
       <div className="flex items-center gap-2 px-3">
         <LiveBack m={m} size={32} />
         <Logo m={m} size={30} />
@@ -2057,11 +2114,53 @@ export function CatalogHeader({ m, children, search = true }: { m: PreviewModel;
           <Search className="h-3.5 w-3.5" /> {m.t('search')}
         </div>
       ) : null}
+      {search && bar !== null && m.live?.search ? <TopBarSearchField m={m} search={m.live.search} /> : null}
       {children}
       {/* "כיתוב רץ" under the header. */}
       <TickerSlot m={m} screen="catalog" position="top" />
     </div>
   );
+}
+
+/**
+ * The top bar's search field (a real kiosk, layout.topBar "search"), under the bar as the Android kiosk's: what is typed,
+ * else "מה בא לך?"; a tap opens the kiosk's keyboard, ✕ clears it (the bar's ✕ closes the search).
+ */
+function TopBarSearchField({ m, search }: { m: PreviewModel; search: NonNullable<KioskLive['search']> }) {
+  return (
+    <div data-top-search className="flex items-center gap-2 px-3">
+      <button
+        type="button"
+        onClick={search.onEdit}
+        className="flex h-11 min-w-0 flex-1 items-center gap-2 px-3 text-start kt-13"
+        style={{ ...cardStyle(m), borderRadius: m.btnRadius, color: search.query ? m.c.text : m.c.mutedText }}
+      >
+        <Search className="h-4 w-4 shrink-0" />
+        <span className="truncate">{search.query || regText(m, 'searchHint')}</span>
+      </button>
+      {search.query ? (
+        <button type="button" aria-label={m.t('close')} onClick={search.onClear} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full" style={{ background: `${m.c.text}10` }}>
+          <X className="h-4 w-4" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The menu as the top bar's search shows it (m.live.search with something typed — a real kiosk): every category with
+ * its matching dishes only (lib/kioskTopBar.ts catalogSearch), no "מומלצים", and "לא מצאנו מנה בשם הזה" where nothing
+ * matches. No search, or nothing typed: the very same model. The layouts' one switch point (LayoutCatalog) asks it.
+ */
+export function searchedModel(m: PreviewModel): PreviewModel {
+  const query = m.live?.search?.query ?? '';
+  if (query.trim() === '') return m;
+  return {
+    ...m,
+    categories: catalogSearch(m.categories, query),
+    featured: [],
+    t: (key, values) => (key === 'empty' ? regText(m, 'searchNone') : m.t(key, values)),
+  };
 }
 
 /**

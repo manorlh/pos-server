@@ -89,12 +89,15 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   useKioskRenderProfile,
+  useKioskTopBar,
+  KioskTopBarWindows,
   UpsellWindow,
 } from '@kiosk-shared/index';
 // "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
 import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
-import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
+import { configuredText, kioskTextOf, webTextIn } from '@dash-lib/kioskTexts';
+import { screenTextIn } from '@dash-lib/kioskTopBar';
 import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@dash-lib/kioskMenus';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
 import { voucherCodeOf } from '@dash-lib/kioskWebOrders';
@@ -434,6 +437,10 @@ export function KioskApp({ view }: { view: KioskView }) {
 
   // Back to rest: the order's own state cleared.
   const resting = !['service', 'catalog', 'cart', 'confirm', 'details', 'pay', 'success'].includes(flow.screen);
+  // "סרגל עליון" (layout.topBar): the club's window, the search over the menu and the language (kiosk-shared/top-bar.tsx,
+  // as the browser kiosk) — the screens' texts are drawn in its language; at rest the kiosk's own again.
+  const bar = useKioskTopBar(cfg, flow.screen, resting);
+  const lang = bar.lang;
   // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
   // when the basket opens and on the way to payment — never a strip on the basket.
   const upsellWin = useKioskUpsell(cfg, view.catalog.upsellRules, allProducts, resting, { shown: (w) => funnel.upsell('shown', w.moment, w.offer.rule.id, w.offer.productIds[0] ?? null) });
@@ -697,6 +704,9 @@ export function KioskApp({ view }: { view: KioskView }) {
     back: flow.screen === 'service' || flow.screen === 'catalog' || flow.screen === 'cart' ? back : undefined,
     startOver: flow.screen === 'catalog' ? () => (cart.length > 0 ? setLeaveAsk(true) : dispatch({ type: 'reset' })) : undefined,
     detailsScreen: true,
+    // "סרגל עליון": the club, the search and the language buttons have their actions here (cancel is startOver).
+    topBar: bar.live.topBar,
+    search: bar.live.search,
     help: () => {
       funnel.help();
       void kiosk.helpRequest();
@@ -757,14 +767,14 @@ export function KioskApp({ view }: { view: KioskView }) {
     cols,
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
-    // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one.
-    // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+    // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one — in the
+    // top bar's language. The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
     txt: (key: KioskTextKey) => {
-      const text = configuredText(cfg, 'he', key) ?? txtOf(undefined, key);
+      const text = screenTextIn(cfg, lang, key, (k) => txtOf(undefined, k));
       return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
     },
-    t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? t(key, values),
-    kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
+    t: (key, values) => webTextIn(cfg, lang, key, values) ?? t(key, values),
+    kt: (key, values) => kioskTextOf(cfg, lang, key, values),
     // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
     mealOptions: (p) => mealsFor(view, p.id, allProducts),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
@@ -960,7 +970,7 @@ export function KioskApp({ view }: { view: KioskView }) {
     busy: flowBusy(flow),
     // Under the shop's lock a scan starts nothing (as under the staff's screens).
     staff: staffOpen !== 'none' || shopLockUp,
-    sheetOpen: !!product || leaveAsk || !!changes || till.entry,
+    sheetOpen: !!product || leaveAsk || !!changes || till.entry || bar.state.clubOpen || bar.state.typing,
     shown: allProducts,
     codes: view.catalog.products,
     screenRef,
@@ -998,7 +1008,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   return (
     <div
       ref={screenRef}
-      dir="rtl"
+      dir={bar.dir}
       className={`k-root relative h-screen w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
       style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font }}
       onPointerDownCapture={(e) => {
@@ -1189,6 +1199,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       {entry && (screen === 'catalog' || screen === 'cart') && product ? (
         <EntryWindow m={m} caption={entry.caption} steps={entry.steps} onFinish={() => setEntry(null)} onClose={() => setEntry(null)} />
       ) : null}
+      {/* "סרגל עליון": the club's window and the search's keyboard, over the menu. */}
+      <KioskTopBarWindows m={m} bar={bar} screen={screen} />
       {idleState.kind === 'warn' ? (
         <Dialog
           m={m}

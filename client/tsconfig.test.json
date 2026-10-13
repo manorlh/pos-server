@@ -67,6 +67,8 @@
     "src/lib/kioskConfig.test.ts",
     "src/lib/kioskLayout.ts",
     "src/lib/kioskLayout.test.ts",
+    "src/lib/kioskTopBar.ts",
+    "src/lib/kioskTopBar.test.ts",
     "src/lib/kioskBonPrinters.ts",
     "src/lib/kioskBonPrinters.test.ts",
     "src/lib/attendance.ts",

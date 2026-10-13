@@ -14,7 +14,7 @@
 import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { HandHelping } from 'lucide-react';
 import { catalogKindOf, helpFloats, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
-import { CatalogScreen, ProductSheet, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { CatalogScreen, ProductSheet, searchedModel, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { MealChooser, MealSheet, StepsProductSheet } from './item';
 import { PagesProductSheet } from './pages';
 import { itemFlowOf, itemFlowPages, usesItemPages } from '@/lib/kioskItemFlow';
@@ -103,9 +103,13 @@ export function HelpFab({ m, bottom = 92 }: { m: PreviewModel; bottom?: number }
   );
 }
 
-/** The menu screen: the layout's catalog (today's, for standard), with "רוצים להפוך לארוחה?" over it. */
-export function LayoutCatalog(props: CatalogProps) {
-  const { m } = props;
+/**
+ * The menu screen: the layout's catalog (today's, for standard), with "רוצים להפוך לארוחה?" over it. The top bar's
+ * search (a real kiosk) shows every layout the matching dishes only (searchedModel); no search — the model as it is.
+ */
+export function LayoutCatalog({ m: given, ...rest }: CatalogProps) {
+  const m = searchedModel(given);
+  const props: CatalogProps = { ...rest, m };
   const [meal, setMeal] = useState<PProduct | null>(null);
   const kind = catalogKindOf(m.cfg);
   const Catalog = kind ? CATALOGS[kind] : undefined;
