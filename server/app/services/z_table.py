@@ -112,7 +112,9 @@ def filter_z_types(query, types: Sequence[str]):
         return query
     from app.models.kiosk import KioskDevice
 
-    kiosks = select(KioskDevice.machine_id)
+    # The same kiosks as `kiosk_machine_ids` (and so `z_type_of`): a till in kiosk mode for the
+    # time being (`home_role` set) is a till — its Z is a till's, by the rule and by the filter.
+    kiosks = select(KioskDevice.machine_id).where(KioskDevice.home_role.is_(None))
     # No sections: SQL NULL, or a JSON null written by the ORM for a Python None.
     no_sections = or_(ZReport.per_machine.is_(None), cast(ZReport.per_machine, String) == "null")
     legacy = and_(no_sections, ZReport.machine_id.isnot(None))

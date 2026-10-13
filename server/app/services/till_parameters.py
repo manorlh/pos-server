@@ -436,7 +436,7 @@ def scope_chain_for_machine(db: Session, machine: POSMachine) -> TillScopeChain:
     )
 
 
-def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedParameters:
+def _resolve_raw(db: Session, machine: POSMachine):
     chain = scope_chain_for_machine(db, machine)
     parameters = db.query(TillParameter).all()
     on_chain = [
@@ -447,6 +447,16 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     resolved = resolve_till_parameters(parameters, values, chain)
     # "פתיחת מגירה" on a till with a drawer port of its own: on, with the button, unless set.
     apply_device_defaults(getattr(machine, "device_model", None), parameters, values, chain, resolved.parameters)
+    return parameters, values, resolved
+
+
+def raw_parameters_for_machine(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    """The values as the levels set them — before what the till's role in the shop's LAN changes."""
+    return dict(_resolve_raw(db, machine)[2].parameters)
+
+
+def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedParameters:
+    parameters, values, resolved = _resolve_raw(db, machine)
     if getattr(machine, "independent_till", False):
         # "קופה עצמאית" (app/services/independent_till.py): never a host of the shop's LAN
         # group, and tables only when set at its own level.
@@ -457,8 +467,13 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         # "לא משמש כשרת מקומי" (app/services/lan_server.py): never a host of the shop's LAN
         # group either — but still in it, so its tables mode stays as the shop set it.
         from app.services.lan_server import excluded_parameters, is_excluded
+        from app.services.local_shop_z import is_remote_participant, remote_parameters
 
-        if is_excluded(db, machine):
+        if is_remote_participant(machine, raw_parameters=resolved.parameters):
+            # "מרוחקת בזד הסניפי" (SPEC_INDEPENDENT_TILL §8.14): off the shop's LAN — never a host,
+            # and its tables «קופה אחת» or off (no LAN tables host for it).
+            resolved.parameters = remote_parameters(resolved.parameters)
+        elif is_excluded(db, machine):
             resolved.parameters = excluded_parameters(resolved.parameters)
     # "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): never sent in clear — the till
     # gets the code's hash, salted with its own id.

@@ -141,3 +141,21 @@ class TestPayAtTill:
         assert out["accepted"] is True and out["pickupNumber"] == 42
         assert KDS.release(ks.db, ks.waiter, KdsReleaseIn.model_validate(body))["replayed"] is True
         assert ks.db.query(KitchenTask).count() == 1
+
+
+class TestAKioskInAnotherPlace:
+    """A kiosk in the shop Z set "מרוחק (דרך הענן)" (SPEC_INDEPENDENT_TILL §8.15): its orders reach the KDS through the cloud."""
+
+    def test_its_paid_order_reaches_the_stations(self, ks):
+        from app.services import local_shop_z as LZ
+
+        LZ.set_remote_till_ids(ks.shop, [ks.kiosk.id])
+        ks.db.commit()
+        assert LZ.is_remote_participant(ks.kiosk)
+        out = KDS.release(ks.db, ks.kiosk, windows_release(ks))
+        assert out["accepted"] is True and out["tasksCreated"] == 2
+        assert ks.db.query(KitchenOrder).one().source == "kiosk"
+        assert _task(board(ks, ks.grill_screen), "steak")["state"] == "queued"
+        # Sent again (a lost answer): the same release, never twice on the screens.
+        again = KDS.release(ks.db, ks.kiosk, windows_release(ks))
+        assert again["accepted"] is True and ks.db.query(KitchenOrder).count() == 1

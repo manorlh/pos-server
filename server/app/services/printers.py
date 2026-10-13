@@ -1332,7 +1332,7 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
     """The shop's print server as `machine` needs it: who, and where on the LAN."""
     from app.services.independent_till import is_independent
 
-    away_kiosk = False
+    away_kiosk = off_lan = False
     if is_independent(machine):
         # "קופה עצמאית": it never uses the shop's print server; it prints by itself — except a
         # self-order kiosk, which may stand away from the shop's LAN (docs/SPEC_KIOSK.md §16.7):
@@ -1342,17 +1342,31 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         if not getattr(machine, "is_kiosk", False):
             return None
         away_kiosk = True
+    else:
+        from app.services.local_shop_z import is_remote_participant
+
+        # "מרוחקת בזד הסניפי" (not on the shop's local server, SPEC_INDEPENDENT_TILL §8.15): in the
+        # shop Z but in another place, off the shop's LAN — the away form, and said so (`offLan`):
+        # never the print server over the LAN, and never the shop's printers directly either (an
+        # address of the shop's network may be another device where it stands). Its own printers
+        # (set for it, `scope` machine) it prints itself; the shop's go through the cloud relay
+        # and the print server prints them — once.
+        if is_remote_participant(machine):
+            away_kiosk = off_lan = True
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
     if away_kiosk:
-        return {
+        out = {
             "machineId": str(host.id),
             "name": machine_label(host),
             "isSelf": False,
             "lanAddress": None,
             "port": DEFAULT_LAN_PORT,
         }
+        if off_lan:
+            out["offLan"] = True
+        return out
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
     from app.services.local_server_device import host_block_fields
 
@@ -1397,7 +1411,12 @@ def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[Kitchen
     ids.discard(machine.id)
     if not ids:
         return {}
-    lan = not is_independent(machine) or bool(getattr(machine, "is_kiosk", False))
+    from app.services.local_shop_z import is_remote_participant
+
+    # A remote participant ("מרוחקת בזד הסניפי", kiosk or till) stands in another place, off the
+    # shop's LAN: names only — the job goes through the cloud. An independent kiosk may be on it.
+    remote = is_remote_participant(machine)
+    lan = not remote and (not is_independent(machine) or bool(getattr(machine, "is_kiosk", False)))
     tills = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(list(ids))).all()}
     rows = {
         r.machine_id: r
@@ -1405,7 +1424,9 @@ def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[Kitchen
     } if lan else {}
     out: Dict[str, Dict[str, Any]] = {}
     for ident in ids:
-        row = rows.get(ident)
+        # A host that is itself a remote participant reported an address of its own network,
+        # not the shop's: never handed to the shop's tills (they reach it through the cloud).
+        row = rows.get(ident) if not is_remote_participant(tills.get(ident)) else None
         address = row.lan_address if row is not None and row.lan_address else None
         out[str(ident)] = {
             "name": machine_label(tills.get(ident)),

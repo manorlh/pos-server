@@ -9,6 +9,9 @@ import { join } from 'node:path';
 
 import {
   buildParticipationBody,
+  explainKeyOf,
+  nextChoice,
+  settingsOf,
   canBeRemote,
   initialLinks,
   linkHintOf,
@@ -268,7 +271,7 @@ describe('"מחובר ברשת המקומית" / "מרוחק (דרך הענן)"'
   it('the effect and the hint (a hint only)', () => {
     assert.equal(effectOf('shop_z', true), 'remote');
     assert.equal(effectOf('shop_z'), 'shopZ');
-    assert.equal(he.independentTill.effect.remote, 'נסגרת דרך הענן — הקופה הראשית ממתינה לחלק שלה');
+    assert.equal(he.independentTill.effect.remote, 'מרוחקת בזד הסניפי — נסגרת דרך הענן');
     assert.equal(linkHintOf('lan', false), 'maybeRemote');
     assert.equal(linkHintOf('remote', true), 'heardOnLan');
     assert.equal(linkHintOf('lan', true), null);
@@ -280,7 +283,7 @@ describe('"מחובר ברשת המקומית" / "מרוחק (דרך הענן)"'
     const st = s();
     assert.equal(
       render(summarySegments(st, initialChoices(st), 'm1', initialLinks(st))),
-      'קופות 1–5, 7 בזד הסניפי, נשענות על קופה 1 כשרת מקומי · קופה 7 מרוחקת (נסגרת דרך הענן) · קופה 6 עצמאית',
+      'קופות 1–5, 7 בזד הסניפי, נשענות על קופה 1 כשרת מקומי · קופה 7 מרוחקת בזד הסניפי (לא מחוברת לשרת, נסגרת דרך הענן) · קופה 6 עצמאית',
     );
   });
 });
@@ -409,5 +412,81 @@ describe('"לא משמש כשרת מקומי"', () => {
     assert.deepEqual(validateParticipation(state, initialChoices(state), 'm5', ex).map((i) => i.kind), ['main_excluded']);
     assert.equal(isKnownRefusal('main_till_not_server'), true);
     assert.equal(isKnownRefusal('lan_server_excluded_main_till'), true);
+  });
+});
+
+describe('the two settings: "מחוברת לשרת המקומי" and "ה-Z" (all four)', () => {
+  const heAll = JSON.parse(readFileSync(join(__dirname, '..', 'src', 'messages', 'he.json'), 'utf8')) as {
+    independentTill: { explain: Record<string, string>; settings: Record<string, string>; effect: Record<string, string> };
+  };
+  const st = () =>
+    shop([
+      till(1, 'shop_z', { mainTill: true, link: 'lan' }),
+      till(2, 'shop_z', { link: 'lan' }),
+      till(3, 'own_z', { link: 'lan' }),
+      till(4, 'shop_z', { link: 'remote' }),
+      till(6, 'independent', { link: 'lan' }),
+    ]);
+
+  it('each role and link is one pair of settings, explained in Hebrew', () => {
+    assert.deepEqual(settingsOf('shop_z', 'lan'), { connected: true, shopZ: true });
+    assert.deepEqual(settingsOf('shop_z', 'remote'), { connected: false, shopZ: true });
+    assert.deepEqual(settingsOf('own_z', 'lan'), { connected: true, shopZ: false });
+    assert.deepEqual(settingsOf('independent', 'lan'), { connected: false, shopZ: false });
+    for (const key of ['shopZ', 'remote', 'ownZ', 'independent'] as const) assert.ok(heAll.independentTill.explain[key]);
+    assert.equal(explainKeyOf({ connected: false, shopZ: true }), 'remote');
+    assert.equal(heAll.independentTill.settings.connected, 'מחוברת לשרת המקומי');
+    assert.ok(heAll.independentTill.explain.remote.includes('קופה אחת'));
+    assert.ok(heAll.independentTill.explain.remote.includes('דרך הענן'));
+  });
+
+  it('every move between the four, one setting at a time', () => {
+    const opts = { remoteAllowed: true };
+    const shopZ = { role: 'shop_z' as ZRole, link: 'lan' as const };
+    const remote = { role: 'shop_z' as ZRole, link: 'remote' as const };
+    const ownZ = { role: 'own_z' as ZRole, link: 'lan' as const };
+    const independent = { role: 'independent' as ZRole, link: 'lan' as const };
+    assert.deepEqual(nextChoice(shopZ, { connected: false }, opts), remote);
+    assert.deepEqual(nextChoice(shopZ, { shopZ: false }, opts), ownZ);
+    assert.deepEqual(nextChoice(remote, { connected: true }, opts), shopZ);
+    assert.deepEqual(nextChoice(remote, { shopZ: false }, opts), independent);
+    assert.deepEqual(nextChoice(ownZ, { connected: false }, opts), independent);
+    assert.deepEqual(nextChoice(ownZ, { shopZ: true }, opts), shopZ);
+    assert.deepEqual(nextChoice(independent, { connected: true }, opts), ownZ);
+    assert.deepEqual(nextChoice(independent, { shopZ: true }, opts), remote);
+    // Where it may not be remote (the main till, or no local server): it stays on the server.
+    assert.deepEqual(nextChoice(shopZ, { connected: false }, { remoteAllowed: false }), shopZ);
+    assert.deepEqual(nextChoice(independent, { shopZ: true }, { remoteAllowed: false }), shopZ);
+  });
+
+  it('the body sets each of the four, and only what changed', () => {
+    const s = st();
+    const choices = { ...initialChoices(s), m2: 'shop_z' as ZRole, m3: 'independent' as ZRole, m4: 'shop_z' as ZRole, m6: 'own_z' as ZRole };
+    const links = { ...initialLinks(s), m2: 'remote' as const, m4: 'lan' as const };
+    assert.deepEqual(buildParticipationBody(s, choices, 'm1', links), {
+      participants: [],
+      independent: ['m3'],
+      ownZ: ['m6'],
+      remote: ['m2'],
+    });
+    assert.equal(buildParticipationBody(s, initialChoices(s), 'm1', initialLinks(s)), null);
+  });
+
+  it('a move on or off the server waits for a clean break too', () => {
+    const s = shop([till(1, 'shop_z', { mainTill: true }), till(2, 'shop_z', { link: 'lan', openShift: true })]);
+    const issues = validateParticipation(s, initialChoices(s), 'm1', undefined, { m1: 'lan', m2: 'remote' });
+    assert.deepEqual(issues, [{ kind: 'blocked', machineId: 'm2', reason: 'open_shift' }]);
+    assert.deepEqual(validateParticipation(s, initialChoices(s), 'm1', undefined, { m1: 'lan', m2: 'lan' }), []);
+  });
+
+  it('a remote till is never offered as the main till', () => {
+    const s = st();
+    assert.deepEqual(mainTillOptions(s.tills, initialChoices(s), undefined, initialLinks(s)).map((t) => t.machineId), ['m1', 'm2']);
+    const links = { ...initialLinks(s), m2: 'remote' as const };
+    assert.deepEqual(mainTillOptions(s.tills, initialChoices(s), undefined, links).map((t) => t.machineId), ['m1']);
+  });
+
+  it('the main till may not leave the server, nor its refusal from the server go unexplained', () => {
+    assert.equal(isKnownRefusal('remote_main_till'), true);
   });
 });
