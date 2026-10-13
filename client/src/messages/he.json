@@ -4025,6 +4025,15 @@
       "area": "אזור: {area}",
       "cardBrandsTitle": "אשראי לפי מותג וסולק"
     },
+    "report": {
+      "monthHint": "בתצוגה החודשית החודש נבחר בתוך התצוגה; הסניף, האזור, המקור וסוגי ה-Z חלים עליה.",
+      "paymentMethods": "אמצעי תשלום (עמודה לכל אמצעי)",
+      "basis": "תאריך לפי",
+      "basisProduction": "תאריך הפקת Z",
+      "basisBusiness": "יום עסקי",
+      "unselectPage": "ביטול בחירת העמוד",
+      "zCount": "{count, plural, one {דו״ח Z אחד} other {# דוחות Z}}"
+    },
     "tillPrint": {
       "viewLabel": "תצוגה",
       "viewA4": "תצוגת A4",

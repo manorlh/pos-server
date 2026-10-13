@@ -75,6 +75,26 @@ export interface ReportExportBarProps {
 }
 
 /**
+ * The columns that are known only from the exported rows (`expandInExport`, one per payment
+ * method), written in their placeholder's place — in the table and in the chosen keys.
+ */
+export function expandExportColumns(
+  table: ReportTableSpec<unknown>,
+  rows: unknown[],
+  keys: string[],
+): { table: ReportTableSpec<unknown>; keys: string[] } {
+  if (!table.columns.some((c) => c.expandInExport)) return { table, keys };
+  const parts = new Map<string, string[]>();
+  const columns = table.columns.flatMap((c) => {
+    if (!c.expandInExport) return [c];
+    const expanded = c.expandInExport(rows).map((x) => ({ ...x, key: `${c.key}:${x.key}` }));
+    parts.set(c.key, expanded.map((x) => x.key));
+    return expanded;
+  });
+  return { table: { ...table, columns }, keys: keys.flatMap((k) => parts.get(k) ?? [k]) };
+}
+
+/**
  * A table as the exports see it: no screen-only columns, the search applied, its totals row.
  * `allRows`: what the table's `exportRows` fetched (default: its rows on screen).
  */
@@ -170,14 +190,21 @@ export function ReportExportBar({
   const headerLines = (at: string) =>
     reportHeaderLines({ title, business, place, from, to, hours, filters: filterLines, generatedAt: at }, words);
 
+  /** One table ready to write: a paged list's rows fetched now (`exportRows`), its data's columns expanded. */
+  const prepare = async (r: (typeof resolved)[number]) => {
+    const rows = r.table.exportRows ? await r.table.exportRows() : undefined;
+    const x = expandExportColumns(r.table, rows ?? r.table.rows, r.keys);
+    return { table: toExportTable(x.table, q, title, rows), keys: x.keys };
+  };
+
   const onExcel = async () => {
     setBusy('excel');
     try {
-      // A paged list's rows are fetched now (`exportRows`): the export is every row, not the page.
       const sheets = await Promise.all(
-        resolved.map(async (r) =>
-          exportTableSheet(toExportTable(r.table, q, title, r.table.exportRows ? await r.table.exportRows() : undefined), r.keys),
-        ),
+        resolved.map(async (r) => {
+          const p = await prepare(r);
+          return exportTableSheet(p.table, p.keys);
+        }),
       );
       const extra = (await extraSheets?.()) ?? [];
       await downloadExcel(extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra], fileName, {
@@ -208,7 +235,7 @@ export function ReportExportBar({
     if (!r) return;
     setBusy('pdf');
     try {
-      const table = toExportTable(r.table, q, title, r.table.exportRows ? await r.table.exportRows() : undefined);
+      const { table, keys } = await prepare(r);
       if (table.rows.length > PDF_MAX_ROWS) {
         toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
         return;
@@ -218,7 +245,7 @@ export function ReportExportBar({
       const blob = await fetchReportPdf(
         exportTablePdfBody(
           table,
-          r.keys,
+          keys,
           {
             title: pdfTitle,
             subtitleLines: [

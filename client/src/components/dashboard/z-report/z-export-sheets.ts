@@ -1,25 +1,36 @@
 'use client';
 
 /**
- * A Z detail as Excel (docs/ACCOUNTING_EXPORT_AND_REPORTS.md §4.1): the Z's own figures,
- * one row per till section (document ranges per number series, counts, money, tenders,
- * card transmission), the card brands, the waiters, the shifts — and its failed payment
- * attempts when there are any. Money goes out as the server sent it (decimal strings),
- * dates as the ISO strings the server sent.
+ * A Z detail for the report export bar (docs/ACCOUNTING_EXPORT_AND_REPORTS.md §4.1,
+ * P:\specs\reports-upgrade.md §5): the Z's own figures, one row per till section (document
+ * ranges per number series, counts, money, tenders, card transmission), the card brands, the
+ * waiters, the shifts — each a table with keyed columns, so the reader (and the company's
+ * default) chooses what goes out — and its failed payment attempts as sheets of their own when
+ * there are any. Money goes out as the server sent it (decimal strings), dates as the ISO
+ * strings the server sent. The same cells and totals the Z's Excel always had.
  */
 
+import type { ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { zShowsExempt } from '@/lib/dealerType';
 import { latePartTitleOf } from '@/lib/localShopZ';
-import { useCardBrandLabels } from '@/lib/cardBrands';
-import type { ExcelColumn, ExcelSheet, ExcelValue } from '@/lib/excelExport';
-import type { Money, PeriodTransmission, ZReportDetail, ZReportMachineSection } from '@/lib/types';
+import { useCardBrandLabels, type CardBrandBreakdownRow } from '@/lib/cardBrands';
+import type { ExcelSheet, ExcelValue } from '@/lib/excelExport';
+import type {
+  Money,
+  PeriodTransmission,
+  Shift,
+  ZReportDetail,
+  ZReportMachineSection,
+  ZWaiterRow,
+} from '@/lib/types';
 import {
   usePaymentMethodLabel,
   useShiftLabel,
   useTillHeading,
 } from '@/components/dashboard/shifts/shift-parts';
 import { useFailedPaymentsSheets } from '@/components/dashboard/failed-payments/export-sheets';
+import type { ReportColumn, ReportTableSpec } from '@/components/dashboard/report-framework';
 import { useZNumberLabel, zNumberSourceOf } from './z-number';
 
 /** What a stored section carries beyond the typed fields (app/services/z_builder.py). */
@@ -39,7 +50,16 @@ function methodsOf(breakdowns: (Record<string, Money> | null | undefined)[]): st
 const sum = (values: (Money | number | null | undefined)[]): number =>
   Math.round(values.reduce<number>((acc, v) => acc + (Number(v) || 0), 0) * 100) / 100;
 
-export function useZExportSheets() {
+/** A key part from a code (`pay:cash`, `range:320:first`). */
+const keyPart = (code: string | number) => String(code).replace(/[^A-Za-z0-9_.:-]/g, '_');
+
+export interface ZExport {
+  tables: ReportTableSpec<unknown>[];
+  /** The Z's failed payment attempts (fetched), as sheets of their own. */
+  extraSheets: () => Promise<ExcelSheet[]>;
+}
+
+export function useZExportTables() {
   const t = useTranslations('zReports');
   const ts = useTranslations('shifts');
   const tc = useTranslations('common');
@@ -59,292 +79,185 @@ export function useZExportSheets() {
   const seriesLabel = (series: number | string) =>
     tSeq.has(`docType.${series}`) ? tSeq(`docType.${series}`) : String(series);
 
-  return async (z: ZReportDetail): Promise<ExcelSheet[]> => {
+  return (z: ZReportDetail): ZExport => {
     const sections = z.perMachine as StoredSection[];
     const methods = methodsOf([z.paymentBreakdown, ...sections.map((s) => s.paymentBreakdown)]);
-    const methodColumns: ExcelColumn[] = methods.map((m) => ({ header: methodLabel(m), kind: 'money' }));
     const dealerType = z.business?.dealerType;
     const vat = (x: { vatTotal?: Money | null }) => (zShowsExempt(dealerType, x.vatTotal) ? null : (x.vatTotal ?? null));
     const regular = sections.filter((s) => !latePartTitleOf(s));
+    /** A money / count column of the Z and of a section alike. */
+    const methodColumns = <R extends { paymentBreakdown?: Record<string, Money> | null }>(total?: (m: string) => ExcelValue) =>
+      methods.map(
+        (m): ReportColumn<R> => ({
+          key: `pay:${keyPart(m)}`,
+          header: methodLabel(m),
+          kind: 'money',
+          value: (r) => r.paymentBreakdown?.[m] ?? null,
+          ...(total ? { total: total(m) } : {}),
+        }),
+      );
 
     // ── The Z ────────────────────────────────────────────────────────────────
-    const summary: ExcelSheet = {
-      name: t('export.summarySheet'),
+    const summary: ReportTableSpec<ZReportDetail> = {
+      id: 'main',
+      title: t('export.summarySheet'),
+      rows: [z],
+      rowKey: (x) => x.id,
       columns: [
-        { header: t('zNumber'), width: 16 },
-        { header: t('filterOrigin'), width: 18 },
-        { header: t('header.businessName'), width: 20 },
-        { header: t('header.vatNumber'), width: 13 },
-        { header: t('shop'), width: 18 },
-        { header: t('area'), width: 14 },
-        { header: t('export.till'), width: 22 },
-        { header: t('businessDate'), kind: 'date' },
-        { header: t('productionDate'), kind: 'date' },
-        { header: t('closedAt'), kind: 'datetime' },
-        { header: t('periodStart'), kind: 'datetime' },
-        { header: t('periodEnd'), kind: 'datetime' },
-        { header: t('tills'), kind: 'number' },
-        { header: t('shiftsCount'), kind: 'number' },
-        { header: t('documentsSalesAndCredits'), kind: 'number' },
-        { header: t('grossSales'), kind: 'money' },
-        { header: t('discounts'), kind: 'money' },
-        { header: t('salesAfterDiscounts'), kind: 'money' },
-        { header: t('refundsAndCredits'), kind: 'money' },
-        { header: t('netSales'), kind: 'money' },
-        { header: t('vatNetOfCredits'), kind: 'money' },
-        { header: t('tips'), kind: 'money' },
-        { header: t('export.cashTips'), kind: 'money' },
-        { header: t('export.cardTips'), kind: 'money' },
-        ...methodColumns,
-        { header: t('openingCash'), kind: 'money' },
-        { header: t('betweenShiftAdjustments'), kind: 'money' },
-        { header: t('expectedCash'), kind: 'money' },
-        { header: t('actualCash'), kind: 'money' },
-        { header: t('discrepancy'), kind: 'money' },
-      ],
-      rows: [
-        [
-          zNumberLabel(zNumberSourceOf(z)),
-          z.origin === 'till' ? t('originTillOption') : t('originCloudOption'),
-          z.business?.businessName ?? null,
-          z.business?.vatNumber ?? null,
-          z.shopName ?? z.business?.shopName ?? null,
-          z.business?.areaName ?? z.areaName ?? null,
-          regular.map(tillText).join(', ') || z.machineName || null,
-          z.businessDate,
-          z.productionDate ?? z.closedAt,
-          z.closedAt,
-          z.periodStart ?? null,
-          z.periodEnd ?? null,
-          z.machineCount ?? regular.length,
-          z.shiftCount ?? z.shifts.length,
-          z.transactionsCount ?? null,
-          z.grossSales ?? null,
-          z.discountsTotal ?? null,
-          z.totalSales ?? null,
-          z.totalRefunds ?? null,
-          z.netSales ?? null,
-          vat(z),
-          z.totalTips ?? null,
-          z.totalCashTips ?? null,
-          z.totalCardTips ?? null,
-          ...methods.map((m) => z.paymentBreakdown?.[m] ?? null),
-          z.openingCash ?? null,
-          z.betweenShiftAdjustments ?? null,
-          z.expectedCash ?? null,
-          z.actualCash ?? null,
-          z.discrepancy ?? null,
-        ],
+        { key: 'zNumber', header: t('zNumber'), width: 16, required: true, value: (x) => zNumberLabel(zNumberSourceOf(x)) },
+        {
+          key: 'origin',
+          header: t('filterOrigin'),
+          width: 18,
+          value: (x) => (x.origin === 'till' ? t('originTillOption') : t('originCloudOption')),
+        },
+        { key: 'businessName', header: t('header.businessName'), width: 20, value: (x) => x.business?.businessName ?? null },
+        { key: 'vatNumber', header: t('header.vatNumber'), width: 13, value: (x) => x.business?.vatNumber ?? null },
+        { key: 'shop', header: t('shop'), width: 18, value: (x) => x.shopName ?? x.business?.shopName ?? null },
+        { key: 'area', header: t('area'), width: 14, value: (x) => x.business?.areaName ?? x.areaName ?? null },
+        { key: 'till', header: t('export.till'), width: 22, value: (x) => regular.map(tillText).join(', ') || x.machineName || null },
+        { key: 'businessDate', header: t('businessDate'), kind: 'date', value: (x) => x.businessDate },
+        { key: 'productionDate', header: t('productionDate'), kind: 'date', value: (x) => x.productionDate ?? x.closedAt ?? null },
+        { key: 'closedAt', header: t('closedAt'), kind: 'datetime', value: (x) => x.closedAt ?? null },
+        { key: 'periodStart', header: t('periodStart'), kind: 'datetime', value: (x) => x.periodStart ?? null },
+        { key: 'periodEnd', header: t('periodEnd'), kind: 'datetime', value: (x) => x.periodEnd ?? null },
+        { key: 'tills', header: t('tills'), kind: 'number', value: (x) => x.machineCount ?? regular.length },
+        { key: 'shifts', header: t('shiftsCount'), kind: 'number', value: (x) => x.shiftCount ?? x.shifts.length },
+        { key: 'documents', header: t('documentsSalesAndCredits'), kind: 'number', value: (x) => x.transactionsCount ?? null },
+        { key: 'grossSales', header: t('grossSales'), kind: 'money', value: (x) => x.grossSales ?? null },
+        { key: 'discounts', header: t('discounts'), kind: 'money', value: (x) => x.discountsTotal ?? null },
+        { key: 'salesAfterDiscounts', header: t('salesAfterDiscounts'), kind: 'money', value: (x) => x.totalSales ?? null },
+        { key: 'refunds', header: t('refundsAndCredits'), kind: 'money', value: (x) => x.totalRefunds ?? null },
+        { key: 'netSales', header: t('netSales'), kind: 'money', value: (x) => x.netSales ?? null },
+        { key: 'vat', header: t('vatNetOfCredits'), kind: 'money', value: (x) => vat(x) },
+        { key: 'tips', header: t('tips'), kind: 'money', value: (x) => x.totalTips ?? null },
+        { key: 'cashTips', header: t('export.cashTips'), kind: 'money', value: (x) => x.totalCashTips ?? null },
+        { key: 'cardTips', header: t('export.cardTips'), kind: 'money', value: (x) => x.totalCardTips ?? null },
+        ...methodColumns<ZReportDetail>(),
+        { key: 'openingCash', header: t('openingCash'), kind: 'money', value: (x) => x.openingCash ?? null },
+        { key: 'betweenShiftAdjustments', header: t('betweenShiftAdjustments'), kind: 'money', value: (x) => x.betweenShiftAdjustments ?? null },
+        { key: 'expectedCash', header: t('expectedCash'), kind: 'money', value: (x) => x.expectedCash ?? null },
+        { key: 'actualCash', header: t('actualCash'), kind: 'money', value: (x) => x.actualCash ?? null },
+        { key: 'discrepancy', header: t('discrepancy'), kind: 'money', value: (x) => x.discrepancy ?? null },
       ],
     };
 
-    const sheets: ExcelSheet[] = [summary];
+    const tables: ReportTableSpec<unknown>[] = [summary as ReportTableSpec<unknown>];
 
     // ── One row per till section ───────────────────────────────────────────
     if (sections.length > 0) {
       const series = [
         ...new Set(sections.flatMap((s) => (s.documentRanges ?? []).map((r) => String(r.documentType)))),
       ].sort((a, b) => Number(a) - Number(b));
-      const rangeColumns: ExcelColumn[] =
+      const rangeOf = (s: StoredSection, code: string) => (s.documentRanges ?? []).find((x) => String(x.documentType) === code);
+      const rangeColumns: ReportColumn<StoredSection>[] =
         series.length > 0
-          ? series.flatMap((code) => [
-              { header: t('export.rangeFirst', { type: seriesLabel(code) }), width: 16 },
-              { header: t('export.rangeLast', { type: seriesLabel(code) }), width: 16 },
-              { header: t('export.rangeCount', { type: seriesLabel(code) }), kind: 'number' as const },
+          ? series.flatMap((code): ReportColumn<StoredSection>[] => [
+              { key: `range:${keyPart(code)}:first`, header: t('export.rangeFirst', { type: seriesLabel(code) }), width: 16, value: (s) => rangeOf(s, code)?.first ?? null },
+              { key: `range:${keyPart(code)}:last`, header: t('export.rangeLast', { type: seriesLabel(code) }), width: 16, value: (s) => rangeOf(s, code)?.last ?? null },
+              { key: `range:${keyPart(code)}:count`, header: t('export.rangeCount', { type: seriesLabel(code) }), kind: 'number', value: (s) => rangeOf(s, code)?.count ?? null },
             ])
           : [
-              { header: t('till.firstDocument'), width: 16 },
-              { header: t('till.lastDocument'), width: 16 },
+              { key: 'firstDocument', header: t('till.firstDocument'), width: 16, value: (s) => s.firstDocumentNumber ?? null },
+              { key: 'lastDocument', header: t('till.lastDocument'), width: 16, value: (s) => s.lastDocumentNumber ?? null },
             ];
-      const rangeValues = (s: StoredSection): ExcelValue[] =>
-        series.length > 0
-          ? series.flatMap((code) => {
-              const r = (s.documentRanges ?? []).find((x) => String(x.documentType) === code);
-              return [r?.first ?? null, r?.last ?? null, r?.count ?? null];
-            })
-          : [s.firstDocumentNumber ?? null, s.lastDocumentNumber ?? null];
       const tx = (s: StoredSection) => s.transmission ?? null;
-
-      sheets.push({
-        name: t('tillsTitle'),
-        columns: [
-          { header: t('export.posNumber'), width: 10 },
-          { header: t('export.machineName'), width: 20 },
-          { header: t('shiftsCount'), kind: 'number' },
-          ...rangeColumns,
-          { header: t('documentsSalesAndCredits'), kind: 'number' },
-          { header: t('print.salesCount'), kind: 'number' },
-          { header: t('print.creditNotesCount'), kind: 'number' },
-          { header: t('print.nonSaleCount'), kind: 'number' },
-          { header: t('grossSales'), kind: 'money' },
-          { header: t('discounts'), kind: 'money' },
-          { header: t('salesAfterDiscounts'), kind: 'money' },
-          { header: t('refundsAndCredits'), kind: 'money' },
-          { header: t('netSales'), kind: 'money' },
-          { header: t('vatNetOfCredits'), kind: 'money' },
-          { header: t('tips'), kind: 'money' },
-          { header: t('export.cashTips'), kind: 'money' },
-          { header: t('export.cardTips'), kind: 'money' },
-          ...methodColumns,
-          { header: t('openingCash'), kind: 'money' },
-          { header: t('betweenShiftAdjustments'), kind: 'money' },
-          { header: t('expectedCash'), kind: 'money' },
-          { header: t('actualCash'), kind: 'money' },
-          { header: t('discrepancy'), kind: 'money' },
-          { header: t('export.cardLegs'), kind: 'number' },
-          { header: t('export.transmittedLegs'), kind: 'number' },
-          { header: t('export.untransmittedLegs'), kind: 'number' },
-          { header: t('export.untransmittedAmount'), kind: 'money' },
-        ],
-        rows: sections.map((s) => [
-          s.posNumber ?? null,
-          latePartTitleOf(s) ?? s.machineName ?? s.machineId,
-          s.shiftCount ?? null,
-          ...rangeValues(s),
-          s.transactionsCount ?? null,
-          s.salesCount ?? null,
-          s.creditNotesCount ?? null,
-          s.nonSaleDocumentsCount ?? null,
-          s.grossSales ?? null,
-          s.discountsTotal ?? null,
-          s.totalSales ?? null,
-          s.totalRefunds ?? null,
-          s.netSales ?? null,
-          vat(s),
-          s.totalTips ?? null,
-          s.totalCashTips ?? null,
-          s.totalCardTips ?? null,
-          ...methods.map((m) => s.paymentBreakdown?.[m] ?? null),
-          s.openingCash ?? null,
-          s.betweenShiftAdjustments ?? null,
-          s.expectedCash ?? null,
-          // Null when any of the till's shifts is uncounted — never read as zero.
-          s.countedCash ?? null,
-          s.overShort ?? null,
-          tx(s)?.cardLegs ?? null,
-          tx(s)?.transmittedLegs ?? null,
-          tx(s)?.untransmittedLegs ?? null,
-          tx(s)?.untransmittedAmount ?? null,
-        ]),
+      const anyTx = sections.some(tx);
+      const tills: ReportTableSpec<StoredSection> = {
+        id: 'tills',
+        title: t('tillsTitle'),
+        rows: sections,
+        rowKey: (s, i) => `${s.machineId}-${i}`,
         // The Z's own figures, as the server summed them.
-        totals: [
-          tc('total'),
-          null,
-          z.shiftCount ?? z.shifts.length,
-          ...rangeColumns.map(() => null),
-          z.transactionsCount ?? null,
-          sum(sections.map((s) => s.salesCount)),
-          sum(sections.map((s) => s.creditNotesCount)),
-          sum(sections.map((s) => s.nonSaleDocumentsCount)),
-          z.grossSales ?? null,
-          z.discountsTotal ?? null,
-          z.totalSales ?? null,
-          z.totalRefunds ?? null,
-          z.netSales ?? null,
-          vat(z),
-          z.totalTips ?? null,
-          z.totalCashTips ?? null,
-          z.totalCardTips ?? null,
-          ...methods.map((m) => z.paymentBreakdown?.[m] ?? null),
-          z.openingCash ?? null,
-          z.betweenShiftAdjustments ?? null,
-          z.expectedCash ?? null,
-          z.actualCash ?? null,
-          z.discrepancy ?? null,
-          sections.some(tx) ? sum(sections.map((s) => tx(s)?.cardLegs)) : null,
-          sections.some(tx) ? sum(sections.map((s) => tx(s)?.transmittedLegs)) : null,
-          sections.some(tx) ? sum(sections.map((s) => tx(s)?.untransmittedLegs)) : null,
-          sections.some(tx) ? sum(sections.map((s) => tx(s)?.untransmittedAmount)) : null,
+        totalsLabel: tc('total'),
+        columns: [
+          { key: 'posNumber', header: t('export.posNumber'), width: 10, value: (s) => s.posNumber ?? null },
+          { key: 'machineName', header: t('export.machineName'), width: 20, required: true, value: (s) => latePartTitleOf(s) ?? s.machineName ?? s.machineId },
+          { key: 'shifts', header: t('shiftsCount'), kind: 'number', value: (s) => s.shiftCount ?? null, total: z.shiftCount ?? z.shifts.length },
+          ...rangeColumns,
+          { key: 'documents', header: t('documentsSalesAndCredits'), kind: 'number', value: (s) => s.transactionsCount ?? null, total: z.transactionsCount ?? null },
+          { key: 'salesCount', header: t('print.salesCount'), kind: 'number', value: (s) => s.salesCount ?? null, total: sum(sections.map((s) => s.salesCount)) },
+          { key: 'creditNotesCount', header: t('print.creditNotesCount'), kind: 'number', value: (s) => s.creditNotesCount ?? null, total: sum(sections.map((s) => s.creditNotesCount)) },
+          { key: 'nonSaleCount', header: t('print.nonSaleCount'), kind: 'number', value: (s) => s.nonSaleDocumentsCount ?? null, total: sum(sections.map((s) => s.nonSaleDocumentsCount)) },
+          { key: 'grossSales', header: t('grossSales'), kind: 'money', value: (s) => s.grossSales ?? null, total: z.grossSales ?? null },
+          { key: 'discounts', header: t('discounts'), kind: 'money', value: (s) => s.discountsTotal ?? null, total: z.discountsTotal ?? null },
+          { key: 'salesAfterDiscounts', header: t('salesAfterDiscounts'), kind: 'money', value: (s) => s.totalSales ?? null, total: z.totalSales ?? null },
+          { key: 'refunds', header: t('refundsAndCredits'), kind: 'money', value: (s) => s.totalRefunds ?? null, total: z.totalRefunds ?? null },
+          { key: 'netSales', header: t('netSales'), kind: 'money', value: (s) => s.netSales ?? null, total: z.netSales ?? null },
+          { key: 'vat', header: t('vatNetOfCredits'), kind: 'money', value: (s) => vat(s), total: vat(z) },
+          { key: 'tips', header: t('tips'), kind: 'money', value: (s) => s.totalTips ?? null, total: z.totalTips ?? null },
+          { key: 'cashTips', header: t('export.cashTips'), kind: 'money', value: (s) => s.totalCashTips ?? null, total: z.totalCashTips ?? null },
+          { key: 'cardTips', header: t('export.cardTips'), kind: 'money', value: (s) => s.totalCardTips ?? null, total: z.totalCardTips ?? null },
+          ...methodColumns<StoredSection>((m) => z.paymentBreakdown?.[m] ?? null),
+          { key: 'openingCash', header: t('openingCash'), kind: 'money', value: (s) => s.openingCash ?? null, total: z.openingCash ?? null },
+          { key: 'betweenShiftAdjustments', header: t('betweenShiftAdjustments'), kind: 'money', value: (s) => s.betweenShiftAdjustments ?? null, total: z.betweenShiftAdjustments ?? null },
+          { key: 'expectedCash', header: t('expectedCash'), kind: 'money', value: (s) => s.expectedCash ?? null, total: z.expectedCash ?? null },
+          // Null when any of the till's shifts is uncounted — never read as zero.
+          { key: 'actualCash', header: t('actualCash'), kind: 'money', value: (s) => s.countedCash ?? null, total: z.actualCash ?? null },
+          { key: 'discrepancy', header: t('discrepancy'), kind: 'money', value: (s) => s.overShort ?? null, total: z.discrepancy ?? null },
+          { key: 'cardLegs', header: t('export.cardLegs'), kind: 'number', value: (s) => tx(s)?.cardLegs ?? null, total: anyTx ? sum(sections.map((s) => tx(s)?.cardLegs)) : null },
+          { key: 'transmittedLegs', header: t('export.transmittedLegs'), kind: 'number', value: (s) => tx(s)?.transmittedLegs ?? null, total: anyTx ? sum(sections.map((s) => tx(s)?.transmittedLegs)) : null },
+          { key: 'untransmittedLegs', header: t('export.untransmittedLegs'), kind: 'number', value: (s) => tx(s)?.untransmittedLegs ?? null, total: anyTx ? sum(sections.map((s) => tx(s)?.untransmittedLegs)) : null },
+          { key: 'untransmittedAmount', header: t('export.untransmittedAmount'), kind: 'money', value: (s) => tx(s)?.untransmittedAmount ?? null, total: anyTx ? sum(sections.map((s) => tx(s)?.untransmittedAmount)) : null },
         ],
-      });
+      };
+      tables.push(tills as ReportTableSpec<unknown>);
     }
 
     // ── Card brands ──────────────────────────────────────────────────────────
     const cards = z.cardBrands ?? [];
     if (cards.length > 0) {
-      sheets.push({
-        name: tcb('zTitle'),
+      const cardTable: ReportTableSpec<CardBrandBreakdownRow> = {
+        id: 'cards',
+        title: tcb('zTitle'),
+        rows: cards,
+        rowKey: (r, i) => `${r.brand}-${r.acquirer}-${i}`,
+        totalsLabel: tc('total'),
         columns: [
-          { header: tcb('col.brand'), width: 16 },
-          { header: tcb('col.acquirer'), width: 16 },
-          { header: t('export.salesCount'), kind: 'number' },
-          { header: tcb('col.sales'), kind: 'money' },
-          { header: t('export.refundsCount'), kind: 'number' },
-          { header: tcb('col.refunds'), kind: 'money' },
-          { header: tcb('col.net'), kind: 'money' },
+          { key: 'brand', header: tcb('col.brand'), width: 16, required: true, value: (r) => brands.brand(r.brand) },
+          { key: 'acquirer', header: tcb('col.acquirer'), width: 16, value: (r) => brands.acquirer(r.acquirer) },
+          { key: 'salesCount', header: t('export.salesCount'), kind: 'number', value: (r) => r.salesCount, total: sum(cards.map((r) => r.salesCount)) },
+          { key: 'sales', header: tcb('col.sales'), kind: 'money', value: (r) => r.salesAmount, total: sum(cards.map((r) => r.salesAmount)) },
+          { key: 'refundsCount', header: t('export.refundsCount'), kind: 'number', value: (r) => r.refundsCount, total: sum(cards.map((r) => r.refundsCount)) },
+          { key: 'refunds', header: tcb('col.refunds'), kind: 'money', value: (r) => r.refundsAmount, total: sum(cards.map((r) => r.refundsAmount)) },
+          { key: 'net', header: tcb('col.net'), kind: 'money', value: (r) => r.net, total: sum(cards.map((r) => r.net)) },
         ],
-        rows: cards.map((r) => [
-          brands.brand(r.brand),
-          brands.acquirer(r.acquirer),
-          r.salesCount,
-          r.salesAmount,
-          r.refundsCount,
-          r.refundsAmount,
-          r.net,
-        ]),
-        totals: [
-          tc('total'),
-          null,
-          sum(cards.map((r) => r.salesCount)),
-          sum(cards.map((r) => r.salesAmount)),
-          sum(cards.map((r) => r.refundsCount)),
-          sum(cards.map((r) => r.refundsAmount)),
-          sum(cards.map((r) => r.net)),
-        ],
-      });
+      };
+      tables.push(cardTable as ReportTableSpec<unknown>);
     }
 
     // ── Waiters ──────────────────────────────────────────────────────────────
     const waiters = z.byWaiter ?? [];
     if (waiters.length > 0) {
-      sheets.push({
-        name: t('waiters.title'),
+      const waiterTable: ReportTableSpec<ZWaiterRow> = {
+        id: 'waiters',
+        title: t('waiters.title'),
+        rows: waiters,
+        rowKey: (r, i) => `${r.waiter ?? ''}-${i}`,
+        totalsLabel: tc('total'),
         columns: [
-          { header: t('waiters.col.waiter'), width: 18 },
-          { header: t('waiters.col.tables'), kind: 'number' },
-          { header: t('export.guests'), kind: 'number' },
-          { header: t('export.salesCount'), kind: 'number' },
-          { header: t('waiters.col.sales'), kind: 'money' },
-          { header: t('export.refundsCount'), kind: 'number' },
-          { header: t('waiters.col.refunds'), kind: 'money' },
-          { header: t('waiters.col.net'), kind: 'money' },
-          { header: t('waiters.col.cash'), kind: 'money' },
-          { header: t('waiters.col.card'), kind: 'money' },
-          { header: t('waiters.col.productionVoucher'), kind: 'money' },
-          { header: t('export.other'), kind: 'money' },
-          { header: t('waiters.col.tips'), kind: 'money' },
+          { key: 'waiter', header: t('waiters.col.waiter'), width: 18, required: true, value: (r) => r.waiter || t('waiters.none') },
+          { key: 'tables', header: t('waiters.col.tables'), kind: 'number', value: (r) => r.tables, total: sum(waiters.map((r) => r.tables)) },
+          { key: 'guests', header: t('export.guests'), kind: 'number', value: (r) => r.guests, total: sum(waiters.map((r) => r.guests)) },
+          { key: 'salesCount', header: t('export.salesCount'), kind: 'number', value: (r) => r.salesCount, total: sum(waiters.map((r) => r.salesCount)) },
+          { key: 'sales', header: t('waiters.col.sales'), kind: 'money', value: (r) => r.sales, total: sum(waiters.map((r) => r.sales)) },
+          { key: 'refundsCount', header: t('export.refundsCount'), kind: 'number', value: (r) => r.refundsCount, total: sum(waiters.map((r) => r.refundsCount)) },
+          { key: 'refunds', header: t('waiters.col.refunds'), kind: 'money', value: (r) => r.refunds, total: sum(waiters.map((r) => r.refunds)) },
+          { key: 'net', header: t('waiters.col.net'), kind: 'money', value: (r) => r.net, total: sum(waiters.map((r) => r.net)) },
+          { key: 'cash', header: t('waiters.col.cash'), kind: 'money', value: (r) => r.cash, total: sum(waiters.map((r) => r.cash)) },
+          { key: 'card', header: t('waiters.col.card'), kind: 'money', value: (r) => r.card, total: sum(waiters.map((r) => r.card)) },
+          {
+            key: 'productionVoucher',
+            header: t('waiters.col.productionVoucher'),
+            kind: 'money',
+            value: (r) => r.productionVoucher ?? '0.00',
+            total: sum(waiters.map((r) => r.productionVoucher ?? '0.00')),
+          },
+          { key: 'other', header: t('export.other'), kind: 'money', value: (r) => r.other, total: sum(waiters.map((r) => r.other)) },
+          { key: 'tips', header: t('waiters.col.tips'), kind: 'money', value: (r) => r.tips, total: sum(waiters.map((r) => r.tips)) },
         ],
-        rows: waiters.map((r) => [
-          r.waiter || t('waiters.none'),
-          r.tables,
-          r.guests,
-          r.salesCount,
-          r.sales,
-          r.refundsCount,
-          r.refunds,
-          r.net,
-          r.cash,
-          r.card,
-          r.productionVoucher ?? '0.00',
-          r.other,
-          r.tips,
-        ]),
-        totals: [
-          tc('total'),
-          sum(waiters.map((r) => r.tables)),
-          sum(waiters.map((r) => r.guests)),
-          sum(waiters.map((r) => r.salesCount)),
-          sum(waiters.map((r) => r.sales)),
-          sum(waiters.map((r) => r.refundsCount)),
-          sum(waiters.map((r) => r.refunds)),
-          sum(waiters.map((r) => r.net)),
-          sum(waiters.map((r) => r.cash)),
-          sum(waiters.map((r) => r.card)),
-          sum(waiters.map((r) => r.productionVoucher ?? '0.00')),
-          sum(waiters.map((r) => r.other)),
-          sum(waiters.map((r) => r.tips)),
-        ],
-      });
+      };
+      tables.push(waiterTable as ReportTableSpec<unknown>);
     }
 
     // ── Shifts ───────────────────────────────────────────────────────────────
@@ -353,45 +266,76 @@ export function useZExportSheets() {
         const s = sections.find((x) => x.machineId === machineId && !latePartTitleOf(x));
         return s ? tillText(s) : (machineName ?? machineId);
       };
-      sheets.push({
-        name: ts('title'),
-        columns: [
-          { header: ts('col.till'), width: 20 },
-          { header: ts('col.shift'), width: 12 },
-          { header: ts('col.businessDate'), kind: 'date' },
-          { header: ts('col.opened'), kind: 'datetime' },
-          { header: ts('detail.openedBy'), width: 14 },
-          { header: ts('col.closed'), kind: 'datetime' },
-          { header: ts('detail.closedBy'), width: 14 },
-          { header: ts('col.sales'), kind: 'money' },
-          { header: ts('col.expected'), kind: 'money' },
-          { header: ts('col.counted'), kind: 'money' },
-          { header: ts('col.overShort'), kind: 'money' },
-        ],
-        rows: z.shifts.map((s) => [
-          tillOf(s.machineId, s.machineName),
-          shiftLabel(s),
-          s.businessDate,
-          s.openedAt,
-          s.openedByName ?? null,
-          s.closedAt ?? null,
-          s.unattended ? ts('closedRemotely') : (s.closedByName ?? null),
-          s.serverTotals?.totalSales ?? null,
-          s.expectedCash ?? null,
-          s.countedCash ?? null,
-          s.discrepancy ?? null,
-        ]),
-      });
+      tables.push(zShiftsExportTable(z.shifts, tillOf) as ReportTableSpec<unknown>);
     }
 
-    // ── Failed payment attempts of the Z (information only) ─────────────────
-    try {
-      const failed = await failedSheets({ zReportId: z.id });
-      sheets.push(...failed.filter((s) => s.rows.length > 0));
-    } catch {
-      // Information only: the Z's own sheets still go out.
-    }
+    return {
+      tables,
+      // The Z's failed payment attempts (information only).
+      extraSheets: async () => {
+        try {
+          const failed = await failedSheets({ zReportId: z.id });
+          return failed.filter((s) => s.rows.length > 0);
+        } catch {
+          // Information only: the Z's own sheets still go out.
+          return [];
+        }
+      },
+    };
+  };
 
-    return sheets;
+  /** The Z's shifts — one table on screen (under each till) and in the export, so the columns are shared. */
+  function zShiftsExportTable(shifts: Shift[], tillOf: (machineId: string, machineName?: string | null) => string) {
+    return zShiftsTableSpec(shifts, { ts, shiftLabel, tillOf });
+  }
+}
+
+/**
+ * The Z's shifts as a report table (key `z-report`, table `shifts`): on the Z's page under each
+ * till, and the "משמרות" sheet of its Excel — the same columns, so the reader's choice is shared.
+ */
+export function zShiftsTableSpec(
+  shifts: Shift[],
+  {
+    ts,
+    shiftLabel,
+    tillOf,
+    screen,
+  }: {
+    ts: (key: string) => string;
+    shiftLabel: (s: Shift) => string;
+    tillOf: (machineId: string, machineName?: string | null) => string;
+    /** The screen's cells (links, badges); the export reads the values. */
+    screen?: Partial<Record<'shift' | 'opened' | 'closed' | 'counted' | 'overShort' | 'badges', (s: Shift) => ReactNode>>;
+  },
+): ReportTableSpec<Shift> {
+  const columns: ReportColumn<Shift>[] = [
+    { key: 'till', header: ts('col.till'), width: 20, exportOnly: true, value: (s) => tillOf(s.machineId, s.machineName) },
+    { key: 'shift', header: ts('col.shift'), width: 12, required: true, value: (s) => shiftLabel(s), cell: screen?.shift },
+    { key: 'businessDate', header: ts('col.businessDate'), kind: 'date', value: (s) => s.businessDate },
+    { key: 'opened', header: ts('col.opened'), kind: 'datetime', value: (s) => s.openedAt, cell: screen?.opened },
+    { key: 'openedBy', header: ts('detail.openedBy'), width: 14, exportOnly: true, value: (s) => s.openedByName ?? null },
+    { key: 'closed', header: ts('col.closed'), kind: 'datetime', value: (s) => s.closedAt ?? null, cell: screen?.closed },
+    {
+      key: 'closedBy',
+      header: ts('detail.closedBy'),
+      width: 14,
+      exportOnly: true,
+      value: (s) => (s.unattended ? ts('closedRemotely') : (s.closedByName ?? null)),
+    },
+    { key: 'sales', header: ts('col.sales'), kind: 'money', value: (s) => s.serverTotals?.totalSales ?? null },
+    { key: 'expected', header: ts('col.expected'), kind: 'money', exportOnly: true, value: (s) => s.expectedCash ?? null },
+    { key: 'counted', header: ts('col.counted'), kind: 'money', value: (s) => s.countedCash ?? null, cell: screen?.counted },
+    { key: 'overShort', header: ts('col.overShort'), kind: 'money', value: (s) => s.discrepancy ?? null, cell: screen?.overShort },
+    ...(screen?.badges
+      ? [{ key: 'badges', header: ts('col.state'), screenOnly: true, sortable: false, value: () => null, cell: screen.badges } as ReportColumn<Shift>]
+      : []),
+  ];
+  return {
+    id: 'shifts',
+    title: ts('title'),
+    columns,
+    rows: shifts,
+    rowKey: (s) => s.id,
   };
 }

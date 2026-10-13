@@ -41,6 +41,12 @@ export interface ReportColumn<R> {
   exportOnly?: boolean;
   /** On screen only (e.g. a share bar). */
   screenOnly?: boolean;
+  /**
+   * A column that stands for several in the export, known only from the exported rows (one per
+   * payment method the data has): chosen or left out as one, written as the columns this returns,
+   * in its place (their keys `<key>:<theirs>`).
+   */
+  expandInExport?(rows: R[]): ReportColumn<R>[];
 }
 
 export interface ReportTableSpec<R> {
