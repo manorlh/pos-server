@@ -93,7 +93,7 @@ export function StaffLayer({
   );
 }
 
-function PinPad({ m, title, onSubmit, onCancel }: { m: PreviewModel; title: string; onSubmit: (code: string) => Promise<string | null>; onCancel: () => void }) {
+export function PinPad({ m, title, onSubmit, onCancel }: { m: PreviewModel; title: string; onSubmit: (code: string) => Promise<string | null>; onCancel: () => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

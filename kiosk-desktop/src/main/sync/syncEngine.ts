@@ -8,10 +8,13 @@
  *  - after a good beat (at most every 25 s): parameters (ETag), settings (since), kiosk/sync
  *    (every 15 s for a kiosk), catalog (delta), promotions (ETag), the outbox;
  *  - every 15 minutes (and at start): machines/me, a full catalog, POS users;
+ *  - "סניף לא פעיל": `shopActive` read from the heartbeat, machines/me and every settings answer
+ *    ("unchanged" included) and kept — none of the above stops under the shop's lock;
  *  - nothing here is on the customer's path: the screens only ever read the local copies.
  */
 
 import { stockLevelsOf } from '@dash-lib/kioskSoldOut';
+import { shopActiveAfter, shopActiveSaid } from '@dash-lib/shopActive';
 import { apiBase, tokenRevoked, type Api, type ApiReply } from './api';
 import { docResults, FINAL_ON_REFUSAL, plan, type Outbox, type OutboxRow } from './outbox';
 import type { CloudStore, Credentials, MachineMe } from './cloud';
@@ -39,6 +42,12 @@ export interface RemoteHooks {
   onStock?(): void;
   onSettings(): void;
   onParameters(): void;
+  /**
+   * "סניף לא פעיל" (client lib/shopActive.ts): the shop was turned off — or on again — in the cloud
+   * (`shopActive` on the heartbeat, `machines/me`, the settings pull). The device locks once its
+   * customer is done, or is released at once.
+   */
+  onShopActive?(active: boolean): void;
   /** Remote instructions from the heartbeat. */
   onPendingCloseShift(req: { requestId: string; shiftId?: string | null; force?: boolean }): void;
   onPendingTillZ(req: { requestId: string; force?: boolean }): void;
@@ -194,6 +203,7 @@ export class SyncEngine {
       if (Number.isFinite(server)) this.status.clockSkewMs = Math.round((sentAt + Date.now()) / 2 - server);
     }
     const b = reply.body ?? {};
+    this.noteShopActive(shopActiveSaid(b));
     const prev = this.cloud.heartbeat();
     const epoch = typeof b.tillZEpoch === 'number' ? b.tillZEpoch : prev.tillZEpoch;
     this.cloud.setHeartbeat({
@@ -228,6 +238,14 @@ export class SyncEngine {
     return true;
   }
 
+  /** The cloud's `shopActive` in an answer (null: it said nothing), kept; a change told to the service. */
+  private noteShopActive(said: boolean | null, full = false) {
+    const next = shopActiveAfter(this.cloud.shopActive(), said, full);
+    if (!this.cloud.setShopActive(next)) return;
+    this.hooks.log(`shop ${next ? 'active again: devices released' : 'inactive: the device locks once its customer is done'}`);
+    this.hooks.onShopActive?.(next);
+  }
+
   /* ----------------------------------------------------------------- pulls */
 
   async pulls(): Promise<void> {
@@ -254,6 +272,7 @@ export class SyncEngine {
     const reply = await this.api.get<MachineMe>('machines/me', { timeoutMs: 20_000 });
     if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return null;
     this.cloud.setMachine(reply.body);
+    this.noteShopActive(shopActiveSaid(reply.body));
     return reply.body;
   }
 
@@ -277,6 +296,8 @@ export class SyncEngine {
     const reply = await this.api.get<Record<string, unknown>>(this.machinePath(`settings${since}`), { timeoutMs: 20_000 });
     if (!this.check(reply) || reply.kind !== 'ok' || !reply.body) return;
     const b = reply.body;
+    // "סניף פעיל" rides on every answer, "unchanged" too; a full one that says nothing of it is an older server's: active.
+    this.noteShopActive(shopActiveSaid(b), b.syncType === 'full');
     if (b.syncType === 'unchanged') return;
     this.cloud.setSettings({
       settings: (b.settings as Record<string, unknown>) ?? {},

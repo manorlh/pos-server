@@ -131,6 +131,8 @@ import { BatteryAlerts } from './BatteryAlerts';
 import { Dialog } from './Dialog';
 import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
+import { KioskShopLock } from './KioskShopLock';
+import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
@@ -417,9 +419,17 @@ export function KioskApp({ view }: { view: KioskView }) {
   // The flow, as the cloud's status and the automatic close read it — and, on Android, as the APK
   // follows it: the checkout's steps ("איך תרצו לשלם?" included) are the "details" screen and the
   // charge is "pay", where the APK keeps the order's vouchers; any other screen gives them back.
+  // "סניף לא פעיל" (client lib/shopActive.ts): the shop's lock once the customer is done — ordering, paying, the
+  // success screen — and from then on ("engaged") until the shop is on again; reported as SHOP_LOCK_FLOW, so the
+  // service starts no sale under it and its automatic / remote close runs as on any resting screen.
+  const shopActive = view.shopActive !== false;
+  const [shopLockWas, setShopLockWas] = useState(false);
+  const shopLockUp = shopLockShown({ shopActive, surface: 'kiosk', saleInProgress: !flowIdle(flow) || flowBusy(flow), engaged: shopLockWas });
+  const shopLockNow = shopLockEngaged(shopLockWas, shopLockUp, shopActive);
+  if (shopLockNow !== shopLockWas) setShopLockWas(shopLockNow);
   useEffect(() => {
-    kiosk.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
-  }, [flow]);
+    kiosk.reportFlow(shopLockUp ? { ...SHOP_LOCK_FLOW, busy: false, idle: true } : { flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
+  }, [flow, shopLockUp]);
 
   // Back to rest: the order's own state cleared.
   const resting = !['service', 'catalog', 'cart', 'confirm', 'details', 'pay', 'success'].includes(flow.screen);
@@ -944,7 +954,8 @@ export function KioskApp({ view }: { view: KioskView }) {
     m,
     screen: flow.screen,
     busy: flowBusy(flow),
-    staff: staffOpen !== 'none',
+    // Under the shop's lock a scan starts nothing (as under the staff's screens).
+    staff: staffOpen !== 'none' || shopLockUp,
     sheetOpen: !!product || leaveAsk || !!changes || till.entry,
     shown: allProducts,
     codes: view.catalog.products,
@@ -1249,6 +1260,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
+      {shopLockUp ? <KioskShopLock m={m} closeDay={view.closeDay ?? null} /> : null}
       <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} />
     </div>
   );
