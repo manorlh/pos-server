@@ -1113,19 +1113,9 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
         return made_urgent
     if E.rate_limited(db, rule, now):
         return made_urgent
-    pending = (
-        db.query(ExceptionAlertDispatch)
-        .filter(
-            ExceptionAlertDispatch.rule_id == rule.id,
-            ExceptionAlertDispatch.kind == DISPATCH_ALERT,
-            ExceptionAlertDispatch.status.in_(SUPPRESSED_STATUSES),
-            ExceptionAlertDispatch.digest_id.is_(None),
-        )
-        .order_by(ExceptionAlertDispatch.created_at, ExceptionAlertDispatch.id)
-        .all()
-    )
+    pending = _held(db, rule)
     if not pending:
-        return 0
+        return made_urgent
     entry_ids = list(dict.fromkeys(d.entry_id for d in pending if d.entry_id is not None))
     entries = db.query(ExceptionLogEntry).filter(ExceptionLogEntry.id.in_(entry_ids)).all() if entry_ids else []
     entries.sort(key=lambda e: aware(e.occurred_at))
@@ -1134,7 +1124,7 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
         for d in pending:
             d.digest_id = d.id
         db.flush()
-        return 0
+        return made_urgent
     from app.models.user import User
 
     owner = db.get(User, rule.owner_user_id)

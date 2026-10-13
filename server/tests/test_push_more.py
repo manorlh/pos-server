@@ -224,6 +224,20 @@ def test_urgent_alerts_skip_the_rate_limit_and_the_digest_quiet_hours_still_hold
     assert E.flush_digests(w.db, now=after + timedelta(minutes=5)) == 0
 
 
+def test_after_the_quiet_hours_an_urgent_alert_goes_alone_and_the_rest_in_the_digest(w):
+    device(w, w.admin)
+    P.save_preferences(w.db, w.admin, w.tenant.id, {"quietFrom": "18:00", "quietTo": "23:00", "rateLimitMinutes": 0})
+    quiet_now = NOW + timedelta(hours=1)                                   # 20:00 local
+    urgent = run(w, entry(w, "document_refused", severity="high", minutes_ago=0), now=quiet_now)
+    run(w, entry(w, "till_offline", minutes_ago=0), now=quiet_now)
+    run(w, entry(w, "kiosk_offline", minutes_ago=0), now=quiet_now)
+    assert E.flush_digests(w.db, now=NOW + timedelta(hours=4, minutes=1)) == 2   # the urgent one + one digest
+    sent = [d for d in pushes(w) if d.status == "sent"]
+    assert sorted(d.kind for d in sent) == ["alert", "digest"]
+    assert next(d for d in sent if d.kind == "alert").entry_id == urgent[0].entry_id
+    assert next(d for d in sent if d.kind == "digest").digest_count == 2
+
+
 # ── The feed ─────────────────────────────────────────────────────────────────
 
 
