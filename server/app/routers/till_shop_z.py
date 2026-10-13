@@ -50,7 +50,7 @@ from app.services import z_runs as ZR
 from app.services.machine_status import is_online
 
 # Display devices are not tills (app/services/display_devices.py).
-from app.middleware.auth import FISCAL_SYNC_PATH
+from app.middleware.auth import HOST_SYNC_PATH
 
 router = APIRouter(tags=["till-shop-z"])
 
@@ -210,7 +210,8 @@ def till_shop_z_status(
     }
 
 
-@router.post("/sync/{machine_id}/shop-z", status_code=status.HTTP_201_CREATED, dependencies=FISCAL_SYNC_PATH)
+# The shop's master: a till, or a dedicated local server (P:/specs/dedicated-local-server.md §11.2).
+@router.post("/sync/{machine_id}/shop-z", status_code=status.HTTP_201_CREATED, dependencies=HOST_SYNC_PATH)
 def till_shop_z_start(
     machine_id: str,
     body: ShopZStartIn,
@@ -273,7 +274,7 @@ def till_shop_z_run(
     return ZRunOut.model_validate(ZR.run_to_out(db, run)).model_dump(mode="json", by_alias=True)
 
 
-@router.post("/sync/{machine_id}/shop-z/runs/{run_id}/proceed", dependencies=FISCAL_SYNC_PATH)
+@router.post("/sync/{machine_id}/shop-z/runs/{run_id}/proceed", dependencies=HOST_SYNC_PATH)
 def till_shop_z_proceed(
     machine_id: str,
     run_id: uuid.UUID,

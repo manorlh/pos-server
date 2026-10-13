@@ -249,7 +249,11 @@ def _machine_routes():
         auth.get_pos_machine_for_sync_path, auth.get_pos_machine_from_sync_machine_token,
         auth.get_pos_machine_from_machine_token,
     }
-    fiscal_deps = {auth.require_fiscal_machine, auth.require_fiscal_machine_token}
+    # The host guards ("שרת מקומי", P:/specs/dedicated-local-server.md §11.2) refuse a display device too.
+    fiscal_deps = {
+        auth.require_fiscal_machine, auth.require_fiscal_machine_token,
+        auth.require_host_machine, auth.require_host_machine_token,
+    }
 
     def calls(dependant, out):
         for d in dependant.dependencies:

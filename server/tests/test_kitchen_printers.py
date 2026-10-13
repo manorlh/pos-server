@@ -756,6 +756,8 @@ class TestPrintServer:
         one = pull(k, t1)
         assert one["printHost"] == {
             "machineId": str(t2.id), "name": "2 · Till 2", "isSelf": False, "lanAddress": None, "port": 8399,
+            # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.6): a till, with no LAN key yet.
+            "deviceRole": "till", "keyId": None,
         }
         assert one["hostsLan"] is False
         two = pull(k, t2)

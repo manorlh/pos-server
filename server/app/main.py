@@ -403,6 +403,18 @@ def start_exception_alerts_worker():
 
 
 @app.on_event("startup")
+def start_local_server_failover_worker():
+    """
+    "גיבוי אוטומטי לשרת המקומי" every 30 s (app/services/local_server_failover.py) — it acts only in a
+    shop that switched it on; LOCAL_SERVER_FAILOVER_WORKER_ENABLED=false stops the check altogether.
+    """
+    from app.database import SessionLocal
+    from app.services.local_server_failover import start_background_worker as start_failover_worker
+
+    start_failover_worker(SessionLocal)
+
+
+@app.on_event("startup")
 def start_device_logs_retention_worker():
     """Uploaded device logs past DEVICE_LOGS_RETENTION_DAYS, deleted nightly; DEVICE_LOGS_RETENTION_WORKER_ENABLED=false stops it."""
     from app.database import SessionLocal

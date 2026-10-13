@@ -91,8 +91,9 @@ class Category:
 TERMINAL_OUTCOMES = frozenset({"no_answer", "terminal_error", "unresolved"})
 
 CATEGORIES: Tuple[Category, ...] = (
-    Category("till_offline", "קופה התנתקה", "קופה או קיוסק עם משמרת פתוחה שלא מחוברים לענן.",
-             ("till_offline", "kiosk_offline")),
+    Category("till_offline", "קופה התנתקה",
+             "קופה או קיוסק עם משמרת פתוחה שלא מחוברים לענן, ושרת מקומי שהענן העביר לבד (גיבוי אוטומטי).",
+             ("till_offline", "kiosk_offline", "local_server_failover")),
     Category("card_terminal", "מסוף אשראי לא עונה / נכשל",
              "המסוף לא ענה או החזיר שגיאה בעסקה, תקלת מסוף בקיוסק, שידור אשראי שנכשל ב-Z.",
              ("failed_payment", "kiosk_terminal", "terminal_mismatch", "card_unresolved", "z_transmission_failed")),

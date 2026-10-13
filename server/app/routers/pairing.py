@@ -81,12 +81,21 @@ def generate_pairing_code(
         )
     except device_profile.DeviceProfileRefused as refused:
         return JSONResponse(status_code=refused.status_code, content=refused.body)
+    # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.1): the Android app in its server role.
+    from app.services import local_server_device
+
+    server_refused = local_server_device.platform_refusal(body.platform, device_role)
+    if server_refused is not None:
+        return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=server_refused)
     # "דפדפן (Web)": the browser kiosk at `/k` (docs/SPEC_KIOSK.md §27), the KDS at `/kds` and the
     # board at `/board` (docs/SPEC_KDS.md §13) — never a till.
     web_refused = display_devices.web_platform_refusal(body.platform, device_role)
     if web_refused is not None:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
     kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
+    if device_role == display_devices.ROLE_LOCAL_SERVER and body.name:
+        # "שם המכשיר": a server's typed name is kept with its options (it has no register number).
+        kds_options = {**(kds_options or {}), "name": body.name}
     # "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): checked now, as for a new device of that
     # role in that shop — the same refusals the device page answers, while the dialog is open.
     try:

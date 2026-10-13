@@ -111,7 +111,7 @@ from app.services.elevation import consume_per_action_use
 from app.services.permissions import Scope, requires_per_action_reauth
 
 # Display devices are not tills (app/services/display_devices.py).
-from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH
+from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH, HOST_MACHINE_TOKEN
 
 router = APIRouter(tags=["tables"])
 
@@ -226,7 +226,8 @@ def get_tables_state(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/report", dependencies=FISCAL_MACHINE_TOKEN)
+# The tables' mirror: a till (single-till mode, a LAN host) or a dedicated local server as host.
+@router.post("/sync/{machine_id}/tables/report", dependencies=HOST_MACHINE_TOKEN)
 def report_local_tables(
     machine_id: str,
     body: TablesReportIn,
@@ -343,13 +344,15 @@ def take_over_host(
             status_code=status.HTTP_410_GONE,
             detail={"code": SWITCH_FROM_CLOUD_ONLY, "message": SWITCH_FROM_CLOUD_ONLY_MESSAGE},
         )
-    try:
-        out = LSS.switch_from_till(db, machine, body.pos_user_name if body is not None else None)
-    except Exception:
-        db.rollback()
-        raise
-    tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
-    db.commit()
+    # One move of the shop's server at a time (P:/specs/dedicated-local-server.md §11.7).
+    with LSS.switch_lock(db, machine.shop_id, wait=True):
+        try:
+            out = LSS.switch_from_till(db, machine, body.pos_user_name if body is not None else None)
+        except Exception:
+            db.rollback()
+            raise
+        tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
+        db.commit()
     if out.get("previous") is not None:
         # Every till re-reads its parameters and printers, and pulls the tables' new host.
         background_tasks.add_task(TP.publish_parameters_notify, tills)

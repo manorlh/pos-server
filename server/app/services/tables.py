@@ -832,20 +832,24 @@ def tables_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         m for m in members
         if till_parameters_for_machine(db, m).parameters.get(TABLES_HOST_KEY) is True
     ]
+    from app.services.local_server_device import host_order, is_local_server
+
     if not hosts:
         named = main_till_of_shop(db, shop_id) or print_host_of_shop(db, shop_id)
         if named is not None:
             return named
+        # A shop with one dedicated local server ("שרת מקומי"): it holds the tables — the host
+        # the shop has a device for. Two servers and nothing named: neither (the cloud never picks).
+        servers = [m for m in members if is_local_server(m)]
+        if servers:
+            return servers[0] if len(servers) == 1 else None
         # A shop with one till: it holds the tables, there being no other. Without this a
         # one-till shop in the LAN mode had no host at all, and its till — the main one by
         # any reading — said the main till was out of reach and refused every table.
         return members[0] if len(members) == 1 else None
 
-    def order(m: POSMachine):
-        number = (m.pos_number or "").strip()
-        return (0, int(number), "") if number.isdigit() else (1, 0, number or str(m.id))
-
-    return sorted(hosts, key=order)[0]
+    # A dedicated local server first (the preferred host), then the lowest number.
+    return sorted(hosts, key=host_order)[0]
 
 
 def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
@@ -861,6 +865,8 @@ def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]
     if host is None:
         return None
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
+    from app.services.local_server_device import host_block_fields
+
     return {
         "machineId": str(host.id),
         "name": machine_label(host),
@@ -868,6 +874,9 @@ def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]
         "isSelf": str(host.id) == str(machine.id),
         "lanAddress": row.lan_address if row is not None else None,
         "port": (row.port if row is not None and row.port else DEFAULT_LAN_PORT),
+        # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.6): a dedicated server or a till,
+        # and the id of the key a discovered host must prove it holds (`lanDiscovery`).
+        **host_block_fields(host),
     }
 
 

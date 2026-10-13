@@ -329,6 +329,8 @@ GET /machines/{machine_id}/document-prefix -> devices|reports:view
 POST /machines/{machine_id}/document-prefix/assign-free -> devices:edit
 GET /machines/{machine_id}/lan-server -> devices:view
 PUT /machines/{machine_id}/lan-server -> devices:edit
+GET /machines/{machine_id}/local-server -> devices|device_control:view
+POST /machines/{machine_id}/local-server/commands -> devices|device_control:edit
 GET /machines/{machine_id}/payment-devices -> till_settings|devices:view
 DELETE /machines/{machine_id}/reboot -> devices|device_control:edit
 POST /machines/{machine_id}/reboot -> devices|device_control:edit
@@ -632,6 +634,8 @@ POST /shops/{shop_id}/areas -> organization:edit
 PUT /shops/{shop_id}/kitchen-stations/{station_id}/printers -> printers:edit
 PUT /shops/{shop_id}/local-network -> devices:edit
 GET /shops/{shop_id}/local-server -> devices|local_server_switch:view
+GET /shops/{shop_id}/local-server/failover -> devices|local_server_switch:view
+PUT /shops/{shop_id}/local-server/failover -> local_server_switch:edit
 POST /shops/{shop_id}/local-server/former-host-changes/ack -> devices|tables:edit
 POST /shops/{shop_id}/local-server/switch -> local_server_switch:edit
 DELETE /shops/{shop_id}/local-shop-z-request -> z:edit

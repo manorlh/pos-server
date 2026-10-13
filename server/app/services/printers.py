@@ -1286,12 +1286,10 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     ]
     if not hosts:
         return main_till_of_shop(db, shop_id)
+    from app.services.local_server_device import host_order
 
-    def order(m: POSMachine):
-        number = (m.pos_number or "").strip()
-        return (0, int(number), "") if number.isdigit() else (1, 0, number or str(m.id))
-
-    return sorted(hosts, key=order)[0]
+    # A dedicated local server first ("שרת מקומי", the preferred host), then the lowest number.
+    return sorted(hosts, key=host_order)[0]
 
 
 def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
@@ -1320,6 +1318,8 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
             "port": DEFAULT_LAN_PORT,
         }
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
+    from app.services.local_server_device import host_block_fields
+
     return {
         "machineId": str(host.id),
         "name": machine_label(host),
@@ -1327,6 +1327,9 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         # Not the report time: the ETag must not move on every heartbeat.
         "lanAddress": row.lan_address if row is not None else None,
         "port": (row.port if row is not None and row.port else DEFAULT_LAN_PORT),
+        # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.6): a dedicated server or a till, and
+        # its LAN key's id (it changes only when the device's key does — the ETag stays still).
+        **host_block_fields(host),
     }
 
 

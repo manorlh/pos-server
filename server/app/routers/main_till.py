@@ -183,8 +183,11 @@ def put_main_till(
     if chosen is not None and lan_server.is_excluded(db, chosen):
         # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): in the LAN group, never its server.
         raise lan_server.main_till_refusal(chosen)
-    if chosen is not None and getattr(chosen, "is_fiscal", True) is False:
-        # A display device (a KDS / the board) is no till (app/services/display_devices.py).
+    from app.services.local_server_device import is_local_server
+
+    if chosen is not None and getattr(chosen, "is_fiscal", True) is False and not is_local_server(chosen):
+        # A display device (a KDS / the board) is no till (app/services/display_devices.py); a
+        # dedicated local server is no till either, but the shop's preferred host.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={

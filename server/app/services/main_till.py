@@ -79,10 +79,13 @@ def main_till_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         return None
     # An independent till ("קופה עצמאית") is never the shop's main till, whatever is set, nor
     # a device set "לא משמש כשרת מקומי" (app/services/lan_server.py).
+    from app.services.local_server_device import host_order
+
     marked = [
         m for m in server_candidates(db, shop_machines(db, shop_id)) if is_on(_params(db, m).get(MAIN_TILL_KEY))
     ]
-    return sorted(marked, key=till_order)[0] if marked else None
+    # A dedicated local server first ("שרת מקומי", the preferred host), then the lowest number.
+    return sorted(marked, key=host_order)[0] if marked else None
 
 
 def till_ref(machine: Optional[POSMachine]) -> Optional[Dict[str, Any]]:
@@ -169,9 +172,11 @@ def shop_tills_out(db: Session, shop_id: Any) -> List[Dict[str, Any]]:
     devices set "לא משמש כשרת מקומי".
     """
     from app.services.lan_server import server_candidates
+    from app.services.local_server_device import host_order, ref
     from app.services.printers import shop_machines
 
-    return [till_ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=till_order)]
+    # A dedicated local server first (it says `deviceRole: "local_server"`).
+    return [ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=host_order)]
 
 
 def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[datetime] = None) -> None:
@@ -256,9 +261,11 @@ def take_over(
         raise lan_server.take_over_refusal(machine)
     if require_lan and mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tables_not_lan")
+    from app.services.local_server_device import ref
+
     old = tables_host_of_shop(db, machine.shop_id)
     if old is not None and old.id == machine.id:
-        return {"mainTill": till_ref(machine), "previous": None}
+        return {"mainTill": ref(machine), "previous": None}
     if old is not None and is_online(old.last_heartbeat_at, now=now) and not force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -335,9 +342,10 @@ def take_over(
         machine.shop_id, machine.id, old.id if old else None, operator or "?", ", ".join(moved),
     )
     producer = effective_producer(db, shop, now=now)
+    # A dedicated local server says so (`deviceRole: "local_server"`); a till's ref is as it was.
     return {
-        "mainTill": till_ref(machine),
-        "previous": till_ref(old),
+        "mainTill": ref(machine),
+        "previous": ref(old),
         "moved": moved,
         # Waiting: this till serves the tables, but makes no shop Z until the old main till
         # syncs (or a super admin moves the production on the shop's page).
