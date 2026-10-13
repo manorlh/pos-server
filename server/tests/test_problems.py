@@ -235,7 +235,7 @@ def test_the_alert_policy_and_push_detector_kinds_group_and_a_daily_summary_neve
     """
     The release of 14.10.2026 (alert-policy, push-detectors and this screen merged): each of their
     kinds the screen lists is in its group, and "סיכום יום" (`catalog.INFO_KINDS`) is information —
-    never an item, never counted.
+    never an item, never counted. Nor table-restore-payments' reversals and restores.
     """
     from app.services.exception_alerts import catalog as C
 
@@ -250,6 +250,10 @@ def test_the_alert_policy_and_push_detector_kinds_group_and_a_daily_summary_neve
         assert C.kind_spec(kind) is not None, kind  # the log knows it: its label is the card's title
     assert "daily_summary" in C.INFO_KINDS
     assert not set(P.KIND_GROUP) & C.INFO_KINDS
+    # table-restore-payments: a payment reversed in a table and a restored table are a manager's
+    # business (their own push type), not problems — in no group.
+    for kind in ("payment_reversed", "table_restored"):
+        assert C.kind_spec(kind) is not None and kind not in P.KIND_GROUP, kind
 
     rows = {kind: entry(w, kind, till=w.tills[1], severity="medium")
             for kind in ("till_idle", "table_open_long", "kds_ticket_late")}
@@ -258,8 +262,10 @@ def test_the_alert_policy_and_push_detector_kinds_group_and_a_daily_summary_neve
         listed = group(before, expected[kind])["items"]
         assert str(row.id) in {i["exceptionId"] for i in listed}, kind
     summary = entry(w, "daily_summary", machine=False, severity="low")
+    reversed_ = entry(w, "payment_reversed", severity="medium", amount=50)
+    restored = entry(w, "table_restored", severity="medium")
     after = build(w, w.admin)
-    assert str(summary.id) not in exception_ids(after)
+    assert not {str(summary.id), str(reversed_.id), str(restored.id)} & exception_ids(after)
     assert after["counts"] == before["counts"] and after["total"] == before["total"]
     assert [g["total"] for g in after["groups"]] == [g["total"] for g in before["groups"]]
 
