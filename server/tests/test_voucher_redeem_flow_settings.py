@@ -2,8 +2,9 @@
 
 `voucherRedeemFlow` ("items_first" | "voucher_first" | "both") and `voucherShowUnavailable` (bool):
 flat keys set at every level (tenant → company → shop → point of sale → till) and merged like the
-voucher's payment switches; unset everywhere = "items_first" / true, so every existing till keeps
-today's flow; always sent to the till resolved (GET /sync/{id}/settings, `settings.<key>`); a value
+voucher's payment switches; unset everywhere = "both" / true (the owner, 13.10.2026; "items_first"
+until then), while a level that sets "items_first" explicitly still wins over that default; always
+sent to the till resolved (GET /sync/{id}/settings, `settings.<key>`); a value
 outside the enum is a 422; `null` resets a layer to inherit; each change is logged (who, which level,
 old → new) in the till parameters' change log. The Android till reads these keys by name.
 
@@ -51,18 +52,25 @@ def _audit_rows(db):
 def test_the_keys_and_values_are_the_contract_with_the_till() -> None:
     assert VOUCHER_FLOW_SETTING_KEYS == (FLOW, SHOW)
     assert REDEEM_FLOWS == ("items_first", "voucher_first", "both")
-    assert DEFAULT_REDEEM_FLOW == "items_first"
+    assert DEFAULT_REDEEM_FLOW == "both"
     for key in VOUCHER_FLOW_SETTING_KEYS:
         assert key in MANAGED_SETTING_KEYS
 
 
-def test_unset_everywhere_is_todays_flow_and_unavailable_shown() -> None:
-    assert resolve_voucher_flow({}) == {FLOW: "items_first", SHOW: True}
+def test_unset_everywhere_is_both_ways_in_and_unavailable_shown() -> None:
+    # The owner, 13.10.2026: "both" — a voucher scanned on an empty order opens its item picker at once,
+    # one scanned with items in the order goes to the payment. "items_first" was the default until then.
+    assert resolve_voucher_flow({}) == {FLOW: "both", SHOW: True}
+
+
+def test_an_explicit_items_first_still_wins_over_the_default() -> None:
+    # Only the unset default moved: a level that chose "items_first" keeps it.
+    assert resolve_voucher_flow({FLOW: "items_first"}) == {FLOW: "items_first", SHOW: True}
 
 
 @pytest.mark.parametrize("junk", ["ITEMS_FIRST", "scan", "", 1, True, None, [], {}])
 def test_an_unknown_stored_value_counts_as_unset(junk) -> None:
-    assert resolve_voucher_flow({FLOW: junk, SHOW: "false"}) == {FLOW: "items_first", SHOW: True}
+    assert resolve_voucher_flow({FLOW: junk, SHOW: "false"}) == {FLOW: "both", SHOW: True}
 
 
 @pytest.mark.parametrize("flow", REDEEM_FLOWS)
@@ -101,10 +109,20 @@ def test_the_endpoint_answers_422_for_a_value_outside_the_enum() -> None:
 
 
 def test_sync_sends_both_resolved_when_nothing_sets_them() -> None:
+    # A till no level ever set the key for gets the resolved default, never a missing key.
     _, _, _, area, machine, db = _world()
     settings = _sync(machine, db, area).settings
-    assert settings[FLOW] == "items_first"
+    assert settings[FLOW] == "both"
     assert settings[SHOW] is True
+
+
+@pytest.mark.parametrize("level", range(5))
+def test_sync_sends_an_explicit_items_first_set_at_any_level(level) -> None:
+    # Tenant, company, shop, point of sale or the till itself: "items_first" set there still wins.
+    layers = [{} for _ in range(5)]
+    layers[level] = {FLOW: "items_first"}
+    _, _, _, area, machine, db = _world(*layers)
+    assert _sync(machine, db, area).settings[FLOW] == "items_first"
 
 
 def test_sync_carries_each_level_down_and_the_deepest_wins() -> None:
@@ -118,26 +136,31 @@ def test_sync_carries_each_level_down_and_the_deepest_wins() -> None:
 
 
 def test_a_till_override_beats_inheritance_and_a_reset_brings_the_inherited_value_back() -> None:
-    _, _, shop, area, machine, db = _world({}, {}, {FLOW: "both"})
+    _, _, shop, area, machine, db = _world({}, {}, {FLOW: "items_first"})
     _patch_machine(machine, area, db, {FLOW: "voucher_first"})
     assert machine.settings == {FLOW: "voucher_first"}
     assert _sync(machine, db, area).settings[FLOW] == "voucher_first"
     _patch_machine(machine, area, db, {FLOW: None})
     # Gone from the till's own JSON — not stored as null.
     assert machine.settings == {}
-    assert _sync(machine, db, area).settings[FLOW] == "both"
+    # The shop's explicit "items_first" comes back, not the default ("both").
+    assert _sync(machine, db, area).settings[FLOW] == "items_first"
 
 
 def test_every_level_takes_and_resets_both_keys() -> None:
     tenant, company, shop, area, machine, db = _world()
-    _patch_tenant(tenant, db, {FLOW: "both"})
+    _patch_tenant(tenant, db, {FLOW: "items_first"})
     _patch_shop(shop, db, {SHOW: False})
     _patch_area(area, shop, db, {FLOW: "voucher_first"})
-    assert (tenant.settings, shop.settings, area.settings) == ({FLOW: "both"}, {SHOW: False}, {FLOW: "voucher_first"})
+    assert (tenant.settings, shop.settings, area.settings) == ({FLOW: "items_first"}, {SHOW: False}, {FLOW: "voucher_first"})
     merged = merge_all_settings_layers(company, shop, tenant, machine, area)
     assert resolve_voucher_flow(merged) == {FLOW: "voucher_first", SHOW: False}
     _patch_area(area, shop, db, {FLOW: None})
     _patch_shop(shop, db, {SHOW: None})
+    merged = merge_all_settings_layers(company, shop, tenant, machine, area)
+    # The tenant's explicit "items_first" still wins over the default ("both").
+    assert resolve_voucher_flow(merged) == {FLOW: "items_first", SHOW: True}
+    _patch_tenant(tenant, db, {FLOW: None})
     merged = merge_all_settings_layers(company, shop, tenant, machine, area)
     assert resolve_voucher_flow(merged) == {FLOW: "both", SHOW: True}
 
@@ -163,7 +186,7 @@ def test_a_tills_preview_shows_the_default_when_no_level_sets_it() -> None:
             machine_id=str(machine.id), include_effective=True, current_user=_user(UserRole.SUPER_ADMIN),
             active_tenant_id=machine.tenant_id, db=db,
         )
-    assert (res.effective[FLOW], res.effective[SHOW]) == ("items_first", True)
+    assert (res.effective[FLOW], res.effective[SHOW]) == ("both", True)
     assert FLOW not in (res.effective_sources or {})  # no level: the dashboard says "ברירת מחדל"
 
 
