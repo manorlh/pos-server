@@ -268,7 +268,13 @@ GET /insights/trends -> reports:view
 GET /item-blocks -> item_blocks:view
 POST /item-blocks -> item_blocks:edit
 POST /item-blocks/clear -> item_blocks:edit
+GET /item-blocks/control -> item_blocks|stock:view
+PUT /item-blocks/control -> item_blocks|stock:edit
+POST /item-blocks/control/machines/{machine_id}/managing -> item_blocks|stock:edit
+PUT /item-blocks/control/managing -> item_blocks|stock:edit
 POST /item-blocks/end-preview -> item_blocks:view
+GET /item-blocks/quick -> item_blocks|stock:view
+POST /item-blocks/quick -> item_blocks|stock:edit
 GET /item-blocks/resolve -> item_blocks:view
 GET /item-blocks/targets -> item_blocks:view
 DELETE /item-blocks/{block_id} -> item_blocks:edit

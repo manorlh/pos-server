@@ -588,6 +588,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/device-logs*", S("devices", "device_control", level=VIEW)),
     # "חסימות ואזל" (app/routers/item_blocks.py).
     ("POST", "/item-blocks/end-preview", S("item_blocks", level=VIEW)),
+    # "חסימה מהירה" and "חסימות מהקופה" (P:/specs/item-block-control.md §4, §5): the stock pages too.
+    (_ALL, "/item-blocks/quick", S("item_blocks", "stock")),
+    (_ALL, "/item-blocks/control*", S("item_blocks", "stock")),
     (_ALL, "/item-blocks*", S("item_blocks")),
     (_ALL, "/till-design/*", S("till_design")),
     # "מסך לקוח" (app/routers/customer_display.py): a till setting, and the devices paired as one.

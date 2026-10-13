@@ -186,7 +186,8 @@ class TillParametersSyncResponse(BaseModel):
     """
     `GET /sync/{machine_id}/parameters`. A fixed contract with the till:
     `{"parameters": {key: scalar}, "updatedAt": ISO-8601 UTC | null}`. Always the full
-    set — a key that is gone from `parameters` is gone for the till.
+    set — a key that is gone from `parameters` is gone for the till. One key is an object, not a
+    scalar: `itemBlocks` (app/services/item_block_control.py), which the till stores as JSON.
     """
 
     model_config = ConfigDict(populate_by_name=True)

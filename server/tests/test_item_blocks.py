@@ -694,7 +694,12 @@ def dev(b):
 
     # till_parameters / values: a controlling till is checked against areaScopeLock (feat/area-lock, merged
     # beside this branch at the integration; app/services/area_lock.py reads the parameter).
-    for name in ("employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values"):
+    # kds_devices…: a till's role in blocks follows the shop's main till (P:/specs/item-block-control.md),
+    # whose rule reads the shop's LAN devices (app/services/main_till.py).
+    for name in (
+        "employee_roles", "till_roles", "pos_users", "till_parameters", "till_parameter_values",
+        "kds_devices", "customer_displays", "local_server_devices",
+    ):
         if name in Base.metadata.tables and not b.db.get_bind().dialect.has_table(b.db.connection(), name):
             Base.metadata.tables[name].create(b.db.get_bind())
     b.mgr = PosUser(id=uuid.uuid4(), tenant_id=b.tid, shop_id=b.h_shop.id, username="mgr", first_name="Dana",
@@ -723,9 +728,10 @@ def _refusal(out):
 
 class TestDevices:
     def test_a_till_blocks_for_its_own_point_of_sale_by_default(self, dev):
+        # A regular till (P:/specs/item-block-control.md §2): its point of sale, the tills' channel only.
         out = _dev_block(dev, dev.h1, dev.mgr, kind="blocked", note="נגמר")
         block = out["block"]
-        assert (block["level"], block["scopeId"], block["target"], block["origin"]) == ("area", str(dev.bar.id), "all", "till")
+        assert (block["level"], block["scopeId"], block["target"], block["origin"]) == ("area", str(dev.bar.id), "tills", "till")
         assert block["by"].startswith("h1") and block["removable"] is True
         assert _sells(dev, dev.h1) is False
 
@@ -743,6 +749,10 @@ class TestDevices:
         assert _refusal(_dev_block(dev, dev.h1, dev.mgr, level="machine", levelId=dev.h2.id))[0] == 403, "not in its point of sale"
 
     def test_a_till_blocks_the_shop_for_the_kiosks_only(self, dev):
+        # A regular till may not (P:/specs/item-block-control.md §2); a managing one may.
+        assert _refusal(_dev_block(dev, dev.h1, dev.mgr, level="shop", target="kiosks"))[1] == "block_scope_not_allowed"
+        dev.h1.settings = {"itemBlocks": {"role": "managing"}}
+        dev.db.commit()
         out = _dev_block(dev, dev.h1, dev.mgr, level="shop", target="kiosks", kioskDisplay="hide")
         assert (out["block"]["level"], out["block"]["target"], out["block"]["kioskDisplay"]) == ("shop", "kiosks", "hide")
         assert (_sells(dev, dev.h1), _sells(dev, dev.h2)) == (True, False)

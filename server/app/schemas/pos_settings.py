@@ -78,6 +78,10 @@ class PosSettingsV1Patch(BaseModel):
     #: "אזל אוטומטי": a product that tracks stock is blocked "אזל" by itself when the stock its
     #: devices sell from reaches 0 (app/services/sold_out.py). Unset = on.
     auto_sold_out_at_zero: Optional[bool] = Field(None, alias="autoSoldOutAtZero")
+    #: "חסימות מהקופה" (P:/specs/item-block-control.md, app/services/item_block_control.py): the
+    #: level's own `{role, localMaxLevel, localChannels, managingMaxLevel, releaseMode, localRelease,
+    #: quickDefaults}` — the whole object; `null` = inherit again.
+    item_blocks: Optional[Dict[str, Any]] = Field(None, alias="itemBlocks")
     # Legacy tip switches. Still accepted and stored: layers already hold them, and
     # they are the fallback for any option whose own tips key below is unset
     # (see app/services/payment_options.py).
@@ -470,6 +474,13 @@ class PosSettingsV1Patch(BaseModel):
         from app.services.payment_integration import validate_synqpay_serial
 
         return validate_synqpay_serial(v)
+
+    @field_validator("item_blocks")
+    @classmethod
+    def _check_item_blocks(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        from app.services.item_block_control import clean
+
+        return clean(v)
 
     # The secrets are checked in the router (payment_secrets.secret_patch), not here: a
     # validation error would echo the value back in its `input`, and into the error log.
