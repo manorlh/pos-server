@@ -945,10 +945,10 @@ DELETE /users/{user_id} -> users:edit
 GET /users/{user_id} -> users:view
 PUT /users/{user_id} -> users:edit
 POST /users/{user_id}/activate -> users:edit
-GET /users/{user_id}/push-policy -> users:view
-PUT /users/{user_id}/push-policy -> users:edit
 GET /users/{user_id}/linked-employees -> users:view
 PUT /users/{user_id}/linked-employees -> users:edit
+GET /users/{user_id}/push-policy -> users:view
+PUT /users/{user_id}/push-policy -> users:edit
 DELETE /users/{user_id}/till-pin -> users:edit
 POST /users/{user_id}/till-pin -> users:edit
 GET /vouchers -> vouchers|products:view
