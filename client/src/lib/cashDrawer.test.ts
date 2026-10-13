@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { drawerQuery, isNotable, movementSign, runningExpected, type TimelineItem } from './cashDrawer';
+import {
+  activeDrawerExtras,
+  drawerFiltersFromExtras,
+  drawerQuery,
+  isNotable,
+  isShiftId,
+  movementSign,
+  runningExpected,
+  type TimelineItem,
+} from './cashDrawer';
 
 test('the filters become query parameters, empty ones left out', () => {
   assert.deepEqual(drawerQuery({}), {});
@@ -51,4 +60,35 @@ test('notable rows', () => {
   assert.equal(isNotable({ result: 'denied', eventType: 'MANUAL', exceptions: [] }), true);
   assert.equal(isNotable({ result: 'approved', eventType: 'AFTER_CLOSE', exceptions: [] }), true);
   assert.equal(isNotable({ result: 'approved', eventType: 'MANUAL', exceptions: ['drawer_open'] }), true);
+});
+
+const SHIFT = '0f8fad5b-d9cb-469f-a165-70867728950e';
+
+test('the report filters in the URL → each list’s query; what the server does not know is dropped', () => {
+  const extras = {
+    eventType: 'MANUAL', reason: 'change', approval: 'no', sale: 'yes', result: 'denied', role: ' מנהל ',
+    employee: 'e1', exceptions: '1', movementType: 'cash_in', shift: SHIFT,
+  };
+  assert.deepEqual(drawerFiltersFromExtras(extras, 'events'), {
+    employee: 'e1', shiftId: SHIFT, eventType: ['MANUAL'], reason: 'change', managerApproval: false, withSale: true,
+    result: ['denied'], role: 'מנהל', exceptionsOnly: true,
+  });
+  // The movements take the type, the employee and the shift only.
+  assert.deepEqual(drawerFiltersFromExtras(extras, 'movements'), { employee: 'e1', shiftId: SHIFT, type: ['cash_in'] });
+  assert.deepEqual(
+    drawerFiltersFromExtras({ eventType: 'NOPE', approval: 'maybe', result: 'x', shift: '12', movementType: 'y' }, 'events'),
+    {},
+  );
+  assert.deepEqual(drawerFiltersFromExtras({ movementType: 'y', shift: 'abc' }, 'movements'), {});
+});
+
+test('a shift id is a uuid; the active filters are the ones each list reads', () => {
+  assert.equal(isShiftId(SHIFT), true);
+  assert.equal(isShiftId(` ${SHIFT} `), true);
+  assert.equal(isShiftId('42'), false);
+  assert.deepEqual(activeDrawerExtras({ reason: 'change', movementType: 'count', employee: 'e' }, 'events'), ['reason', 'employee']);
+  assert.deepEqual(activeDrawerExtras({ reason: 'change', movementType: 'count', employee: 'e' }, 'movements'), [
+    'movementType',
+    'employee',
+  ]);
 });

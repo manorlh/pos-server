@@ -3788,7 +3788,15 @@
     },
     "cardBrand": "מותג",
     "cardAcquirerShort": "סולק: {name}",
-    "cardIssuerShort": "מנפיק: {name}"
+    "cardIssuerShort": "מנפיק: {name}",
+    "report": {
+      "tip": "טיפ",
+      "tipMethod": "טיפ — אמצעי תשלום",
+      "actions": "פעולות",
+      "searchHint": "החיפוש מוצא: {what}.",
+      "allDays": "עד שמפיקים טווח תאריכים מוצגים המסמכים האחרונים מכל התאריכים.",
+      "documents": "{count, plural, one {מסמך אחד} other {# מסמכים}}"
+    }
   },
   "forceClose": {
     "label": "כפה סגירה (גם באמצע מכירה)",
@@ -4016,6 +4024,15 @@
       "legacyNotice": "דו״ח Z ישן שהקופה {till} הפיקה בעצמה, לפני המעבר למשמרות. אין לו חלוקה לפי קופות.",
       "area": "אזור: {area}",
       "cardBrandsTitle": "אשראי לפי מותג וסולק"
+    },
+    "report": {
+      "monthHint": "בתצוגה החודשית החודש נבחר בתוך התצוגה; הסניף, האזור, המקור וסוגי ה-Z חלים עליה.",
+      "paymentMethods": "אמצעי תשלום (עמודה לכל אמצעי)",
+      "basis": "תאריך לפי",
+      "basisProduction": "תאריך הפקת Z",
+      "basisBusiness": "יום עסקי",
+      "unselectPage": "ביטול בחירת העמוד",
+      "zCount": "{count, plural, one {דו״ח Z אחד} other {# דוחות Z}}"
     },
     "tillPrint": {
       "viewLabel": "תצוגה",
@@ -4546,6 +4563,10 @@
     "withSaleShort": "עם עסקה",
     "openTimeline": "ציר זמן משמרת",
     "approvedBy": "אושר ע״י {name}",
+    "rowsTotal": "{total, plural, =0 {אין שורות} one {שורה אחת בסך הכול} other {# שורות בסך הכול}}",
+    "pagedNote": "המיון חל על העמוד המוצג. הייצוא כולל את כל השורות שתואמות את הסינון.",
+    "prevPage": "העמוד הקודם",
+    "nextPage": "העמוד הבא",
     "tabs": {
       "label": "לשוניות מגירת מזומן",
       "events": "פתיחות מגירה",
@@ -4569,7 +4590,16 @@
       "employee": "עובד",
       "exceptionsOnly": "חריגות בלבד",
       "all": "הכול",
-      "badRange": "טווח תאריכים לא תקין"
+      "badRange": "טווח תאריכים לא תקין",
+      "movementType": "סוג תנועה",
+      "shift": "משמרת",
+      "shiftPlaceholder": "מזהה משמרת",
+      "shiftInvalid": "מזהה משמרת לא תקין",
+      "shiftHint": "נבחרה משמרת: מוצגות כל השורות של המשמרת, וטווח התאריכים לא חל.",
+      "byEmployee": "הצגת השורות של העובד הזה בלבד",
+      "clearEmployee": "ביטול הסינון לפי עובד",
+      "yes": "כן",
+      "no": "לא"
     },
     "types": {
       "CASH_SALE": "עסקת מזומן",
@@ -4636,9 +4666,25 @@
       "movement": "תנועה",
       "expectedBefore": "צפוי לפני",
       "expectedAfter": "צפוי אחרי",
-      "variance": "פער"
+      "variance": "פער",
+      "posNumber": "מס׳ קופה",
+      "shop": "סניף",
+      "drawer": "מגירה",
+      "role": "תפקיד",
+      "withSale": "עם עסקה",
+      "note": "הערה",
+      "resultReason": "פירוט התוצאה",
+      "blind": "ספירה עיוורת",
+      "kind": "רשומה"
     },
     "timeline": {
+      "kindEvent": "פתיחת מגירה",
+      "kindMovement": "תנועת מזומן",
+      "summarySheet": "סיכום משמרת",
+      "openedAt": "נפתחה",
+      "closedAt": "נסגרה",
+      "openingsOfShift": "פתיחות המגירה במשמרת",
+      "movementsOfShift": "תנועות המזומן במשמרת",
       "shiftId": "מזהה משמרת",
       "show": "הצג",
       "hint": "או בחרו \"ציר זמן משמרת\" בשורה של פתיחה / תנועה, או מעמוד המשמרת.",
@@ -4864,12 +4910,10 @@
     "till": "קופה {number} {name}",
     "noRows": "לא נשלחו עסקאות לא מקוונות לאישור בטווח שנבחר",
     "truncated": "מוצגות {count} השליחות האחרונות בלבד. צמצמו את טווח התאריכים כדי לראות את כולן.",
-    "filters": {
-      "from": "מתאריך",
-      "to": "עד תאריך",
-      "run": "הצג דוח",
-      "rangeInvalid": "תאריך ההתחלה חייב להיות לפני תאריך הסיום או זהה לו"
-    },
+    "selectFilters": "בחרו טווח והפיקו את הדוח.",
+    "runsTitle": "שליחות לאישור",
+    "declinedTitle": "מסמכים שנדחו",
+    "total": "סה״כ",
     "totals": {
       "approved": "אושרו במצב לא מקוון",
       "approvedAmount": "{amount} · {runs} שליחות לאישור",
@@ -4883,6 +4927,7 @@
       "shop": "חנות",
       "till": "קופה",
       "approved": "אושרו",
+      "approvedAmount": "סכום שאושר",
       "declined": "נדחו",
       "declinedAmount": "סכום שנדחה"
     },
@@ -4891,7 +4936,8 @@
       "soldAt": "מועד העסקה",
       "uid": "מזהה במסוף",
       "amount": "סכום",
-      "unmatched": "לא אותרה עסקה"
+      "unmatched": "לא אותרה עסקה",
+      "none": "בשליחה הזו לא נדחתה אף עסקה."
     }
   },
   "daySummary": {
@@ -5213,6 +5259,16 @@
     "export": {
       "method": "אמצעי תשלום",
       "amount": "סכום"
+    },
+    "report": {
+      "tips": "טיפים",
+      "cashTips": "טיפים במזומן",
+      "cardTips": "טיפים באשראי",
+      "tipsSplit": "מזומן {cash} · אשראי {card}",
+      "total": "סה״כ",
+      "totalsOfPage": "שורת הסה״כ היא של המשמרות בעמוד הזה. הייצוא (אקסל / PDF) כולל ומסכם את כל המשמרות שתואמות את הסינון.",
+      "allDays": "עד שמפיקים טווח תאריכים מוצגות כל המשמרות, החדשות קודם.",
+      "shifts": "{count, plural, one {משמרת אחת} other {# משמרות}}"
     }
   },
   "zWizard": {
@@ -8787,6 +8843,7 @@
       "missing": "חסרים",
       "gaps": "חוסרים",
       "duplicates": "כפולים",
+      "nonNumeric": "מספרים לא מספריים",
       "gapFrom": "מ-",
       "gapTo": "עד"
     },
@@ -8826,7 +8883,8 @@
       "closedAt": "נסגרה",
       "expected": "צפוי",
       "countedCash": "נספר",
-      "variance": "הפרש"
+      "variance": "הפרש",
+      "countStatus": "ספירה"
     }
   },
   "accounting": {
@@ -9696,6 +9754,36 @@
       "clear": "ניקוי סינון",
       "count": "{shown} מתוך {total} כללים",
       "none": "אין כללים שמתאימים לסינון."
+    },
+    "export": {
+      "title": "כללי הגדלות מכירה",
+      "note": "בייצוא: הכללים שברשימה ({count}), עם הנתונים של 30 הימים האחרונים.",
+      "rules": "כללים",
+      "rulesAll": "כל הכללים ({total})",
+      "rulesFiltered": "{shown} מתוך {total}, לפי הסינון",
+      "stats": "נתוני ביצוע",
+      "statsWindow": "30 הימים האחרונים",
+      "search": "חיפוש",
+      "col": {
+        "name": "כלל",
+        "action": "סוג",
+        "places": "איפה",
+        "triggerType": "מפעיל",
+        "triggers": "מה מפעיל",
+        "offers": "מה מוצע",
+        "prompt": "טקסט בקופה",
+        "display": "תצוגה",
+        "oncePerOrder": "פעם בהזמנה",
+        "when": "מתי",
+        "active": "פעיל",
+        "shown": "הוצג",
+        "accepted": "התקבל",
+        "dismissed": "נדחה",
+        "declined": "הלקוח סירב",
+        "rate": "שיעור קבלה",
+        "revenue": "הכנסה",
+        "optionsTaken": "מה נלקח"
+      }
     }
   },
   "catalogMenus": {
@@ -10016,7 +10104,37 @@
       "shown": "הוצג",
       "accepted": "התקבל",
       "dismissed": "נדחה",
-      "rate": "שיעור קבלה"
+      "rate": "שיעור קבלה",
+      "notes": "הערות",
+      "action": "סוג"
+    }
+  },
+  "targetsPage": {
+    "exportTitle": "יעדים",
+    "progressTitle": "התקדמות היום",
+    "targetsTitle": "כל היעדים",
+    "reached": "היעד הושג",
+    "period": {
+      "day": "יומי",
+      "event": "אירוע"
+    },
+    "when": {
+      "event": "לאירוע",
+      "day": "ליום {day}",
+      "everyDay": "כל יום {from}–{to}"
+    },
+    "col": {
+      "target": "יעד",
+      "shop": "סניף",
+      "scope": "יעד של",
+      "period": "תקופה",
+      "amount": "סכום היעד",
+      "actual": "בפועל",
+      "percent": "ביצוע",
+      "forecast": "צפי בקצב הנוכחי",
+      "status": "מצב",
+      "reachedAt": "הושג ב־",
+      "when": "מתי"
     }
   },
   "promotionsReport": {
@@ -10031,8 +10149,16 @@
     "byShop": "לפי סניף",
     "byTill": "לפי קופה",
     "byDay": "לפי יום",
+    "filter": {
+      "promotion": "מבצע",
+      "all": "כל המבצעים",
+      "deleted": "מבצע שנמחק",
+      "noMatch": "אין מבצע בשם הזה"
+    },
+    "othNotFiltered": "הנחות „על חשבון הבית” והנחות המועדון שלהלן אינן מסוננות לפי המבצע שנבחר — הן לכל העסקאות בטווח.",
     "col": {
       "promotion": "מבצע",
+      "type": "סוג מבצע",
       "shop": "סניף",
       "till": "קופה",
       "day": "יום",

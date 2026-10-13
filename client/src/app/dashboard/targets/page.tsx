@@ -5,8 +5,13 @@
  * app/routers/targets.py): the progress now with the pace forecast ("בקצב הנוכחי: ₪X עד סוף היום"),
  * and the targets themselves. Reaching one raises "יעד הושג" in the exception alerts. The tills'
  * small leaderboard is the till parameter "לוח מובילים" (off by default).
+ *
+ * Export (P:\specs\reports-upgrade.md §2ה, §4.6; `StandaloneExportBar`, report key `targets`):
+ * today's progress (the list's own query, so the figures are the ones on screen) and every
+ * target, each a sheet; the PDF is the progress (the targets when there is none today).
  */
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -21,10 +26,14 @@ import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { cn } from '@/lib/utils';
 import { fetchBlockTargets, liveKeys } from '@/lib/liveControlApi';
 import { parseHhmm } from '@/lib/liveControl';
-import { parseQty, shekels } from '@/lib/stockLive';
-import { deleteTarget, fetchTargets, saveTarget, stockKeys, type TargetRow } from '@/lib/stockLiveApi';
+import { paceLine, parseQty, shekels } from '@/lib/stockLive';
+import { deleteTarget, fetchTargets, saveTarget, stockKeys, type TargetProgressRow, type TargetRow } from '@/lib/stockLiveApi';
 import type { PosUser } from '@/lib/types';
-import { TargetsProgressList } from '@/components/dashboard/live-control';
+import { anyRowHas, targetWhen } from '@/lib/menuTargetsReports';
+import { dmy } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
+import { TargetsProgressList, useTargetsProgress } from '@/components/dashboard/live-control';
+import { StandaloneExportBar, type ReportColumn, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 type Form = {
   id?: string;
@@ -79,6 +88,67 @@ export default function TargetsPage() {
     onError: (e) => toast.error(axiosErrorToToastMessage(e, 'ההסרה נכשלה')),
   });
 
+  // ── The export: today's progress (the list's own query) and every target ──
+  const tt = useTranslations('targetsPage');
+  const progress = useTargetsProgress(scope, resolution.status === 'ok');
+  const progressRows = (progress.data ?? []) as TargetProgressRow[];
+  const targetRows = targets.data ?? [];
+  const progressColumns: ReportColumn<TargetProgressRow>[] = [
+    { key: 'target', header: tt('col.target'), required: true, width: 26, value: (r) => r.label },
+  ];
+  // The shop: a field of a newer server (§4.6) — its column only when it came.
+  if (anyRowHas(progressRows, (r) => r.shopName ?? r.shopId)) {
+    progressColumns.push({
+      key: 'shop',
+      header: tt('col.shop'),
+      width: 18,
+      value: (r) => r.shopName ?? (r.shopId ? shopName(r.shopId) || null : null),
+    });
+  }
+  progressColumns.push(
+    { key: 'scope', header: tt('col.scope'), width: 12, value: (r) => SCOPE_LABELS[r.scope] },
+    { key: 'period', header: tt('col.period'), width: 10, value: (r) => tt(`period.${r.period}`) },
+    { key: 'amount', header: tt('col.amount'), kind: 'money', value: (r) => r.amount },
+    { key: 'actual', header: tt('col.actual'), kind: 'money', value: (r) => r.actual },
+    { key: 'percent', header: tt('col.percent'), kind: 'percent', value: (r) => r.percent },
+    { key: 'forecast', header: tt('col.forecast'), kind: 'money', value: (r) => r.forecast },
+    { key: 'status', header: tt('col.status'), width: 30, value: (r) => (r.reached ? tt('reached') : paceLine(r)) },
+  );
+  if (anyRowHas(progressRows, (r) => r.reachedAt)) {
+    progressColumns.push({ key: 'reachedAt', header: tt('col.reachedAt'), kind: 'datetime', defaultHidden: true, value: (r) => r.reachedAt ?? null });
+  }
+  const progressTable: ReportTableSpec<TargetProgressRow> = {
+    id: 'main',
+    title: tt('progressTitle'),
+    columns: progressColumns,
+    rows: progressRows,
+    rowKey: (r) => r.targetId,
+  };
+  const targetsTable: ReportTableSpec<TargetRow> = {
+    id: 'targets',
+    title: tt('targetsTitle'),
+    columns: [
+      { key: 'target', header: tt('col.target'), required: true, width: 26, value: (r) => r.label },
+      { key: 'shop', header: tt('col.shop'), width: 18, value: (r) => r.shopName ?? (shopName(r.shopId) || null) },
+      { key: 'scope', header: tt('col.scope'), width: 12, value: (r) => SCOPE_LABELS[r.scope] },
+      { key: 'amount', header: tt('col.amount'), kind: 'money', value: (r) => r.amount },
+      { key: 'period', header: tt('col.period'), width: 10, value: (r) => tt(`period.${r.period}`) },
+      {
+        key: 'when',
+        header: tt('col.when'),
+        width: 22,
+        value: (r) =>
+          targetWhen(r, {
+            event: tt('when.event'),
+            day: (day) => tt('when.day', { day: dmy(day) }),
+            everyDay: (from, to) => tt('when.everyDay', { from, to }),
+          }),
+      },
+    ],
+    rows: targetRows,
+    rowKey: (r) => r.id,
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -91,6 +161,17 @@ export default function TargetsPage() {
         </Button>
       </div>
       <ScopeGate resolution={resolution}>
+        <div className="mb-4">
+          <StandaloneExportBar
+            reportKey="targets"
+            title={tt('exportTitle')}
+            tables={[progressTable, targetsTable] as ReportTableSpec<unknown>[]}
+            pdfTableId={progressRows.length ? 'main' : 'targets'}
+            from={todayIso()}
+            to={todayIso()}
+            disabled={progressRows.length === 0 && targetRows.length === 0}
+          />
+        </div>
         <section className="space-y-2">
           <h2 className="font-semibold">היום</h2>
           <TargetsProgressList scope={scope} emptyText="אין יעדים פעילים היום" />

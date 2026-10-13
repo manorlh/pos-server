@@ -7,251 +7,176 @@
  *
  * The brand and acquirer come from the terminal's reply (`mutag` / `solek`), else the
  * card's BIN; "לא ידוע" is a leg whose reply named neither. Tips are not card legs, so
- * the net is the card total of "sales by payment method" for the same window.
+ * the net is the card total of "sales by payment method" for the same window — no tips
+ * column here, on purpose (§2ה).
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §5): days, hours, area and cashier in
+ * the URL; the company (§4.1), the shop and the till from the scope.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
+import { formatCurrency } from '@/lib/format';
+import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { useCardBrandLabels } from '@/lib/cardBrands';
-import { fetchCardBrandsReport, type CardBrandTotal, type CardBrandsReport } from '@/lib/salesReportsApi';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
-import { ReportErrorState, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  fetchCardBrandsReport,
+  type CardBrandRow,
+  type CardBrandTotal,
+  type CardBrandsReport,
+} from '@/lib/salesReportsApi';
+import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
+import {
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
-function TotalsTable({
-  title,
-  rows,
-  label,
-  report,
-}: {
-  title: string;
-  rows: CardBrandTotal[];
-  label: (code: string) => string;
-  report: CardBrandsReport;
-}) {
-  const t = useTranslations('cardBrandsReport');
+const SPEC: ReportFilterSpec = { filters: ['hours', 'area', 'cashier'] };
+
+/** An amount with its count in brackets, as the breakdown shows them. */
+function AmountWithCount({ amount, count }: { amount: number; count: number }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="overflow-x-auto p-0">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{title}</TableHead>
-              <TableHead className="text-end">{t('col.salesCount')}</TableHead>
-              <TableHead className="text-end">{t('col.salesAmount')}</TableHead>
-              <TableHead className="text-end">{t('col.refundsCount')}</TableHead>
-              <TableHead className="text-end">{t('col.refundsAmount')}</TableHead>
-              <TableHead className="text-end">{t('col.net')}</TableHead>
-              <TableHead className="text-end">{t('col.share')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.key}>
-                <TableCell className="font-medium">{label(r.key)}</TableCell>
-                <TableCell className="text-end tabular-nums">{formatQuantity(r.salesCount)}</TableCell>
-                <TableCell className="text-end tabular-nums">{formatCurrency(r.salesAmount)}</TableCell>
-                <TableCell className="text-end tabular-nums">{formatQuantity(r.refundsCount)}</TableCell>
-                <TableCell className="text-end tabular-nums">
-                  {r.refundsAmount ? formatCurrency(-r.refundsAmount) : '—'}
-                </TableCell>
-                <TableCell className="text-end font-semibold tabular-nums">{formatCurrency(r.net)}</TableCell>
-                <TableCell className="text-end tabular-nums">{r.share.toFixed(1)}%</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-          <TableFooter>
-            <TableRow>
-              <TableCell className="font-semibold">{t('total')}</TableCell>
-              <TableCell className="text-end tabular-nums">{formatQuantity(report.salesCount)}</TableCell>
-              <TableCell className="text-end tabular-nums">{formatCurrency(report.salesAmount)}</TableCell>
-              <TableCell className="text-end tabular-nums">{formatQuantity(report.refundsCount)}</TableCell>
-              <TableCell className="text-end tabular-nums">
-                {report.refundsAmount ? formatCurrency(-report.refundsAmount) : '—'}
-              </TableCell>
-              <TableCell className="text-end font-bold tabular-nums">{formatCurrency(report.net)}</TableCell>
-              <TableCell />
-            </TableRow>
-          </TableFooter>
-        </Table>
-      </CardContent>
-    </Card>
+    <>
+      {formatCurrency(amount)} <span className="text-muted-foreground text-xs">({count})</span>
+    </>
   );
 }
 
 export default function CardBrandsReportPage() {
   const t = useTranslations('cardBrandsReport');
-  const tc = useTranslations('common');
   const labels = useCardBrandLabels();
-  const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
+  const { resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  const filters = useReportFilters(SPEC);
 
-  const [filters, setFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
-    hours: WHOLE_DAY,
-  });
-  const [applied, setApplied] = useState<ReportFiltersState | null>(null);
+  const params = useMemo(
+    () => (filters.apiParams ? { ...filters.apiParams, ...scopeApiParams(effective) } : null),
+    [effective, filters.apiParams],
+  );
 
-  const params = useMemo(() => {
-    if (!applied) return null;
-    return {
-      from: applied.from,
-      to: applied.to,
-      ...(effective.shopId ? { shopId: effective.shopId } : {}),
-      ...(effective.machineId ? { machineId: effective.machineId } : {}),
-      ...hourQueryParams(applied.hours),
-    };
-  }, [applied, effective.shopId, effective.machineId]);
-
-  const { data, isLoading, isFetching, isError, error } = useQuery<CardBrandsReport>({
+  const query = useQuery<CardBrandsReport>({
     queryKey: ['report-card-brands', params],
     queryFn: () => fetchCardBrandsReport(params!),
     enabled: params !== null,
   });
+  const data = query.data;
 
-  const totalsSheet = (name: string, rows: CardBrandTotal[], label: (c: string) => string, report: CardBrandsReport) => ({
-    name,
-    columns: [
-      { header: name },
-      { header: t('col.salesCount'), kind: 'number' as const },
-      { header: t('col.salesAmount'), kind: 'money' as const },
-      { header: t('col.refundsCount'), kind: 'number' as const },
-      { header: t('col.refundsAmount'), kind: 'money' as const },
-      { header: t('col.net'), kind: 'money' as const },
-      { header: t('col.share'), kind: 'percent' as const },
-    ],
-    rows: rows.map((r) => [label(r.key), r.salesCount, r.salesAmount, r.refundsCount, r.refundsAmount, r.net, r.share]),
-    totals: [t('total'), report.salesCount, report.salesAmount, report.refundsCount, report.refundsAmount, report.net, 100],
-  });
+  const { acquirer: acquirerLabel, brand: brandLabel } = labels;
+
+  /** By acquirer / by brand: one row per code, the report's totals below. */
+  const totalsTable = useMemo(
+    () =>
+      (id: string, title: string, nameHeader: string, rows: CardBrandTotal[], label: (code: string) => string): ReportTableSpec<CardBrandTotal> => ({
+        id,
+        title,
+        rows,
+        rowKey: (r) => r.key,
+        totalsLabel: t('total'),
+        emptyText: t('noRows'),
+        columns: [
+          { key: 'name', header: nameHeader, required: true, value: (r) => label(r.key), className: 'font-medium' },
+          { key: 'salesCount', header: t('col.salesCount'), kind: 'number', value: (r) => r.salesCount, total: data?.salesCount },
+          { key: 'salesAmount', header: t('col.salesAmount'), kind: 'money', value: (r) => r.salesAmount, total: data?.salesAmount },
+          { key: 'refundsCount', header: t('col.refundsCount'), kind: 'number', value: (r) => r.refundsCount, total: data?.refundsCount },
+          {
+            key: 'refundsAmount',
+            header: t('col.refundsAmount'),
+            kind: 'money',
+            // Positive in the export (as the server sends it); the screen shows it as a deduction.
+            value: (r) => r.refundsAmount,
+            cell: (r) => (r.refundsAmount ? formatCurrency(-r.refundsAmount) : '—'),
+            total: data?.refundsAmount,
+            totalCell: data ? (data.refundsAmount ? formatCurrency(-data.refundsAmount) : '—') : undefined,
+          },
+          { key: 'net', header: t('col.net'), kind: 'money', value: (r) => r.net, total: data?.net, className: 'font-semibold' },
+          // The export's totals row says 100%, as it always has; the screen leaves the cell empty.
+          { key: 'share', header: t('col.share'), kind: 'percent', value: (r) => r.share, total: 100, totalCell: null },
+        ],
+      }),
+    [data, t],
+  );
+
+  const byAcquirer = useMemo(
+    () => totalsTable('main', t('byAcquirer'), t('col.acquirer'), data?.byAcquirer ?? [], acquirerLabel),
+    [acquirerLabel, data, t, totalsTable],
+  );
+  const byBrand = useMemo(
+    () => totalsTable('brands', t('byBrand'), t('col.brand'), data?.byBrand ?? [], brandLabel),
+    [brandLabel, data, t, totalsTable],
+  );
+
+  const breakdown = useMemo<ReportTableSpec<CardBrandRow>>(
+    () => ({
+      id: 'shops',
+      title: t('breakdownTitle'),
+      rows: data?.rows ?? [],
+      rowKey: (r, i) => `${r.shopId}-${r.acquirer}-${r.brand}-${i}`,
+      totalsLabel: t('total'),
+      emptyText: t('noRows'),
+      columns: [
+        { key: 'shop', header: t('col.shop'), required: true, value: (r) => r.shopName ?? null, className: 'text-muted-foreground' },
+        { key: 'acquirer', header: t('col.acquirer'), value: (r) => acquirerLabel(r.acquirer) },
+        { key: 'brand', header: t('col.brand'), value: (r) => brandLabel(r.brand) },
+        // The screen writes each count in brackets beside its amount; the export has them as columns.
+        { key: 'salesCount', header: t('col.salesCount'), kind: 'number', exportOnly: true, value: (r) => r.salesCount, total: data?.salesCount },
+        {
+          key: 'salesAmount',
+          header: t('col.salesAmount'),
+          kind: 'money',
+          value: (r) => r.salesAmount,
+          cell: (r) => <AmountWithCount amount={r.salesAmount} count={r.salesCount} />,
+          total: data?.salesAmount,
+          totalCell: data ? <AmountWithCount amount={data.salesAmount} count={data.salesCount} /> : undefined,
+        },
+        { key: 'refundsCount', header: t('col.refundsCount'), kind: 'number', exportOnly: true, value: (r) => r.refundsCount, total: data?.refundsCount },
+        {
+          key: 'refundsAmount',
+          header: t('col.refundsAmount'),
+          kind: 'money',
+          value: (r) => r.refundsAmount,
+          cell: (r) => (r.refundsCount ? <AmountWithCount amount={-r.refundsAmount} count={r.refundsCount} /> : '—'),
+          total: data?.refundsAmount,
+          totalCell: data ? (data.refundsCount ? <AmountWithCount amount={-data.refundsAmount} count={data.refundsCount} /> : '—') : undefined,
+        },
+        { key: 'net', header: t('col.net'), kind: 'money', value: (r) => r.net, total: data?.net, className: 'font-medium' },
+      ],
+    }),
+    [acquirerLabel, brandLabel, data, t],
+  );
+
+  const tables = [byAcquirer, byBrand, breakdown] as ReportTableSpec<unknown>[];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-      </div>
-
-      <ScopeGate resolution={resolution}>
-        <ReportFilters value={filters} onChange={setFilters} onRun={() => setApplied(filters)} isFetching={isFetching} />
-
-        {!applied ? (
-          <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>
-        ) : isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : data ? (
-          <div className="space-y-4">
-            <ReportExportToolbar
-              title={t('title')}
-              from={data.window.from}
-              to={data.window.to}
-              getSheets={() => [
-                totalsSheet(t('byAcquirer'), data.byAcquirer, labels.acquirer, data),
-                totalsSheet(t('byBrand'), data.byBrand, labels.brand, data),
-                {
-                  name: t('breakdownTitle'),
-                  columns: [
-                    { header: t('col.shop') },
-                    { header: t('col.acquirer') },
-                    { header: t('col.brand') },
-                    { header: t('col.salesCount'), kind: 'number' },
-                    { header: t('col.salesAmount'), kind: 'money' },
-                    { header: t('col.refundsCount'), kind: 'number' },
-                    { header: t('col.refundsAmount'), kind: 'money' },
-                    { header: t('col.net'), kind: 'money' },
-                  ],
-                  rows: data.rows.map((r) => [
-                    r.shopName ?? null,
-                    labels.acquirer(r.acquirer),
-                    labels.brand(r.brand),
-                    r.salesCount,
-                    r.salesAmount,
-                    r.refundsCount,
-                    r.refundsAmount,
-                    r.net,
-                  ]),
-                  totals: [t('total'), null, null, data.salesCount, data.salesAmount, data.refundsCount, data.refundsAmount, data.net],
-                },
-              ]}
-            />
-            <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
-
-            {data.rows.length === 0 ? (
-              <p className="text-muted-foreground py-10 text-center text-sm">{t('noRows')}</p>
-            ) : (
-              <>
-                <TotalsTable title={t('byAcquirer')} rows={data.byAcquirer} label={labels.acquirer} report={data} />
-                <TotalsTable title={t('byBrand')} rows={data.byBrand} label={labels.brand} report={data} />
-
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base">{t('breakdownTitle')}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="overflow-x-auto p-0">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t('col.shop')}</TableHead>
-                          <TableHead>{t('col.acquirer')}</TableHead>
-                          <TableHead>{t('col.brand')}</TableHead>
-                          <TableHead className="text-end">{t('col.salesAmount')}</TableHead>
-                          <TableHead className="text-end">{t('col.refundsAmount')}</TableHead>
-                          <TableHead className="text-end">{t('col.net')}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {data.rows.map((r, i) => (
-                          <TableRow key={`${r.shopId}-${r.acquirer}-${r.brand}-${i}`}>
-                            <TableCell className="text-muted-foreground">{r.shopName ?? '—'}</TableCell>
-                            <TableCell>{labels.acquirer(r.acquirer)}</TableCell>
-                            <TableCell>{labels.brand(r.brand)}</TableCell>
-                            <TableCell className="text-end tabular-nums">
-                              {formatCurrency(r.salesAmount)}{' '}
-                              <span className="text-muted-foreground text-xs">({r.salesCount})</span>
-                            </TableCell>
-                            <TableCell className="text-end tabular-nums">
-                              {r.refundsCount ? (
-                                <>
-                                  {formatCurrency(-r.refundsAmount)}{' '}
-                                  <span className="text-muted-foreground text-xs">({r.refundsCount})</span>
-                                </>
-                              ) : (
-                                '—'
-                              )}
-                            </TableCell>
-                            <TableCell className="text-end font-medium tabular-nums">{formatCurrency(r.net)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-          </div>
-        ) : null}
-      </ScopeGate>
-    </div>
+    <ReportPage
+      reportKey="card-brands"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      resolution={resolution}
+      filters={filters}
+      bar={{ shopId: effective.shopId }}
+      query={reportQueryState(query)}
+      prompt={t('selectFilters')}
+      loading="table"
+      export={data ? { tables, from: data.window.from, to: data.window.to } : null}
+    >
+      {data ? (
+        <>
+          <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
+          {data.rows.length === 0 ? (
+            <p className="text-muted-foreground py-10 text-center text-sm">{t('noRows')}</p>
+          ) : (
+            <>
+              <ReportTable table={byAcquirer} />
+              <ReportTable table={byBrand} />
+              <ReportTable table={breakdown} />
+            </>
+          )}
+        </>
+      ) : null}
+    </ReportPage>
   );
 }

@@ -56,8 +56,8 @@ export interface ReportExportBarProps {
   title: string;
   /** The tables that go out (the first, or `pdfTableId`, is the PDF's). */
   tables: ReportTableSpec<unknown>[];
-  /** Sheets that are not a table of the page (a heat map…), appended as they are. */
-  extraSheets?: () => ExcelSheet[];
+  /** Sheets that are not a table of the page (a heat map…), appended as they are; may be fetched. */
+  extraSheets?: () => ExcelSheet[] | Promise<ExcelSheet[]>;
   extraSheetsFirst?: boolean;
   pdfTableId?: string;
   from?: string | null;
@@ -70,15 +70,48 @@ export interface ReportExportBarProps {
   companyId?: string | null;
   companyName?: string | null;
   disabled?: boolean;
+  /** Excel and its columns only — for a page that prints its own document (a Z). */
+  excelOnly?: boolean;
 }
 
-/** A table as the exports see it: no screen-only columns, the search applied, its totals row. */
-export function toExportTable(table: ReportTableSpec<unknown>, q: string, fallbackName: string): ExportTable {
+/**
+ * The columns that are known only from the exported rows (`expandInExport`, one per payment
+ * method), written in their placeholder's place — in the table and in the chosen keys.
+ */
+export function expandExportColumns(
+  table: ReportTableSpec<unknown>,
+  rows: unknown[],
+  keys: string[],
+): { table: ReportTableSpec<unknown>; keys: string[] } {
+  if (!table.columns.some((c) => c.expandInExport)) return { table, keys };
+  const parts = new Map<string, string[]>();
+  const columns = table.columns.flatMap((c) => {
+    if (!c.expandInExport) return [c];
+    const expanded = c.expandInExport(rows).map((x) => ({ ...x, key: `${c.key}:${x.key}` }));
+    parts.set(c.key, expanded.map((x) => x.key));
+    return expanded;
+  });
+  return { table: { ...table, columns }, keys: keys.flatMap((k) => parts.get(k) ?? [k]) };
+}
+
+/**
+ * A table as the exports see it: no screen-only columns, the search applied, its totals row.
+ * `allRows`: what the table's `exportRows` fetched (default: its rows on screen).
+ */
+export function toExportTable(
+  table: ReportTableSpec<unknown>,
+  q: string,
+  fallbackName: string,
+  allRows?: unknown[],
+): ExportTable {
   const columns = table.columns.filter((c) => !c.screenOnly);
-  const rows = searchRows(table, q);
+  const all = allRows ?? table.rows;
+  const rows = searchRows(allRows ? { ...table, rows: allRows } : table, q);
   const totals =
-    table.totalsLabel && table.rows.length > 0
-      ? columns.map((c, i) => (c.total !== undefined ? c.total : i === 0 ? table.totalsLabel! : null))
+    table.totalsLabel && all.length > 0
+      ? columns.map((c, i) =>
+          c.total !== undefined ? c.total : c.totalOf ? c.totalOf(all) : i === 0 ? table.totalsLabel! : null,
+        )
       : undefined;
   return {
     tableId: table.id,
@@ -106,6 +139,7 @@ export function ReportExportBar({
   companyId,
   companyName,
   disabled,
+  excelOnly = false,
 }: ReportExportBarProps) {
   const t = useTranslations('reportFramework.export');
   const ctx = useReportContext();
@@ -156,11 +190,23 @@ export function ReportExportBar({
   const headerLines = (at: string) =>
     reportHeaderLines({ title, business, place, from, to, hours, filters: filterLines, generatedAt: at }, words);
 
+  /** One table ready to write: a paged list's rows fetched now (`exportRows`), its data's columns expanded. */
+  const prepare = async (r: (typeof resolved)[number]) => {
+    const rows = r.table.exportRows ? await r.table.exportRows() : undefined;
+    const x = expandExportColumns(r.table, rows ?? r.table.rows, r.keys);
+    return { table: toExportTable(x.table, q, title, rows), keys: x.keys };
+  };
+
   const onExcel = async () => {
     setBusy('excel');
     try {
-      const sheets = resolved.map((r) => exportTableSheet(toExportTable(r.table, q, title), r.keys));
-      const extra = extraSheets?.() ?? [];
+      const sheets = await Promise.all(
+        resolved.map(async (r) => {
+          const p = await prepare(r);
+          return exportTableSheet(p.table, p.keys);
+        }),
+      );
+      const extra = (await extraSheets?.()) ?? [];
       await downloadExcel(extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra], fileName, {
         heading: headerLines(new Date().toISOString()),
         readableName: true,
@@ -187,19 +233,19 @@ export function ReportExportBar({
   const onPdf = async () => {
     const r = resolved.find((x) => x.table.id === pdfTableId) ?? resolved[0];
     if (!r) return;
-    const table = toExportTable(r.table, q, title);
-    if (table.rows.length > PDF_MAX_ROWS) {
-      toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
-      return;
-    }
     setBusy('pdf');
     try {
+      const { table, keys } = await prepare(r);
+      if (table.rows.length > PDF_MAX_ROWS) {
+        toast.error(t('pdfTooMany', { max: PDF_MAX_ROWS.toLocaleString('he-IL') }));
+        return;
+      }
       const pdfTitle = r.table.id !== MAIN_TABLE && r.table.title ? `${title} · ${r.table.title}` : title;
       const range = rangeText(from, to);
       const blob = await fetchReportPdf(
         exportTablePdfBody(
           table,
-          r.keys,
+          keys,
           {
             title: pdfTitle,
             subtitleLines: [
@@ -277,14 +323,18 @@ export function ReportExportBar({
           {busy === 'excel' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />}
           {t('excel')}
         </Button>
-        <Button variant="outline" size="sm" onClick={onPdf} disabled={disabled || busy !== null}>
-          {busy === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileDown className="h-4 w-4" aria-hidden />}
-          {t('pdf')}
-        </Button>
-        <Button variant="outline" size="sm" onClick={print} disabled={disabled}>
-          <Printer className="h-4 w-4" aria-hidden />
-          {t('print')}
-        </Button>
+        {excelOnly ? null : (
+          <>
+            <Button variant="outline" size="sm" onClick={onPdf} disabled={disabled || busy !== null}>
+              {busy === 'pdf' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileDown className="h-4 w-4" aria-hidden />}
+              {t('pdf')}
+            </Button>
+            <Button variant="outline" size="sm" onClick={print} disabled={disabled}>
+              <Printer className="h-4 w-4" aria-hidden />
+              {t('print')}
+            </Button>
+          </>
+        )}
         <Button variant="ghost" size="sm" onClick={() => setPicker(true)} disabled={disabled || exported.length === 0}>
           <Columns3 className="h-4 w-4" aria-hidden />
           {t('columns')}
@@ -295,13 +345,15 @@ export function ReportExportBar({
       </div>
 
       {/* The print template's header. Never on screen. */}
-      <div className="report-print-header hidden print:block" dir="rtl">
-        {headerLines(generatedAt).map((line, i) => (
-          <div key={i} className={i === 0 ? 'text-lg font-bold' : 'text-sm'}>
-            {line}
-          </div>
-        ))}
-      </div>
+      {excelOnly ? null : (
+        <div className="report-print-header hidden print:block" dir="rtl">
+          {headerLines(generatedAt).map((line, i) => (
+            <div key={i} className={i === 0 ? 'text-lg font-bold' : 'text-sm'}>
+              {line}
+            </div>
+          ))}
+        </div>
+      )}
 
       <Dialog open={picker} onOpenChange={setPicker}>
         <DialogContent className="sm:max-w-lg">
@@ -385,7 +437,7 @@ export function ReportExportBar({
             ) : null}
           </div>
 
-          <div className="space-y-1">
+          <div className={excelOnly ? 'hidden' : 'space-y-1'}>
             <Label className="text-xs">{t('orientation')}</Label>
             <Select
               value={orientation}

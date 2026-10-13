@@ -240,3 +240,29 @@ export function sortRows<R>(rows: readonly R[], value: (row: R) => SortValue, di
     })
     .map((x) => x.row);
 }
+
+/** A heading of a run of rows (a day): its group and the rows of the run. */
+export interface RowRun<R> {
+  group: string;
+  rows: R[];
+}
+
+/**
+ * Rows in runs of one group (a day of a list): for each row, the run it opens, or null when it
+ * continues the run above it — a new heading wherever the group changes.
+ */
+export function groupRuns<R>(rows: readonly R[], groupOf: (row: R) => string): (RowRun<R> | null)[] {
+  const out: (RowRun<R> | null)[] = [];
+  let current: RowRun<R> | null = null;
+  for (const row of rows) {
+    const group = groupOf(row);
+    if (current && current.group === group) {
+      current.rows.push(row);
+      out.push(null);
+    } else {
+      current = { group, rows: [row] };
+      out.push(current);
+    }
+  }
+  return out;
+}
