@@ -19,7 +19,7 @@ import type { KioskConfig, KioskLayer } from './kioskConfig';
 
 /* ------------------------------------------------------------ vocabulary */
 
-export type LayoutTemplate = 'standard' | 'guided' | 'tabs' | 'landing' | 'fastfood' | 'cafe' | 'combo' | 'list' | 'magazine' | 'wall';
+export type LayoutTemplate = 'standard' | 'guided' | 'tabs' | 'landing' | 'fastfood' | 'cafe' | 'combo' | 'list' | 'magazine' | 'wall' | 'restaurant_rail';
 export type LayoutCatalog = 'rail' | 'top' | 'landing' | 'list' | 'shelves' | 'magazine' | 'wall';
 export type LayoutCategoryIcons = 'photo' | 'line' | 'filled' | 'duotone' | 'emoji' | 'none';
 export type LayoutRailSize = 's' | 'm' | 'l';
@@ -37,8 +37,23 @@ export type LayoutBasket = 'bar' | 'panel' | 'summary' | 'fab' | 'drawer' | 'rec
 export type LayoutService = 'cards' | 'split' | 'rows' | 'sheet';
 export type LayoutName = 'card' | 'dock' | 'avatar';
 export type LayoutReach = 'normal' | 'low';
+/* "מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6.1): every key additive, its default today's look. */
+/** The rail's items: plain (today) or an icon in a circle with the name under it. */
+export type LayoutRailStyle = 'plain' | 'circle';
+/** How the chosen circle stands out (circle only). */
+export type LayoutRailEmphasis = 'none' | 'fill' | 'scale' | 'fill_scale';
+/** paged — today (catalog.oneCategory decides); continuous — one list with headings, the rail following. */
+export type LayoutCatalogScroll = 'paged' | 'continuous';
+export type LayoutOnOff = 'on' | 'off';
+/** The windows' entrance (the dish, its add-ons, the payment method); null — motion.sheet (today). */
+export type LayoutSheetMotion = 'slide_up' | 'fade' | 'none';
+export type LayoutTopBarItem = 'club' | 'cancel' | 'search' | 'lang';
+export type LayoutHelpButton = 'off' | 'float';
+export type LayoutDoneScreen = 'classic' | 'card';
+/** "איך תרצו לשלם?": today's screen, or a window rising over the basket with a card per method (§3א). */
+export type LayoutPayMethodView = 'screen' | 'sheet';
 
-export const LAYOUT_TEMPLATES: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall'];
+export const LAYOUT_TEMPLATES: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall', 'restaurant_rail'];
 export const LAYOUT_CATALOGS: LayoutCatalog[] = ['rail', 'top', 'landing', 'list', 'shelves', 'magazine', 'wall'];
 export const LAYOUT_CATEGORY_ICONS: LayoutCategoryIcons[] = ['photo', 'line', 'filled', 'duotone', 'emoji', 'none'];
 export const LAYOUT_RAIL_SIZES: LayoutRailSize[] = ['s', 'm', 'l'];
@@ -55,6 +70,17 @@ export const LAYOUT_BASKETS: LayoutBasket[] = ['bar', 'panel', 'summary', 'fab',
 export const LAYOUT_SERVICES: LayoutService[] = ['cards', 'split', 'rows', 'sheet'];
 export const LAYOUT_NAMES: LayoutName[] = ['card', 'dock', 'avatar'];
 export const LAYOUT_REACHES: LayoutReach[] = ['normal', 'low'];
+export const LAYOUT_RAIL_STYLES: LayoutRailStyle[] = ['plain', 'circle'];
+export const LAYOUT_RAIL_EMPHASES: LayoutRailEmphasis[] = ['none', 'fill', 'scale', 'fill_scale'];
+export const LAYOUT_CATALOG_SCROLLS: LayoutCatalogScroll[] = ['paged', 'continuous'];
+export const LAYOUT_ON_OFF: LayoutOnOff[] = ['on', 'off'];
+export const LAYOUT_SHEET_MOTIONS: LayoutSheetMotion[] = ['slide_up', 'fade', 'none'];
+export const LAYOUT_TOP_BAR_ITEMS: LayoutTopBarItem[] = ['club', 'cancel', 'search', 'lang'];
+export const LAYOUT_HELP_BUTTONS: LayoutHelpButton[] = ['off', 'float'];
+export const LAYOUT_DONE_SCREENS: LayoutDoneScreen[] = ['classic', 'card'];
+export const LAYOUT_PAY_METHOD_VIEWS: LayoutPayMethodView[] = ['screen', 'sheet'];
+/** The chosen circle's scale ("scale" / "fill_scale"): within the spec's 1.08–1.15. */
+export const RAIL_EMPHASIS_SCALE = 1.12;
 
 /** The vocabulary per key, as the fixture's `vocabulary` (validation, the editor's choices). */
 export const LAYOUT_VOCABULARY = {
@@ -75,6 +101,17 @@ export const LAYOUT_VOCABULARY = {
   service: LAYOUT_SERVICES,
   name: LAYOUT_NAMES,
   reach: LAYOUT_REACHES,
+  railStyle: LAYOUT_RAIL_STYLES,
+  railEmphasis: LAYOUT_RAIL_EMPHASES,
+  catalogScroll: LAYOUT_CATALOG_SCROLLS,
+  railFollow: LAYOUT_ON_OFF,
+  pricePill: LAYOUT_ON_OFF,
+  sheetMotion: LAYOUT_SHEET_MOTIONS,
+  /** A list key: the vocabulary of one item. */
+  topBar: LAYOUT_TOP_BAR_ITEMS,
+  helpButton: LAYOUT_HELP_BUTTONS,
+  doneScreen: LAYOUT_DONE_SCREENS,
+  payMethodView: LAYOUT_PAY_METHOD_VIEWS,
 } as const;
 
 export interface KioskLayout {
@@ -120,6 +157,26 @@ export interface KioskLayout {
   reach: LayoutReach;
   /** A ♿ button that turns `reach` over for the current customer (back as configured at the end of the order). */
   reachToggle: boolean;
+  /** rail: plain (today) or circles — an icon in a circle, the name under it. */
+  railStyle: LayoutRailStyle;
+  /** circle: how the chosen one stands out — filled (railSelectedBg), scaled, both, or not. */
+  railEmphasis: LayoutRailEmphasis;
+  /** continuous: one list of every category with its heading, the rail following the scroll. */
+  catalogScroll: LayoutCatalogScroll;
+  /** The rail scrolls itself to keep the chosen category in sight (today: on). */
+  railFollow: LayoutOnOff;
+  /** The dish card's price in a pill at the card's bottom. */
+  pricePill: LayoutOnOff;
+  /** The windows' entrance; null — motion.sheet (today). */
+  sheetMotion: LayoutSheetMotion | null;
+  /** The top bar's buttons in order; null — today's header. */
+  topBar: LayoutTopBarItem[] | null;
+  /** "קריאה לצוות" floating at the bottom corner. */
+  helpButton: LayoutHelpButton;
+  /** The success screen: classic (today) or the card with the countdown ring. */
+  doneScreen: LayoutDoneScreen;
+  /** "איך תרצו לשלם?": today's screen, or the rising window of method cards. */
+  payMethodView: LayoutPayMethodView;
 }
 
 /** What a kiosk gets when no level sets anything: the layout of today (template standard). */
@@ -145,6 +202,16 @@ export const KIOSK_LAYOUT_DEFAULTS: KioskLayout = {
   nameAvatars: [],
   reach: 'normal',
   reachToggle: false,
+  railStyle: 'plain',
+  railEmphasis: 'fill',
+  catalogScroll: 'paged',
+  railFollow: 'on',
+  pricePill: 'off',
+  sheetMotion: null,
+  topBar: null,
+  helpButton: 'off',
+  doneScreen: 'classic',
+  payMethodView: 'screen',
 };
 
 /** The keys a template decides (every layout key but the template itself). */
@@ -186,14 +253,33 @@ export const KIOSK_LAYOUT_TEMPLATES: Record<LayoutTemplate, KioskLayer> = {
   wall: {
     layout: { catalog: 'wall', categoryIcons: 'emoji', itemView: 'popover', basket: 'receipt', name: 'avatar', quickAdd: 'always' },
   },
+  // "מסעדה — פס צד": circles on the rail, one continuous menu, price pills, windows rising (spec §6.4).
+  restaurant_rail: {
+    layout: {
+      catalog: 'rail',
+      categoryIcons: 'line',
+      railStyle: 'circle',
+      railEmphasis: 'fill_scale',
+      catalogScroll: 'continuous',
+      railFollow: 'on',
+      card: 'tile',
+      pricePill: 'on',
+      itemView: 'sheet',
+      sheetMotion: 'slide_up',
+      topBar: ['club', 'cancel', 'search'],
+      doneScreen: 'card',
+      payMethodView: 'sheet',
+    },
+    catalog: { oneCategory: false },
+  },
 };
 
 /**
- * The templates this build draws (the dashboard offers only these): all ten — phase 2 added cafe,
- * combo, list, magazine and wall. A config naming one a kiosk does not draw falls back to the
- * categories as theme.categoryLayout says (what an older kiosk shows).
+ * The templates this build draws (the dashboard offers only these): all of them — phase 2 added cafe,
+ * combo, list, magazine and wall, 13.10 restaurant_rail. A config naming one a kiosk does not draw
+ * falls back to the categories as theme.categoryLayout says (what an older kiosk shows).
  */
-export const LAYOUT_TEMPLATES_READY: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall'];
+export const LAYOUT_TEMPLATES_READY: LayoutTemplate[] = ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall', 'restaurant_rail'];
 
 /** What an older kiosk (no `layout`) reads: theme.categoryLayout / theme.cartStyle from the layout. */
 export const LAYOUT_BACK_COMPAT: {
@@ -204,7 +290,7 @@ export const LAYOUT_BACK_COMPAT: {
   cartStyle: { bar: 'bar', panel: 'panel', summary: 'bar', fab: 'bar', drawer: 'bar', receipt: 'bar' },
 };
 
-export const LAYOUT_LIMITS = { nameAvatarsMax: 12, nameAvatarMax: 24 } as const;
+export const LAYOUT_LIMITS = { nameAvatarsMax: 12, nameAvatarMax: 24, topBarMax: 4 } as const;
 
 /* ------------------------------------------------------------ "ברוכים הבאים" */
 
@@ -450,6 +536,25 @@ export function validateLayout(cfg: Pick<KioskConfig, 'layout' | 'attract'>): La
       checkIn(out, p('service'), l.service, LAYOUT_SERVICES);
       checkIn(out, p('name'), l.name, LAYOUT_NAMES);
       checkIn(out, p('reach'), l.reach, LAYOUT_REACHES);
+      // "מסעדה — פס צד": absent (a draft from before them) is today's; a value must be known.
+      const known = (k: string, allowed: readonly unknown[], nullable = false) => {
+        if (l[k] !== undefined) checkIn(out, p(k), l[k], allowed, nullable);
+      };
+      known('railStyle', LAYOUT_RAIL_STYLES);
+      known('railEmphasis', LAYOUT_RAIL_EMPHASES);
+      known('catalogScroll', LAYOUT_CATALOG_SCROLLS);
+      known('railFollow', LAYOUT_ON_OFF);
+      known('pricePill', LAYOUT_ON_OFF);
+      known('sheetMotion', LAYOUT_SHEET_MOTIONS, true);
+      known('helpButton', LAYOUT_HELP_BUTTONS);
+      known('doneScreen', LAYOUT_DONE_SCREENS);
+      known('payMethodView', LAYOUT_PAY_METHOD_VIEWS);
+      const bar = l.topBar;
+      if (bar !== undefined && bar !== null) {
+        if (!Array.isArray(bar) || bar.some((x) => !(LAYOUT_TOP_BAR_ITEMS as readonly unknown[]).includes(x))) out.push({ path: p('topBar'), code: 'enum' });
+        else if (bar.length > LAYOUT_LIMITS.topBarMax) out.push({ path: p('topBar'), code: 'tooMany', params: { max: LAYOUT_LIMITS.topBarMax } });
+        else if (new Set(bar).size !== bar.length) out.push({ path: p('topBar'), code: 'duplicate' });
+      }
       for (const k of ['landingShowCounts', 'magazineFeed', 'reachToggle'] as const) {
         if (typeof l[k] !== 'boolean') out.push({ path: p(k), code: 'enum' });
       }
@@ -496,6 +601,7 @@ export const LAYOUT_CATALOGS_READY: LayoutCatalog[] = ['rail', 'top', 'landing',
  * The values of each key this build draws (the editor offers the others as "בקרוב"); a key not
  * listed — every value. Still to come: the cards bleed / button / outlined, the meal's own steps,
  * "להפוך לארוחה?" after the add, and the service / name screens' variants (today's screens).
+ * "מסעדה — פס צד" (13.10): every value of its keys is drawn — the dashboard, the Android kiosk.
  */
 export const LAYOUT_VALUES_READY: Partial<Record<keyof KioskLayout, readonly unknown[]>> = {
   template: LAYOUT_TEMPLATES_READY,
@@ -505,6 +611,15 @@ export const LAYOUT_VALUES_READY: Partial<Record<keyof KioskLayout, readonly unk
   mealUpsell: ['off', 'first'],
   service: ['cards'],
   name: ['card'],
+  railStyle: LAYOUT_RAIL_STYLES,
+  railEmphasis: LAYOUT_RAIL_EMPHASES,
+  catalogScroll: LAYOUT_CATALOG_SCROLLS,
+  railFollow: LAYOUT_ON_OFF,
+  pricePill: LAYOUT_ON_OFF,
+  sheetMotion: [null, ...LAYOUT_SHEET_MOTIONS],
+  helpButton: LAYOUT_HELP_BUTTONS,
+  doneScreen: LAYOUT_DONE_SCREENS,
+  payMethodView: LAYOUT_PAY_METHOD_VIEWS,
 };
 
 /** Whether this build draws `value` for `key`. */
@@ -632,6 +747,70 @@ export const RECEIPT_LINES = 4;
 export function cardKindOf(cfg: Pick<KioskConfig, 'layout'>): 'tile' | 'row' | 'plate' {
   const c = layoutOf(cfg).card;
   return c === 'row' || c === 'plate' ? c : 'tile';
+}
+
+/* ------------------------------------------------------------ "מסעדה — פס צד" (spec §6) */
+
+/** The rail draws circles (an icon in a circle, the name under it). */
+export function railCircles(cfg: Pick<KioskConfig, 'layout'>): boolean {
+  return layoutOf(cfg).railStyle === 'circle';
+}
+
+/** The chosen circle: filled with railSelectedBg, and its scale (1 — none). Plain rails: as today. */
+export function railEmphasisOf(cfg: Pick<KioskConfig, 'layout'>): { fill: boolean; scale: number } {
+  const e = layoutOf(cfg).railEmphasis;
+  return { fill: e === 'fill' || e === 'fill_scale', scale: e === 'scale' || e === 'fill_scale' ? RAIL_EMPHASIS_SCALE : 1 };
+}
+
+/** One continuous menu (every category with its heading): catalogScroll continuous, or — as today — oneCategory off. */
+export function catalogContinuous(cfg: Pick<KioskConfig, 'layout' | 'catalog'>): boolean {
+  return layoutOf(cfg).catalogScroll === 'continuous' || cfg.catalog?.oneCategory === false;
+}
+
+/** The rail scrolls itself to keep the chosen category in sight (today's behaviour unless off). */
+export function railFollows(cfg: Pick<KioskConfig, 'layout'>): boolean {
+  return layoutOf(cfg).railFollow !== 'off';
+}
+
+export function pricePillOn(cfg: Pick<KioskConfig, 'layout'> | null | undefined): boolean {
+  return layoutOf(cfg).pricePill === 'on';
+}
+
+/** The windows' entrance the layout asks for; null — motion.sheet (today). */
+export function sheetMotionOf(cfg: Pick<KioskConfig, 'layout'> | null | undefined): LayoutSheetMotion | null {
+  const v = layoutOf(cfg).sheetMotion;
+  return v && (LAYOUT_SHEET_MOTIONS as readonly string[]).includes(v) ? v : null;
+}
+
+export function doneCard(cfg: Pick<KioskConfig, 'layout'> | null | undefined): boolean {
+  return layoutOf(cfg).doneScreen === 'card';
+}
+
+export function payMethodSheet(cfg: Pick<KioskConfig, 'layout'> | null | undefined): boolean {
+  return layoutOf(cfg).payMethodView === 'sheet';
+}
+
+export function helpFloats(cfg: Pick<KioskConfig, 'layout'> | null | undefined): boolean {
+  return layoutOf(cfg).helpButton === 'float';
+}
+
+/**
+ * The top bar's buttons a screen shows, in order (null — today's header): club where the club is on or
+ * a voucher is a payment method; search where the search is on; the language where there is another
+ * language; cancel always. Unknown items (a newer cloud) are dropped.
+ */
+export function topBarItems(cfg: Pick<KioskConfig, 'layout' | 'club' | 'general' | 'payment'>): LayoutTopBarItem[] | null {
+  const bar = layoutOf(cfg).topBar;
+  if (!Array.isArray(bar)) return null;
+  const seen = new Set<string>();
+  return bar.filter((item): item is LayoutTopBarItem => {
+    if (!(LAYOUT_TOP_BAR_ITEMS as readonly string[]).includes(item) || seen.has(item)) return false;
+    seen.add(item);
+    if (item === 'club') return !!cfg.club?.enabled || (cfg.payment?.methods ?? []).includes('voucher');
+    if (item === 'search') return !!cfg.general?.searchEnabled;
+    if (item === 'lang') return (cfg.general?.languages?.length ?? 0) > 1;
+    return true;
+  });
 }
 
 /** The accessible mode now: as configured, turned over by the customer's ♿ (only where the toggle is on). */

@@ -153,6 +153,12 @@ BACKGROUND_OVERLAY_MIN, BACKGROUND_OVERLAY_MAX, BACKGROUND_OVERLAY_DEFAULT = 0, 
 #: "גודל טקסט" per element, in percent over `typeScale` (80–150 by 10; 100 = as drawn today) —
 #: the dashboard's TEXT_SIZE_KEYS and the till's KioskTextSizes; the shared golden
 #: tests/fixtures/kiosk_theme_colors_golden.json pins them for all three.
+#: "מסעדה — פס צד" colours (P:/specs/kiosk-rail-motion.md §6.2): each "#RRGGBB" or null — the kiosk's
+#: own palette (lib/kioskConfig.ts railMotionColors, the till's the same rules). The screen's background
+#: is the existing `backgroundColor`. No style's preset sets them.
+RAIL_MOTION_COLOR_KEYS = (
+    "pricePillBg", "pricePillText", "cardBg", "photoBg", "railBg", "railCircleBg", "railSelectedBg", "railIcon", "cancelBg",
+)
 TEXT_SIZE_KEYS = (
     "productName", "productDescription", "productPrice", "categoryName",
     "itemName", "itemDescription", "itemOptions", "cartLines", "buttons",
@@ -282,6 +288,9 @@ SPLIT_CARD_MIN_PER_CARD = (100, 100000)
 CASH_AT_TILL_EXPIRY_MIN = (5, 240)
 RECEIPT_POLICIES = ("always", "ask", "never")
 CUSTOMER_FIELD_MODES = ("off", "optional", "required")
+#: "דלג על בחירת אמצעי תשלום כשיש רק אשראי ללא תשלומים" (P:/specs/kiosk-rail-motion.md §3א, §6.3):
+#: auto — today's rule (the card alone → no window, straight to the card); never — the window always.
+PAYMENT_CHOOSER_SKIPS = ("auto", "never")
 #: "סוג שירות": "types" — as `serviceTypes` says (asked with two, else every order is the one);
 #: "none" — "ללא סוג שירות": never asked, and the order carries no service at all (no word on
 #: the screens, the slip, the bon, the receipt or the KDS). `serviceTypes` is kept as it was.
@@ -415,6 +424,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "showDescriptions": True,
         # "גודל טקסט": every element as drawn today.
         "textSizes": {key: TEXT_SIZE_DEFAULT for key in TEXT_SIZE_KEYS},
+        # "מסעדה — פס צד" colours: none — the kiosk's palette, as today.
+        **{key: None for key in RAIL_MOTION_COLOR_KEYS},
     },
     "texts": {},
     "screenImages": {},
@@ -497,6 +508,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # "פיצול תשלום בכרטיסים" (split_card, the Android kiosk only): 2 / 3 / 4 equal cards (the
         # remainder agorot on card 1) and "סכום אחר" (an amount per card), each card at least this.
         "splitCard": {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000},
+        # "דלג על בחירת אמצעי תשלום כשיש רק אשראי ללא תשלומים": auto — as the kiosks always did.
+        "paymentChooserSkip": "auto",
     },
     # "הגדלת מכירה": the menu's rules for the kiosk (§21); at most `maxShown` windows in one order.
     "upsell": {"maxShown": 2},
@@ -919,11 +932,13 @@ class UList(Node):
     """A list (replaced whole by a layer). `unique` refuses duplicates; `sort` stores it sorted."""
 
     def __init__(self, item: Node, *, min_len: int = 0, max_len: int = ID_LIST_MAX, unique: bool = False,
-                 sort: bool = False):
+                 sort: bool = False, nullable: bool = False):
         self.item, self.min_len, self.max_len, self.unique = item, min_len, max_len, unique
-        self.sort = sort
+        self.sort, self.nullable = sort, nullable
 
     def check(self, value, path, errors):
+        if value is None and self.nullable:
+            return None
         if not isinstance(value, list):
             return _fail(errors, path, "invalid_type", "must be a list")
         before = len(errors)
@@ -1258,6 +1273,7 @@ SCHEMA = Obj({
         "animation": Enum(ANIMATIONS),
         "showDescriptions": Bool(),
         "textSizes": Obj({key: Int(TEXT_SIZE_MIN, TEXT_SIZE_MAX, step=TEXT_SIZE_STEP) for key in TEXT_SIZE_KEYS}),
+        **{key: Color(nullable=True) for key in RAIL_MOTION_COLOR_KEYS},
     }),
     # The first language's texts: the keys of before, and every text of the registry (kiosk_layout.py).
     "texts": Map(Str(TEXT_MAX), keys=TEXT_KEYS + tuple(k for k in layouts.text_keys() if k not in TEXT_KEYS)),
@@ -1350,6 +1366,7 @@ SCHEMA = Obj({
             "otherAmount": Bool(),
             "minPerCardAgorot": Int(*SPLIT_CARD_MIN_PER_CARD),
         }),
+        "paymentChooserSkip": Enum(PAYMENT_CHOOSER_SKIPS),
     }),
     "upsell": Obj({
         "maxShown": Int(1, UPSELL_MAX_SHOWN),
@@ -1458,6 +1475,17 @@ SCHEMA = Obj({
         "nameAvatars": UList(Str(layouts.NAME_AVATAR_MAX, min_len=1), max_len=layouts.NAME_AVATARS_MAX, unique=True),
         "reach": Enum(layouts.LAYOUT_REACHES),
         "reachToggle": Bool(),
+        # "מסעדה — פס צד" (kiosk_layout.py, P:/specs/kiosk-rail-motion.md §6.1).
+        "railStyle": Enum(layouts.LAYOUT_RAIL_STYLES),
+        "railEmphasis": Enum(layouts.LAYOUT_RAIL_EMPHASES),
+        "catalogScroll": Enum(layouts.LAYOUT_CATALOG_SCROLLS),
+        "railFollow": Enum(layouts.LAYOUT_ON_OFF),
+        "pricePill": Enum(layouts.LAYOUT_ON_OFF),
+        "sheetMotion": Enum(layouts.LAYOUT_SHEET_MOTIONS, nullable=True),
+        "topBar": UList(Enum(layouts.LAYOUT_TOP_BAR_ITEMS), max_len=layouts.LAYOUT_TOP_BAR_MAX, unique=True, nullable=True),
+        "helpButton": Enum(layouts.LAYOUT_HELP_BUTTONS),
+        "doneScreen": Enum(layouts.LAYOUT_DONE_SCREENS),
+        "payMethodView": Enum(layouts.LAYOUT_PAY_METHOD_VIEWS),
     }),
 })
 
@@ -1560,6 +1588,7 @@ def limits() -> Dict[str, Any]:
             "motionItemsEnter": list(MOTION_ITEMS_ENTER),
             "motionScreenChange": list(MOTION_SCREEN_CHANGE),
             "motionSheet": list(MOTION_SHEET),
+            "paymentChooserSkip": list(PAYMENT_CHOOSER_SKIPS),
             "motionAddToCart": list(MOTION_ADD_TO_CART),
             "motionSpeed": list(MOTION_SPEEDS),
             "motionEffects": list(MOTION_EFFECTS),
@@ -1590,6 +1619,8 @@ def limits() -> Dict[str, Any]:
             "templates": layouts.LAYOUT_TEMPLATES,
             "ready": list(layouts.LAYOUT_TEMPLATES_READY),
             "nameAvatarsMax": layouts.NAME_AVATARS_MAX,
+            "topBarMax": layouts.LAYOUT_TOP_BAR_MAX,
+            "railMotionColors": list(RAIL_MOTION_COLOR_KEYS),
             "welcome": {
                 "positions": list(layouts.WELCOME_POSITIONS), "aligns": list(layouts.WELCOME_ALIGNS),
                 "sizes": list(layouts.WELCOME_SIZES), "weights": list(layouts.WELCOME_WEIGHTS),
@@ -1875,7 +1906,8 @@ def step_mode(cfg: Dict[str, Any], key: str) -> str:
         return "off"
     if key == "payMethod":
         methods = payment.get("methods") or ["card"]
-        if len(methods) <= 1 and methods[0] == "card":
+        # "דלג על בחירת אמצעי תשלום": the card alone skips the window unless the business says never.
+        if len(methods) <= 1 and methods[0] == "card" and payment.get("paymentChooserSkip") != "never":
             return "off"
     if key.startswith("upsell") and general.get("upsellEnabled") is False:
         return "off"

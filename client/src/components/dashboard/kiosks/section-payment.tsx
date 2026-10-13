@@ -21,7 +21,7 @@ import {
 } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
 import { FieldShell, MediaField, MoveButtons, NumberInput, SectionCard, SegmentField, SwitchField } from './fields';
-import { CashAtTillFields, PayMethodStepRow, PaymentMethodsField, SplitCardFields } from './section-payment-methods';
+import { CashAtTillFields, PayMethodStepRow, PaymentChooserSkipField, PaymentMethodsField, SplitCardFields } from './section-payment-methods';
 import { StepModesCard } from './section-step-modes';
 
 /**
@@ -204,8 +204,9 @@ export function PaymentSection() {
   const fieldOptions = (['off', 'optional', 'required'] as const).map((v) => ({ value: v, label: t(`field.${v}`) }));
   return (
     <div className="space-y-4">
-      <SectionCard title={t('methodsTitle')} paths={['payment.methods']}>
+      <SectionCard title={t('methodsTitle')} paths={['payment.methods', 'payment.paymentChooserSkip']}>
         <PaymentMethodsField />
+        <PaymentChooserSkipField />
       </SectionCard>
 
       <SectionCard title={t('cashAtTillTitle')} paths={['payment.cashAtTillExpiryMin', 'payment.cashAtTillKitchenBeforePay']}>

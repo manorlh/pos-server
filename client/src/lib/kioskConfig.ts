@@ -229,6 +229,20 @@ export interface KioskTheme {
   showDescriptions: boolean;
   /** "גודל טקסט" per element (TEXT_SIZE_KEYS), over typeScale. */
   textSizes: KioskTextSizes;
+  /*
+   * "מסעדה — פס צד" colours (P:/specs/kiosk-rail-motion.md §6.2), each "#RRGGBB" or null — the kiosk's
+   * own palette (railMotionColors). Optional on the wire: a server before them sends none. The screen's
+   * background is `backgroundColor`.
+   */
+  pricePillBg?: string | null;
+  pricePillText?: string | null;
+  cardBg?: string | null;
+  photoBg?: string | null;
+  railBg?: string | null;
+  railCircleBg?: string | null;
+  railSelectedBg?: string | null;
+  railIcon?: string | null;
+  cancelBg?: string | null;
 }
 
 export const TEXT_KEYS = [
@@ -538,7 +552,29 @@ export interface KioskPayment {
    * sends none — the defaults.
    */
   splitCard?: KioskSplitCard;
+  /**
+   * "דלג על בחירת אמצעי תשלום כשיש רק אשראי ללא תשלומים" (spec §3א, §6.3): auto (today) — the card
+   * alone skips "איך תרצו לשלם?"; never — the window always. Optional on the wire (absent: auto).
+   */
+  paymentChooserSkip?: PaymentChooserSkip;
 }
+
+export type PaymentChooserSkip = 'auto' | 'never';
+export const PAYMENT_CHOOSER_SKIPS: PaymentChooserSkip[] = ['auto', 'never'];
+
+/** The theme's "מסעדה — פס צד" colours (spec §6.2): no style's preset sets them. */
+export const RAIL_MOTION_COLOR_KEYS = [
+  'pricePillBg',
+  'pricePillText',
+  'cardBg',
+  'photoBg',
+  'railBg',
+  'railCircleBg',
+  'railSelectedBg',
+  'railIcon',
+  'cancelBg',
+] as const;
+export type RailMotionColorKey = (typeof RAIL_MOTION_COLOR_KEYS)[number];
 
 /**
  * "פיצול תשלום בכרטיסים" (payment.splitCard, the server's kiosk_config): `counts` — 2 / 3 / 4 equal
@@ -918,6 +954,16 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     textColor: null,
     buttonColor: null,
     buttonTextColor: null,
+    // "מסעדה — פס צד" colours: none — the kiosk's palette, as today.
+    pricePillBg: null,
+    pricePillText: null,
+    cardBg: null,
+    photoBg: null,
+    railBg: null,
+    railCircleBg: null,
+    railSelectedBg: null,
+    railIcon: null,
+    cancelBg: null,
     backgroundImage: null,
     // "רקע הקיוסק": the picture veiled at 70 % (the attract screen at half), behind every screen.
     backgroundOverlay: 70,
@@ -1016,6 +1062,7 @@ export const KIOSK_DEFAULTS: KioskConfig = {
     waitLogo: { media: null, style: 'plain' },
     stepModes: { ...STEP_MODE_DEFAULTS },
     splitCard: { counts: [2, 3, 4], otherAmount: true, minPerCardAgorot: 1000 },
+    paymentChooserSkip: 'auto',
   },
   printing: {
     bonMode: 'routing',
@@ -1757,6 +1804,11 @@ export function validateKioskConfig(
   for (const key of ['backgroundColor', 'surfaceColor', 'textColor', 'buttonColor', 'buttonTextColor'] as const) {
     if (th[key] !== null && !isHexColor(th[key])) e.push({ path: `theme.${key}`, code: 'color' });
   }
+  // "מסעדה — פס צד": absent or null — the palette's; else "#RRGGBB".
+  for (const key of RAIL_MOTION_COLOR_KEYS) {
+    const v = th[key];
+    if (v !== undefined && v !== null && !isHexColor(v)) e.push({ path: `theme.${key}`, code: 'color' });
+  }
   checkMedia(e, 'theme.backgroundImage', th.backgroundImage, ['image']);
   checkRange(e, 'theme.backgroundOverlay', th.backgroundOverlay, L.backgroundOverlay);
   checkEnum(e, 'theme.backgroundScope', th.backgroundScope, BACKGROUND_SCOPES);
@@ -1906,6 +1958,7 @@ export function validateKioskConfig(
   if (pay.cashAtTillExpiryMin !== undefined && (!isInt(pay.cashAtTillExpiryMin) || pay.cashAtTillExpiryMin < 5 || pay.cashAtTillExpiryMin > 240)) {
     e.push({ path: 'payment.cashAtTillExpiryMin', code: 'range', params: { min: 5, max: 240 } });
   }
+  if (pay.paymentChooserSkip !== undefined) checkEnum(e, 'payment.paymentChooserSkip', pay.paymentChooserSkip, PAYMENT_CHOOSER_SKIPS);
   // "פיצול תשלום בכרטיסים": 2 / 3 / 4 each once, the least per card ₪1–₪1000, and something to offer.
   if (pay.splitCard !== undefined) {
     const split = pay.splitCard;
@@ -2304,6 +2357,92 @@ export function resolveThemeColors(theme: KioskTheme): ResolvedThemeColors {
   };
 }
 
+/* ------------------------------------------- "מסעדה — פס צד" colours (spec §6.2) */
+
+/** The least contrast the rail-motion colours keep before the editor warns (WCAG AA, normal text). */
+export const RAIL_MOTION_MIN_CONTRAST = 4.5;
+/** The cancel pill's red where `cancelBg` is not set. */
+export const CANCEL_BG_DEFAULT = '#DC2626';
+
+export interface RailMotionColors {
+  cardBg: string;
+  /** The dish's words on its card. */
+  cardText: string;
+  photoBg: string;
+  pricePillBg: string;
+  pricePillText: string;
+  railBg: string;
+  /** The categories' names on the rail. */
+  railText: string;
+  railCircleBg: string;
+  railSelectedBg: string;
+  railIcon: string;
+  /** The icon in the chosen (filled) circle. */
+  railIconOn: string;
+  cancelBg: string;
+  cancelText: string;
+}
+
+/** White or near-black (#111111), whichever reads better on `bg`. */
+function readableOn(bg: string): string {
+  return contrastRatio('#FFFFFF', bg) >= contrastRatio('#111111', bg) ? '#FFFFFF' : '#111111';
+}
+
+/** `want` where it reads on `bg` (4.5:1), else white or near-black. */
+function textOn(want: string, bg: string): string {
+  return contrastRatio(want, bg) >= RAIL_MOTION_MIN_CONTRAST ? want : readableOn(bg);
+}
+
+/**
+ * The colours the rail-motion look paints with (the Android kiosk's the same rules, spec §6.2): each
+ * set colour as it is, each null from the kiosk's palette (resolveThemeColors) — the card the surface,
+ * the photo the card, the pill 12% of the brand over the card, the rail the surface, its circle 6% of
+ * the words over it, the chosen circle the brand, the icon the words, the cancel red.
+ */
+export function railMotionColors(theme: KioskTheme): RailMotionColors {
+  const base = resolveThemeColors(theme);
+  const own = (v: string | null | undefined) => (isHexColor(v) ? v.toUpperCase() : null);
+  const cardBg = own(theme.cardBg) ?? base.surface;
+  const pricePillBg = own(theme.pricePillBg) ?? mixHex(cardBg, base.primary, 0.12);
+  const railBg = own(theme.railBg) ?? base.surface;
+  const railSelectedBg = own(theme.railSelectedBg) ?? base.primary.toUpperCase();
+  const cancelBg = own(theme.cancelBg) ?? CANCEL_BG_DEFAULT;
+  return {
+    cardBg,
+    cardText: textOn(base.text, cardBg),
+    photoBg: own(theme.photoBg) ?? cardBg,
+    pricePillBg,
+    pricePillText: own(theme.pricePillText) ?? textOn(base.primary.toUpperCase(), pricePillBg),
+    railBg,
+    railText: textOn(base.text, railBg),
+    railCircleBg: own(theme.railCircleBg) ?? mixHex(railBg, base.text, 0.06),
+    railSelectedBg,
+    railIcon: own(theme.railIcon) ?? base.text,
+    railIconOn: readableOn(railSelectedBg),
+    cancelBg,
+    cancelText: readableOn(cancelBg),
+  };
+}
+
+export type RailMotionContrastPair = 'pricePill' | 'card' | 'background' | 'railIcon' | 'railText' | 'cancel';
+
+/** The pairs under 4.5:1 (the editor warns, never blocks): what is read on what, and the ratio. */
+export function railMotionContrastIssues(theme: KioskTheme): Array<{ pair: RailMotionContrastPair; ratio: number }> {
+  const c = railMotionColors(theme);
+  const base = resolveThemeColors(theme);
+  const pairs: Array<[RailMotionContrastPair, string, string]> = [
+    ['pricePill', c.pricePillText, c.pricePillBg],
+    ['card', c.cardText, c.cardBg],
+    ['background', base.text, base.background],
+    ['railIcon', c.railIcon, c.railCircleBg],
+    ['railText', c.railText, c.railBg],
+    ['cancel', c.cancelText, c.cancelBg],
+  ];
+  return pairs
+    .map(([pair, fg, bg]) => ({ pair, ratio: Math.round(contrastRatio(fg, bg) * 100) / 100 }))
+    .filter((x) => x.ratio < RAIL_MOTION_MIN_CONTRAST);
+}
+
 /* ------------------------------------------- "רקע הקיוסק" and "גודל טקסט" */
 
 /** The rest screens: where the picture shows with `backgroundScope` "rest" (and, as before, the closed screens' own). */
@@ -2384,10 +2523,13 @@ export function singleCardPayMethods(methods: readonly unknown[] | null | undefi
   return kioskPayMethods(kioskPayMethods(methods).filter((m) => !MULTI_CARD_METHODS.includes(m)));
 }
 
-/** "איך תרצו לשלם?" is asked: more than one method — or the only one is not the card (cash at the till alone). */
-export function kioskAsksPayMethod(methods: readonly unknown[] | null | undefined): boolean {
+/**
+ * "איך תרצו לשלם?" is asked: more than one method — or the only one is not the card (cash at the till
+ * alone) — or the business never skips it (`payment.paymentChooserSkip` never, spec §3א).
+ */
+export function kioskAsksPayMethod(methods: readonly unknown[] | null | undefined, skip?: PaymentChooserSkip | null): boolean {
   const m = kioskPayMethods(methods);
-  return m.length > 1 || m[0] !== 'card';
+  return m.length > 1 || m[0] !== 'card' || skip === 'never';
 }
 
 /** "איך תרצו לשלם?" on one device: asked, passable ("רשות"), and the method taken when it is not asked or passed. */
@@ -2409,12 +2551,18 @@ export interface PayMethodAsk {
  *    charge without asking, and the step is asked as "חובה";
  *  - "רשות": asked, and may be passed with the fallback; "חובה": asked, a choice made.
  */
-export function payMethodAsk(methods: readonly PaymentMethod[], usable: readonly PaymentMethod[], mode: CustomerFieldMode): PayMethodAsk {
+export function payMethodAsk(
+  methods: readonly PaymentMethod[],
+  usable: readonly PaymentMethod[],
+  mode: CustomerFieldMode,
+  skip: PaymentChooserSkip | null = 'auto',
+): PayMethodAsk {
   const card = methods.includes('card') && usable.includes('card');
   const pays = usable.filter((m) => m !== 'voucher' && methods.includes(m));
   const fallback: PaymentMethod | null = card ? 'card' : (pays[0] ?? null);
   if (fallback === null) return { asks: false, optional: false, fallback: null };
-  if (card && methods.length === 1) return { asks: false, optional: false, fallback };
+  // "דלג על בחירת אמצעי תשלום" (auto): the card alone goes straight to the card; never — the window.
+  if (card && methods.length === 1 && skip !== 'never') return { asks: false, optional: false, fallback };
   if (mode === 'off') return card ? { asks: false, optional: false, fallback } : { asks: true, optional: false, fallback };
   return { asks: true, optional: mode === 'optional', fallback };
 }
@@ -2458,7 +2606,9 @@ export function kioskTipAsked(payment: Pick<KioskPayment, 'tipEnabled' | 'tipPre
 
 export interface StepModeConfigIn {
   general: Partial<Pick<KioskGeneral, 'serviceTypes' | 'serviceMode' | 'upsellEnabled'>>;
-  payment: Partial<Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'methods' | 'stepModes' | 'customerName' | 'customerPhone' | 'tableNumber'>>;
+  payment: Partial<
+    Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'methods' | 'stepModes' | 'customerName' | 'customerPhone' | 'tableNumber' | 'paymentChooserSkip'>
+  >;
 }
 
 /**
@@ -2477,7 +2627,7 @@ export function stepMode(cfg: StepModeConfigIn, key: StepModeKey | 'customerName
   const mode = valid(own) ? own : STEP_MODE_DEFAULTS[key];
   if (key === 'service' && ((cfg.general?.serviceTypes?.length ?? 2) <= 1 || cfg.general?.serviceMode === 'none')) return 'off';
   if (key === 'tip' && !kioskTipAsked({ tipEnabled: !!pay.tipEnabled, tipPresets: pay.tipPresets ?? [], tipOther: pay.tipOther !== false })) return 'off';
-  if (key === 'payMethod' && !kioskAsksPayMethod(pay.methods)) return 'off';
+  if (key === 'payMethod' && !kioskAsksPayMethod(pay.methods, pay.paymentChooserSkip)) return 'off';
   if (key.startsWith('upsell') && cfg.general?.upsellEnabled === false) return 'off';
   return mode;
 }
@@ -2536,14 +2686,18 @@ export function upsellStepModeKey(moment: { kind: string; code?: string }): Step
  * for an earlier step, not given yet (`detailsDone`). Details asked after the payment never come here.
  */
 export function checkoutStepsNow(
-  payment: Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'detailsStep' | 'checkoutSteps'> & { methods?: readonly string[]; stepModes?: KioskPayment['stepModes'] },
+  payment: Pick<KioskPayment, 'tipEnabled' | 'tipPresets' | 'tipOther' | 'detailsStep' | 'checkoutSteps'> & {
+    methods?: readonly string[];
+    stepModes?: KioskPayment['stepModes'];
+    paymentChooserSkip?: PaymentChooserSkip;
+  },
   detailsAsked: boolean,
   detailsDone: boolean,
 ): CheckoutStep[] {
   const details = detailsAsked && (payment.detailsStep === 'before_pay' || (payment.detailsStep !== 'after_pay' && !detailsDone));
   // "חובה / רשות / כבוי": a step set off is never asked (stepMode).
   const tip = kioskTipAsked(payment) && payment.stepModes?.tip !== 'off';
-  const method = kioskAsksPayMethod(payment.methods) && payment.stepModes?.payMethod !== 'off';
+  const method = kioskAsksPayMethod(payment.methods, payment.paymentChooserSkip) && payment.stepModes?.payMethod !== 'off';
   return checkoutStepOrder(payment.checkoutSteps).filter((s) => (s === 'tip' ? tip : s === 'details' ? details : method));
 }
 
@@ -3250,6 +3404,29 @@ export function engineTransitionSpec(engine: ResolvedMotionEngine): TransitionSp
   if (screenEase) out.screenEase = screenEase;
   if (sheetEase) out.sheetEase = sheetEase;
   return out;
+}
+
+/** "slide_up" of layout.sheetMotion: the window rises on a gentle spring (≤ 4% past its place). */
+export const SHEET_SPRING_EASE = 'cubic-bezier(0.34, 1.26, 0.64, 1)';
+export const SHEET_SPRING_MS = 320;
+
+/**
+ * layout.sheetMotion (spec §6.1) over the played transitions: null — as they are (motion.sheet, today);
+ * otherwise the windows (the dish, its add-ons, the payment method) enter so — slide_up on a gentle
+ * spring, never with reduced motion (no motion at all) nor the light profile (no spring).
+ */
+export function withSheetMotion(
+  t: TransitionSpec,
+  sheetMotion: 'slide_up' | 'fade' | 'none' | null | undefined,
+  opts: { reduceMotion?: boolean; light?: boolean } = {},
+): TransitionSpec {
+  if (!sheetMotion || !(['slide_up', 'fade', 'none'] as const).includes(sheetMotion)) return t;
+  const out: TransitionSpec = { ...t };
+  delete out.sheetEase;
+  if (opts.reduceMotion || sheetMotion === 'none') return { ...out, sheet: 'none', sheetMs: 0 };
+  if (sheetMotion === 'fade') return { ...out, sheet: 'fade', sheetMs: TRANSITION_BASE_MS.sheet.fade };
+  if (opts.light) return { ...out, sheet: 'slide_up', sheetMs: TRANSITION_BASE_MS.sheet.slide_up };
+  return { ...out, sheet: 'slide_up', sheetMs: SHEET_SPRING_MS, sheetEase: SHEET_SPRING_EASE };
 }
 
 /** An event's own curve as CSS, or undefined for "auto" (the kind's own curve) and a reduced fallback (a plain fade). */
