@@ -42,12 +42,24 @@ class PaymentMethodTotal(_Camel):
     share: float
 
 
+class PaymentMethodTip(_Camel):
+    #: The tender the tip went on: cash | card | other (`reports.tip_bucket`).
+    method: str
+    amount: float
+    #: Documents that carried a tip on it.
+    documents: int
+
+
 class PaymentMethodsReportResponse(_Camel):
     window: ReportWindowOut
     generated_at: datetime
     rows: List[PaymentMethodRow]
     totals: List[PaymentMethodTotal]
+    #: The takings — never the tips, which are apart in `tips` / `tipsTotal`.
     total: float
+    #: Always cash, card, other, in that order.
+    tips: List[PaymentMethodTip] = []
+    tips_total: float = 0.0
 
 
 # ── Card brands / acquirers (דוח סליקה) ──────────────────────────────────────
@@ -102,8 +114,11 @@ class HourlyCell(_Camel):
     #: 0 = Sunday … 6 = Saturday (the Israeli week).
     weekday: int
     hour: int
+    #: Takings, tips excluded.
     net: float
     documents: int
+    #: Tips taken in the hour — apart from `net`.
+    tips: float = 0.0
 
 
 class HourlyRow(_Camel):
@@ -111,6 +126,7 @@ class HourlyRow(_Camel):
     net: float
     documents: int
     average_basket: float
+    tips: float = 0.0
 
 
 class HourlyReportResponse(_Camel):
@@ -120,6 +136,7 @@ class HourlyReportResponse(_Camel):
     by_hour: List[HourlyRow]
     total: float
     documents: int
+    tips_total: float = 0.0
 
 
 # ── Department ───────────────────────────────────────────────────────────────
