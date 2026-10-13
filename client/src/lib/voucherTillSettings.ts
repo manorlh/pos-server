@@ -123,8 +123,9 @@ export function voucherStationPaidItemsView(
 
 /**
  * The voucher station's recommended companions (spec §3): with the station on, a level whose
- * redemption flow is still "items first", or whose voucher can be neither scanned nor typed, gets a
- * (non-blocking) "מומלץ: דרך מימוש = סריקת שובר תחילה".
+ * redemption flow is "items first" (set at it or above — unset resolves to "both" since 13.10.2026),
+ * or whose voucher can be neither scanned nor typed, gets a (non-blocking) "מומלץ: דרך מימוש = סריקת
+ * שובר תחילה".
  */
 export function voucherStationNeedsAdvice(
   station: VoucherOnOff,

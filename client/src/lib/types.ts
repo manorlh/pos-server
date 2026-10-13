@@ -311,7 +311,7 @@ export interface PosSettingsV1 {
   payVoucherManualEnabled?: boolean;
   /**
    * "דרך מימוש שובר" (lib/voucherRedeemFlow.ts): how the till enters a voucher's redemption —
-   * items first (unset: today's flow), the voucher first, or both. In `effective` always resolved.
+   * items first, the voucher first, or both (unset: both). In `effective` always resolved.
    */
   voucherRedeemFlow?: VoucherRedeemFlow;
   /** "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden. */
