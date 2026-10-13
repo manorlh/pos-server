@@ -87,6 +87,8 @@ import {
   TabletSmartphone,
   Target,
   PackageSearch,
+  ClipboardCheck,
+  ShieldQuestion,
 } from 'lucide-react';
 
 /** Which gate an entry hangs on. `undefined` = visible to anyone signed in. */
@@ -136,6 +138,9 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/live-event', labelKey: 'liveEvent', icon: MonitorPlay, matchPrefixes: ['/dashboard/live-event/'] },
       // "התראות": the phone (push) alerts — history, subscribing this phone, preferences (feat/event-live).
       { href: '/dashboard/alerts', labelKey: 'alerts', icon: BellRing },
+      // "בקשות אישור": the tills' requests for a manager's approval — pending (with the count in the
+      // menu, components/sidebar.tsx) and history; a push opens one request (`/dashboard/approvals/<id>`).
+      { href: '/dashboard/approvals', labelKey: 'approvals', icon: ClipboardCheck, matchPrefixes: ['/dashboard/approvals/'] },
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
@@ -340,6 +345,14 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard/exception-settings',
         labelKey: 'exceptionSettings',
         icon: SlidersVertical,
+        gate: 'settingsWrite',
+      },
+      // "בקשות אישור" settings: which requests a till may send to a manager's phone, who approves and
+      // how — per company, shop, point of sale or till (P:\specs\manager-approval-mobile.md §4).
+      {
+        href: '/dashboard/approval-settings',
+        labelKey: 'approvalSettings',
+        icon: ShieldQuestion,
         gate: 'settingsWrite',
       },
       // "יעדים": daily / event sales targets per shop, point of sale or cashier, with the pace.

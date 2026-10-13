@@ -27,7 +27,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, Pencil, KeyRound, Power } from 'lucide-react';
+import { Plus, Pencil, KeyRound, Power, ClipboardCheck } from 'lucide-react';
+import { ApprovalOverridesDialog, type OverridesTarget } from '@/components/dashboard/approvals/approval-overrides-dialog';
 
 const ALL_ROLES: PosUserRole[] = ['cashier', 'shop_manager'];
 
@@ -77,6 +78,9 @@ export default function PosUsersPage() {
   const [openReset, setOpenReset] = useState(false);
   const [resetTarget, setResetTarget] = useState<PosUser | null>(null);
   const [newPin, setNewPin] = useState('');
+  // "בקשות אישור מרחוק": this employee's own overrides as an approver.
+  const [overridesTarget, setOverridesTarget] = useState<OverridesTarget | null>(null);
+  const ta = useTranslations('approvals.overrides');
 
   const isNew = !editing.id;
 
@@ -284,6 +288,21 @@ export default function PosUsersPage() {
                           <Button variant="ghost" size="icon" onClick={() => openResetFor(u)}>
                             <KeyRound className="h-3.5 w-3.5" />
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title={ta('button')}
+                            aria-label={ta('button')}
+                            onClick={() =>
+                              setOverridesTarget({
+                                shopId,
+                                posUserId: u.id,
+                                name: [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username,
+                              })
+                            }
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5" />
+                          </Button>
                           {u.isActive && (
                             <Button
                               variant="ghost"
@@ -408,6 +427,8 @@ export default function PosUsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ApprovalOverridesDialog target={overridesTarget} onClose={() => setOverridesTarget(null)} />
 
       {/* Reset PIN dialog */}
       <Dialog open={openReset} onOpenChange={setOpenReset}>

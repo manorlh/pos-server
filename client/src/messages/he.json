@@ -170,7 +170,9 @@
     "displayOrder": "סדר תצוגה",
     "digitalMenu": "תפריט דיגיטלי",
     "onlineOrdering": "הזמנות אונליין",
-    "catalogAdmin": "ניהול קטלוג מהקופה"
+    "catalogAdmin": "ניהול קטלוג מהקופה",
+    "approvals": "בקשות אישור",
+    "approvalSettings": "בקשות אישור"
   },
   "notificationsClub": {
     "common": {
@@ -17724,7 +17726,9 @@
       "accounting": "הנהלת חשבונות",
       "digital_menu": "תפריט דיגיטלי",
       "online_ordering": "הזמנות אונליין",
-      "prepaid_voucher_redeem": "מימוש ידני של שוברים"
+      "prepaid_voucher_redeem": "מימוש ידני של שוברים",
+      "approvals": "בקשות אישור",
+      "approval_settings": "הגדרות בקשות אישור"
     },
     "levels": {
       "view": "צפייה",
@@ -19953,5 +19957,311 @@
       }
     }
   },
-  "reportFramework": {"filters": {"from": "מתאריך", "to": "עד תאריך", "quick": "טווח מהיר", "hours": "שעות בכל יום", "wholeDay": "כל היום", "hoursEachDay": "השעות {band} חוזרות בכל אחד מ-{days} הימים בטווח — לא רצף אחד.", "hoursWrap": "החלון חוצה חצות: מ-{fromHour} עד {toHour} של למחרת.", "hoursInvalid": "שעת ההתחלה ושעת הסיום חייבות להיות שונות.", "shop": "סניף", "allShops": "כל הסניפים", "till": "קופה", "allTills": "כל הקופות", "cashier": "קופאי", "allCashiers": "כל הקופאים", "cashierNeedsShop": "בחרו סניף כדי לסנן לפי קופאי", "unknownChoice": "(בחירה מהקישור)", "inactive": "{name} (לא פעיל)", "method": "אמצעי תשלום", "allMethods": "כל האמצעים", "category": "מחלקה", "allCategories": "כל המחלקות", "product": "מוצר", "allProducts": "כל המוצרים", "productSearch": "חיפוש מוצר…", "docType": "סוג מסמך", "allDocTypes": "כל הסוגים", "search": "חיפוש", "searchPlaceholder": "חיפוש בשורות…", "run": "הפק דוח", "running": "מפיק…", "clearAll": "נקה הכל", "rangeInvalid": "תאריך ההתחלה מאוחר מתאריך הסיום", "active": "{count, plural, one {סינון אחד פעיל} other {# סינונים פעילים}}", "pending": "יש שינויים שעוד לא הופקו — לחצו \"הפק דוח\".", "linkHint": "כל הסינונים נשמרים בקישור — אפשר לשתף אותו."}, "table": {"columns": "עמודות", "columnsTitle": "עמודות בטבלה", "columnsHint": "סמנו מה להציג. גררו שורה (או השתמשו בחצים) כדי לשנות את הסדר.", "moveUp": "הזז למעלה", "moveDown": "הזז למטה", "dragHandle": "גרירה לשינוי הסדר", "reset": "חזרה לברירת המחדל", "required": "תמיד מוצגת", "savedServer": "הבחירה נשמרת בחשבון שלך, בכל מכשיר.", "savedLocal": "הבחירה נשמרת בדפדפן הזה.", "saveFailed": "שמירת בחירת העמודות נכשלה", "close": "סגירה", "sortBy": "מיון לפי {column}", "rows": "{count, plural, one {שורה אחת} other {# שורות}}", "rowsOf": "{shown} מתוך {total} שורות", "noRows": "אין נתונים להצגה.", "noMatch": "אין שורות שמתאימות לחיפוש.", "totalsAllRows": "שורת הסיכום היא של כל השורות בדוח, גם אלה שהחיפוש הסתיר.", "details": "פירוט", "hideDetails": "הסתר פירוט"}, "export": {"excel": "אקסל", "pdf": "PDF", "print": "הדפסה", "columns": "עמודות לייצוא", "columnsTitle": "עמודות לייצוא (אקסל ו-PDF)", "columnsHint": "הבחירה חלה על הייצוא הנוכחי בלבד.", "source": "מסומן לפי: {source}", "sourceCurrent": "הבחירה שלך לייצוא הזה", "sourceCompany": "ברירת המחדל של החברה", "sourceVisible": "העמודות שמוצגות בטבלה", "sourceAll": "כל העמודות", "asTable": "כמו בטבלה", "all": "הכל", "companyDefault": "כברירת המחדל של החברה", "saveCompanyDefault": "שמור כברירת מחדל לחברה", "clearCompanyDefault": "מחק את ברירת המחדל של החברה", "companyDefaultSaved": "נשמר: אלה העמודות שייצאו כברירת מחדל ל-{company}", "companyDefaultCleared": "ברירת המחדל של החברה נמחקה", "companyDefaultFailed": "שמירת ברירת המחדל נכשלה", "companyDefaultTooMany": "ברירת המחדל של החברה שומרת עד {max} עמודות — צמצמו את הבחירה באחת הטבלאות ושמרו שוב.","companyDefaultInherited": "ברירת המחדל הנוכחית עוברת מחברת-האם.", "companyDefaultHint": "ברירת המחדל קובעת אילו עמודות יוצאות לאקסל ול-PDF לכל משתמשי {company}.", "thisCompany": "החברה", "orientation": "כיוון ה-PDF", "orientationAuto": "אוטומטי (לרוחב מעל 7 עמודות)", "orientationPortrait": "לאורך", "orientationLandscape": "לרוחב", "done": "סגירה", "excelFailed": "יצירת קובץ האקסל נכשלה", "pdfFailed": "יצירת קובץ ה-PDF נכשלה", "pdfFallback": "השרת עוד לא מפיק PDF — נפתח חלון ההדפסה: בחרו \"שמירה כ-PDF\".", "pdfTooMany": "יותר מ-{max} שורות ל-PDF — צמצמו את הסינון או ייצאו לאקסל.", "noColumns": "בחרו לפחות עמודה אחת לייצוא.", "filtersLine": "סינון: {list}", "hoursLine": "שעות: {band} בכל יום", "rangeLine": "תקופה: {range}", "generatedAt": "הופק: {at}", "allOrganization": "כל הארגון", "chosenColumns": "{count, plural, one {עמודה אחת} other {# עמודות}}"}}
+  "reportFramework": {"filters": {"from": "מתאריך", "to": "עד תאריך", "quick": "טווח מהיר", "hours": "שעות בכל יום", "wholeDay": "כל היום", "hoursEachDay": "השעות {band} חוזרות בכל אחד מ-{days} הימים בטווח — לא רצף אחד.", "hoursWrap": "החלון חוצה חצות: מ-{fromHour} עד {toHour} של למחרת.", "hoursInvalid": "שעת ההתחלה ושעת הסיום חייבות להיות שונות.", "shop": "סניף", "allShops": "כל הסניפים", "till": "קופה", "allTills": "כל הקופות", "cashier": "קופאי", "allCashiers": "כל הקופאים", "cashierNeedsShop": "בחרו סניף כדי לסנן לפי קופאי", "unknownChoice": "(בחירה מהקישור)", "inactive": "{name} (לא פעיל)", "method": "אמצעי תשלום", "allMethods": "כל האמצעים", "category": "מחלקה", "allCategories": "כל המחלקות", "product": "מוצר", "allProducts": "כל המוצרים", "productSearch": "חיפוש מוצר…", "docType": "סוג מסמך", "allDocTypes": "כל הסוגים", "search": "חיפוש", "searchPlaceholder": "חיפוש בשורות…", "run": "הפק דוח", "running": "מפיק…", "clearAll": "נקה הכל", "rangeInvalid": "תאריך ההתחלה מאוחר מתאריך הסיום", "active": "{count, plural, one {סינון אחד פעיל} other {# סינונים פעילים}}", "pending": "יש שינויים שעוד לא הופקו — לחצו \"הפק דוח\".", "linkHint": "כל הסינונים נשמרים בקישור — אפשר לשתף אותו."}, "table": {"columns": "עמודות", "columnsTitle": "עמודות בטבלה", "columnsHint": "סמנו מה להציג. גררו שורה (או השתמשו בחצים) כדי לשנות את הסדר.", "moveUp": "הזז למעלה", "moveDown": "הזז למטה", "dragHandle": "גרירה לשינוי הסדר", "reset": "חזרה לברירת המחדל", "required": "תמיד מוצגת", "savedServer": "הבחירה נשמרת בחשבון שלך, בכל מכשיר.", "savedLocal": "הבחירה נשמרת בדפדפן הזה.", "saveFailed": "שמירת בחירת העמודות נכשלה", "close": "סגירה", "sortBy": "מיון לפי {column}", "rows": "{count, plural, one {שורה אחת} other {# שורות}}", "rowsOf": "{shown} מתוך {total} שורות", "noRows": "אין נתונים להצגה.", "noMatch": "אין שורות שמתאימות לחיפוש.", "totalsAllRows": "שורת הסיכום היא של כל השורות בדוח, גם אלה שהחיפוש הסתיר.", "details": "פירוט", "hideDetails": "הסתר פירוט"}, "export": {"excel": "אקסל", "pdf": "PDF", "print": "הדפסה", "columns": "עמודות לייצוא", "columnsTitle": "עמודות לייצוא (אקסל ו-PDF)", "columnsHint": "הבחירה חלה על הייצוא הנוכחי בלבד.", "source": "מסומן לפי: {source}", "sourceCurrent": "הבחירה שלך לייצוא הזה", "sourceCompany": "ברירת המחדל של החברה", "sourceVisible": "העמודות שמוצגות בטבלה", "sourceAll": "כל העמודות", "asTable": "כמו בטבלה", "all": "הכל", "companyDefault": "כברירת המחדל של החברה", "saveCompanyDefault": "שמור כברירת מחדל לחברה", "clearCompanyDefault": "מחק את ברירת המחדל של החברה", "companyDefaultSaved": "נשמר: אלה העמודות שייצאו כברירת מחדל ל-{company}", "companyDefaultCleared": "ברירת המחדל של החברה נמחקה", "companyDefaultFailed": "שמירת ברירת המחדל נכשלה", "companyDefaultTooMany": "ברירת המחדל של החברה שומרת עד {max} עמודות — צמצמו את הבחירה באחת הטבלאות ושמרו שוב.","companyDefaultInherited": "ברירת המחדל הנוכחית עוברת מחברת-האם.", "companyDefaultHint": "ברירת המחדל קובעת אילו עמודות יוצאות לאקסל ול-PDF לכל משתמשי {company}.", "thisCompany": "החברה", "orientation": "כיוון ה-PDF", "orientationAuto": "אוטומטי (לרוחב מעל 7 עמודות)", "orientationPortrait": "לאורך", "orientationLandscape": "לרוחב", "done": "סגירה", "excelFailed": "יצירת קובץ האקסל נכשלה", "pdfFailed": "יצירת קובץ ה-PDF נכשלה", "pdfFallback": "השרת עוד לא מפיק PDF — נפתח חלון ההדפסה: בחרו \"שמירה כ-PDF\".", "pdfTooMany": "יותר מ-{max} שורות ל-PDF — צמצמו את הסינון או ייצאו לאקסל.", "noColumns": "בחרו לפחות עמודה אחת לייצוא.", "filtersLine": "סינון: {list}", "hoursLine": "שעות: {band} בכל יום", "rangeLine": "תקופה: {range}", "generatedAt": "הופק: {at}", "allOrganization": "כל הארגון", "chosenColumns": "{count, plural, one {עמודה אחת} other {# עמודות}}"}},
+  "approvals": {
+    "title": "בקשות אישור",
+    "subtitle": "בקשות מהקופות לאישור מנהל מהנייד: הממתינות בזמן אמת, וכל ההיסטוריה.",
+    "settingsLink": "הגדרות",
+    "tabs": {
+      "label": "תצוגה",
+      "pending": "ממתינות",
+      "history": "היסטוריה"
+    },
+    "pendingCount": "{count, plural, one {בקשה אחת ממתינה} other {# בקשות ממתינות}}",
+    "noPending": "אין בקשות שממתינות לתשובה.",
+    "noPendingHint": "בקשה חדשה מופיעה כאן מיד, וגם כהתראה לטלפון למי שנרשם להתראות.",
+    "loadError": "טעינת הבקשות נכשלה",
+    "open": "פתח",
+    "statuses": {
+      "pending": "ממתינה",
+      "approved": "אושרה",
+      "rejected": "נדחתה",
+      "expired": "פגה",
+      "cancelled": "בוטלה"
+    },
+    "table": "שולחן {table}",
+    "requestedBy": "מבקש: {name}",
+    "expiresIn": "נשאר {time}",
+    "expired": "פג הזמן",
+    "notYours": "לצפייה בלבד",
+    "partial": "חלקי",
+    "historyEmpty": "אין בקשות שמתאימות לסינון.",
+    "pageOf": "עמוד {page} מתוך {pages} · {total} בקשות",
+    "prev": "הקודם",
+    "next": "הבא",
+    "filters": {
+      "title": "סינון",
+      "type": "סוג",
+      "allTypes": "כל הסוגים",
+      "shop": "סניף",
+      "allShops": "כל הסניפים",
+      "requester": "מבקש",
+      "requesterPlaceholder": "שם העובד",
+      "approver": "מאשר",
+      "allApprovers": "כל המאשרים",
+      "outcome": "תוצאה",
+      "allOutcomes": "כל התוצאות",
+      "reason": "סיבה",
+      "reasonPlaceholder": "טקסט הסיבה",
+      "from": "מתאריך",
+      "to": "עד תאריך",
+      "clear": "נקה סינון"
+    },
+    "col": {
+      "createdAt": "נשלחה",
+      "type": "סוג",
+      "status": "תוצאה",
+      "shop": "סניף",
+      "till": "קופה",
+      "table": "שולחן",
+      "requester": "מבקש",
+      "amount": "סכום",
+      "percent": "אחוז",
+      "reason": "סיבה",
+      "note": "הודעה למנהל",
+      "sentTo": "נשלחה אל",
+      "decidedAt": "הוחלט",
+      "decidedBy": "מאשר / דוחה",
+      "approvedAmount": "סכום שאושר",
+      "approvedPercent": "אחוז שאושר",
+      "message": "הודעה לקופה"
+    },
+    "detail": {
+      "back": "לכל הבקשות",
+      "notFound": "הבקשה לא נמצאה, או שאין לך גישה אליה.",
+      "retry": "נסו שוב",
+      "note": "הודעה למנהל",
+      "escalated": "הבקשה הוסלמה ב-{at}",
+      "requester": "מבקש",
+      "till": "קופה",
+      "shop": "סניף",
+      "amount": "סכום",
+      "percent": "אחוז",
+      "createdAt": "נשלחה",
+      "sentTo": "נשלחה אל",
+      "lines": "פריטים",
+      "sentToKitchen": "נשלח למטבח",
+      "document": "מסמך מקורי",
+      "documentNumber": "מסמך",
+      "documentTotal": "סכום המסמך",
+      "documentDate": "תאריך המסמך",
+      "extras": {
+        "installments": "מספר תשלומים",
+        "expected": "צפוי",
+        "counted": "נספר",
+        "difference": "הפרש",
+        "originalPrice": "מחיר מקורי",
+        "newPrice": "מחיר חדש",
+        "method": "אמצעי החזר",
+        "employee": "עובד",
+        "machine": "קופה"
+      },
+      "myLimit": "התקרה שלך: {limit}",
+      "overMyLimit": "המבוקש מעל התקרה שלך ({limit}).",
+      "partialPercent": "אחוז לאישור",
+      "partialAmount": "סכום לאישור",
+      "partialOf": "מתוך {requested} שהתבקשו",
+      "partialHint": "אפשר לאשר פחות מהמבוקש. אותו ערך — אישור מלא.",
+      "partialErrors": {
+        "empty": "הזינו ערך",
+        "notPositive": "ערך גדול מ-0",
+        "overRequested": "לא יותר מהמבוקש ({max})",
+        "overLimit": "לא יותר מהתקרה שלך ({max})"
+      },
+      "message": "הודעה לקופה (רשות)",
+      "messagePlaceholder": "למשל: רק 20%, ותדברו איתי",
+      "approve": "אשר",
+      "approveValue": "אשר {value}",
+      "reject": "דחה",
+      "approvedToast": "אושר — הקופה מקבלת את התשובה",
+      "rejectedToast": "נדחה — הקופה מקבלת את התשובה",
+      "alreadyDecided": "הבקשה כבר טופלה — מוצג המצב הסופי.",
+      "notAllowed": "אינך מאשר/ת של הבקשה הזו.",
+      "notAllowedHint": "הבקשה נשלחה למאשרים אחרים, או שאינך עומד/ת עוד בכללים (תפקיד, תקרה או משמרת).",
+      "viewOnly": "צפייה בלבד — אין לך הרשאה לאשר בקשות.",
+      "partialNotAllowed": "בבקשה הזו אי אפשר לאשר פחות מהמבוקש.",
+      "invalidAmount": "הערך לאישור לא תקין.",
+      "failed": "השליחה נכשלה, נסו שוב.",
+      "decidedBy": "טופל על ידי {name}",
+      "decidedByMe": "טופל על ידך",
+      "decidedByUnknown": "הבקשה טופלה",
+      "approvedValue": "אושר: {value}",
+      "approvedAsRequested": "אושר כמבוקש",
+      "approvedPartial": "אושר {value} (התבקש {requested})",
+      "messageToTill": "הודעה לקופה: {message}",
+      "expiredState": "הבקשה פגה בלי תשובה.",
+      "cancelledState": "הקופה ביטלה את הבקשה.",
+      "quickTitle": "אישור מהיר",
+      "quickBody": "לאשר {what}?",
+      "quickConfirm": "אשר עכשיו",
+      "quickOther": "לפרטים המלאים"
+    },
+    "settings": {
+      "title": "בקשות אישור",
+      "subtitle": "אילו פעולות בקופה אפשר לבקש לאשר מהנייד, ממי ואיך — לפי חברה, סניף, נקודת מכירה או קופה. כל שדה נקבע ברמה הזו או יורש מהרמה שמעל.",
+      "listLink": "לבקשות",
+      "scopeTitle": "רמה",
+      "scopeHint": "בחרו חברה, ואפשר לצמצם לסניף, לנקודת מכירה או לקופה. הרמה הספציפית ביותר קובעת, שדה אחרי שדה.",
+      "chooseScope": "בחרו חברה כדי לראות ולערוך את ההגדרות.",
+      "loadError": "טעינת ההגדרות נכשלה",
+      "noPermission": "אין לך הרשאה לראות את ההגדרות ברמה הזו.",
+      "editingLevel": "עורכים ברמה: {level}",
+      "readOnly": "צפייה בלבד — אין לך הרשאה לשנות את ההגדרות ברמה הזו.",
+      "levels": {
+        "company": "חברה",
+        "shop": "סניף",
+        "area": "נקודת מכירה",
+        "machine": "קופה"
+      },
+      "defaultSource": "ברירת מחדל",
+      "master": "בקשות אישור מהנייד",
+      "masterHint": "המתג הראשי. כבוי — אין בקשות מהנייד, רק קוד מנהל בקופה כמו היום.",
+      "on": "פעיל",
+      "off": "כבוי",
+      "inherit": "יורש",
+      "none": "אין",
+      "inheritNote": "יורש: {value} · {source}",
+      "phase": "שלב {n}",
+      "phaseHints": {
+        "1": "פעולות שכבר היום מחכות לקוד מנהל.",
+        "2": "חסימות חדשות: כשמדליקים סוג, הפעולה דורשת אישור בקוד או מהנייד."
+      },
+      "overrides": "{count, plural, one {שדה אחד נקבע כאן} other {# שדות נקבעו כאן}}",
+      "sees": "המאשר רואה: {sees}",
+      "limitBy": {
+        "amount": "תקרה לפי סכום",
+        "percent": "תקרה לפי אחוז",
+        "count": "תקרה לפי מספר",
+        "none": "ללא תקרה"
+      },
+      "setHere": "קבע ברמה הזו",
+      "setHereNote": "נקבע ברמה הזו",
+      "inheritedFrom": "יורש · {source}",
+      "inheritBtn": "חזרה לירושה ({value} · {source})",
+      "clearType": "כל השדות של הסוג בירושה",
+      "secondsValue": "{n} שניות",
+      "seconds": "שניות",
+      "escalationOff": "כבוי",
+      "escalationAfter": "הסלמה אחרי",
+      "methods": {
+        "pin": "קוד מנהל בקופה",
+        "remote": "בקשה מהנייד"
+      },
+      "options": {
+        "pickApprover": {
+          "optional": "רשות (\"כל המורשים\" מסומן)",
+          "required": "חובה לבחור מאשר",
+          "off": "נשלח לכל המורשים"
+        },
+        "reasonMode": {
+          "required": "חובה",
+          "optional": "רשות",
+          "off": "בלי סיבה"
+        },
+        "onShiftScope": {
+          "shop": "משמרת באותו סניף",
+          "company": "משמרת בכל סניף של החברה"
+        }
+      },
+      "roleKinds": {
+        "till": "תפקידים בקופה",
+        "dash": "תפקידי דשבורד",
+        "other": "תפקידים שכבר לא קיימים"
+      },
+      "noRolesYet": "בחרו קודם תפקידים מאשרים.",
+      "limits": {
+        "none": "ללא תקרה מיוחדת",
+        "hint": "ריק = התקרה של התפקיד בקופה (לתפקידי דשבורד — ללא תקרה).",
+        "unit": {
+          "amount": "₪",
+          "percent": "%",
+          "count": "תשלומים"
+        }
+      },
+      "reasons": {
+        "add": "הוסף",
+        "placeholder": "סיבה חדשה",
+        "item": "סיבה {n}",
+        "up": "הזז למעלה",
+        "down": "הזז למטה",
+        "remove": "הסר",
+        "empty": "אין סיבות קבועות.",
+        "count": "{count} מתוך {max} סיבות · עד {length} תווים לסיבה"
+      },
+      "errors": {
+        "range": "מספר שלם בין {min} ל-{max}",
+        "escalation": "כבוי, או מספר שלם בין {min} ל-{max}",
+        "notNumber": "מספר שלם",
+        "methods": "בחרו לפחות דרך אישור אחת",
+        "tooMany": "עד {max} סיבות",
+        "tooLong": "עד {max} תווים לסיבה",
+        "empty": "סיבה לא יכולה להיות ריקה",
+        "duplicate": "סיבה מופיעה פעמיים",
+        "limit": "תקרה היא מספר 0 ומעלה"
+      },
+      "invalid": "יש שדות לא תקינים",
+      "discard": "בטל שינויים",
+      "saved": "נשמר — הקופות יקבלו את השינוי בסנכרון הבא"
+    },
+    "linked": {
+      "label": "עובד מקושר",
+      "hint": "העובד (או העובדים) בקופה שהמשתמש הזה הוא. הקישור קובע את התפקיד בקופה, התקרות ומצב המשמרת כשהוא מאשר בקשות מהנייד. בלי עובד מקושר — מאשר לפי תפקיד הדשבורד, וכלל המשמרת לא חל עליו.",
+      "search": "חיפוש עובד לפי שם או שם משתמש",
+      "none": "לא נבחר עובד",
+      "noResults": "לא נמצאו עובדים",
+      "linkedElsewhere": "מקושר למשתמש אחר",
+      "remove": "הסר את {name}",
+      "loadFailed": "טעינת העובדים המקושרים נכשלה",
+      "saveFailed": "המשתמש נשמר, אבל שמירת העובד המקושר נכשלה"
+    },
+    "overrides": {
+      "button": "בקשות אישור מרחוק",
+      "title": "בקשות אישור מרחוק — {name}",
+      "hint": "חריגות אישיות לעובד הזה כמאשר, מעבר למה שהתפקיד שלו קובע. ריק או כבוי — לפי התפקיד.",
+      "all": "כל הסוגים",
+      "perType": "לפי סוג בקשה",
+      "noTypes": "אין חריגות לסוג מסוים.",
+      "chooseType": "בחרו סוג בקשה",
+      "addType": "הוסף",
+      "removeType": "הסר את {type}",
+      "offShift": "רשאי לאשר גם כשאינו במשמרת",
+      "noRequests": "לא מקבל בקשות",
+      "ceiling": {
+        "amount": "תקרה אישית (₪)",
+        "percent": "תקרה אישית (%)",
+        "count": "תקרה אישית (מספר)"
+      },
+      "asRole": "לפי התפקיד",
+      "invalid": "תקרה היא מספר 0 ומעלה (מספר — שלם)",
+      "noPermission": "אין לך הרשאה לערוך את העובד הזה.",
+      "loadFailed": "הטעינה נכשלה",
+      "saved": "נשמר",
+      "saveFailed": "השמירה נכשלה"
+    },
+    "quiet": {
+      "label": "בקשות אישור גם בשעות שקטות",
+      "hint": "בקשה מהקופה מחכה לתשובה. בלי זה, היא לא תגיע לטלפון בשעות השקטות.",
+      "saved": "נשמר",
+      "failed": "השמירה נכשלה"
+    },
+    "receivers": {
+      "title": "מי יקבל בקשות",
+      "hint": "כל מי שיכול לקבל בקשות ברמה הזו — בכל סוג פעיל עם \"בקשה מהנייד\", בלי קשר למשמרת ולתקרות — והטלפונים שלו.",
+      "empty": "אף אחד לא יקבל בקשות ברמה הזו (הפיצר כבוי, או שאין סוג פעיל עם בקשה מהנייד).",
+      "noDevice": "ל־{name} אין נייד רשום — לא יקבל/תקבל בקשות עד שירשום נייד.",
+      "noDeviceHint": "רושמים נייד בדף ההתראות, בטלפון עצמו:",
+      "alertsLink": "התראות",
+      "typesMore": "{list} ועוד {more}",
+      "health": {
+        "tone": {
+          "green": "הנייד מקבל התראות",
+          "yellow": "שליחת התראות נכשלה לאחרונה",
+          "red": "אין נייד רשום"
+        },
+        "devices": "{count, plural, =0 {אין מכשירים} one {מכשיר אחד} other {# מכשירים}}",
+        "lastSuccess": "נשלח לאחרונה {at}",
+        "lastFailure": "נכשל לאחרונה {at}"
+      }
+    }
+  }
 }

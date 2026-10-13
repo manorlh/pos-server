@@ -77,6 +77,9 @@ import { entitySelectItems } from '@/lib/selectItems';
 import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
 import { toast } from 'sonner';
 import { setTheme, useTheme } from '@/lib/theme';
+import { PendingApprovalsBadge } from '@/components/dashboard/approvals/pending-badge';
+
+const APPROVALS_HREF = '/dashboard/approvals';
 
 /**
  * `className` sizes the panel for where it sits (the fixed column on a wide screen, the
@@ -248,6 +251,8 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
       >
         <Icon className="h-4 w-4 shrink-0" />
         {t(item.labelKey)}
+        {/* "בקשות אישור": how many wait for me (hidden at 0). */}
+        {item.href === APPROVALS_HREF ? <PendingApprovalsBadge active={active} /> : null}
         {active && <ChevronLeft className="me-auto h-3 w-3" />}
       </Link>
     );

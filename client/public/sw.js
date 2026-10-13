@@ -86,6 +86,11 @@ self.addEventListener('fetch', (event) => {
 /**
  * "התראות לטלפון" (Web Push, pos-server app/services/exception_alerts/push.py): show the alert,
  * and a tap opens the dashboard page it names — only ever a page of this origin.
+ *
+ * "בקשות אישור" pushes (tag `approval:<id>`, url `/dashboard/approvals/<id>`, or `…?quick=approve`)
+ * use two more flags: `requireInteraction: true` keeps the request on screen until it is handled,
+ * and `renotify: false` replaces the notification of the same tag silently — "טופל על ידי X" once
+ * someone else decided.
  */
 self.addEventListener('push', (event) => {
   let data = {};
@@ -95,16 +100,19 @@ self.addEventListener('push', (event) => {
     data = { title: 'R2M POS', body: event.data ? event.data.text() : '' };
   }
   const title = data.title || 'R2M POS';
+  const tag = data.tag || undefined;
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || '',
-      tag: data.tag || undefined,
-      renotify: Boolean(data.tag),
+      tag,
+      // A replacement of the same tag alerts again, unless the server says it should not.
+      renotify: Boolean(tag) && data.renotify !== false,
       dir: 'rtl',
       lang: 'he',
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
-      requireInteraction: data.severity === 'high',
+      requireInteraction: data.severity === 'high' || data.requireInteraction === true,
+      silent: data.renotify === false ? true : undefined,
       data: { url: typeof data.url === 'string' ? data.url : '/dashboard/alerts' },
     }),
   );
