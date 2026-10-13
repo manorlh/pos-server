@@ -123,6 +123,8 @@ class UserPreferencesUpdate(BaseModel):
     #: "עמודות": per report key, merged — only the reports sent change; a report's null
     #: removes it; `reportColumns: null` removes them all.
     report_columns: Optional[Dict[str, Optional[ReportColumnsPreference]]] = Field(None, alias="reportColumns")
+    #: "בקשות אישור גם בשעות שקטות" (app/services/exception_alerts/push.py `deliver_to_user`).
+    approvals_in_quiet_hours: Optional[bool] = Field(None, alias="approvalsInQuietHours")
 
 
 class UserPreferencesResponse(BaseModel):
@@ -136,6 +138,7 @@ class UserPreferencesResponse(BaseModel):
     simple_mode_default: bool = Field(False, alias="simpleModeDefault")
     #: `{reportKey: {visible, order}}`; `{}` when none was chosen.
     report_columns: Dict[str, Dict[str, List[str]]] = Field(default_factory=dict, alias="reportColumns")
+    approvals_in_quiet_hours: bool = Field(False, alias="approvalsInQuietHours")
 
 
 class UserResponse(UserBase):

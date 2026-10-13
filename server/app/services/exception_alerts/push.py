@@ -906,3 +906,109 @@ __all__ = [
     "entry_matches", "process_entry", "flush_rule", "send_test", "retry_stale", "subscribe", "device_label",
     "payload_for",
 ]
+
+
+# ── "בקשות אישור" (P:/specs/manager-approval-mobile.md §6) ────────────────────
+#
+# A request from a till goes to the approvers chosen for it — never to "everyone whose rule
+# matches": the approvals call `deliver_to_user` for each of them (app/services/remote_approvals).
+# No rate limit and no digest (a request waits for an answer now); quiet hours apply unless the
+# user chose "בקשות אישור גם בשעות שקטות" (`approvalsInQuietHours`, their preferences). The
+# category is listed so the preferences show it; no exception kind maps to it, so the rule engine
+# (`process_entry`) never sends one.
+
+APPROVALS_CATEGORY = Category(
+    "approvals", "בקשות אישור",
+    "בקשות אישור מהקופות שנשלחו אליך: נשלחות רק למאשרים שנבחרו, בלי מגבלת קצב ובלי סיכום מרוכז.",
+    (),
+)
+CATEGORIES = CATEGORIES + (APPROVALS_CATEGORY,)
+CATEGORY_BY_KEY[APPROVALS_CATEGORY.key] = APPROVALS_CATEGORY
+CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
+
+
+def approvals_in_quiet_hours(user: Any) -> bool:
+    prefs = getattr(user, "preferences", None)
+    return isinstance(prefs, dict) and prefs.get("approvalsInQuietHours") is True
+
+
+def decorate_for_user(db: Session, user_id: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The recipient's behaviour for the payload's category (stays on screen, vibration) when this
+    build has the push policy (feat/pwa-push-required `push_policy.decorate`) — the one seam.
+    """
+    try:
+        from app.services import push_policy  # type: ignore[attr-defined]
+    except ImportError:
+        return payload
+    return push_policy.decorate(db, user_id, payload)
+
+
+def deliver_to_user(
+    db: Session,
+    *,
+    tenant_id: Any,
+    user: Any,
+    payload: Dict[str, Any],
+    dedupe: str,
+    now: Optional[datetime] = None,
+    entry: Optional[ExceptionLogEntry] = None,
+    respect_quiet: bool = True,
+) -> List[ExceptionAlertDispatch]:
+    """
+    One message to every device of one user, outside the rules: the approvals' own sends.
+    The user's push rule (if any) still says whether they take phone alerts at all and when
+    their quiet hours are; a dispatch row per device records every attempt, as for alerts.
+    """
+    from app.services.exception_alerts import engine as E
+
+    now = now or utcnow()
+    user_id = getattr(user, "id", None)
+    devices = devices_of(db, user_id)
+    if not devices:
+        return []
+    payload = decorate_for_user(db, user_id, payload)
+    rule = rule_for_user(db, user_id, tenant_id)
+    if rule is not None and not rule.enabled:
+        return []
+    status, reason = None, None
+    if respect_quiet and rule is not None and not approvals_in_quiet_hours(user):
+        tzinfo = E.tz_for(db, tenant_id)
+        if E.in_quiet_hours(rule, now.astimezone(tzinfo)):
+            status, reason = ST_SUPPRESSED_QUIET, f"{rule.quiet_from}-{rule.quiet_to}"
+    out: List[ExceptionAlertDispatch] = []
+    jobs: List[Dict[str, Any]] = []
+    for device in devices:
+        row = ExceptionAlertDispatch(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            rule_id=rule.id if rule is not None else None,
+            entry_id=entry.id if entry is not None else None,
+            channel=CHANNEL_PUSH,
+            user_id=user_id,
+            subscription_id=device.id,
+            kind=DISPATCH_ALERT,
+            status=status or ST_QUEUED,
+            reason=reason,
+            provider="webpush",
+            recipient_hash=device.endpoint_hash,
+            recipient_masked=(device.label or "מכשיר")[:32],
+            recipient_label=device.label,
+            text=f"{payload.get('title')}\n{payload.get('body')}"[:1000],
+            dedupe_key=f"push:{dedupe}:{device.endpoint_hash[:16]}"[:200],
+            created_by=None,
+            created_at=now,
+        )
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError:
+            continue  # already sent to this device
+        out.append(row)
+        if status is None:
+            jobs.append(_job(row, device, payload))
+    db.flush()
+    for job in jobs:
+        _submit(db, job)
+    return out

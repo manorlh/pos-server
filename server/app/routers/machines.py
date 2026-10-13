@@ -788,7 +788,16 @@ def post_my_heartbeat(
     if body is not None:
         from app.services.remote_till_z import clean_capabilities
 
+        capabilities_before = list(machine.capabilities or []) if isinstance(machine.capabilities, list) else []
         machine.capabilities = clean_capabilities(body.capabilities)
+        # "בקשת אישור ממנהל מהנייד": a build newly saying `remote_approval_v1` pulls its settings now
+        # (`approvalRequests` goes only to such a till). Never fails a beat.
+        try:
+            from app.services.remote_approvals.service import on_capabilities
+
+            on_capabilities(db, machine, capabilities_before)
+        except Exception:  # noqa: BLE001
+            logger.exception("approval capability hand-over failed for %s", machine.id)
     # The shift the till says is open is one the cloud holds closed — closed administratively
     # (§2.9: dead-till recovery, `force` on a till that came back, or support's Z): the till is
     # told, closes it on its side too and goes to "קופה סגורה" (docs/SHIFTS_API.md §1.6).
@@ -920,6 +929,15 @@ def post_my_heartbeat(
             pending_card_commands = card_attempt_commands.take_pending(db, machine)
     except Exception:  # noqa: BLE001
         logger.exception("card command hand-over failed for %s", machine.id)
+    # "בקשת אישור ממנהל מהנייד": this till's requests waiting or just answered — the pull half of
+    # `approval.decided` (P:/specs/manager-approval-mobile.md §7, §9.10). Never fails a beat.
+    pending_approvals = None
+    try:
+        from app.services.remote_approvals.service import heartbeat_items
+
+        pending_approvals = heartbeat_items(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("pending approvals hand-over failed for %s", machine.id)
     through = z_reported_through_sequence(db, machine.id)
     recent = recent_shift_zs(db, machine.id)
     # A shop Z is about (the master till's "סגירת Z סניפי" is open, or a run is waiting):
@@ -996,6 +1014,8 @@ def post_my_heartbeat(
         response["pendingRemoteCredits"] = pending_remote_credits
     if pending_card_commands:
         response["pendingCardCommands"] = pending_card_commands
+    if pending_approvals:
+        response["pendingApprovals"] = pending_approvals
     return response
 
 

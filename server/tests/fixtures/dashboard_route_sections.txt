@@ -21,6 +21,7 @@ GET /approvals/catalog -> approval_settings|approvals|pos_users:view
 GET /approvals/pending-count -> approvals:view
 GET /approvals/policy -> approval_settings:view
 PUT /approvals/policy -> approval_settings:edit
+GET /approvals/policy/approvers -> approval_settings:view
 POST /approvals/{request_id}/decide -> approvals:edit
 PATCH /areas/{area_id} -> organization:edit
 POST /areas/{area_id}/archive -> organization:edit

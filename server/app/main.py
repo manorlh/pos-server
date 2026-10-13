@@ -607,3 +607,23 @@ def readiness_check():
         logger.warning("readiness: database unreachable", exc_info=True)
         return JSONResponse(status_code=503, content={"status": "unavailable", "database": False})
     return {"status": "ready", "database": True}
+
+
+# "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md): the till's and the dashboard's
+# routes, "עובד מקושר" and the employee card's overrides — and the sweep that expires and escalates.
+from app.routers import remote_approvals as remote_approvals_router  # noqa: E402
+
+app.include_router(remote_approvals_router.router, prefix=_prefix)
+app.include_router(remote_approvals_router.users_router, prefix=_prefix)
+app.include_router(remote_approvals_router.shops_router, prefix=_prefix)
+
+
+@app.on_event("startup")
+def start_remote_approvals_worker():
+    """Expire and escalate pending approval requests every few seconds (app/services/remote_approvals/worker.py)."""
+    if not getattr(settings, "remote_approvals_worker_enabled", True):
+        return
+    from app.database import SessionLocal
+    from app.services.remote_approvals.worker import start_background_worker as start_approvals_worker
+
+    start_approvals_worker(SessionLocal)

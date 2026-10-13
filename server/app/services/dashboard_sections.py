@@ -705,6 +705,7 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # ── "בקשות אישור" (P:/specs/manager-approval-mobile.md) — the till's own routes under /approvals
     # take a machine token (never a dashboard user); these are the dashboard's ──
     (_ALL, "/approvals/policy", S("approval_settings")),
+    (_GET, "/approvals/policy/approvers", S("approval_settings", level=VIEW)),
     (_GET, "/approvals/catalog", S("approval_settings", "approvals", "pos_users", level=VIEW)),
     ("POST", "/approvals/{}/decide", S("approvals", level=EDIT)),
     (_ALL, "/approvals*", S("approvals")),

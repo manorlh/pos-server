@@ -32,6 +32,8 @@ from app.models.user import User
 HOME_PAGE_KEY = "homePage"
 SIMPLE_MODE_KEY = "simpleMode"
 REPORT_COLUMNS_KEY = "reportColumns"
+#: "בקשות אישור גם בשעות שקטות": a remote approval request reaches the phone in quiet hours too.
+APPROVALS_QUIET_KEY = "approvalsInQuietHours"
 MAX_REPORT_COLUMN_REPORTS = 200
 DEFAULT_HOME_PAGE = "board"
 #: The opening pages offered in the profile, in the order offered.
@@ -68,6 +70,7 @@ def read_preferences(user: User, db: Optional[Session] = None) -> Dict[str, Any]
         SIMPLE_MODE_KEY: simple if isinstance(simple, bool) else default_simple,
         "simpleModeDefault": default_simple,
         REPORT_COLUMNS_KEY: _read_report_columns(stored.get(REPORT_COLUMNS_KEY)),
+        APPROVALS_QUIET_KEY: stored.get(APPROVALS_QUIET_KEY) is True,
     }
 
 
@@ -146,6 +149,17 @@ def update_preferences(db: Session, user: User, patch: Dict[str, Any]) -> Dict[s
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="simpleMode must be true, false or null")
     if REPORT_COLUMNS_KEY in patch:
         _write_report_columns(current, patch[REPORT_COLUMNS_KEY])
+    if APPROVALS_QUIET_KEY in patch:
+        flag = patch[APPROVALS_QUIET_KEY]
+        if flag is None or flag is False:
+            current.pop(APPROVALS_QUIET_KEY, None)
+        elif flag is True:
+            current[APPROVALS_QUIET_KEY] = True
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="approvalsInQuietHours must be true, false or null",
+            )
     # A new dict, so the JSON column is seen as changed.
     user.preferences = current or None
     db.commit()

@@ -440,6 +440,11 @@ def set_overrides(db: Session, company: Company, pos_user: PosUser, overrides: A
             raise TillRoleError("invalid_overrides", "overrides must be an object")
         states, lims = _clean(overrides.get("states"), overrides.get("limits"))
         cleaned = {"states": states, "limits": lims} if (states or lims) else None
+    # "בקשות אישור מרחוק" keeps its own key in the same column (app/services/remote_approvals/
+    # overrides.py), edited on the employee card on its own: the role editor never drops it.
+    kept = (pos_user.permission_overrides or {}).get("approvals") if isinstance(pos_user.permission_overrides, dict) else None
+    if kept:
+        cleaned = {**(cleaned or {"states": {}, "limits": {}}), "approvals": kept}
     before = pos_user.permission_overrides
     if (before or None) == cleaned:
         return set()
