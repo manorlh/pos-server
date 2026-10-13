@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  DEFAULT_ITEM_BLOCKS,
   DEFAULT_PROFILE,
   FIELD_GROUPS,
   FIELD_HINTS,
@@ -72,9 +73,14 @@ test('the local templates are the server\'s (its golden file, once it is in this
     return;
   }
   const golden = JSON.parse(readFileSync(file, 'utf8')) as { id: string; profile: unknown }[];
+  // "חסימות פריטים" is never in the server's templates: the local copy carries the defaults.
   assert.deepEqual(
     golden.map((g) => ({ id: g.id, profile: g.profile })),
-    LOCAL_TEMPLATES.map((l) => ({ id: l.id, profile: l.profile })),
+    LOCAL_TEMPLATES.map((l) => {
+      const { itemBlocks, ...rest } = l.profile;
+      assert.deepEqual(itemBlocks, DEFAULT_ITEM_BLOCKS, l.id);
+      return { id: l.id, profile: rest };
+    }),
   );
 });
 
@@ -386,4 +392,47 @@ test('"שרת מקומי: מכשיר ייעודי": only with a local server, ma
   assert.equal(normalizeProfile(dedicated).localServerDevice, 'dedicated');
   const summary = creationSummary(dedicated);
   assert.deepEqual(summary.waiting.map((l) => l.field), ['zType', 'localServer', 'localServerDevice']);
+});
+
+test('"חסימות פריטים": the main till, the point of sale, the tills only by default; a template resets it', () => {
+  assert.deepEqual(DEFAULT_PROFILE.itemBlocks, { managing: 'main_till', localScope: 'area', localWide: false });
+  assert.equal(FIELD_LABELS.itemBlocks, 'חסימות פריטים');
+  assert.ok(FIELD_GROUPS.some((g) => g.fields.includes('itemBlocks')));
+  // Read from the server: each value kept when valid; an older server (none sent) — the defaults.
+  const wide = { managing: 'all', localScope: 'shop', localWide: true } as const;
+  assert.deepEqual(normalizeProfile({ ...DEFAULT_PROFILE, itemBlocks: wide }).itemBlocks, wide);
+  assert.deepEqual(normalizeProfile({ ...DEFAULT_PROFILE, itemBlocks: undefined }).itemBlocks, DEFAULT_ITEM_BLOCKS);
+  assert.deepEqual(
+    normalizeProfile({ itemBlocks: { managing: 'some', localScope: 'machine', localWide: 'yes' } }).itemBlocks,
+    { managing: 'main_till', localScope: 'machine', localWide: false },
+  );
+  // A server template has none: the defaults, as every field a template leaves out.
+  const fromServer = templatesOrFallback([{ id: 'kiosks', profile: { zType: 'shop_cloud', kitchen: 'kds' } }]);
+  assert.deepEqual(fromServer.templates[0].profile.itemBlocks, DEFAULT_ITEM_BLOCKS);
+  // Changed: no cascade, valid, and "שונה מהתבנית".
+  const p = withField(tpl('kiosks').profile, 'itemBlocks', wide);
+  assert.deepEqual(p, { ...tpl('kiosks').profile, itemBlocks: wide });
+  assert.deepEqual(validateProfile(p), []);
+  assert.deepEqual(diffFromTemplate(p, tpl('kiosks')), ['itemBlocks']);
+  assert.equal(matchingTemplate({ ...p, templateId: null }, LOCAL_TEMPLATES), null);
+  // A template decides every field — this one too (as `localServerDevice`) — unless it is locked.
+  assert.deepEqual(applyTemplate(tpl('event'), p).itemBlocks, DEFAULT_ITEM_BLOCKS);
+  assert.deepEqual(applyTemplate(tpl('event'), p, (f) => f === 'itemBlocks').itemBlocks, wide);
+  assert.deepEqual(editableOnly(p, tpl('kiosks').profile, { itemBlocks: false }).itemBlocks, DEFAULT_ITEM_BLOCKS);
+  // In words.
+  assert.equal(fieldValueText('itemBlocks', DEFAULT_PROFILE), 'קופה מנהלת: הקופה הראשית · קופות רגילות: נקודת המכירה');
+  assert.equal(fieldValueText('itemBlocks', p), 'קופה מנהלת: כל הקופות · קופות רגילות: כל הסניף, גם קיוסק, הזמנות ותפריט');
+  // Set at once: in the summary's "now", with which till will manage.
+  const summary = creationSummary(tpl('restaurant_tables').profile);
+  const line = summary.now.find((l) => l.field === 'itemBlocks');
+  assert.ok(line);
+  assert.match(line.note ?? '', /הקופה הראשונה שתצומד/);
+  assert.ok(!summary.waiting.some((l) => l.field === 'itemBlocks'));
+  const none = creationSummary({ ...DEFAULT_PROFILE, itemBlocks: { ...DEFAULT_ITEM_BLOCKS, managing: 'none' } });
+  assert.match(none.now.find((l) => l.field === 'itemBlocks')?.note ?? '', /הגדרות ניהול המלאי/);
+  const dedicated = withField(tpl('restaurant_tables').profile, 'localServerDevice', 'dedicated');
+  assert.match(creationSummary(dedicated).now.find((l) => l.field === 'itemBlocks')?.note ?? '', /כל הקופות/);
+  assert.equal(creationSummary({ ...DEFAULT_PROFILE, itemBlocks: wide }).now.find((l) => l.field === 'itemBlocks')?.note, null);
+  // What POST /shops sends: the whole profile, this field too.
+  assert.deepEqual(createPayloadOf({ kind: 'profile', profile: p }).workProfile?.itemBlocks, wide);
 });

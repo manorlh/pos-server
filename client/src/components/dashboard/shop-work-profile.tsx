@@ -2,8 +2,8 @@
 
 /**
  * "תצורת עבודה של הסניף" (spec shop-work-config.md §2–§5, §7ב): how the whole shop works with
- * its tills — the Z, a local server, tables, the kitchen, the customer display, attendance, tips
- * and vouchers. One editor, in two places:
+ * its tills — the Z, a local server, tables, the kitchen, the customer display, attendance, tips,
+ * vouchers and "חסימות פריטים" (which tills manage the item blocks). One editor, in two places:
  *
  * * `ShopWorkProfileStep` — step 2 of "הקמת סניף" (shop-form-dialog.tsx): a template, or "העתק
  *   תצורה מסניף קיים", then the fields, and the summary — what is set now and what waits for
@@ -45,6 +45,9 @@ import {
   FIELD_GROUPS,
   FIELD_HINTS,
   FIELD_LABELS,
+  ITEM_BLOCKS_MANAGING_CHOICES,
+  ITEM_BLOCKS_SCOPE_CHOICES,
+  ITEM_BLOCKS_WIDE_LABEL,
   KITCHEN_CHOICES,
   LOCAL_SERVER_DEVICE_CHOICES,
   SHOP_Z_FROM_CHOICES,
@@ -353,6 +356,54 @@ function FieldControl({
           </div>
         </div>
       );
+    case 'itemBlocks': {
+      // "חסימות פריטים" (P:/specs/item-block-control.md §5): the shop's own `itemBlocks`, set at once.
+      const blocks = profile.itemBlocks;
+      return (
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <span className="text-xs font-medium">הקופה המנהלת</span>
+            <Pills
+              label="הקופה המנהלת"
+              choices={ITEM_BLOCKS_MANAGING_CHOICES}
+              value={blocks.managing}
+              onChange={(v) => onField('itemBlocks', { ...blocks, managing: v })}
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-1">
+            <span className="text-xs font-medium">קופות רגילות חוסמות עד</span>
+            <Pills
+              label="קופות רגילות חוסמות עד"
+              choices={ITEM_BLOCKS_SCOPE_CHOICES}
+              value={blocks.localScope}
+              onChange={(v) => onField('itemBlocks', { ...blocks, localScope: v })}
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-1">
+            <OnOff
+              id="wp-item-blocks-wide"
+              label={ITEM_BLOCKS_WIDE_LABEL}
+              checked={blocks.localWide}
+              onChange={(v) => onField('itemBlocks', { ...blocks, localWide: v })}
+              disabled={disabled}
+            />
+            <p className="text-xs text-muted-foreground">
+              {blocks.localWide
+                ? 'קופה רגילה חוסמת בכל הערוצים: קופות, קיוסק, הזמנות אונליין ותפריט דיגיטלי.'
+                : 'קופה רגילה חוסמת רק בקופות. קיוסק, הזמנות ותפריט חוסמים מהקופה המנהלת או מהענן.'}
+            </p>
+          </div>
+          {blocks.managing === 'all' ? (
+            <p className="text-xs text-muted-foreground">
+              ב&quot;כל הקופות&quot; אין קופות רגילות: ההיקף והערוצים שלמעלה חלים רק על קופה שתוגדר רגילה בהגדרות ניהול
+              המלאי.
+            </p>
+          ) : null}
+        </div>
+      );
+    }
   }
 }
 

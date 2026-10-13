@@ -89,7 +89,9 @@ def seat(monkeypatch):
 
 
 def template(template_id, **changes):
+    """A template's profile as the dashboard sends it: "חסימות פריטים" (never in a template) at its default."""
     profile = next(t["profile"] for t in T.templates() if t["id"] == template_id)
+    profile[T.ITEM_BLOCKS] = dict(T.DEFAULT_ITEM_BLOCKS)
     profile.update(changes)
     return profile
 
@@ -183,7 +185,10 @@ class TestTemplates:
     def test_each_is_a_valid_profile_with_its_own_id(self):
         for t in T.templates():
             assert t["name"] and t["description"]
-            assert T.validate(t["profile"]) == t["profile"] and t["profile"]["templateId"] == t["id"]
+            # "חסימות פריטים" is not in a template (the golden file is pinned): validated, it is the default.
+            assert T.ITEM_BLOCKS not in t["profile"]
+            assert T.validate(t["profile"]) == {**t["profile"], T.ITEM_BLOCKS: T.DEFAULT_ITEM_BLOCKS}
+            assert t["profile"]["templateId"] == t["id"]
 
     def test_the_spec_table(self):
         rows = {t["id"]: t["profile"] for t in T.templates()}
