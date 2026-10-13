@@ -7,6 +7,7 @@ import type {
   LanTillRef,
   LocalServerCardData,
   LocalServerFailover,
+  LocalServerRolesView,
   LocalServerState,
   LocalServerSwitchBody,
   LocalServerSwitchRecord,
@@ -100,6 +101,22 @@ export async function saveLocalServerFailover(
   body: { enabled: boolean; targetMachineId: string | null; minutes: number },
 ): Promise<LocalServerFailover> {
   const { data } = await api.put<LocalServerFailover>(`/shops/${shopId}/local-server/failover`, body);
+  return data;
+}
+
+export const localServerRolesKey = (shopId: string) => ['local-server-roles', shopId] as const;
+
+/** "תפקידי השרת המקומי": who holds the tables, the printing and the shop Z. */
+export async function fetchLocalServerRoles(shopId: string): Promise<LocalServerRolesView> {
+  const { data } = await api.get<LocalServerRolesView>(`/shops/${shopId}/local-server/roles`);
+  return data;
+}
+
+export async function saveLocalServerRoles(
+  shopId: string,
+  body: { tables: string; print: string; shopZ?: string },
+): Promise<LocalServerRolesView> {
+  const { data } = await api.put<LocalServerRolesView>(`/shops/${shopId}/local-server/roles`, body);
   return data;
 }
 

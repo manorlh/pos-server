@@ -21,10 +21,15 @@ the super admin and a holder of "העברת שרת מקומי" (`local_server_sw
 7. no other move of the shop's server is under way (`local_server_switch.switch_lock`, not
    waited for: the failover never fires during a manual switch, and never twice at once).
 
-**What it does** (`run_shop`): exactly the manual switch — the full move, the notice to every
-till, the audit (`local_server_switched`, `source: "auto_failover"`) — with no shift closed and
-nothing forced; then a high-severity exception (`local_server_failover`), which the alerts send
-to the managers. Re-checked under the lock with fresh rows, so a pass that lost a race finds the
+**Per role** (§11.9): the hosts watched are the devices holding a host role — the tables host,
+the main till (the shop Z producer in local mode) and the print server, which a shop may give to
+different devices (app/services/local_server_roles.py). A silent one gives the target only the
+roles it held (`local_server_roles.move_roles`); the others stay where they are.
+
+**What it does** (`run_shop`): the manual switch's move — the notice to every till, the audit
+(`local_server_switched`, `source: "auto_failover"`) — with no shift closed and nothing forced,
+for the roles the failed device held; then a high-severity exception (`local_server_failover`),
+which the alerts send to the managers. Re-checked under the lock with fresh rows, so a pass that lost a race finds the
 target already the host and does nothing.
 
 **The check** (`run_once`) runs every 30 s in a background thread of each API instance
@@ -58,6 +63,8 @@ MAX_MINUTES = 60
 HISTORY_KEPT = 20
 
 FAILOVER_EXCEPTION = "local_server_failover"
+#: The host roles' holders a pass may move, at most one move each (tables, main till, printing).
+ROLE_HOSTS = ("tables", "main", "print")
 CHANGED_EXCEPTION = "local_server_failover_changed"
 
 INTERVAL_SECONDS = 30.0
@@ -261,8 +268,24 @@ REASONS = {
 }
 
 
+def hosts_of(db: Session, shop: Shop) -> List[POSMachine]:
+    """The devices holding a host role, each once: the tables host, the main till, the print server."""
+    from app.services.local_server_roles import holders
+
+    h = holders(db, shop)
+    out: List[POSMachine] = []
+    for key in ("tables", "main", "print"):
+        m = h.get(key)
+        if m is not None and all(m.id != o.id for o in out):
+            out.append(m)
+    return out
+
+
 def evaluate(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> Decision:
-    """Every condition, in order; the first that fails says why not (pure reading)."""
+    """
+    Every condition, in order, for each device holding a host role (the tables host first): the
+    first one the cloud would move now, else why not — the first host's reason (pure reading).
+    """
     from app.services import local_server_switch as LSS
     from app.services.machine_status import is_online
 
@@ -281,21 +304,28 @@ def evaluate(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> Deci
     reason = LSS.ineligible_reason(db, target, now, require_online=False)
     if reason is not None:
         return no("target_not_eligible", target=target)
-    host = LSS.current_server(db, shop)
-    if host is None:
+    hosts = hosts_of(db, shop)
+    if not hosts:
         return no("no_host", target=target)
-    if host.id == target.id:
-        return no("target_is_host", host=host, target=target)
+    others = [h for h in hosts if h.id != target.id]
+    if not others:
+        # The target holds every role already: the cloud never moves anything back by itself.
+        return no("target_is_host", host=hosts[0], target=target)
     window = timedelta(minutes=minutes)
-    host_last = _aware(host.last_heartbeat_at)
-    if host_last is not None and now - host_last < window:
-        return no("host_heard", host=host, target=target)
     target_last = _aware(target.last_heartbeat_at)
-    if target_last is None or not is_online(target_last, now=now):
-        return no("target_offline", host=host, target=target)
-    if host_last is not None and target_last < host_last + window:
-        return no("target_not_heard_since", host=host, target=target)
-    return Decision(True, "fire", REASONS["fire"].format(minutes=minutes), host=host, target=target)
+    first: Optional[Decision] = None
+    for host in others:
+        host_last = _aware(host.last_heartbeat_at)
+        if host_last is not None and now - host_last < window:
+            why = no("host_heard", host=host, target=target)
+        elif target_last is None or not is_online(target_last, now=now):
+            why = no("target_offline", host=host, target=target)
+        elif host_last is not None and target_last < host_last + window:
+            why = no("target_not_heard_since", host=host, target=target)
+        else:
+            return Decision(True, "fire", REASONS["fire"].format(minutes=minutes), host=host, target=target)
+        first = first or why
+    return first  # type: ignore[return-value]
 
 
 def view(db: Session, shop: Shop, user: Any = None, *, now: Optional[datetime] = None) -> Dict[str, Any]:
@@ -378,34 +408,43 @@ def run_shop(db: Session, shop_id: Any, *, now: Optional[datetime] = None) -> Di
                 db.rollback()
                 return out
             minutes = settings_of(shop)["minutes"]
-            host, target = decision.host, decision.target
-            moved = LSS.move_by_failover(db, shop, target, host, minutes=minutes, now=now)
-            fired = {
-                "at": now.isoformat(),
-                "switchId": moved.get("switchId"),
-                "from": moved.get("previous"),
-                "to": moved.get("mainTill"),
-                "minutes": minutes,
-                "hostLastHeartbeatAt": _iso(host.last_heartbeat_at),
-                "targetLastHeartbeatAt": _iso(target.last_heartbeat_at),
-            }
+            all_fired: List[Dict[str, Any]] = []
+            # Each silent device that held a role, once (a role holder moved holds none any more).
+            for _ in range(len(ROLE_HOSTS)):
+                if not decision.fire:
+                    break
+                host, target = decision.host, decision.target
+                moved = LSS.move_by_failover(db, shop, target, host, minutes=minutes, now=now)
+                fired = {
+                    "at": now.isoformat(),
+                    "switchId": moved.get("switchId"),
+                    "from": moved.get("previous"),
+                    "to": moved.get("mainTill"),
+                    "roles": LSS.switches(shop)[-1].get("roles") if LSS.switches(shop) else None,
+                    "minutes": minutes,
+                    "hostLastHeartbeatAt": _iso(host.last_heartbeat_at),
+                    "targetLastHeartbeatAt": _iso(target.last_heartbeat_at),
+                }
+                try:
+                    Detector(db)._record(target, Found(
+                        type=FAILOVER_EXCEPTION,
+                        key=f"{FAILOVER_EXCEPTION}:{shop.id}:{host.id}:{fired['at']}"[:200],
+                        occurred_at=now,
+                        severity="high",
+                        details={**fired, "shopId": str(shop.id), "summary": _summary(host, target, minutes)},
+                    ))
+                except Exception:  # noqa: BLE001 - the move is what matters; the log keeps the rest
+                    logger.exception("could not record the failover of shop %s", shop.id)
+                all_fired.append(fired)
+                db.flush()
+                decision = evaluate(db, shop, now=now)
             raw = dict(_raw(shop))
-            raw["lastFired"] = fired
+            raw["lastFired"] = all_fired[-1]
             _put(shop, raw)
-            try:
-                Detector(db)._record(target, Found(
-                    type=FAILOVER_EXCEPTION,
-                    key=f"{FAILOVER_EXCEPTION}:{shop.id}:{fired['at']}"[:200],
-                    occurred_at=now,
-                    severity="high",
-                    details={**fired, "shopId": str(shop.id), "summary": _summary(host, target, minutes)},
-                ))
-            except Exception:  # noqa: BLE001 - the move is what matters; the log keeps the rest
-                logger.exception("could not record the failover of shop %s", shop.id)
             db.commit()
             notify_shop = shop
-            out.update(fired=True, switch=fired)
-            logger.warning("shop %s: local server failover %s", shop.id, fired)
+            out.update(fired=True, switch=all_fired[0], switches=all_fired, reason="fire")
+            logger.warning("shop %s: local server failover %s", shop.id, all_fired)
     except Exception:  # noqa: BLE001 - one shop's failure never stops the pass
         db.rollback()
         logger.exception("local server failover check failed for shop %s", shop_id)

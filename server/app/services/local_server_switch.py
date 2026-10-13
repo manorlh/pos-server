@@ -593,10 +593,15 @@ def move_by_failover(
     The automatic failover's move (the caller checked every condition, under `switch_lock`): the
     same full move as the dashboard's — no shift closed, nothing forced — `source: "auto_failover"`.
     """
+    from app.services.local_server_roles import move_roles
+
+    # Only the roles the failed device held (app/services/local_server_roles.py): a print server
+    # that fell gives up the printing, never the tables another device holds.
     return _move(
         db, shop, target, old,
         by=FAILOVER_BY, by_user_id=None, source=SOURCE_FAILOVER, approved_by=None, forced=False,
         now=now, extra={"failoverMinutes": int(minutes)},
+        mover=lambda: move_roles(db, shop, old, target, now=now),
     )
 
 
@@ -615,6 +620,7 @@ def _move(
     release=None,
     now: datetime,
     extra: Optional[Dict[str, Any]] = None,
+    mover=None,
 ) -> Dict[str, Any]:
     """
     The move itself, after every check (the dashboard's switch, a till's own take-over where
@@ -627,8 +633,13 @@ def _move(
     from app.services.local_server_device import forget_shop
     from app.services.till_messages import send_server_switch_notice
 
-    out = MT.take_over(db, target, by, force=True, require_lan=False, now=now)
+    # The full take-over of the old host's roles (`mover`: the failover's, only what it held).
+    out = mover() if mover is not None else MT.take_over(db, target, by, force=True, require_lan=False, now=now)
     forget_shop(shop.id)
+    # Relayed tickets no till took yet follow the print server (remote kiosks and tills, §11.9).
+    from app.services.printers import retarget_relay_jobs
+
+    retarget_relay_jobs(db, shop.id)
     previous = out.get("previous")
     closed = close_old() if close_old is not None else None
     if release is not None:
@@ -653,6 +664,7 @@ def _move(
             {k: closed.get(k) for k in ("shiftId", "closedAt", "countedCash", "documentsOnCloud")} if closed else None
         ),
         "releasedShopZ": release is not None,
+        **({"roles": out["roles"]} if out.get("roles") is not None else {}),
         **(extra or {}),
     }
     _put(shop, SWITCHES_KEY, (switches(shop) + [record])[-SWITCHES_KEPT:])

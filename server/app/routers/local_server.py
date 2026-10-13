@@ -23,6 +23,10 @@ GET  /shops/{shop_id}/local-server/failover             → "גיבוי אוטו
                                                           by default), the target, what it would do now
 PUT  /shops/{shop_id}/local-server/failover             {enabled, targetMachineId?, minutes?} — the
                                                           super admin, or "העברת שרת מקומי"; audited
+GET  /shops/{shop_id}/local-server/roles                → "תפקידי השרת המקומי": who holds tables /
+                                                          printing / shop Z, and the choices
+PUT  /shops/{shop_id}/local-server/roles                {tables, print ("none" allowed), shopZ?} — the
+                                                          super admin, or "העברת שרת מקומי"; audited
 GET  /machines/{machine_id}/local-server                → the device page's "שרת מקומי" card
 POST /machines/{machine_id}/local-server/commands       {action, params?, confirm?} — restart_app,
                                                           upload_logs, print_test_page,
@@ -71,6 +75,17 @@ class FailoverIn(BaseModel):
     target_machine_id: Optional[uuid.UUID] = Field(None, alias="targetMachineId")
     #: Minutes the cloud must not hear the server before it moves it (2–60; default 3).
     minutes: Optional[int] = None
+
+
+class RolesIn(BaseModel):
+    """"תפקידי השרת המקומי": who holds each role — a device id (the server or a till); print may be "none"."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tables: uuid.UUID
+    print_: str = Field(..., alias="print", max_length=64)
+    #: Only in local shop Z mode; absent — the producer stays.
+    shop_z: Optional[uuid.UUID] = Field(None, alias="shopZ")
 
 
 class ServerCommandIn(BaseModel):
@@ -210,6 +225,49 @@ def put_local_server_failover(
             db.rollback()
             raise
         db.commit()
+    return out
+
+
+@router.get("/shops/{shop_id}/local-server/roles")
+def get_local_server_roles(
+    shop_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """"תפקידי השרת המקומי": who holds the tables, the printing and the shop Z, and the choices."""
+    from app.services import local_server_roles as LSR
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    return LSR.view(db, shop, current_user)
+
+
+@router.put("/shops/{shop_id}/local-server/roles")
+def put_local_server_roles(
+    shop_id: uuid.UUID,
+    body: RolesIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    Give each host role to the dedicated server or a till (printing: or "none") — the super admin,
+    or "העברת שרת מקומי"; under the shop's switch lock, audited, every till told.
+    """
+    from app.services import local_server_device as LSD
+    from app.services import local_server_roles as LSR
+
+    shop = _shop(db, shop_id, current_user, active_tenant_id)
+    with LSS.switch_lock(db, shop.id, wait=True):
+        db.expire(shop)
+        try:
+            out = LSR.update(db, current_user, shop, tables=body.tables, print_=body.print_, shop_z=body.shop_z)
+        except Exception:
+            db.rollback()
+            raise
+        db.commit()
+    if out.get("changed"):
+        LSD.after_host_change(db, shop)
     return out
 
 

@@ -114,6 +114,8 @@
 - **מארח מועדף:** בקבוצת הרשת של הסניף (`independent_till.lan_members`), וכל בחירת מארח מעדיפה אותו על פני קופה
   (`local_server_device.host_order`). לעולם לא משתתף ב-Z ולא קופה עצמאית.
 - **העברה וגיבוי אוטומטי:** `app/services/local_server_switch.py`, `app/services/local_server_failover.py`.
+- **תפקידים לבחירה לכל סניף** (§11.9 באפיון): שולחנות, הדפסות (או "ללא שרת הדפסות") ו-Z סניפי, כל אחד בשרת או
+  בקופה — `app/services/local_server_roles.py`, `GET/PUT /shops/{id}/local-server/roles`.
 - **ניטור ופקודות:** `app/services/local_server_device.py`, `GET /machines/{id}/local-server`,
   `POST /machines/{id}/local-server/commands`.
 - **Migration:** `e4a7c2d9b1f3_local_server_device` (אחרי `3bfb94dbebb2`), additive ואידמפוטנטי.

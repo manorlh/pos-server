@@ -637,6 +637,8 @@ GET /shops/{shop_id}/local-server -> devices|local_server_switch:view
 GET /shops/{shop_id}/local-server/failover -> devices|local_server_switch:view
 PUT /shops/{shop_id}/local-server/failover -> local_server_switch:edit
 POST /shops/{shop_id}/local-server/former-host-changes/ack -> devices|tables:edit
+GET /shops/{shop_id}/local-server/roles -> devices|local_server_switch:view
+PUT /shops/{shop_id}/local-server/roles -> local_server_switch:edit
 POST /shops/{shop_id}/local-server/switch -> local_server_switch:edit
 DELETE /shops/{shop_id}/local-shop-z-request -> z:edit
 GET /shops/{shop_id}/local-shop-z-request -> z:view

@@ -615,6 +615,9 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # holder or the super admin (the route checks the profile itself, and audits).
     (_GET, "/shops/{}/local-server/failover", S("devices", "local_server_switch", level=VIEW)),
     ("PUT", "/shops/{}/local-server/failover", S("local_server_switch")),
+    # "תפקידי השרת המקומי" (§11.9): the same people as the switch.
+    (_GET, "/shops/{}/local-server/roles", S("devices", "local_server_switch", level=VIEW)),
+    ("PUT", "/shops/{}/local-server/roles", S("local_server_switch")),
     ("POST", "/shops/{}/local-server/former-host-changes/ack", S("devices", "tables")),
     (_GET, "/shops/{}/work-config", S("devices")),
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),

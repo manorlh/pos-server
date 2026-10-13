@@ -1176,9 +1176,11 @@ def send_server_switch_notice(
     old_till: Optional[Dict],
     by: Optional[str] = None,
     now: Optional[datetime] = None,
+    body: Optional[str] = None,
 ) -> Optional[TillMessage]:
     """
     Every till of the shop shows "השרת הוחלף" full-screen until its employee taps "קראתי"
+    (`body`: the text instead of the default — the dedicated server's roles changed)
     (the ordinary till message: its receipts, its "who acknowledged"). Sent by the system
     (no sender), to the shop's active fiscal tills — not its kiosks (a customer stands
     there) nor its kitchen / ready screens (no employee to acknowledge). None: no such till.
@@ -1203,7 +1205,7 @@ def send_server_switch_notice(
         created_by=None,
         created_at=now,
         title=SERVER_SWITCH_TITLE,
-        body=server_switch_body(new_till, old_till, by),
+        body=body or server_switch_body(new_till, old_till, by),
         target_level="shop",
         target_id=shop.id,
         expires_at=now + SERVER_SWITCH_TTL,

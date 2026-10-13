@@ -20,7 +20,13 @@ import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { formatDateTime } from '@/lib/format';
 import {
+  NO_PRINT_HOST,
   SERVER_ACTIONS,
+  SERVER_ROLES,
+  roleChoices,
+  rolesBody,
+  rolesDraftError,
+  rolesDraftOf,
   failoverBody,
   failoverDraftError,
   failoverDraftOf,
@@ -34,6 +40,8 @@ import {
   syncTone,
   type FailoverDraft,
   type LocalServerFailover,
+  type LocalServerRolesView,
+  type RolesDraft,
   type ServerAction,
   type Tone,
 } from '@/lib/lanMode';
@@ -41,10 +49,13 @@ import {
   fetchLocalServer,
   fetchLocalServerCard,
   fetchLocalServerFailover,
+  fetchLocalServerRoles,
   localServerCardKey,
   localServerFailoverKey,
   localServerKey,
+  localServerRolesKey,
   saveLocalServerFailover,
+  saveLocalServerRoles,
   sendLocalServerCommand,
 } from '@/lib/localServerApi';
 import { refusalOf } from '@/lib/zParticipation';
@@ -211,6 +222,7 @@ export function LocalServerShopCard({ shopId }: { shopId: string }) {
   const t = useTranslations('localServer');
   const state = useQuery({ queryKey: localServerKey(shopId), queryFn: () => fetchLocalServer(shopId) });
   const failover = useQuery({ queryKey: localServerFailoverKey(shopId), queryFn: () => fetchLocalServerFailover(shopId) });
+  const roles = useQuery({ queryKey: localServerRolesKey(shopId), queryFn: () => fetchLocalServerRoles(shopId) });
   const servers = state.data?.servers ?? [];
   return (
     <Card>
@@ -248,6 +260,7 @@ export function LocalServerShopCard({ shopId }: { shopId: string }) {
         ) : (
           <p className="text-xs text-muted-foreground">{t('device.noServers')}</p>
         )}
+        {roles.data?.applies ? <RolesSettings key={JSON.stringify(rolesDraftOf(roles.data))} shopId={shopId} data={roles.data} /> : null}
         {failover.data ? (
           <FailoverSettings shopId={shopId} data={failover.data} candidates={state.data?.candidates ?? []} server={state.data?.server ?? null} />
         ) : failover.isLoading ? (
@@ -255,6 +268,74 @@ export function LocalServerShopCard({ shopId }: { shopId: string }) {
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * "תפקידי השרת המקומי" (§11.9): which roles the dedicated server holds — the tables, the printing
+ * (or no print server at all), the shop Z — each one it is not given held by a till.
+ */
+function RolesSettings({ shopId, data }: { shopId: string; data: LocalServerRolesView }) {
+  const t = useTranslations('localServer.roles');
+  const tc = useTranslations('common');
+  const qc = useQueryClient();
+  const [draft, setDraft] = useState<RolesDraft>(() => rolesDraftOf(data));
+  const error = rolesDraftError(draft, data);
+  const save = useMutation({
+    mutationFn: () => saveLocalServerRoles(shopId, rolesBody(draft, data.localMode)),
+    onSuccess: (out) => {
+      qc.setQueryData(localServerRolesKey(shopId), out);
+      void qc.invalidateQueries({ queryKey: localServerKey(shopId) });
+      void qc.invalidateQueries({ queryKey: ['main-till', shopId] });
+      void qc.invalidateQueries({ queryKey: ['kitchen-printers', shopId] });
+      toast.success(t('saved'));
+    },
+    onError: (err: unknown) => toast.error(refusalOf(err)?.message ?? axiosErrorToToastMessage(err, tc('error'))),
+  });
+  const dirty = JSON.stringify(rolesBody(draft, data.localMode)) !== JSON.stringify(rolesBody(rolesDraftOf(data), data.localMode));
+  const label = (c: { machineId: string; posNumber?: string | null; name?: string | null; deviceRole?: string | null }) =>
+    c.deviceRole === 'local_server' ? `${t('server')} (${c.name ?? '—'})` : c.posNumber ? `${c.posNumber} · ${c.name ?? ''}` : c.name ?? '—';
+  const roles = SERVER_ROLES.filter((r) => r !== 'shopZ' || data.localMode);
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <p className="font-medium">{t('title')}</p>
+      <p className="text-xs text-muted-foreground">{t('hint')}</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {roles.map((role) => (
+          <label key={role} className="space-y-1">
+            <span className="block text-xs font-medium">{t(role)}</span>
+            <select
+              className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+              value={draft[role]}
+              disabled={!data.canEdit || save.isPending}
+              onChange={(e) => setDraft({ ...draft, [role]: e.target.value })}
+            >
+              <option value="" disabled>{t('pick')}</option>
+              {roleChoices(data, draft[role]).map((c) => (
+                <option key={c.machineId} value={c.machineId}>
+                  {label(c)}
+                </option>
+              ))}
+              {role === 'print' && data.noPrintHostSupported && (data.noPrintHostAllowed || draft.print === NO_PRINT_HOST) ? (
+                <option value={NO_PRINT_HOST}>{t('none')}</option>
+              ) : null}
+            </select>
+          </label>
+        ))}
+      </div>
+      {!data.localMode ? <p className="text-xs text-muted-foreground">{t('notLocal')}</p> : null}
+      {draft.print === NO_PRINT_HOST ? <p className="text-xs text-muted-foreground">{t('noneHint')}</p> : null}
+      {error === 'printNone' || (!data.noPrintHostAllowed && data.noPrintHostSupported) ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400">{t('noneRemote')}</p>
+      ) : null}
+      {data.canEdit ? (
+        <Button size="sm" disabled={!!error || !dirty || save.isPending} onClick={() => save.mutate()}>
+          {t('save')}
+        </Button>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t('readOnly')}</p>
+      )}
+    </div>
   );
 }
 

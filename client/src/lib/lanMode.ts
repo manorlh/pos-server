@@ -199,7 +199,7 @@ export interface LocalServerSwitchRecord {
    * `cloud`: this wizard; `till`: the till's own button (`tillServerTakeover` = manager), `approvedBy` its
    * manager; `auto_failover`: "גיבוי אוטומטי"; `work_profile`: the work profile's dedicated server.
    */
-  source?: 'cloud' | 'till' | 'auto_failover' | 'work_profile';
+  source?: 'cloud' | 'till' | 'auto_failover' | 'work_profile' | 'roles';
   approvedBy?: string | null;
   /** The automatic failover's N minutes. */
   failoverMinutes?: number;
@@ -220,8 +220,9 @@ export function tillTakeoverKey(mode: string | null | undefined): 'tillTakeoverO
  */
 export function lastSwitchKey(
   record: Pick<LocalServerSwitchRecord, 'source'>,
-): 'lastSwitch' | 'lastSwitchFromTill' | 'lastSwitchFailover' | 'lastSwitchWorkProfile' {
+): 'lastSwitch' | 'lastSwitchFromTill' | 'lastSwitchFailover' | 'lastSwitchWorkProfile' | 'lastSwitchRoles' {
   if (record.source === 'till') return 'lastSwitchFromTill';
+  if (record.source === 'roles') return 'lastSwitchRoles';
   if (record.source === 'auto_failover') return 'lastSwitchFailover';
   if (record.source === 'work_profile') return 'lastSwitchWorkProfile';
   return 'lastSwitch';
@@ -361,6 +362,77 @@ export function serverCommandBody(
     return { action, params: { printerId: opts.printerId ?? null, scope: opts.scope ?? 'failed' }, confirm: !!opts.confirmed };
   }
   return { action };
+}
+
+// ── "תפקידי השרת המקומי" (§11.9) ─────────────────────────────────────────────────
+
+export const SERVER_ROLES = ['tables', 'print', 'shopZ'] as const;
+export type ServerRole = (typeof SERVER_ROLES)[number];
+/** "ללא שרת הדפסות — כל קופה מדפיסה בעצמה". */
+export const NO_PRINT_HOST = 'none' as const;
+
+export interface LocalServerRoleChoice extends LanTillRef {
+  deviceRole: 'local_server' | 'till' | string;
+  online: boolean;
+  eligible: boolean;
+  reason: string | null;
+  reasonText: string | null;
+}
+
+/** `GET /shops/{id}/local-server/roles`. */
+export interface LocalServerRolesView {
+  shopId: string;
+  applies: boolean;
+  server: LanTillRef | null;
+  localMode: boolean;
+  roles: {
+    tables: { holder: LanTillRef | null; onServer: boolean };
+    print: { holder: LanTillRef | null; none: boolean; onServer: boolean };
+    shopZ: { holder: LanTillRef | null; onServer: boolean; applies: boolean };
+  };
+  choices: LocalServerRoleChoice[];
+  noPrintHostSupported: boolean;
+  noPrintHostAllowed: boolean;
+  remoteDevices?: LanTillRef[];
+  canEdit: boolean;
+  changed?: ServerRole[];
+}
+
+/** What the editor holds: a device id per role ('none' for printing with no print server). */
+export interface RolesDraft {
+  tables: string;
+  print: string;
+  shopZ: string;
+}
+
+export function rolesDraftOf(v: Pick<LocalServerRolesView, 'roles'> | null | undefined): RolesDraft {
+  return {
+    tables: v?.roles.tables.holder?.machineId ?? '',
+    print: v?.roles.print.none ? NO_PRINT_HOST : (v?.roles.print.holder?.machineId ?? ''),
+    shopZ: v?.roles.shopZ.holder?.machineId ?? '',
+  };
+}
+
+/** The devices a role may go to: the eligible ones, and whoever holds it now. */
+export function roleChoices(v: Pick<LocalServerRolesView, 'choices'>, current: string): LocalServerRoleChoice[] {
+  return v.choices.filter((c) => c.eligible || c.machineId === current);
+}
+
+/** Why the draft cannot be saved, or null. */
+export function rolesDraftError(
+  d: RolesDraft,
+  v: Pick<LocalServerRolesView, 'localMode' | 'noPrintHostAllowed'>,
+): 'tables' | 'print' | 'shopZ' | 'printNone' | null {
+  if (!d.tables) return 'tables';
+  if (!d.print) return 'print';
+  if (d.print === NO_PRINT_HOST && !v.noPrintHostAllowed) return 'printNone';
+  if (v.localMode && !d.shopZ) return 'shopZ';
+  return null;
+}
+
+/** `PUT /shops/{id}/local-server/roles`'s body (the shop Z only in local mode). */
+export function rolesBody(d: RolesDraft, localMode: boolean): { tables: string; print: string; shopZ?: string } {
+  return { tables: d.tables, print: d.print, ...(localMode && d.shopZ ? { shopZ: d.shopZ } : {}) };
 }
 
 // ── "גיבוי אוטומטי לשרת המקומי" (§11.7) ─────────────────────────────────────────

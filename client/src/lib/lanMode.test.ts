@@ -23,6 +23,12 @@ import {
   lastSwitchKey,
   tillTakeoverKey,
   FAILOVER_DEFAULTS,
+  NO_PRINT_HOST,
+  SERVER_ROLES,
+  roleChoices,
+  rolesBody,
+  rolesDraftError,
+  rolesDraftOf,
   SERVER_ACTIONS,
   failoverBody,
   failoverDraftError,
@@ -315,6 +321,7 @@ describe('"העברת שרת מקומי מהקופה" (tillServerTakeover)', () 
     assert.equal(lastSwitchKey({}), 'lastSwitch');
     assert.equal(lastSwitchKey({ source: 'auto_failover' }), 'lastSwitchFailover');
     assert.equal(lastSwitchKey({ source: 'work_profile' }), 'lastSwitchWorkProfile');
+    assert.equal(lastSwitchKey({ source: 'roles' }), 'lastSwitchRoles');
   });
 });
 
@@ -350,6 +357,34 @@ describe('"שרת מקומי ייעודי" (dedicated-local-server.md §11)', ()
     assert.equal(serverCommandBody('clear_print_queue').confirm, false);
   });
 
+  it('the server\'s roles: each to the server or a till, printing to none only with no remote device', () => {
+    assert.deepEqual([...SERVER_ROLES], ['tables', 'print', 'shopZ']);
+    const view = {
+      roles: {
+        tables: { holder: { machineId: 's' }, onServer: true },
+        print: { holder: null, none: true, onServer: false },
+        shopZ: { holder: { machineId: 's' }, onServer: true, applies: true },
+      },
+      choices: [
+        { machineId: 's', deviceRole: 'local_server', online: true, eligible: true, reason: null, reasonText: null },
+        { machineId: 't1', deviceRole: 'till', online: false, eligible: false, reason: 'offline', reasonText: null },
+        { machineId: 't2', deviceRole: 'till', online: true, eligible: true, reason: null, reasonText: null },
+      ],
+      localMode: true,
+      noPrintHostAllowed: true,
+    };
+    const d = rolesDraftOf(view);
+    assert.deepEqual(d, { tables: 's', print: NO_PRINT_HOST, shopZ: 's' });
+    assert.equal(rolesDraftError(d, view), null);
+    assert.equal(rolesDraftError(d, { ...view, noPrintHostAllowed: false }), 'printNone');
+    assert.equal(rolesDraftError({ ...d, shopZ: '' }, view), 'shopZ');
+    assert.equal(rolesDraftError({ ...d, shopZ: '' }, { ...view, localMode: false }), null);
+    assert.deepEqual(roleChoices(view, 's').map((c) => c.machineId), ['s', 't2']);
+    assert.deepEqual(roleChoices(view, 't1').map((c) => c.machineId), ['s', 't1', 't2']);
+    assert.deepEqual(rolesBody({ ...d, print: 't2' }, true), { tables: 's', print: 't2', shopZ: 's' });
+    assert.deepEqual(rolesBody(d, false), { tables: 's', print: NO_PRINT_HOST });
+  });
+
   it('the failover is off by default, and on needs a target and 2–60 minutes', () => {
     assert.deepEqual(FAILOVER_DEFAULTS, { enabled: false, targetMachineId: null, minutes: 3 });
     const d = failoverDraftOf(null);
@@ -372,7 +407,7 @@ describe('"שרת מקומי ייעודי" (dedicated-local-server.md §11)', ()
   it('every word the cards say is in he.json', () => {
     const he = JSON.parse(readFileSync(join(process.cwd(), 'src', 'messages', 'he.json'), 'utf8'));
     const ls = he.localServer;
-    for (const k of ['lastSwitchFailover', 'lastSwitchWorkProfile', 'serverNoShift']) assert.ok(ls.wizard[k], k);
+    for (const k of ['lastSwitchFailover', 'lastSwitchWorkProfile', 'lastSwitchRoles', 'serverNoShift']) assert.ok(ls.wizard[k], k);
     for (const k of ['title', 'offByDefault', 'enabled', 'target', 'minutes', 'save', 'saved', 'noTarget', 'lastFired',
       'rules', 'targetRequired', 'minutesInvalid', 'readOnly']) assert.ok(ls.failover[k], k);
     for (const k of ['title', 'hosting', 'standby', 'tills', 'openOrders', 'printQueue', 'printers', 'mirror', 'notTillLicense',
@@ -380,6 +415,8 @@ describe('"שרת מקומי ייעודי" (dedicated-local-server.md §11)', ()
     for (const a of SERVER_ACTIONS) assert.ok(ls.device.actions[a], a);
     for (const s of ['ok', 'offline', 'error', 'no_paper', 'unknown']) assert.ok(ls.device.printerStates[s], s);
     for (const r of ['mainTill', 'tables', 'print', 'shopZ']) assert.ok(ls.device.roles[r], r);
+    for (const k of ['title', 'hint', 'tables', 'print', 'shopZ', 'server', 'none', 'noneHint', 'noneRemote', 'save', 'saved',
+      'readOnly', 'notLocal', 'pick']) assert.ok(ls.roles[k], k);
     for (const k of ['local_server', 'local_serverHint', 'localServerNote', 'localServerReady', 'localServerNeedsShop',
       'localServerNotTill', 'localServerNotTillHint']) assert.ok(he.machines.deviceRole[k], k);
     assert.ok(he.machines.deviceRole.badge.local_server);
