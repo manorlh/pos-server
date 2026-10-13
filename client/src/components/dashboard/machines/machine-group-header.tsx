@@ -36,6 +36,8 @@ export interface MachineGroupHeaderProps {
   /** The catch-all group for terminals with no shop: sorted last, styled apart. */
   unassigned: boolean;
   count: number;
+  /** The shop's screens (KDS, boards, customer displays) in view: not tills, said apart. */
+  screens?: number;
   tallies: Array<[MachineStatusValue, number]>;
   collapsed: boolean;
   onToggle: () => void;
@@ -51,6 +53,7 @@ export function MachineGroupHeader({
   shopNumber,
   unassigned,
   count,
+  screens = 0,
   tallies,
   collapsed,
   onToggle,
@@ -94,9 +97,10 @@ export function MachineGroupHeader({
       </button>
 
       {/* Counts and the shop's actions, together on one line at the row's end. */}
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 md:flex-nowrap">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 md:shrink-0 md:flex-nowrap">
         <span className="text-xs text-muted-foreground tabular-nums">
           {t('groupMachineCount', { count })}
+          {screens > 0 ? ` · ${t('devicesView.screensCount', { count: screens })}` : ''}
         </span>
 
         {tallies.length > 0 ? (

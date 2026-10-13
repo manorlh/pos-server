@@ -24,6 +24,11 @@ export interface MainTillState {
   tills: TillRef[];
   /** The super admin's alone to change. */
   canEdit: boolean;
+  /**
+   * "העברת שרת מקומי" (lib/localServerApi.ts): the one way to move the main till to another till —
+   * the super admin, or a user granted the permission. The card's own select only names the first.
+   */
+  canSwitch?: boolean;
   /** "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the switch as stored. */
   localNetwork?: boolean;
   /** The switch on and a main till: the main till produces the shop Z on the LAN. */

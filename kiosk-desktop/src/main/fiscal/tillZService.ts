@@ -96,6 +96,22 @@ export class TillZService {
     }
   }
 
+  /**
+   * A Z a manager asked for now ("סגירת משמרת ו-Z" on the shop's lock, core/shopLock.ts): owed first
+   * (on disk — the tick makes it later if the cloud cannot now), then asked. Null while the tick or
+   * another request is already at it.
+   */
+  async produceOwed(closerName: string): Promise<ZOutcome | null> {
+    if (this.busy) return null;
+    this.busy = true;
+    try {
+      this.markOwed();
+      return await this.produce(closerName, false);
+    } finally {
+      this.busy = false;
+    }
+  }
+
   /** A close requested by the cloud (heartbeat pendingCloseShift): the same close, its request id carried. */
   closeForCloud(input: { requestId: string; closerName: string; vatRate: number }) {
     return this.d.ledger.closeShift({ closedByName: input.closerName, closeRequestId: input.requestId, unattended: true, vatRate: input.vatRate });

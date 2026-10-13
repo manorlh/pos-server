@@ -1,15 +1,12 @@
 'use client';
 
 /**
- * One terminal, as a single dense row.
+ * A terminal's pieces, shared by the devices list (devices-list.tsx — the table row and the
+ * card) and the pages that show a till: its label, its shift chip, its alerts, the row's "⋯"
+ * menu and the details panel behind the expander, where the rest costs nothing until it is
+ * asked for.
  *
- * This replaced a ~500px card per terminal. The card carried five stacked panels and
- * still never said which shop the till belonged to, which is the one thing an operator
- * looking at thirty terminals actually needs. So the row carries the eight facts that
- * are scannable side by side, and everything else moves behind the expander, where it
- * costs nothing until it is asked for.
- *
- * Two rules the row inherits rather than re-implements:
+ * Two rules the pieces inherit rather than re-implement:
  *
  * * **The status light is the server's.** `MachineStatusLabel` renders `m.status` as
  *   resolved by `machine_status.py`; nothing here re-derives it. The Z wizard
@@ -18,14 +15,6 @@
  * * **Pending documents are a last-known reading, never a live count.** The "as of"
  *   line is not decoration — presenting `pendingDocuments` as current is a bug this
  *   page has already shipped once.
- *
- * Layout: a flex row that wraps onto two lines below `md`, and a fixed grid at `md` and
- * up. The mobile order is set with `max-md:order-*` so it cannot leak into the grid,
- * where `order` would reshuffle the columns. Every cell is start-aligned and vertically
- * centred, so a header caption sits over its values. The area is not a column (most
- * tills have none, and an empty column of dashes cost the row its width): it rides
- * under the name. Clicking the row anywhere but a link, button or the menu opens the
- * details.
  */
 
 import Link from 'next/link';
@@ -36,7 +25,6 @@ import { he } from 'date-fns/locale';
 import {
   BatteryLow,
   CalendarClock,
-  ChevronDown,
   ClockAlert,
   Cpu,
   CreditCard,
@@ -74,12 +62,7 @@ import {
   TransmissionSummary,
 } from '@/components/dashboard/machines/card-transmission';
 import { TerminalSummary } from '@/components/dashboard/machines/card-terminal';
-import { DeviceModelBadge } from '@/components/dashboard/machines/device-model';
-import {
-  DevicePlatformBadge,
-  DeviceRoleBadge,
-  DisplayDeviceNote,
-} from '@/components/dashboard/machines/device-role';
+import { DisplayDeviceNote } from '@/components/dashboard/machines/device-role';
 import { isDisplayDevice } from '@/lib/deviceProfile';
 import { canRequestTillZ } from '@/components/dashboard/till-z/till-z-dialogs';
 import { LatestTillZRequest, ZModeBadge } from '@/components/dashboard/till-z/till-z-request';
@@ -98,18 +81,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { MachineHealthPanel } from '@/components/dashboard/machine-health';
 import { DeadTillRecovery } from '@/components/dashboard/dead-till-recovery';
-import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
-import { LicenseBadge, useIsSuperAdmin } from '@/components/dashboard/license-fields';
-import { DeviceCommandChip } from '@/components/dashboard/device-commands/command-chip';
-
-/**
- * The six columns — status, till, shift, alerts, last seen, actions — shared with the
- * table's header strip so the two cannot drift. Fixed widths at the edges and
- * proportional ones between, so no column's width depends on what one row holds.
- * Below `md` the grid is off entirely and the row lays itself out with flex-wrap.
- */
-export const MACHINE_ROW_GRID =
-  'md:grid md:grid-cols-[10rem_minmax(0,2.2fr)_minmax(0,1.3fr)_minmax(0,1.5fr)_7.5rem_4.5rem] md:items-center md:gap-x-4';
+import { useIsSuperAdmin } from '@/components/dashboard/license-fields';
 
 /** Everything the row needs to decide what a given operator may do with a terminal. */
 export interface MachinePermissions {
@@ -153,8 +125,6 @@ export interface MachineRowProps {
   actions: MachineRowActions;
   /** Passed down rather than recomputed: the page owns the one online decision. */
   isDeviceOnline: (m: PosMachine) => boolean;
-  expanded: boolean;
-  onToggleExpanded: (id: string) => void;
 }
 
 function shiftBadgeVariant(m: PosMachine): 'default' | 'secondary' | 'outline' {
@@ -284,7 +254,8 @@ export function RegisterNameMismatch({ className = '' }: { className?: string })
   );
 }
 
-function MachineRowMenu({
+/** The row's "⋯": every action on the device the operator may take, and nothing they may not. */
+export function MachineRowMenu({
   m,
   permissions,
   actions,
@@ -433,7 +404,7 @@ function MachineRowMenu({
 }
 
 /** The panels the card used to stack, revealed only for the row being looked at. */
-function MachineRowDetails({
+export function MachineRowDetails({
   m,
   isDeviceOnline,
 }: Pick<MachineRowProps, 'm' | 'isDeviceOnline'>) {
@@ -686,10 +657,13 @@ const ALERT_RED = `${ALERT_BASE} border-destructive/50 bg-destructive/5 text-des
 export function MachineAlerts({
   m,
   onPinpadAddress,
+  quietWhenNone = false,
 }: {
   m: PosMachine;
   /** Opens the till's own settings, where the pinpad's address is typed; absent = shown only. */
   onPinpadAddress?: (m: PosMachine) => void;
+  /** Nothing at all when there is nothing to say (a card), rather than the column's "—". */
+  quietWhenNone?: boolean;
 }) {
   const t = useTranslations('machines');
   const tStatus = useTranslations('machineStatus');
@@ -854,12 +828,12 @@ export function MachineAlerts({
     );
   }
 
-  if (items.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  if (items.length === 0) return quietWhenNone ? null : <span className="text-xs text-muted-foreground">—</span>;
   return <span className="flex min-w-0 flex-wrap items-center gap-1">{items}</span>;
 }
 
 /** The card integration the till charges on ("Z-Credit", "מובנה (אוטומטי)"); amber while short of a field. */
-function IntegrationBadge({ m }: { m: PosMachine }) {
+export function IntegrationBadge({ m }: { m: PosMachine }) {
   const badge = integrationBadge(m);
   if (!badge) return null;
   return (
@@ -874,138 +848,5 @@ function IntegrationBadge({ m }: { m: PosMachine }) {
     >
       {badge.label}
     </Badge>
-  );
-}
-
-/** Clicks on these do what they are, not open the row's details. */
-const INTERACTIVE = 'a, button, input, select, textarea, [role="menuitem"], [role="menu"]';
-
-export function MachineRow({
-  m,
-  permissions,
-  actions,
-  isDeviceOnline,
-  expanded,
-  onToggleExpanded,
-}: MachineRowProps) {
-  const t = useTranslations('machines');
-  const tStatus = useTranslations('machineStatus');
-  const detailsId = `machine-details-${m.id}`;
-  const label = useMachineLabel(m);
-  const statusText = tStatus(`status.${machineStatus(m)}`);
-
-  const onRowClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
-    // Selecting text to copy a code is not a request to expand.
-    if (window.getSelection()?.toString()) return;
-    onToggleExpanded(m.id);
-  };
-
-  return (
-    <div className="border-b last:border-b-0">
-      <div
-        onClick={onRowClick}
-        className={`flex cursor-pointer flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2 text-sm hover:bg-muted/40 md:min-h-12 ${
-          expanded ? 'bg-muted/30' : ''
-        } ${MACHINE_ROW_GRID}`}
-      >
-        {/* The narrow row keeps just the dot, which is all that fits beside the name. */}
-        <div className="flex min-w-0 items-center gap-2 max-md:order-1" title={statusText}>
-          <MachineStatusDot m={m} />
-          <span className="truncate text-xs max-md:hidden">{statusText}</span>
-        </div>
-
-        <div className="min-w-0 max-md:order-2 max-md:flex-1">
-          {/* A device is a place you can go into now, not just a row. */}
-          {/* The register number is how the shop names a till, so it leads; the free-text
-              name follows only when it says something the number does not. */}
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Link
-              href={`/dashboard/machines/${m.id}`}
-              className={`shrink-0 hover:underline ${label.number !== null ? 'font-semibold' : 'font-medium'}`}
-            >
-              {label.primary}
-            </Link>
-            {label.secondary ? (
-              <span className="truncate text-xs text-muted-foreground">{label.secondary}</span>
-            ) : null}
-            {label.nameMismatch ? <RegisterNameMismatch /> : null}
-            <LicenseBadge value={m} className="shrink-0" />
-          </div>
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="truncate" dir="ltr">
-              {m.machineCode}
-            </span>
-            {/* "סוג מכשיר": קופה / קיוסק, then the model. */}
-            <DeviceRoleBadge m={m} showTill />
-            <DevicePlatformBadge m={m} showAndroid={isDisplayDevice(m)} />
-            <DeviceModelBadge m={m} />
-            <IntegrationBadge m={m} />
-            {/* Only the exception is marked: most tills are on the shop's cloud Z. */}
-            {m.independentTill ? (
-              <IndependentTillBadge machine={m} className="h-4 px-1 text-[10px]" />
-            ) : zModeOf(m) === 'till' ? (
-              <ZModeBadge mode="till" className="h-4 shrink-0 px-1 text-[10px]" />
-            ) : null}
-            {m.areaName ? <span className="truncate">· {m.areaName}</span> : null}
-          </div>
-        </div>
-
-        <div className="flex min-w-0 flex-wrap items-center gap-1 max-md:order-5">
-          {/* A screen has no shifts: nothing to show here. */}
-          {isDisplayDevice(m) ? null : <MachineShiftChip m={m} />}
-          {/* "פקודה נשלחה: … · ממתין" — the last command sent to this device (nothing when none). */}
-          <DeviceCommandChip machineId={m.id} />
-        </div>
-
-        <div className="min-w-0 max-md:order-6">
-          {/* The pinpad's address opens the till's own settings: the same rule as that menu item. */}
-          <MachineAlerts
-            m={m}
-            onPinpadAddress={
-              permissions.canProduceZ && actions.onEditSettings && m.shopId ? actions.onEditSettings : undefined
-            }
-          />
-        </div>
-
-        <div className="truncate text-xs text-muted-foreground max-md:order-7">
-          {m.lastHeartbeatAt
-            ? formatDistanceToNow(new Date(m.lastHeartbeatAt), { addSuffix: true, locale: he })
-            : t('neverSeen')}
-        </div>
-
-        {/* Stops here so a menu item (in a portal, but bubbling through React) never
-            also toggles the row. */}
-        <div
-          className="flex items-center justify-end gap-1 max-md:order-3"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0"
-            onClick={() => onToggleExpanded(m.id)}
-            aria-expanded={expanded}
-            aria-controls={detailsId}
-            aria-label={t('rowToggle')}
-          >
-            <ChevronDown
-              className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`}
-              aria-hidden
-            />
-          </Button>
-          <MachineRowMenu m={m} permissions={permissions} actions={actions} />
-        </div>
-
-        {/* Forces the wrap below `md`; on the grid it is not a cell at all. */}
-        <div className="basis-full max-md:order-4 md:hidden" aria-hidden />
-      </div>
-
-      {expanded ? (
-        <div id={detailsId}>
-          <MachineRowDetails m={m} isDeviceOnline={isDeviceOnline} />
-        </div>
-      ) : null}
-    </div>
   );
 }

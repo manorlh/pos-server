@@ -15,6 +15,9 @@ closed (shift close, X / Z, card transmission), so no money is left unaccounted 
   lent to an event out of a permanent shop.
 * **Last day.** The license is valid through `license_expires_on` (the whole day, the
   shop's local time is the till's to apply); it ends the day after.
+* **Not a till license** (`countsAsTillLicense: false`): a dedicated local server ("שרת מקומי",
+  P:/specs/dedicated-local-server.md §10.4) and a display device. A license's end never stops a
+  local server: it sells nothing, and the tills need it to close the day.
 """
 from __future__ import annotations
 
@@ -88,13 +91,19 @@ def effective_license(db: Session, machine: POSMachine) -> Dict[str, Any]:
     if tenant is not None:
         candidates.append(("tenant", tenant))
 
+    from app.services.local_server_device import counts_as_till_license
+
+    counts = counts_as_till_license(machine)
     best = None
     for source, entity in candidates:
         ends = _temporary_end(entity)
         if ends is not None and (best is None or ends < best[0]):
             best = (ends, source, entity)
     if best is None:
-        return {"type": PERMANENT, "expiresOn": None, "source": None, "name": None, "warnDays": WARN_DAYS}
+        return {
+            "type": PERMANENT, "expiresOn": None, "source": None, "name": None, "warnDays": WARN_DAYS,
+            "countsAsTillLicense": counts,
+        }
     ends, source, entity = best
     return {
         "type": TEMPORARY,
@@ -102,4 +111,5 @@ def effective_license(db: Session, machine: POSMachine) -> Dict[str, Any]:
         "source": source,
         "name": getattr(entity, "name", None),
         "warnDays": WARN_DAYS,
+        "countsAsTillLicense": counts,
     }

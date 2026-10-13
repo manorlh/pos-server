@@ -269,6 +269,40 @@ FISCAL_SYNC_PATH = [Depends(require_fiscal_machine)]
 FISCAL_MACHINE_TOKEN = [Depends(require_fiscal_machine_token)]
 
 
+# ── "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.2) ─────────────────────────
+# A dedicated local server is not a till either (403 `local_server_not_a_till` on every fiscal
+# endpoint above), but it serves the shop as its host: the endpoints a host calls — the tables'
+# mirror, the local shop Z, the master's shop Z, a device command's answer — admit it too. A
+# display device stays refused (`device_not_fiscal`).
+
+
+def _refuse_unless_till_or_server(machine: POSMachine) -> POSMachine:
+    from app.services.display_devices import refuse_unless_fiscal
+    from app.services.local_server_device import is_local_server
+
+    if not is_local_server(machine):
+        refuse_unless_fiscal(machine)
+    return machine
+
+
+def require_host_machine(machine: POSMachine = Depends(get_pos_machine_for_sync_path)) -> POSMachine:
+    """`get_pos_machine_for_sync_path`: a till, or a dedicated local server (a host's endpoint)."""
+    return _refuse_unless_till_or_server(machine)
+
+
+def require_host_machine_token(
+    machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+) -> POSMachine:
+    """`get_pos_machine_from_sync_machine_token`: a till, or a dedicated local server."""
+    return _refuse_unless_till_or_server(machine)
+
+
+#: A host's endpoint whose machine comes from `get_pos_machine_for_sync_path`.
+HOST_SYNC_PATH = [Depends(require_host_machine)]
+#: A host's endpoint whose machine comes from `get_pos_machine_from_sync_machine_token`.
+HOST_MACHINE_TOKEN = [Depends(require_host_machine_token)]
+
+
 def _resolve_user_from_bearer_token(token: str, db: Session) -> User:
     """Shared user resolution for Clerk and legacy username tokens (raises on failure)."""
     clerk_user_id = verify_clerk_token(token)

@@ -233,6 +233,17 @@ def claim_device_pairing(
         raise PairingMobileError("Company or shop not found")
     if company.tenant_id != session.tenant_id:
         raise PairingMobileError("Access denied")
+    # "סניף לא פעיל" (app/services/shop_active.py): 409 `shop_inactive` before the machine is
+    # made; the device keeps waiting, and may be claimed into another shop.
+    from app.services import shop_active
+
+    shop_active.refuse_pairing(shop)
+    # "מצב הדרכה": a Windows / browser device never into a shop in training mode (409,
+    # `training_mode.DeviceUnsupported`, nothing created). The QR path is Android's in practice.
+    from app.services import training_mode
+    from app.services.display_devices import platform_of_device_info
+
+    training_mode.check_device_fits(shop, platform_of_device_info(row.device_info))
 
     resolved_machine_name = machine_name or row.machine_name
     pos_machine = create_pos_machine(

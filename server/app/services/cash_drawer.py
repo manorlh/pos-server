@@ -212,11 +212,24 @@ def level_view(db, scope_type: str, scope_id: Any) -> Dict[str, Any]:
             .all()
         )
     inherited = resolve_till_parameters(params, values, above).parameters
+    inherited_sources: Dict[str, str] = {}
+    if scope_type == "machine":
+        # A till with a drawer port of its own: "פתיחת מגירה" unset above it → the device's default.
+        from app.models.pos_machine import POSMachine
+        from app.services.till_parameters import DEVICE_DEFAULT_SOURCE, apply_device_defaults
+
+        machine = db.get(POSMachine, ident)
+        if machine is not None:
+            before = dict(inherited)
+            apply_device_defaults(machine.device_model, params, values, above, inherited)
+            inherited_sources = {k: DEVICE_DEFAULT_SOURCE for k, v in inherited.items() if before.get(k) != v}
     return {
         "scopeType": scope_type,
         "scopeId": str(ident),
         "own": own,
         "inherited": inherited,
+        #: key → "device_default" where the inherited value is the device's default.
+        "inheritedSources": inherited_sources,
         "parameters": [
             {
                 "key": key,
@@ -656,6 +669,8 @@ def event_out(e, labels: Optional[Dict[str, Any]] = None, exceptions: Optional[D
         "shopName": (labels.get("shops") or {}).get(e.shop_id),
         "machineId": str(e.machine_id),
         "machineName": getattr((labels.get("machines") or {}).get(e.machine_id), "name", None),
+        # The till's register number ("קופה 2"), for the report's export.
+        "posNumber": getattr((labels.get("machines") or {}).get(e.machine_id), "pos_number", None),
         "drawerName": e.drawer_name,
         "deviceId": e.device_id,
         "shiftId": str(e.shift_id) if e.shift_id else None,
@@ -697,6 +712,7 @@ def movement_out(m, labels: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "shopName": (labels.get("shops") or {}).get(m.shop_id),
         "machineId": str(m.machine_id),
         "machineName": getattr((labels.get("machines") or {}).get(m.machine_id), "name", None),
+        "posNumber": getattr((labels.get("machines") or {}).get(m.machine_id), "pos_number", None),
         "shiftId": str(m.shift_id) if m.shift_id else None,
         "employeeId": m.employee_id,
         "employeeName": m.employee_name,

@@ -4,17 +4,21 @@ Two flat keys, each set or inherited per layer (tenant -> company -> shop -> poi
 the deepest wins) like the voucher's payment switches (`payVoucherEnabled`, payment_options.py):
 
     voucherRedeemFlow        "items_first"   — "בחירת פריטים תחילה": the cashier picks the goods, then
-                                               scans the voucher and it is matched to them (today's flow)
+                                               scans the voucher and it is matched to them
                              "voucher_first" — "סריקת שובר תחילה": a scan on the order screen (an empty
                                                order too) opens "בחירת פריטים למימוש שובר" with only
                                                the voucher's eligible goods
-                             "both"          — "שתי הדרכים": either way in, on the same till
+                             "both"          — "שתי הדרכים": either way in, on the same till — a scan on
+                                               an empty order opens the voucher's item picker at once,
+                                               a scan with items in the order goes to the payment
     voucherShowUnavailable   true  — an eligible item that is not for sale now is shown blocked, with
                                      the reason, in the voucher's item picker ("הצג כחסומים")
                              false — it is hidden there ("הסתר")
 
-Unset at every level: "items_first" and true — every till keeps the flow it has until someone
-changes it. They go to the till always resolved (GET /sync/{id}/settings, `settings.<key>`), so the
+Unset at every level: "both" and true (the owner, 13.10.2026 — "items_first" until then made a "one
+from each group" voucher scanned on an empty order go round twice: its goods in, "השלימו את
+הבחירה… ואז סרקו את השובר שוב"). A level that sets "items_first" keeps it: only the unset default
+moved. They go to the till always resolved (GET /sync/{id}/settings, `settings.<key>`), so the
 till never decides what a missing key means; anything but a known value counts as unset (the PATCH
 schema admits only those, but JSONB takes whatever a script puts there). They steer the till's
 screens only: eligibility, quotas and the redemption itself are the same rules on both ways in.
@@ -37,8 +41,8 @@ BOTH = "both"
 #: The values `voucherRedeemFlow` takes; the Android till reads the same three.
 REDEEM_FLOWS: Tuple[str, ...] = (ITEMS_FIRST, VOUCHER_FIRST, BOTH)
 
-#: What an unset key means: today's flow, and unavailable items shown blocked.
-DEFAULT_REDEEM_FLOW = ITEMS_FIRST
+#: What an unset key means: both ways in, and unavailable items shown blocked.
+DEFAULT_REDEEM_FLOW = BOTH
 DEFAULT_SHOW_UNAVAILABLE = True
 
 VOUCHER_FLOW_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_REDEEM_FLOW_KEY, VOUCHER_SHOW_UNAVAILABLE_KEY)
@@ -61,10 +65,14 @@ def _audited_keys() -> Tuple[str, ...]:
     from app.services.payment_options import VOUCHER_SETTING_KEYS
     from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
     from app.services.voucher_station_settings import (
+        VOUCHER_AUTO_APPLY_SETTING_KEYS,
+        VOUCHER_FAST_MODE_SETTING_KEYS,
         VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
         VOUCHER_SOUND_SETTING_KEYS,
         VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
         VOUCHER_STATION_SETTING_KEYS,
+        VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
+        VOUCHER_SUCCESS_SETTING_KEYS,
     )
 
     return (
@@ -74,7 +82,11 @@ def _audited_keys() -> Tuple[str, ...]:
         *VOUCHER_STATION_SETTING_KEYS,
         *VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
         *VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+        *VOUCHER_AUTO_APPLY_SETTING_KEYS,
+        *VOUCHER_SUCCESS_SETTING_KEYS,
+        *VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
         *VOUCHER_SOUND_SETTING_KEYS,
+        *VOUCHER_FAST_MODE_SETTING_KEYS,
     )
 
 

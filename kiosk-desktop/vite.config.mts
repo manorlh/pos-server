@@ -26,6 +26,9 @@ export const sharedAlias = {
   '@': client,
 };
 
+/** One copy of each, this package's (the shared screens' hooks and the renderer must share one React). */
+export const sharedDedupe = ['react', 'react-dom', 'lucide-react', 'qrcode.react', 'clsx', 'tailwind-merge'];
+
 /**
  * `virtual:kiosk-strings`: the kiosk's Hebrew texts taken from the dashboard's messages at build
  * time — `kiosks.builtin` (the screens' built-in texts) and `kiosks.preview` (the preview's
@@ -77,7 +80,7 @@ export default defineConfig(({ mode }) => ({
   },
   resolve: {
     alias: sharedAlias,
-    dedupe: ['react', 'react-dom', 'lucide-react', 'qrcode.react', 'clsx', 'tailwind-merge'],
+    dedupe: sharedDedupe,
   },
   json: { namedExports: true, stringify: false },
   server: {

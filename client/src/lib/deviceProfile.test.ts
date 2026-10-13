@@ -38,6 +38,7 @@ import {
   pinpadHostError,
   pinpadPortError,
   roleNeedsShop,
+  isLocalServer,
   splitDisplayDevices,
   platformsFor,
   webKioskLink,
@@ -215,7 +216,8 @@ describe('iMin / LANDI / Feitian docks (app/models/builtin_printers.py)', () => 
 
 describe('roles', () => {
   it('a till, a kiosk, a KDS or the ready / not-ready board', () => {
-    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display']);
+    assert.deepEqual([...DEVICE_ROLES], ['till', 'kiosk', 'kds', 'order_status_board', 'customer_display', 'local_server']);
+    assert.equal(deviceRoleOf('local_server'), 'local_server');
     assert.equal(deviceRoleOf('customer_display'), 'customer_display');
     assert.equal(deviceRoleOf('kiosk'), 'kiosk');
     assert.equal(deviceRoleOf(' TILL '), 'till');
@@ -226,7 +228,12 @@ describe('roles', () => {
   });
 
   it('a KDS and the board are not tills, not accounting systems', () => {
-    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display']);
+    assert.deepEqual([...NON_FISCAL_ROLES], ['kds', 'order_status_board', 'customer_display', 'local_server']);
+    // "שרת מקומי" (P:/specs/dedicated-local-server.md): not a till either — no sales, no Z, no license.
+    assert.equal(isFiscalRole('local_server'), false);
+    assert.equal(isLocalServer({ deviceRole: 'local_server' }), true);
+    assert.equal(isLocalServer({ deviceRole: 'kds' }), false);
+    assert.equal(isLocalServer(null), false);
     // "מסך לקוח" (P:/specs/customer-display.md §4): a screen too — no sales, no Z.
     assert.equal(isFiscalRole('customer_display'), false);
     assert.equal(isFiscalRole('till'), true);
@@ -277,6 +284,8 @@ describe('platforms', () => {
     assert.deepEqual(platformsFor('order_status_board'), ['android', 'windows', 'web']);
     assert.deepEqual([webPathOf('kiosk'), webPathOf('kds'), webPathOf('order_status_board'), webPathOf('till')], ['/k', '/kds', '/board', null]);
     assert.deepEqual(platformsFor('customer_display'), ['android', 'windows', 'web']);
+    // The local server is the Android app in its server role.
+    assert.deepEqual(platformsFor('local_server'), ['android']);
     assert.equal(webPathOf('customer_display'), '/display');
     assert.equal(webScreenLink('http://localhost:3002', 'customer_display', 'ab12'), 'http://localhost:3002/display#pair=AB12');
     assert.equal(webScreenLink('https://pos-cloud-app.vercel.app/', 'kds', 'ab12-cd34'), 'https://pos-cloud-app.vercel.app/kds#pair=AB12CD34');
@@ -391,7 +400,7 @@ describe('adding a device', () => {
 
   it('a KDS and the board need their shop too; a station screen its stations', () => {
     assert.equal(roleNeedsShop('till'), false);
-    for (const role of ['kiosk', 'kds', 'order_status_board'] as const) assert.equal(roleNeedsShop(role), true);
+    for (const role of ['kiosk', 'kds', 'order_status_board', 'local_server'] as const) assert.equal(roleNeedsShop(role), true);
     assert.equal(addDeviceMissing({ ...draft, role: 'kds' }), 'shop');
     assert.equal(addDeviceMissing({ ...draft, role: 'order_status_board' }), 'shop');
     const inShop = { ...draft, companyId: 'c', shopId: 's' };

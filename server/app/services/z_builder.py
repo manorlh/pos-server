@@ -489,7 +489,11 @@ def machine_section(
     """
     cash = till_cash_summary(shifts, with_movements)
     seqs = [s.sequence_number for s in shifts if s.sequence_number is not None]
+    # A self-order kiosk's part says so: printed "קיוסק <name>", as the main till's paper does
+    # (SPEC_INDEPENDENT_TILL §8.13). A till's part has no such key, exactly as before.
+    kiosk = {"kiosk": True} if bool(getattr(machine, "is_kiosk", False)) else {}
     return {
+        **kiosk,
         "machineId": str(machine.id),
         "machineName": machine.name,
         # The register number, or null when the till has none. It used to fall back to

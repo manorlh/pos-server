@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -368,6 +368,60 @@ def resolve_till_parameters(
     return ResolvedParameters(parameters=resolved, updated_at=updated_at)
 
 
+# ── Defaults by device ("פתיחת מגירה") ───────────────────────────────────────
+#
+# The owner (12.10.2026): "ברירת מחדל שיופיע אם יש מדפסת מובנית" — on a till whose own model drives
+# a drawer port (`device_has_cash_drawer_port`: the SUNMI desktops, the iMin desktops), "פתיחת
+# מגירה" left unset at every level (company / shop / point of sale / till) resolves to the
+# option with the "פתיחת מגירה" button. Any value set at any level wins; nothing is stored.
+
+CASH_DRAWER_KEY = "cashDrawer"
+CASH_DRAWER_OFF = "כבוי"
+CASH_DRAWER_ON_CASH = "בתשלום מזומן"
+CASH_DRAWER_WITH_BUTTON = "בתשלום מזומן + כפתור פתיחה"
+#: Where a value came from when it is a device's default, not the parameter's (the dashboard).
+DEVICE_DEFAULT_SOURCE = "device_default"
+
+
+def device_default(key: str, device_model: Any) -> Any:
+    """The value `key` takes on a till of this model when no level sets it; None: the parameter's default."""
+    from app.models.pos_machine import device_has_cash_drawer_port
+
+    if key == CASH_DRAWER_KEY and device_has_cash_drawer_port(device_model):
+        return CASH_DRAWER_WITH_BUTTON
+    return None
+
+
+def _set_on_chain(parameter: TillParameter, values: Iterable[TillParameterValue], chain: TillScopeChain) -> bool:
+    """Whether some level on `chain` holds a value of `parameter` its type accepts."""
+    scopes = set(chain.scopes())
+    ident = as_uuid(parameter.id)
+    return any(
+        as_uuid(row.parameter_id) == ident
+        and (row.scope_type, as_uuid(row.scope_id)) in scopes
+        and _is_valid(parameter.value_type, row.value, parameter.enum_options)
+        for row in values
+    )
+
+
+def apply_device_defaults(
+    device_model: Any,
+    parameters: Iterable[TillParameter],
+    values: Sequence[TillParameterValue],
+    chain: TillScopeChain,
+    resolved: Dict[str, Any],
+) -> None:
+    """`resolved` (one till's map) with the device's defaults in place of the parameters' own, in place."""
+    for parameter in parameters:
+        if not parameter.is_active:
+            continue
+        value = device_default(parameter.key, device_model)
+        if value is None or not _is_valid(parameter.value_type, value, parameter.enum_options):
+            continue
+        if not _set_on_chain(parameter, values, chain):
+            resolved[parameter.key] = value
+
+
 def scope_chain_for_machine(db: Session, machine: POSMachine) -> TillScopeChain:
     """The till, its area, its shop and that shop's company — as they are right now."""
     company_id = None
@@ -382,7 +436,7 @@ def scope_chain_for_machine(db: Session, machine: POSMachine) -> TillScopeChain:
     )
 
 
-def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedParameters:
+def _resolve_raw(db: Session, machine: POSMachine):
     chain = scope_chain_for_machine(db, machine)
     parameters = db.query(TillParameter).all()
     on_chain = [
@@ -391,6 +445,18 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
     ]
     values = db.query(TillParameterValue).filter(or_(*on_chain)).all() if on_chain else []
     resolved = resolve_till_parameters(parameters, values, chain)
+    # "פתיחת מגירה" on a till with a drawer port of its own: on, with the button, unless set.
+    apply_device_defaults(getattr(machine, "device_model", None), parameters, values, chain, resolved.parameters)
+    return parameters, values, resolved
+
+
+def raw_parameters_for_machine(db: Session, machine: POSMachine) -> Dict[str, Any]:
+    """The values as the levels set them — before what the till's role in the shop's LAN changes."""
+    return dict(_resolve_raw(db, machine)[2].parameters)
+
+
+def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedParameters:
+    parameters, values, resolved = _resolve_raw(db, machine)
     if getattr(machine, "independent_till", False):
         # "קופה עצמאית" (app/services/independent_till.py): never a host of the shop's LAN
         # group, and tables only when set at its own level.
@@ -401,8 +467,13 @@ def till_parameters_for_machine(db: Session, machine: POSMachine) -> ResolvedPar
         # "לא משמש כשרת מקומי" (app/services/lan_server.py): never a host of the shop's LAN
         # group either — but still in it, so its tables mode stays as the shop set it.
         from app.services.lan_server import excluded_parameters, is_excluded
+        from app.services.local_shop_z import is_remote_participant, remote_parameters
 
-        if is_excluded(db, machine):
+        if is_remote_participant(machine, raw_parameters=resolved.parameters):
+            # "מרוחקת בזד הסניפי" (SPEC_INDEPENDENT_TILL §8.14): off the shop's LAN — never a host,
+            # and its tables «קופה אחת» or off (no LAN tables host for it).
+            resolved.parameters = remote_parameters(resolved.parameters)
+        elif is_excluded(db, machine):
             resolved.parameters = excluded_parameters(resolved.parameters)
     # "קוד טכנאי לקיוסק" (app/services/kiosk_technician.py): never sent in clear — the till
     # gets the code's hash, salted with its own id.
@@ -529,6 +600,9 @@ class BuiltinParameter:
     #: Changed by a super admin or a distributor only, whatever route writes it
     #: (`kioskTillModeEnabled` — app/services/kiosk_till_mode.py ADMIN_ONLY_KEYS).
     admin_only: bool = False
+    #: An enum whose stored options are codes the till reads (`sellAllTab`: first / last /
+    #: hidden): the Hebrew the dashboard shows for each (`enum_labels`, `enumLabels`).
+    enum_labels: Optional[Dict[str, str]] = field(default=None, hash=False, compare=False)
 
 
 #: Parameters the cloud itself reads or the dashboard edits specially. Created once if
@@ -883,7 +957,9 @@ BUILTIN_PARAMETERS: Tuple[BuiltinParameter, ...] = (
             "תשלום שבו עבר מזומן (כולל עודף והחזר כספי). «+ כפתור פתיחה» — בנוסף, \"פתיחת מגירה\" "
             "בתפריט הקופה; כל פתיחה ידנית נרשמת בענן כחריגה \"מגירה נפתחה ללא מכירה\". "
             "חל על מדפסת החשבוניות שבפרמטר; מגירה של מדפסת חשבוניות מדף \"מדפסות\" נפתחת תמיד בתשלום מזומן "
-            "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח."
+            "ויש לה כפתור — וכשיש לקופה כמה מגירות, היא שואלת איזו לפתוח. "
+            "ברירת מחדל לפי המכשיר: בקופה שהמגירה מחוברת אליה ישירות (שקע מגירה במכשיר — SUNMI / iMin "
+            "שולחניות) — «בתשלום מזומן + כפתור פתיחה»; בכל מכשיר אחר — «כבוי». ערך שנקבע בכל רמה גובר."
         ),
     ),
     BuiltinParameter(
@@ -1679,6 +1755,13 @@ from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ON
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
 
+# "העברת שרת מקומי מהקופה" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §9):
+# `off` — the cloud only (the till's take-over answers 410); `manager` — the till's own button, a
+# manager approving, the same full move as the dashboard's switch.
+from app.services.local_server_switch import PARAMETER_SPECS as _LOCAL_SERVER_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _LOCAL_SERVER_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).
@@ -1744,8 +1827,54 @@ BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
     ),
 )
 
+# "לשונית 'הכל' בקטלוג ההזמנה" (the owner, 13.10.2026): where the till's category bar puts "הכל"
+# (every product) — first as today, last, or not at all (the order opens on the first category;
+# search still covers every product). Read by the till only, on every order screen with a
+# category bar: phone, tablet, a table's order and the designed templates (till-design).
+SELL_ALL_TAB_KEY = "sellAllTab"
+SELL_ALL_TAB_FIRST = "first"
+SELL_ALL_TAB_LAST = "last"
+SELL_ALL_TAB_HIDDEN = "hidden"
+SELL_ALL_TAB_OPTIONS = (SELL_ALL_TAB_FIRST, SELL_ALL_TAB_LAST, SELL_ALL_TAB_HIDDEN)
+SELL_ALL_TAB_LABELS = {
+    SELL_ALL_TAB_FIRST: "ראשונה — כמו היום",
+    SELL_ALL_TAB_LAST: "אחרונה",
+    SELL_ALL_TAB_HIDDEN: "מוסתרת — נפתחת המחלקה הראשונה",
+}
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + (
+    BuiltinParameter(
+        key=SELL_ALL_TAB_KEY,
+        label="לשונית 'הכל' בקטלוג ההזמנה",
+        value_type="enum",
+        enum_options=SELL_ALL_TAB_OPTIONS,
+        enum_labels=SELL_ALL_TAB_LABELS,
+        default_value=SELL_ALL_TAB_FIRST,
+        description=(
+            "איפה מופיעה לשונית \"הכל\" (כל הפריטים) בסרגל המחלקות של ההזמנה בקופה — בטלפון, בטאבלט, "
+            "בהזמנת שולחן ובתבניות המעוצבות (\"עיצוב קופה\"). "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_FIRST]}» (ברירת מחדל) — \"הכל\" לפני כל המחלקות. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_LAST]}» — \"הכל\" אחרי המחלקה האחרונה. "
+            f"«{SELL_ALL_TAB_LABELS[SELL_ALL_TAB_HIDDEN]}» — אין לשונית \"הכל\", וההזמנה נפתחת על המחלקה "
+            "הראשונה; החיפוש עדיין מחפש בכל המוצרים. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
 #: Parameters a super admin or a distributor alone may change (BuiltinParameter.admin_only).
 ADMIN_ONLY_KEYS = frozenset(spec.key for spec in BUILTIN_PARAMETERS if spec.admin_only)
+
+#: The Hebrew of each option of a built-in enum whose options are codes (`BuiltinParameter.enum_labels`).
+_ENUM_LABELS: Dict[str, Dict[str, str]] = {
+    spec.key: dict(spec.enum_labels) for spec in BUILTIN_PARAMETERS if spec.enum_labels
+}
+
+
+def enum_labels(key: str) -> Optional[Dict[str, str]]:
+    """What the dashboard shows for each option of this parameter, when its options are codes."""
+    labels = _ENUM_LABELS.get(key)
+    return dict(labels) if labels else None
 
 
 def validate_keyed_value(key: str, value: Any) -> Any:
@@ -1770,6 +1899,10 @@ def validate_keyed_value(key: str, value: Any) -> Any:
             return zcredit_reconcile.validate_time(value)
         except ValueError as exc:
             raise TillParameterValueError(str(exc)) from exc
+
+    # The till knows these three and no other, even if the definition's options were re-edited.
+    if key == SELL_ALL_TAB_KEY and value is not None and value not in SELL_ALL_TAB_OPTIONS:
+        raise TillParameterValueError(f"{SELL_ALL_TAB_KEY} must be one of {', '.join(SELL_ALL_TAB_OPTIONS)}")
     return value
 
 

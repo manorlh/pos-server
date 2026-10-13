@@ -91,7 +91,7 @@ def _by_name(w, name):
 
 def test_the_restaurant_and_bar_template_is_the_royal_spirit_demo():
     templates = {t["key"]: t for t in DM.templates_out()["templates"]}
-    assert set(templates) == {"restaurant", "bar", "cafe", "restaurant_bar"}
+    assert set(templates) == {"restaurant", "bar", "cafe", "restaurant_bar", "snack_bar"}
     assert templates["restaurant_bar"]["counts"] == {
         "categories": 14, "products": 76, "groups": 22, "meals": 4, "upsells": 2, "notes": 6, "courses": 3,
     }
@@ -322,8 +322,10 @@ def test_a_group_the_customer_linked_to_their_own_product_is_kept(w):
 
 
 def test_leaving_training_mode_can_take_the_demo_menu_with_it(w, monkeypatch):
-    # A shop put in training mode before it was blocked (TM.AVAILABLE) can still leave it.
-    monkeypatch.setattr(TM, "AVAILABLE", True)
+    # Its tills run a build with training mode (their heartbeat said so), so it may be turned on.
+    for till in w.tills:
+        till.capabilities = [TM.CAPABILITY]
+    w.db.flush()
     TM.start(w.db, w.shop, w.admin)
     _load(w, "bar")
     preview = R.get_disable_preview(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)

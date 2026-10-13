@@ -76,6 +76,7 @@ from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
 from app.services import item_ticket
+from app.services import shop_active
 from app.services.areas import as_utc, get_area, machine_area_for_sync
 from app.schemas.transaction import (
     TransactionsBatchEnvelope,
@@ -2412,6 +2413,7 @@ def get_settings_sync(
             business_info=None,
             area=area,
             training_mode=bool(shop.training_mode),
+            shop_active=shop_active.is_active(shop),
         )
 
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
@@ -2429,8 +2431,8 @@ def get_settings_sync(
     # either of these on, the till is a voucher-only till.
     effective.update(resolve_voucher_options(all_settings))
     # How the till enters a voucher's redemption ("דרך מימוש שובר", and whether eligible items
-    # not for sale show blocked or hidden): always sent resolved — unset = "items_first" / true,
-    # so a till keeps today's flow until someone changes it (app/services/voucher_redeem_settings.py).
+    # not for sale show blocked or hidden): always sent resolved — unset = "both" / true, so a till
+    # no level set it for gets "both" on its next full pull (app/services/voucher_redeem_settings.py).
     from app.services.voucher_redeem_settings import resolve_voucher_flow
 
     effective.update(resolve_voucher_flow(all_settings))
@@ -2440,20 +2442,36 @@ def get_settings_sync(
     # Closing on their own when vouchers cover the sale (unset = "on", today) and the scan-only
     # voucher station (unset = "off"), and whether the station also sells items paid for at the
     # regular price after the voucher (`voucherStationPaidItems`, unset = "off"), and the cashier's
-    # "מה מגיע ללקוח" card on a voucher scan (`voucherShowEntitlement`, unset = "on"), and the strong
-    # approve / reject sounds of a voucher redemption (`voucherSoundApprove` / `voucherSoundReject`,
-    # unset = "on"): always sent resolved (app/services/voucher_station_settings.py).
+    # "מה מגיע ללקוח" card on a voucher scan (`voucherShowEntitlement`, unset = "on"), a voucher
+    # scanned over a cart applied at once with no redeem sheet (`voucherAutoApply`, unset = "on"), the
+    # green success screen after a voucher sale and how long it stays (`voucherSuccessScreen`, unset =
+    # "always"; `voucherSuccessSeconds`, an int, unset = 3) and how it closes (`voucherSuccessDismiss`,
+    # unset = "auto"), and the strong approve / reject sounds of
+    # a voucher redemption (`voucherSoundApprove` / `voucherSoundReject`, unset = "on"), and the
+    # voucher fast mode with its station (`voucherFastMode` unset = "station", `voucherFastAutoClose`
+    # "on", `voucherStationCamera` "tap", `voucherStationCameraFacing` "back", `voucherVibrate` "both",
+    # `voucherSoundBoost` "on", `voucherStationCatalogSwitch` "manager", `voucherStationHeader` "logo",
+    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0): always sent
+    # resolved (app/services/voucher_station_settings.py).
     from app.services.voucher_station_settings import (
+        resolve_auto_apply,
         resolve_show_entitlement,
         resolve_station_paid_items,
+        resolve_voucher_fast_mode,
         resolve_voucher_sounds,
         resolve_voucher_station,
+        resolve_voucher_success,
+        resolve_voucher_success_dismiss,
     )
 
     effective.update(resolve_voucher_station(all_settings))
     effective.update(resolve_station_paid_items(all_settings))
     effective.update(resolve_show_entitlement(all_settings))
+    effective.update(resolve_auto_apply(all_settings))
+    effective.update(resolve_voucher_success(all_settings))
+    effective.update(resolve_voucher_success_dismiss(all_settings))
     effective.update(resolve_voucher_sounds(all_settings))
+    effective.update(resolve_voucher_fast_mode(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))
@@ -2496,6 +2514,9 @@ def get_settings_sync(
             effective[key] = value
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
+    # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): the shop's flag likewise — false
+    # locks the device; only the super admin turning the shop back on releases it.
+    effective["shopActive"] = shop_active.is_active(shop)
     business_info = build_business_info(company, shop, all_settings)
     # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
     # beside the identity. The till picks its document type and VAT by it.
@@ -2522,6 +2543,7 @@ def get_settings_sync(
         business_info=business_info,
         area=area,
         training_mode=bool(shop.training_mode),
+        shop_active=shop_active.is_active(shop),
         terminal_config_sources=terminal_sources,
     )
 

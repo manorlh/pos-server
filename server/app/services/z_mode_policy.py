@@ -47,6 +47,22 @@ def check_switch(db: Session, user: User, machine: POSMachine, mode: Optional[st
                 "message": "הקופה מוגדרת כקופה עצמאית — מצרפים אותה ל-Z הסניפי בכרטיס \"קופות בזד הסניפי\" בדף הסניף.",
             },
         )
+    from app.services.local_shop_z import is_remote_participant
+
+    if mode == till_z.Z_MODE_TILL and is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי" (not on the local server): a Z of its own here would put it back on
+        # the shop's LAN behind the card's back — off the server with its own Z is "קופה עצמאית".
+        raise TillZRefused(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": "remote_till",
+                "machineId": str(machine.id),
+                "message": (
+                    "הקופה מוגדרת \"מרוחקת בזד הסניפי\" (לא מחוברת לשרת המקומי) — את ה-Z שלה משנים בכרטיס "
+                    "\"קופות בזד הסניפי\" בדף הסניף."
+                ),
+            },
+        )
     open_shift = (
         db.query(Shift)
         .filter(Shift.machine_id == machine.id, Shift.status == ShiftStatus.OPEN)

@@ -132,6 +132,9 @@ class TillParameterOut(BaseModel):
     description: Optional[str] = None
     value_type: str = Field(..., alias="valueType")
     enum_options: Optional[List[str]] = Field(None, alias="enumOptions")
+    #: For a built-in enum whose options are codes the till reads (`sellAllTab`): option → the
+    #: Hebrew the dashboard shows (`app.services.till_parameters.enum_labels`); null otherwise.
+    enum_labels: Optional[Dict[str, str]] = Field(None, alias="enumLabels")
     default_value: Any = Field(None, alias="defaultValue")
     is_active: bool = Field(True, alias="isActive")
     #: How many levels set a value for it — for the list, and the delete confirmation.

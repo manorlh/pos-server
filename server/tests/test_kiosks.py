@@ -204,6 +204,8 @@ def test_defaults_are_valid_and_complete():
         "waitLogo": {"media": None, "style": "plain"},
         # "פיצול תשלום בכרטיסים" (§23.7): its options; the method itself is off (not in `methods`).
         "splitCard": {"counts": [2, 3, 4], "otherAmount": True, "minPerCardAgorot": 1000},
+        # "דלג על בחירת אמצעי תשלום" (P:/specs/kiosk-rail-motion.md §3א): auto — today's rule.
+        "paymentChooserSkip": "auto",
     }
     assert cfg["printing"] == {
         "bonMode": "routing", "bonPrinterId": None, "bonCopies": 1, "receiptPrinterId": None,

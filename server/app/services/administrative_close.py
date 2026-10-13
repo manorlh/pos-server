@@ -46,12 +46,24 @@ SILENT_BEFORE_CLOSE = timedelta(hours=2)
 
 
 def check_can_close_administratively(
-    machine: POSMachine, shift: Shift, *, force: bool, now: Optional[datetime] = None
+    machine: POSMachine,
+    shift: Shift,
+    *,
+    force: bool,
+    now: Optional[datetime] = None,
+    silent_before: Optional[timedelta] = None,
 ) -> None:
-    """Raise if this shift must not be closed from the cloud. Called before any write."""
+    """
+    Raise if this shift must not be closed from the cloud. Called before any write.
+
+    `silent_before`: how long the till must have been silent — `SILENT_BEFORE_CLOSE` unless the
+    caller has its own, shorter rule ("סגירת משמרת מהענן": 5 minutes, app/services/
+    local_server_switch.py, which refuses a till the cloud still hears before calling here).
+    """
+    silent = SILENT_BEFORE_CLOSE if silent_before is None else silent_before
     if shift.status != ShiftStatus.OPEN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="shift_not_open")
-    if is_online(machine.last_heartbeat_at, now=now) and not force:
+    if silent_before is None and is_online(machine.last_heartbeat_at, now=now) and not force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -64,12 +76,17 @@ def check_can_close_administratively(
     if last is not None and not force:
         if last.tzinfo is None:
             last = last.replace(tzinfo=timezone.utc)
-        if reference - last < SILENT_BEFORE_CLOSE:
+        if reference - last < silent:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
                     "terminal_recently_seen — wait for it to be silent for "
-                    f"{int(SILENT_BEFORE_CLOSE.total_seconds() // 3600)}h, or pass force."
+                    + (
+                        f"{int(silent.total_seconds() // 3600)}h"
+                        if silent >= timedelta(hours=1)
+                        else f"{int(silent.total_seconds() // 60)} minutes"
+                    )
+                    + ", or pass force."
                 ),
             )
 
@@ -83,17 +100,24 @@ def close_shift_administratively(
     force: bool = False,
     note: Optional[str] = None,
     now: Optional[datetime] = None,
+    silent_before: Optional[timedelta] = None,
+    counted_cash: Optional[Decimal] = None,
+    extra_basis: Optional[dict] = None,
 ) -> Tuple[Shift, bool]:
     """
     Close `shift` with an X built from the cloud's documents. Returns `(shift, created)`.
 
     Idempotent: a shift that is already closed is returned untouched with `created`
     False, so a double click cannot rewrite a close.
+
+    `counted_cash`: a drawer someone did count by hand ("סגירת משמרת מהענן" lets the manager
+    type it) — kept with its variance, and the close is then not unattended. `extra_basis` is
+    merged into the recorded basis (the cloud close's own marks).
     """
     if shift.status == ShiftStatus.CLOSED:
         return shift, False
 
-    check_can_close_administratively(machine, shift, force=force, now=now)
+    check_can_close_administratively(machine, shift, force=force, now=now, silent_before=silent_before)
 
     reference = now or datetime.now(timezone.utc)
     totals = compute_totals(db, [shift.id])
@@ -123,6 +147,7 @@ def close_shift_administratively(
         "note": note,
         "reconstructedAt": reference.isoformat(),
         "reconstructedBy": who,
+        **(extra_basis or {}),
     }
 
     for column, value in totals.as_x().items():
@@ -133,10 +158,15 @@ def close_shift_administratively(
     shift.closed_by = who
     shift.expected_cash = expected
     # Nobody opened a drawer. Unknown, not `expected` — that would assert a variance of
-    # zero that no one verified.
-    shift.counted_cash = None
-    shift.discrepancy = None
-    shift.unattended = True
+    # zero that no one verified. Unless someone counted it by hand and typed it in.
+    if counted_cash is not None:
+        shift.counted_cash = Decimal(counted_cash).quantize(Decimal("0.01"))
+        shift.discrepancy = shift.counted_cash - Decimal(expected).quantize(Decimal("0.01"))
+        shift.unattended = False
+    else:
+        shift.counted_cash = None
+        shift.discrepancy = None
+        shift.unattended = True
     shift.reconstructed = True
     shift.reconstructed_by = who
     shift.reconstruction_basis = basis

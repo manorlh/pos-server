@@ -168,6 +168,34 @@ export interface PrepaidVoucherBatch extends PrepaidBatchTerms {
   testMode?: boolean;
   testModeSince?: string | null;
   testModeBy?: string | null;
+  /**
+   * "סדרה פעילה" (components/dashboard/prepaid-vouchers/batch-active.tsx): off = a pause of the batch's
+   * own is open — no till redeems it. Absent (an older server): on.
+   */
+  active?: boolean;
+  /** While off: that pause (the red banner's reason, since when, by whom). */
+  inactive?: PrepaidBatchInactive | null;
+  /** A pause of its event / production / type that stops it too (read only on the batch's page). */
+  pausedBy?: PrepaidBatchPausedBy | null;
+}
+
+/** "הסדרה כבויה": the open pause of the batch's own. */
+export interface PrepaidBatchInactive {
+  pauseId: string;
+  reason: string;
+  since: string | null;
+  by: string | null;
+  until: string | null;
+}
+
+/** "מושהית דרך אירוע: …" — a pause above the batch. */
+export interface PrepaidBatchPausedBy {
+  pauseId: string;
+  kind: 'event' | 'production' | 'type';
+  kindText?: string | null;
+  name: string;
+  reason: string;
+  until: string | null;
 }
 
 /** "הוסף שוברים לסדרה": one run of more vouchers, as the server recorded it (its audit line). */
@@ -544,6 +572,15 @@ export interface PrepaidRedemption {
   discountAmount?: number | null;
   /** What the cloud's re-check found when the sale confirmed it (late, over_use, …). */
   flags?: string[];
+  /** "מימוש ידני מהענן" (the scanner failed): "dashboard", who, why, the rules a super admin forced. */
+  source?: string | null;
+  manual?: boolean;
+  manualReason?: string | null;
+  manualBy?: string | null;
+  manualOverride?: string[];
+  reverseReason?: string | null;
+  reversedBy?: string | null;
+  shopName?: string | null;
 }
 
 export interface PrepaidVoucher {
@@ -692,10 +729,26 @@ export type PrepaidBatchEditBody = Partial<Omit<PrepaidBatchCreate, 'companyId' 
     applyToPartial?: boolean;
     /** "מצב בדיקה" on / off ("סיום בדיקה והפעלה"). */
     testMode?: boolean;
+    /** "סדרה פעילה" on / off, with why (blank: "הסדרה כובתה מהענן"). */
+    active?: boolean;
+    activeReason?: string | null;
   };
 
 export async function updatePrepaidBatch(id: string, body: PrepaidBatchEditBody): Promise<PrepaidVoucherBatch> {
   const { data } = await api.patch<PrepaidVoucherBatch>(`/prepaid-vouchers/batches/${id}`, body);
+  return data;
+}
+
+/**
+ * "סדרה פעילה" on / off (`PUT …/active`, "ערוך סדרה"'s permission). Idempotent: already so → `changed: false`.
+ * [reason]: why it is turned off (blank: "הסדרה כובתה מהענן"); on, the resume's note.
+ */
+export async function setPrepaidBatchActive(
+  id: string, active: boolean, reason?: string | null,
+): Promise<PrepaidVoucherBatch & { changed: boolean }> {
+  const { data } = await api.put<PrepaidVoucherBatch & { changed: boolean }>(`/prepaid-vouchers/batches/${id}/active`, {
+    active, reason: reason?.trim() ? reason.trim() : null,
+  });
   return data;
 }
 
@@ -816,7 +869,9 @@ export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
   | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off'
   /** "שכפול סדרה": on the new batch (`details.batchId` / `batchName`: the source) and on the source (the new one). */
-  | 'duplicated_from' | 'duplicated_to';
+  | 'duplicated_from' | 'duplicated_to'
+  /** "מימוש ידני מהענן" and its undo (`details.summary`, `details.overrideText` when forced). */
+  | 'manual_redeem' | 'manual_redeem_reversed';
 
 export interface PrepaidBatchEvent {
   id: string;

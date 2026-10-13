@@ -77,13 +77,34 @@ export function draftToValue(
   }
 }
 
-/** How a stored value reads in a table. */
+/**
+ * An enum value's Hebrew words, where the parameter's values are codes: the server's own
+ * `enumLabels` for a built-in that sends them (`sellAllTab`), else
+ * `tillParameters.enumLabels.<key>.<value>` in the messages (`tillServerTakeover`: `off` /
+ * `manager`), else the value.
+ */
+export function useEnumLabel() {
+  const t = useTranslations('tillParameters');
+  return (key: string | undefined, value: string, enumLabels?: Record<string, string> | null): string => {
+    if (enumLabels?.[value]) return enumLabels[value];
+    if (!key || !/^[A-Za-z0-9_]+$/.test(key) || !/^[A-Za-z0-9_]+$/.test(value)) return value;
+    const path = `enumLabels.${key}.${value}`;
+    return t.has(path) ? `${t(path)} (${value})` : value;
+  };
+}
+
+/** How a stored value reads in a table (an enum code as its Hebrew, given `enumLabels` or `key`). */
 export function useFormatParameterValue() {
   const tc = useTranslations('common');
-  return (value: TillParameterScalar | null | undefined): string => {
+  const enumLabel = useEnumLabel();
+  return (
+    value: TillParameterScalar | null | undefined,
+    key?: string,
+    enumLabels?: Record<string, string> | null,
+  ): string => {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'boolean') return value ? tc('yes') : tc('no');
-    return String(value);
+    return typeof value === 'string' ? enumLabel(key, value, enumLabels) : String(value);
   };
 }
 
@@ -105,6 +126,8 @@ export function ParameterImageThumb({ url, alt }: { url: string; alt: string }) 
 export function ParameterValueInput({
   type,
   enumOptions,
+  enumLabels,
+  parameterKey,
   imageKind,
   draft,
   onChange,
@@ -113,6 +136,10 @@ export function ParameterValueInput({
 }: {
   type: TillParameterValueType;
   enumOptions?: string[] | null;
+  /** Option → the Hebrew shown for it (a built-in whose options are codes); the value stays the code. */
+  enumLabels?: Record<string, string> | null;
+  /** The parameter's key: an enum of codes shows its Hebrew words (`useEnumLabel`). */
+  parameterKey?: string;
   /** Set for an image parameter: its branding upload kind. */
   imageKind?: BrandingImageKind | 'media' | null;
   draft: ValueDraft;
@@ -123,6 +150,7 @@ export function ParameterValueInput({
   const t = useTranslations('tillParameters');
   const tc = useTranslations('common');
   const tb = useTranslations('branding');
+  const enumLabel = useEnumLabel();
 
   if (imageKind === 'media') {
     return <MediaField value={draft.text} onChange={(url) => onChange({ ...draft, text: url })} disabled={disabled} />;
@@ -152,7 +180,7 @@ export function ParameterValueInput({
   }
 
   if (type === 'enum') {
-    const items = (enumOptions ?? []).map((o) => ({ value: o, label: o }));
+    const items = (enumOptions ?? []).map((o) => ({ value: o, label: enumLabel(parameterKey, o, enumLabels) }));
     return (
       <Select
         value={draft.text || null}

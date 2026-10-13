@@ -6,9 +6,15 @@ and the shop's main till among the participants.
 GET /shops/{shop_id}/z-participation → every till of the shop with its role
                                        (`shop_z` | `independent` | `own_z`), the main till,
                                        the shop's local mode
-PUT /shops/{shop_id}/z-participation → `{participants?, independent?, mainTillId?}` — the
-                                       super admin's alone, all or nothing; a refusal names
-                                       the till and says why in Hebrew (`message`)
+PUT /shops/{shop_id}/z-participation → `{participants?, independent?, ownZ?, remote?, mainTillId?}`
+                                       — the super admin's alone, all or nothing, every move
+                                       over a clean break; a refusal names the till and says
+                                       why in Hebrew (`message`)
+
+Each till has two settings (P:/specs/dedicated-local-server.md §12): "מחוברת לשרת המקומי" and
+"ה-Z". In the shop Z on the server — `participants`; in the shop Z off it ("מרוחקת בזד הסניפי",
+the device preset `remote_shop_z`) — a participant on the `remote` list; its own Z on the
+server ("Z בקופה, בתוך הסניף") — `ownZ`; its own Z off it ("קופה עצמאית") — `independent`.
 
 The shop's tills are told (their parameters change: the host flags, `tablesMode`).
 
@@ -52,6 +58,8 @@ class ZParticipationIn(BaseModel):
     participants: List[uuid.UUID] = Field(default_factory=list)
     #: These tills become independent ("קופה עצמאית").
     independent: List[uuid.UUID] = Field(default_factory=list)
+    #: These tills become "Z בקופה, בתוך הסניף": their own Z, on the shop's local server.
+    own_z: List[uuid.UUID] = Field(default_factory=list, alias="ownZ")
     #: Absent: the main till stays; null: none; a till: it (a participant after the save).
     main_till_id: Optional[uuid.UUID] = Field(None, alias="mainTillId")
     #: The super admin moves the shop's Z production although its producer may still hold
@@ -279,7 +287,7 @@ def put_z_participation(
     try:
         IT.apply_shop(
             db, current_user, shop,
-            participants=body.participants, independent=body.independent,
+            participants=body.participants, independent=body.independent, own_z=body.own_z,
             force_producer_switch=body.force_producer_switch, **kwargs,
         )
     except IT.IndependentSwitchRefused as refused:

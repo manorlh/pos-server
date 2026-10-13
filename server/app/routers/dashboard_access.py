@@ -215,6 +215,17 @@ def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.
     """
     if actor.role == UserRole.SUPER_ADMIN:
         return
+    # "העברת שרת מקומי" and the like (`DS.SUPER_ADMIN_GRANTED`): the super admin's alone to give,
+    # with or without "גישה מלאה" (which never implies them, so it cannot carry them either).
+    # Keeping what the user's own profile already names is fine.
+    special = {k: v for k, v in DS.clean_sections(values["sections"]).items() if k in DS.SUPER_ADMIN_GRANTED}
+    kept = DS.clean_sections(current.sections) if current is not None else {}
+    raised = DA.sections_over(special, kept, {})
+    if raised:
+        labels = ", ".join(DS.SECTION_BY_ID[sid].label for sid in raised)
+        raise _error(
+            "grant_exceeds_own", f"רק מנהל-על מעניק את ההרשאה: {labels}.", status.HTTP_403_FORBIDDEN
+        )
     mine = DA.effective_access(db, actor)
     limit = DA.grantable(mine)
     already_full = current is not None and not current.restricted
@@ -224,7 +235,8 @@ def check_grant(db: Session, actor: User, values: dict, *, current: Optional[DA.
                 "grant_exceeds_own", "גישה מלאה אפשר לתת רק למי שיש לו גישה מלאה בעצמו.", status.HTTP_403_FORBIDDEN
             )
     else:
-        had = DA.grantable(current) if current is not None else {}
+        # What the user holds now, the super admin's own grants included: keeping one is never raising it.
+        had = DA.grantable(current, super_admin=True) if current is not None else {}
         over = DA.sections_over(values["sections"], had, limit)
         if over:
             labels = ", ".join(DS.SECTION_BY_ID[sid].label for sid in over)
@@ -419,7 +431,7 @@ def get_profile(
         "profile": DA.profile_out(profile),
         "orgScopeAllowed": user.role == UserRole.COMPANY_MANAGER,
         # What this caller may give (the dialog greys out the rest; the PUT refuses it).
-        "grantable": DA.grantable(mine),
+        "grantable": DA.grantable(mine, super_admin=is_admin),
         "canGrantFull": not mine.restricted,
         "canGrantOrgWide": is_admin or current_user.role == UserRole.DISTRIBUTOR or (
             current_user.role == UserRole.COMPANY_MANAGER and mine.org_wide

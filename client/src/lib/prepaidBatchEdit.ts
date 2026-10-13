@@ -6,12 +6,14 @@
  * Free changes (texts, print settings) are saved at once; anything else is confirmed first with
  * that list ("ישפיע על 340 שוברים שטרם מומשו").
  */
+import { isoDate, parseDateInput } from './format';
+import { dayBoundIso } from './prepaidBatchDuplicate';
 
-export type PrepaidEditCategory = 'free' | 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'quantity' | 'price' | 'test';
+export type PrepaidEditCategory = 'free' | 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'quantity' | 'price' | 'test' | 'active';
 
 /** The order the confirmation lists them in (the cloud's FIELDS order). */
 export const EDIT_CATEGORIES: readonly PrepaidEditCategory[] = [
-  'free', 'validity', 'where', 'rules', 'accounting', 'contents', 'quantity', 'price', 'test',
+  'free', 'validity', 'where', 'rules', 'accounting', 'contents', 'quantity', 'price', 'test', 'active',
 ];
 
 export interface PrepaidBatchEditChange {
@@ -34,6 +36,8 @@ export interface PrepaidBatchEditEffects {
   price?: { fromSerial: number; issued: number };
   /** "מצב בדיקה" on / off: from the next scan. */
   test?: { on: boolean; vouchers: number };
+  /** "סדרה פעילה" on / off: from the next scan the tills redeem it / refuse it. */
+  active?: { on: boolean; vouchers: number };
 }
 
 export interface PrepaidBatchEditPlan {
@@ -74,6 +78,34 @@ export function changedFields<T extends Record<string, unknown>>(base: T, next: 
     if (!sameSetting(base[key], next[key])) out[key] = next[key];
   }
   return out;
+}
+
+/* ── The validity in the form ── */
+
+const DAY_FIRST = /^\d{1,2}[/.]\d{1,2}[/.]\d{4}$/;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}(?:$|T)/;
+
+/**
+ * A batch date as the form's date field (components/ui/date-picker.tsx) holds it: "2026-10-07", the
+ * only form that field reads — a "07/10/2026" there shows as an empty field, which is how "ערוך סדרה"
+ * opened with the batch's validity blank. Takes the stored moment (an ISO date-time: the day it falls
+ * on in Israel, or [timeZone], as the page shows it — not UTC's day), a plain day, or a day as the
+ * dashboard writes it ("07/10/2026"); '' for none or for anything that is not a real day.
+ */
+export function dateFieldValue(value: string | null | undefined, timeZone?: string): string {
+  const s = (value ?? '').trim();
+  if (DAY_FIRST.test(s)) return parseDateInput(s) ?? '';
+  if (ISO_DAY.test(s)) return isoDate(s, timeZone);
+  return '';
+}
+
+/**
+ * The form's validity days as the PATCH carries them: the start of the first day and the end of the
+ * last (as a new batch sends them), null for none. The form's opening snapshot is taken through this
+ * same function, so a day the owner did not touch is never a change ([changedFields] leaves it out).
+ */
+export function editValidity(validFrom: string, validUntil: string): { validFrom: string | null; validUntil: string | null } {
+  return { validFrom: dayBoundIso(validFrom, false), validUntil: dayBoundIso(validUntil, true) };
 }
 
 /** Whether [body] changes what a voucher gives. */

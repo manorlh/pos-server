@@ -1056,11 +1056,16 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
     """
     The printing settings as this page edits them: each parameter's definition, what the
     shop inherits from above it (`inherited`: the company's value, else the default), and
-    the values set at the shop, its areas and its tills.
+    the values set at the shop, its areas and its tills. Per till: its model's own defaults
+    (`deviceDefaults`, below every level — "פתיחת מגירה" on a till with a drawer port) and
+    what it takes now (`effective`, with `effectiveSource`).
     """
+    from app.services.till_parameters import DEVICE_DEFAULT_SOURCE, device_default
+
     parameters = _option_parameters(db)
     by_id = {p.id: key for key, p in parameters.items()}
-    scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in shop_machines(db, shop.id)]
+    machines = shop_machines(db, shop.id)
+    scope_ids = [shop.id] + [a.id for a in shop_areas(db, shop.id)] + [m.id for m in machines]
     if shop.company_id is not None:
         scope_ids.append(shop.company_id)
     values = (
@@ -1080,6 +1085,27 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
         levels[row.scope_type].setdefault(str(row.scope_id), {})[by_id[row.parameter_id]] = row.value
     company = levels["company"].get(str(shop.company_id), {}) if shop.company_id is not None else {}
     ordered = [parameters[key] for key in SETTING_KEYS if key in parameters]
+    shop_values = levels["shop"].get(str(shop.id), {})
+    # A device's own default in place of the parameter's ("פתיחת מגירה" on a till with a drawer port).
+    device_defaults: Dict[str, Dict[str, Any]] = {}
+    effective: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for m in machines:
+        mine = {p.key: v for p in ordered if (v := device_default(p.key, m.device_model)) is not None}
+        if mine:
+            device_defaults[str(m.id)] = mine
+        chain = (
+            ("machine", levels["machine"].get(str(m.id), {})),
+            ("area", levels["area"].get(str(m.area_id), {}) if m.area_id else {}),
+            ("shop", shop_values),
+            ("company", company),
+        )
+        out: Dict[str, Dict[str, Any]] = {}
+        for p in ordered:
+            found = next(((src, vals[p.key]) for src, vals in chain if p.key in vals), None)
+            if found is None:
+                found = (DEVICE_DEFAULT_SOURCE, mine[p.key]) if p.key in mine else ("default", p.default_value)
+            out[p.key] = {"value": found[1], "effectiveSource": found[0]}
+        effective[str(m.id)] = out
     return {
         "parameters": [
             {
@@ -1095,9 +1121,13 @@ def options_out(db: Session, shop: Shop) -> Dict[str, Any]:
         "defaults": {p.key: p.default_value for p in ordered},
         "inherited": {p.key: company.get(p.key, p.default_value) for p in ordered},
         "fromCompany": sorted(company),
-        "shop": levels["shop"].get(str(shop.id), {}),
+        "shop": shop_values,
         "areas": levels["area"],
         "machines": levels["machine"],
+        #: machine id → {key: value} where a till's model has a default of its own (below every level).
+        "deviceDefaults": device_defaults,
+        #: machine id → {key: {value, effectiveSource: machine|area|shop|company|device_default|default}}.
+        "effective": effective,
     }
 
 
@@ -1277,6 +1307,12 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
 
     if shop_id is None:
         return None
+    # "ללא שרת הדפסות — כל קופה מדפיסה בעצמה" (app/services/local_server_roles.py): the shop chose
+    # no print server — not even its main till. Every till prints its network printers itself.
+    from app.services.local_server_roles import print_none
+
+    if print_none(db.get(Shop, _uuid(shop_id))):
+        return None
     # An independent till ("קופה עצמאית") is outside the shop's LAN group: never its server;
     # nor a device set "לא משמש כשרת מקומי" (app/services/lan_server.py). A printer hosted by
     # such a device is still printed by it (`is_hosted_by`): a printer endpoint, not the server.
@@ -1286,19 +1322,17 @@ def print_host_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
     ]
     if not hosts:
         return main_till_of_shop(db, shop_id)
+    from app.services.local_server_device import host_order
 
-    def order(m: POSMachine):
-        number = (m.pos_number or "").strip()
-        return (0, int(number), "") if number.isdigit() else (1, 0, number or str(m.id))
-
-    return sorted(hosts, key=order)[0]
+    # A dedicated local server first ("שרת מקומי", the preferred host), then the lowest number.
+    return sorted(hosts, key=host_order)[0]
 
 
 def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]:
     """The shop's print server as `machine` needs it: who, and where on the LAN."""
     from app.services.independent_till import is_independent
 
-    away_kiosk = False
+    away_kiosk = off_lan = False
     if is_independent(machine):
         # "קופה עצמאית": it never uses the shop's print server; it prints by itself — except a
         # self-order kiosk, which may stand away from the shop's LAN (docs/SPEC_KIOSK.md §16.7):
@@ -1308,18 +1342,34 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         if not getattr(machine, "is_kiosk", False):
             return None
         away_kiosk = True
+    else:
+        from app.services.local_shop_z import is_remote_participant
+
+        # "מרוחקת בזד הסניפי" (not on the shop's local server, SPEC_INDEPENDENT_TILL §8.15): in the
+        # shop Z but in another place, off the shop's LAN — the away form, and said so (`offLan`):
+        # never the print server over the LAN, and never the shop's printers directly either (an
+        # address of the shop's network may be another device where it stands). Its own printers
+        # (set for it, `scope` machine) it prints itself; the shop's go through the cloud relay
+        # and the print server prints them — once.
+        if is_remote_participant(machine):
+            away_kiosk = off_lan = True
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
     if away_kiosk:
-        return {
+        out = {
             "machineId": str(host.id),
             "name": machine_label(host),
             "isSelf": False,
             "lanAddress": None,
             "port": DEFAULT_LAN_PORT,
         }
+        if off_lan:
+            out["offLan"] = True
+        return out
     row = db.query(KitchenPrintHost).filter(KitchenPrintHost.machine_id == host.id).first()
+    from app.services.local_server_device import host_block_fields
+
     return {
         "machineId": str(host.id),
         "name": machine_label(host),
@@ -1327,6 +1377,9 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         # Not the report time: the ETag must not move on every heartbeat.
         "lanAddress": row.lan_address if row is not None else None,
         "port": (row.port if row is not None and row.port else DEFAULT_LAN_PORT),
+        # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.6): a dedicated server or a till, and
+        # its LAN key's id (it changes only when the device's key does — the ETag stays still).
+        **host_block_fields(host),
     }
 
 
@@ -1358,7 +1411,12 @@ def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[Kitchen
     ids.discard(machine.id)
     if not ids:
         return {}
-    lan = not is_independent(machine) or bool(getattr(machine, "is_kiosk", False))
+    from app.services.local_shop_z import is_remote_participant
+
+    # A remote participant ("מרוחקת בזד הסניפי", kiosk or till) stands in another place, off the
+    # shop's LAN: names only — the job goes through the cloud. An independent kiosk may be on it.
+    remote = is_remote_participant(machine)
+    lan = not remote and (not is_independent(machine) or bool(getattr(machine, "is_kiosk", False)))
     tills = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(list(ids))).all()}
     rows = {
         r.machine_id: r
@@ -1366,7 +1424,9 @@ def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[Kitchen
     } if lan else {}
     out: Dict[str, Dict[str, Any]] = {}
     for ident in ids:
-        row = rows.get(ident)
+        # A host that is itself a remote participant reported an address of its own network,
+        # not the shop's: never handed to the shop's tills (they reach it through the cloud).
+        row = rows.get(ident) if not is_remote_participant(tills.get(ident)) else None
         address = row.lan_address if row is not None and row.lan_address else None
         out[str(ident)] = {
             "name": machine_label(tills.get(ident)),
@@ -1709,12 +1769,49 @@ def test_jobs(db: Session, printer: KitchenPrinter) -> List[KitchenPrintJob]:
     return jobs
 
 
+def retarget_relay_jobs(db: Session, shop_id: Any) -> int:
+    """
+    The print role moved (a switch, the failover, "תפקידי השרת המקומי"): relayed tickets of the
+    shop's network / Bluetooth kitchen printers that no till took yet follow the print server now.
+    One its old host already took stays there (it is in that host's own queue; sent again it
+    would print twice). No print server: they stay as they are. How many moved.
+    """
+    host = print_host_of_shop(db, shop_id)
+    if host is None:
+        return 0
+    rows = (
+        db.query(KitchenPrintJob)
+        .filter(
+            KitchenPrintJob.shop_id == _uuid(shop_id),
+            KitchenPrintJob.status == "pending",
+            KitchenPrintJob.kind == "ticket",
+            KitchenPrintJob.target_machine_id != host.id,
+        )
+        .all()
+    )
+    moved = 0
+    for job in rows:
+        printer = db.get(KitchenPrinter, job.printer_id) if job.printer_id is not None else None
+        if printer is None or not is_served(printer) or was_taken(job):
+            continue
+        job.target_machine_id = host.id
+        moved += 1
+    if moved:
+        db.flush()
+    return moved
+
+
 def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
     """
     The jobs `machine` should print now, handed out (pending → printing). A job already
     handed out and not acknowledged within `JOB_LEASE` is handed out again.
     """
     now = now or _now()
+    # The print host moved here: the jobs a silent former host holds for its printers come with it
+    # (app/services/print_relay_handover.py).
+    from app.services.print_relay_handover import take_over_stale_jobs
+
+    take_over_stale_jobs(db, machine, now)
     rows = (
         db.query(KitchenPrintJob)
         .filter(
@@ -1747,6 +1844,8 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
             "ticket": job.payload,
             "createdAt": _iso(job.created_at),
             "expiresAt": _iso(job.expires_at),
+            # Moved here from a print host that went silent holding it: maybe on paper there already.
+            "resent": bool((job.payload or {}).get("resent")),
         })
     db.flush()
     return out
@@ -2061,6 +2160,10 @@ def set_print_host(db: Session, shop: Shop, machine_id: Optional[uuid.UUID]) -> 
         db.add(TillParameterValue(
             id=uuid.uuid4(), parameter_id=parameter.id, scope_type="machine", scope_id=machine_id, value=True,
         ))
+        # A print server named: "ללא שרת הדפסות" (local_server_roles) no longer holds.
+        from app.services.local_server_roles import set_print_none
+
+        set_print_none(shop, False)
     # A removal must move the tills' parameters watermark too.
     parameter.updated_at = _now()
     db.flush()

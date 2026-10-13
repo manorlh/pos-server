@@ -32,6 +32,7 @@ from app.models.pos_machine import PairingStatus, POSMachine
 from app.routers import kds as R
 from app.routers import printers as PR
 from app.schemas.kds import KdsActionIn, KdsDeviceIn, KdsReleaseIn, KdsRouteOverrideIn, WorkflowValuesIn
+from app.services import kds as KDS
 from app.services import kds_outbox
 from test_kitchen_printers import _run, k  # noqa: F401
 from test_shop_areas import _ctx, w  # noqa: F401
@@ -587,6 +588,44 @@ class TestTillBadges:
         states = R.get_kds_order_states(str(kd.waiter.id), source="table", refs="tb,nope", machine=kd.waiter, db=kd.db)
         assert states["orders"]["tb"]["ready"] == 1 and states["orders"]["tb"]["tasks"] == 2
         assert "nope" not in states["orders"]
+        # Not asked for: no lines (the answer an older till always had).
+        assert "lines" not in states["orders"]["tb"]
+
+    def test_lines_say_ready_per_line_when_asked(self, kd):
+        """"לוח מנות" (till design phase 2 §2.1): "מוכן 3/4" per course from the lines' states."""
+        out = release(kd, ref="tl", items=[item("l1:0", kd.steak), item("l2:0", kd.cola), item("l3:0", kd.salad)])
+        act(kd, kd.grill_screen, "station_ready", orderId=out["orderId"])
+        states = R.get_kds_order_states(
+            str(kd.waiter.id), source="table", refs="tl", lines=True, machine=kd.waiter, db=kd.db,
+        )
+        lines = {row["lineKey"]: row for row in states["orders"]["tl"]["lines"]}
+        assert list(lines) == sorted(lines)
+        assert lines["l1:0"]["state"] == "ready" and lines["l1:0"]["readyAt"]
+        assert lines["l2:0"]["state"] == "queued" and lines["l2:0"]["readyAt"] is None
+        assert set(lines) == {"l1:0", "l2:0", "l3:0"}
+
+    def test_line_states_fold_remakes_and_holds(self):
+        from decimal import Decimal
+        from types import SimpleNamespace
+
+        def task(key, prep="queued", release="released", required=True, at=None, cancelled=0):
+            return SimpleNamespace(
+                line_key=key, prep_state=prep, release_state=release, required=required, ready_at=at,
+                ordered_qty=Decimal(1), cancelled_qty=Decimal(cancelled),
+            )
+
+        at = datetime(2026, 10, 13, 19, 44, tzinfo=timezone.utc)
+        rows = KDS.line_states([
+            task("a:0", "ready", at=at), task("a:0~r1"),  # remade: not ready until the remake is
+            task("b:0", release="hold"),  # its course held
+            task("c:0", "ready", at=at), task("c:0", required=False),  # an expo target never holds it
+            task("d:0", "preparing"),
+            task("e:0", cancelled=1),  # cancelled: no line
+        ])
+        assert [(r["lineKey"], r["state"]) for r in rows] == [
+            ("a:0", "preparing"), ("b:0", "held"), ("c:0", "ready"), ("d:0", "preparing"),
+        ]
+        assert rows[2]["readyAt"] == at.isoformat()
 
 
 class TestDashboard:

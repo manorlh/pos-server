@@ -82,6 +82,19 @@ def state_of(db: Session, machine_id: Any) -> Optional[DeviceRemoteState]:
     return db.get(DeviceRemoteState, machine_id)
 
 
+def locked_machine_ids(db: Session, machine_ids: Sequence[Any]) -> set:
+    """The machines of `machine_ids` locked from the dashboard now ("נעולה") — one query, for a list."""
+    ids = [m for m in machine_ids if m is not None]
+    if not ids:
+        return set()
+    rows = (
+        db.query(DeviceRemoteState.machine_id)
+        .filter(DeviceRemoteState.machine_id.in_(ids), DeviceRemoteState.locked.is_(True))
+        .all()
+    )
+    return {row[0] for row in rows}
+
+
 def state_out(row: Optional[DeviceRemoteState]) -> Dict[str, Any]:
     if row is None or not row.locked:
         return {"locked": False, "message": None, "lockedAt": None, "lockedBy": None}

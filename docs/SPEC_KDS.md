@@ -142,7 +142,7 @@ Payload של `ReadyForPickup` (מינימלי): `orderId, groupId, shopId, sourc
 | `GET workflow` | התצורה האפקטיבית של הקופה |
 | `GET kds/board?since=<version>` | לוח המסך לפי התפקיד; `syncType: unchanged` כשאין שינוי. תחנה: רק משימות התחנות שלה (+ `otherStations`), Expo/מנהל: הכול, איסוף: `pickup {preparing, ready}` בלבד |
 | `POST kds/release` | `KdsReleaseIn` — `id` (idempotency), `source`, `sourceRef`, `trigger`, `paid`, `workflowMode?`, כותרת (`displayRef, tableRef, zoneName, serviceType, guests, waiterName, pickupName, contactPhone, orderNote, pickupNumber, transactionNumber`), `items[]` (דלתא: + הוספה, − ביטול; `lineKey, productId, categoryId, name, quantity, mods, removals, notes, allergies, important, seat, course, mealName`), `held[]?`, `noteUpdates[]`, `fallbackPrinted` |
-| `POST kds/actions` | `KdsActionIn` — `id` (idempotency), `type` ∈ `start, item_ready (qty), undo_ready, station_ready, ack_change, ready_for_pickup (override+reason), undo_pickup, handover, priority (reason), resolve_fallback (prepared/prepare), remake (reason)`, `expectedVersion?`, `occurredAt` |
+| `POST kds/actions` | `KdsActionIn` — `id` (idempotency), `type` ∈ `start, item_ready (qty), undo_ready, station_ready, ack_change, ready_for_pickup (override+reason), undo_pickup, handover, priority (reason), resolve_fallback (prepared/prepare), remake (reason), requeue` (§16), `expectedVersion?`, `occurredAt` |
 | `GET kds/orders/status?source=table&refs=a,b` | תגים לקופה: מצב, משימות, מוכנות, בהכנה, מוחזקות |
 
 שגיאות: `{"detail": {"code": …}}` — `release_requires_payment`, `order_of_another_shop`, `dispatch_id_taken`, `not_a_kds_device`, `task_of_another_station`, `pickup_screen_is_read_only`, `expo_or_manager_only`, `reason_required`, `version_conflict`. תוצאת פעולה: `outcome` = applied / noop / rejected (+`reason`).
@@ -462,3 +462,58 @@ endpoints של הענן. כמו בכל מכונה: **מכשיר תצוגה — �
   כמו בפעולת מסך. רק קופה (לא קיוסק ולא מכשיר תצוגה — `not_a_till` / `device_not_fiscal`), רק הזמנות של הסניף שלה.
 - **מיגרציה:** `c4f8a2d6e9b1_kds_board_scope.py` — `kds_devices.scope` (JSON, nullable; לכל סוגי המסכים), אידמפוטנטית, ראש יחיד אחרי
   `e7d1b4a9c3f6`. **להחיל לפני פריסה:** `alembic upgrade head` (לא הוחלה על מסד הפיתוח המשותף).
+
+## 16. מה למדנו מ-KDS לדוגמה — נגיעה בפריט, "להכנה", תפריט הבון, היסטוריה, השהיה (13.10.2026)
+
+**הבעלים:** "תעבור על זה — זה KDS, אפשר ללחוץ פר פריט שהוא מוכן. תעבור על ההגדרות. שמור על ה-UI שלנו, כהה ולבן. תלמד מזה."
+טבלת הפערים המלאה (כל יכולת והגדרה בדוגמה: מה יש לנו, הפער, ההחלטה): `P:\specs\kds-pro.md`. לומדים את היכולות בלבד — המראה שלנו
+(הערכות, Heebo, הכפתורים והצ'יפים), בלי שום צבע, אייקון או מיתוג של המוצר האחר.
+
+### 16.1 במסך (דפדפן ו-Windows — אותו קוד, `kiosk-shared/roles/kds/{KdsScreen,KdsCard,layouts,tools}.tsx`)
+- **נגיעה בפריט** (`itemTap`): "כפתור ליד הפריט" (היום) / "ממתין ← בהכנה ← מוכן" (נגיעה בשורה מעבירה למצב הבא, ואחרי מוכן — חזרה לממתין) /
+  "מוכן בנגיעה" (נגיעה = מוכן, עם "התחל" קודם כשההזמנה דורשת; נגיעה נוספת = בטל מוכן). במצבי הנגיעה צ'יפ מצב במקום הכפתור. המצבים שלנו
+  (queued / preparing / ready) לא השתנו; הנגיעה עוברת באותו תור פעולות, באותה הגנה מנגיעה כפולה.
+- **תפריט הבון** — נגיעה בכותרת הכרטיס: "דחוף" (ועם `urgencyLevels`: "דחוף מאוד", "בהול"; "בטל דחיפות" — תמיד עם סיבה), "הכול ממתין" (`requeue`),
+  "הכול בהכנה" (`start` לממתינים, `undo_ready` למוכנים), "הכול מוכן" (`item_ready`, `start` קודם כשנדרש). מוצע רק מה שישנה משהו.
+- **סרגל כלים** (`toolbar`, מתחת לכותרת): "להכנה" (הלוח), "מוכנות" (רק הכרטיסים שהכול בהם מוכן, עם מונה), רשימה ↔ כרטיסים, זום 60–200%
+  ("100%" מחזיר לגודל של הדשבורד), "היסטוריה", "השהה" / "המשך", "מרוכז" / "מורחב". הזום, הרשימה, הלוח והמרוכז נשמרים במכשיר
+  (`localStorage` `r2m.kds.local`, ב-try/catch); עם `toolbar` כבוי המסך הוא בדיוק של הדשבורד.
+- **"להכנה"**: כל פריט פתוח (לא מוכן, לא מוחזק, לא מבוטל) עם הכמות שנותרה, לפי א"ב; "חיפוש פריט"; נגיעה בפריט מסננת את הכרטיסים להזמנות
+  שהוא פתוח בהן — הבון המלא או רק השורות שלו (`filterFullTicket`); "מסונן: X" בסרגל מבטל.
+- **היסטוריה**: מה שהסתיים במסך ב-30 הדקות האחרונות (גם אחרי שהענן כבר לא שולח — זיכרון במסך, עד 40), עם "החזר": תחנה — בטל מוכן לפריטים
+  שלה (הכרטיס חוזר), Expo — "החזר להכנה" למוכן לאיסוף, "החזר" ממסירה.
+- **השהיה**: הכרטיסים שעל המסך נשארים ומתעדכנים; חדשים לא מוצגים ולא מצלצלים ("מושהה · N חדשות ממתינות"). מקומי בלבד.
+- **בון שסיים** (`keepReadyOpen` כבוי): יורד מיד להיסטוריה (תחנה — אין לו עבודה; Expo — מוכן לאיסוף בלי מעקב מסירה).
+- **סדר** (`ticketOrder`): FIFO (היום) / LIFO; דחוף תמיד ראשון. **בונים בשורה** (`perRow` 2–10; כרטיסים ומסילה). **גובה מרבי** (`maxTicketHeight`).
+- **עומס** (`overflowAt`): מעל N כרטיסים — הרשימה הצפופה, "מצב עומס" בסרגל.
+- **סינון הזמנות**: `orderTypes` (ישיבה / לקחת / משלוח; בלי סוג — תמיד; שולחן = ישיבה), `externalOrders` (הכול / בלי / רק חיצוניות).
+  המסונן לא מוצג ולא מצלצל.
+- **בכרטיס** (`ticketInfo`): מקור ההזמנה (מתג משלו; חסר = כמו "שולחן"), שעת ההזמנה, מספר הזמנה (כשהכותרת לא אומרת אותו), "✓ גריל 16:52" ליד פריט מוכן.
+  **פס צבע** (`serviceTint`) ללקחת / משלוח — מצבעי הערכה (`theme.ts`: `tintTakeAway`, `tintDelivery`, בכל ארבע הערכות).
+
+### 16.2 בענן (תוספות בלבד, בלי מיגרציה)
+- `kds_devices.display` (גרסה 2) — המפתחות של 16.1, נבדקים ב-`KdsDisplayIn` (422) ומנוקים ב-`kds_display.behaviour_out`; כל מפתח חסר = היום.
+  נשמרים לכל מסך או כברירת מחדל לסניף, מגיעים למסך תוך שניות, ומוצגים בתצוגה המקדימה של "עיצוב" בדשבורד (אותו מסך).
+- `requeue` — פריט חוזר ל"ממתין" (ההכנה מתאפסת). תחנה רק על שלה; מוחזק / מבוטל — `rejected`; מוכן לאיסוף שחזר — `waiting`, האירוע מושתק כמו undo.
+- `priority` ממסך תחנה — רק כש-`stationRush` באפקטיבי שלו (של המסך או של הסניף); אחרת 403 `expo_or_manager_only` כמו היום.
+- `serviceType: "delivery"` בשחרור (למתממשקים; override לפי סוג שירות נשאר eat_in / take_away).
+- `order_out` לא השתנה — הקורפוס הזהב לא השתנה.
+
+### 16.3 הדשבורד
+מסכי מטבח ← "עיצוב" (מסך / ברירת מחדל לסניף): ב"גודל וצפיפות" — בונים בשורה, גובה מרבי; ב"מה מוצג בכרטיס" — מקור, שעה, מספר, איזו תחנה
+סיימה; "התנהגות המסך" — נגיעה בפריט, סדר, בון שסיים, סרגל כלים, "להכנה", בון מלא בסינון, עומס; "דחיפות" — תחנה יכולה לסמן דחוף, שלוש
+רמות; "אילו הזמנות מוצגות" — סוגים, חיצוניות, פס צבע. מספר מחוץ לטווח — הודעה והשמירה חסומה.
+
+### 16.4 לא נבנה
+- **מדבקות** — אין במערכת הדפסת תוויות. **שפה ראשית / משנית לבון** — אין תרגומים לשמות בקטלוג.
+- **הגדרות במסך עצמו / סגירה** — ההגדרות בדשבורד; היציאה רק דרך פינת הטכנאי.
+- **Android** — מסך ה-KDS של הקופה הוא מסך Compose משלו (`ui/kds/*`); המפתחות החדשים לא נקראים שם (מתעלם בבטחה, `JSONObject.opt…`),
+  ו-`requeue` לא נשלח משם. המשך: אותו חוזה ב-`domain/KdsDisplay.kt`.
+
+### 16.5 בדיקות
+- ענן: `tests/test_kds_pro.py` (28). `test_kds*.py`, `test_kds_golden.py`, `test_web_screens.py`, `test_kiosk_web.py` — בלי שינוי, עוברים.
+- דשבורד: `screenLook.test.ts` (ברירות המחדל = היום, כל מראה קודם נפתר כמו קודם, ניקוי, כתובת ההדגמה), `kdsLayouts.test.ts` (נגיעה בכל מצב,
+  `requeue` באוברליי, תפריט הבון, סינון, FIFO/LIFO, "להכנה", בון שסיים, מוכנות, השהיה, עומס, היסטוריה, מספר הזמנה).
+- Windows: `npm test` + `typecheck` של kiosk-desktop על הקוד המשותף.
+- הדגמה: `/kds?demo=1&busy=1&tap=cycle&allday=1&tint=takeAway,delivery&info=orderTime,orderNumber,readyBy&levels=1` (וב-Windows `npm run dev:web`
+  עם `?role=kds&…`).

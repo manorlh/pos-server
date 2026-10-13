@@ -58,7 +58,9 @@ class KdsReleaseIn(_Body):
     display_ref: Optional[str] = Field(None, alias="displayRef", max_length=60)
     table_ref: Optional[str] = Field(None, alias="tableRef", max_length=60)
     zone_name: Optional[str] = Field(None, alias="zoneName", max_length=100)
-    service_type: Optional[Literal["eat_in", "take_away"]] = Field(None, alias="serviceType")
+    #: "delivery" (docs/SPEC_KDS.md §16): an external order's courier — the screens filter / tint
+    #: it; no till sends it today. Route overrides stay eat_in / take_away.
+    service_type: Optional[Literal["eat_in", "take_away", "delivery"]] = Field(None, alias="serviceType")
     guests: Optional[int] = Field(None, ge=0, le=10_000)
     waiter_name: Optional[str] = Field(None, alias="waiterName", max_length=TEXT_MAX)
     pickup_name: Optional[str] = Field(None, alias="pickupName", max_length=100)
@@ -90,6 +92,7 @@ KDS_ACTION_TYPES = (
     "priority",
     "resolve_fallback",
     "remake",
+    "requeue",
 )
 
 
@@ -109,6 +112,8 @@ class KdsActionIn(_Body):
         "priority",
         "resolve_fallback",
         "remake",
+        # Back to "ממתין" (queued): the ticket menu's "הכול ממתין", a tap cycling an item (§16).
+        "requeue",
     ]
     task_id: Optional[uuid.UUID] = Field(None, alias="taskId")
     order_id: Optional[uuid.UUID] = Field(None, alias="orderId")
@@ -158,10 +163,34 @@ class KdsMediaIn(_Body):
     duration_sec: int = Field(8, alias="durationSec", ge=3, le=300)
 
 
+class KdsOrderTypesIn(_Body):
+    """Which service types a kitchen screen shows (all on = today)."""
+
+    eat_in: bool = Field(True, alias="eatIn")
+    take_away: bool = Field(True, alias="takeAway")
+    delivery: bool = True
+
+
+class KdsServiceTintIn(_Body):
+    """A coloured band on the ticket's header for these service types (the screen's theme colours)."""
+
+    take_away: bool = Field(False, alias="takeAway")
+    delivery: bool = False
+
+
+class KdsTicketInfoIn(_Body):
+    """More on a ticket (§16): the source (null = as `fields.table`), the order's time and number, who finished an item."""
+
+    source: Optional[bool] = None
+    order_time: bool = Field(False, alias="orderTime")
+    order_number: bool = Field(False, alias="orderNumber")
+    ready_by: bool = Field(False, alias="readyBy")
+
+
 class KdsDisplayIn(_Body):
     """
     How a screen looks (docs/SPEC_KDS.md §13.4.3, §14; app/services/kds_display.py). Version 1 was
-    the board's five keys; every new key defaults to today's look.
+    the board's five keys; every new key defaults to today's look — and to today's behaviour (§16).
     """
 
     theme: Literal["dark", "light", "contrast", "brand"] = "dark"
@@ -189,6 +218,26 @@ class KdsDisplayIn(_Body):
     sounds: KdsSoundsIn = Field(default_factory=KdsSoundsIn)
     clock: bool = True
     counts: bool = True
+    # How the kitchen screen behaves (§16, P:\specs\kds-pro.md).
+    toolbar: bool = True
+    all_day: bool = Field(False, alias="allDay")
+    item_tap: Literal["button", "cycle", "ready"] = Field("button", alias="itemTap")
+    ticket_order: Literal["fifo", "lifo"] = Field("fifo", alias="ticketOrder")
+    #: Tickets per row; None = as many as fit (today).
+    per_row: Optional[int] = Field(None, alias="perRow", ge=2, le=10)
+    #: A ticket's most height in pixels (it scrolls inside); None = no limit (today).
+    max_ticket_height: Optional[int] = Field(None, alias="maxTicketHeight", ge=240, le=3000)
+    keep_ready_open: bool = Field(True, alias="keepReadyOpen")
+    filter_full_ticket: bool = Field(False, alias="filterFullTicket")
+    #: A station screen may mark an order urgent (the cloud refuses it otherwise).
+    station_rush: bool = Field(False, alias="stationRush")
+    urgency_levels: bool = Field(False, alias="urgencyLevels")
+    #: Above this many tickets the screen switches to the dense list; None = never.
+    overflow_at: Optional[int] = Field(None, alias="overflowAt", ge=5, le=200)
+    order_types: KdsOrderTypesIn = Field(default_factory=KdsOrderTypesIn, alias="orderTypes")
+    external_orders: Literal["all", "hide", "only"] = Field("all", alias="externalOrders")
+    service_tint: KdsServiceTintIn = Field(default_factory=KdsServiceTintIn, alias="serviceTint")
+    ticket_info: KdsTicketInfoIn = Field(default_factory=KdsTicketInfoIn, alias="ticketInfo")
 
     @model_validator(mode="after")
     def _thresholds_together(self) -> "KdsDisplayIn":

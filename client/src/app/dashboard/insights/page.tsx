@@ -15,6 +15,12 @@
  *
  * The control board's iOS language: a large title, grouped grey background, white
  * rounded cards, segmented controls and a switch; dark mode included.
+ *
+ * On the report framework where it fits (P:\specs\reports-upgrade.md §5): the view — period,
+ * the page's own scope, the event, the menu's category, the dead-stock days, the anomalies'
+ * window — lives in the URL (lib/insightsView.ts), so a link reproduces it; the export bar
+ * is the framework's (Excel with the header on every sheet, a real PDF of the feed, export
+ * columns and the company's default, print as before).
  */
 
 import { useEffect, useState } from 'react';
@@ -25,6 +31,9 @@ import { he } from 'date-fns/locale';
 import { RefreshCw } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { formatShortDate } from '@/lib/format';
+import { insightsPeriodParams, insightsViewQuery, type InsightsRange, type InsightsViewSpec } from '@/lib/insightsView';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
 import {
   agorot,
   fetchAbc,
@@ -44,7 +53,7 @@ import {
   type KpiBlock,
 } from '@/lib/insightsApi';
 import { cn } from '@/lib/utils';
-import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
+import { ALL_COMPANIES, type OrgScope } from '@/components/dashboard/org-scope-cascade';
 import { ScopePicker } from '@/components/dashboard/live/scope-picker';
 import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard, Switch, Widget } from '@/components/dashboard/insights/ios';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -58,13 +67,14 @@ import { TrendsSection } from '@/components/dashboard/insights/trends-section';
 import { HeatmapSection } from '@/components/dashboard/insights/heatmap-section';
 import { MenuSection } from '@/components/dashboard/insights/menu-section';
 import { AbcSection } from '@/components/dashboard/insights/abc-section';
-import { SlowSection, type DeadDays } from '@/components/dashboard/insights/slow-section';
+import { DEAD_DAY_OPTIONS, SlowSection, type DeadDays } from '@/components/dashboard/insights/slow-section';
 import { StockSection } from '@/components/dashboard/insights/stock-section';
 import { BasketsSection } from '@/components/dashboard/insights/baskets-section';
 import { CashiersSection } from '@/components/dashboard/insights/cashiers-section';
 import { CustomersSection, TablesPeriodSection } from '@/components/dashboard/insights/tables-section';
 import { useInsightsExport } from '@/components/dashboard/insights/export-sheets';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { useInsightsExportScope, useInsightsView } from '@/components/dashboard/insights/use-insights-view';
+import { ReportExportBar } from '@/components/dashboard/report-framework';
 // Till anomalies, quick actions, happy hour (docs/SPEC_INSIGHTS.md §10).
 import { fetchEvents } from '@/lib/eventsApi';
 import { fetchHappyHourSuggestions, fetchTillAnomalies } from '@/lib/insightsActionsApi';
@@ -81,13 +91,12 @@ import { useHomeAccess } from '@/components/dashboard/control-board/use-home-acc
 const AUTO_REFRESH_MS = 5 * 60_000;
 const COST_EDITORS = new Set(['super_admin', 'distributor', 'company_manager']);
 
-type Range = '7' | '28' | '90' | 'custom';
-
-function isoDaysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+/** The view in the URL: the period and the scope, and each section's option (defaults left out). */
+const VIEW: InsightsViewSpec = {
+  allCompanies: ALL_COMPANIES,
+  extras: { event: '', category: '', byCategory: '1', deadDays: '21', anomalies: 'period' },
+  choices: { byCategory: ['1', '0'], deadDays: DEAD_DAY_OPTIONS, anomalies: ['period', 'today'] },
+};
 
 /** A section: its header, then a skeleton, an error with a retry, or its content. */
 function Section<T>({
@@ -134,24 +143,33 @@ export default function InsightsPage() {
   // "לוח בקרה | השוואות | תובנות": the home page's control, its segments gated the same way.
   const { compareAllowed, insightsAllowed } = useHomeAccess();
 
-  const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
-  const [range, setRange] = useState<Range>('28');
-  const [customFrom, setCustomFrom] = useState(() => isoDaysAgo(28));
-  const [customTo, setCustomTo] = useState(() => isoDaysAgo(1));
+  // The view lives in the URL (a link reproduces it); auto refresh is the reader's own.
+  const { view, update } = useInsightsView(VIEW);
+  const scope: OrgScope = view.scope;
+  const setScope = (next: OrgScope) => update({ scope: next });
+  const range = view.range;
+  const setRange = (next: InsightsRange) => update({ range: next });
+  const customFrom = view.from;
+  const customTo = view.to;
+  const setCustom = (patch: { from?: string; to?: string }) => {
+    // A cleared field keeps the period as it was.
+    if (patch.from !== '' && patch.to !== '') update({ range: 'custom', ...patch });
+  };
   const [auto, setAuto] = useState(true);
-  const [deadDays, setDeadDays] = useState<DeadDays>('21');
-  const [categoryId, setCategoryId] = useState('');
-  const [byCategory, setByCategory] = useState(true);
+  const deadDays = view.extras.deadDays as DeadDays;
+  const setDeadDays = (v: DeadDays) => update({ extras: { deadDays: v } });
+  const categoryId = view.extras.category;
+  const setCategoryId = (v: string) => update({ extras: { category: v } });
+  const byCategory = view.extras.byCategory !== '0';
+  const setByCategory = (v: boolean) => update({ extras: { byCategory: v ? '1' : '0' } });
   // An event's scope: its tills, window and days (the period and the org scope give way).
-  const [eventId, setEventId] = useState('');
-  const [anomalyWindow, setAnomalyWindow] = useState<AnomalyWindow>('period');
+  const eventId = view.extras.event;
+  const setEventId = (v: string) => update({ extras: { event: v } });
+  const anomalyWindow = view.extras.anomalies as AnomalyWindow;
+  const setAnomalyWindow = (v: AnomalyWindow) => update({ extras: { anomalies: v } });
   const tA = useTranslations('insightsActions');
 
-  const params: InsightScopeParams = eventId
-    ? { eventId }
-    : range === 'custom'
-      ? { ...scopeParams(scope), from: customFrom, to: customTo }
-      : { ...scopeParams(scope), days: Number(range) };
+  const params: InsightScopeParams = eventId ? { eventId } : { ...scopeParams(scope), ...insightsPeriodParams(view) };
   const common = {
     refetchInterval: auto ? AUTO_REFRESH_MS : (false as const),
     placeholderData: keepPreviousData,
@@ -197,6 +215,15 @@ export default function InsightsPage() {
     ...common,
   });
   const events = useQuery({ queryKey: ['report-events', 'insights'], queryFn: () => fetchEvents({}), staleTime: 60_000, retry: false });
+
+  // The export: the headline figures and the feed as report tables (the feed is the PDF's),
+  // every other section as the sheets after them; the event, when one is picked, in the header.
+  const exportScope = useInsightsExportScope(scope, ALL_COMPANIES, insightsExport.scopeLabel);
+  // While a new view's feed loads, the one on screen is the previous view's: no export of it.
+  const feedReady = !!feed.data && !feed.isPlaceholderData;
+  const exportTables = feedReady ? insightsExport.feedTables(feed.data!) : [];
+  const eventName = eventId ? (events.data ?? []).find((ev) => ev.id === eventId)?.name : undefined;
+  const exportFilters: ReportFilterLine[] = eventId ? [{ label: tA('page.event'), value: eventName ?? eventId }] : [];
 
   // The sheets act on the page's scope (or its event).
   const companyScope = scope.companyId && scope.companyId !== ALL_COMPANIES ? scope.companyId : undefined;
@@ -279,20 +306,28 @@ export default function InsightsPage() {
         </button>
       </div>
 
-      {/* Excel · Print · PDF */}
-      <ReportExportToolbar
-        title={t('title')}
-        from={period?.from}
-        to={period?.to}
-        scopeLabel={insightsExport.scopeLabel}
-        getSheets={() => insightsExport.getSheets({ params, menuParams, slowParams })}
-        disabled={feed.isPending}
-        className="mt-3 px-1"
-      />
+      {/* Excel · PDF · Print · export columns */}
+      <div className="mt-3 px-1">
+        <ReportExportBar
+          reportKey="insights"
+          title={t('title')}
+          tables={exportTables}
+          extraSheets={() => insightsExport.extraSheets({ params, menuParams, slowParams }, exportTables.length > 0)}
+          pdfTableId="main"
+          from={feedReady ? period?.from : null}
+          to={feedReady ? period?.to : null}
+          business={exportScope.business}
+          place={exportScope.place}
+          filterLines={exportFilters}
+          companyId={exportScope.companyId}
+          companyName={exportScope.companyName}
+          disabled={!feedReady}
+        />
+      </div>
 
       {/* Period */}
       <div className="mt-4 overflow-x-auto px-1 pb-1">
-        <Segmented
+        <Segmented<InsightsRange>
           value={range}
           onChange={setRange}
           label={t('range.label')}
@@ -312,8 +347,8 @@ export default function InsightsPage() {
             <DatePicker
               value={customFrom}
               max={customTo}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
+              onChange={(e) => setCustom({ from: e.target.value })}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => setCustom({ from: r.from, to: r.to }) }}
               dir="ltr"
               className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
@@ -323,9 +358,9 @@ export default function InsightsPage() {
             <DatePicker
               value={customTo}
               min={customFrom}
-              max={isoDaysAgo(0)}
-              onChange={(e) => setCustomTo(e.target.value)}
-              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
+              max={todayIso()}
+              onChange={(e) => setCustom({ to: e.target.value })}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => setCustom({ from: r.from, to: r.to }) }}
               dir="ltr"
               className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
@@ -462,7 +497,7 @@ export default function InsightsPage() {
       <RecentActions />
 
       {/* "ביצועי קיוסקים" — its own page */}
-      <KioskInsightsLinkCard />
+      <KioskInsightsLinkCard query={insightsViewQuery(view, ALL_COMPANIES)} />
 
       <Section id="forecast" title={t('sections.forecast')} query={forecast}>
         {(data) => <ForecastSection data={data} />}

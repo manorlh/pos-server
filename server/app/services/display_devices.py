@@ -54,8 +54,14 @@ ROLE_ORDER_STATUS_BOARD = "order_status_board"
 #: "מסך לקוח" (app/services/customer_display.py, P:/specs/customer-display.md §4): a device that shows the
 #: customer one till's sale. Told apart by its own settings layer (customerDisplay.device), not a KDS row.
 ROLE_CUSTOMER_DISPLAY = "customer_display"
+#: "שרת מקומי" (app/services/local_server_device.py, P:/specs/dedicated-local-server.md §11): an Android
+#: device that does not sell — non-fiscal like a screen, but in the shop's LAN group and a valid,
+#: preferred host (tables, printing, the local shop Z). `pos_machines.is_local_server`.
+ROLE_LOCAL_SERVER = "local_server"
 FISCAL_ROLES = (ROLE_TILL, ROLE_KIOSK)
-NON_FISCAL_ROLES = (ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
+NON_FISCAL_ROLES = (ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY, ROLE_LOCAL_SERVER)
+#: The screens among them: a display device shows something; a local server serves the shop.
+DISPLAY_ROLES = (ROLE_KDS, ROLE_ORDER_STATUS_BOARD, ROLE_CUSTOMER_DISPLAY)
 ROLES = FISCAL_ROLES + NON_FISCAL_ROLES
 
 PLATFORM_ANDROID = "android"
@@ -86,6 +92,7 @@ REQUIRES_SHOP_MESSAGES = {
     ROLE_KDS: "מסך מטבח (KDS) נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
     ROLE_ORDER_STATUS_BOARD: "מסך מוכן / לא מוכן נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
     ROLE_CUSTOMER_DISPLAY: "מסך לקוח נפתח בסניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
+    ROLE_LOCAL_SERVER: "שרת מקומי משרת סניף מסוים: בחרו חברה וסניף לפני יצירת הקוד.",
 }
 STATION_NEEDED_MESSAGE = (
     "מסך עמדה צריך לפחות עמדת מטבח אחת. בחרו עמדות, או סוג מסך אחר (Expo / מנהל מטבח)."
@@ -188,7 +195,10 @@ def prime_kds(db: Session, machines: Sequence[Any]) -> None:
 
 def role_of_display(db: Optional[Session], machine: Any) -> str:
     from app.services import customer_display
+    from app.services.local_server_device import is_local_server
 
+    if is_local_server(machine):
+        return ROLE_LOCAL_SERVER
     if customer_display.is_display_device(machine):
         return ROLE_CUSTOMER_DISPLAY
     return display_role(kds_device_of(db, machine))
@@ -218,10 +228,20 @@ class DeviceNotFiscal(HTTPException):
 
     def __init__(self, machine: Any = None, status_code: int = status.HTTP_403_FORBIDDEN,
                  message: str = NOT_FISCAL_MESSAGE):
-        super().__init__(status_code=status_code, detail=NOT_FISCAL)
-        self.body: Dict[str, Any] = {"detail": NOT_FISCAL, "message": message}
+        from app.services import local_server_device as LSD
+
+        code = NOT_FISCAL
+        extra: Dict[str, Any] = {}
+        if LSD.is_local_server(machine):
+            # "שרת מקומי אינו קופה" (P:/specs/dedicated-local-server.md §11.2): its own code, so the
+            # server's log says what refused it — never a screen's words.
+            code, message = LSD.NOT_A_TILL, LSD.NOT_A_TILL_MESSAGE
+            extra["deviceRole"] = ROLE_LOCAL_SERVER
+        super().__init__(status_code=status_code, detail=code)
+        self.body: Dict[str, Any] = {"detail": code, "message": message}
         if machine is not None and getattr(machine, "id", None) is not None:
             self.body["machineId"] = str(machine.id)
+        self.body.update(extra)
 
 
 async def not_fiscal_handler(request: Request, exc: DeviceNotFiscal) -> JSONResponse:
@@ -267,6 +287,9 @@ def check_pairing_request(db: Session, *, role: str, shop_id: Any, kds: Any = No
     if shop is None:
         raise _refuse("shop_not_found", None, "הסניף לא נמצא.", status.HTTP_404_NOT_FOUND)
     name = _clean_name(getattr(kds, "name", None))
+    if role == ROLE_LOCAL_SERVER:
+        # "שרת מקומי": nothing to check but its shop — its name, if one was typed.
+        return {"name": name}
     if role == ROLE_CUSTOMER_DISPLAY:
         # The till it mirrors (optional: chosen later on the customer-display page) — a till of this shop.
         from app.services import customer_display
@@ -345,6 +368,12 @@ def apply_on_pairing(db: Session, pairing_code: Any, machine: Any) -> bool:
         return False
     options = getattr(pairing_code, "kds_options", None)
     options = options if isinstance(options, dict) else {}
+    if role == ROLE_LOCAL_SERVER:
+        # "שרת מקומי": its name, and — in a shop whose work profile says "מכשיר ייעודי" — the host
+        # (app/services/local_server_device.py). Never fails the pairing.
+        from app.services import local_server_device as LSD
+
+        return LSD.apply_on_pairing(db, pairing_code, machine, options)
     if role == ROLE_CUSTOMER_DISPLAY:
         # "מסך לקוח": no KDS row — its own settings layer says what it is and which till it mirrors.
         from app.services import customer_display
@@ -458,6 +487,7 @@ def role_change_refusal(machine: Any, current: str, wanted: str):
     labels = {
         ROLE_TILL: "קופה", ROLE_KIOSK: "קיוסק", ROLE_KDS: "מסך מטבח (KDS)",
         ROLE_ORDER_STATUS_BOARD: "מסך מוכן / לא מוכן", ROLE_CUSTOMER_DISPLAY: "מסך לקוח",
+        ROLE_LOCAL_SERVER: "שרת מקומי",
     }
     return _refuse(
         ROLE_CHANGE_REQUIRES_PAIRING, machine,
@@ -482,8 +512,9 @@ def change_display_role(db: Session, machine: Any, wanted: str, kds: Any = None)
     current = role_of_display(db, machine)
     if wanted == current:
         return False
-    if ROLE_CUSTOMER_DISPLAY in (wanted, current):
-        # A customer display mirrors a till; a KDS / board shows the kitchen: a new pairing, not a switch.
+    if ROLE_CUSTOMER_DISPLAY in (wanted, current) or ROLE_LOCAL_SERVER in (wanted, current):
+        # A customer display mirrors a till; a KDS / board shows the kitchen; a local server serves the
+        # shop: a new pairing, not a switch.
         raise role_change_refusal(machine, current, wanted)
     if machine.shop_id is None:
         raise _refuse(

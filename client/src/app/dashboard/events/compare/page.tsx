@@ -4,8 +4,14 @@
  * Events side by side (`/report-events/compare`): the customers who split one shop into
  * two events want to see which did better and why — the headline figures (the best of
  * each row marked), each event's tills by sales per hour, and the top items.
+ *
+ * The events are in the URL (`?ids=a,b`). Exported through the reports' export bar
+ * (P:\specs\reports-upgrade.md §2ב–ד, key `event-compare`): Excel with the same three
+ * sheets — the figures grid, the tills (weak and silent ones highlighted, as on screen) and
+ * the top items — each with columns to choose; a PDF of the figures grid; print.
  */
 
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -16,8 +22,8 @@ import { eventErrorMessage, fetchEventCompare, type EventCompareEntry } from '@/
 import { clockLabel, durationText } from '@/lib/eventReport';
 import { CHART, Capsule, Card, InsightsSurface, Muted, SectionHeader, SkeletonCard, tooltipStyle } from '@/components/dashboard/insights/ios';
 import { IosTable, StatusChip, Td, Th, compactMoney, count, money, pctText, tillColor } from '@/components/dashboard/events/event-parts';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
-import { EXCEL_FILL, type ExcelSheet } from '@/lib/excelExport';
+import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
+import { EXCEL_FILL } from '@/lib/excelExport';
 
 type Row = {
   key: string;
@@ -26,6 +32,32 @@ type Row = {
   /** Less is better (refunds, alerts). */
   invert?: boolean;
 };
+
+const ROWS: Row[] = [
+  { key: 'net', value: (e) => e.kpis.net, format: money },
+  { key: 'netExVat', value: (e) => e.kpis.netExVat, format: money },
+  { key: 'sales', value: (e) => e.kpis.salesCount, format: count },
+  { key: 'avgTicket', value: (e) => e.kpis.avgTicket, format: money },
+  { key: 'items', value: (e) => e.kpis.itemsSold, format: count },
+  { key: 'tips', value: (e) => e.kpis.tips, format: money },
+  { key: 'tipPct', value: (e) => e.kpis.tipPct, format: (n) => pctText(n) },
+  { key: 'refunds', value: (e) => e.kpis.refunds, format: money, invert: true },
+  { key: 'perActiveHour', value: (e) => e.kpis.avgPerActiveHour, format: money },
+  { key: 'activeTills', value: (e) => e.perTill.activeTills, format: count },
+  { key: 'avgPerTill', value: (e) => e.perTill.avgNet, format: money },
+  { key: 'medianPerHour', value: (e) => e.perTill.medianSalesPerHour, format: money },
+  { key: 'cash', value: (e) => e.kpis.cash, format: money },
+  { key: 'card', value: (e) => e.kpis.card, format: money },
+  { key: 'alerts', value: (e) => e.alerts, format: count, invert: true },
+];
+
+type TillRow = { entry: EventCompareEntry; till: EventCompareEntry['tills'][number] };
+type ItemRow = { entry: EventCompareEntry; item: EventCompareEntry['topItems'][number] };
+
+/** An event's tills, best sales per hour first (as the cards list them). */
+function bySalesPerHour(e: EventCompareEntry) {
+  return e.tills.slice().sort((a, b) => b.salesPerHour - a.salesPerHour);
+}
 
 export default function EventsComparePage() {
   const t = useTranslations('events.compareView');
@@ -36,99 +68,92 @@ export default function EventsComparePage() {
     queryFn: () => fetchEventCompare(ids),
     enabled: ids.split(',').filter(Boolean).length >= 2,
   });
-  const events = query.data ?? [];
+  const events = useMemo(() => query.data ?? [], [query.data]);
 
-  const rows: Row[] = [
-    { key: 'net', value: (e) => e.kpis.net, format: money },
-    { key: 'netExVat', value: (e) => e.kpis.netExVat, format: money },
-    { key: 'sales', value: (e) => e.kpis.salesCount, format: count },
-    { key: 'avgTicket', value: (e) => e.kpis.avgTicket, format: money },
-    { key: 'items', value: (e) => e.kpis.itemsSold, format: count },
-    { key: 'tips', value: (e) => e.kpis.tips, format: money },
-    { key: 'tipPct', value: (e) => e.kpis.tipPct, format: (n) => pctText(n) },
-    { key: 'refunds', value: (e) => e.kpis.refunds, format: money, invert: true },
-    { key: 'perActiveHour', value: (e) => e.kpis.avgPerActiveHour, format: money },
-    { key: 'activeTills', value: (e) => e.perTill.activeTills, format: count },
-    { key: 'avgPerTill', value: (e) => e.perTill.avgNet, format: money },
-    { key: 'medianPerHour', value: (e) => e.perTill.medianSalesPerHour, format: money },
-    { key: 'cash', value: (e) => e.kpis.cash, format: money },
-    { key: 'card', value: (e) => e.kpis.card, format: money },
-    { key: 'alerts', value: (e) => e.alerts, format: count, invert: true },
-  ];
-  const best = (row: Row): number | null => {
-    const values = events.map(row.value).filter((v): v is number => v !== null);
-    if (values.length < 2) return null;
-    return row.invert ? Math.min(...values) : Math.max(...values);
-  };
+  const best = useMemo(
+    () =>
+      (row: Row): number | null => {
+        const values = events.map(row.value).filter((v): v is number => v !== null);
+        if (values.length < 2) return null;
+        return row.invert ? Math.min(...values) : Math.max(...values);
+      },
+    [events],
+  );
   const chart = events.map((e, i) => ({ name: e.event.name, net: e.kpis.net, avg: e.kpis.avgTicket, color: tillColor(i) }));
 
   /**
-   * The figures grid (a row per figure, a column per event — numbers, the unit in the
-   * figure's name, the best named beside it), every event's tills by sales per hour (weak
-   * and silent tills highlighted, as on screen), and the top items.
+   * What goes out, sheet by sheet, as it always did: the figures grid (a row per figure, a
+   * column per event — numbers, the unit in the figure's name, the best named beside it),
+   * every event's tills by sales per hour (weak and silent tills filled red, as on screen),
+   * and the top items. Not on screen as tables — the cards and the grid below are the view.
    */
-  const exportSheets = (): ExcelSheet[] => {
+  const tables = useMemo(() => {
     const unit = (row: Row) => (row.format === money ? ' (₪)' : row.key === 'tipPct' ? ' (%)' : '');
-    const tills = events.flatMap((e) =>
-      e.tills
-        .slice()
-        .sort((a, b) => b.salesPerHour - a.salesPerHour)
-        .map((x) => ({ event: e.event.name, x })),
-    );
-    return [
-      {
-        name: t('figures'),
-        columns: [
-          { header: t('figures') },
-          ...events.map((e) => ({
-            header: `${e.event.name} · ${clockLabel(e.event.startsAt, e.event.timezone, true)}`,
-            kind: 'number' as const,
-            width: 18,
-          })),
-          { header: t('best') },
-        ],
-        rows: rows.map((row) => {
-          const top = best(row);
-          return [
-            `${t(`rows.${row.key}`)}${unit(row)}`,
-            ...events.map(row.value),
-            top === null ? null : events.filter((e) => row.value(e) === top).map((e) => e.event.name).join(', '),
-          ];
-        }),
-        autoFilter: false,
-      },
-      {
-        name: t('tills'),
-        columns: [
-          { header: te('form.name') },
-          { header: te('tills.till') },
-          { header: te('tills.perHour'), kind: 'money' },
-          { header: te('tills.net'), kind: 'money' },
-          { header: te('tills.sales'), kind: 'number' },
-          { header: te('tills.avgTicket'), kind: 'money' },
-          { header: te('tills.share'), kind: 'percent' },
-          { header: t('rows.tipPct'), kind: 'percent' },
-        ],
-        rows: tills.map(({ event, x }) => [
-          event, x.name, x.salesPerHour, x.net, x.salesCount, x.avgTicket, x.sharePct, x.tipPct,
-        ]),
-        rowFills: tills.map(({ x }) => (x.weak || x.noSales ? EXCEL_FILL.missing : null)),
-      },
-      {
-        name: t('topItems'),
-        columns: [
-          { header: te('form.name') },
-          { header: te('items.item') },
-          { header: te('items.quantity'), kind: 'number' },
-          { header: te('items.revenue'), kind: 'money' },
-          { header: te('items.share'), kind: 'percent' },
-        ],
-        rows: events.flatMap((e) => e.topItems.map((i) => [e.event.name, i.name, i.quantity, i.revenue, i.sharePct])),
-      },
-    ];
-  };
+    const figures: ReportTableSpec<Row> = {
+      id: 'main',
+      title: t('figures'),
+      rows: ROWS,
+      rowKey: (row) => row.key,
+      // A figure per row, not a list to filter (as the sheet always was).
+      autoFilter: false,
+      columns: [
+        { key: 'figure', header: t('figures'), required: true, value: (row) => `${t(`rows.${row.key}`)}${unit(row)}` },
+        // By position: "the first event", "the second"… — what a saved choice can mean here.
+        ...events.map((e, i) => ({
+          key: `event${i + 1}`,
+          header: `${e.event.name} · ${clockLabel(e.event.startsAt, e.event.timezone, true)}`,
+          kind: 'number' as const,
+          width: 18,
+          value: (row: Row) => row.value(e),
+        })),
+        {
+          key: 'best',
+          header: t('best'),
+          value: (row) => {
+            const top = best(row);
+            return top === null ? null : events.filter((e) => row.value(e) === top).map((e) => e.event.name).join(', ');
+          },
+        },
+      ],
+    };
+    const tills: ReportTableSpec<TillRow> = {
+      id: 'tills',
+      title: t('tills'),
+      rows: events.flatMap((entry) => bySalesPerHour(entry).map((till) => ({ entry, till }))),
+      rowKey: (r) => `${r.entry.event.id}:${r.till.machineId}`,
+      rowFill: (r) => (r.till.weak || r.till.noSales ? EXCEL_FILL.missing : null),
+      columns: [
+        { key: 'event', header: te('form.name'), required: true, value: (r) => r.entry.event.name },
+        { key: 'till', header: te('tills.till'), value: (r) => r.till.name },
+        { key: 'perHour', header: te('tills.perHour'), kind: 'money', value: (r) => r.till.salesPerHour },
+        { key: 'net', header: te('tills.net'), kind: 'money', value: (r) => r.till.net },
+        { key: 'sales', header: te('tills.sales'), kind: 'number', value: (r) => r.till.salesCount },
+        { key: 'avgTicket', header: te('tills.avgTicket'), kind: 'money', value: (r) => r.till.avgTicket },
+        { key: 'share', header: te('tills.share'), kind: 'percent', value: (r) => r.till.sharePct },
+        { key: 'tipPct', header: t('rows.tipPct'), kind: 'percent', value: (r) => r.till.tipPct },
+      ],
+    };
+    const items: ReportTableSpec<ItemRow> = {
+      id: 'items',
+      title: t('topItems'),
+      rows: events.flatMap((entry) => entry.topItems.map((item) => ({ entry, item }))),
+      rowKey: (r) => `${r.entry.event.id}:${r.item.key}`,
+      columns: [
+        { key: 'event', header: te('form.name'), required: true, value: (r) => r.entry.event.name },
+        { key: 'item', header: te('items.item'), value: (r) => r.item.name },
+        { key: 'quantity', header: te('items.quantity'), kind: 'number', value: (r) => r.item.quantity },
+        { key: 'revenue', header: te('items.revenue'), kind: 'money', value: (r) => r.item.revenue },
+        { key: 'share', header: te('items.share'), kind: 'percent', value: (r) => r.item.sharePct },
+      ],
+    };
+    return [figures, tills, items] as ReportTableSpec<unknown>[];
+  }, [best, events, t, te]);
+
   const startDates = events.map((e) => e.event.startDate).filter(Boolean).sort();
   const endDates = events.map((e) => e.event.endDate).filter(Boolean).sort();
+  const shopNames = [...new Set(events.map((e) => e.event.shopName).filter((s): s is string => Boolean(s)))];
+  const exportScope = useReportExportScope(shopNames.length ? shopNames.join(', ') : null);
+  const filterLines = events.length ? [{ label: t('eventsLabel'), value: events.map((e) => e.event.name).join(', ') }] : [];
 
   return (
     <InsightsSurface className="print:bg-white">
@@ -140,14 +165,22 @@ export default function EventsComparePage() {
         <h1 className="text-[34px] font-bold leading-tight tracking-tight">{t('title')}</h1>
         <p className="text-[15px] text-[#8E8E93]">{t('subtitle')}</p>
       </div>
-      <ReportExportToolbar
-        className="mt-3 px-1"
-        title={t('title')}
-        from={startDates[0]}
-        to={endDates[endDates.length - 1]}
-        disabled={events.length === 0}
-        getSheets={exportSheets}
-      />
+      <div className="mt-3 px-1">
+        <ReportExportBar
+          reportKey="event-compare"
+          title={t('title')}
+          tables={tables}
+          pdfTableId="main"
+          from={startDates[0]}
+          to={endDates[endDates.length - 1]}
+          business={exportScope.business}
+          place={exportScope.place}
+          filterLines={filterLines}
+          companyId={exportScope.companyId}
+          companyName={exportScope.companyName}
+          disabled={events.length === 0}
+        />
+      </div>
 
       {query.isLoading ? (
         <div className="mt-4 space-y-3">
@@ -206,7 +239,7 @@ export default function EventsComparePage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => {
+                {ROWS.map((row) => {
                   const top = best(row);
                   return (
                     <tr key={row.key}>
@@ -236,16 +269,13 @@ export default function EventsComparePage() {
                 <Card key={e.event.id} className="space-y-2">
                   <div className="text-[15px] font-semibold">{e.event.name}</div>
                   <ul className="space-y-2">
-                    {e.tills
-                      .slice()
-                      .sort((a, b) => b.salesPerHour - a.salesPerHour)
-                      .map((x) => (
-                        <li key={x.machineId} className="grid grid-cols-[minmax(5rem,8rem)_1fr_auto] items-center gap-3 text-[14px]">
-                          <span className="truncate">{x.name}</span>
-                          <Capsule value={x.salesPerHour} max={max} color={x.weak || x.noSales ? '#FF3B30' : undefined} />
-                          <span className="tabular-nums">{t('perHour', { value: money(x.salesPerHour) })}</span>
-                        </li>
-                      ))}
+                    {bySalesPerHour(e).map((x) => (
+                      <li key={x.machineId} className="grid grid-cols-[minmax(5rem,8rem)_1fr_auto] items-center gap-3 text-[14px]">
+                        <span className="truncate">{x.name}</span>
+                        <Capsule value={x.salesPerHour} max={max} color={x.weak || x.noSales ? '#FF3B30' : undefined} />
+                        <span className="tabular-nums">{t('perHour', { value: money(x.salesPerHour) })}</span>
+                      </li>
+                    ))}
                   </ul>
                   <div className="border-t border-[#3C3C4320] pt-2 text-[13px] text-[#8E8E93] dark:border-[#54545866]">
                     {t('topItems')}: {e.topItems.map((i) => `${i.name} (${money(i.revenue)})`).join(' · ') || '—'}

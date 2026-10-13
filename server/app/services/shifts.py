@@ -559,6 +559,8 @@ def note_documents_after_close(
                 setattr(shift, column, value)
             shift.totals_mismatch = till_totals_mismatch(shift.till_totals, totals)
             recomputed_tills.add(shift.machine_id)
+            if new_count:
+                _note_cloud_closed_late(db, shift, new_count)
             continue
         late = new_count + int((moved_in or {}).get(shift_id, 0))
         rewritten = int((amended or {}).get(shift_id, 0))
@@ -588,6 +590,8 @@ def note_documents_after_close(
 
             if late:
                 late_documents.carry(db, shift, z, doc_ids=late_ids, now=now)
+        if late:
+            _note_cloud_closed_late(db, shift, late)
         logger.warning(
             "shift %s is in Z %s: %s document(s) arrived or moved in after it, %s rewritten",
             shift.id, shift.z_report_id, late, rewritten,
@@ -599,6 +603,23 @@ def note_documents_after_close(
         from app.services.z_runs import retry_strict_runs
 
         retry_strict_runs(db, recomputed_tills)
+
+
+def _note_cloud_closed_late(db: Session, shift: Shift, count: int) -> None:
+    """
+    A shift closed from the cloud ("סגירת משמרת מהענן", app/services/local_server_switch.py)
+    got documents after the close: counted late above; the dashboard's exception here. Never
+    fails the push it rides on.
+    """
+    from app.services import local_server_switch as LSS
+
+    if not LSS.is_closed_from_cloud(shift):
+        return
+    try:
+        with db.begin_nested():
+            LSS.note_late_documents(db, shift, count)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not record late documents of cloud-closed shift %s", shift.id)
 
 
 def recent_shift_zs(

@@ -14,9 +14,11 @@ from app.services import device_profile
 from app.services import display_devices
 from app.services import device_identity
 from app.services import device_management
+from app.services import device_commands
 from app.services import document_prefix
 from app.services import lan_server
 from app.services import support_z, till_reset
+from app.services import shop_active
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.schemas.device_profile import DeviceProfileIn
@@ -153,6 +155,7 @@ def _enrich_machine_status(
     pending_transmit: Optional[Dict[uuid_mod.UUID, uuid_mod.UUID]] = None,
     terminal_settings: Optional[Dict[uuid_mod.UUID, TerminalSettings]] = None,
     kiosks: Optional[Dict[uuid_mod.UUID, Any]] = None,
+    remote_locked: Optional[set] = None,
 ) -> Dict[str, Any]:
     last_catalog_change_at = get_catalog_change_watermark_for_machine(db, machine)
     last_sync_at = machine.last_sync_at
@@ -212,6 +215,13 @@ def _enrich_machine_status(
         "replacements": getattr(machine, "replacements", None) or [],
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md).
         "independentTill": bool(getattr(machine, "independent_till", False)),
+        # The devices page's filters: its shop in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md), its
+        # shop switched off (null without a shop), and "נעולה" from "שליטה מרחוק".
+        "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
+        "shopActive": bool(machine.shop.is_active) if machine.shop is not None else None,
+        "remoteLocked": machine.id in (
+            remote_locked if remote_locked is not None else device_commands.locked_machine_ids(db, [machine.id])
+        ),
         "distributorId": machine.distributor_id,
         "mqttClientId": machine.mqtt_client_id,
         "pairingStatus": machine.pairing_status,
@@ -384,6 +394,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
     # and priming tells every machine at once rather than one lookup each.
     kiosks = device_profile.prime_kiosks(db, machines)
     terminal = terminal_settings_for(db, machines)
+    locked = device_commands.locked_machine_ids(db, ids)
     return [
         _enrich_machine_status(
             m,
@@ -398,6 +409,7 @@ def _enrich_machines_batch(machines: List[POSMachine], db: Session) -> List[Dict
             pending_transmit=pending_transmit,
             terminal_settings=terminal,
             kiosks=kiosks,
+            remote_locked=locked,
         )
         for m in machines
     ]
@@ -617,8 +629,57 @@ def get_my_machine(
             if shop is not None and getattr(shop, "training_mode", False) and shop.training_started_at
             else None
         ),
+        # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): false locks the device —
+        # till, kiosk, KDS, customer display — once its current sale ends; only the super admin
+        # turning the shop back on releases it, never a manager code. True in no shop.
+        "shopActive": shop_active.is_active(shop),
+        # "המשמרת נסגרה מהענן" (P:/specs/local-server-switch.md §8): the shift this till last said
+        # is open was closed from the cloud — `{shiftId, closedAt, closedBy}`, else null.
+        "shiftClosedFromCloud": _shift_closed_from_cloud(
+            db if isinstance(db, Session) else object_session(machine), machine,
+            getattr(machine, "reported_open_shift_id", None),
+        ),
+        # "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.3, §11.6): the server's own block
+        # (null for any other device), and the host the cloud named with the key to verify it by.
+        **_local_server_fields(db if isinstance(db, Session) else object_session(machine), machine, always=True),
         **machine_realtime_refresh_info(machine=machine),
     }
+
+
+def _local_server_fields(db: Optional[Session], machine: POSMachine, *, always: bool) -> Dict[str, Any]:
+    """
+    `localServer` (the server's own block) and `lanDiscovery` (§11.6). `always`: `machines/me`
+    says both, null when there is none; a heartbeat only what there is. Never fails the call.
+    """
+    out: Dict[str, Any] = {"localServer": None, "lanDiscovery": None} if always else {}
+    if db is None:
+        return out
+    try:
+        from app.services import local_server_device as LSD
+
+        block = LSD.device_block(db, machine)
+        discovery = LSD.discovery_for(db, machine)
+    except Exception:  # noqa: BLE001
+        logger.exception("local server blocks failed for %s", machine.id)
+        return out
+    if block is not None or always:
+        out["localServer"] = block
+    if discovery is not None or always:
+        out["lanDiscovery"] = discovery
+    return out
+
+
+def _shift_closed_from_cloud(db: Optional[Session], machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
+    """`shiftClosedFromCloud`; never fails the call it rides on."""
+    if db is None or not shift_id:
+        return None
+    try:
+        from app.services.local_server_switch import shift_closed_from_cloud
+
+        return shift_closed_from_cloud(db, machine, shift_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("shiftClosedFromCloud failed for %s", machine.id)
+        return None
 
 
 def _closed_claimed_shift(db: Session, machine: POSMachine, shift_id) -> Optional[Dict[str, Any]]:
@@ -736,6 +797,13 @@ def post_my_heartbeat(
         if body is not None and not body.open_shift_id_unreadable
         else None
     )
+    # Closed from the cloud ("סגירת משמרת מהענן", P:/specs/local-server-switch.md §8): the till
+    # marks it closed and read-only, says "המשמרת נסגרה מהענן", and opens a new shift to sell.
+    shift_closed_from_cloud = (
+        _shift_closed_from_cloud(db, machine, body.open_shift_id)
+        if body is not None and not body.open_shift_id_unreadable
+        else None
+    )
     # The pull half of a remote shift close. Every till calls this on a timer, so it is
     # the one channel that does not care whether the terminal was reachable when the
     # manager started the Z — a till that was off finds the instruction when it comes
@@ -816,6 +884,14 @@ def post_my_heartbeat(
     # The local server's sync lag (docs/SPEC_LAN_MODE.md §6): what the cloud copy still lacks.
     if body is not None and body.lan_sync is not None:
         lan_server.note_sync(machine, body.lan_sync)
+    # "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.4): its state and its LAN key.
+    if body is not None and (body.local_server is not None or body.lan_identity is not None):
+        from app.services import local_server_device
+
+        try:
+            local_server_device.apply_heartbeat(machine, body.local_server, body.lan_identity)
+        except Exception:  # noqa: BLE001 - a report never fails a heartbeat
+            logger.exception("local server report failed for %s", machine.id)
     # Local shop Zs of this shop still waiting for their tills' shifts and documents
     # (docs/SPEC_INDEPENDENT_TILL.md §8.12): what arrived is linked, and a Z is verified once
     # everything it names is here. Never fails a heartbeat.
@@ -882,6 +958,14 @@ def post_my_heartbeat(
         **_till_z_run(db, machine),
         # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
         "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
+        # "סניף לא פעיל", every beat too: the device locks (or is released) on the beat after
+        # the change, should it have missed the realtime signal.
+        "shopActive": shop_active.is_active(machine.shop),
+        # "סוג מכשיר (תפקיד)" every beat (P:/specs/dedicated-local-server.md §11.3): a device the
+        # dashboard paired as "שרת מקומי" learns it without waiting for `machines/me`.
+        "deviceRole": device_profile.effective_role(db, machine),
+        # The server's own block, and the host the cloud named with the key to verify it by (§11.6).
+        **_local_server_fields(db, machine, always=False),
     }
     # Support produced this till's Z from the cloud (offline till Z §4.6): the till makes
     # nothing for that period and keeps its data of it read-only.
@@ -894,6 +978,8 @@ def post_my_heartbeat(
         response["pendingCloseShift"] = pending
     if closed_open_shift is not None:
         response["closedOpenShift"] = closed_open_shift
+    if shift_closed_from_cloud is not None:
+        response["shiftClosedFromCloud"] = shift_closed_from_cloud
     if pending_transmit is not None:
         response["pendingTransmit"] = pending_transmit
     if pending_till_z is not None:
@@ -1015,11 +1101,24 @@ def update_machine(
             # another company's included, and draw that shop's register number.
             if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
                 _check_shop_access(current_user, shop, db)
+            # "סניף לא פעיל": no device moves into an inactive shop (409 `shop_inactive`).
+            if leaving:
+                shop_active.refuse_pairing(shop)
             if not shop_belongs_to_company(db, sid, shop.company_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="shopId does not belong to its company",
                 )
+            # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): a Windows / browser device has no training
+            # mode — never moved into a shop in it (409 `shop_in_training_device_unsupported`).
+            if str(sid) != str(machine.shop_id):
+                from app.services import training_mode
+
+                try:
+                    training_mode.check_device_fits(shop, display_devices.platform_of(machine), db=db, machine=machine)
+                except training_mode.DeviceUnsupported as refused:
+                    db.rollback()
+                    return JSONResponse(status_code=refused.status_code, content=refused.body)
             machine.tenant_id = shop.tenant_id or machine.tenant_id
             machine.pairing_status = PairingStatus.ASSIGNED
         # Not a plain setattr: changing shop gives up this shop's register number
@@ -1681,6 +1780,9 @@ def create_replacement_pairing_code(
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    # "סניף לא פעיל": a replacement unit is a new device paired into the till's shop — refused
+    # while the shop is inactive (409 `shop_inactive`), here and when a code is redeemed.
+    shop_active.refuse_pairing(machine.shop)
 
     # Checked here as well as at redemption so the operator is told now, while they are
     # looking at the screen, rather than when the engineer is standing at the counter

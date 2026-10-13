@@ -54,6 +54,10 @@ export interface KdsTheme {
   onNote: string;
   ringWidth: string;
   levels: Record<TimerLevel, Level>;
+  /** The ticket's band for take away / delivery (`serviceTint`, §16) and the text on it. */
+  tintTakeAway: string;
+  tintDelivery: string;
+  onTint: string;
 }
 
 export const KDS_THEMES: Record<ScreenThemeName, KdsTheme> = {
@@ -93,6 +97,9 @@ export const KDS_THEMES: Record<ScreenThemeName, KdsTheme> = {
       late: { ring: '#ef4444', head: 'rgba(220,38,38,0.35)', time: '#fca5a5' },
       done: { ring: 'rgba(16,185,129,0.70)', head: 'rgba(5,150,105,0.20)', time: '#6ee7b7' },
     },
+    tintTakeAway: '#38bdf8',
+    tintDelivery: '#a78bfa',
+    onTint: '#0b1220',
   },
   light: {
     bg: '#eceff3',
@@ -130,6 +137,9 @@ export const KDS_THEMES: Record<ScreenThemeName, KdsTheme> = {
       late: { ring: '#dc2626', head: '#fee2e2', time: '#b91c1c' },
       done: { ring: '#16a34a', head: '#dcfce7', time: '#15803d' },
     },
+    tintTakeAway: '#0369a1',
+    tintDelivery: '#6d28d9',
+    onTint: '#ffffff',
   },
   contrast: {
     bg: '#000000',
@@ -168,6 +178,9 @@ export const KDS_THEMES: Record<ScreenThemeName, KdsTheme> = {
       late: { ring: '#ff3b30', head: '#000000', time: '#ff3b30' },
       done: { ring: '#00e05a', head: '#000000', time: '#00e05a' },
     },
+    tintTakeAway: '#00e5ff',
+    tintDelivery: '#ff66ff',
+    onTint: '#000000',
   },
   brand: {
     bg: '#0b1220',
@@ -205,6 +218,9 @@ export const KDS_THEMES: Record<ScreenThemeName, KdsTheme> = {
       late: { ring: '#ef4444', head: 'rgba(239,68,68,0.30)', time: '#fca5a5' },
       done: { ring: 'rgba(34,197,94,0.70)', head: 'rgba(22,163,74,0.20)', time: '#86efac' },
     },
+    tintTakeAway: '#60a5fa',
+    tintDelivery: '#c084fc',
+    onTint: '#0b1220',
   },
 };
 
@@ -248,6 +264,9 @@ export function themeVars(t: KdsTheme): CSSProperties {
     '--k-note': t.note,
     '--k-on-note': t.onNote,
     '--k-ring-w': t.ringWidth,
+    '--k-tint-ta': t.tintTakeAway,
+    '--k-tint-del': t.tintDelivery,
+    '--k-on-tint': t.onTint,
   };
   return v as CSSProperties;
 }

@@ -111,6 +111,10 @@ from app.models.product_cost import ProductCost
 from app.models.insight_quick_action import InsightQuickAction
 from app.models.report_event import ReportEvent, ReportEventMachine, ReportEventMachineChange
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
+# "סניף לא פעיל": who turned a shop off or back on, when and why (app/services/shop_active.py).
+from app.models.shop_active_log import ShopActiveLog
+# "בניית חברת הדגמה": what the one-click demo company build made (app/services/demo_company.py).
+from app.models.demo_company import DemoCompanyItem
 from app.models.pos_user_session import PosUserSession
 # "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
 from app.models.attendance import AttendanceAdjustment, AttendanceBreak, AttendanceShift, EmployeeRole
@@ -255,7 +259,7 @@ __all__ = [
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
     "ReportEvent", "ReportEventMachine", "ReportEventMachineChange",
     "InsightQuickAction",
-    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
+    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem", "ShopActiveLog", "DemoCompanyItem",
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",
@@ -291,3 +295,5 @@ __all__ = [
 ]
 # "כרטיסי ביקור דיגיטליים": cards, revisions, slugs, enquiries, counters (app/services/business_cards.py).
 from app.models import business_card as _business_card  # noqa: F401,E402
+# "ברירת מחדל לייצוא" of each report per company, and its audit (app/services/report_export_defaults.py).
+from app.models.report_export_default import ReportExportDefault, ReportExportDefaultAudit  # noqa: F401,E402

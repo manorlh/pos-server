@@ -9,6 +9,11 @@
  * with a profile the dialog shows what the server applied and what waits for the first till.
  * Editing an existing shop is the details alone; its profile is on the shop page.
  *
+ * "קוד סניף" of a new shop comes filled with the company's next code ("אוטומטי: הבא בתור. אפשר
+ * לשנות", P:/specs/shop-code-and-inactive.md §2); left as it was it is sent `branchIdAuto`, so a
+ * code taken meanwhile becomes the next one. An existing shop shows the "סניף פעיל" switch — the
+ * super admin's only, confirmed with a reason, saved on its own (components/dashboard/shop-active.tsx).
+ *
  * The company field here is part of the record being edited — which company the
  * shop belongs to — and is not the dashboard's shared scope. It stays a field on
  * the form for that reason; it is not one of the per-page scope pickers that were
@@ -21,10 +26,18 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, fetchCompanies } from '@/lib/api';
-import { branchCodeError, branchCodeInput, normalizeBranchCode } from '@/lib/branchCode';
+import {
+  branchCodeCreatePayload,
+  branchCodeError,
+  branchCodeInput,
+  branchCodeReassigned,
+  normalizeBranchCode,
+  shouldPrefillBranchCode,
+} from '@/lib/branchCode';
+import { withoutActiveFields } from '@/lib/shopActive';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { buildCompanyTree, companyPathLabel, MAX_TREE_INDENT_DEPTH } from '@/lib/companyTree';
-import { TRAINING_MODE_AVAILABLE, withoutTrainingFields } from '@/lib/trainingMode';
+import { NEW_SHOP_TRAINING_DEFAULT, withoutTrainingFields } from '@/lib/trainingMode';
 import { INTEGRATION_LABELS, type PaymentIntegration } from '@/lib/paymentIntegration';
 import {
   createPayloadOf,
@@ -35,6 +48,7 @@ import {
 } from '@/lib/shopWorkProfile';
 import type { Company, Shop } from '@/lib/types';
 import { ShopPaymentIntegrationSelect } from '@/components/payment-integration-section';
+import { ShopActiveSwitch } from '@/components/dashboard/shop-active';
 import {
   CreatedWorkProfile,
   EMPTY_STEP_VALUE,
@@ -170,15 +184,34 @@ function ShopForm({
   );
   const isNew = !draft.id;
   const isSuperAdmin = useIsSuperAdmin();
-  // A new shop may open in training mode once the devices implement it (off and disabled
-  // until then: a practice sale would be a real document); an existing one changes it on the
-  // shop page's "מצב הדרכה" card, never through this form.
-  const [trainingMode, setTrainingMode] = useState(TRAINING_MODE_AVAILABLE);
+  // "מצב הדרכה": a new shop opens in it by default (the spec — pre-checked); it has no device
+  // yet, so nothing holds it back. An existing shop changes it on the shop page's "מצב הדרכה"
+  // card, never through this form.
+  const [trainingMode, setTrainingMode] = useState(NEW_SHOP_TRAINING_DEFAULT);
   // "סוג אינטגרציית אשראי" for all the new shop's tills; changed later in its settings.
   const [paymentIntegration, setPaymentIntegration] = useState<PaymentIntegration>('auto');
   // "קוד סניף": mandatory, digits 1–7 (the server also checks it is unique in the company).
   const [branchTouched, setBranchTouched] = useState(false);
   const branchError = branchCodeError(draft.branchId);
+  // A new shop's code comes filled with the company's next one; another company picked brings
+  // its own — but never over a code typed by hand (`shouldPrefillBranchCode`).
+  const nextCode = useQuery<{ companyId: string; nextBranchCode: string }>({
+    queryKey: ['next-branch-code', draft.companyId],
+    queryFn: () =>
+      api
+        .get('/shops/next-branch-code', { params: { companyId: draft.companyId } })
+        .then((r) => r.data),
+    enabled: isNew && !!draft.companyId,
+    staleTime: 0,
+  });
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  const fetchedSuggestion = isNew ? (nextCode.data?.nextBranchCode ?? null) : null;
+  if (fetchedSuggestion && fetchedSuggestion !== suggestion) {
+    if (shouldPrefillBranchCode(draft.branchId, suggestion)) {
+      setDraft((s) => ({ ...s, branchId: fetchedSuggestion }));
+    }
+    setSuggestion(fetchedSuggestion);
+  }
   // Step 2: "תצורת עבודה" of the new shop.
   const [profileStep, setProfileStep] = useState<WorkProfileStepValue>(EMPTY_STEP_VALUE);
   // After creating with a profile: the shop, what the server said of the profile, what was sent.
@@ -196,12 +229,15 @@ function ShopForm({
     mutationFn: async ({ s, choice }: { s: Partial<Shop>; choice: CreateChoice }) => {
       // The draft is the row as read, license included; only a super admin may send that
       // part back ("לקוח קבוע / זמני"), so it is rebuilt rather than echoed.
+      // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts). A new
+      // shop's, still the suggestion, goes flagged `branchIdAuto`.
+      const code = s.id ? { branchId: normalizeBranchCode(s.branchId) } : branchCodeCreatePayload(s.branchId, suggestion);
       const payload = {
-        ...withoutTrainingFields(withoutLicense(s)),
-        // "קוד סניף" is mandatory: an internal code identifying the branch (lib/branchCode.ts).
-        branchId: normalizeBranchCode(s.branchId),
+        // "סניף פעיל" is never part of a save of the details: its switch saves it on its own.
+        ...withoutActiveFields(withoutTrainingFields(withoutLicense(s))),
+        ...code,
         ...licensePayload(s, isSuperAdmin),
-        ...(s.id || !TRAINING_MODE_AVAILABLE ? {} : { trainingMode }),
+        ...(s.id ? {} : { trainingMode }),
         // "אוטומטי" stores nothing, so it is not sent.
         ...(s.id || paymentIntegration === 'auto' ? {} : { paymentIntegration }),
         // "תצורת עבודה": `workProfile` or `copyWorkProfileFromShopId`; nothing on "דלג".
@@ -210,11 +246,15 @@ function ShopForm({
       const { data } = s.id
         ? await api.put<Shop>(`/shops/${s.id}`, payload)
         : await api.post<Shop>('/shops', payload);
-      return { data, choice };
+      return { data, choice, code };
     },
-    onSuccess: ({ data, choice }) => {
+    onSuccess: ({ data, choice, code }) => {
       qc.invalidateQueries({ queryKey: ['shops'] });
+      qc.invalidateQueries({ queryKey: ['next-branch-code'] });
       toast.success(isNew ? t('created') : t('updated'));
+      // The suggestion was taken by another shop meanwhile: this one got the next code.
+      const reassigned = isNew ? branchCodeReassigned(code, data.branchId) : null;
+      if (reassigned) toast.info(t('branchIdReassigned', { sent: code.branchId, code: reassigned }));
       onSaved?.(data);
       if (isNew && choice.kind !== 'skip') {
         setCreated({ shop: data, result: createdWorkProfileOf(data), sent: createPayloadOf(choice).workProfile ?? null });
@@ -351,6 +391,9 @@ function ShopForm({
                 setDraft((s) => ({ ...s, branchId: branchCodeInput(e.target.value) }));
               }}
             />
+            {isNew && suggestion ? (
+              <p className="text-xs font-medium text-primary">{t('branchIdAutoHint')}</p>
+            ) : null}
             <p className="text-muted-foreground text-xs">{t('branchIdHint')}</p>
             {branchError && branchTouched ? (
               <p className="text-destructive text-xs">
@@ -373,6 +416,13 @@ function ShopForm({
             onChange={(e) => setDraft((s) => ({ ...s, address: e.target.value }))}
           />
         </div>
+        {!isNew && draft.id ? (
+          // "סניף פעיל": shown to everyone, flipped by the super admin only (confirmed, with a reason).
+          <ShopActiveSwitch
+            shop={{ id: draft.id, isActive: draft.isActive !== false }}
+            onChanged={(saved) => setDraft((s) => ({ ...s, isActive: saved.isActive }))}
+          />
+        ) : null}
         {isNew ? (
           <div className="flex items-start justify-between gap-3 rounded-md border border-orange-200 bg-orange-50/60 p-3 dark:border-orange-900 dark:bg-orange-950/30">
             <div>
@@ -380,15 +430,10 @@ function ShopForm({
                 {tTraining('createSwitch')}
               </Label>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {TRAINING_MODE_AVAILABLE ? tTraining('createHint') : tTraining('createUnavailable')}
+                {trainingMode ? tTraining('createHint') : tTraining('createHintOff')}
               </p>
             </div>
-            <Switch
-              id="shop-training-mode"
-              checked={trainingMode}
-              onCheckedChange={setTrainingMode}
-              disabled={!TRAINING_MODE_AVAILABLE}
-            />
+            <Switch id="shop-training-mode" checked={trainingMode} onCheckedChange={setTrainingMode} />
           </div>
         ) : null}
         {isNew ? (

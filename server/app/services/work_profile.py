@@ -168,6 +168,13 @@ class ShopState:
     kitchen_raw: Dict[str, Any] = field(default_factory=dict)
     #: The tills that may become the main till, best first (Android, in the LAN group, not a kiosk).
     main_candidates: List[POSMachine] = field(default_factory=list)
+    #: The shop's dedicated local servers ("שרת מקומי", app/services/local_server_device.py).
+    servers: List[POSMachine] = field(default_factory=list)
+
+    def main_is_server(self) -> bool:
+        from app.services.local_server_device import is_local_server
+
+        return self.main is not None and is_local_server(self.main)
 
     def is_kiosk(self, machine: POSMachine) -> bool:
         return machine.id in self.kiosk_ids
@@ -187,6 +194,7 @@ def read_state(db: Session, shop: Shop) -> ShopState:
     from app.services import display_devices as DD
     from app.services import kds_workflow as WF
     from app.services import lan_server as LS
+    from app.services import local_server_device as LSD
     from app.services import local_shop_z as LZ
     from app.services import main_till as MT
     from app.services import z_runs as ZR
@@ -225,6 +233,7 @@ def read_state(db: Session, shop: Shop) -> ShopState:
         merged=merged,
         kitchen_raw=WF.level_view(db, "shop", shop.id)["raw"],
         main_candidates=sorted(candidates, key=MT.till_order),
+        servers=LSD.servers_of_shop(db, shop.id),
     )
 
 
@@ -313,6 +322,7 @@ def current_values(state: ShopState) -> Dict[str, Any]:
         "zType": z_type,
         "shopZFrom": _shop_z_from_now(state),
         "localServer": z_type == T.Z_SHOP_LOCAL,
+        T.LOCAL_SERVER_DEVICE: T.DEVICE_DEDICATED if state.main_is_server() else T.DEVICE_MAIN_TILL,
         "tablesMode": _tables_now(state),
         "kitchen": kitchen_of(state.kitchen_raw),
         "customerDisplay": _customer_display_now(state),
@@ -390,6 +400,17 @@ def _switch_refusal(db: Session, machine: POSMachine, mode: str, now: datetime) 
         return {
             "code": "independent_till", **ref,
             "message": f"{label} מוגדרת כקופה עצמאית — מצרפים אותה ל-Z הסניפי בכרטיס \"קופות בזד הסניפי\" בדף הסניף.",
+        }
+    from app.services.local_shop_z import is_remote_participant
+
+    if mode == Z_TILL and is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי": off the local server; its Z is chosen on the card, with that.
+        return {
+            "code": "remote_till", **ref,
+            "message": (
+                f"{label} מוגדרת \"מרוחקת בזד הסניפי\" (לא מחוברת לשרת המקומי) — את ה-Z שלה משנים בכרטיס "
+                "\"קופות בזד הסניפי\" בדף הסניף."
+            ),
         }
     open_shift = (
         db.query(Shift.id).filter(Shift.machine_id == machine.id, Shift.status == ShiftStatus.OPEN).first()
@@ -477,12 +498,30 @@ def _blocked(reason: str) -> Dict[str, Any]:
     return {"state": BLOCKED, "reason": reason}
 
 
-def _local_status(db: Session, state: ShopState, want: bool, now: datetime) -> Dict[str, Any]:
+WAIT_SERVER = (
+    "ממתין לשרת המקומי: הוסיפו לסניף מכשיר \"שרת מקומי\" (מכשירים ← הוספת מכשיר ← שרת מקומי). "
+    "צימוד שלו על ידי מנהל-על הופך אותו לשרת."
+)
+WAIT_SERVER_SWITCH = (
+    "השרת המקומי של הסניף הוא כרגע מכשיר ייעודי. כדי שקופה ראשית תהיה השרת, העבירו אליה את השרת "
+    "ב\"העברת שרת מקומי\" — שמירת התצורה לא מעבירה אותו בחזרה."
+)
+
+
+def _local_status(db: Session, state: ShopState, want: bool, now: datetime, *, dedicated: bool = False) -> Dict[str, Any]:
     """"שרת מקומי": the shop's main till with "רשת מקומית" on (local mode) — or not."""
+    if want and dedicated and not state.main_is_server():
+        # "שרת מקומי: מכשיר ייעודי": the dedicated server is the host, never a till.
+        if not state.servers:
+            return _pending(WAIT_SERVER)
+        if _live_z_run(db, state.shop):
+            return _blocked(_Z_MESSAGES["z_run_in_progress"])
+        # A server is there to be the host: a super admin's save makes it one.
+        return _pending(WAIT_SUPER_ADMIN)
     if want:
         if state.local_mode:
             return _applied()
-        if not state.tills:
+        if not state.tills and not (dedicated and state.main_is_server()):
             return _pending(FIRST_TILL)
         if state.main is None:
             if not state.main_candidates:
@@ -529,7 +568,7 @@ def _z_status(db: Session, state: ShopState, profile: Dict[str, Any], now: datet
         # page: a super admin's save switches it.
         return _pending(WAIT_SUPER_ADMIN)
     if want == T.Z_SHOP_LOCAL and not state.local_mode:
-        return _local_status(db, state, True, now)
+        return _local_status(db, state, True, now, dedicated=profile.get(T.LOCAL_SERVER_DEVICE) == T.DEVICE_DEDICATED)
     if want == T.Z_SHOP_CLOUD and state.local_mode:
         return _local_status(db, state, False, now)
     return _applied()
@@ -539,12 +578,26 @@ def _differs(name: str, now_value: Any) -> Dict[str, Any]:
     return _blocked(f"בסניף מוגדר כרגע \"{T.value_label(name, now_value)}\". שמירת התצורה תחיל את הערך שבחרתם.")
 
 
+def _server_device_status(db: Session, state: ShopState, profile: Dict[str, Any], now: datetime) -> Dict[str, Any]:
+    """"שרת מקומי — איזה מכשיר": a dedicated server is the host, or the main till is a till."""
+    if profile.get(T.LOCAL_SERVER_DEVICE) == T.DEVICE_DEDICATED:
+        if state.main_is_server():
+            return _applied()
+        return _local_status(db, state, True, now, dedicated=True)
+    if state.main_is_server():
+        # A dedicated server serves the shop and the profile says a till: never moved back by a save.
+        return _blocked(WAIT_SERVER_SWITCH)
+    return _applied()
+
+
 def status_of(db: Session, state: ShopState, profile: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = _now(now)
     current = current_values(state)
+    dedicated = profile.get(T.LOCAL_SERVER_DEVICE) == T.DEVICE_DEDICATED
     out: Dict[str, Any] = {
         "zType": _z_status(db, state, profile, now),
-        "localServer": _local_status(db, state, profile["localServer"], now),
+        "localServer": _local_status(db, state, profile["localServer"], now, dedicated=dedicated),
+        T.LOCAL_SERVER_DEVICE: _server_device_status(db, state, profile, now),
     }
     for name in ("shopZFrom", "tablesMode", "kitchen", "customerDisplay", "attendance", "tips", "vouchers"):
         out[name] = _applied() if current[name] == profile[name] else _differs(name, current[name])
@@ -705,6 +758,8 @@ class TillPlan:
     new_main: Optional[POSMachine] = None
     local_on: bool = False
     local_off: bool = False
+    #: "שרת מקומי: מכשיר ייעודי": the dedicated server that becomes the host (`make_host`).
+    host_server: Optional[POSMachine] = None
 
 
 def _plan_tills(db: Session, state: ShopState, profile: Dict[str, Any], now: datetime) -> TillPlan:
@@ -731,7 +786,29 @@ def _plan_tills(db: Session, state: ShopState, profile: Dict[str, Any], now: dat
         if why:
             raise _refused(why.pop("code"), why.pop("message"), "zType", **why)
         plan.z_switch.append(machine)
-    if profile["localServer"]:
+    dedicated = profile.get(T.LOCAL_SERVER_DEVICE) == T.DEVICE_DEDICATED
+    if profile["localServer"] and dedicated:
+        # "שרת מקומי: מכשיר ייעודי": never a till as the host — the shop's dedicated server, when there
+        # is one (none yet: it waits for its pairing).
+        from app.services import local_server_switch as LSS
+
+        if not state.main_is_server() and state.servers:
+            server = state.servers[0]
+            if _live_z_run(db, shop):
+                raise _refused("z_run_in_progress", _Z_MESSAGES["z_run_in_progress"], T.LOCAL_SERVER_DEVICE)
+            reason = LSS.ineligible_reason(db, server, now, require_online=False)
+            if reason is not None:
+                raise _refused(
+                    "target_not_eligible", f"{LSS.till_label(server)}: {LSS.INELIGIBLE[reason]}.",
+                    T.LOCAL_SERVER_DEVICE, machineId=str(server.id), reason=reason,
+                )
+            plan.host_server = server
+        elif state.main_is_server() and not state.local_network:
+            busy = _producer_refusal(db, shop, True, state.main, now)
+            if busy:
+                raise _refused(busy.pop("code"), busy.pop("message"), "localServer", **busy)
+            plan.local_on = True
+    elif profile["localServer"]:
         if state.main is None and state.main_candidates:
             candidate = state.main_candidates[0]
             if _live_z_run(db, shop):
@@ -842,8 +919,11 @@ def apply_profile(
     # this save — a refusal refuses the save; as saved before but not applied yet (a till that
     # was open) — tried again, and left waiting with its reason if it still cannot be.
     till_plan = TillPlan()
-    if state.tills and allowed["zType"] and allowed["localServer"]:
-        changing = profile["zType"] != current["zType"] or profile["localServer"] != current["localServer"]
+    if (state.tills or state.servers) and allowed["zType"] and allowed["localServer"]:
+        changing = (
+            profile["zType"] != current["zType"] or profile["localServer"] != current["localServer"]
+            or profile[T.LOCAL_SERVER_DEVICE] != current[T.LOCAL_SERVER_DEVICE]
+        )
         try:
             till_plan = _plan_tills(db, state, profile, now)
         except WorkProfileRefused:
@@ -852,6 +932,10 @@ def apply_profile(
             till_plan = TillPlan()
     z_switch, kiosks_own, new_main = till_plan.z_switch, till_plan.kiosks_own, till_plan.new_main
     local_on, local_off, mode = till_plan.local_on, till_plan.local_off, till_plan.mode
+    host_server = till_plan.host_server
+    if host_server is not None and getattr(user, "role", None) != UserRole.SUPER_ADMIN:
+        # The presets' services are the super admin's: anyone else's save leaves it waiting for one.
+        host_server = None
 
     # ── 2. Writing ──
     from app.services import lan_server as LS
@@ -891,6 +975,17 @@ def apply_profile(
             if not state.local_network:
                 _audit(db, user, "localNetwork", "shop", shop.id, False, True, now)
             applied.changes.extend(["mainTill", "localNetwork"])
+        if host_server is not None:
+            # "שרת מקומי: מכשיר ייעודי": the server becomes the host — the full move from a till that
+            # held it, and "רשת מקומית" on (app/services/local_server_device.py `make_host`).
+            from app.services import local_server_device as LSD
+
+            step = T.LOCAL_SERVER_DEVICE
+            made = LSD.make_host(db, user, shop, host_server, now=now)
+            _audit(db, user, "mainTill", "machine", host_server.id, None, True, now)
+            if "localNetwork" in (made.get("changes") or []):
+                _audit(db, user, "localNetwork", "shop", shop.id, False, True, now)
+            applied.changes.extend(["mainTill", "localNetwork", T.LOCAL_SERVER_DEVICE])
         if local_on:
             step = "localServer"
             LS.set_local_network(db, user, shop, True, now=now)
@@ -1047,6 +1142,10 @@ _REASONS = {
         "לפי תצורת העבודה של הסניף (Z סניפי בשרת מקומי) — אבל רק קופת אנדרואיד יכולה להיות הקופה הראשית. "
         "עד שתצומד אחת, המכשיר בזד הסניפי מהענן."
     ),
+    "cloud_until_server": (
+        "לפי תצורת העבודה של הסניף (שרת מקומי: מכשיר ייעודי) — השרת הוא מכשיר \"שרת מקומי\", לא קופה. "
+        "עד שהשרת יצומד, המכשיר בזד הסניפי מהענן."
+    ),
     "own_z": "לפי תצורת העבודה של הסניף (Z לכל קופה): הקופה מפיקה Z משלה.",
     "kiosk_own_z": "לפי תצורת העבודה של הסניף (Z לכל קופה): הקיוסק מפיק Z משלו.",
     "kiosk_shop_z": "לפי תצורת העבודה של הסניף (Z סניפי): הקיוסק בזד הסניפי.",
@@ -1086,6 +1185,9 @@ def suggest(db: Session, shop: Optional[Shop], ctx) -> Optional[Dict[str, Any]]:
     # Z סניפי בשרת מקומי.
     if ctx.is_main_till:
         return _offer(ctx, WC.MAIN_TILL, "main_is")
+    if ctx.main_till is None and profile.get(T.LOCAL_SERVER_DEVICE) == T.DEVICE_DEDICATED:
+        # "שרת מקומי: מכשיר ייעודי": a till never becomes the main till; it waits for the server.
+        return _offer(ctx, WC.SHOP_Z_CLOUD, "cloud_until_server")
     if ctx.main_till is None:
         if ctx.lan_client and not ctx.kds_screen:
             plan = {} if ctx.local_network else {"enableLocalNetwork": True}

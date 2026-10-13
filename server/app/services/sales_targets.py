@@ -277,6 +277,7 @@ def progress_of(db: Session, target: SalesTarget, *, now: Optional[datetime] = N
         "areaId": str(target.area_id) if target.area_id else None,
         "posUserId": str(target.pos_user_id) if target.pos_user_id else None,
         "shopId": str(target.shop_id),
+        "shopName": _shop_name(db, target.shop_id),
         "period": target.period,
         "periodKey": period_key,
         "amount": float(amount),
@@ -490,9 +491,15 @@ def validate(db: Session, shop: Shop, body: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _shop_name(db: Session, shop_id: Any) -> Optional[str]:
+    shop = db.get(Shop, shop_id) if shop_id is not None else None
+    return shop.name if shop is not None else None
+
+
 def target_out(db: Session, t: SalesTarget) -> Dict[str, Any]:
     return {
-        "id": str(t.id), "shopId": str(t.shop_id), "scope": t.scope, "period": t.period,
+        "id": str(t.id), "shopId": str(t.shop_id), "shopName": _shop_name(db, t.shop_id),
+        "scope": t.scope, "period": t.period,
         "areaId": str(t.area_id) if t.area_id else None, "posUserId": str(t.pos_user_id) if t.pos_user_id else None,
         "eventId": str(t.event_id) if t.event_id else None, "day": t.day.isoformat() if t.day else None,
         "amount": float(t.amount), "dayStart": t.day_start, "dayEnd": t.day_end, "name": t.name,

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  VOUCHER_AUTO_APPLY_DEFAULT,
+  VOUCHER_AUTO_APPLY_KEY,
+  VOUCHER_AUTO_APPLY_VALUES,
   VOUCHER_AUTO_CLOSE_DEFAULT,
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_DEFAULT,
@@ -17,18 +20,53 @@ import {
   VOUCHER_STATION_PAID_ITEMS_KEY,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_VALUES,
+  VOUCHER_SUCCESS_SCREEN_DEFAULT,
+  VOUCHER_SUCCESS_SCREEN_KEY,
+  VOUCHER_SUCCESS_SCREEN_VALUES,
+  VOUCHER_SUCCESS_SECONDS_DEFAULT,
+  VOUCHER_SUCCESS_SECONDS_KEY,
+  VOUCHER_SUCCESS_SECONDS_MAX,
+  VOUCHER_SUCCESS_SECONDS_MIN,
+  VOUCHER_SUCCESS_SECONDS_VALUES,
+  VOUCHER_SUCCESS_DISMISS_DEFAULT,
+  VOUCHER_SUCCESS_DISMISS_KEY,
+  VOUCHER_SUCCESS_DISMISS_VALUES,
   isVoucherBalanceCheckMode,
+  isVoucherSuccessDismiss,
+  resolveVoucherSuccessDismiss,
   isVoucherOnOff,
+  isVoucherSuccessScreen,
+  isVoucherSuccessSeconds,
+  resolveVoucherAutoApply,
   resolveVoucherAutoClose,
   resolveVoucherBalanceCheck,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
   resolveVoucherStation,
   resolveVoucherStationPaidItems,
+  resolveVoucherSuccessScreen,
+  resolveVoucherSuccessSeconds,
   voucherBalanceCheckEnabled,
   voucherStationNeedsAdvice,
   voucherStationPaidItemsView,
+  VOUCHER_FAST_CHOICES,
+  VOUCHER_FAST_CHOICE_KEYS,
+  VOUCHER_STATION_TITLE_DEFAULT,
+  VOUCHER_STATION_TITLE_KEY,
+  VOUCHER_STATION_TITLE_MAX,
+  isVoucherFastChoiceKey,
+  isVoucherFastChoiceValue,
+  isVoucherStationTitle,
+  normalizeVoucherStationTitle,
+  resolveVoucherFastChoice,
+  resolveVoucherStationTitle,
+  voucherFastChoiceDefault,
+  voucherFastChoiceValues,
+  voucherStationTitleLength,
+  voucherStationTitlePatch,
+  voucherStationTitleTooLong,
 } from './voucherTillSettings';
+import { resolveVoucherRedeemFlow } from './voucherRedeemFlow';
 import type { PosSettingsPatch, PosSettingsV1 } from './types';
 
 test("the values and defaults are the server's (and the till's)", () => {
@@ -76,6 +114,14 @@ test('the station recommends scanning first and a way to enter the voucher', () 
   assert.equal(voucherStationNeedsAdvice('on', 'voucher_first', false, false), true);
   assert.equal(voucherStationNeedsAdvice('on', 'voucher_first', true, false), false);
   assert.equal(voucherStationNeedsAdvice('on', 'both', false, true), false);
+});
+
+test('the station advice follows the flow in force: unset is "both" now, an explicit items_first still advises', () => {
+  // No level sets the flow: it resolves to "both" (13.10.2026), which already scans first — no advice.
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow(undefined, undefined), true, true), false);
+  // "items_first" set at this level or above still wins over the default, and still gets the advice.
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow('items_first', undefined), true, true), true);
+  assert.equal(voucherStationNeedsAdvice('on', resolveVoucherRedeemFlow(undefined, 'items_first'), true, true), true);
 });
 
 // ── "רכישה נוספת בתשלום בעמדת שובר" (voucherStationPaidItems, spec §5) ──
@@ -177,6 +223,72 @@ test('voucherShowEntitlement: its own value, then the inherited one, then on; ju
   }
 });
 
+// ── "מימוש אוטומטי בסריקת שובר" (voucherAutoApply, 12.10.2026) ──
+
+test("voucherAutoApply: the server's key, values and default (on)", () => {
+  assert.equal(VOUCHER_AUTO_APPLY_KEY, 'voucherAutoApply');
+  assert.deepEqual([...VOUCHER_AUTO_APPLY_VALUES], ['on', 'off']);
+  assert.equal(VOUCHER_AUTO_APPLY_DEFAULT, 'on');
+});
+
+test('voucherAutoApply: its own value, then the inherited one, then on; junk is unset', () => {
+  assert.equal(resolveVoucherAutoApply('off', 'on'), 'off');
+  assert.equal(resolveVoucherAutoApply('on', 'off'), 'on');
+  assert.equal(resolveVoucherAutoApply(null, 'off'), 'off');
+  assert.equal(resolveVoucherAutoApply(undefined, undefined), 'on');
+  for (const junk of ['OFF', 'false', '', 0, false, {}]) {
+    assert.equal(resolveVoucherAutoApply(junk, junk), 'on');
+    assert.equal(resolveVoucherAutoApply(junk, 'off'), 'off');
+  }
+});
+
+// ── "מסך הצלחה במימוש שובר" / "משך מסך ההצלחה (שניות)" (voucherSuccessScreen / voucherSuccessSeconds) ──
+
+test("voucherSuccessScreen / voucherSuccessSeconds: the server's keys, values and defaults", () => {
+  assert.equal(VOUCHER_SUCCESS_SCREEN_KEY, 'voucherSuccessScreen');
+  assert.equal(VOUCHER_SUCCESS_SECONDS_KEY, 'voucherSuccessSeconds');
+  assert.deepEqual([...VOUCHER_SUCCESS_SCREEN_VALUES], ['always', 'auto_close', 'off']);
+  assert.equal(VOUCHER_SUCCESS_SCREEN_DEFAULT, 'always');
+  assert.equal(VOUCHER_SUCCESS_SECONDS_MIN, 1);
+  assert.equal(VOUCHER_SUCCESS_SECONDS_MAX, 10);
+  assert.equal(VOUCHER_SUCCESS_SECONDS_DEFAULT, 3);
+  assert.deepEqual([...VOUCHER_SUCCESS_SECONDS_VALUES], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+});
+
+test('voucherSuccessScreen: its own value, then the inherited one, then always; junk is unset', () => {
+  for (const v of ['always', 'auto_close', 'off']) {
+    assert.equal(isVoucherSuccessScreen(v), true);
+    assert.equal(resolveVoucherSuccessScreen(v, 'off'), v);
+    assert.equal(resolveVoucherSuccessScreen(undefined, v), v);
+  }
+  assert.equal(resolveVoucherSuccessScreen('off', 'auto_close'), 'off');
+  assert.equal(resolveVoucherSuccessScreen(null, 'auto_close'), 'auto_close');
+  assert.equal(resolveVoucherSuccessScreen(undefined, undefined), 'always');
+  for (const junk of ['ALWAYS', 'on', 'auto-close', '', 0, 3, true, {}]) {
+    assert.equal(isVoucherSuccessScreen(junk), false);
+    assert.equal(resolveVoucherSuccessScreen(junk, junk), 'always');
+    assert.equal(resolveVoucherSuccessScreen(junk, 'off'), 'off');
+  }
+});
+
+test('voucherSuccessSeconds: an integer 1–10, its own, then the inherited one, then 3', () => {
+  for (const n of [1, 2, 5, 9, 10]) {
+    assert.equal(isVoucherSuccessSeconds(n), true);
+    assert.equal(resolveVoucherSuccessSeconds(n, 7), n);
+    assert.equal(resolveVoucherSuccessSeconds(undefined, n), n);
+  }
+  assert.equal(resolveVoucherSuccessSeconds(null, 8), 8);
+  assert.equal(resolveVoucherSuccessSeconds(undefined, undefined), 3);
+});
+
+test('voucherSuccessSeconds: out of range, non-integer or not a number counts as unset', () => {
+  for (const junk of [0, 11, -1, 100, 2.5, 9.99, NaN, Infinity, '5', '', true, null, undefined, {}, [3]]) {
+    assert.equal(isVoucherSuccessSeconds(junk), false);
+    assert.equal(resolveVoucherSuccessSeconds(junk, junk), 3);
+    assert.equal(resolveVoucherSuccessSeconds(junk, 6), 6);
+  }
+});
+
 // ── "צליל אישור / סירוב במימוש שובר" (voucherSoundApprove / voucherSoundReject, 12.10.2026) ──
 
 test("voucherSoundApprove / voucherSoundReject: the server's keys, values and default (on)", () => {
@@ -193,5 +305,120 @@ test('voucher sounds: their own value, then the inherited one, then on; junk is 
   for (const junk of ['OFF', 'false', '', 0, false, {}]) {
     assert.equal(resolveVoucherSound(junk, junk), 'on');
     assert.equal(resolveVoucherSound(junk, 'off'), 'off');
+  }
+});
+
+// ── The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0) ──
+
+/** server/app/services/voucher_station_settings.py VOUCHER_FAST_CHOICES — the contract with the till. */
+const FAST_CONTRACT: Record<string, [string[], string]> = {
+  voucherFastMode: [['off', 'station', 'all'], 'station'],
+  voucherFastAutoClose: [['on', 'off'], 'on'],
+  voucherStationCamera: [['off', 'always', 'tap'], 'tap'],
+  voucherStationCameraFacing: [['back', 'front'], 'back'],
+  voucherVibrate: [['off', 'approve', 'reject', 'both'], 'both'],
+  voucherSoundBoost: [['on', 'off'], 'on'],
+  voucherStationCatalogSwitch: [['off', 'manager', 'free'], 'manager'],
+  voucherStationHeader: [['logo', 'text', 'both', 'none'], 'logo'],
+};
+
+test("fast mode: the server's keys, values (in the dashboard's order) and defaults", () => {
+  assert.deepEqual([...VOUCHER_FAST_CHOICE_KEYS], Object.keys(FAST_CONTRACT));
+  assert.equal(VOUCHER_FAST_CHOICES.length, 8);
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    assert.deepEqual([...voucherFastChoiceValues(key)], values, key);
+    assert.equal(voucherFastChoiceDefault(key), fallback, key);
+    assert.equal(isVoucherFastChoiceKey(key), true);
+  }
+  assert.equal(isVoucherFastChoiceKey(VOUCHER_STATION_TITLE_KEY), false);
+  assert.equal(isVoucherFastChoiceKey('voucherSoundApprove'), false);
+  assert.equal(VOUCHER_STATION_TITLE_KEY, 'voucherStationTitle');
+  assert.equal(VOUCHER_STATION_TITLE_MAX, 40);
+  assert.equal(VOUCHER_STATION_TITLE_DEFAULT, 'עמדת מימוש שוברים');
+});
+
+test('fast mode: a choice is its own value, then the inherited one, then the default', () => {
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    for (const v of values) {
+      assert.equal(isVoucherFastChoiceValue(key, v), true);
+      assert.equal(resolveVoucherFastChoice(key, v, values[0]), v);
+      assert.equal(resolveVoucherFastChoice(key, undefined, v), v);
+      assert.equal(resolveVoucherFastChoice(key, null, v), v);
+    }
+    assert.equal(resolveVoucherFastChoice(key, undefined, undefined), fallback);
+  }
+  assert.equal(resolveVoucherFastChoice('voucherVibrate', 'off', 'approve'), 'off');
+  assert.equal(resolveVoucherFastChoice('voucherFastMode', null, 'all'), 'all');
+});
+
+test("fast mode: junk, or another key's value, counts as unset", () => {
+  for (const key of VOUCHER_FAST_CHOICE_KEYS) {
+    const [values, fallback] = FAST_CONTRACT[key];
+    for (const junk of ['ON', ' off', 'maybe', '', 0, 1, true, false, {}, [values[0]]]) {
+      assert.equal(isVoucherFastChoiceValue(key, junk), false, `${key} ${String(junk)}`);
+      assert.equal(resolveVoucherFastChoice(key, junk, junk), fallback);
+      assert.equal(resolveVoucherFastChoice(key, junk, values[values.length - 1]), values[values.length - 1]);
+    }
+  }
+  assert.equal(isVoucherFastChoiceValue('voucherStationCamera', 'front'), false);
+  assert.equal(isVoucherFastChoiceValue('voucherStationHeader', 'off'), false);
+  assert.equal(isVoucherFastChoiceValue('voucherFastMode', 'on'), false);
+});
+
+test('station title: one trimmed line, up to 40 characters, as the server stores it', () => {
+  assert.equal(normalizeVoucherStationTitle('  עמדת   מימוש \n שוברים\t'), 'עמדת מימוש שוברים');
+  assert.equal(normalizeVoucherStationTitle('א\u0000ב'), 'א ב');
+  assert.equal(normalizeVoucherStationTitle('   '), '');
+  assert.equal(voucherStationTitleLength('  ' + 'א'.repeat(40) + '  '), 40);
+  assert.equal(voucherStationTitleLength('😀'.repeat(3)), 3); // characters, not UTF-16 units
+  assert.equal(voucherStationTitleTooLong('א'.repeat(40)), false);
+  assert.equal(voucherStationTitleTooLong(' ' + 'א'.repeat(40) + ' '), false);
+  assert.equal(voucherStationTitleTooLong('א'.repeat(41)), true);
+  assert.equal(voucherStationTitleTooLong(undefined), false);
+});
+
+test('station title: its own, then the inherited one, then "עמדת מימוש שוברים"; blank or too long is unset', () => {
+  assert.equal(resolveVoucherStationTitle('דוכן 1', 'רשת'), 'דוכן 1');
+  assert.equal(resolveVoucherStationTitle(undefined, 'רשת'), 'רשת');
+  assert.equal(resolveVoucherStationTitle(null, ' רשת  ראשית '), 'רשת ראשית');
+  assert.equal(resolveVoucherStationTitle(undefined, undefined), 'עמדת מימוש שוברים');
+  for (const junk of ['', '   ', 'א'.repeat(41), 5, true, {}, ['x'], null]) {
+    assert.equal(isVoucherStationTitle(junk), false);
+    assert.equal(resolveVoucherStationTitle(junk, junk), 'עמדת מימוש שוברים');
+    assert.equal(resolveVoucherStationTitle(junk, 'רשת'), 'רשת');
+  }
+});
+
+test('station title: what a typed title sends — normalized, blank is null (inherit)', () => {
+  assert.equal(voucherStationTitlePatch('  עמדת  שוברים '), 'עמדת שוברים');
+  assert.equal(voucherStationTitlePatch(''), null);
+  assert.equal(voucherStationTitlePatch('  \n'), null);
+  assert.equal(voucherStationTitlePatch(null), null);
+  assert.equal(voucherStationTitlePatch(undefined), null);
+});
+
+// ── "סגירת מסך 'שובר מומש'" (voucherSuccessDismiss, 13.10.2026, P:/specs/voucher-fast-mode.md §0 item 11) ──
+
+test("voucherSuccessDismiss: the server's key, values and default (auto)", () => {
+  assert.equal(VOUCHER_SUCCESS_DISMISS_KEY, 'voucherSuccessDismiss');
+  assert.deepEqual([...VOUCHER_SUCCESS_DISMISS_VALUES], ['auto', 'confirm']);
+  assert.equal(VOUCHER_SUCCESS_DISMISS_DEFAULT, 'auto');
+});
+
+test('voucherSuccessDismiss: its own value, then the inherited one, then auto; junk is unset', () => {
+  for (const v of ['auto', 'confirm']) {
+    assert.equal(isVoucherSuccessDismiss(v), true);
+    assert.equal(resolveVoucherSuccessDismiss(v, 'auto'), v);
+    assert.equal(resolveVoucherSuccessDismiss(undefined, v), v);
+  }
+  assert.equal(resolveVoucherSuccessDismiss('auto', 'confirm'), 'auto');
+  assert.equal(resolveVoucherSuccessDismiss(null, 'confirm'), 'confirm');
+  assert.equal(resolveVoucherSuccessDismiss(undefined, undefined), 'auto');
+  for (const junk of ['AUTO', 'Confirm', ' confirm', 'on', 'tap', '', 0, true, {}, ['confirm']]) {
+    assert.equal(isVoucherSuccessDismiss(junk), false);
+    assert.equal(resolveVoucherSuccessDismiss(junk, junk), 'auto');
+    assert.equal(resolveVoucherSuccessDismiss(junk, 'confirm'), 'confirm');
   }
 });

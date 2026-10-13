@@ -128,7 +128,7 @@ def run_out(db: Session, run: ZCreditReconRun, *, open_hard: Optional[int] = Non
     }
 
 
-def item_out(item: ZCreditReconItem, names: Dict[str, str]) -> Dict[str, Any]:
+def item_out(item: ZCreditReconItem, names: Dict[str, str], shop_names: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     is_refund = (item.zc_deal_type or "") == "51"
     return {
         "id": str(item.id),
@@ -158,6 +158,7 @@ def item_out(item: ZCreditReconItem, names: Dict[str, str]) -> Dict[str, Any]:
             "machineId": str(item.machine_id) if item.machine_id else None,
             "machineName": names.get(str(item.machine_id)) if item.machine_id else None,
             "shopId": str(item.shop_id) if item.shop_id else None,
+            "shopName": (shop_names or {}).get(str(item.shop_id)) if item.shop_id else None,
             "documentNumber": item.document_number,
             "documentType": item.document_type,
             "amount": svc.shekels(item.our_amount_agorot),
@@ -309,8 +310,12 @@ def get_run(
     order = {c: n for n, c in enumerate(("zcredit_only", "ours_only", "amount_mismatch", "status_mismatch", "duplicate", "deposit_mismatch", "matched"))}
     items.sort(key=lambda i: (order.get(i.category, 9), i.zc_save_date or datetime.min, str(i.id)))
     names = {k: m.name for k, m in scope.items()}
+    shop_names = {s["id"]: s["name"] for s in _names(db, list({str(i.shop_id) for i in items if i.shop_id}), Shop)}
     hard = _open_hard(db, [run.id])
-    return {**run_out(db, run, open_hard=hard.get(run.id, 0)), "items": [item_out(i, names) for i in items]}
+    return {
+        **run_out(db, run, open_hard=hard.get(run.id, 0)),
+        "items": [item_out(i, names, shop_names) for i in items],
+    }
 
 
 class RunIn(BaseModel):

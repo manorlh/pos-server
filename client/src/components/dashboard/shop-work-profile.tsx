@@ -46,6 +46,7 @@ import {
   FIELD_HINTS,
   FIELD_LABELS,
   KITCHEN_CHOICES,
+  LOCAL_SERVER_DEVICE_CHOICES,
   SHOP_Z_FROM_CHOICES,
   STATE_LABELS,
   SUPER_ADMIN_ONLY,
@@ -264,6 +265,19 @@ function FieldControl({
               : 'כבוי: נדלק רק עם "Z סניפי בשרת מקומי" (בסוג Z שלמעלה).'}
           </p>
         </div>
+      );
+    case 'localServerDevice':
+      // "שרת מקומי: מכשיר ייעודי" (P:/specs/dedicated-local-server.md §11.8), only with a local server.
+      return profile.localServer ? (
+        <Pills
+          label={label}
+          choices={LOCAL_SERVER_DEVICE_CHOICES}
+          value={profile.localServerDevice}
+          onChange={(v) => onField('localServerDevice', v)}
+          disabled={disabled}
+        />
+      ) : (
+        <p className="text-xs text-muted-foreground">לא רלוונטי: אין שרת מקומי (נדלק עם &quot;Z סניפי בשרת מקומי&quot;).</p>
       );
     case 'tablesMode':
       return (

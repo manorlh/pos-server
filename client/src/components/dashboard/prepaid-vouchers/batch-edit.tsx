@@ -70,28 +70,35 @@ export function useEditValueFormat(batch: Pick<PrepaidVoucherBatch, 'shops'> | n
 /** A field's name as the owner reads it ("בתוקף עד"). */
 export function useEditFieldLabel() {
   const t = useTranslations('prepaidVouchers.edit');
-  // "מצב בדיקה"'s words live in their own namespace (components/dashboard/prepaid-vouchers/batch-test-mode.tsx).
+  // "מצב בדיקה"'s and "סדרה פעילה"'s words live in their own namespaces (batch-test-mode.tsx, batch-active.tsx).
   const tm = useTranslations('prepaidVoucherTestMode.edit');
-  return (field: string) => (t.has(`field.${field}`) ? t(`field.${field}`) : tm.has(`field.${field}`) ? tm(`field.${field}`) : field);
+  const ta = useTranslations('prepaidVoucherActive.edit');
+  return (field: string) => (t.has(`field.${field}`) ? t(`field.${field}`) : tm.has(`field.${field}`) ? tm(`field.${field}`)
+    : ta.has(`field.${field}`) ? ta(`field.${field}`) : field);
 }
 
 /** A category's name as the confirmation heads it ("תוקף", "מצב בדיקה"). */
 export function useEditCategoryLabel() {
   const t = useTranslations('prepaidVouchers.edit');
   const tm = useTranslations('prepaidVoucherTestMode.edit');
+  const ta = useTranslations('prepaidVoucherActive.edit');
   return (category: PrepaidEditCategory) =>
-    t.has(`category.${category}`) ? t(`category.${category}`) : tm.has(`category.${category}`) ? tm(`category.${category}`) : category;
+    t.has(`category.${category}`) ? t(`category.${category}`) : tm.has(`category.${category}`) ? tm(`category.${category}`)
+      : ta.has(`category.${category}`) ? ta(`category.${category}`) : category;
 }
 
 /** One category's effect, in words ("ישפיע על 340 שוברים שטרם מומשו"). */
 export function useEffectLines() {
   const t = useTranslations('prepaidVouchers.edit.effect');
   const tm = useTranslations('prepaidVoucherTestMode.edit');
+  const ta = useTranslations('prepaidVoucherActive.edit');
   return (category: PrepaidEditCategory, plan: PrepaidBatchEditPlan): string[] => {
     const e = plan.effects;
     switch (category) {
       case 'test':
         return e.test ? [e.test.on ? tm('effectOn') : tm('effectOff')] : [];
+      case 'active':
+        return e.active ? [e.active.on ? ta('effectOn') : ta('effectOff', { n: e.active.vouchers })] : [];
       case 'free':
         return [t('free')];
       case 'validity':

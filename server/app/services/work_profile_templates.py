@@ -11,6 +11,7 @@ A profile (stored on the shop as `settings.workProfile`):
      "zType": "per_till" | "shop_cloud" | "shop_local",
      "shopZFrom": "main_only" | "main_and_dashboard" | "any_and_dashboard",
      "localServer": bool,
+     "localServerDevice": "main_till" | "dedicated",
      "tablesMode": "off" | "single" | "synced" | "lan",
      "kitchen": "printer" | "kds" | "both",
      "customerDisplay": bool,
@@ -22,6 +23,11 @@ Two rules tie the fields together, because the system has no other way to run th
 server is the shop's main till with "רשת מקומית" on, and with it on the main till produces the
 shop Z — so `localServer` is true exactly when `zType` is `shop_local`; and the tables over the
 LAN («רשת מקומית (קופה ראשית)») live on that main till, so `tablesMode: "lan"` needs it.
+
+"שרת מקומי: מכשיר ייעודי" (P:/specs/dedicated-local-server.md §11.8): `localServerDevice` says what the
+local server is — a till, the main till (`main_till`, the default and every profile before the field),
+or a dedicated local server device (`dedicated`, needs `localServer`). Optional in what the dashboard
+sends (absent is `main_till`); always in what is stored, and in every template (`main_till`).
 """
 from __future__ import annotations
 
@@ -47,22 +53,30 @@ KITCHENS = (KITCHEN_PRINTER, KITCHEN_KDS, KITCHEN_BOTH)
 TIP_DISTRIBUTIONS = ("direct", "equal_pool", "by_sales")
 BALANCE_CHECKS = ("auto", "on", "off")
 
+#: "שרת מקומי": the main till (a till that sells too), or a dedicated device that does not sell.
+LOCAL_SERVER_DEVICE = "localServerDevice"
+DEVICE_MAIN_TILL, DEVICE_DEDICATED = "main_till", "dedicated"
+LOCAL_SERVER_DEVICES = (DEVICE_MAIN_TILL, DEVICE_DEDICATED)
+
 FIELDS = (
-    "templateId", "zType", "shopZFrom", "localServer", "tablesMode", "kitchen",
+    "templateId", "zType", "shopZFrom", "localServer", LOCAL_SERVER_DEVICE, "tablesMode", "kitchen",
     "customerDisplay", "attendance", "tips", "vouchers",
 )
 #: The fields that carry a status (all but the template's name).
 STATUS_FIELDS = FIELDS[1:]
+#: Fields a profile may leave out (an older dashboard, a template): read as their default.
+OPTIONAL_FIELDS = (LOCAL_SERVER_DEVICE,)
 #: The Z and the local server: applied to the tills, so they wait for one.
-TILL_FIELDS = ("zType", "localServer")
+TILL_FIELDS = ("zType", "localServer", LOCAL_SERVER_DEVICE)
 #: Changed only by the super admin once the shop has tills (spec §5).
-Z_FIELDS = ("zType", "localServer", "shopZFrom")
+Z_FIELDS = ("zType", "localServer", LOCAL_SERVER_DEVICE, "shopZFrom")
 
 LABELS: Dict[str, str] = {
     "templateId": "תבנית",
     "zType": "סוג Z",
     "shopZFrom": "מי מפיק Z סניפי",
     "localServer": "שרת מקומי (קופה ראשית)",
+    LOCAL_SERVER_DEVICE: "שרת מקומי — איזה מכשיר",
     "tablesMode": "ניהול שולחנות",
     "kitchen": "מטבח",
     "customerDisplay": "מסך לקוח",
@@ -85,6 +99,7 @@ VALUE_LABELS: Dict[str, Dict[Any, str]] = {
         TABLES_LAN: "רשת מקומית (דרך הקופה הראשית)",
     },
     "kitchen": {KITCHEN_PRINTER: "בונים במדפסת", KITCHEN_KDS: "מסך מטבח (KDS)", KITCHEN_BOTH: "בונים ומסך מטבח"},
+    LOCAL_SERVER_DEVICE: {DEVICE_MAIN_TILL: "קופה ראשית", DEVICE_DEDICATED: "שרת מקומי: מכשיר ייעודי"},
     "distribution": {"direct": "ישירה", "equal_pool": "שווה", "by_sales": "לפי מכירות"},
     "balanceCheck": {"auto": "אוטומטי", "on": "כן", "off": "לא"},
 }
@@ -95,6 +110,7 @@ DEFAULT_PROFILE: Dict[str, Any] = {
     "zType": Z_SHOP_CLOUD,
     "shopZFrom": FROM_MAIN,
     "localServer": False,
+    "localServerDevice": "main_till",
     "tablesMode": TABLES_OFF,
     "kitchen": KITCHEN_PRINTER,
     "customerDisplay": False,
@@ -293,7 +309,7 @@ def validate(raw: Any) -> Dict[str, Any]:
             f"השדה \"{unknown[0]}\" לא מוכר בתצורת העבודה. השדות: {', '.join(FIELDS)}.",
             value=unknown[0], allowed=FIELDS,
         )
-    missing = [k for k in STATUS_FIELDS if k not in raw]
+    missing = [k for k in STATUS_FIELDS if k not in raw and k not in OPTIONAL_FIELDS]
     if missing:
         raise ProfileInvalid(
             missing[0],
@@ -310,6 +326,9 @@ def validate(raw: Any) -> Dict[str, Any]:
         "zType": _choice("zType", raw["zType"], Z_TYPES),
         "shopZFrom": _choice("shopZFrom", raw["shopZFrom"], SHOP_Z_FROM),
         "localServer": _bool("localServer", raw["localServer"]),
+        LOCAL_SERVER_DEVICE: _choice(
+            LOCAL_SERVER_DEVICE, raw.get(LOCAL_SERVER_DEVICE) or DEVICE_MAIN_TILL, LOCAL_SERVER_DEVICES,
+        ),
         "tablesMode": _choice("tablesMode", raw["tablesMode"], TABLES),
         "kitchen": _choice("kitchen", raw["kitchen"], KITCHENS),
         "customerDisplay": _bool("customerDisplay", raw["customerDisplay"]),
@@ -337,6 +356,13 @@ def validate(raw: Any) -> Dict[str, Any]:
             f"מפיקה את ה-Z של הסניף. הערך localServer=true לא אפשרי עם zType={out['zType']} — בחרו "
             "\"Z סניפי בשרת מקומי\", או כבו את השרת המקומי.",
             value=True, allowed=[False],
+        )
+    if out[LOCAL_SERVER_DEVICE] == DEVICE_DEDICATED and not out["localServer"]:
+        raise ProfileInvalid(
+            LOCAL_SERVER_DEVICE,
+            "\"שרת מקומי: מכשיר ייעודי\" הוא סוג של שרת מקומי: הוא מחייב localServer=true (ולכן Z סניפי בשרת "
+            "מקומי). הפעילו שרת מקומי, או בחרו localServerDevice=main_till.",
+            value=DEVICE_DEDICATED, allowed=[DEVICE_MAIN_TILL],
         )
     if out["tablesMode"] == TABLES_LAN and not out["localServer"]:
         raise ProfileInvalid(

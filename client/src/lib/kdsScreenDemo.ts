@@ -10,7 +10,10 @@
  *           the glow). The look (docs/SPEC_KDS.md §14, screenLook.ts `lookFromQuery`): &layout=
  *           tickets|columns|rail|list|big, &by=station|course, &theme=…, &accent=%23rrggbb,
  *           &density=compact|normal|large, &font=0.8–1.6, &age=8-12|off, &hide=waiter,guests…,
- *           &clock=0, &counts=0, &sound=new:bell,late:beep.
+ *           &clock=0, &counts=0, &sound=new:bell,late:beep. How it behaves (§16): &tap=cycle|ready,
+ *           &order=lifo, &row=2–10, &maxh=240–3000, &keep=0, &full=1, &rush=1, &levels=1, &overflow=N,
+ *           &types=takeAway,delivery (hidden), &ext=hide|only, &tint=takeAway,delivery,
+ *           &info=orderTime,orderNumber,readyBy, &hide=source, &toolbar=0, &allday=1.
  *   board:  a number moves from "בהכנה" to "מוכן" every 6 seconds (the chime and the flash);
  *           &offline=1, &theme=dark|light|contrast|brand, &accent=%23rrggbb, &prep=0, &title=…,
  *           &layout=columns|spotlight|grid|split|ticker, &ready=<minutes>, &promo=…,
@@ -172,6 +175,8 @@ function busyOrders(): KdsOrder[] {
     mk(47, 3, [['צ׳יזבורגר', 2, { removals: ['חמוצים'] }], ['צ׳יפס', 1, { stationId: 's2' }]], { source: 'kiosk' }),
     mk(48, 2, [['המבורגר טבעוני', 1, { allergies: ['שומשום'] }]], { source: 'external', displayRef: 'W-322', pickupName: 'טל' }),
     mk(49, 1, [['שיפודי פרגית', 2], ['עוגת שוקולד', 1, { stationId: 's3', course: 'קינוחים' }]], { serviceType: 'eat_in' }),
+    // A courier's order from an external channel (docs/SPEC_KDS.md §16: the delivery filter and band).
+    mk(50, 6, [['המבורגר קלאסי', 2, { mods: ['מידת עשייה: M'] }], ['צ׳יפס', 2, { stationId: 's2' }]], { source: 'external', serviceType: 'delivery', displayRef: 'W-330', pickupName: 'מאיה' }),
   ];
 }
 

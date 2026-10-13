@@ -44,7 +44,8 @@ import {
   KioskPinpadWarning,
 } from '@/components/dashboard/machines/device-role';
 import { WebScreenNote } from '@/components/dashboard/machines/web-screen-note';
-import { isDisplayDevice } from '@/lib/deviceProfile';
+import { isDisplayDevice, isLocalServer } from '@/lib/deviceProfile';
+import { LocalServerDeviceCard } from '@/components/dashboard/local-server-dedicated';
 import {
   DocumentPrefixBusinessStatus,
   DocumentPrefixDialog,
@@ -63,6 +64,7 @@ import {
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { RequestTillZButton, ZModeField } from '@/components/dashboard/till-z/till-z-dialogs';
 import { SupportZButton } from '@/components/dashboard/machines/support-z-dialog';
+import { CloseFromCloudButton } from '@/components/dashboard/machines/close-from-cloud';
 import { TillResetButton } from '@/components/dashboard/machines/till-reset-dialog';
 import { TillReplacements } from '@/components/dashboard/machines/till-replacements';
 import { DeviceManagementCard } from '@/components/dashboard/machines/device-management';
@@ -303,6 +305,17 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
             <Button size="sm" variant="outline" onClick={() => setCloseShiftOpen(true)}>
               {tMachines('closeShiftRemotely')}
             </Button>
+          ) : null}
+          {/* "סגירת משמרת מהענן": a till the cloud has not heard for 5 minutes — the same people. */}
+          {canProduceZ ? (
+            <CloseFromCloudButton
+              machineId={machine.id}
+              lastHeartbeatAt={machine.lastHeartbeatAt ?? null}
+              hasOpenShift={machine.shiftStatus === 'open' || !!machine.openShiftId}
+              removed={removed || machine.pairingStatus !== 'assigned'}
+              display={display}
+              nowMs={machineQuery.dataUpdatedAt}
+            />
           ) : null}
           {display ? null : canProduceZ && tillMode ? (
             <RequestTillZButton m={machine} />
@@ -636,9 +649,14 @@ export default function MachineDetailPage({ params }: { params: Promise<{ id: st
           a user who may neither read nor request (the server decides). */}
       <DeviceLogsCard machineId={machine.id} machineName={registerLabel ?? machine.name} />
 
+      {/* "שרת מקומי" (P:/specs/dedicated-local-server.md §7): what it serves, its tills, orders, print
+          queue, printers and mirror lag, and its remote commands. */}
+      {isLocalServer(machine) ? <LocalServerDeviceCard machineId={machine.id} /> : null}
+
       {/* "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): how the device works, each value with
-          where it comes from — set on the device or inherited from the shop / company. */}
-      {machine.shopId ? <WorkConfigCard machineId={machine.id} /> : null}
+          where it comes from — set on the device or inherited from the shop / company. A local
+          server's is the shop's work profile ("שרת מקומי: מכשיר ייעודי") and "העברת שרת מקומי". */}
+      {machine.shopId && !isLocalServer(machine) ? <WorkConfigCard machineId={machine.id} /> : null}
 
       {/* "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): never the shop's local server. */}
       {!display ? <MachineLanServerCard machineId={machine.id} shopId={machine.shopId} /> : null}

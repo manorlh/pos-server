@@ -651,6 +651,19 @@ class POSMachine(Base):
     #: What the device's build can do, from its heartbeat's `capabilities` (e.g. "device_logs_v1"):
     #: {list, appVersion, at}. Null: it never said (an older build).
     reported_capabilities = Column(JSONB, nullable=True)
+    # ── "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11) ─────────────────
+    #: An Android device that does not sell: it serves the shop's tables, printing and local shop
+    #: Z. Always non-fiscal (`is_fiscal` false): no shifts, documents, cash or card — but unlike a
+    #: display device it is in the shop's LAN group and a valid, preferred host
+    #: (app/services/local_server_device.py). Set at pairing only; never counted as a till license.
+    is_local_server = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    #: Its last heartbeat's `localServer` block, cleaned: connected tills, open orders, the print
+    #: queue, the printers' states. `local_server_status_at`: when it arrived. Null: never said.
+    local_server_status = Column(JSONB, nullable=True)
+    local_server_status_at = Column(DateTime(timezone=True), nullable=True)
+    #: The device's LAN identity for discovery (§11.6): `{publicKey, alg, keyId, at}` — an EC P-256
+    #: public key from its heartbeat's `lanIdentity`. Tills verify a discovered host against it.
+    lan_identity = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 

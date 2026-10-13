@@ -4,8 +4,12 @@
  * The report of one prepaid voucher batch (שוברי הפקה), over its whole life:
  * vouchers by state, the goods (issued / taken / forfeited / outstanding / void), and the
  * redemptions by hour, day, shop, till and employee. Reversed redemptions — a payment
- * abandoned at the till — are left out by the server. Excel / print / PDF through the
- * shared report toolbar.
+ * abandoned at the till — are left out by the server.
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §5): the tables are `ReportTable`s (sort,
+ * columns, phone cards, the days' totals) and the export bar is the framework's
+ * (`prepaid-vouchers-batch`): Excel — the usage and the summary first, then every table, the hours
+ * too — the goods' PDF, print, and the export columns.
  */
 
 import { useTranslations } from 'next-intl';
@@ -15,28 +19,30 @@ import {
   fetchPrepaidBatchReport,
   type PrepaidBatchReport,
   type PrepaidReportGroup,
+  type PrepaidReportProduct,
   type PrepaidVoucherBatch,
 } from '@/lib/prepaidVouchersApi';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { isDiscountKind } from '@/lib/prepaidVoucherBenefit';
 import { DEFAULT_WEIGHT_UNIT } from '@/lib/prepaidVoucherProducts';
-import { formatDate, formatHour } from '@/lib/format';
+import { formatHour } from '@/lib/format';
 import type { ExcelSheet } from '@/lib/excelExport';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  ReportExportBar,
+  ReportTable,
+  useReportExportScope,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
-const NUM = 'text-end tabular-nums';
+const REPORT_KEY = 'prepaid-vouchers-batch';
+
+type Tr = ReturnType<typeof useTranslations>;
+type Day = PrepaidBatchReport['byDay'][number];
+type Hour = PrepaidBatchReport['byHour'][number];
 
 function Counts({ label, value, tone }: { label: string; value: number; tone?: string }) {
   return (
@@ -47,69 +53,38 @@ function Counts({ label, value, tone }: { label: string; value: number; tone?: s
   );
 }
 
-function GroupTable({ title, rows, nameHeader, unitsHeader, unknown, withShop }: {
-  title: string;
-  rows: PrepaidReportGroup[];
-  nameHeader: string;
-  /** "פריטים" for a goods batch, "שימושים" for a discount one. */
-  unitsHeader: string;
-  unknown: string;
-  withShop?: boolean;
-}) {
-  const t = useTranslations('prepaidVouchers.report');
-  return (
-    <Card className="break-inside-avoid">
-      <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('noRedemptions')}</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{nameHeader}</TableHead>
-                {withShop ? <TableHead>{t('col.shop')}</TableHead> : null}
-                <TableHead className="text-end">{t('col.redemptions')}</TableHead>
-                <TableHead className="text-end">{t('col.vouchers')}</TableHead>
-                <TableHead className="text-end">{unitsHeader}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((r) => (
-                <TableRow key={r.key ?? '—'}>
-                  <TableCell>{r.name || unknown}</TableCell>
-                  {withShop ? <TableCell>{r.shopName || '—'}</TableCell> : null}
-                  <TableCell className={NUM}>{r.redemptions}</TableCell>
-                  <TableCell className={NUM}>{r.vouchers}</TableCell>
-                  <TableCell className={NUM}>{r.units}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
-  );
+/** "זיתים (ק״ג)": by weight, every figure of the row is in its unit. */
+const productName = (p: PrepaidReportProduct) => (p.weighed ? `${p.name ?? ''} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name ?? '');
+
+/** By shop, till or employee: redemptions, vouchers and units ("פריטים", or a discount's "שימושים"). */
+function groupTable(
+  t: Tr,
+  id: string,
+  title: string,
+  rows: PrepaidReportGroup[],
+  nameHeader: string,
+  unitsHeader: string,
+  unknown: string,
+  withShop = false,
+): ReportTableSpec<PrepaidReportGroup> {
+  return {
+    id,
+    title,
+    rows,
+    rowKey: (r, i) => r.key ?? `none-${i}`,
+    emptyText: t('noRedemptions'),
+    columns: [
+      { key: 'name', header: nameHeader, required: true, value: (r) => r.name || unknown },
+      ...(withShop ? [{ key: 'shop', header: t('col.shop'), value: (r: PrepaidReportGroup) => r.shopName || '' }] : []),
+      { key: 'redemptions', header: t('col.redemptions'), kind: 'number', value: (r) => r.redemptions },
+      { key: 'vouchers', header: t('col.vouchers'), kind: 'number', value: (r) => r.vouchers },
+      { key: 'units', header: unitsHeader, kind: 'number', value: (r) => r.units },
+    ],
+  };
 }
 
-/** Every table of the report as Excel sheets, in the order the page shows them. */
-function sheetsOf(
-  r: PrepaidBatchReport,
-  t: ReturnType<typeof useTranslations>,
-  labels: { unknownTill: string; unknownShop: string; unknownEmployee: string; units: string },
-): ExcelSheet[] {
-  const counts = [
-    { header: t('col.redemptions'), kind: 'number' as const },
-    { header: t('col.vouchers'), kind: 'number' as const },
-    { header: labels.units, kind: 'number' as const },
-  ];
-  const group = (name: string, header: string, rows: PrepaidReportGroup[], unknown: string, withShop = false): ExcelSheet => ({
-    name,
-    columns: [{ header }, ...(withShop ? [{ header: t('col.shop') }] : []), ...counts],
-    rows: rows.map((g) => [g.name || unknown, ...(withShop ? [g.shopName || ''] : []), g.redemptions, g.vouchers, g.units]),
-  });
+/** The sheets that are not a table of the page — the usage and the summary — first in the workbook, as before. */
+function summarySheets(r: PrepaidBatchReport, t: Tr, units: string): ExcelSheet[] {
   const v = r.vouchers;
   const u = r.usage;
   // Usage (docs/SPEC_VOUCHER_PRODUCTION.md §7): issued / used / remaining / void and the ₪ given —
@@ -143,54 +118,15 @@ function sheetsOf(
         [t('vouchers.used'), v.used],
         [t('vouchers.cancelled'), v.cancelled],
         [t('col.redemptions'), r.totals.redemptions],
-        [labels.units, r.totals.units],
+        [units, r.totals.units],
       ],
     },
-    {
-      name: t('sheet.products'),
-      columns: [
-        { header: t('col.product'), width: 28 },
-        { header: t('col.perVoucher'), kind: 'number' },
-        { header: t('col.issued'), kind: 'number' },
-        { header: t('col.taken'), kind: 'number' },
-        { header: t('col.forfeited'), kind: 'number' },
-        { header: t('col.outstanding'), kind: 'number' },
-        { header: t('col.void'), kind: 'number' },
-      ],
-      rows: r.products.map((p) => [
-        p.weighed ? `${p.name ?? ''} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name ?? '',
-        p.perVoucher, p.issued, p.taken, p.forfeited, p.outstanding, p.void,
-      ]),
-    },
-    {
-      name: t('sheet.byDay'),
-      columns: [
-        { header: t('col.date'), kind: 'date' },
-        ...counts,
-        ...r.products.map((p) => ({ header: p.name ?? '', kind: 'number' as const })),
-      ],
-      rows: r.byDay.map((d) => [
-        d.date, d.redemptions, d.vouchers, d.units,
-        ...r.products.map((p) => d.products.find((x) => x.productId === p.productId)?.quantity ?? 0),
-      ]),
-      totals: [
-        t('total'), r.totals.redemptions, r.totals.vouchers, r.totals.units,
-        ...r.products.map((p) => p.taken),
-      ],
-    },
-    {
-      name: t('sheet.byHour'),
-      columns: [{ header: t('col.hour') }, ...counts],
-      rows: r.byHour.map((h) => [formatHour(h.hour), h.redemptions, h.vouchers, h.units]),
-    },
-    group(t('sheet.byShop'), t('col.shop'), r.byShop, labels.unknownShop),
-    group(t('sheet.byTill'), t('col.till'), r.byTill, labels.unknownTill, true),
-    group(t('sheet.byEmployee'), t('col.employee'), r.byEmployee, labels.unknownEmployee),
   ];
 }
 
 export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }) {
   const t = useTranslations('prepaidVouchers.report');
+  const scope = useReportExportScope();
   const q = useQuery({
     queryKey: ['prepaid-voucher-report', batch.id],
     queryFn: () => fetchPrepaidBatchReport(batch.id),
@@ -224,6 +160,63 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
   const r = q.data;
   const title = t('title', { name: batch.eventName || batch.name });
   const maxHour = Math.max(1, ...r.byHour.map((h) => h.units));
+  const counts = (units: string): ReportColumn<{ redemptions: number; vouchers: number; units: number }>[] => [
+    { key: 'redemptions', header: t('col.redemptions'), kind: 'number', value: (x) => x.redemptions },
+    { key: 'vouchers', header: t('col.vouchers'), kind: 'number', value: (x) => x.vouchers },
+    { key: 'units', header: units, kind: 'number', value: (x) => x.units },
+  ];
+
+  const products: ReportTableSpec<PrepaidReportProduct> = {
+    id: 'main',
+    title: t('productsTitle'),
+    rows: r.products,
+    rowKey: (p) => p.productId,
+    columns: [
+      { key: 'product', header: t('col.product'), required: true, width: 28, value: productName },
+      { key: 'perVoucher', header: t('col.perVoucher'), kind: 'number', value: (p) => p.perVoucher },
+      { key: 'issued', header: t('col.issued'), kind: 'number', value: (p) => p.issued },
+      { key: 'taken', header: t('col.taken'), kind: 'number', className: 'font-semibold', value: (p) => p.taken },
+      { key: 'forfeited', header: t('col.forfeited'), kind: 'number', value: (p) => p.forfeited },
+      { key: 'outstanding', header: t('col.outstanding'), kind: 'number', value: (p) => p.outstanding },
+      { key: 'void', header: t('col.void'), kind: 'number', value: (p) => p.void },
+    ],
+  };
+  const [redemptionsCol, vouchersCol, unitsCol] = counts(labels.units);
+  const days: ReportTableSpec<Day> = {
+    id: 'days',
+    title: t('byDay'),
+    rows: r.byDay,
+    rowKey: (d) => d.date,
+    totalsLabel: t('total'),
+    emptyText: t('noRedemptions'),
+    columns: [
+      { key: 'date', header: t('col.date'), kind: 'date', required: true, value: (d) => d.date },
+      { ...redemptionsCol, total: r.totals.redemptions },
+      { ...vouchersCol, total: r.totals.vouchers },
+      // On screen the goods' columns say it; the sheet has the units too.
+      { ...unitsCol, exportOnly: true, total: r.totals.units },
+      ...r.products.map(
+        (p): ReportColumn<Day> => ({
+          key: `p:${p.productId}`,
+          header: p.name ?? '',
+          kind: 'number',
+          value: (d) => d.products.find((x) => x.productId === p.productId)?.quantity ?? 0,
+          total: p.taken,
+        }),
+      ),
+    ],
+  };
+  // The bars on screen; a table in the export.
+  const hours: ReportTableSpec<Hour> = {
+    id: 'hours',
+    title: t('byHour'),
+    rows: r.byHour,
+    rowKey: (h) => String(h.hour),
+    columns: [{ key: 'hour', header: t('col.hour'), required: true, value: (h) => formatHour(h.hour) }, ...counts(labels.units)],
+  };
+  const shops = groupTable(t, 'shops', t('byShop'), r.byShop, t('col.shop'), labels.units, labels.unknownShop);
+  const tills = groupTable(t, 'tills', t('byTill'), r.byTill, t('col.till'), labels.units, labels.unknownTill, true);
+  const employees = groupTable(t, 'employees', t('byEmployee'), r.byEmployee, t('col.employee'), labels.units, labels.unknownEmployee);
 
   return (
     <div className="space-y-4">
@@ -234,18 +227,23 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <p className="text-xs text-muted-foreground">{t('reversedNote')}</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
-            <RefreshCw className={`h-4 w-4 ${q.isFetching ? 'animate-spin' : ''}`} aria-hidden />
-            {t('refresh')}
-          </Button>
-          <ReportExportToolbar
-            title={title}
-            scopeLabel={batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : batch.companyName ?? ''}
-            getSheets={() => sheetsOf(r, t, labels)}
-          />
-        </div>
+        <Button variant="ghost" size="sm" onClick={() => void q.refetch()} disabled={q.isFetching}>
+          <RefreshCw className={`h-4 w-4 ${q.isFetching ? 'animate-spin' : ''}`} aria-hidden />
+          {t('refresh')}
+        </Button>
       </div>
+      <ReportExportBar
+        reportKey={REPORT_KEY}
+        title={title}
+        tables={[products, days, hours, shops, tills, employees] as ReportTableSpec<unknown>[]}
+        extraSheets={() => summarySheets(r, t, labels.units)}
+        extraSheetsFirst
+        business={batch.companyName ?? scope.business}
+        place={batch.shops.length ? batch.shops.map((s) => s.name).join(', ') : batch.companyName ?? ''}
+        filterLines={[]}
+        companyId={batch.companyId || scope.companyId}
+        companyName={batch.companyName ?? scope.companyName}
+      />
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Counts label={t('vouchers.total')} value={r.vouchers.total} />
@@ -282,89 +280,10 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
         </Card>
       ) : null}
 
-      <Card className="break-inside-avoid">
-        <CardHeader>
-          <CardTitle className="text-base">{t('productsTitle')}</CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('col.product')}</TableHead>
-                <TableHead className="text-end">{t('col.perVoucher')}</TableHead>
-                <TableHead className="text-end">{t('col.issued')}</TableHead>
-                <TableHead className="text-end">{t('col.taken')}</TableHead>
-                <TableHead className="text-end">{t('col.forfeited')}</TableHead>
-                <TableHead className="text-end">{t('col.outstanding')}</TableHead>
-                <TableHead className="text-end">{t('col.void')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {r.products.map((p) => (
-                <TableRow key={p.productId}>
-                  {/* By weight: every figure of the row is in its unit ("זיתים (ק״ג)"). */}
-                  <TableCell>{p.weighed ? `${p.name} (${p.unitLabel || DEFAULT_WEIGHT_UNIT})` : p.name}</TableCell>
-                  <TableCell className={NUM}>{p.perVoucher}</TableCell>
-                  <TableCell className={NUM}>{p.issued}</TableCell>
-                  <TableCell className={`${NUM} font-semibold`}>{p.taken}</TableCell>
-                  <TableCell className={NUM}>{p.forfeited}</TableCell>
-                  <TableCell className={NUM}>{p.outstanding}</TableCell>
-                  <TableCell className={NUM}>{p.void}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      <ReportTable table={products} reportKey={REPORT_KEY} className="break-inside-avoid" />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="break-inside-avoid">
-          <CardHeader>
-            <CardTitle className="text-base">{t('byDay')}</CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {r.byDay.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t('noRedemptions')}</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('col.date')}</TableHead>
-                    <TableHead className="text-end">{t('col.redemptions')}</TableHead>
-                    <TableHead className="text-end">{t('col.vouchers')}</TableHead>
-                    {r.products.map((p) => (
-                      <TableHead key={p.productId} className="text-end">{p.name}</TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {r.byDay.map((d) => (
-                    <TableRow key={d.date}>
-                      <TableCell>{formatDate(d.date)}</TableCell>
-                      <TableCell className={NUM}>{d.redemptions}</TableCell>
-                      <TableCell className={NUM}>{d.vouchers}</TableCell>
-                      {r.products.map((p) => (
-                        <TableCell key={p.productId} className={NUM}>
-                          {d.products.find((x) => x.productId === p.productId)?.quantity ?? 0}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow>
-                    <TableCell>{t('total')}</TableCell>
-                    <TableCell className={NUM}>{r.totals.redemptions}</TableCell>
-                    <TableCell className={NUM}>{r.totals.vouchers}</TableCell>
-                    {r.products.map((p) => (
-                      <TableCell key={p.productId} className={NUM}>{p.taken}</TableCell>
-                    ))}
-                  </TableRow>
-                </TableFooter>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+        <ReportTable table={days} reportKey={REPORT_KEY} className="break-inside-avoid" />
 
         <Card className="break-inside-avoid">
           <CardHeader>
@@ -393,9 +312,9 @@ export function PrepaidBatchReportView({ batch }: { batch: PrepaidVoucherBatch }
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <GroupTable title={t('byShop')} rows={r.byShop} nameHeader={t('col.shop')} unitsHeader={labels.units} unknown={labels.unknownShop} />
-        <GroupTable title={t('byTill')} rows={r.byTill} nameHeader={t('col.till')} unitsHeader={labels.units} unknown={labels.unknownTill} withShop />
-        <GroupTable title={t('byEmployee')} rows={r.byEmployee} nameHeader={t('col.employee')} unitsHeader={labels.units} unknown={labels.unknownEmployee} />
+        <ReportTable table={shops} reportKey={REPORT_KEY} className="break-inside-avoid" />
+        <ReportTable table={tills} reportKey={REPORT_KEY} className="break-inside-avoid" />
+        <ReportTable table={employees} reportKey={REPORT_KEY} className="break-inside-avoid" />
       </div>
     </div>
   );

@@ -3,14 +3,44 @@
 /**
  * "שדות והתנהגות": the order's questions (the customer's name, take away / eat in, the guests:
  * "auto" is the till parameters' "שם לקוח" / "לקחת/לשבת" / "מספר סועדים", shown as they are
- * now), the tables' floor map (its style, the chairs), and the behaviour (the summary open or
- * closed, the lines' status chips).
+ * now), the tables' floor map (its style, the chairs), the behaviour (the summary open or
+ * closed, the lines' status chips), and "מספר הזמנה בפתיחה" (phase 2 §3.9: "הזמנה 47" from the
+ * first item, a daily count per till — never the document number — with the till's prefix).
  */
 
 import { useTranslations } from 'next-intl';
-import { FIELD_KEYS, FIELD_MODES, LEGACY_FALLBACK, MAP_STYLES, SHOW_HIDE, SUMMARY_STATES } from '@/lib/tillDesign';
-import { useTillEditor } from './editor-context';
-import { AutoHint, SectionCard, SegmentField, SwitchField } from './fields';
+import { Input } from '@/components/ui/input';
+import { FIELD_KEYS, FIELD_MODES, LEGACY_FALLBACK, MAP_STYLES, ORDER_PREFIX_MAX, SHOW_HIDE, SUMMARY_STATES } from '@/lib/tillDesign';
+import { useTillEditor, useTillField } from './editor-context';
+import { AutoHint, FieldShell, SectionCard, SegmentField, SwitchField } from './fields';
+
+function OrderNumberCard() {
+  const t = useTranslations('tillDesign.orderNumber');
+  const prefix = useTillField<string>('orderNumber.prefix');
+  const atOpen = useTillField<boolean>('orderNumber.atOpen');
+  const value = typeof prefix.value === 'string' ? prefix.value : '';
+  const example = value ? `${value}-047` : t('exampleAuto');
+  return (
+    <SectionCard title={t('title')} description={t('description')} paths={['orderNumber']}>
+      <SwitchField path="orderNumber.atOpen" label={t('atOpen')} hint={t('atOpenHint')} />
+      {atOpen.value ? (
+        <FieldShell path="orderNumber.prefix" label={t('prefix')} hint={t('prefixHint', { max: ORDER_PREFIX_MAX })}>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={value}
+              disabled={prefix.disabled}
+              placeholder={t('prefixAuto')}
+              aria-label={t('prefix')}
+              className="w-40"
+              onChange={(e) => prefix.set(e.target.value.trim())}
+            />
+            <AutoHint>{t('example', { example })}</AutoHint>
+          </div>
+        </FieldShell>
+      ) : null}
+    </SectionCard>
+  );
+}
 
 export function FieldsSection() {
   const t = useTranslations('tillDesign.fieldsSection');
@@ -60,6 +90,7 @@ export function FieldsSection() {
         />
         <SwitchField path="behavior.lineStatus" label={tb('lineStatus')} hint={tb('lineStatusHint')} />
       </SectionCard>
+      <OrderNumberCard />
     </div>
   );
 }

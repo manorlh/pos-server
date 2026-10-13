@@ -126,7 +126,12 @@ class CashierSalesRow(BaseModel):
     #: "שוברי הפקה": what production vouchers paid for (the `voucher` / `production_voucher` legs).
     production_voucher_net: float = Field(0.0, alias="productionVoucherNet")
 
+    #: Tips are never inside the tender split above: they are the cashier's, not takings.
     tips: float
+    #: `tips` by the tender the tip went on (`reports.tip_bucket`); they sum to `tips`.
+    tips_cash: float = Field(0.0, alias="tipsCash")
+    tips_card: float = Field(0.0, alias="tipsCard")
+    tips_other: float = Field(0.0, alias="tipsOther")
 
 
 class CashierSalesReportResponse(BaseModel):
@@ -172,6 +177,10 @@ class SalesByAreaRow(BaseModel):
     #: "שוברי הפקה".
     production_voucher: float = Field(0.0, alias="productionVoucher")
     tips: float = 0.0
+    #: `tips` by the tender the tip went on; they sum to `tips`.
+    tips_cash: float = Field(0.0, alias="tipsCash")
+    tips_card: float = Field(0.0, alias="tipsCard")
+    tips_other: float = Field(0.0, alias="tipsOther")
 
 
 class SalesByAreaResponse(BaseModel):
@@ -215,6 +224,47 @@ class TipsByCashierRow(BaseModel):
     sales_net: float = Field(..., alias="salesNet")
 
 
+class _TipMoney(BaseModel):
+    """One breakdown row's tips (by the tender they went on) and net takings."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tips_total: float = Field(0.0, alias="tipsTotal")
+    tips_cash: float = Field(0.0, alias="tipsCash")
+    tips_card: float = Field(0.0, alias="tipsCard")
+    tips_other: float = Field(0.0, alias="tipsOther")
+    tipped_document_count: int = Field(0, alias="tippedDocumentCount")
+    sales_net: float = Field(0.0, alias="salesNet")
+
+
+class TipsByDayRow(_TipMoney):
+    #: The local day (report timezone).
+    day: date
+
+
+class TipsByMachineRow(_TipMoney):
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
+    machine_name: Optional[str] = Field(None, alias="machineName")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    shop_name: Optional[str] = Field(None, alias="shopName")
+
+
+class TipsByShiftRow(_TipMoney):
+    #: Null: the documents that belong to no shift.
+    shift_id: Optional[uuid.UUID] = Field(None, alias="shiftId")
+    business_date: Optional[date] = Field(None, alias="businessDate")
+    sequence_number: Optional[int] = Field(None, alias="sequenceNumber")
+    machine_id: Optional[uuid.UUID] = Field(None, alias="machineId")
+    machine_name: Optional[str] = Field(None, alias="machineName")
+    pos_number: Optional[str] = Field(None, alias="posNumber")
+    shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
+    shop_name: Optional[str] = Field(None, alias="shopName")
+    opened_at: Optional[datetime] = Field(None, alias="openedAt")
+    closed_at: Optional[datetime] = Field(None, alias="closedAt")
+    opened_by_name: Optional[str] = Field(None, alias="openedByName")
+
+
 class TipsRangeReportResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -224,8 +274,17 @@ class TipsRangeReportResponse(BaseModel):
     tips_cash: float = Field(..., alias="tipsCash")
     tips_card: float = Field(..., alias="tipsCard")
     tips_other: float = Field(..., alias="tipsOther")
+    #: Documents that carried a tip, and the net takings of every document in the range.
+    tipped_document_count: int = Field(0, alias="tippedDocumentCount")
+    sales_net: float = Field(0.0, alias="salesNet")
     by_method: List[TipMethodRow] = Field(..., alias="byMethod")
     by_cashier: List[TipsByCashierRow] = Field(..., alias="byCashier")
+    #: The same tips per local day, per till and per shift; each adds up to the totals
+    #: above (`byShift` is capped — `byShiftTruncated` says so).
+    by_day: List[TipsByDayRow] = Field(default_factory=list, alias="byDay")
+    by_machine: List[TipsByMachineRow] = Field(default_factory=list, alias="byMachine")
+    by_shift: List[TipsByShiftRow] = Field(default_factory=list, alias="byShift")
+    by_shift_truncated: bool = Field(False, alias="byShiftTruncated")
 
 
 # ── 2e. Shop-wide recent documents (fixed contract — the till calls this) ─────
@@ -384,6 +443,8 @@ class DaySummaryContributor(BaseModel):
     cash_sales: float = Field(0.0, alias="cashSales")
     card_sales: float = Field(0.0, alias="cardSales")
     tips: float = 0.0
+    cash_tips: float = Field(0.0, alias="cashTips")
+    card_tips: float = Field(0.0, alias="cardTips")
     transactions_count: int = Field(0, alias="transactionsCount")
     expected_cash: float = Field(0.0, alias="expectedCash")
     actual_cash: Optional[float] = Field(None, alias="actualCash")

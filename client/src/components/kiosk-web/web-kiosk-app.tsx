@@ -36,10 +36,10 @@ import {
   messagePlacement,
   engineMotionSpec,
   engineTransitionSpec,
+  withSheetMotion,
   kioskMotionEngine,
   resolveThemeColors,
-  stepMode,
-  payMethodAsk,
+  kioskPayChooser,
   tickerBandPx,
   typeScaleFactor,
   typeWeights,
@@ -100,12 +100,15 @@ import {
   REACH_STRIP_PX,
   SuccessScreen,
   useKioskRenderProfile,
+  useKioskTopBar,
+  KioskTopBarWindows,
   UpsellWindow,
 } from '@/kiosk-shared';
 // "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
 import { mealUpsellIds } from '@/kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@/kiosk-shared/upsell-window';
-import { configuredText, kioskTextOf, webTextOverride } from '@/lib/kioskTexts';
+import { configuredText, kioskTextOf, webTextIn } from '@/lib/kioskTexts';
+import { screenTextIn } from '@/lib/kioskTopBar';
 import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@/lib/kioskMenus';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@/lib/kioskMoney';
 import {
@@ -142,6 +145,8 @@ import { useWebScanner } from './web-scanner';
 import { CameraScanButton, CameraScanner, cameraScanAvailable } from './web-camera';
 import { WebStaff, TapSequence, inTechnicianZone } from './web-staff';
 import { BridgePairPrompt, bridgePromptDue } from './web-bridge';
+import { ShopLockScreen } from '@/kiosk-shared/shop-lock';
+import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@/lib/shopActive';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
 const FOOTER_PX = 18;
@@ -208,7 +213,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // can sell, unless the card through the bridge is the only way, or the step is off and the card is
   // usable — then straight to the pinpad, as the Windows kiosk; "רשות" may be passed with the default.
   const sells = webSells(view.pay.methods, cardReady);
-  const payAsk = payMethodAsk(view.pay.methods, view.pay.usable, stepMode(cfg, 'payMethod'));
+  // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
+  const payAsk = kioskPayChooser(cfg, view.pay.methods, view.pay.usable);
   const asks = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'card' ? 'card' : 'cash_at_till';
   const rulesFor = useCallback((cartEmpty: boolean): KioskFlowRules => ({ ...rulesOf(cfgIn, cartEmpty), asksPayMethod: asks }), [cfgIn, asks]);
@@ -531,11 +537,22 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     return () => window.clearInterval(id);
   }, [cfg.hours, dispatch]);
 
+  // "סניף לא פעיל" (lib/shopActive.ts): the shop's lock once the customer is done — ordering, paying, the success
+  // screen — and from then on ("engaged") until the shop is on again; reported as SHOP_LOCK_FLOW, so the service
+  // sends no order under it (the Windows kiosk's KioskApp alike).
+  const shopActive = view.shopActive !== false;
+  const [shopLockWas, setShopLockWas] = useState(false);
+  const shopLockUp = shopLockShown({ shopActive, surface: 'kiosk', saleInProgress: !flowIdle(flow) || flowBusy(flow), engaged: shopLockWas });
+  const shopLockNow = shopLockEngaged(shopLockWas, shopLockUp, shopActive);
+  if (shopLockNow !== shopLockWas) setShopLockWas(shopLockNow);
   useEffect(() => {
-    svc.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
-  }, [flow, svc]);
+    svc.reportFlow(shopLockUp ? { ...SHOP_LOCK_FLOW, busy: false, idle: true } : { flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
+  }, [flow, svc, shopLockUp]);
 
   const resting = RESTING.has(flow.screen);
+  // "סרגל עליון" (layout.topBar): the club's window, the search over the menu and the language (kiosk-shared/top-bar.tsx,
+  // as the Windows kiosk) — the texts below are drawn in its language; at rest the kiosk's own again.
+  const bar = useKioskTopBar(cfg, flow.screen, resting);
   // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
   // when the basket opens and on the way to payment — never a strip on the basket.
   const upsellWin = useKioskUpsell(cfg, view.catalog.upsellRules, allProducts, resting, undefined);
@@ -696,14 +713,15 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
 
   /* --------------------------------------------------------------- vouchers */
 
-  /** A kiosk text: the business's, else the built-in one (lib/kioskTexts.ts). */
+  /** A kiosk text: the business's, else the built-in one (lib/kioskTexts.ts) — in the top bar's language. */
   // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+  const lang = bar.lang;
   const txt = useCallback(
     (key: KioskTextKey) => {
-      const text = configuredText(cfg, 'he', key) ?? words.builtin(key);
+      const text = screenTextIn(cfg, lang, key, words.builtin);
       return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
     },
-    [cfg, words, view.catalog.menu],
+    [cfg, lang, words, view.catalog.menu],
   );
 
   /** A voucher scanned, typed or read by the camera: the order's vouchers session applies it (goods as a leg of the payment, discount held for the order). */
@@ -743,7 +761,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // "מנוע הנפשות": every event resolved once — the preset, the speed, the events' own values, this profile.
   const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
   const motion = engineMotionSpec(engine, cfg.theme);
-  const transitions = engineTransitionSpec(engine);
+  // "פתיחת חלונות" (layout.sheetMotion, the rail-motion look): the windows' entrance over the engine's.
+  const transitions = withSheetMotion(engineTransitionSpec(engine), layoutOf(cfg).sheetMotion, { reduceMotion: cfg.general.reduceMotion, light: profile === 'light' });
   // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
@@ -789,6 +808,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     back: flow.screen === 'service' || flow.screen === 'catalog' || flow.screen === 'cart' ? back : undefined,
     startOver: flow.screen === 'catalog' ? () => (cart.length > 0 ? setLeaveAsk(true) : dispatch({ type: 'reset' })) : undefined,
     detailsScreen: true,
+    // "סרגל עליון": the club, the search and the language buttons have their actions here (cancel is startOver).
+    topBar: bar.live.topBar,
+    search: bar.live.search,
     help: () => {
       svc.helpRequest();
       setToast(words.t('helpSent'));
@@ -834,6 +856,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       flow.screen === 'success' && cardPay && cardPay.phase === 'approved'
         ? {
             pickupLabel: cardPay.pickupLabel ?? '',
+            // "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave.
+            customerName: details.name.trim() || null,
             paid: cardPay.amountAgorot / 100,
             receipt: cardPay.receipt ?? 'none',
             onReceipt: (print) => void svc.bridge?.receiptChoice(cardPay.orderId, print),
@@ -863,8 +887,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
     txt,
-    t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? words.t(key, values),
-    kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
+    t: (key, values) => webTextIn(cfg, lang, key, values) ?? words.t(key, values),
+    kt: (key, values) => kioskTextOf(cfg, lang, key, values),
     mealOptions: (p) => mealsFor(view, p.id, allProducts),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
     pricing,
@@ -1055,8 +1079,9 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
     m,
     screen: flow.screen,
     busy: flowBusy(flow),
-    staff: staffOpen,
-    sheetOpen: !!product || leaveAsk || !!changes || pay.entry || pay.camera,
+    // Under the shop's lock a scan starts nothing (as under the staff's sheet).
+    staff: staffOpen || shopLockUp,
+    sheetOpen: !!product || leaveAsk || !!changes || pay.entry || pay.camera || bar.state.clubOpen || bar.state.typing,
     shown: allProducts,
     codes: view.catalog.products,
     screenRef,
@@ -1095,7 +1120,7 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   return (
     <div
       ref={screenRef}
-      dir="rtl"
+      dir={bar.dir}
       className={`k-root relative h-dvh w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
       style={{
         ...rootVars,
@@ -1280,6 +1305,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       {noteEntry && (screen === 'catalog' || screen === 'cart') && product ? (
         <EntryWindow m={m} caption={noteEntry.caption} steps={noteEntry.steps} onFinish={() => setNoteEntry(null)} onClose={() => setNoteEntry(null)} />
       ) : null}
+      {/* "סרגל עליון": the club's window and the search's keyboard, over the menu. */}
+      <KioskTopBarWindows m={m} bar={bar} screen={screen} />
       {pay.entry && atPayMethod ? (
         <EntryWindow
           m={m}
@@ -1365,9 +1392,11 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       ) : null}
       {toast ? <Toast m={m} text={toast} onDone={() => setToast(null)} /> : null}
       {scanNote}
+      {/* "הסניף אינו פעיל — פנו לתמיכה": no shift or document here, so no close of the day either (the bridge's own close runs). */}
+      {shopLockUp ? <ShopLockScreen /> : null}
       {staffOpen ? <WebStaff m={m} view={view} svc={svc} onClose={() => setStaffOpen(false)} /> : null}
       {/* "גשר לדפדפן": a bridge on this PC, not paired yet — asked once, only at rest (§28). */}
-      {!staffOpen && !bridgePromptClosed && bridgePromptDue(view, flow.screen === 'attract', nowMs) ? (
+      {!staffOpen && !shopLockUp && !bridgePromptClosed && bridgePromptDue(view, flow.screen === 'attract', nowMs) ? (
         <BridgePairPrompt m={m} svc={svc} words={words} onClose={() => setBridgePromptClosed(true)} />
       ) : null}
     </div>

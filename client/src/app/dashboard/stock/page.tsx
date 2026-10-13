@@ -5,12 +5,13 @@
  * "מלאי מהיר" (find, + / −, count, receive, transfer, block), "חסימות פעילות" ("חסומים כעת": "אזל" /
  * "חסום" in force, by point of sale and channel), "העברות" (and the low-stock alerts' suggested transfers), "מלאי פתיחה ואיפוס יומי",
  * "הגדרות ניהול מלאי" (the managed levels, with the switch wizard) and "נשאר בסוף היום".
- * `?tab=` opens a tab (the board links to `?tab=blocks`).
+ * `?tab=` opens a tab (the board links to `?tab=blocks`); picking a tab writes it there, with the
+ * tab's own filters ("מלאי מהיר": `q`, `category`, `filter`; "נשאר בסוף היום": `day`).
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { PackageX, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePageScope } from '@/lib/scope';
@@ -40,6 +41,8 @@ const TABS = [
 type StockTab = (typeof TABS)[number]['id'];
 /** Tabs of stock locations: shown only while the server has them on (STOCK_LOCATIONS_ENABLED). */
 const LOCATION_TABS: StockTab[] = ['transfers', 'opening', 'levels', 'leftover'];
+/** The tabs' own URL params ("מלאי מהיר": q / category / filter; "נשאר בסוף היום": day). */
+const TAB_PARAMS = ['q', 'category', 'filter', 'day'];
 
 function tabOf(raw: string | null): StockTab {
   if (raw === 'stock') return 'quick';
@@ -119,7 +122,20 @@ export default function ShopStockPage() {
   // A company, a shop or a till: the picker inside the tabs goes down to points of sale and tills.
   const { resolution, effective } = usePageScope({ maxLevel: 'machine', minLevel: 'company' });
   const searchParams = useSearchParams();
-  const [picked, setTab] = useState<StockTab>(tabOf(searchParams.get('tab')));
+  const router = useRouter();
+  const pathname = usePathname();
+  const [picked, setPicked] = useState<StockTab>(tabOf(searchParams.get('tab')));
+  // The tab goes to the URL too, so a tab's own filters (quick: `q` / `category` / `filter`; leftover:
+  // `day`) make a link with it. Another tab's params are dropped; the scope's stay.
+  const setTab = (id: StockTab) => {
+    setPicked(id);
+    const params = new URLSearchParams(searchParams.toString());
+    for (const k of TAB_PARAMS) params.delete(k);
+    if (id === 'quick') params.delete('tab');
+    else params.set('tab', id);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
   // Off (the default until stock locations go live): shop stock and blocks only, as before.
   const features = useQuery({ queryKey: ['stock-live', 'features'], queryFn: fetchStockFeatures, staleTime: 5 * 60_000 });
   const locations = features.data?.locations === true;

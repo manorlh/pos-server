@@ -12,8 +12,22 @@
  * Shared by the Windows app and the browser KDS; self-contained (no `@/` imports).
  */
 
-import type { KdsField, KdsOrder, KdsTask } from './kdsScreenTypes';
-import { epochMs, hasWork, isCancelled, isFinished, isHeld, isLive, isReady, openTasks, qtyText, type KdsButton, type KdsScreenRole } from './kdsBoard';
+import type { KdsBehaviour, KdsField, KdsOrder, KdsOrderType, KdsTask } from './kdsScreenTypes';
+import {
+  epochMs,
+  hasWork,
+  isCancelled,
+  isFinished,
+  isHeld,
+  isLive,
+  isReady,
+  openTasks,
+  qtyText,
+  remaining,
+  screenOf,
+  type KdsButton,
+  type KdsScreenRole,
+} from './kdsBoard';
 
 /* -------------------------------------------------------------------- lanes */
 
@@ -137,11 +151,11 @@ export function laneButton(order: KdsOrder, lane: Pick<Lane, 'kind' | 'stationId
 
 /* --------------------------------------------------------------------- rail */
 
-/** The rail's order: by time only (the oldest first); on a station, what is done goes to the end. */
-export function railOrder(cards: readonly KdsOrder[], role: KdsScreenRole): KdsOrder[] {
+/** The rail's order: by time only (the oldest first; `lifo` — the newest); on a station, what is done goes to the end. */
+export function railOrder(cards: readonly KdsOrder[], role: KdsScreenRole, lifo = false): KdsOrder[] {
   const at = (o: KdsOrder) => epochMs(o.firstReleasedAt ?? o.createdAt) ?? Number.MAX_SAFE_INTEGER;
   const done = (o: KdsOrder) => (role === 'station' && !hasWork(o) ? 1 : 0);
-  return [...cards].sort((a, b) => done(a) - done(b) || at(a) - at(b) || a.id.localeCompare(b.id));
+  return [...cards].sort((a, b) => done(a) - done(b) || (lifo ? at(b) - at(a) : at(a) - at(b)) || a.id.localeCompare(b.id));
 }
 
 /* --------------------------------------------------------------------- list */
@@ -196,4 +210,166 @@ export function bigCapacity(width: number, height: number): number {
 export function bigSplit<T>(cards: readonly T[], capacity: number): { shown: T[]; queue: T[] } {
   const n = Math.max(1, capacity);
   return { shown: cards.slice(0, n), queue: cards.slice(n) };
+}
+
+/* ------------------------------------- what the screen shows (docs/SPEC_KDS.md §16) */
+
+/** An order's type as the filters know it: a table's without one is eaten in; none = always shown. */
+export function orderTypeOf(o: Pick<KdsOrder, 'serviceType' | 'source'>): KdsOrderType | null {
+  if (o.serviceType === 'eat_in') return 'eatIn';
+  if (o.serviceType === 'take_away') return 'takeAway';
+  if (o.serviceType === 'delivery') return 'delivery';
+  return o.source === 'table' ? 'eatIn' : null;
+}
+
+/** Whether the screen's filters let the order on: its type (`orderTypes`) and external orders (`externalOrders`). */
+export function passesFilters(o: KdsOrder, b: Pick<KdsBehaviour, 'orderTypes' | 'externalOrders'>): boolean {
+  const external = o.source === 'external';
+  if (b.externalOrders === 'hide' && external) return false;
+  if (b.externalOrders === 'only' && !external) return false;
+  const type = orderTypeOf(o);
+  return type === null || b.orderTypes[type] !== false;
+}
+
+/** The ticket header's band (`serviceTint`): take away / delivery, or none. */
+export function tintOf(o: Pick<KdsOrder, 'serviceType' | 'source'>, b: Pick<KdsBehaviour, 'serviceTint'>): 'takeAway' | 'delivery' | null {
+  const type = orderTypeOf(o);
+  if (type === 'takeAway' && b.serviceTint.takeAway) return 'takeAway';
+  if (type === 'delivery' && b.serviceTint.delivery) return 'delivery';
+  return null;
+}
+
+const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+
+/** The same item by name (the "להכנה" panel's key). */
+export function sameItem(a: string, b: string): boolean {
+  return norm(a) === norm(b);
+}
+
+export interface AllDayItem {
+  name: string;
+  /** Still to prepare, over every card. */
+  qty: number;
+  /** On how many cards. */
+  orders: number;
+}
+
+/** "להכנה": every item still to prepare on the cards (live, released, not ready), by name A–Z, with how many are left. */
+export function allDayCounts(cards: readonly KdsOrder[]): AllDayItem[] {
+  const by = new Map<string, { name: string; qty: number; orders: Set<string> }>();
+  for (const o of cards) {
+    for (const t of openTasks(o)) {
+      const key = norm(t.name);
+      if (!key) continue;
+      const e = by.get(key) ?? { name: t.name.trim(), qty: 0, orders: new Set<string>() };
+      e.qty += remaining(t);
+      e.orders.add(o.id);
+      by.set(key, e);
+    }
+  }
+  return [...by.values()]
+    .filter((e) => e.qty > 1e-6)
+    .map((e) => ({ name: e.name, qty: Math.round(e.qty * 1000) / 1000, orders: e.orders.size }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+/** "חיפוש פריט": the panel's items whose name has the text. */
+export function searchItems(items: readonly AllDayItem[], text: string): AllDayItem[] {
+  const q = norm(text);
+  return q ? items.filter((i) => norm(i.name).includes(q)) : [...items];
+}
+
+/** Filtering by an item: the cards on which it is still to prepare. */
+export function cardsWithItem(cards: readonly KdsOrder[], name: string): KdsOrder[] {
+  return cards.filter((o) => openTasks(o).some((t) => sameItem(t.name, name)));
+}
+
+/**
+ * Nothing left for this screen to do on the card (§16 "בון נשאר פתוח"): a station — no work left;
+ * the Expo — ready for pickup without handover tracking (the pickup screen holds the number).
+ */
+export function isDoneCard(o: KdsOrder, role: KdsScreenRole): boolean {
+  if (hasWork(o)) return false;
+  if (role === 'station') return true;
+  return o.groupState === 'ready_for_pickup' && !o.trackHandover && !o.pending;
+}
+
+/** "מוכנות": the cards whose items are all ready (a station's done cards; the Expo's "לאיסוף"). */
+export function isReadyCard(o: KdsOrder, role: KdsScreenRole): boolean {
+  if (role === 'station') return openTasks(o).length === 0 && o.tasks.some((t) => isLive(t));
+  return inPickupLane(o);
+}
+
+/** `keepReadyOpen` off: the done cards leave the screen at once (they are in the history). */
+export function splitDone(cards: readonly KdsOrder[], role: KdsScreenRole, keep: boolean): { cards: KdsOrder[]; gone: KdsOrder[] } {
+  if (keep) return { cards: [...cards], gone: [] };
+  const out: KdsOrder[] = [];
+  const gone: KdsOrder[] = [];
+  for (const o of cards) (isDoneCard(o, role) ? gone : out).push(o);
+  return { cards: out, gone };
+}
+
+/** "השהה": the cards that were on the screen when it paused stay (and update); the new ones wait. */
+export function pausedView(cards: readonly KdsOrder[], shown: ReadonlySet<string> | null): { cards: KdsOrder[]; waiting: number } {
+  if (!shown) return { cards: [...cards], waiting: 0 };
+  const keep = cards.filter((o) => shown.has(o.id));
+  return { cards: keep, waiting: cards.length - keep.length };
+}
+
+/** Overflow (`overflowAt`): more cards than this and the screen switches to the dense list. */
+export function overflowing(count: number, overflowAt: number | null): boolean {
+  return overflowAt !== null && overflowAt > 0 && count > overflowAt;
+}
+
+export interface HistoryEntry {
+  order: KdsOrder;
+  /** When it was first seen done (epoch ms). */
+  at: number;
+}
+
+export const HISTORY_KEEP_MS = 30 * 60_000;
+export const HISTORY_MAX = 40;
+
+/**
+ * The history (§16): the orders that finished on this screen in the last half hour, each in its last
+ * known state (the cloud stops sending a station's ready items after a few minutes). `done`: the
+ * finished orders seen now; `active`: the ids that have work again (they leave the history).
+ */
+export function nextHistory(
+  prev: ReadonlyMap<string, HistoryEntry>,
+  done: readonly KdsOrder[],
+  active: ReadonlySet<string>,
+  nowMs: number,
+  keepMs = HISTORY_KEEP_MS,
+  max = HISTORY_MAX,
+): Map<string, HistoryEntry> {
+  const next = new Map<string, HistoryEntry>();
+  for (const [id, e] of prev) if (!active.has(id) && nowMs - e.at <= keepMs) next.set(id, e);
+  for (const o of done) if (!active.has(o.id)) next.set(o.id, { order: o, at: prev.get(o.id)?.at ?? nowMs });
+  if (next.size <= max) return next;
+  return new Map([...next.entries()].sort((a, b) => b[1].at - a[1].at).slice(0, max));
+}
+
+/**
+ * The history after a new board (the screen calls it when the board arrives): the orders this
+ * screen shows (its filters) that are done here now — a station's finished cards, the Expo's ready
+ * ones it has nothing left to do on, the recently handed over.
+ */
+export function historyAfter(
+  prev: ReadonlyMap<string, HistoryEntry>,
+  orders: readonly KdsOrder[],
+  role: KdsScreenRole,
+  filters: Pick<KdsBehaviour, 'orderTypes' | 'externalOrders'>,
+  nowMs: number,
+): Map<string, HistoryEntry> {
+  const shown = orders.filter((o) => passesFilters(o, filters));
+  const { cards, recent } = screenOf(shown, role, nowMs);
+  const done = [...cards.filter((o) => isDoneCard(o, role)), ...recent];
+  const active = new Set(cards.filter(hasWork).map((o) => o.id));
+  return nextHistory(prev, done, active, nowMs);
+}
+
+/** The history's rows, the newest first, without the cards still on the screen. */
+export function historyRows(history: ReadonlyMap<string, HistoryEntry>, onScreen: ReadonlySet<string>): HistoryEntry[] {
+  return [...history.values()].filter((e) => !onScreen.has(e.order.id)).sort((a, b) => b.at - a.at || a.order.id.localeCompare(b.order.id));
 }

@@ -26,10 +26,10 @@ import {
   messagePlacement,
   engineMotionSpec,
   engineTransitionSpec,
+  withSheetMotion,
   kioskMotionEngine,
   resolveThemeColors,
-  stepMode,
-  payMethodAsk,
+  kioskPayChooser,
   MULTI_CARD_METHODS,
   tickerBandPx,
   typeScaleFactor,
@@ -89,12 +89,15 @@ import {
   ReachToggle,
   REACH_STRIP_PX,
   useKioskRenderProfile,
+  useKioskTopBar,
+  KioskTopBarWindows,
   UpsellWindow,
 } from '@kiosk-shared/index';
 // "הגדלת מכירה": the Android kiosk's rules, one copy for both hosts.
 import { mealUpsellIds } from '@kiosk-shared/basket-upsell';
 import { useKioskUpsell, type UpsellWindowState } from '@kiosk-shared/upsell-window';
-import { configuredText, kioskTextOf, webTextOverride } from '@dash-lib/kioskTexts';
+import { configuredText, kioskTextOf, webTextIn } from '@dash-lib/kioskTexts';
+import { screenTextIn } from '@dash-lib/kioskTopBar';
 import { joinsPlainLine, menuMemoryOf, plainLineKey, titleWithMenu, withMenuOrder } from '@dash-lib/kioskMenus';
 import { localDateTimeOf, promotionsOf, belowMinimumOrder } from '@dash-lib/kioskMoney';
 import { voucherCodeOf } from '@dash-lib/kioskWebOrders';
@@ -131,6 +134,8 @@ import { BatteryAlerts } from './BatteryAlerts';
 import { Dialog } from './Dialog';
 import { noteEntry, type EntryRequest } from './EntryWindow';
 import { StaffLayer } from '../staff/StaffLayer';
+import { KioskShopLock } from './KioskShopLock';
+import { SHOP_LOCK_FLOW, shopLockEngaged, shopLockShown } from '@dash-lib/shopActive';
 import { useKioskScanner } from './kioskScanner';
 
 /** The strip "POWERED BY R2M POS" takes at the bottom (CSS px). */
@@ -212,7 +217,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   const payHost = view.pay ?? { methods: ['card'] as PaymentMethod[], usable: (view.state.noPayment ? [] : ['card']) as PaymentMethod[], cardOff: null };
   const oneCard = (list: PaymentMethod[]) => list.filter((m) => !MULTI_CARD_METHODS.includes(m));
   const payInfo = { ...payHost, methods: oneCard(payHost.methods), usable: oneCard(payHost.usable) };
-  const payAsk = payMethodAsk(payInfo.methods, payInfo.usable, stepMode(cfg, 'payMethod'));
+  // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
+  const payAsk = kioskPayChooser(cfg, payInfo.methods, payInfo.usable);
   const asksPay = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'cash_at_till' ? 'cash_at_till' : 'card';
   const flowReducer = useCallback((s: KioskFlowState, a: FlowAction) => reduce(s, a.event, { ...rulesOf(cfgIn, a.cartEmpty), asksPayMethod: asksPay }), [cfgIn, asksPay]);
@@ -417,12 +423,24 @@ export function KioskApp({ view }: { view: KioskView }) {
   // The flow, as the cloud's status and the automatic close read it — and, on Android, as the APK
   // follows it: the checkout's steps ("איך תרצו לשלם?" included) are the "details" screen and the
   // charge is "pay", where the APK keeps the order's vouchers; any other screen gives them back.
+  // "סניף לא פעיל" (client lib/shopActive.ts): the shop's lock once the customer is done — ordering, paying, the
+  // success screen — and from then on ("engaged") until the shop is on again; reported as SHOP_LOCK_FLOW, so the
+  // service starts no sale under it and its automatic / remote close runs as on any resting screen.
+  const shopActive = view.shopActive !== false;
+  const [shopLockWas, setShopLockWas] = useState(false);
+  const shopLockUp = shopLockShown({ shopActive, surface: 'kiosk', saleInProgress: !flowIdle(flow) || flowBusy(flow), engaged: shopLockWas });
+  const shopLockNow = shopLockEngaged(shopLockWas, shopLockUp, shopActive);
+  if (shopLockNow !== shopLockWas) setShopLockWas(shopLockNow);
   useEffect(() => {
-    kiosk.reportFlow({ flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
-  }, [flow]);
+    kiosk.reportFlow(shopLockUp ? { ...SHOP_LOCK_FLOW, busy: false, idle: true } : { flowState: wire(flow), screen: flow.screen, busy: flowBusy(flow), idle: flowIdle(flow) });
+  }, [flow, shopLockUp]);
 
   // Back to rest: the order's own state cleared.
   const resting = !['service', 'catalog', 'cart', 'confirm', 'details', 'pay', 'success'].includes(flow.screen);
+  // "סרגל עליון" (layout.topBar): the club's window, the search over the menu and the language (kiosk-shared/top-bar.tsx,
+  // as the browser kiosk) — the screens' texts are drawn in its language; at rest the kiosk's own again.
+  const bar = useKioskTopBar(cfg, flow.screen, resting);
+  const lang = bar.lang;
   // "הגדלת מכירה" as the Android kiosk asks it (kiosk-shared/upsell-window.ts): a window after a line goes in,
   // when the basket opens and on the way to payment — never a strip on the basket.
   const upsellWin = useKioskUpsell(cfg, view.catalog.upsellRules, allProducts, resting, { shown: (w) => funnel.upsell('shown', w.moment, w.offer.rule.id, w.offer.productIds[0] ?? null) });
@@ -637,7 +655,8 @@ export function KioskApp({ view }: { view: KioskView }) {
   // (the light one's cheaper kinds, reduced motion's fallbacks), as the Android kiosk resolves them.
   const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
   const motion = engineMotionSpec(engine, cfg.theme);
-  const transitions = engineTransitionSpec(engine);
+  // "פתיחת חלונות" (layout.sheetMotion, the rail-motion look): the windows' entrance over the engine's.
+  const transitions = withSheetMotion(engineTransitionSpec(engine), layoutOf(cfg).sheetMotion, { reduceMotion: cfg.general.reduceMotion, light: profile === 'light' });
   // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
@@ -685,6 +704,9 @@ export function KioskApp({ view }: { view: KioskView }) {
     back: flow.screen === 'service' || flow.screen === 'catalog' || flow.screen === 'cart' ? back : undefined,
     startOver: flow.screen === 'catalog' ? () => (cart.length > 0 ? setLeaveAsk(true) : dispatch({ type: 'reset' })) : undefined,
     detailsScreen: true,
+    // "סרגל עליון": the club, the search and the language buttons have their actions here (cancel is startOver).
+    topBar: bar.live.topBar,
+    search: bar.live.search,
     help: () => {
       funnel.help();
       void kiosk.helpRequest();
@@ -713,6 +735,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       flow.screen === 'success' && pay
         ? {
             pickupLabel: pay.pickupLabel ?? '',
+            // "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave.
+            customerName: details.name.trim() || null,
             paid: pay.amountAgorot / 100,
             receipt: pay.receipt ?? 'none',
             onReceipt: (print) => void kiosk.receiptChoice(pay.orderId, print),
@@ -743,14 +767,14 @@ export function KioskApp({ view }: { view: KioskView }) {
     cols,
     ratio: aspectRatioCss(cfg.theme.imageRatio),
     font: fontStack(cfg.theme.font),
-    // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one.
-    // The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
+    // Every customer text through the registry (lib/kioskTexts.ts): the business's, else the built-in one — in the
+    // top bar's language. The catalog's title carries the active menu's name ("התפריט · צהריים"), as the Android kiosk's.
     txt: (key: KioskTextKey) => {
-      const text = configuredText(cfg, 'he', key) ?? txtOf(undefined, key);
+      const text = screenTextIn(cfg, lang, key, (k) => txtOf(undefined, k));
       return key === 'catalogTitle' ? titleWithMenu(text, view.catalog.menu) : text;
     },
-    t: (key, values) => webTextOverride(cfg, 'he', key, values) ?? t(key, values),
-    kt: (key, values) => kioskTextOf(cfg, 'he', key, values),
+    t: (key, values) => webTextIn(cfg, lang, key, values) ?? t(key, values),
+    kt: (key, values) => kioskTextOf(cfg, lang, key, values),
     // "רוצים להפוך לארוחה?": the meals the till's upsells offer for a dish.
     mealOptions: (p) => mealsFor(view, p.id, allProducts),
     reach: { toggled: reachToggled, toggle: () => setReachToggled((v) => !v) },
@@ -944,8 +968,9 @@ export function KioskApp({ view }: { view: KioskView }) {
     m,
     screen: flow.screen,
     busy: flowBusy(flow),
-    staff: staffOpen !== 'none',
-    sheetOpen: !!product || leaveAsk || !!changes || till.entry,
+    // Under the shop's lock a scan starts nothing (as under the staff's screens).
+    staff: staffOpen !== 'none' || shopLockUp,
+    sheetOpen: !!product || leaveAsk || !!changes || till.entry || bar.state.clubOpen || bar.state.typing,
     shown: allProducts,
     codes: view.catalog.products,
     screenRef,
@@ -983,7 +1008,7 @@ export function KioskApp({ view }: { view: KioskView }) {
   return (
     <div
       ref={screenRef}
-      dir="rtl"
+      dir={bar.dir}
       className={`k-root relative h-screen w-screen overflow-hidden select-none ${cfg.general.reduceMotion ? 'k-reduce' : ''} ${chrome.className}`}
       style={{ ...rootVars, ...chrome.style, background: colors.background, color: colors.text, fontFamily: m.font }}
       onPointerDownCapture={(e) => {
@@ -1174,6 +1199,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       {entry && (screen === 'catalog' || screen === 'cart') && product ? (
         <EntryWindow m={m} caption={entry.caption} steps={entry.steps} onFinish={() => setEntry(null)} onClose={() => setEntry(null)} />
       ) : null}
+      {/* "סרגל עליון": the club's window and the search's keyboard, over the menu. */}
+      <KioskTopBarWindows m={m} bar={bar} screen={screen} />
       {idleState.kind === 'warn' ? (
         <Dialog
           m={m}
@@ -1249,6 +1276,7 @@ export function KioskApp({ view }: { view: KioskView }) {
       {/* "סוללה חלשה": the strip and the alarm — never over a payment (BatteryAlerts.tsx). */}
       <BatteryAlerts busy={flowBusy(flow) || flow.screen === 'pay'} />
       {scanNote}
+      {shopLockUp ? <KioskShopLock m={m} closeDay={view.closeDay ?? null} /> : null}
       <StaffLayer m={m} view={view} open={staffOpen} onClose={() => setStaffOpen('none')} home={resting && !flowBusy(flow)} />
     </div>
   );

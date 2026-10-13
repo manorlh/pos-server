@@ -19,7 +19,7 @@
  * the cloud confirms them, never reviving a cancelled quantity.
  */
 
-import type { KdsActionInput, KdsActionType, KdsChange, KdsDeviceInfo, KdsOrder, KdsTask, KdsView } from './kdsScreenTypes';
+import type { KdsActionInput, KdsActionType, KdsChange, KdsDeviceInfo, KdsItemTap, KdsOrder, KdsTask, KdsView } from './kdsScreenTypes';
 
 const EPS = 1e-6;
 
@@ -113,6 +113,18 @@ export function orderTitle(order: KdsOrder): string {
   return order.displayRef ?? order.id.slice(0, 6);
 }
 
+/**
+ * The order's number when the title does not already say it (`ticketInfo.orderNumber`, §16): the
+ * pickup number, else the document's number ("#20000057"). A table's order has none on the board.
+ */
+export function orderNumberText(order: KdsOrder): string | null {
+  const title = orderTitle(order);
+  const ref = order.displayRef?.trim() || null;
+  const candidates = [order.pickupNumber ? `#${order.pickupNumber}` : null, ref ? (/^\d+$/.test(ref) ? `#${ref}` : ref) : null];
+  for (const c of candidates) if (c && c !== title && !title.includes(c.replace(/^#/, ''))) return c;
+  return null;
+}
+
 export function sourceText(source: string): string {
   if (source === 'table') return 'שולחן';
   if (source === 'kiosk') return 'קיוסק';
@@ -123,6 +135,8 @@ export function sourceText(source: string): string {
 export function serviceText(serviceType: string | null): string | null {
   if (serviceType === 'eat_in') return 'לשבת';
   if (serviceType === 'take_away') return 'לקחת';
+  // An external order's courier (docs/SPEC_KDS.md §16); no till sends it yet.
+  if (serviceType === 'delivery') return 'משלוח';
   return null;
 }
 
@@ -324,6 +338,107 @@ export function recallButton(order: KdsOrder): KdsButton | null {
   return null;
 }
 
+/* ------------------------------------------- learned from a reference KDS (§16) */
+
+/** An order's urgency in words: 1 "דחוף", 2 "דחוף מאוד", 3 and up "בהול"; null when it is not urgent. */
+export function urgencyText(priority: number | null | undefined): string | null {
+  const p = priority ?? 0;
+  if (p <= 0) return null;
+  if (p === 1) return 'דחוף';
+  if (p === 2) return 'דחוף מאוד';
+  return 'בהול';
+}
+
+/** An item's state in words (the chip of a row that takes taps): ממתין / בהכנה / מוכן. */
+export function taskStateText(t: KdsTask): 'ממתין' | 'בהכנה' | 'מוכן' {
+  if (isReady(t)) return 'מוכן';
+  if (t.state === 'preparing' || t.preparedQty > EPS) return 'בהכנה';
+  return 'ממתין';
+}
+
+/**
+ * What a tap on an item row does (`itemTap`, docs/SPEC_KDS.md §16): "button" — nothing (the row's
+ * button acts, as always); "cycle" — ממתין → בהכנה (start) → מוכן (item_ready) → ממתין (requeue);
+ * "ready" ("מוכן בנגיעה") — מוכן (a start first where the order requires one), and again בטל מוכן.
+ * Null where the item takes no tap: held, cancelled, a finished order, a fallback round to reconcile.
+ */
+export function itemTapButton(order: KdsOrder, task: KdsTask, mode: KdsItemTap): KdsButton | null {
+  if (mode === 'button' || !isLive(task) || isFinished(order) || needsFallbackDecision(task)) return null;
+  const key = `task:${task.id}`;
+  const taskId = task.id;
+  if (mode === 'ready') {
+    if (isReady(task)) return { key, label: 'בטל מוכן', tone: 'undo', actions: [{ type: 'undo_ready', taskId }] };
+    const start: KdsActionInput[] = task.state === 'queued' && order.requireStart ? [{ type: 'start', taskId }] : [];
+    return { key, label: 'מוכן', tone: 'ready', actions: [...start, { type: 'item_ready', taskId }] };
+  }
+  if (isReady(task)) return { key, label: 'ממתין', tone: 'undo', actions: [{ type: 'requeue', taskId }] };
+  if (task.state === 'queued' && task.preparedQty <= EPS) return { key, label: 'בהכנה', tone: 'start', actions: [{ type: 'start', taskId }] };
+  return { key, label: 'מוכן', tone: 'ready', actions: [{ type: 'item_ready', taskId }] };
+}
+
+/** Who may mark an order urgent from the ticket's menu: the Expo and the manager; a station when its screen allows (`stationRush`). */
+export interface TicketMenuOptions {
+  stationRush: boolean;
+  urgencyLevels: boolean;
+}
+
+/**
+ * The ticket header's menu (§16): "דחוף" (with `urgencyLevels`: "דחוף מאוד", "בהול"; "בטל דחיפות"
+ * when urgent — each asks for the reason the cloud requires), and for the card's items: "הכול ממתין"
+ * (requeue), "הכול בהכנה" (start the waiting, undo the ready), "הכול מוכן" (a start first where the
+ * order requires one). `tasks`: the items the card shows (a station's own; all on the Expo).
+ * Only what would change something is offered.
+ */
+export function ticketMenu(order: KdsOrder, role: KdsScreenRole, opts: TicketMenuOptions, tasks: readonly KdsTask[] = order.tasks): KdsButton[] {
+  const out: KdsButton[] = [];
+  if (isFinished(order)) return out;
+  const orderId = order.id;
+  if (role !== 'station' || opts.stationRush) {
+    const now = order.priority ?? 0;
+    if (now > 0) out.push({ key: `prio:${orderId}:0`, label: 'בטל דחיפות', tone: 'neutral', actions: [{ type: 'priority', orderId, priority: 0 }], reason: 'priority' });
+    for (const level of opts.urgencyLevels ? [1, 2, 3] : [1]) {
+      if (level === now || (!opts.urgencyLevels && now > 0)) continue;
+      out.push({ key: `prio:${orderId}:${level}`, label: urgencyText(level) ?? 'דחוף', tone: 'urgent', actions: [{ type: 'priority', orderId, priority: level }], reason: 'priority' });
+    }
+  }
+  const live = tasks.filter((t) => isLive(t) && !needsFallbackDecision(t));
+  const begun = live.filter((t) => t.state !== 'queued' || t.preparedQty > EPS);
+  if (begun.length) out.push({ key: `bulk:${orderId}:queued`, label: 'הכול ממתין', tone: 'neutral', actions: begun.map((t) => ({ type: 'requeue' as const, taskId: t.id })) });
+  const toStart = live.filter((t) => t.state === 'queued' && t.preparedQty <= EPS);
+  const toUndo = live.filter(isReady);
+  if (toStart.length || toUndo.length) {
+    out.push({
+      key: `bulk:${orderId}:preparing`,
+      label: 'הכול בהכנה',
+      tone: 'start',
+      actions: [...toStart.map((t) => ({ type: 'start' as const, taskId: t.id })), ...toUndo.map((t) => ({ type: 'undo_ready' as const, taskId: t.id }))],
+    });
+  }
+  const open = live.filter((t) => !isReady(t));
+  if (open.length) {
+    const starts = order.requireStart ? open.filter((t) => t.state === 'queued').map((t) => ({ type: 'start' as const, taskId: t.id })) : [];
+    out.push({ key: `bulk:${orderId}:ready`, label: 'הכול מוכן', tone: 'ready', actions: [...starts, ...open.map((t) => ({ type: 'item_ready' as const, taskId: t.id }))] });
+  }
+  return out;
+}
+
+/**
+ * "החזר" from the history (§16): handed over → back to ready (as the Expo's strip); on the Expo a
+ * ready-for-pickup order → back to preparation; else this screen's ready items → not ready (they
+ * come back on the screen). Null when nothing can come back.
+ */
+export function recallFor(order: KdsOrder, role: KdsScreenRole): KdsButton | null {
+  const strip = recallButton(order);
+  if (strip) return strip;
+  if (isFinished(order)) return null;
+  if (role !== 'station' && !order.viewOnly && order.groupState === 'ready_for_pickup') {
+    return { key: `undo:${order.id}`, label: 'החזר להכנה', tone: 'undo', actions: [{ type: 'undo_pickup', orderId: order.id }] };
+  }
+  const ready = order.tasks.filter((t) => isLive(t) && isReady(t));
+  if (!ready.length) return null;
+  return { key: `undo:${order.id}`, label: 'החזר', tone: 'undo', actions: ready.map((t) => ({ type: 'undo_ready' as const, taskId: t.id })) };
+}
+
 /** Ready presets for a reason (a touch screen without a keyboard); free text is allowed too. */
 export const REASON_PRESETS: Record<'override' | 'priority', string[]> = {
   override: ['הלקוח ממתין', 'פריט חסר יוגש בהמשך', 'אושר ע״י מנהל'],
@@ -332,7 +447,7 @@ export const REASON_PRESETS: Record<'override' | 'priority', string[]> = {
 
 /** What the cloud would refuse outright (422) — said here, before anything is queued. */
 export function checkAction(a: KdsActionInput): string | null {
-  const needsTask: KdsActionType[] = ['start', 'item_ready', 'undo_ready', 'resolve_fallback'];
+  const needsTask: KdsActionType[] = ['start', 'item_ready', 'undo_ready', 'resolve_fallback', 'requeue'];
   const needsOrder: KdsActionType[] = ['station_ready', 'ready_for_pickup', 'undo_pickup', 'handover', 'priority'];
   if (needsTask.includes(a.type) && !a.taskId) return 'חסר פריט לפעולה';
   if (needsOrder.includes(a.type) && !a.orderId) return 'חסרה הזמנה לפעולה';
@@ -387,6 +502,7 @@ export const ACTION_TEXT: Record<KdsActionType, string> = {
   handover: 'נמסר',
   priority: 'עדיפות',
   resolve_fallback: 'התאמת הדפסת גיבוי',
+  requeue: 'חזרה לממתין',
 };
 
 /* ------------------------------------------------------------ the overlay */
@@ -444,6 +560,11 @@ function applyOne(order: KdsOrder, a: OverlayAction, ctx: OverlayContext): KdsOr
       return onTask(order, a, ctx, (t) => {
         if (t.preparedQty <= EPS) return t;
         return { ...t, preparedQty: 0, state: t.activeQty > EPS ? 'preparing' : t.state, readyAt: null };
+      });
+    case 'requeue':
+      return onTask(order, a, ctx, (t) => {
+        if (!isLive(t) || (t.state === 'queued' && t.preparedQty <= EPS)) return t;
+        return { ...t, preparedQty: 0, overPrepared: false, state: 'queued', startedAt: null, readyAt: null };
       });
     case 'resolve_fallback':
       return onTask(order, a, ctx, (t) => {
@@ -553,9 +674,9 @@ export function hasWork(order: KdsOrder): boolean {
  * cancelled leaves once the cancellation was seen). The Expo: handed over and
  * bumped orders go to the strip (for "החזר"), cancelled ones disappear once their changes were
  * seen, and a ready order without handover tracking leaves after 15 minutes, as on the pickup
- * screen. Sorted: urgent first, then the oldest.
+ * screen. Sorted: urgent first, then the oldest (`lifo`: the newest — docs/SPEC_KDS.md §16).
  */
-export function screenOf(orders: readonly KdsOrder[], role: KdsScreenRole, nowMs: number): { cards: KdsOrder[]; recent: KdsOrder[] } {
+export function screenOf(orders: readonly KdsOrder[], role: KdsScreenRole, nowMs: number, opts: { lifo?: boolean } = {}): { cards: KdsOrder[]; recent: KdsOrder[] } {
   const cards: KdsOrder[] = [];
   const recent: KdsOrder[] = [];
   for (const o of orders) {
@@ -575,11 +696,11 @@ export function screenOf(orders: readonly KdsOrder[], role: KdsScreenRole, nowMs
     }
     cards.push(o);
   }
-  return { cards: sortOrders(cards, role), recent: sortOrders(recent, role).reverse() };
+  return { cards: sortOrders(cards, role, opts.lifo), recent: sortOrders(recent, role).reverse() };
 }
 
-/** Urgent first, then the oldest; on a station the cards with nothing left to do go last. */
-export function sortOrders(orders: readonly KdsOrder[], role: KdsScreenRole): KdsOrder[] {
+/** Urgent first, then the oldest (`lifo`: the newest); on a station the cards with nothing left to do go last. */
+export function sortOrders(orders: readonly KdsOrder[], role: KdsScreenRole, lifo = false): KdsOrder[] {
   const key = (o: KdsOrder) => ({
     done: role === 'station' && !hasWork(o) ? 1 : 0,
     priority: o.priority ?? 0,
@@ -588,7 +709,7 @@ export function sortOrders(orders: readonly KdsOrder[], role: KdsScreenRole): Kd
   return [...orders].sort((a, b) => {
     const ka = key(a);
     const kb = key(b);
-    return ka.done - kb.done || kb.priority - ka.priority || ka.at - kb.at || a.id.localeCompare(b.id);
+    return ka.done - kb.done || kb.priority - ka.priority || (lifo ? kb.at - ka.at : ka.at - kb.at) || a.id.localeCompare(b.id);
   });
 }
 

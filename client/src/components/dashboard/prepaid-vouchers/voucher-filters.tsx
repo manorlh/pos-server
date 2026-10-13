@@ -26,10 +26,15 @@ import {
   activeFilterCount,
   pageStateFromQuery,
   pageStateToQuery,
+  voucherFilterLines,
   type PageState,
+  type VoucherChoiceKey,
   type VoucherFilters,
+  type VoucherIdKey,
+  type VoucherLineKey,
   type VoucherView,
 } from '@/lib/prepaidVoucherFilters';
+import { dmy, type ReportFilterLine } from '@/lib/reportExport';
 import { cn } from '@/lib/utils';
 
 const SELECT = 'h-9 w-full rounded-lg border border-input bg-transparent px-2 text-sm dark:bg-input/30';
@@ -53,6 +58,70 @@ export function useVoucherPageState(): [PageState, (next: PageState) => void] {
 
 export function useVoucherFacets() {
   return useQuery({ queryKey: ['prepaid-voucher-facets'], queryFn: fetchPrepaidFacets, staleTime: 60_000 });
+}
+
+const OPTION_KEY: Record<Exclude<VoucherChoiceKey, 'testMode'>, string> = {
+  kind: 'kindOptions',
+  accounting: 'accountingOptions',
+  pricing: 'pricingOptions',
+  override: 'overrideOptions',
+  offline: 'offlineOptions',
+  batchStatus: 'batchStatuses',
+  state: 'states',
+};
+const LINE_LABEL: Record<Exclude<VoucherLineKey, 'testMode'>, string> = {
+  customer: 'forWhom',
+  event: 'event',
+  typeId: 'type',
+  kind: 'kind',
+  batchId: 'batch',
+  shopId: 'shop',
+  accounting: 'accounting',
+  pricing: 'pricing',
+  override: 'override',
+  offline: 'offline',
+  value: 'value',
+  price: 'price',
+  createdBy: 'createdBy',
+  issued: 'issued',
+  validOn: 'validOn',
+  batchStatus: 'batchStatus',
+  redeemed: 'redeemed',
+  machineId: 'till',
+  employee: 'employee',
+  state: 'state',
+  group: 'group',
+  q: 'q',
+};
+
+/**
+ * The filters that are set, in words, for an export's "סינון:" line (lib/prepaidVoucherFilters.ts
+ * `voucherFilterLines`). [omit]: by default the redemption days, which the export's range line says.
+ */
+export function useVoucherFilterLines(filters: VoucherFilters, omit: (keyof VoucherFilters)[] = ['from', 'to']): ReportFilterLine[] {
+  const t = useTranslations('prepaidVouchers.scope');
+  const tm = useTranslations('prepaidVoucherTestMode.filter');
+  const facets = useVoucherFacets().data;
+  const lists: Record<VoucherIdKey, { id: string; name: string | null }[]> = {
+    typeId: facets?.types ?? [],
+    batchId: facets?.batches ?? [],
+    shopId: facets?.shops ?? [],
+    machineId: facets?.tills ?? [],
+    employee: facets?.employees ?? [],
+    createdBy: facets?.creators ?? [],
+  };
+  return voucherFilterLines(
+    filters,
+    {
+      label: (k) => (k === 'testMode' ? tm('label') : t(LINE_LABEL[k])),
+      option: (k, v) => (k === 'testMode' ? tm(`options.${v}`) : t(`${OPTION_KEY[k]}.${v}`)),
+      name: (k, id) => lists[k].find((x) => x.id === id)?.name,
+      day: dmy,
+      min: t('min'),
+      max: t('max'),
+    },
+    omit,
+  );
 }
 
 interface PickerOption {
@@ -236,6 +305,7 @@ export function VoucherFilterBar({
 }) {
   const t = useTranslations('prepaidVouchers.scope');
   const tm = useTranslations('prepaidVoucherTestMode.filter');
+  const ta = useTranslations('prepaidVoucherActive.filter');
   const [more, setMore] = useState(false);
   const set = <K extends keyof VoucherFilters>(k: K, v: VoucherFilters[K]) => onChange({ ...value, [k]: v });
   const omit: (keyof VoucherFilters)[] = view === 'batches' ? ['state', 'group', 'q'] : ['q'];
@@ -313,6 +383,8 @@ export function VoucherFilterBar({
             onChange={(v) => set('offline', v)} labelOf={(s) => t(`offlineOptions.${s}`)} />
           <ChoiceSelect label={tm('label')} allLabel={t('any')} options={YES_NO} value={value.testMode}
             onChange={(v) => set('testMode', v)} labelOf={(s) => tm(`options.${s}`)} />
+          <ChoiceSelect label={ta('label')} allLabel={t('any')} options={YES_NO} value={value.active}
+            onChange={(v) => set('active', v)} labelOf={(s) => ta(`options.${s}`)} />
           <AmountRange label={t('value')} min={value.valueMin} max={value.valueMax}
             onChange={(a, b) => onChange({ ...value, valueMin: a, valueMax: b })} />
           {f?.pricesVisible ? (

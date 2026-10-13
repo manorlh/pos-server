@@ -84,9 +84,16 @@ def lan_members(machines: Iterable[POSMachine]) -> List[POSMachine]:
     """
     The tills of the shop's LAN group: every one but the independent tills — and never a
     display device (a KDS / the "מוכן / לא מוכן" board, app/services/display_devices.py),
-    which is no till: never the main till, the tables host or the print server.
+    which is no till: never the main till, the tables host or the print server. A dedicated
+    local server ("שרת מקומי", app/services/local_server_device.py) is in it: not a till, but
+    the shop's preferred host.
     """
-    return [m for m in machines if not is_independent(m) and getattr(m, "is_fiscal", True) is not False]
+    from app.services.local_server_device import is_local_server
+
+    return [
+        m for m in machines
+        if not is_independent(m) and (getattr(m, "is_fiscal", True) is not False or is_local_server(m))
+    ]
 
 
 def till_label(machine: POSMachine) -> str:
@@ -190,15 +197,54 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
       Z it made as a main till (`independent_switch_shop_zs_unsynced`, §8.10) — the switch
       starts or leaves a run, and a number of the old one must never arrive after it.
     """
-    from app.services import till_z
     from app.services.z_builder import Z_MODE_CLOUD
 
     if independent == is_independent(machine) and (independent or machine.z_mode == Z_MODE_CLOUD):
         return
+    check_clean_break(db, user, machine, "לקופה עצמאית" if independent else "ל-Z הסניפי", into_shop_z=not independent)
+
+
+#: The card's four (P:/specs/dedicated-local-server.md §12): "מחוברת לשרת המקומי" × "ה-Z".
+CARD_SHOP_Z, CARD_REMOTE, CARD_OWN_Z, CARD_INDEPENDENT = "shop_z", "remote_shop_z", "own_z", "independent"
+
+
+def card_role_of(machine: POSMachine, *, remote: bool) -> str:
+    """Where the till stands on the card: `remote` — it is a remote participant (`is_remote_participant`)."""
+    if is_independent(machine):
+        return CARD_INDEPENDENT
+    if getattr(machine, "z_mode", None) == "till":
+        return CARD_OWN_Z
+    return CARD_REMOTE if remote else CARD_SHOP_Z
+
+
+def _may_be_remote(machine: POSMachine) -> bool:
+    """A Windows device is closed through the cloud by its platform: the list moves nothing for it."""
+    from app.services.display_devices import PLATFORM_WINDOWS, platform_of
+
+    return platform_of(machine) != PLATFORM_WINDOWS
+
+
+#: "Z בקופה, בתוך הסניף" — its own Z, on the shop's local server (`set_own_z`).
+TARGET_OWN_Z = "ל\"Z בקופה, בתוך הסניף\""
+
+#: "מרוחקת בזד הסניפי" — in the shop Z, off the shop's local server (the `remote` list).
+TARGET_REMOTE = "ל\"מרוחקת בזד הסניפי\" (לא מחוברת לשרת המקומי)"
+#: How a refusal names where the card was taking the till.
+CARD_TARGETS = {
+    CARD_SHOP_Z: "ל-Z הסניפי (מחוברת לשרת המקומי)",
+    CARD_REMOTE: TARGET_REMOTE,
+    CARD_OWN_Z: TARGET_OWN_Z,
+    CARD_INDEPENDENT: "לקופה עצמאית",
+}
+
+
+def check_clean_break(db: Session, user: User, machine: POSMachine, target: str, *, into_shop_z: bool) -> None:
+    """The rules of every move on the card (`check_switch`), `target` naming where it goes."""
+    from app.services import till_z
+
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
     label = till_label(machine)
-    target = "לקופה עצמאית" if independent else "ל-Z הסניפי"
     till_z.expire_overdue(db)
     if till_z.live_z_run_item(db, machine.id) is not None or till_z._pending_query(db, machine.id).first() is not None:
         raise _refuse(
@@ -222,7 +268,7 @@ def check_switch(db: Session, user: User, machine: POSMachine, independent: bool
             count=shop_zs,
         )
     waiting = till_z.unreported_closed_count(db, machine.id)
-    recovering = not independent and till_z._has_reconstructed_unreported(db, machine.id)
+    recovering = into_shop_z and till_z._has_reconstructed_unreported(db, machine.id)
     # Closed shifts with nothing in them need no Z of the old kind: carried into the first Z of
     # the new one, adding nothing (till_z.waiting_shifts_all_empty) — never a block.
     if waiting and not recovering and till_z.waiting_shifts_all_empty(db, machine) is None:
@@ -272,6 +318,27 @@ def _clear_host_flags(db: Session, machine: POSMachine, now: datetime) -> List[s
         parameter.updated_at = now
         removed.append(parameter.key)
     return removed
+
+
+def set_own_z(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> bool:
+    """
+    "Z בקופה, בתוך הסניף": its own Z (`z_mode` till, through `till_z.set_z_mode` and its lock,
+    as `PUT /machines/{id}` switches it), on the shop's local server. From an independent till
+    only the LAN changes: it keeps its run of Zs. The caller ran the card's checks. True when it
+    changed.
+    """
+    from app.services import till_z
+    from app.services.z_builder import Z_MODE_TILL
+
+    if is_independent(machine):
+        machine.independent_till = False
+        db.flush()
+        return True
+    if machine.z_mode == Z_MODE_TILL:
+        return False
+    till_z.set_z_mode(db, machine, Z_MODE_TILL, now=now or datetime.now(timezone.utc))
+    db.flush()
+    return True
 
 
 def set_independent(db: Session, machine: POSMachine, independent: bool, *, now: Optional[datetime] = None) -> bool:
@@ -386,11 +453,15 @@ def apply_shop(
     force_producer_switch: bool = False,
     remote: Optional[Sequence[uuid.UUID]] = None,
     lan_server_excluded: Optional[Sequence[uuid.UUID]] = None,
+    own_z: Sequence[uuid.UUID] = (),
     now: Optional[datetime] = None,
 ) -> List[POSMachine]:
     """
-    The card's save: `participants` join the shop Z, `independent` become independent, a
-    till in neither stays as it is; `main_till_id` (when given) becomes the shop's main
+    The card's save: `participants` join the shop Z, `independent` become independent, `own_z`
+    become "Z בקופה, בתוך הסניף" (their own Z, still on the shop's local server), a till in
+    none stays as it is — and `remote` (when given): exactly these participants are "מרוחקת
+    בזד הסניפי", off the local server (P:/specs/dedicated-local-server.md §12: "מחוברת לשרת
+    המקומי" × "ה-Z", every move over the same clean break); `main_till_id` (when given) becomes the shop's main
     till — which must be in the LAN group after the save. `lan_server_excluded` (when given):
     exactly these devices are "לא משמש כשרת מקומי" after the save (docs/SPEC_LAN_MODE.md §3),
     and the main till may not be one of them. All or nothing: every refusal is raised
@@ -406,6 +477,7 @@ def apply_shop(
     seated = {str(m.id): m for m in ZR.shop_tills(db, shop.id) if ZR.is_seated_in(m, shop.id)}
     joining = [str(i) for i in participants]
     leaving = [str(i) for i in independent]
+    owning = [str(i) for i in own_z]
     both = set(joining) & set(leaving)
     if both:
         raise IndependentSwitchRefused(
@@ -413,7 +485,17 @@ def apply_shop(
             {"detail": "till_in_both_lists", "message": "קופה לא יכולה להיות גם בזד הסניפי וגם עצמאית.",
              "machineId": sorted(both)[0]},
         )
-    for machine_id in joining + leaving + ([str(main_till_id)] if main_till_id not in (_MAIN_UNCHANGED, None) else []):
+    twice = set(owning) & (set(joining) | set(leaving))
+    if twice:
+        raise IndependentSwitchRefused(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {"detail": "till_in_both_lists",
+             "message": "לכל קופה בוחרים מצב אחד: בזד הסניפי, Z בקופה בתוך הסניף, או עצמאית.",
+             "machineId": sorted(twice)[0]},
+        )
+    for machine_id in joining + leaving + owning + (
+        [str(main_till_id)] if main_till_id not in (_MAIN_UNCHANGED, None) else []
+    ):
         if machine_id not in seated:
             raise IndependentSwitchRefused(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -421,7 +503,7 @@ def apply_shop(
             )
 
     # The main till after the save: named, or the present one.
-    after_independent = {mid for mid, m in seated.items() if is_independent(m)} - set(joining) | set(leaving)
+    after_independent = {mid for mid, m in seated.items() if is_independent(m)} - set(joining) - set(owning) | set(leaving)
     if main_till_id is _MAIN_UNCHANGED:
         current = MT.main_till_of_shop(db, shop.id)
         main_after = str(current.id) if current is not None else None
@@ -436,6 +518,19 @@ def apply_shop(
                 "message": (
                     f"{till_label(m) if m else 'הקופה'} היא הקופה הראשית (השרת המקומי) של הסניף ולכן לא יכולה להיות עצמאית. "
                     "בחרו קופה ראשית מבין הקופות שבזד הסניפי."
+                ),
+                "machineId": main_after,
+            },
+        )
+    if main_after is not None and main_after in owning:
+        m = seated.get(main_after)
+        raise IndependentSwitchRefused(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            {
+                "detail": "main_till_not_participating",
+                "message": (
+                    f"{till_label(m) if m else 'הקופה'} היא הקופה הראשית (השרת המקומי) של הסניף ומפיקה את ה-Z הסניפי, "
+                    "ולכן לא יכולה לעבור ל-Z בקופה. בחרו קודם קופה ראשית אחרת."
                 ),
                 "machineId": main_after,
             },
@@ -457,6 +552,12 @@ def apply_shop(
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     {"detail": "remote_not_participant", "machineId": machine_id,
                      "message": f"{till_label(m)} עצמאית — היא לא בזד הסניפי, ולכן אין לה סגירה דרך הענן."},
+                )
+            if machine_id in owning:
+                raise IndependentSwitchRefused(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"detail": "remote_not_participant", "machineId": machine_id,
+                     "message": f"{till_label(m)} עוברת ל-Z בקופה — היא לא בזד הסניפי, ולכן אין לה סגירה דרך הענן."},
                 )
             if machine_id == main_after:
                 raise IndependentSwitchRefused(
@@ -502,10 +603,29 @@ def apply_shop(
                 {"detail": "z_run_in_progress", "message": "יש Z סניפי בתהליך — המתינו לסיומו ואז שנו את הקופה הראשית."},
             )
 
-    for machine_id in joining:
-        check_switch(db, user, seated[machine_id], False)
-    for machine_id in leaving:
-        check_switch(db, user, seated[machine_id], True)
+    # Every till moving between the card's four (§12) — "ה-Z" or "מחוברת לשרת המקומי" — over the
+    # same clean break, the refusal naming where it was going. A Windows device is closed through
+    # the cloud whatever is set, and a stale entry (the main till, an independent till) is no move.
+    from app.services.local_shop_z import is_remote_participant
+
+    for machine_id, m in seated.items():
+        before = card_role_of(m, remote=is_remote_participant(m))
+        if machine_id in leaving:
+            after = CARD_INDEPENDENT
+        elif machine_id in owning:
+            after = CARD_OWN_Z
+        elif machine_id in joining or before in (CARD_SHOP_Z, CARD_REMOTE):
+            if remote_after is None:
+                remote = before == CARD_REMOTE
+            else:
+                remote = machine_id in remote_after and _may_be_remote(m)
+            after = CARD_REMOTE if remote else CARD_SHOP_Z
+        else:
+            after = before
+        if after != before:
+            check_clean_break(
+                db, user, m, CARD_TARGETS[after], into_shop_z=after in (CARD_SHOP_Z, CARD_REMOTE),
+            )
 
     # Exactly one producer of the shop's Z sequence (SPEC_INDEPENDENT_TILL §8.10): pinned
     # before the save, checked after it — a move the producer cannot hand over is refused.
@@ -519,12 +639,23 @@ def apply_shop(
     for machine_id in leaving:
         if set_independent(db, seated[machine_id], True, now=now):
             changed.append(seated[machine_id])
+    for machine_id in owning:
+        if set_own_z(db, seated[machine_id], now=now):
+            changed.append(seated[machine_id])
     if main_till_id is not _MAIN_UNCHANGED:
         MT.set_main_till(db, shop, main_till_id, now=now)
+    remote_moved = False
     if remote_after is not None:
-        from app.services.local_shop_z import set_remote_till_ids
+        from app.services.local_shop_z import remote_till_ids, set_remote_till_ids
 
+        remote_before = remote_till_ids(shop)
+        remote_moved = remote_after != remote_before
         set_remote_till_ids(shop, remote_after)
+        # A remote participant is off the shop's LAN (no tables host, no print server,
+        # never a host — `local_shop_z.is_remote_participant`): the tills see the change.
+        for machine_id, m in seated.items():
+            if (machine_id in remote_after) != (machine_id in remote_before) and m not in changed:
+                changed.append(m)
     if excluded_after is not None:
         from app.services.lan_server import apply_excluded
 
@@ -533,4 +664,9 @@ def apply_shop(
                 changed.append(m)
     db.flush()
     guard.check(force=force_producer_switch, user=user)
+    if remote_moved:
+        # Its tables state names no LAN tables host any more (or again): a new version, last.
+        from app.services import tables_state as TS
+
+        TS.bump(db, shop.id)
     return changed

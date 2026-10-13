@@ -17,6 +17,8 @@ GET    /prepaid-vouchers/batches                      → batches with their cou
 POST   /prepaid-vouchers/batches                      → make a batch and its vouchers
 GET    /prepaid-vouchers/batches/{id}                 → one batch
 PATCH  /prepaid-vouchers/batches/{id}                 → texts, logo, validity
+PUT    /prepaid-vouchers/batches/{id}/active          → "סדרה פעילה" on / off (a pause of the batch's
+                                                        own; idempotent; the edit's permission)
 POST   /prepaid-vouchers/batches/bulk-edit-preview    → the same change on many batches: per batch ok /
                                                         unchanged / refused (the single edit's reason)
 POST   /prepaid-vouchers/batches/bulk-edit            → applied per batch through the single edit;
@@ -66,6 +68,7 @@ from app.middleware.auth import (
 from app.models.pos_machine import POSMachine
 from app.models.user import User
 from app.schemas.prepaid_voucher import (
+    PrepaidBatchActiveIn,
     PrepaidBatchBulkEditIn,
     PrepaidBatchDuplicateIn,
     PrepaidProductionCreate,
@@ -164,6 +167,7 @@ def voucher_scope(
     group: Optional[int] = Query(None, ge=1),
     q: Optional[str] = Query(None, max_length=100),
     test_mode: Optional[str] = Query(None, alias="testMode", description="yes | no: the batch is in test mode"),
+    active: Optional[str] = Query(None, description="yes | no: \"סדרה פעילה\" — no open pause of the batch's own"),
 ) -> "PVA.Scope":
     """The vouchers' one filter model (app/services/prepaid_voucher_analytics.py)."""
     return PVA.make_scope(
@@ -174,6 +178,7 @@ def voucher_scope(
         date_from=date_from, date_to=date_to, machine_id=machine_id, employee=employee, state=state, group=group, q=q,
         # A direct call (a test, another router) that leaves it out passes the Query default itself.
         test_mode=test_mode if isinstance(test_mode, str) else None,
+        active=active if isinstance(active, str) else None,
     )
 
 
@@ -625,6 +630,26 @@ def update_prepaid_voucher_batch(
     db.commit()
     _wake_tills(db, batch)
     return PV.batch_out(db, batch, user=current_user)
+
+
+@router.put("/prepaid-vouchers/batches/{batch_id}/active")
+def set_prepaid_voucher_batch_active(
+    batch_id: str,
+    body: PrepaidBatchActiveIn,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id=Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "סדרה פעילה" on / off — "ערוך סדרה" with `active` (its permission, the batch's lock): off opens a
+    pause of the batch's own (`reason`, blank: "הסדרה כובתה מהענן"), on resumes every open one of its
+    own (app/services/prepaid_voucher_controls.py `set_active`). Idempotent: already so changes nothing
+    (`changed: false`). The batch as `GET` gives it, with `active` / `inactive` / `pausedBy`.
+    """
+    changes = PrepaidVoucherBatchUpdate(active=body.active, **({"activeReason": body.reason} if body.reason else {}))
+    batch, plan = PV.edit_batch(db, current_user, active_tenant_id, batch_id, changes)
+    db.commit()
+    return {**PV.batch_out(db, batch, user=current_user), "changed": bool(plan.get("changes"))}
 
 
 @router.post("/prepaid-vouchers/batches/{batch_id}/vouchers", status_code=status.HTTP_201_CREATED)

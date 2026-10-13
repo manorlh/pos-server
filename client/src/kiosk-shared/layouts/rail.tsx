@@ -3,23 +3,76 @@
  * kiosk's layouts/KioskLayoutRail.kt: a tall rail of big category pictures on the start side (right
  * in Hebrew), 12 / 8 / 6 to a screen (railSize), the dishes beside it on their plates, two across, the
  * order bar fixed at the bottom. One category at a time (catalog.oneCategory, as today) or one list
- * the rail follows.
+ * the rail follows (layout.catalogScroll = continuous, or oneCategory off).
+ *
+ * "מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): railStyle circle — each category an icon in a
+ * circle with its name under it, the chosen one filled and / or scaled (railEmphasis), in the theme's
+ * rail colours (railMotionColors); railFollow off — the rail never scrolls by itself.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { basketDocked, basketKindOf, layoutOf, productColumns, railMeasures } from '@/lib/kioskLayout';
+import { basketDocked, basketKindOf, catalogContinuous, layoutOf, productColumns, railCircles, railEmphasisOf, railFollows, railMeasures, type LayoutCategoryIcons } from '@/lib/kioskLayout';
+import { railMotionColors, type RailMotionColors } from '@/lib/kioskConfig';
+import { kioskIcon } from '@/lib/kioskIcons';
 import { KioskSwap } from '@/components/dashboard/kiosks/preview-motion';
 import { CartPanel, CatalogHeader, textSize, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
-import { CategoryVisual } from './icons';
+import { CategoryVisual, KioskIconSvg, categoryIconId } from './icons';
 import { DockedBasket, FloatingBasket } from './baskets';
 import { DP_PER_PX, Empty, LayoutDishCard, SectionTitle, cartCounts, widthDpOf } from './parts';
 import { itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { cn } from '@/lib/utils';
+import type { PCategory } from '@/components/dashboard/kiosks/preview-screens';
+
+/**
+ * A category on the circles rail: its icon (layout.categoryIcons — line / filled / duotone in railIcon,
+ * the emoji) or its picture cropped round (photo / null), else its initial; `fill` — the chosen one's
+ * circle in railSelectedBg with the icon readable on it.
+ */
+function RailCircle({ m, cat, mode, size, fill, rc }: {
+  m: PreviewModel;
+  cat: PCategory;
+  mode: LayoutCategoryIcons | null;
+  size: number;
+  fill: boolean;
+  rc: RailMotionColors;
+}) {
+  const bg = fill ? rc.railSelectedBg : rc.railCircleBg;
+  const fg = fill ? rc.railIconOn : rc.railIcon;
+  const id = categoryIconId(m, cat);
+  let inner;
+  if ((mode === 'photo' || mode === null) && cat.imageUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    inner = <img src={cat.imageUrl} alt="" draggable={false} loading="lazy" className="h-full w-full rounded-full object-cover" />;
+  } else if (mode === 'line' || mode === 'filled' || mode === 'duotone') {
+    inner = <KioskIconSvg id={id} style={mode} size={Math.round(size * 0.56)} color={fg} knock={bg} />;
+  } else if (mode === 'emoji' || mode === 'photo') {
+    inner = <span style={{ fontSize: size * 0.5, lineHeight: 1 }}>{kioskIcon(id)?.emoji ?? '🍽️'}</span>;
+  } else {
+    inner = (
+      <span className="font-bold" style={{ fontSize: size * 0.4, color: fg }}>
+        {cat.name.trim().charAt(0)}
+      </span>
+    );
+  }
+  return (
+    <span
+      data-circle
+      className="flex shrink-0 items-center justify-center overflow-hidden rounded-full transition-[background-color,box-shadow] duration-200"
+      style={{ width: size, height: size, background: bg, boxShadow: fill ? 'none' : `inset 0 0 0 1px ${rc.railIcon}1A` }}
+    >
+      {inner}
+    </span>
+  );
+}
 
 export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (id: string) => void }) {
   const layout = layoutOf(m.cfg);
-  const one = m.cfg.catalog.oneCategory;
+  const one = !catalogContinuous(m.cfg);
+  const circles = railCircles(m.cfg);
+  const emphasis = railEmphasisOf(m.cfg);
+  const follow = railFollows(m.cfg);
+  const rc = railMotionColors(m.cfg.theme);
   const [active, setActive] = useState<string | null>(m.categories[0]?.id ?? null);
   const current = m.categories.some((c) => c.id === active) ? active : (m.categories[0]?.id ?? null);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -36,12 +89,13 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
   }, []);
   useEffect(() => {
     const rail = railRef.current;
-    if (!rail || !current) return;
+    // "הפס עוקב אחרי הבחירה" off: the rail stays where the customer left it.
+    if (!rail || !current || !follow) return;
     const item = rail.querySelector<HTMLElement>(`[data-cat="${CSS.escape(current)}"]`);
     if (!item) return;
     if (item.offsetTop < rail.scrollTop) rail.scrollTo({ top: item.offsetTop - 8 });
     else if (item.offsetTop + item.offsetHeight > rail.scrollTop + rail.clientHeight) rail.scrollTo({ top: item.offsetTop + item.offsetHeight - rail.clientHeight + 8 });
-  }, [current]);
+  }, [current, follow]);
 
   const basket = basketKindOf(m.cfg, widthDpOf(m));
   const measures = railMeasures(layout.railSize, widthDpOf(m), Math.round(bodyH * DP_PER_PX));
@@ -85,9 +139,41 @@ export function RailCatalog({ m, onCategory }: { m: PreviewModel; onCategory?: (
     <div className="flex h-full flex-col">
       <CatalogHeader m={m} />
       <div ref={bodyRef} className="flex min-h-0 flex-1">
-        <div ref={railRef} className="flex shrink-0 flex-col overflow-y-auto [scrollbar-width:none]" style={{ width: railW, background: m.c.surface }}>
+        <div
+          ref={railRef}
+          className={cn('flex shrink-0 flex-col overflow-y-auto [scrollbar-width:none]', circles && 'gap-1 py-2')}
+          style={{ width: railW, background: circles ? rc.railBg : m.c.surface }}
+        >
           {m.categories.map((cat) => {
             const on = cat.id === current;
+            if (circles) {
+              const d = Math.max(40, Math.round(Math.min(railW * 0.7, imageSize)));
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  data-cat={cat.id}
+                  data-active={on || undefined}
+                  aria-current={on || undefined}
+                  onClick={() => pick(cat.id)}
+                  className="relative flex shrink-0 flex-col items-center justify-center gap-1.5 px-1.5 text-center"
+                  style={{ minHeight: itemH }}
+                >
+                  <span
+                    className="transition-transform duration-200"
+                    style={{ transform: `scale(${on ? emphasis.scale : 1})`, transitionTimingFunction: 'cubic-bezier(0.34, 1.26, 0.64, 1)' }}
+                  >
+                    <RailCircle m={m} cat={cat} mode={layout.categoryIcons} size={d} fill={on && emphasis.fill} rc={rc} />
+                  </span>
+                  <span
+                    className={cn('line-clamp-2 w-full leading-tight', itemH >= 100 ? 'kt-13' : 'kt-11', on ? 'font-extrabold' : 'font-semibold')}
+                    style={{ color: rc.railText, ...textSize(m, 'categoryName', itemH >= 100 ? 13 : 11) }}
+                  >
+                    {cat.name}
+                  </span>
+                </button>
+              );
+            }
             return (
               <button
                 key={cat.id}

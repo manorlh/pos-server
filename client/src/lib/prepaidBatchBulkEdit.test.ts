@@ -104,6 +104,15 @@ describe('offeredFields', () => {
     assert.equal(fieldApplies('testMode', discount), true);
     assert.deepEqual(bulkChanges({ testMode: { testMode: true } }, new Set<BulkField>(['testMode'])), { testMode: true });
   });
+
+  it('"סדרה פעילה" for every batch, whatever its kind — sent as active with its reason', () => {
+    for (const picked of [[goods], [discount], [goods, discount, meal]]) assert.ok(offeredFields(picked).fields.includes('active'));
+    assert.equal(fieldApplies('active', discount), true);
+    assert.deepEqual(
+      bulkChanges({ active: { active: false, activeReason: 'סוף האירוע' }, testMode: { testMode: true } }, new Set<BulkField>(['active'])),
+      { active: false, activeReason: 'סוף האירוע' },
+    );
+  });
 });
 
 describe('knownRefusal', () => {

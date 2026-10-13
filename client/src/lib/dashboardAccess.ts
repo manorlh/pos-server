@@ -29,6 +29,7 @@ export type SectionId =
   | 'prepaid_voucher_prices'
   | 'voucher_discount_override'
   | 'prepaid_voucher_settlement'
+  | 'prepaid_voucher_redeem'
   | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
@@ -38,6 +39,7 @@ export type SectionId =
   | 'exception_alerts'
   | 'organization'
   | 'devices'
+  | 'local_server_switch'
   | 'tables'
   | 'kiosks'
   | 'till_design'
@@ -81,6 +83,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
     pages: [
       '/dashboard/products', '/dashboard/categories', '/dashboard/modifiers', '/dashboard/upsells',
       '/dashboard/menus', '/dashboard/assortment', '/dashboard/display-order',
+      // "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone (its menu gate,
+      // the page's role check, and its API `/till-parameters/catalog-admin` is SUPER_ADMIN).
+      '/dashboard/catalog-admin',
     ],
   },
   // "תפריט דיגיטלי" / "הזמנות אונליין" (ערוצים דיגיטליים): their profiles, each its own section.
@@ -106,6 +111,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'voucher_discount_override', pages: [] },
   // No page of its own: the "התחשבנות" tab and the commercial reports inside the prepaid vouchers page.
   { id: 'prepaid_voucher_settlement', pages: [] },
+  // No page of its own: "מימוש ידני מהענן" inside the prepaid vouchers page (or edit on prepaid_vouchers).
+  { id: 'prepaid_voucher_redeem', pages: [] },
   // No page of its own: pauses, quotas, test batches and replacement vouchers inside the prepaid vouchers page.
   { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },
@@ -116,6 +123,9 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'exception_alerts', pages: ['/dashboard/exception-alerts'] },
   { id: 'organization', pages: ['/dashboard/companies', '/dashboard/shops'] },
   { id: 'devices', pages: ['/dashboard/machines'] },
+  // "העברת שרת מקומי": no page of its own — the wizard on the shop page's main till card. Only the
+  // super admin grants it, and full access does not include it (the server says `canSwitch`).
+  { id: 'local_server_switch', pages: [] },
   { id: 'tables', pages: ['/dashboard/tables'] },
   { id: 'kiosks', pages: ['/dashboard/kiosks', '/dashboard/kiosks/health'] },
   { id: 'till_design', pages: ['/dashboard/till-design'] },

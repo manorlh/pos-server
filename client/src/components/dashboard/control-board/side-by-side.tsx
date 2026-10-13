@@ -12,7 +12,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Check, Columns3 } from 'lucide-react';
 import { fetchCashierSalesReport } from '@/lib/api';
-import { fetchSideBySide, type SideBySideReport } from '@/lib/compareApi';
+import { fetchSideBySide, type SideBySideEntity, type SideBySideReport } from '@/lib/compareApi';
 import { formatCurrency, formatQuantity, formatShortDate } from '@/lib/format';
 import { numberedLabel } from '@/lib/orgNumber';
 import { registerNumberOf } from '@/lib/registerNumber';
@@ -32,6 +32,7 @@ import {
 } from '@/lib/periodCompare';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ReportTable, type ReportColumn, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { BoardCard, CardTitle, Segmented } from './board-ui';
 import { axisMoney } from './compare-parts';
 
@@ -42,6 +43,54 @@ const TENDER_FILL = { card: 'bg-cb-blue', cash: 'bg-cb-teal', other: 'bg-cb-purp
 interface Candidate {
   id: string;
   label: string;
+}
+
+/**
+ * The figures side by side as a report table (P:\specs\reports-upgrade.md §5; key `compare`,
+ * table `side`): a row per compared entity, a column per figure — so the reader hides or
+ * reorders figures, and sorts the entities by one. The best of each figure stands out. The same
+ * table goes to Excel / PDF.
+ */
+export function sideTableSpec(
+  entities: SideBySideEntity[],
+  t: (key: string) => string,
+  nameOf: (e: SideBySideEntity) => string,
+  dotOf?: (e: SideBySideEntity) => string,
+): ReportTableSpec<SideBySideEntity> {
+  const best = new Map(FIGURE_ORDER.map((key) => [key, Math.max(...entities.map((e) => e.figures[key]))]));
+  const columns: ReportColumn<SideBySideEntity>[] = [
+    {
+      key: 'name',
+      header: t('side.table'),
+      required: true,
+      width: 22,
+      value: nameOf,
+      cell: (e) => (
+        <span className="inline-flex items-center gap-1.5 font-semibold text-cb-ink">
+          {dotOf ? <span aria-hidden className={cn('size-2 rounded-full', dotOf(e))} /> : null}
+          {nameOf(e)}
+        </span>
+      ),
+    },
+    ...FIGURE_ORDER.map(
+      (key): ReportColumn<SideBySideEntity> => ({
+        key,
+        header: t(`figures.${key}`),
+        kind: figureKind(key),
+        value: (e) => e.figures[key],
+        cell: (e) => {
+          const v = e.figures[key];
+          const top = best.get(key) ?? 0;
+          return (
+            <span className={cn('tabular-nums text-cb-ink', v === top && top > 0 && entities.length > 1 && 'font-semibold')}>
+              {figureKind(key) === 'money' ? formatCurrency(v) : formatQuantity(v)}
+            </span>
+          );
+        },
+      }),
+    ),
+  ];
+  return { id: 'side', title: t('side.table'), columns, rows: entities, rowKey: (e) => e.id };
 }
 
 export function useSideBySide({
@@ -327,45 +376,13 @@ export function SideBySide({
 
           <BoardCard labelledBy="cb-side-table" className="hidden md:block">
             <CardTitle id="cb-side-table">{t('side.table')}</CardTitle>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-cb-line text-xs text-cb-muted">
-                    <th className="py-2 text-start font-medium" />
-                    {entities.map((e) => (
-                      <th key={e.id} className="py-2 text-end font-semibold text-cb-ink">
-                        <span className="inline-flex items-center gap-1.5">
-                          <span aria-hidden className={cn('size-2 rounded-full', DOT[colorOf(e.id)])} />
-                          {e.name ?? labelOf(e.id) ?? e.id}
-                        </span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-cb-line">
-                  {FIGURE_ORDER.map((key) => {
-                    const values = entities.map((e) => e.figures[key]);
-                    const best = Math.max(...values);
-                    return (
-                      <tr key={key}>
-                        <th scope="row" className="py-2 text-start font-normal text-cb-muted">{t(`figures.${key}`)}</th>
-                        {entities.map((e) => (
-                          <td
-                            key={e.id}
-                            className={cn(
-                              'py-2 text-end tabular-nums text-cb-ink',
-                              e.figures[key] === best && best > 0 && entities.length > 1 && 'font-semibold',
-                            )}
-                          >
-                            {figureKind(key) === 'money' ? formatCurrency(e.figures[key]) : formatQuantity(e.figures[key])}
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ReportTable
+              reportKey="compare"
+              table={{
+                ...sideTableSpec(entities, t, (e) => e.name ?? labelOf(e.id) ?? e.id, (e) => DOT[colorOf(e.id)]),
+                title: undefined,
+              }}
+            />
           </BoardCard>
         </>
       )}

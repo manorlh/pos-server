@@ -7,21 +7,22 @@
  * bar, the colours, the texts, the fields, the menu order and the favourites — on the real
  * catalog of a till in scope when it has loaded, else the owner's sample (brief §6). A small
  * working till: a tap adds (the next quantity, to the chosen seat), − / + change new lines, the
- * categories filter, the summary opens.
+ * categories filter, the summary opens. Phase 2's four templates draw through preview-phase2.tsx;
+ * "לוח מנות" in a quick order is "נקי", as on the till.
  */
 
-import { useMemo, useReducer, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useReducer, type ReactNode } from 'react';
 import type { KioskSourceCatalog } from '@/lib/kioskApi';
-import type { Mode, Profile, TillDesignConfig, TillDesignLegacy } from '@/lib/tillDesign';
+import { PHASE2_NEW_TEMPLATES, forProfile, type Mode, type Profile, type Template, type TillDesignConfig, type TillDesignLegacy } from '@/lib/tillDesign';
 import { FONT, useBoxSize } from './preview-atoms';
 import { CleanScreen } from './preview-clean';
 import { DesignedScreen } from './preview-designed';
+import { Phase2Screen } from './preview-phase2';
 import {
   buildPreviewModel,
   catalogProducts,
   initialState,
   reducePreview,
-  tokensFor,
   SAMPLE_PRODUCTS,
   type PreviewEvent,
   type PreviewModel,
@@ -48,7 +49,13 @@ export function TillScreen({ m, d = NOOP }: { m: PreviewModel; d?: (e: PreviewEv
         WebkitFontSmoothing: 'antialiased',
       }}
     >
-      {m.view.template === 'clean' ? <CleanScreen m={m} d={d} /> : <DesignedScreen m={m} d={d} />}
+      {m.view.template === 'clean' ? (
+        <CleanScreen m={m} d={d} />
+      ) : PHASE2_NEW_TEMPLATES.includes(m.view.template) ? (
+        <Phase2Screen m={m} d={d} />
+      ) : (
+        <DesignedScreen m={m} d={d} />
+      )}
     </div>
   );
 }
@@ -108,6 +115,13 @@ export interface TillPreviewProps {
   legacy?: TillDesignLegacy | null;
   brandColor?: string | null;
   maxHeight?: number;
+  /** "לוח מנות": the company's courses ("שלבי הגשה"). */
+  courseNames?: string[];
+}
+
+/** What a mode of a profile draws: "לוח מנות" has no courses in a quick order — "נקי" there. */
+export function drawnTemplate(cfg: TillDesignConfig, profile: Profile, mode: Mode): Template | undefined {
+  return mode === 'quick' && forProfile(cfg, profile).template === 'courses' ? 'clean' : undefined;
 }
 
 /**
@@ -115,10 +129,11 @@ export interface TillPreviewProps {
  * switch starts the order afresh (a template or profile switch keeps it, as rotation does on
  * the till).
  */
-export function TillPreview({ cfg, profile, mode, catalog, legacy, brandColor, maxHeight }: TillPreviewProps) {
+export function TillPreview({ cfg, profile, mode, catalog, legacy, brandColor, maxHeight, courseNames }: TillPreviewProps) {
   const products = useMemo(() => catalogProducts(catalog)?.products ?? SAMPLE_PRODUCTS, [catalog]);
-  const [state, dispatch] = useReducer(reducePreview, undefined, () => initialState(products, mode));
-  const m = buildPreviewModel({ cfg, profile, mode, catalog, legacy, brandColor, state });
+  const [state, dispatch] = useReducer(reducePreview, undefined, () => initialState(products, mode, forProfile(cfg, profile).template));
+  const forced = drawnTemplate(cfg, profile, mode);
+  const m = buildPreviewModel({ cfg, profile, mode, catalog, legacy, brandColor, state, courseNames, template: forced });
   return (
     <ScaledScreen width={m.W} height={m.H} maxHeight={maxHeight}>
       <TillScreen m={m} d={dispatch} />
@@ -147,7 +162,8 @@ export function TemplateThumb({
   height?: number;
 }) {
   const m = useMemo(
-    () => buildPreviewModel({ cfg, profile, mode, catalog, legacy, brandColor, template }),
+    // "לוח מנות" is a table's screen: its card shows the lanes whatever the preview's mode.
+    () => buildPreviewModel({ cfg, profile, mode: template === 'courses' ? 'table' : mode, catalog, legacy, brandColor, template }),
     [cfg, profile, mode, catalog, legacy, brandColor, template],
   );
   return (
@@ -155,71 +171,6 @@ export function TemplateThumb({
       <ScaledScreen width={m.W} height={m.H} maxHeight={height} frame={false}>
         <TillScreen m={m} />
       </ScaledScreen>
-    </div>
-  );
-}
-
-/**
- * A phase-2 template's thumbnail ("בקרוב"): a schematic in the draft's colours — the course
- * lanes, the payment dock with banknotes, the night screen, the big photo cards.
- */
-export function Phase2Thumb({ cfg, template, height = 150 }: { cfg: TillDesignConfig; template: string; height?: number }) {
-  const night = template === 'night';
-  const t = tokensFor(night ? { colors: { ...cfg.colors, mode: 'dark' } } : cfg);
-  const block = (style: CSSProperties, key?: string | number) => (
-    <div key={key} style={{ borderRadius: 3, border: `1px solid ${t.border}`, background: t.surface, ...style }} />
-  );
-  const w = Math.round(height * 0.75);
-  let body: ReactNode;
-  if (template === 'courses') {
-    body = (
-      <div style={{ display: 'flex', gap: 4, height: '100%' }}>
-        {[0, 1, 2].map((i) => (
-          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <div style={{ height: 6, borderRadius: 2, background: i === 1 ? t.accent : t.border }} />
-            {block({ height: 18 })}
-            {block({ height: 18 })}
-            {i < 2 ? block({ height: 18 }) : null}
-          </div>
-        ))}
-      </div>
-    );
-  } else if (template === 'payDock') {
-    body = (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%' }}>
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 3 }}>
-          {Array.from({ length: 9 }, (_, i) => block({}, i))}
-        </div>
-        <div style={{ display: 'flex', gap: 3, height: 22 }}>
-          <div style={{ flex: 1.4, borderRadius: 3, background: t.accent }} />
-          {[0, 1, 2].map((i) => block({ flex: 1 }, i))}
-        </div>
-      </div>
-    );
-  } else if (template === 'visual') {
-    body = (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, height: '100%' }}>
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} style={{ borderRadius: 3, border: `1px solid ${t.border}`, background: t.surface, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ flex: 1, background: t.tint }} />
-            <div style={{ height: 8, margin: 3, borderRadius: 2, background: t.border }} />
-          </div>
-        ))}
-      </div>
-    );
-  } else {
-    body = (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%' }}>
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
-          {[0, 1, 2, 3].map((i) => block({}, i))}
-        </div>
-        <div style={{ height: 22, borderRadius: 3, background: t.accent }} />
-      </div>
-    );
-  }
-  return (
-    <div aria-hidden style={{ display: 'flex', justifyContent: 'center' }}>
-      <div style={{ width: w, height, padding: 6, background: t.bg, borderRadius: 6, border: `1px solid ${t.border}`, boxSizing: 'border-box', opacity: 0.75 }}>{body}</div>
     </div>
   );
 }

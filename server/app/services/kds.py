@@ -38,6 +38,7 @@ The rules, in one place:
 """
 from __future__ import annotations
 
+import re
 import secrets
 import types
 import uuid
@@ -973,11 +974,17 @@ def _out(outcome: str, **extra: Any) -> Tuple[str, Dict[str, Any]]:
     return outcome, {"outcome": outcome, **extra}
 
 
+def _effective_display(db: Session, device: KdsDevice) -> Optional[Dict[str, Any]]:
+    """The look (and behaviour) this screen draws: its own, else the shop's default for its kind."""
+    shop = db.query(Shop).filter(Shop.id == device.shop_id).first()
+    return DISPLAY.effective(device, shop)
+
+
 def _apply(db: Session, device: KdsDevice, body: KdsActionIn, now: datetime) -> Tuple[str, Dict[str, Any]]:
     kind = body.type
     actor = body.actor_name or device.name
 
-    if kind in ("start", "item_ready", "undo_ready", "resolve_fallback", "remake"):
+    if kind in ("start", "item_ready", "undo_ready", "resolve_fallback", "remake", "requeue"):
         if body.task_id is None:
             raise _refuse("task_required", status.HTTP_422_UNPROCESSABLE_ENTITY)
         task = _load_task(db, device, body.task_id)
@@ -1061,7 +1068,11 @@ def _apply(db: Session, device: KdsDevice, body: KdsActionIn, now: datetime) -> 
         group = _group(db, order)
         tasks = _tasks(db, order.id)
         if kind == "priority":
-            if device.role not in ("expo", "manager"):
+            # A station marks an order urgent only when its screen is set so ("דחוף" in the
+            # ticket's menu, `stationRush` — docs/SPEC_KDS.md §16); otherwise as always.
+            if device.role not in ("expo", "manager") and not (
+                device.role == "station" and DISPLAY.station_may_rush(_effective_display(db, device))
+            ):
                 raise _refuse("expo_or_manager_only", status.HTTP_403_FORBIDDEN)
             if not (body.reason or "").strip():
                 raise _refuse("reason_required", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1199,6 +1210,21 @@ def _task_action(db, order, task, body: KdsActionIn, rules, now, actor):
         if _q(task.prepared_qty) < active_qty(task):
             task.prep_state = "preparing"
             task.ready_at = None
+        return True
+    if kind == "requeue":
+        # "ממתין" again (§16): nothing prepared, not started — the ticket menu's "הכול ממתין", or
+        # a tap cycling the item. A cancelled / held item is not work to queue.
+        if task.release_state != "released":
+            return "task_held"
+        if active_qty(task) <= ZERO:
+            return "task_cancelled"
+        if task.prep_state == "queued" and _q(task.prepared_qty) <= ZERO:
+            return None
+        task.prepared_qty = ZERO
+        task.over_prepared = False
+        task.prep_state = "queued"
+        task.started_at = None
+        task.ready_at = None
         return True
     if kind == "resolve_fallback":
         if not task.fallback_printed or task.fallback_resolved_at is not None:
@@ -1558,8 +1584,58 @@ def public_pickup(db: Session, token: str) -> Dict[str, Any]:
     return {"shopName": shop.name if shop else None, "version": state.version, **pickup_board(db, state.shop_id)}
 
 
-def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[str]) -> Dict[str, Any]:
-    """The till's badges: per source ref, where the kitchen is with it."""
+#: A remake's line key: the line's own with "~r<n>" (`remake`): the same line on the till.
+_REMAKE_SUFFIX = re.compile(r"~r\d+$")
+
+
+def line_states(tasks: Sequence[KitchenTask]) -> List[Dict[str, Any]]:
+    """
+    "מוכן" per order line (till design phase 2 §2.1, "לוח מנות": "מוכן 3/4" on a course's lane):
+    the order's tasks of each `line_key` ("<cart line id>:<component>"; a remake counts with its
+    line) that are still active, as one state —
+
+        ready      every released one is ready (`readyAt`: the last of them)
+        preparing  one is being prepared, or some are ready and some not
+        queued     released, none started
+        held       none released yet (the course is held)
+
+    The required tasks only, when the line has any (an expo or info target never holds it up).
+    Sorted by line key.
+    """
+    by_line: Dict[str, List[KitchenTask]] = {}
+    for t in tasks:
+        if active_qty(t) <= ZERO or not t.line_key:
+            continue
+        by_line.setdefault(_REMAKE_SUFFIX.sub("", t.line_key), []).append(t)
+    out: List[Dict[str, Any]] = []
+    for key in sorted(by_line):
+        group = by_line[key]
+        required = [t for t in group if t.required]
+        group = required or group
+        released = [t for t in group if t.release_state == "released"]
+        ready_at = None
+        if not released:
+            state = "held"
+        elif all(t.prep_state == "ready" for t in released):
+            state = "ready"
+            stamps = [as_utc(t.ready_at) for t in released if t.ready_at is not None]
+            ready_at = _iso(max(stamps)) if stamps else None
+        elif any(t.prep_state in ("preparing", "ready") for t in released):
+            state = "preparing"
+        else:
+            state = "queued"
+        out.append({"lineKey": key, "state": state, "readyAt": ready_at})
+    return out
+
+
+def order_states(
+    db: Session, machine: POSMachine, source: str, refs: Sequence[str], *, with_lines: bool = False
+) -> Dict[str, Any]:
+    """
+    The till's badges: per source ref, where the kitchen is with it. `with_lines` (the till asks
+    `?lines=1` — "לוח מנות" while its screen is open) adds each order's `lines` (`line_states`);
+    without it the answer is as it always was.
+    """
     refs = [r for r in refs if r][:200]
     if not refs or machine.shop_id is None:
         return {"orders": {}}
@@ -1589,6 +1665,8 @@ def order_states(db: Session, machine: POSMachine, source: str, refs: Sequence[s
             "preparing": len([t for t in req if t.prep_state == "preparing"]),
             "held": len([t for t in tasks.get(order.id, []) if t.release_state == "hold" and active_qty(t) > ZERO]),
         }
+        if with_lines:
+            out[order.source_ref]["lines"] = line_states(tasks.get(order.id, []))
     return {"orders": out}
 
 

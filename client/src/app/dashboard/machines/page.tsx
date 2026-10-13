@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, fetchMachines } from '@/lib/api';
@@ -11,7 +12,26 @@ import { usePageScope } from '@/lib/scope';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { findBySameId, sameId } from '@/lib/entityLookup';
 import { entitySelectItems } from '@/lib/selectItems';
-import { registerNumberOf } from '@/lib/registerNumber';
+import { buildCompanyTree, companyPathLabel } from '@/lib/companyTree';
+import {
+  DEFAULT_SORT,
+  EMPTY_FILTERS,
+  STORAGE_KEY as DEVICES_VIEW_STORAGE_KEY,
+  applyDeviceFilters,
+  hasActiveFilters,
+  hasViewParams,
+  nextSort,
+  parseStoredView,
+  serializeStoredView,
+  sortDevices,
+  viewFromParams,
+  viewToParams,
+  type DeviceFilters,
+  type DeviceSort,
+  type DeviceViewContext,
+  type DevicesLayout,
+  type StoredDevicesView,
+} from '@/lib/devicesView';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -21,7 +41,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import Link from 'next/link';
-import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, Send, Layers, MonitorCog } from 'lucide-react';
+import { Monitor, Plus, RefreshCw, Info, Trash2, Smartphone, FilePlus2, Search, SearchX, Send, Layers, MonitorCog } from 'lucide-react';
 import { MachineGroupsPanel } from '@/components/dashboard/machines/machine-groups';
 import { ClockDriftBanner } from '@/components/dashboard/machine-health';
 import { DocumentPrefixConflictsAlert } from '@/components/dashboard/machines/document-prefix';
@@ -32,8 +52,8 @@ import type { PairingSessionCreateResponse } from '@/lib/types';
 import { useRoleAccess } from '@/lib/accessApi';
 import { he } from 'date-fns/locale';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MachineStatusDot, machineStatus } from '@/components/dashboard/machine-status';
-import { MachinesTable } from '@/components/dashboard/machines/machines-table';
+import { DevicesList, useIsWideScreen } from '@/components/dashboard/machines/devices-list';
+import { DevicesToolbar, useDeviceFilterOptions } from '@/components/dashboard/machines/devices-toolbar';
 // "שליטה מרחוק בקופות" (components/dashboard/live-control).
 import { DeviceControlSheet } from '@/components/dashboard/live-control';
 import { DeviceSearchDialog } from '@/components/dashboard/machines/device-search';
@@ -48,7 +68,6 @@ import { RequestTillZDialog, ZModeDialog } from '@/components/dashboard/till-z/t
 import { useZErrorText } from '@/components/dashboard/z-wizard/z-errors';
 import { MachineAreaDialog } from '@/components/dashboard/areas/machine-area-dialog';
 import { EntityPosSettingsDialog } from '@/components/dashboard/entity-settings-dialog';
-import { AREA_NONE } from '@/lib/api';
 import { DeviceModelSelect } from '@/components/dashboard/machines/device-model';
 import {
   DeviceCapabilityList,
@@ -93,10 +112,32 @@ import {
 
 const MQTT_ONLINE_WINDOW_MS = 300 * 1000;
 
+/** The viewer's remembered search, filters, sort and layout; null when none (or storage is refused). */
+function readStoredDevicesView(): StoredDevicesView | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(DEVICES_VIEW_STORAGE_KEY);
+    return raw ? parseStoredView(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where the list starts: a link's own filters win (a view someone shared), else what this viewer
+ * left it at, else everything. The layout is the viewer's alone — never in the link.
+ */
+function initialDevicesView(search: string): StoredDevicesView {
+  const stored = readStoredDevicesView();
+  if (hasViewParams(search)) return { ...viewFromParams(search), layout: stored?.layout ?? 'table' };
+  return stored ?? { filters: EMPTY_FILTERS, sort: DEFAULT_SORT, layout: 'table' };
+}
+
 export default function MachinesPage() {
   const t = useTranslations('machines');
-  const tStatus = useTranslations('machineStatus');
-  const tAreas = useTranslations('areas');
+  const tv = useTranslations('machines.devicesView');
+  const tModel = useTranslations('machines.deviceModel');
+  const tRole = useTranslations('machines.deviceRole');
   const tc = useTranslations('common');
   // Moving or retiring a till is refused (409) while it holds shifts; those codes have words.
   const zErrors = useZErrorText();
@@ -140,7 +181,9 @@ export default function MachinesPage() {
   /** "מסך לקוח": the till it mirrors ('' = chosen later on the customer-display page). */
   const [pairMirrorTill, setPairMirrorTill] = useState('');
   /** "מסך — לא קופה": a KDS or the board gets no register number, no sales, no Z. */
-  const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole);
+  // "שרת מקומי" (P:/specs/dedicated-local-server.md) is not a till either, but no screen: its own notes.
+  const pairIsServer = pairDeviceRole === 'local_server';
+  const pairIsDisplay = pairDeviceRole !== '' && !isFiscalRole(pairDeviceRole) && !pairIsServer;
   /**
    * "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): "לפי הסניף" unless chosen; the code carries
    * it and the device gets it as it pairs. Starts over when the shop, role or platform change.
@@ -234,14 +277,14 @@ export default function MachinesPage() {
    * machines; a company is every machine in every shop under it (the scope's
    * `machineOptions` already resolves the subtree).
    */
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
   // "שייך לאירוע" (feat/event-quick-assign): its button, the table's checkboxes, its bar and dialogs.
   const eventAssign = useEventTillSelection({ machines, shops });
-  const [search, setSearch] = useState('');
-  /** "חיפוש מכשיר": the cloud's device search (serial, SIM, IP…), across shops and tenants. */
+  /**
+   * "חיפוש מכשיר": the cloud's device search (serial, SIM, IP…), across shops and tenants — for
+   * what is outside the scope. Opened from the list's empty answer, it starts with its search.
+   */
   const [deviceSearchOpen, setDeviceSearchOpen] = useState(false);
-  /** `''` = every area, `none` = tills in no area, else an area id. */
-  const [areaFilter, setAreaFilter] = useState('');
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
   const [areaTarget, setAreaTarget] = useState<PosMachine | null>(null);
   const [settingsTarget, setSettingsTarget] = useState<PosMachine | null>(null);
   const [deviceModelTarget, setDeviceModelTarget] = useState<PosMachine | null>(null);
@@ -249,13 +292,80 @@ export default function MachinesPage() {
   /** Narrow the rows to tills on the wrong card terminal (the alert's toggle). */
   const [onlyTerminalMismatch, setOnlyTerminalMismatch] = useState(false);
 
-  const visibleMachines = effective.machineId
-    ? machines.filter((m) => sameId(m.id, effective.machineId))
-    : effective.shopId
-      ? machines.filter((m) => sameId(m.shopId, effective.shopId))
-      : effective.companyId
-        ? machines.filter((m) => scope.machineOptions.some((o) => sameId(o.id, m.id)))
-        : machines;
+  const visibleMachines = useMemo(
+    () =>
+      effective.machineId
+        ? machines.filter((m) => sameId(m.id, effective.machineId))
+        : effective.shopId
+          ? machines.filter((m) => sameId(m.shopId, effective.shopId))
+          : effective.companyId
+            ? machines.filter((m) => scope.machineOptions.some((o) => sameId(o.id, m.id)))
+            : machines,
+    [machines, effective.machineId, effective.shopId, effective.companyId, scope.machineOptions],
+  );
+
+  /*
+   * "מכשירים" — one search, the filters, the sort and the layout (lib/devicesView.ts). They live
+   * in the page's query too (next to the scope's own `company` / `shop` / `machine`), so a
+   * filtered list can be shared or bookmarked, and per viewer in localStorage, so the page opens
+   * the way it was left. Read once as the page mounts; written back a moment after a change
+   * (typing does not rewrite the address on every key).
+   */
+  const searchParams = useSearchParams();
+  const [initialView] = useState(() => initialDevicesView(searchParams.toString()));
+  const [filters, setFilters] = useState<DeviceFilters>(initialView.filters);
+  const [sort, setSort] = useState<DeviceSort>(initialView.sort);
+  const [layout, setLayout] = useState<DevicesLayout>(initialView.layout);
+  // A phone always gets cards; table or cards is a desktop's choice.
+  const wide = useIsWideScreen();
+  const shownLayout: DevicesLayout = wide ? layout : 'cards';
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const query = viewToParams(window.location.search, filters, sort);
+      const href = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+      if (href !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+        // Next keeps its router in step with a native replaceState (no history entry, no refetch).
+        window.history.replaceState(null, '', href);
+      }
+      try {
+        window.localStorage.setItem(DEVICES_VIEW_STORAGE_KEY, serializeStoredView({ filters, sort, layout }));
+      } catch {
+        // Private browsing refuses storage; the page still works, it just will not remember.
+      }
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [filters, sort, layout]);
+
+  const companyTree = useMemo(() => buildCompanyTree(companies), [companies]);
+  const viewContext = useMemo<DeviceViewContext>(
+    () => ({
+      shopName: (id) => findBySameId(shops, id)?.name,
+      companyName: (id) => {
+        const shop = findBySameId(shops, id);
+        return shop ? companyPathLabel(companyTree, shop.companyId, '') : null;
+      },
+      registerLabel: (n) => t('registerLabel', { number: n }),
+      modelLabel: (m) => (tModel.has(m) ? tModel(m) : m),
+      roleLabel: (r) => (tRole.has(r) ? tRole(r) : r),
+      platformLabel: (p) => tRole(`platforms.${p}`),
+    }),
+    [shops, companyTree, t, tModel, tRole],
+  );
+  const filterResult = useMemo(
+    () => applyDeviceFilters(visibleMachines, filters, viewContext),
+    [visibleMachines, filters, viewContext],
+  );
+  const shownMachines = useMemo(
+    () =>
+      sortDevices(
+        onlyTerminalMismatch ? filterResult.rows.filter((m) => m.terminalStatus === 'mismatch') : filterResult.rows,
+        sort,
+        viewContext,
+      ),
+    [filterResult, onlyTerminalMismatch, sort, viewContext],
+  );
+  const filterOptions = useDeviceFilterOptions({ rows: visibleMachines, result: filterResult, shops });
 
   const resetPairDialog = () => {
     setPairName('');
@@ -350,9 +460,11 @@ export default function MachinesPage() {
       : pairMissing === 'model'
         ? t('deviceModel.required')
         : pairMissing === 'shop'
-          ? pairIsDisplay
-            ? t('deviceRole.displayNeedsShop')
-            : t('deviceRole.kioskNeedsShop')
+          ? pairIsServer
+            ? t('deviceRole.localServerNeedsShop')
+            : pairIsDisplay
+              ? t('deviceRole.displayNeedsShop')
+              : t('deviceRole.kioskNeedsShop')
           : pairMissing === 'stations'
             ? t('deviceRole.stationsRequired')
             : undefined;
@@ -558,56 +670,6 @@ export default function MachinesPage() {
     return nowMs - ts <= MQTT_ONLINE_WINDOW_MS;
   };
 
-  /*
-   * Status filter, applied after the scope filter.
-   *
-   * Counts come from `visibleMachines` rather than the filtered list, so selecting one
-   * status does not rewrite the tallies underneath it — the point of the strip is to
-   * see the whole picture while looking at one slice of it.
-   */
-  const statusCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const m of visibleMachines) {
-      const s = machineStatus(m);
-      counts.set(s, (counts.get(s) ?? 0) + 1);
-    }
-    return counts;
-  }, [visibleMachines]);
-
-  /*
-   * Search narrows the rows, never the tallies or the selection. It matches what is
-   * printed on the row — the register label ("קופה 2"), the terminal's name and the
-   * code on its sticker — so an operator holding a device can find it without knowing
-   * which branch it is in.
-   */
-  const searchTerm = search.trim().toLowerCase();
-
-  /*
-   * The areas to filter by: the ones the tills in view are in now, read off the rows
-   * themselves, so the filter works at any scope without a request per shop. With
-   * several shops in view each area carries its shop's name — "Bar" is in more than one.
-   */
-  const areaOptions = useMemo(() => {
-    const byId = new Map<string, { id: string; label: string }>();
-    const shopIds = new Set(visibleMachines.map((m) => m.shopId ?? ''));
-    for (const m of visibleMachines) {
-      if (!m.areaId || byId.has(m.areaId)) continue;
-      const shopName = shopIds.size > 1 ? findBySameId(shops, m.shopId)?.name : null;
-      const name = m.areaName ?? m.areaId.slice(0, 8);
-      byId.set(m.areaId, { id: m.areaId, label: shopName ? `${name} · ${shopName}` : name });
-    }
-    return [...byId.values()].sort((a, b) => a.label.localeCompare(b.label, 'he-IL'));
-  }, [shops, visibleMachines]);
-  const areaFilterItems = [
-    { value: '__all__', label: tAreas('filter.all') },
-    { value: AREA_NONE, label: tAreas('filter.none') },
-    ...areaOptions.map((o) => ({ value: o.id, label: o.label })),
-  ];
-  const activeAreaFilter =
-    areaFilter === '' || areaFilter === AREA_NONE || areaOptions.some((o) => o.id === areaFilter)
-      ? areaFilter
-      : '';
-
   const terminalMismatchCount = visibleMachines.filter(
     (m) => m.terminalStatus === 'mismatch',
   ).length;
@@ -620,28 +682,6 @@ export default function MachinesPage() {
       shopName: shop.name,
       machines: machines.filter((m) => sameId(m.shopId, shop.id)),
     });
-
-  const shownMachines = (
-    statusFilter ? visibleMachines.filter((m) => machineStatus(m) === statusFilter) : visibleMachines
-  )
-    .filter((m) => !onlyTerminalMismatch || m.terminalStatus === 'mismatch')
-    .filter((m) =>
-      activeAreaFilter === ''
-        ? true
-        : activeAreaFilter === AREA_NONE
-          ? !m.areaId
-          : m.areaId === activeAreaFilter,
-    )
-    .filter(
-    (m) =>
-      searchTerm === '' ||
-      m.name.toLowerCase().includes(searchTerm) ||
-      m.machineCode.toLowerCase().includes(searchTerm) ||
-      // The serial on the unit's label, too (the cloud's full search: "חיפוש מכשיר").
-      (m.serialNumber ?? '').toLowerCase().includes(searchTerm) ||
-      (registerNumberOf(m) !== null &&
-        t('registerLabel', { number: registerNumberOf(m)! }).includes(searchTerm)),
-  );
 
   return (
     <div className="space-y-4">
@@ -661,7 +701,15 @@ export default function MachinesPage() {
               onDone={() => setRemoteFor(undefined)}
             />
           ) : null}
-          <Button variant="outline" size="sm" onClick={() => setDeviceSearchOpen(true)}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDeviceSearchQuery('');
+              setDeviceSearchOpen(true);
+            }}
+            title={tv('searchEverywhereHint')}
+          >
             <Search className="h-4 w-4 ms-1" /> {t('deviceSearchButton')}
           </Button>
           {pageTab === 'devices' ? eventAssign.button : null}
@@ -672,6 +720,7 @@ export default function MachinesPage() {
               shops={shops}
               companies={companies}
               superAdmin={authHydrated && me?.role === 'super_admin'}
+              initialQuery={deviceSearchQuery}
             />
           ) : null}
           {canProduceZ ? (
@@ -778,88 +827,19 @@ export default function MachinesPage() {
         />
       ) : null}
 
-      {/*
-        Status tallies, doubling as a filter.
-
-        Ordered by the resolver's own precedence so the states that need attention sit
-        first and a shop with one sick till does not have to hunt for it among thirty
-        healthy rows. A status with no terminals is omitted rather than shown as zero —
-        a row of zeroes is noise, and their absence is already the answer.
-      */}
       {!isLoading && visibleMachines.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setStatusFilter(null)}
-            className={`rounded-full border px-3 py-1 text-xs ${
-              statusFilter === null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
-            }`}
-          >
-            {tStatus('filterAll')} ({visibleMachines.length})
-          </button>
-          {(
-            [
-              'offline_with_unsynced',
-              'offline',
-              'pending_sync',
-              'shift_close_pending',
-              'no_open_shift',
-              'online',
-              'not_paired',
-              'retired',
-            ] as const
-          )
-            .filter((s) => (statusCounts.get(s) ?? 0) > 0)
-            .map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStatusFilter(statusFilter === s ? null : s)}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs ${
-                  statusFilter === s ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'
-                }`}
-              >
-                <MachineStatusDot m={{ status: s } as PosMachine} />
-                {tStatus(`status.${s}`)} ({statusCounts.get(s)})
-              </button>
-            ))}
-        </div>
-      ) : null}
-
-      {!isLoading && visibleMachines.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full max-w-sm">
-            <Search
-              className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-              aria-hidden
-            />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('searchPlaceholder')}
-              aria-label={t('search')}
-              // Both sides restated: the base input's shared `px` is dropped the moment
-              // one logical side is overridden, which would leave no end padding.
-              className="ps-9 pe-2.5"
-            />
-          </div>
-          <Select
-            value={activeAreaFilter || '__all__'}
-            onValueChange={(v) => setAreaFilter(!v || v === '__all__' ? '' : String(v))}
-            items={areaFilterItems}
-          >
-            <SelectTrigger className="w-auto min-w-44" aria-label={tAreas('filter.label')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {areaFilterItems.map((i) => (
-                <SelectItem key={i.value} value={i.value} label={i.label}>
-                  {i.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <DevicesToolbar
+          filters={filters}
+          onFiltersChange={setFilters}
+          options={filterOptions}
+          shown={shownMachines.length}
+          total={visibleMachines.length}
+          sort={sort}
+          onSortChange={setSort}
+          layout={shownLayout}
+          onLayoutChange={setLayout}
+          canChooseLayout={wide}
+        />
       ) : null}
 
       {isLoading ? (
@@ -889,12 +869,36 @@ export default function MachinesPage() {
         <>
         {shownMachines.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
-            <Monitor className="h-10 w-10 opacity-30" />
-            <p className="text-center">{t('noMachinesForSearch')}</p>
+            <SearchX className="h-10 w-10 opacity-30" aria-hidden />
+            <p className="text-center">{tv('noMatches')}</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {hasActiveFilters(filters) ? (
+                <Button variant="outline" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                  {tv('clearAll')}
+                </Button>
+              ) : null}
+              {/* Not in this scope: perhaps in another shop — the cloud's search, with the same words. */}
+              {filters.q.trim() ? (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setDeviceSearchQuery(filters.q);
+                    setDeviceSearchOpen(true);
+                  }}
+                >
+                  <Search className="h-4 w-4 ms-1" aria-hidden /> {tv('searchEverywhere')}
+                </Button>
+              ) : null}
+            </div>
+            {filters.q.trim() ? <p className="text-center text-xs">{tv('searchEverywhereHint')}</p> : null}
           </div>
         ) : (
-          <MachinesTable
+          <DevicesList
             machines={shownMachines}
+            layout={shownLayout}
+            sort={sort}
+            onSort={(key) => setSort((current) => nextSort(current, key))}
+            newest={filterResult.newest}
             shops={shops}
             companies={companies}
             permissions={{
@@ -1003,6 +1007,9 @@ export default function MachinesPage() {
               {pairIsDisplay ? (
                 <p className="text-sm text-muted-foreground">{t('deviceRole.displayReady')}</p>
               ) : null}
+              {pairIsServer ? (
+                <p className="text-sm text-muted-foreground">{t('deviceRole.localServerReady')}</p>
+              ) : null}
               {/* A peek, not a reservation: shown only until the device pairs, since the
                   shop's next number moves on the moment this one is taken. A screen gets none. */}
               {!pairingComplete && pairExpectedNumber !== null ? (
@@ -1046,6 +1053,11 @@ export default function MachinesPage() {
                     {t('deviceRole.kdsNote')}
                   </p>
                 ) : null}
+                {pairIsServer ? (
+                  <p className="rounded-md bg-violet-50 p-2 text-xs text-violet-900 dark:bg-violet-950/40 dark:text-violet-200">
+                    {t('deviceRole.localServerNote')}
+                  </p>
+                ) : null}
               </div>
               <div className="space-y-2">
                 <Label>{t('deviceRole.platform')}</Label>
@@ -1067,7 +1079,7 @@ export default function MachinesPage() {
                     value={pairDeviceModel}
                     onChange={setPairDeviceModel}
                   />
-                  {pairDeviceModel && !pairIsDisplay ? (
+                  {pairDeviceModel && !pairIsDisplay && !pairIsServer ? (
                     <DeviceCapabilityList model={pairDeviceModel} kiosk={pairDeviceRole === 'kiosk'} />
                   ) : !pairDeviceModel ? (
                     <p className="text-xs text-muted-foreground">{t('deviceModel.hint')}</p>
@@ -1080,8 +1092,8 @@ export default function MachinesPage() {
                       : t('deviceRole.webNoModel')
                     : t('deviceRole.windowsNoModel')}</p>
               )}
-              {/* "שם המכשיר" — optional, a till's. Blank: the server names it "קופה N" once it has its number. */}
-              {pairDeviceRole === 'till' ? (
+              {/* "שם המכשיר" — optional, a till's (and a local server's). Blank: "קופה N" / "שרת מקומי". */}
+              {pairDeviceRole === 'till' || pairIsServer ? (
                 <div className="space-y-2">
                   <Label htmlFor="pair-device-name">{t('deviceName.label')}</Label>
                   <Input
@@ -1090,9 +1102,11 @@ export default function MachinesPage() {
                     maxLength={DEVICE_NAME_MAX}
                     onChange={(e) => setPairName(e.target.value)}
                     placeholder={
-                      pairExpectedNumber !== null
-                        ? t('registerLabel', { number: pairExpectedNumber })
-                        : t('deviceName.placeholder')
+                      pairIsServer
+                        ? t('deviceRole.local_server')
+                        : pairExpectedNumber !== null
+                          ? t('registerLabel', { number: pairExpectedNumber })
+                          : t('deviceName.placeholder')
                     }
                     autoComplete="off"
                   />
@@ -1104,7 +1118,9 @@ export default function MachinesPage() {
                   <p className="text-sm font-medium">
                     {pairDeviceRole === 'kiosk'
                       ? t('deviceRole.kioskNeedsShop')
-                      : roleNeedsShop(pairDeviceRole)
+                      : pairIsServer
+                        ? t('deviceRole.localServerNeedsShop')
+                        : roleNeedsShop(pairDeviceRole)
                         ? t('deviceRole.displayNeedsShop')
                         : t('pairAssignOptional')}
                   </p>
@@ -1200,7 +1216,7 @@ export default function MachinesPage() {
                 />
               ) : null}
               {/* "תצורת עבודה": after the shop and the role — "לפי הסניף" unless chosen. */}
-              {pairShopId && pairDeviceRole && pairDeviceRole !== 'customer_display' ? (
+              {pairShopId && pairDeviceRole && pairDeviceRole !== 'customer_display' && !pairIsServer ? (
                 <WorkConfigStep
                   shopId={pairShopId}
                   role={pairDeviceRole}

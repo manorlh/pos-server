@@ -8,127 +8,87 @@
  *
  * Money arrives in agorot and leaves in shekels (`shekels`); percentages are 0–100, as the
  * percent cells want them; times are seconds.
+ *
+ * On the report framework's export bar (P:\specs\reports-upgrade.md §5): the headline
+ * (`kpiTable`) and every kiosk (tables.tsx `usePerKioskTable`, the PDF's table) are report
+ * tables — the first two sheets, with "עמודות לייצוא" and the company's default; the rest
+ * follow as the bar's `extraSheets`, in the same order as always.
  */
 
 import { useTranslations } from 'next-intl';
-import type { ExcelColumn, ExcelSheet, ExcelValue } from '@/lib/excelExport';
+import type { ExcelSheet } from '@/lib/excelExport';
 import {
   LEFT_REASONS,
-  PER_KIOSK_COLUMNS,
   abandonmentRows,
   bucketMinutes,
   shekels,
   type KioskHeadline,
   type KioskInsightsReport,
-  type PerKioskColumn,
 } from '@/lib/kioskInsights';
+import type { ReportColumn, ReportTableSpec } from '@/components/dashboard/report-framework';
 import { useKioskLabels } from './labels';
 
-const KIND: Partial<Record<PerKioskColumn, ExcelColumn['kind']>> = {
-  revenue: 'money',
-  avgBasket: 'money',
-  conversion: 'percent',
-  upsellRate: 'percent',
-  payFailureRate: 'percent',
-  itemsPerOrder: 'number',
-};
+/** A row of the headline's table: this period, or the one before. */
+interface HeadlineRow {
+  id: 'current' | 'previous';
+  label: string;
+  from: string;
+  to: string;
+  h: KioskHeadline;
+}
 
 export function useKioskInsightsSheets() {
   const t = useTranslations('kioskInsights');
   const tc = useTranslations('common');
   const L = useKioskLabels();
 
-  /** A per-kiosk / headline cell: money in shekels, the rest as sent. */
-  const cell = (row: Partial<Record<PerKioskColumn, unknown>>, col: PerKioskColumn): ExcelValue => {
-    const v = row[col];
-    if (col === 'revenue' || col === 'avgBasket') return shekels(v as number | null);
-    return (v as ExcelValue) ?? null;
-  };
-  const kindOf = (col: PerKioskColumn): ExcelColumn['kind'] =>
-    col === 'name' || col === 'shopName' ? 'text' : (KIND[col] ?? 'number');
-
-  return (data: KioskInsightsReport): ExcelSheet[] => {
-    const sheets: ExcelSheet[] = [];
+  /** The headline, one row per period (the first sheet); null without figures. */
+  const kpiTable = (data: KioskInsightsReport): ReportTableSpec<unknown> | null => {
     const { period } = data;
     const cur = data.headline.current;
     const prev = data.headline.previous;
+    if (!cur) return null;
+    const columns: ReportColumn<HeadlineRow>[] = [
+      { key: 'period', header: t('excel.period'), width: 16, value: (r) => r.label },
+      { key: 'from', header: t('excel.from'), kind: 'date', value: (r) => r.from },
+      { key: 'to', header: t('excel.to'), kind: 'date', value: (r) => r.to },
+      { key: 'sessions', header: t('csv.col.sessions'), kind: 'number', value: (r) => r.h.sessions },
+      { key: 'paidSessions', header: t('csv.col.paidSessions'), kind: 'number', value: (r) => r.h.paidSessions },
+      { key: 'conversion', header: t('csv.col.conversion'), kind: 'percent', value: (r) => r.h.conversion },
+      { key: 'abandoned', header: t('csv.col.abandoned'), kind: 'number', value: (r) => r.h.abandoned },
+      { key: 'orders', header: t('csv.col.orders'), kind: 'number', value: (r) => r.h.orders },
+      { key: 'revenue', header: t('csv.col.revenue'), kind: 'money', value: (r) => shekels(r.h.revenue) },
+      { key: 'tips', header: t('excel.tips'), kind: 'money', value: (r) => shekels(r.h.tips) },
+      { key: 'avgBasket', header: t('csv.col.avgBasket'), kind: 'money', value: (r) => shekels(r.h.avgBasket) },
+      { key: 'itemsPerOrder', header: t('csv.col.itemsPerOrder'), kind: 'number', value: (r) => r.h.itemsPerOrder },
+      { key: 'medianOrderSec', header: t('csv.col.medianOrderSec'), kind: 'number', value: (r) => r.h.medianOrderSec },
+      { key: 'avgOrderSec', header: t('excel.avgOrderSec'), kind: 'number', value: (r) => r.h.avgOrderSec },
+      { key: 'upsellShown', header: t('csv.col.upsellShown'), kind: 'number', value: (r) => r.h.upsellShown },
+      { key: 'upsellAccepted', header: t('csv.col.upsellAccepted'), kind: 'number', value: (r) => r.h.upsellAccepted },
+      { key: 'upsellRate', header: t('csv.col.upsellRate'), kind: 'percent', value: (r) => r.h.upsellRate },
+      { key: 'payAttempts', header: t('csv.col.payAttempts'), kind: 'number', value: (r) => r.h.payAttempts },
+      { key: 'payFailures', header: t('csv.col.payFailures'), kind: 'number', value: (r) => r.h.payFailures },
+      { key: 'payFailureRate', header: t('csv.col.payFailureRate'), kind: 'percent', value: (r) => r.h.payFailureRate },
+      { key: 'basketChanged', header: t('excel.basketChanged'), kind: 'number', value: (r) => r.h.basketChanged },
+      { key: 'helpRequests', header: t('excel.helpRequests'), kind: 'number', value: (r) => r.h.helpRequests },
+    ];
+    const table: ReportTableSpec<HeadlineRow> = {
+      id: 'kpi',
+      title: t('kpi.title'),
+      rowKey: (r) => r.id,
+      rows: [
+        { id: 'current', label: t('excel.current'), from: period.from, to: period.to, h: cur },
+        ...(prev ? [{ id: 'previous' as const, label: t('excel.previous'), from: period.prevFrom, to: period.prevTo, h: prev }] : []),
+      ],
+      columns,
+    };
+    return table as ReportTableSpec<unknown>;
+  };
 
-    // ── Headline: one row per period ─────────────────────────────────────────
-    if (cur) {
-      const line = (label: string, from: string, to: string, h: KioskHeadline): ExcelValue[] => [
-        label,
-        from,
-        to,
-        h.sessions,
-        h.paidSessions,
-        h.conversion,
-        h.abandoned,
-        h.orders,
-        shekels(h.revenue),
-        shekels(h.tips),
-        shekels(h.avgBasket),
-        h.itemsPerOrder,
-        h.medianOrderSec,
-        h.avgOrderSec,
-        h.upsellShown,
-        h.upsellAccepted,
-        h.upsellRate,
-        h.payAttempts,
-        h.payFailures,
-        h.payFailureRate,
-        h.basketChanged,
-        h.helpRequests,
-      ];
-      sheets.push({
-        name: t('kpi.title'),
-        columns: [
-          { header: t('excel.period'), width: 16 },
-          { header: t('excel.from'), kind: 'date' },
-          { header: t('excel.to'), kind: 'date' },
-          { header: t('csv.col.sessions'), kind: 'number' },
-          { header: t('csv.col.paidSessions'), kind: 'number' },
-          { header: t('csv.col.conversion'), kind: 'percent' },
-          { header: t('csv.col.abandoned'), kind: 'number' },
-          { header: t('csv.col.orders'), kind: 'number' },
-          { header: t('csv.col.revenue'), kind: 'money' },
-          { header: t('excel.tips'), kind: 'money' },
-          { header: t('csv.col.avgBasket'), kind: 'money' },
-          { header: t('csv.col.itemsPerOrder'), kind: 'number' },
-          { header: t('csv.col.medianOrderSec'), kind: 'number' },
-          { header: t('excel.avgOrderSec'), kind: 'number' },
-          { header: t('csv.col.upsellShown'), kind: 'number' },
-          { header: t('csv.col.upsellAccepted'), kind: 'number' },
-          { header: t('csv.col.upsellRate'), kind: 'percent' },
-          { header: t('csv.col.payAttempts'), kind: 'number' },
-          { header: t('csv.col.payFailures'), kind: 'number' },
-          { header: t('csv.col.payFailureRate'), kind: 'percent' },
-          { header: t('excel.basketChanged'), kind: 'number' },
-          { header: t('excel.helpRequests'), kind: 'number' },
-        ],
-        rows: [
-          line(t('excel.current'), period.from, period.to, cur),
-          ...(prev ? [line(t('excel.previous'), period.prevFrom, period.prevTo, prev)] : []),
-        ],
-      });
-    }
-
-    // ── Every kiosk, the headline as its total ───────────────────────────────
-    sheets.push({
-      name: t('sections.perKiosk'),
-      columns: PER_KIOSK_COLUMNS.map((c) => ({
-        header: t(`csv.col.${c}`),
-        kind: kindOf(c),
-        width: c === 'name' || c === 'shopName' ? 20 : undefined,
-      })),
-      rows: data.perKiosk.map((r) =>
-        PER_KIOSK_COLUMNS.map((c) => (c === 'name' ? (r.name ?? r.machineName) : cell(r, c))),
-      ),
-      totals: cur
-        ? PER_KIOSK_COLUMNS.map((c) =>
-            c === 'name' ? tc('total') : c === 'shopName' ? null : cell(cur as Partial<Record<PerKioskColumn, unknown>>, c),
-          )
-        : undefined,
-    });
+  /** Every sheet after the headline and the per-kiosk table, in the page's order. */
+  const extraSheets = (data: KioskInsightsReport): ExcelSheet[] => {
+    const sheets: ExcelSheet[] = [];
+    const cur = data.headline.current;
 
     if (!data.hasData) return sheets;
 
@@ -312,4 +272,6 @@ export function useKioskInsightsSheets() {
 
     return sheets;
   };
+
+  return { kpiTable, extraSheets };
 }

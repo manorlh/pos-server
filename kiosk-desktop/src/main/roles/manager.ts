@@ -161,6 +161,7 @@ export class RoleManager extends EventEmitter {
       shopName: v.machine?.shopName ?? null,
       online: !v.state.offline,
       update: this.updates(),
+      shopActive: this.svc.cloud.shopActive(),
     };
   }
 

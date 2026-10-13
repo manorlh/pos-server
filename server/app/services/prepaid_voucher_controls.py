@@ -4,6 +4,14 @@ Production vouchers — the redemption controls of the spec's §18 (the contract
 * **Pause** ("השהיית מימושים", §18.4) — an event, a batch, a type or a production stops redeeming,
   with a reason and an optional end ("עד"). Every till is told at once — the next scan:
   `prepaid_voucher_paused`, "מימוש השוברים מושהה: {reason}". Resuming is logged; codes never change.
+* **"סדרה פעילה"** — a batch's own on / off switch, made of the pauses above (no table of its own):
+  off = a pause of the batch's own scope (marked as the switch's on its audit line), on = every open
+  pause of the batch's own scope resumed; nothing when it already is so. The tills get the same code
+  (`prepaid_voucher_paused`, so an older till refuses alike) with "הסדרה כבויה — לא ניתן לממש שוברים
+  ממנה" when the switch made the pause. A batch is `active` while no pause of its own is open;
+  `pausedBy` is a pause of its event / production / type that stops it too ([switch_state]).
+  Turned on / off through "ערוך סדרה" (`active`; `PUT /prepaid-vouchers/batches/{id}/active`, the bulk
+  edit): the edit's permission, its own lines on the batch's log (`active_off` / `active_on`).
 * **Quota** ("מכסת מימושים", §18.3) — at most N redemptions of a production, event, type or batch:
   overall, per local day, or within a range. Counted: redemptions not reversed, and sales holding a
   voucher right now (another voucher's), so two tills never both take the last one (a Postgres lock
@@ -80,9 +88,12 @@ FLAG_OVER_QUOTA = "over_quota"
 TEST_PERMISSION = "VOUCHER_TEST_REDEEM"
 
 TEST_LABEL = "שובר בדיקה"
+#: "סדרה פעילה" off: what the tills say for a pause the batch's switch made (the code stays PAUSED).
+SWITCHED_OFF = "switched_off"
 TEXT = {
     PAUSED: "מימוש השוברים מושהה: {reason}",
     "paused_until": "מימוש השוברים מושהה עד {until}: {reason}",
+    SWITCHED_OFF: "הסדרה כבויה — לא ניתן לממש שוברים ממנה",
     QUOTA_REACHED: "הגעת למכסת המימושים של {scope} ({n}{period})",
     TEST_ONLY: "שובר בדיקה — ניתן לממש רק בקופת בדיקה",
     TEST_NOT_PERMITTED: "שובר בדיקה — לעובד המחובר אין הרשאת \"מימוש שובר בדיקה\"",
@@ -108,6 +119,18 @@ TEST_OFFLINE = "prepaid_voucher_test_assigned_offline"
 TEST_NEVER_OFFLINE = "prepaid_voucher_test_never_offline"
 NOT_A_TEST_BATCH = "prepaid_voucher_not_a_test_batch"
 ALREADY_TEST = "prepaid_voucher_already_test"
+#: "סדרה פעילה" on a database whose controls' tables are missing (the migration not run).
+CONTROLS_UNAVAILABLE = "prepaid_voucher_controls_unavailable"
+
+# ── "סדרה פעילה" ──────────────────────────────────────────────────────────────
+#: The mark on a switch's pause audit line (`details.source`): its pause speaks as the switch.
+SWITCH_SOURCE = "batch_switch"
+#: A switch's pause reason when none was given.
+SWITCH_DEFAULT_REASON = "הסדרה כובתה מהענן"
+#: The batch's log lines (`prepaid_voucher_events.action`): "הסדרה כובתה" / "הסדרה הופעלה".
+ACTIVE_OFF, ACTIVE_ON = "active_off", "active_on"
+#: Where a pause row remembers whether the switch made it (read once per row, never stored).
+_SWITCH_ATTR = "_pv_from_switch"
 
 _TABLES = (
     PrepaidRedemptionPause.__tablename__,
@@ -601,6 +624,8 @@ def quota_text(db: Session, q: PrepaidRedemptionQuota) -> str:
 
 def pause_text(db: Session, p: PrepaidRedemptionPause, now: Optional[datetime] = None) -> str:
     now = now or _now()
+    if from_switch(db, p):
+        return TEXT[SWITCHED_OFF]
     if p.until is not None:
         return TEXT["paused_until"].format(until=_local_text(db, p.tenant_id, p.until, now), reason=p.reason)
     return TEXT[PAUSED].format(reason=p.reason)
@@ -742,6 +767,7 @@ def list_pauses(db: Session, user: User, tenant_id, *, active_only: bool = False
         .limit(500)
         .all()
     )
+    mark_switch(db, rows)  # one read for every row's text
     out = [_with_editable(db, user, pause_out(db, p, now), p) for p in rows if _visible(db, user, p)]
     if active_only:
         out = [p for p in out if p["active"]]
@@ -796,6 +822,150 @@ def resume_pause(db: Session, user: User, tenant_id, pause_id, note: Optional[st
         )
         db.flush()
     return p
+
+
+# ── "סדרה פעילה": a batch's own on / off ──────────────────────────────────────
+
+
+def mark_switch(db: Session, rows: Iterable[PrepaidRedemptionPause]) -> None:
+    """Whether the switch made each batch pause of [rows] — its "pause" audit line says so — read at once."""
+    from app.models.prepaid_voucher_extras import PrepaidVoucherExtraEvent as E
+
+    todo = [p for p in rows if p is not None and p.scope_kind == "batch" and _SWITCH_ATTR not in p.__dict__]
+    if not todo:
+        return
+    hits: Set[str] = set()
+    try:
+        with db.begin_nested():  # never abort the caller's transaction (Postgres)
+            q = db.query(E.ref_id, E.details).filter(
+                E.tenant_id.in_({p.tenant_id for p in todo}), E.action == "pause", E.ref_id.in_([p.id for p in todo]),
+            )
+            for ref, details in q:
+                if isinstance(details, dict) and details.get("source") == SWITCH_SOURCE:
+                    hits.add(str(ref))
+    except Exception:  # noqa: BLE001 — the plain pause text is still right
+        log.exception("prepaid voucher controls: the switch's pause marks could not be read")
+        return
+    for p in todo:
+        p.__dict__[_SWITCH_ATTR] = str(p.id) in hits
+
+
+def from_switch(db: Session, p: Optional[PrepaidRedemptionPause]) -> bool:
+    """Whether "סדרה פעילה" made pause [p] (the tills then say "הסדרה כבויה")."""
+    if p is None or p.scope_kind != "batch":
+        return False
+    if _SWITCH_ATTR not in p.__dict__:
+        mark_switch(db, [p])
+    return bool(p.__dict__.get(_SWITCH_ATTR, False))
+
+
+def open_pauses(db: Session, tenant_id, now: Optional[datetime] = None) -> List[PrepaidRedemptionPause]:
+    """Every pause of the tenant in force at [now] (not resumed, not past its end), oldest first."""
+    if not tables_ready(db):
+        return []
+    now = now or _now()
+    rows = (
+        db.query(PrepaidRedemptionPause)
+        .filter(PrepaidRedemptionPause.tenant_id == tenant_id, PrepaidRedemptionPause.resumed_at.is_(None))
+        .order_by(PrepaidRedemptionPause.created_at)
+        .all()
+    )
+    return [p for p in rows if _pause_live(p, now)]
+
+
+def _own_pauses(batch: PrepaidVoucherBatch, pauses: Iterable[PrepaidRedemptionPause], keys=None) -> List[PrepaidRedemptionPause]:
+    keys = keys or batch_keys(batch)
+    return [p for p in pauses if p.scope_kind == "batch" and _applies(p, batch, keys)]
+
+
+def is_active(db: Session, batch: PrepaidVoucherBatch, *, pauses: Optional[List[PrepaidRedemptionPause]] = None,
+              now: Optional[datetime] = None) -> bool:
+    """"סדרה פעילה": no pause of the batch's own scope is open ([pauses]: the tenant's [open_pauses], read once)."""
+    if pauses is None:
+        pauses = open_pauses(db, batch.tenant_id, now)
+    return not _own_pauses(batch, pauses)
+
+
+SCOPE_KIND_TEXT = {"event": "אירוע", "production": "הפקה", "type": "סוג"}
+
+
+def switch_state(db: Session, batch: PrepaidVoucherBatch, *, pauses: Optional[List[PrepaidRedemptionPause]] = None,
+                 now: Optional[datetime] = None) -> Dict[str, Any]:
+    """
+    The batch read model's part (`prepaid_vouchers.batch_out`): `active` (no pause of its own is open),
+    `inactive` (the first such pause: reason, since, by, until — the red banner) and `pausedBy` (an open
+    pause of its event / production / type that stops it too: kind, name, reason — shown read only).
+    """
+    PV = _pv()
+    if pauses is None:
+        pauses = open_pauses(db, batch.tenant_id, now)
+    keys = batch_keys(batch)
+    own = _own_pauses(batch, pauses, keys)
+    higher = next((p for p in pauses if p.scope_kind != "batch" and _applies(p, batch, keys)), None)
+    first = own[0] if own else None
+    return {
+        "active": first is None,
+        "inactive": None if first is None else {
+            "pauseId": str(first.id), "reason": first.reason, "since": PV._iso(first.created_at),
+            "by": first.created_by_name, "until": PV._iso(first.until),
+        },
+        "pausedBy": None if higher is None else {
+            "pauseId": str(higher.id), "kind": higher.scope_kind, "kindText": SCOPE_KIND_TEXT.get(higher.scope_kind),
+            "name": higher.scope_label or higher.scope_value, "reason": higher.reason, "until": PV._iso(higher.until),
+        },
+    }
+
+
+def set_active(db: Session, user: User, batch: PrepaidVoucherBatch, active: bool, reason: Optional[str] = None, *,
+               bulk: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    "סדרה פעילה" on / off. Off: a pause of the batch's own scope, with [reason] (blank: "הסדרה כובתה
+    מהענן"), marked as the switch's. On: every open pause of the batch's own scope resumed ([reason]: the
+    resume's note). Nothing when it already is so. Returns whether anything changed. The caller checked
+    that [user] may edit the batch ("ערוך סדרה") and holds its lock; it commits. Logged on the batch's
+    log (`active_off` / `active_on`, with [bulk] when part of a bulk edit) and the controls' log
+    (`pause` / `resume`, `source: batch_switch`).
+    """
+    PV = _pv()
+    if not tables_ready(db):
+        raise ACC.http(status.HTTP_409_CONFLICT, CONTROLS_UNAVAILABLE)
+    now = _now()
+    own = _own_pauses(batch, open_pauses(db, batch.tenant_id, now))
+    note = (reason or "").strip() or None
+    marker = {"bulk": dict(bulk)} if bulk else {}
+    if not active:
+        if own:
+            return False
+        p = PrepaidRedemptionPause(
+            id=uuid.uuid4(), tenant_id=batch.tenant_id, company_id=batch.company_id, scope_kind="batch",
+            scope_value=str(batch.id), scope_label=batch.name, reason=note or SWITCH_DEFAULT_REASON, until=None,
+            created_by=getattr(user, "id", None), created_by_name=ACC.user_name(user), created_at=now,
+        )
+        p.__dict__[_SWITCH_ATTR] = True
+        db.add(p)
+        ACC.audit(
+            db, batch.tenant_id, "pause", user, ref_id=p.id, batch_id=batch.id, reason=p.reason,
+            details={"scopeKind": "batch", "scopeValue": str(batch.id), "scopeLabel": batch.name, "until": None,
+                     "source": SWITCH_SOURCE, **marker},
+        )
+        PV._event(db, batch, user, ACTIVE_OFF, reason=note, details={"pauseId": str(p.id), **marker})
+        db.flush()
+        return True
+    if not own:
+        return False
+    name = ACC.user_name(user)
+    for p in own:
+        p.resumed_at = now
+        p.resumed_by_name = name
+        p.resume_note = note
+        ACC.audit(
+            db, batch.tenant_id, "resume", user, ref_id=p.id, batch_id=batch.id, reason=note,
+            details={"scopeKind": "batch", "scopeValue": p.scope_value, "pausedAt": PV._iso(p.created_at),
+                     "source": SWITCH_SOURCE, **marker},
+        )
+    PV._event(db, batch, user, ACTIVE_ON, reason=note, details={"pauseIds": [str(p.id) for p in own], **marker})
+    db.flush()
+    return True
 
 
 # ── Dashboard: quotas ─────────────────────────────────────────────────────────

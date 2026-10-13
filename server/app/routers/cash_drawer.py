@@ -258,7 +258,8 @@ def list_cash_movements(
         company_id=company_id, shop_id=shop_id, machine_id=machine_id, employee=employee, shift_id=shift_id,
     )
     if query is None:
-        return {"total": 0, "page": page, "pageSize": page_size, "rows": [], "totals": {}}
+        return {"total": 0, "page": page, "pageSize": page_size, "rows": [], "totals": {},
+                "window": {"from": str(window.from_date), "to": str(window.to_date)}}
     wanted = [t for t in _split(types) if t in svc.MOVEMENT_TYPES]
     if _split(types):
         query = query.filter(CashMovement.movement_type.in_(wanted or ["__none__"]))

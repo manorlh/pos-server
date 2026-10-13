@@ -823,7 +823,9 @@ class TransactionListItem(BaseModel):
     document_type: Optional[int] = Field(None, alias="documentType")
     payment_method: Optional[str] = Field(None, alias="paymentMethod")
     total_amount: Decimal = Field(..., alias="totalAmount")
+    #: The tip, apart from `totalAmount` (never a tender leg), and the tender it went on.
     tip_amount: Decimal = Field(0, alias="tipAmount")
+    tip_payment_method: Optional[str] = Field(None, alias="tipPaymentMethod")
     cashier_id: Optional[str] = Field(None, alias="cashierId")
     refund_of_transaction_id: Optional[uuid.UUID] = Field(None, alias="refundOfTransactionId")
     basket_id: Optional[uuid.UUID] = Field(None, alias="basketId")

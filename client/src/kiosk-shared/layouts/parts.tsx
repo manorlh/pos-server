@@ -10,13 +10,15 @@ import { Check, Plus, ShoppingBag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskTextOf } from '@/lib/kioskTexts';
-import { cardKindOf, guidedBar, layoutOf, productColumns, tapPathOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
+import { cardKindOf, guidedBar, layoutOf, pricePillOn, productColumns, tapPathOf, type GuidedBarItem, type GuidedStep } from '@/lib/kioskLayout';
 import {
   CartTarget,
   CountUp,
   DietaryChips,
+  PricePill,
   ProductImage,
-  cardStyle,
+  dishCardStyle,
+  photoBgStyle,
   cartCount,
   cartTotal,
   textSize,
@@ -128,6 +130,9 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       {m.money(p.price)}
     </span>
   );
+  // "מחיר בגלולה" (layout.pricePill): the price in its pill at the card's bottom (a short one beside a row's name).
+  const pill = pricePillOn(m.cfg);
+  const priced = pill ? <PricePill m={m} p={p} className={card === 'row' ? 'mt-1 inline-flex w-auto' : 'mt-1.5'} /> : price;
   const soldTag = p.soldOut ? <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span> : null;
   const open = (e: React.MouseEvent<HTMLElement>) => tap(p, false, e.currentTarget.querySelector('[data-pic]')?.getBoundingClientRect() ?? null);
 
@@ -139,9 +144,9 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         disabled={p.soldOut}
         onClick={open}
         className="k-tap relative flex w-full items-center gap-3 p-2.5 text-start transition-transform duration-150 active:scale-[0.99] disabled:opacity-50"
-        style={{ ...cardStyle(m), background: inCart > 0 ? `${m.c.primary}0F` : cardStyle(m).background, minHeight: 84 * u }}
+        style={{ ...dishCardStyle(m), background: inCart > 0 ? `${m.c.primary}0F` : dishCardStyle(m).background, minHeight: 84 * u }}
       >
-        <div data-pic className="relative shrink-0 overflow-hidden" style={{ width: 68 * u, height: 68 * u, borderRadius: Math.min(m.radius, 14) }}>
+        <div data-pic className="relative shrink-0 overflow-hidden" style={{ width: 68 * u, height: 68 * u, borderRadius: Math.min(m.radius, 14), ...photoBgStyle(m) }}>
           <ProductImage m={m} p={p} className="h-full w-full" />
           {soldTag}
         </div>
@@ -154,7 +159,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
               {p.description}
             </div>
           ) : null}
-          {price}
+          {priced}
         </div>
         {inCart > 0 && !added ? (
           <span
@@ -181,10 +186,10 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         disabled={p.soldOut}
         onClick={open}
         className="k-tap relative flex w-full flex-col items-center p-2.5 text-center transition-transform duration-150 active:scale-[0.98] disabled:opacity-50"
-        style={cardStyle(m)}
+        style={dishCardStyle(m)}
       >
         <div className="relative w-full" style={{ aspectRatio: '1 / 1' }}>
-          <div className="absolute inset-[6%] rounded-full" style={{ background: `${m.c.primary}12` }} />
+          <div className="absolute inset-[6%] rounded-full" style={photoBgStyle(m) ?? { background: `${m.c.primary}12` }} />
           <div data-pic className="absolute inset-[9%] overflow-hidden rounded-full">
             <ProductImage m={m} p={p} className="h-full w-full" />
           </div>
@@ -194,7 +199,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
         <div className="mt-1 line-clamp-2 kt-15 font-bold leading-snug" style={textSize(m, 'productName', 15)}>
           {p.name}
         </div>
-        <div className="mt-0.5">{price}</div>
+        <div className={pill ? 'w-full' : 'mt-0.5'}>{priced}</div>
       </button>
     );
   }
@@ -205,9 +210,9 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
       disabled={p.soldOut}
       onClick={open}
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:opacity-60"
-      style={cardStyle(m)}
+      style={dishCardStyle(m)}
     >
-      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio }}>
+      <div data-pic className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {soldTag}
         {plus(34 * u, 'absolute bottom-2 end-2')}
@@ -222,7 +227,7 @@ export function LayoutDishCard({ m, p, kind, inCart = 0 }: { m: PreviewModel; p:
           </div>
         ) : null}
         <DietaryChips m={m} tags={p.dietaryTags} />
-        {price}
+        {priced}
       </div>
     </button>
   );

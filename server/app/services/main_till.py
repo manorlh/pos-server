@@ -51,6 +51,8 @@ NOT_MASTER = "not_master_till"
 ONLY_FROM_MAIN = "z_only_from_main_till"
 #: An independent till ("קופה עצמאית", app/services/independent_till.py) asked for the shop Z.
 INDEPENDENT = "independent_till"
+#: A participant set "מרוחק (דרך הענן)" ("מרוחקת בזד הסניפי") asked to become the shop's server.
+REMOTE = "remote_till"
 
 
 def is_on(value: Any) -> bool:
@@ -79,10 +81,13 @@ def main_till_of_shop(db: Session, shop_id: Any) -> Optional[POSMachine]:
         return None
     # An independent till ("קופה עצמאית") is never the shop's main till, whatever is set, nor
     # a device set "לא משמש כשרת מקומי" (app/services/lan_server.py).
+    from app.services.local_server_device import host_order
+
     marked = [
         m for m in server_candidates(db, shop_machines(db, shop_id)) if is_on(_params(db, m).get(MAIN_TILL_KEY))
     ]
-    return sorted(marked, key=till_order)[0] if marked else None
+    # A dedicated local server first ("שרת מקומי", the preferred host), then the lowest number.
+    return sorted(marked, key=host_order)[0] if marked else None
 
 
 def till_ref(machine: Optional[POSMachine]) -> Optional[Dict[str, Any]]:
@@ -169,9 +174,11 @@ def shop_tills_out(db: Session, shop_id: Any) -> List[Dict[str, Any]]:
     devices set "לא משמש כשרת מקומי".
     """
     from app.services.lan_server import server_candidates
+    from app.services.local_server_device import host_order, ref
     from app.services.printers import shop_machines
 
-    return [till_ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=till_order)]
+    # A dedicated local server first (it says `deviceRole: "local_server"`).
+    return [ref(m) for m in sorted(server_candidates(db, shop_machines(db, shop_id)), key=host_order)]
 
 
 def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[datetime] = None) -> None:
@@ -212,16 +219,30 @@ def set_main_till(db: Session, shop: Shop, machine_id: Any, *, now: Optional[dat
 HOST_KEYS = (MAIN_TILL_KEY, "tablesHostTill", "printHostTill", SHOP_Z_MASTER_KEY)
 
 
-def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) -> Dict[str, Any]:
+def take_over(
+    db: Session,
+    machine: POSMachine,
+    operator: Optional[str] = None,
+    *,
+    force: bool = False,
+    require_lan: bool = True,
+    now: Optional[datetime] = None,
+) -> Dict[str, Any]:
     """
-    "העבר את השרת לקופה הזו": the LAN mode's tables host (normally the main till) does not
-    answer, and a manager at `machine` makes it the shop's main till in its place — the
-    tables host, the print server and the master of the shop Z — moving to it every flag
-    the old host held. The new host then takes the tables from the cloud (`host_seed`).
+    The full move of the shop's local server to `machine`: it becomes the shop's main till in
+    the old host's place — the tables host, the print server and the master of the shop Z —
+    moving to it every flag the old host held. The new host then takes the tables from the
+    cloud (`host_seed`).
 
-    Only when the cloud too sees the old host gone (409 `host_online` otherwise): a host
-    the cloud hears but this till cannot reach is a network fault between the tills, and
-    two hosts would split the tables. 409 `tables_not_lan` outside the LAN mode.
+    Since 13.10.2026 the cloud alone moves the server ("העברת שרת מקומי", app/services/
+    local_server_switch.py; the till's own "העבר את השרת לקופה הזו" answers 410): it calls
+    this with `require_lan=False` (the dashboard moves a main till in any tables mode) and,
+    for "כפה העברה", `force`.
+
+    Only when the cloud too sees the old host gone (409 `host_online` otherwise, unless
+    `force`): a host the cloud hears but the tills cannot reach is a network fault between
+    the tills, and two hosts would split the tables. 409 `tables_not_lan` outside the LAN
+    mode when `require_lan`.
     """
     from app.models.till_parameter import TillParameter, TillParameterValue
     from app.services.machine_status import is_online
@@ -235,24 +256,31 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
     if is_independent(machine):
         # "קופה עצמאית": outside the shop's LAN group — it never becomes its server.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INDEPENDENT)
+    from app.services.local_shop_z import is_remote_participant
+
+    if is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי": not on the shop's local server — it never becomes it either.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=REMOTE)
     from app.services import lan_server
 
     if lan_server.is_excluded(db, machine):
         # "לא משמש כשרת מקומי": in the LAN group, but never its server.
         raise lan_server.take_over_refusal(machine)
-    if mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
+    if require_lan and mode_of(_params(db, machine).get(TABLES_MODE_KEY)) != MODE_LAN:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="tables_not_lan")
+    from app.services.local_server_device import ref
+
     old = tables_host_of_shop(db, machine.shop_id)
     if old is not None and old.id == machine.id:
-        return {"mainTill": till_ref(machine), "previous": None}
-    if old is not None and is_online(old.last_heartbeat_at):
+        return {"mainTill": ref(machine), "previous": None}
+    if old is not None and is_online(old.last_heartbeat_at, now=now) and not force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "host_online", "host": till_ref(old)},
         )
 
     ensure_builtin_parameters(db)
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     # The shop's Z producer is pinned as it stands: the tables move now (they cannot wait),
     # but the Z production moves only once the old main till could hand it over cleanly —
     # it is offline, so it may still hold shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
@@ -321,9 +349,10 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
         machine.shop_id, machine.id, old.id if old else None, operator or "?", ", ".join(moved),
     )
     producer = effective_producer(db, shop, now=now)
+    # A dedicated local server says so (`deviceRole: "local_server"`); a till's ref is as it was.
     return {
-        "mainTill": till_ref(machine),
-        "previous": till_ref(old),
+        "mainTill": ref(machine),
+        "previous": ref(old),
         "moved": moved,
         # Waiting: this till serves the tables, but makes no shop Z until the old main till
         # syncs (or a super admin moves the production on the shop's page).

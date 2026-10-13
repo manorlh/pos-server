@@ -6,9 +6,13 @@
  * until "התאם" starts a list from it — add, remove, reorder, a label per button, the required one
  * ("שדר למטבח" / "תשלום") locked in; the banknotes ("שטרות": the next round amounts or chosen
  * notes, how many, with a live "₪120 / עודף ₪2.80"); the bar's quantity presets and "עוד סבב".
+ *
+ * Phase 2 §3.4: "לכל המכשירים / רק ב<פרופיל>" — a device profile's own bars
+ * (`profiles.<p>.actionBar`; "כמו הבסיס" = the base's, [] = the template's "auto"). The table's
+ * "הוצא הבא" and tenders, a quick order's "עוד סבב"; "עגינת תשלום"'s own quick "auto".
  */
 
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import { Lock, Plus, RotateCcw, Trash2, Wand2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -27,12 +31,17 @@ import {
   TABLE_ACTIONS,
   TEMPLATE_DEFAULTS,
   actionLabelOf,
+  asBaseValue,
+  canonicalTemplate,
+  forProfile,
   formatShekels,
   moveItem,
   quickCashNotes,
+  templatesInUse,
   type ActionId,
   type ActionItem,
   type Mode,
+  type Profile,
 } from '@/lib/tillDesign';
 import { useTillEditor, useTillField } from './editor-context';
 import { AutoHint, ChipToggles, FieldErrors, FieldShell, MoveButtons, OptionSelect, OverrideMark, SectionCard, Segmented, SwitchField } from './fields';
@@ -40,25 +49,44 @@ import { AutoHint, ChipToggles, FieldErrors, FieldShell, MoveButtons, OptionSele
 /** The example the banknotes show ("₪120 / עודף ₪2.80"): the owner's ₪117.20. */
 const EXAMPLE_TOTAL = 11720;
 
-function ActionBarEditor({ mode }: { mode: Mode }) {
+/** The "auto" bar of a template in a mode: the table's from the template; a quick order's the template's own (payDock) or the till parameters'. */
+function autoBar(template: keyof typeof TEMPLATE_DEFAULTS, mode: Mode, legacy: typeof LEGACY_FALLBACK | null): ActionItem[] {
+  const row = TEMPLATE_DEFAULTS[template];
+  if (mode === 'table') return row.tableActions.map((a) => ({ action: a, label: '' }));
+  if (row.quickActions.length > 0) return row.quickActions.map((a) => ({ action: a, label: '' }));
+  return (legacy ?? LEGACY_FALLBACK).quickActions.map((a) => ({ ...a }));
+}
+
+function ActionBarEditor({ mode, profile }: { mode: Mode; profile: Profile | null }) {
   const t = useTranslations('tillDesign.actionBar');
   const ta = useTranslations('tillDesign.actions');
   const tt = useTranslations('tillDesign.templates');
+  const tp = useTranslations('tillDesign.profiles');
   const ed = useTillEditor();
-  const path = `actionBar.${mode}`;
-  const f = useTillField<ActionItem[]>(path);
+  const path = profile ? `profiles.${profile}.actionBar.${mode}` : `actionBar.${mode}`;
+  const f = useTillField<ActionItem[] | string | null>(path);
+  const asBase = profile !== null && !Array.isArray(f.value);
   const list = Array.isArray(f.value) ? f.value : [];
   const required = REQUIRED_ACTION[mode];
   const allowed: readonly ActionId[] = mode === 'table' ? TABLE_ACTIONS : QUICK_ACTIONS;
-  const autoList: ActionItem[] =
-    mode === 'table'
-      ? TEMPLATE_DEFAULTS[ed.draft.template].tableActions.map((a) => ({ action: a, label: '' }))
-      : (ed.legacy ?? LEGACY_FALLBACK).quickActions.map((a) => ({ ...a }));
+  const template = profile ? forProfile(ed.draft, profile).template : canonicalTemplate(ed.draft.template);
+  const autoList = autoBar(template, mode, ed.legacy);
+  const baseList = Array.isArray(ed.draft.actionBar[mode]) ? ed.draft.actionBar[mode] : [];
   const free = allowed.filter((a) => !list.some((i) => i.action === a));
   const [adding, setAdding] = useState<string>('');
 
   const update = (next: ActionItem[]) => f.set(next);
   const label = (a: ActionId) => ta(a);
+  const badges = (items: ActionItem[], prefix: ReactNode) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <AutoHint>{prefix}</AutoHint>
+      {items.map((a) => (
+        <Badge key={a.action} variant={a.action === required ? 'default' : 'outline'}>
+          {actionLabelOf(a, ed.draft)}
+        </Badge>
+      ))}
+    </div>
+  );
 
   return (
     <FieldShell
@@ -66,23 +94,35 @@ function ActionBarEditor({ mode }: { mode: Mode }) {
       label={mode === 'table' ? t('table') : t('quick')}
       hint={mode === 'table' ? t('tableHint') : t('quickHint')}
     >
-      {list.length === 0 ? (
+      {asBase ? (
         <div className="space-y-2 rounded-lg border border-dashed p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <AutoHint>
-              {mode === 'table' ? t('autoTable', { template: tt(`${ed.draft.template}.name`) }) : t('autoQuick')}
-            </AutoHint>
-            {autoList.map((a) => (
-              <Badge key={a.action} variant={a.action === required ? 'default' : 'outline'}>
-                {actionLabelOf(a, ed.draft)}
-              </Badge>
-            ))}
-          </div>
+          {badges(baseList.length ? baseList : autoList, t('asBaseBar', { profile: tp(profile as Profile) }))}
           {ed.canEdit ? (
-            <Button type="button" size="sm" variant="outline" onClick={() => update(autoList)}>
-              <Wand2 /> {t('customize')}
+            <Button type="button" size="sm" variant="outline" onClick={() => update((baseList.length ? baseList : autoList).map((a) => ({ ...a })))}>
+              <Wand2 /> {t('customizeProfile', { profile: tp(profile as Profile) })}
             </Button>
           ) : null}
+        </div>
+      ) : list.length === 0 ? (
+        <div className="space-y-2 rounded-lg border border-dashed p-3">
+          {badges(
+            autoList,
+            mode === 'table' || TEMPLATE_DEFAULTS[template].quickActions.length > 0
+              ? t(mode === 'table' ? 'autoTable' : 'autoQuickTemplate', { template: tt(`${template}.name`) })
+              : t('autoQuick'),
+          )}
+          <div className="flex flex-wrap gap-2">
+            {ed.canEdit ? (
+              <Button type="button" size="sm" variant="outline" onClick={() => update(autoList)}>
+                <Wand2 /> {t('customize')}
+              </Button>
+            ) : null}
+            {ed.canEdit && profile ? (
+              <Button type="button" size="sm" variant="ghost" onClick={() => f.set(asBaseValue(f.inheritedValue))}>
+                <RotateCcw /> {t('backToBase')}
+              </Button>
+            ) : null}
+          </div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -154,6 +194,11 @@ function ActionBarEditor({ mode }: { mode: Mode }) {
               <Button type="button" size="sm" variant="ghost" className="ms-auto" onClick={() => update([])}>
                 <RotateCcw /> {t('backToAuto')}
               </Button>
+              {profile ? (
+                <Button type="button" size="sm" variant="ghost" onClick={() => f.set(asBaseValue(f.inheritedValue))}>
+                  <RotateCcw /> {t('backToBase')}
+                </Button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -195,7 +240,11 @@ function CashSection() {
   const notes = useTillField<number[]>('quickCash.notes');
   const count = useTillField<number>('quickCash.count');
   const chosen = Array.isArray(notes.value) ? notes.value : [];
-  const onBar = (ed.draft.actionBar.quick ?? []).some((a) => a.action === 'cashNotes');
+  // On a bar: the base's, a profile's own, or "עגינת תשלום"'s own "auto".
+  const bars: unknown[] = [ed.draft.actionBar.quick, ed.draft.actionBar.table, ...Object.values(ed.draft.profiles).flatMap((p) => [p?.actionBar?.quick, p?.actionBar?.table])];
+  const onBar =
+    bars.some((b) => Array.isArray(b) && b.some((a: ActionItem) => a.action === 'cashNotes')) ||
+    (templatesInUse(ed.draft).includes('payDock') && (ed.draft.actionBar.quick ?? []).length === 0);
   return (
     <SectionCard title={t('title')} description={t('description')} paths={['quickCash']}>
       {onBar ? null : <p className="rounded-lg border border-dashed p-2.5 text-xs text-muted-foreground">{t('notOnBar')}</p>}
@@ -304,11 +353,29 @@ function PresetsField() {
 export function ActionsSection() {
   const t = useTranslations('tillDesign.actionBar');
   const tb = useTranslations('tillDesign.bar');
+  const tp = useTranslations('tillDesign.profiles');
+  const ed = useTillEditor();
+  const own = ed.draft.profiles[ed.profile]?.actionBar;
+  const [scope, setScope] = useState<'all' | 'profile'>(Array.isArray(own?.table) || Array.isArray(own?.quick) ? 'profile' : 'all');
+  const profile = scope === 'profile' ? ed.profile : null;
+  const profileName = tp(ed.profile);
   return (
     <div className="space-y-4">
-      <SectionCard title={t('title')} description={t('description')} paths={['actionBar']}>
-        <ActionBarEditor mode="table" />
-        <ActionBarEditor mode="quick" />
+      <SectionCard title={t('title')} description={t('description')} paths={['actionBar', `profiles.${ed.profile}.actionBar`]}>
+        <div className="flex flex-wrap items-center gap-3">
+          <Segmented
+            value={scope}
+            onChange={setScope}
+            ariaLabel={t('scope')}
+            options={[
+              { value: 'all', label: t('scopeAll') },
+              { value: 'profile', label: t('scopeProfile', { profile: profileName }) },
+            ]}
+          />
+          <span className="text-xs text-muted-foreground">{scope === 'all' ? t('scopeAllHint') : t('scopeProfileHint', { profile: profileName })}</span>
+        </div>
+        <ActionBarEditor key={`table-${profile ?? 'all'}`} mode="table" profile={profile} />
+        <ActionBarEditor key={`quick-${profile ?? 'all'}`} mode="quick" profile={profile} />
       </SectionCard>
       <CashSection />
       <SectionCard title={tb('title')} description={tb('description')} paths={['bar.quantityPresets', 'bar.repeatRound']}>

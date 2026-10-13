@@ -40,6 +40,8 @@ export interface DrawerEventRow {
   shopName: string | null;
   machineId: string;
   machineName: string | null;
+  /** The till's register number (P:\specs\reports-upgrade.md §4.6, new: absent from an older server). */
+  posNumber?: string | null;
   drawerName: string | null;
   deviceId: string | null;
   shiftId: string | null;
@@ -74,9 +76,12 @@ export interface MovementRow {
   reason: string | null;
   note: string | null;
   source: string | null;
+  shopId?: string | null;
   shopName: string | null;
   machineId: string;
   machineName: string | null;
+  /** The till's register number (§4.6, new). */
+  posNumber?: string | null;
   shiftId: string | null;
   employeeId: string | null;
   employeeName: string | null;
@@ -106,12 +111,19 @@ export interface DrawerKpis {
   exceptions: number;
 }
 
+/** The days the server read (§4.6: sent even with no rows). */
+export interface DrawerWindow {
+  from: string;
+  to: string;
+}
+
 export interface DrawerEventsPage {
   total: number;
   page: number;
   pageSize: number;
   rows: DrawerEventRow[];
   kpis: DrawerKpis;
+  window?: DrawerWindow;
 }
 
 export interface MovementsPage {
@@ -120,6 +132,7 @@ export interface MovementsPage {
   pageSize: number;
   rows: MovementRow[];
   totals: Partial<Record<MovementType, { count: number; amount: number; variance: number }>>;
+  window?: DrawerWindow;
 }
 
 export type TimelineItem = ({ kind: 'event' } & DrawerEventRow) | ({ kind: 'movement' } & MovementRow);
@@ -224,4 +237,100 @@ export function runningExpected(items: TimelineItem[], opening: number | null): 
 /** True when a row deserves a second look: refused, failed, after close, or flagged. */
 export function isNotable(row: Pick<DrawerEventRow, 'result' | 'eventType' | 'exceptions'>): boolean {
   return row.result !== 'approved' || row.eventType === 'AFTER_CLOSE' || row.exceptions.length > 0;
+}
+
+// ── The report's own filters in the URL (P:\specs\reports-upgrade.md §5) ──────────
+
+/** The largest page the list endpoints serve: an export reads every page at this size. */
+export const DRAWER_PAGE_SIZE_MAX = 500;
+
+/**
+ * The report's own filters as URL keys with their defaults (`ReportFilterSpec.extras`):
+ * the openings' type, reason, manager approval, sale, result, role, exceptions only; the
+ * movements' type; the employee and the shift of both lists.
+ */
+export const DRAWER_EXTRAS = {
+  eventType: '',
+  reason: '',
+  approval: '',
+  sale: '',
+  result: '',
+  role: '',
+  employee: '',
+  exceptions: '',
+  movementType: '',
+  shift: '',
+} as const;
+
+export type DrawerExtraKey = keyof typeof DRAWER_EXTRAS;
+
+/** The URL keys each list reads (the other list's stay in the URL, unused). */
+export const DRAWER_TAB_EXTRAS: Record<'events' | 'movements', readonly DrawerExtraKey[]> = {
+  events: ['eventType', 'reason', 'approval', 'sale', 'result', 'role', 'employee', 'exceptions', 'shift'],
+  movements: ['movementType', 'employee', 'shift'],
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A shift id the server takes (a uuid; anything else would be a 422). */
+export function isShiftId(raw: string | null | undefined): boolean {
+  return UUID.test((raw ?? '').trim());
+}
+
+const RESULTS = ['approved', 'denied', 'failed'] as const;
+
+/**
+ * One list's filters from the URL's extras — a value the server does not know is dropped,
+ * never sent. The range and the scope are the page's (`from`, `to`, `companyId`…).
+ */
+export function drawerFiltersFromExtras(
+  extras: Partial<Record<DrawerExtraKey, string>>,
+  tab: 'events' | 'movements',
+): DrawerFilters & { type?: MovementType[] } {
+  const get = (k: DrawerExtraKey) => (extras[k] ?? '').trim();
+  const out: DrawerFilters & { type?: MovementType[] } = {};
+  const employee = get('employee');
+  if (employee) out.employee = employee;
+  const shift = get('shift');
+  if (isShiftId(shift)) out.shiftId = shift;
+  if (tab === 'movements') {
+    const type = get('movementType') as MovementType;
+    if (MOVEMENT_TYPES.includes(type)) out.type = [type];
+    return out;
+  }
+  const eventType = get('eventType') as DrawerEventType;
+  if (DRAWER_EVENT_TYPES.includes(eventType)) out.eventType = [eventType];
+  const reason = get('reason');
+  if (reason) out.reason = reason;
+  const approval = get('approval');
+  if (approval === 'yes' || approval === 'no') out.managerApproval = approval === 'yes';
+  const sale = get('sale');
+  if (sale === 'yes' || sale === 'no') out.withSale = sale === 'yes';
+  const result = get('result') as (typeof RESULTS)[number];
+  if (RESULTS.includes(result)) out.result = [result];
+  const role = get('role');
+  if (role) out.role = role;
+  if (get('exceptions') === '1') out.exceptionsOnly = true;
+  return out;
+}
+
+/** The extras that narrow the given list right now (for the export header and the badge). */
+export function activeDrawerExtras(
+  extras: Partial<Record<DrawerExtraKey, string>>,
+  tab: 'events' | 'movements',
+): DrawerExtraKey[] {
+  const f = drawerFiltersFromExtras(extras, tab);
+  const on: Record<DrawerExtraKey, boolean> = {
+    eventType: Boolean(f.eventType),
+    reason: Boolean(f.reason),
+    approval: f.managerApproval === true || f.managerApproval === false,
+    sale: f.withSale === true || f.withSale === false,
+    result: Boolean(f.result),
+    role: Boolean(f.role),
+    employee: Boolean(f.employee),
+    exceptions: Boolean(f.exceptionsOnly),
+    movementType: Boolean(f.type),
+    shift: Boolean(f.shiftId),
+  };
+  return DRAWER_TAB_EXTRAS[tab].filter((k) => on[k]);
 }

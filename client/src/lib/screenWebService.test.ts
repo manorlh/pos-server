@@ -509,3 +509,37 @@ describe('with the Windows bridge (SPEC_KIOSK §28)', () => {
     assert.equal(kdsBonDoc(o, { device: { id: 'd2', name: 'Expo', role: 'expo', stations: [] }, machineName: null, now: new Date(T0) }).notice, null);
   });
 });
+
+describe('"סניף לא פעיל" (lib/shopActive.ts)', () => {
+  it('the heartbeat locks the screen at once, kept across a reload; the feed goes on; re-activation releases', async () => {
+    const cloud = fakeCloud();
+    const store = new MemoryStore();
+    const svc = service(cloud, 'kds', store);
+    await svc.init();
+    await svc.pair({ code: 'AB12CD34', machineName: 'x' });
+    assert.equal(svc.view().shopActive, true);
+    cloud.handlers['POST machines/me/heartbeat'] = () => ({ status: 200, body: { ok: true, shopActive: false } });
+    await svc.tick();
+    assert.equal(svc.view().shopActive, false);
+    // The kitchen's board is still pulled under the lock (nothing is lost; released, it is current).
+    await svc.refresh();
+    assert.ok(cloud.calls.some((c) => c.path.startsWith('sync/m1/kds/board')));
+    svc.stop();
+    // A reload with no network opens locked.
+    cloud.setOnline(false);
+    const again = service(cloud, 'kds', store);
+    await again.init();
+    assert.equal(again.view().shopActive, false);
+    again.stop();
+    cloud.setOnline(true);
+    // Turned on again: machines/me (and the beat) say so — released.
+    cloud.handlers['GET machines/me'] = () => ({ status: 200, body: { machineId: 'm1', deviceRole: 'kds', shopActive: true } });
+    cloud.handlers['POST machines/me/heartbeat'] = () => ({ status: 200, body: { ok: true } });
+    const third = service(cloud, 'kds', store);
+    await third.init();
+    await third.tick();
+    assert.equal(third.view().shopActive, true);
+    await third.unpair();
+    assert.equal(await store.get(screenKeys('kds').shopActive), null);
+  });
+});

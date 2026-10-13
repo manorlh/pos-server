@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.services import branch_code, licenses
+from app.services import branch_code, licenses, shop_active
 from app.database import get_db
 from app.models.shop import Shop
 from app.models.company import Company
@@ -457,6 +457,38 @@ def _work_profile_for_new_shop(data: ShopCreate, current_user: User, active_tena
         raise WP.invalid(exc)
 
 
+_CREATE_ROLES = (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER)
+
+
+@router.get("/next-branch-code")
+def get_next_branch_code(
+    company_id: uuid_mod.UUID = Query(..., alias="companyId"),
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "קוד סניף" a new shop of the company would get — the create form's pre-fill
+    ("אוטומטי: הבא בתור. אפשר לשנות", P:/specs/shop-code-and-inactive.md §2): the highest
+    numeric code in the company plus 1, or 1 in a company with none.
+
+    A peek, not an allocation: the code is drawn when the shop is saved. Sent back as it
+    was with `branchIdAuto: true`, a code taken in the meantime becomes the next one rather
+    than a 409. Who may open a shop in the company may ask (as `POST /shops`).
+    """
+    if current_user.role not in _CREATE_ROLES:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    ensure_same_tenant(company.tenant_id, active_tenant_id)
+    if current_user.role == UserRole.COMPANY_MANAGER and not user_covers_company(
+        db, current_user, company.id
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return {"companyId": str(company.id), "nextBranchCode": branch_code.next_branch_code(db, company.id)}
+
+
 @router.post("", response_model=ShopCreateResponse, status_code=status.HTTP_201_CREATED)
 def create_shop(
     data: ShopCreate,
@@ -464,7 +496,7 @@ def create_shop(
     active_tenant_id = Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR, UserRole.COMPANY_MANAGER):
+    if current_user.role not in _CREATE_ROLES:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
     company = db.query(Company).filter(Company.id == data.company_id).first()
@@ -479,11 +511,20 @@ def create_shop(
         db, current_user, company.id
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # "סניף לא פעיל" is the super admin's only, with a reason (app/services/shop_active.py).
+    inactive_reason = None if data.is_active else shop_active.check_change(current_user, data.active_reason)
 
     # "תצורת עבודה של הסניף" (P:/specs/shop-work-config.md): checked now, applied once the shop exists.
     work_profile = _work_profile_for_new_shop(data, current_user, active_tenant_id, db)
-    # "קוד סניף" is mandatory, digits, unique in the company (400 / 409, Hebrew).
-    branch_id = branch_code.check_branch_code(db, company.id, data.branch_id)
+    # "קוד סניף" (P:/specs/shop-code-and-inactive.md §2), drawn in this transaction under the
+    # company's lock: none sent, or the form's suggestion left as it was (`branchIdAuto`) —
+    # that suggestion while still free, else the next code, never an error; typed by hand —
+    # digits, unique in the company (400 / 409, Hebrew), as before.
+    branch_code.lock_company(db, company.id)
+    if data.branch_id_auto or branch_code.normalize_branch_code(data.branch_id) is None:
+        branch_id = branch_code.assign_on_create(db, company.id, data.branch_id)
+    else:
+        branch_id = branch_code.check_branch_code(db, company.id, data.branch_id)
     shop = Shop(
         tenant_id=active_tenant_id,
         company_id=data.company_id,
@@ -499,6 +540,8 @@ def create_shop(
     # Flush to materialise shop.id, then seed the default POS user in the same transaction
     # so a shop can never exist without an operator a till can sign in as.
     db.flush()
+    if inactive_reason is not None:
+        shop_active.log(db, shop, current_user, False, inactive_reason)
     # Shop 1, 2, 3 in its company, drawn in this transaction like the till numbers.
     assign_shop_number(db, shop)
     ensure_default_pos_user(db, shop)
@@ -588,11 +631,20 @@ def update_shop(
     _check_shop_override_write(current_user, shop, db)
 
     updates = data.model_dump(exclude_unset=True, by_alias=False)
+    # "סניף פעיל" leaves `updates` too (P:/specs/shop-code-and-inactive.md §3): a change is the
+    # super admin's only, with a reason (403 / 422, Hebrew) — checked before anything else is
+    # touched. The same value again (the edit form sends the row back) is no change at all.
+    active_reason = updates.pop("active_reason", None)
+    wanted_active = updates.pop("is_active", None)
+    if wanted_active is not None and bool(wanted_active) != bool(shop.is_active):
+        shop_active.check_change(current_user, active_reason)
     # The license fields leave `updates` here: the super admin's only.
     licenses.apply_license(current_user, shop, updates)
     if "branch_id" in updates:
         # Never cleared, digits, unique in the company (400 / 409). Once saved it is no
-        # longer the code the migration assigned (`branch_id_auto_assigned`).
+        # longer the code the migration assigned (`branch_id_auto_assigned`). Under the
+        # company's lock, as a new shop's code is drawn.
+        branch_code.lock_company(db, shop.company_id)
         updates["branch_id"] = branch_code.check_branch_code(
             db, shop.company_id, updates["branch_id"], shop_id=shop.id
         )
@@ -601,6 +653,10 @@ def update_shop(
     was_active, old_company_id = shop.is_active, shop.company_id
     for field, value in updates.items():
         setattr(shop, field, value)
+    # Off or back on: logged, the settings watermark moved; the devices are told below.
+    active_changed = wanted_active is not None and shop_active.set_active(
+        db, shop, current_user, wanted_active, active_reason
+    )
     # Back into a rule's scope: reactivated, or (should the company ever become
     # editable here) moved to another company. `reconcile_shops` also finds the rules
     # that covered the old company, through the rows they created.
@@ -609,11 +665,40 @@ def update_shop(
         touched = reconcile_shops(db, [shop])
     db.commit()
     db.refresh(shop)
+    if active_changed:
+        # Every device of the shop — tills, kiosks, KDS screens, customer displays — pulls
+        # `shopActive` now and locks (or is released); one offline does so on its next pull.
+        shop_active.notify(db, shop.id)
     if profile_changed:
         notify_machines_for_shop_settings(db, str(shop.id), reason="shop_profile_updated")
     for touched_shop_id in touched:
         notify_machines_for_shop(db, touched_shop_id, reason="shop_scope_rule")
     return shop
+
+
+@router.get("/{shop_id}/active-log")
+def get_shop_active_log(
+    shop_id: str,
+    current_user: User = Depends(get_current_user),
+    active_tenant_id = Depends(get_active_tenant_id),
+    db: Session = Depends(get_db),
+):
+    """
+    "סניף פעיל" and its log — who turned the shop off or back on, when and why ("כל שינוי
+    נרשם, עם מי, מתי והסיבה"), newest first. `canChange`: whether this user may flip the
+    switch (the super admin only); everyone who sees the shop sees the rest.
+    """
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    ensure_same_tenant(shop.tenant_id, active_tenant_id)
+    _check_shop_access(current_user, shop, db)
+    return {
+        "shopId": str(shop.id),
+        "isActive": bool(shop.is_active),
+        "canChange": current_user.role == UserRole.SUPER_ADMIN,
+        "log": shop_active.log_out(db, shop),
+    }
 
 
 @router.delete("/{shop_id}", status_code=status.HTTP_204_NO_CONTENT)

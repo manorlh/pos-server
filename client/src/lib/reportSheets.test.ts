@@ -1,7 +1,10 @@
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { reconciliationSheets, statusFill, transactionsSheet, zTableSheets } from './reportSheets';
+import { allInOneSheets, reconciliationSheets, statusFill, transactionsSheet, zTableSheets } from './reportSheets';
 import type { Reconciliation, TransactionExportRow, ZTable } from './reportCenterTypes';
+import {
+  checkList, idList, keyedSheets, parseStatusList, reconciliationRows, statusListParam, toggleStatus,
+} from './reportCenterView';
 
 const t = (k: string) => k;
 
@@ -133,4 +136,61 @@ test('the transactions sheet: a cell under every header, the voucher money and t
   assert.equal(sheet.rows[0][at('productionVoucher')], '5.00');
   assert.equal(sheet.rows[0][at('other')], '0.00');
   assert.equal(sheet.rows[1][at('productionVoucher')], null);
+});
+
+describe('the report center on the framework (reconciliation, transmissions, all-in-one)', () => {
+  test('a multi-select in the URL: comma ids, trimmed, no blanks or repeats', () => {
+    assert.deepEqual(idList('a, b,,a'), ['a', 'b']);
+    assert.deepEqual(idList(''), []);
+    assert.deepEqual(idList(undefined), []);
+  });
+
+  test('the status chips: everything but the matches by default, none, the page order, a toggle', () => {
+    assert.deepEqual(parseStatusList(''), ['missing', 'difference', 'pending']);
+    assert.deepEqual(parseStatusList('none'), []);
+    assert.deepEqual(parseStatusList('match,missing,bogus'), ['missing', 'match']);
+    assert.equal(statusListParam(['pending', 'missing', 'difference']), 'missing,difference,pending');
+    assert.equal(statusListParam([]), 'none');
+    assert.deepEqual(toggleStatus(['missing', 'difference'], 'match'), ['missing', 'difference', 'match']);
+    assert.deepEqual(toggleStatus(['missing'], 'missing'), []);
+  });
+
+  test('the checks the server runs: only the ones it knows', () => {
+    assert.deepEqual(checkList('card_legs,bogus,documents_z'), ['documents_z', 'card_legs']);
+    assert.deepEqual(checkList(''), []);
+  });
+
+  test('the list: one check (or all) and the chosen statuses; the export keeps every row', () => {
+    assert.deepEqual(reconciliationRows(rec.rows, '', ['missing']).map((r) => r.check), ['document_numbers']);
+    assert.deepEqual(reconciliationRows(rec.rows, 'card_legs', ['missing', 'match']).map((r) => r.check), ['card_legs']);
+    assert.deepEqual(reconciliationRows(rec.rows, 'card_legs', ['missing']), []);
+  });
+
+  test('keyed sheets: the builder\'s own words as stable column keys, the reader\'s as headers', () => {
+    const he = (k: string) => `he:${k}`;
+    const sheets = keyedSheets(zTableSheets(table, t, (m) => `pm:${m}`), zTableSheets(table, he, (m) => `שיטה ${m}`));
+    assert.deepEqual(sheets.map((s) => s.key), ['sheetZs', 'sheetZTills']);
+    const [zs] = sheets;
+    assert.equal(zs.columnKeys.length, zs.sheet.columns.length);
+    assert.equal(new Set(zs.columnKeys).size, zs.columnKeys.length);
+    assert.ok(zs.columnKeys.includes('pm:cash') && zs.columnKeys.includes('netSales'));
+    assert.equal(zs.sheet.columns[zs.columnKeys.indexOf('netSales')].header, 'he:netSales');
+    assert.equal(zs.sheet.columns[zs.columnKeys.indexOf('pm:card')].header, 'שיטה card');
+    // The values and totals are the reader's sheet, untouched.
+    assert.equal(zs.sheet.totals?.[zs.columnKeys.indexOf('netSales')], 110);
+  });
+
+  test('keyed sheets: keys safe for the export (no dots), unique, never empty; runs that differ throw', () => {
+    const sheet = (headers: string[]) => ({ name: 'x', columns: headers.map((header) => ({ header })), rows: [] });
+    const [k] = keyedSheets([sheet(['a.b', 'a b', 'סטטוס', 'a_b'])], [sheet(['1', '2', '3', '4'])]);
+    assert.deepEqual(k.columnKeys, ['a_b', 'a_b_2', 'col3', 'a_b_3']);
+    assert.throws(() => keyedSheets([sheet(['a'])], []));
+    assert.throws(() => keyedSheets([sheet(['a'])], [sheet(['1', '2'])]));
+  });
+
+  test('all-in-one: an empty report is the summary sheet alone', () => {
+    const empty = { window: { from: '2026-10-01', to: '2026-10-01', timezone: 'Asia/Jerusalem' }, generatedAt: '', empty: true };
+    const sheets = keyedSheets(allInOneSheets(empty, t, (m) => m, (b) => b), allInOneSheets(empty, t, (m) => m, (b) => b));
+    assert.deepEqual(sheets.map((s) => [s.key, s.columnKeys]), [['sheetSummary', ['item']]]);
+  });
 });

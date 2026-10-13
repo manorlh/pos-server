@@ -78,7 +78,48 @@ export type KdsSoundTone = 'chime' | 'bell' | 'knock' | 'beep' | 'off';
 export type KdsSoundEvent = 'new' | 'change' | 'late';
 export type KdsField = 'table' | 'name' | 'waiter' | 'guests' | 'course' | 'notes' | 'allergens' | 'modifiers';
 
-export interface KdsDisplay {
+/**
+ * A tap on an item row (docs/SPEC_KDS.md §16): "button" — only its button acts (today); "cycle" —
+ * the row: ממתין → בהכנה → מוכן → ממתין; "ready" ("מוכן בנגיעה") — the row: מוכן, again: בטל מוכן.
+ */
+export type KdsItemTap = 'button' | 'cycle' | 'ready';
+export type KdsTicketOrder = 'fifo' | 'lifo';
+export type KdsExternalOrders = 'all' | 'hide' | 'only';
+/** The order types a screen can hide (an order without one always shows; a table's is eat in). */
+export type KdsOrderType = 'eatIn' | 'takeAway' | 'delivery';
+export type KdsTicketInfo = 'source' | 'orderTime' | 'orderNumber' | 'readyBy';
+
+/** How the kitchen screen behaves (§16, learned from a reference KDS); every default is today's. */
+export interface KdsBehaviour {
+  /** The header's tools: "להכנה", ready, list / tickets, zoom, history, pause, compact. */
+  toolbar: boolean;
+  /** The "להכנה" panel open when the screen starts. */
+  allDay: boolean;
+  itemTap: KdsItemTap;
+  /** Urgent first, then the oldest (fifo, today) or the newest (lifo). */
+  ticketOrder: KdsTicketOrder;
+  /** Tickets per row (tickets, rail); null = as many as fit. */
+  perRow: number | null;
+  /** A ticket's most height (layout px; it scrolls inside); null = none. */
+  maxTicketHeight: number | null;
+  /** A finished ticket stays a few minutes (today); off: it goes to the history at once. */
+  keepReadyOpen: boolean;
+  /** Filtering by an item shows the whole ticket (else only the matching lines). */
+  filterFullTicket: boolean;
+  /** A station screen may mark an order urgent (the cloud checks it). */
+  stationRush: boolean;
+  /** "דחוף" / "דחוף מאוד" / "בהול" (priority 1–3) instead of one level. */
+  urgencyLevels: boolean;
+  /** Above this many tickets the screen switches to the dense list; null = never. */
+  overflowAt: number | null;
+  orderTypes: Record<KdsOrderType, boolean>;
+  externalOrders: KdsExternalOrders;
+  /** A coloured band on the ticket's header (the theme's colours). */
+  serviceTint: Record<'takeAway' | 'delivery', boolean>;
+  ticketInfo: Record<KdsTicketInfo, boolean>;
+}
+
+export interface KdsDisplay extends KdsBehaviour {
   theme: ScreenThemeName;
   /** "#rrggbb": the kitchen's accent (start / handover, the new-order glow); null = the theme's own. */
   accent: string | null;
@@ -235,7 +276,9 @@ export type KdsActionType =
   | 'undo_pickup'
   | 'handover'
   | 'priority'
-  | 'resolve_fallback';
+  | 'resolve_fallback'
+  /** Back to "ממתין" (queued): the ticket menu's "הכול ממתין", a tap cycling an item (§16). */
+  | 'requeue';
 
 /** A screen action; the shell adds its idempotency id, the time and the expected version. */
 export interface KdsActionInput {

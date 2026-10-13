@@ -30,6 +30,15 @@ from app.services.reports import resolve_report_window
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
+
+def _uuid_or_none(value):
+    """A handler called directly (tests) sees the `Query(...)` default itself: no filter."""
+    return value if isinstance(value, uuid.UUID) else None
+
+
+def _area(value):
+    return parse_area_filter(value if isinstance(value, str) else None)
+
 _FROM = "Start day (inclusive), in the report timezone. Defaults to 30 days back."
 _TO = "End day (inclusive), in the report timezone. Defaults to today."
 
@@ -50,14 +59,26 @@ def get_payment_methods_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    area_id: Optional[str] = Query(
+        None,
+        alias="areaId",
+        description="An area's id, or `none`: the area each document's shift was stamped with.",
+    ),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Net takings per tender method, per local day, shop and till (מכירות לפי אמצעי תשלום)."""
+    """
+    Net takings per tender method, per local day, shop and till (מכירות לפי אמצעי תשלום).
+    Tips apart, by the tender they went on (`tips`, `tipsTotal`) — never inside a method.
+    """
     window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
     return svc.build_payment_methods_report(
-        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=_area(area_id), company_id=_uuid_or_none(company_id),
     )
 
 
@@ -71,6 +92,14 @@ def get_card_brands_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    area_id: Optional[str] = Query(
+        None,
+        alias="areaId",
+        description="An area's id, or `none`: the area each document's shift was stamped with.",
+    ),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -78,7 +107,8 @@ def get_card_brands_report(
     """Card legs per brand (מותג) and acquirer (חברת סליקה), refunds apart (דוח סליקה)."""
     window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
     return svc.build_card_brands_report(
-        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=_area(area_id), company_id=_uuid_or_none(company_id),
     )
 
 
@@ -102,13 +132,14 @@ def get_hourly_report(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """Net per weekday × hour (מכירות לפי שעה), for a heat map and shift planning."""
+    """
+    Net per weekday × hour (מכירות לפי שעה), for a heat map and shift planning. Tips per
+    cell and hour apart (`tips`, `tipsTotal`), never inside `net`.
+    """
     window = _window(db, active_tenant_id, from_date, to_date, None, None, tz)
     return svc.build_hourly_report(
         db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
-        # A handler called directly sees the `Query(...)` defaults themselves: no filter.
-        company_id=company_id if isinstance(company_id, uuid.UUID) else None,
-        area_filter=parse_area_filter(area_id),
+        company_id=_uuid_or_none(company_id), area_filter=_area(area_id),
     )
 
 
@@ -122,6 +153,14 @@ def get_department_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    area_id: Optional[str] = Query(
+        None,
+        alias="areaId",
+        description="An area's id, or `none`: the area each document's shift was stamped with.",
+    ),
+    company_id: Optional[uuid.UUID] = Query(
+        None, alias="companyId", description="Narrow to this company and its subsidiaries."
+    ),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -129,7 +168,8 @@ def get_department_report(
     """Units and money per product category, with each one's share of the net (מכירות לפי מחלקה)."""
     window = _window(db, active_tenant_id, from_date, to_date, from_hour, to_hour, tz)
     return svc.build_department_report(
-        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, active_tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=_area(area_id), company_id=_uuid_or_none(company_id),
     )
 
 

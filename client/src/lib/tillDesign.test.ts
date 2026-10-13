@@ -13,7 +13,9 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ACTION_LABELS,
+  AS_BASE,
   LEGACY_FALLBACK,
+  PHASE2_NEW_TEMPLATES,
   PROFILES,
   TEMPLATES,
   TEMPLATE_DEFAULTS,
@@ -21,6 +23,7 @@ import {
   TILL_DESIGN_DEFAULTS,
   actionLabelOf,
   actionsFor,
+  asBaseValue,
   canonicalJson,
   canonicalTemplate,
   deepMerge,
@@ -29,6 +32,8 @@ import {
   forProfile,
   formatShekels,
   gridColumns,
+  imageCoverage,
+  isSet,
   legacyQuickActions,
   menuView,
   orderCategories,
@@ -42,7 +47,9 @@ import {
   sideBillWidth,
   textOf,
   tileHeight,
+  templatesInUse,
   tillDesignCatalog,
+  usesPhase2Template,
   validateTillDesign,
   validateTillDesignLayer,
   type TillDesignConfig,
@@ -122,12 +129,41 @@ describe('till design: validation of a complete config (the editor\'s draft)', (
     }
   });
 
-  it('refuses a phase-2 template, also per profile', () => {
-    const base = setPath(TILL_DESIGN_DEFAULTS, 'profiles.handheld.template', 'night');
+  it('takes phase 2\'s templates, refuses an unknown one, also per profile', () => {
+    for (const template of PHASE2_NEW_TEMPLATES) {
+      assert.deepEqual(validateTillDesign(setPath(TILL_DESIGN_DEFAULTS, 'profiles.handheld.template', template)), [], template);
+    }
+    const base = setPath(TILL_DESIGN_DEFAULTS, 'profiles.handheld.template', 'fancy');
     assert.deepEqual(
       validateTillDesign(base).map((e) => [e.path, e.code]),
-      [['profiles.handheld.template', 'template_not_available']],
+      [['profiles.handheld.template', 'invalid_value']],
     );
+  });
+
+  it('checks a profile\'s own bar, "base" and "brand", and phase 2\'s sections', () => {
+    const noPay = setPath(TILL_DESIGN_DEFAULTS, 'profiles.handheld.actionBar.quick', [{ action: 'cashNotes', label: '' }]);
+    assert.deepEqual(validateTillDesign(noPay).map((e) => [e.path, e.code]), [['profiles.handheld.actionBar.quick', 'action_bar_missing_pay']]);
+    let ok = setPath(TILL_DESIGN_DEFAULTS, 'profiles.handheld.actionBar.table', AS_BASE);
+    ok = setPath(ok, 'profiles.handheld.tileSize', AS_BASE);
+    ok = setPath(ok, 'profiles.handheld.columns', AS_BASE);
+    ok = setPath(ok, 'colors.accent', 'brand');
+    ok = setPath(ok, 'actionBar.table', ['send', 'fire', 'cashNotes', 'fastCard'].map((action) => ({ action, label: '' })));
+    ok = setPath(ok, 'orderNumber', { atOpen: true, prefix: 'ב2' });
+    assert.deepEqual(validateTillDesign(ok), []);
+    const cases: Array<[string, unknown, string, string]> = [
+      ['layout.density', 'base', 'layout.density', 'invalid_value'],
+      ['layout.tileStyle', 'dish', 'layout.tileStyle', 'invalid_value'],
+      ['courses.fireGapMinutes', 3, 'courses.fireGapMinutes', 'out_of_range'],
+      ['night.hand', 'middle', 'night.hand', 'invalid_value'],
+      ['visual.descriptionLines', 3, 'visual.descriptionLines', 'invalid_value'],
+      ['orderNumber.prefix', '2-', 'orderNumber.prefix', 'invalid_format'],
+      ['orderNumber.prefix', 'ABCDE', 'orderNumber.prefix', 'too_long'],
+      ['actionBar.quick', [{ action: 'fire', label: '' }, { action: 'pay', label: '' }], 'actionBar.quick[0].action', 'invalid_value'],
+    ];
+    for (const [path, value, errPath, code] of cases) {
+      const errors = validateTillDesign(setPath(TILL_DESIGN_DEFAULTS, path, value));
+      assert.ok(errors.some((e) => e.path === errPath && e.code === code), `${path}: ${JSON.stringify(errors)}`);
+    }
   });
 
   it('keeps the required buttons, refuses duplicates and more than 6', () => {
@@ -169,6 +205,11 @@ describe('till design: validation of a complete config (the editor\'s draft)', (
     assert.deepEqual(sanitizeStoredLayer({ bar: { quantityPresets: [2, 3] } }), {});
     assert.deepEqual(sanitizeStoredLayer({ layout: { columns: 1 } }), {});
     assert.deepEqual(sanitizeStoredLayer(null), {});
+    // A profile's bar that lost its "send": back to the base's bar, the profile's other values kept.
+    assert.deepEqual(
+      sanitizeStoredLayer({ profiles: { handheld: { actionBar: { table: [{ action: 'bill' }] }, density: 'compact' }, tabletPortrait: { actionBar: { table: [{ action: 'bill' }] } } } }),
+      { profiles: { handheld: { density: 'compact' } } },
+    );
   });
 });
 
@@ -194,6 +235,19 @@ describe('till design: the minimal saved layer', () => {
     assert.deepEqual(resolveTillDesign({ actionBar: { quick: [{ action: 'cashNotes' }, { action: 'pay' }] } }, layer).actionBar.quick, []);
   });
 
+  it('saves "כמו הבסיס" as "base" only over a value the level above set', () => {
+    const inherited = resolveTillDesign({ profiles: { handheld: { tileSize: 'l' } }, colors: { accent: '#1663D6' } });
+    assert.equal(asBaseValue(inherited.profiles.handheld.tileSize), AS_BASE);
+    assert.equal(asBaseValue(inherited.profiles.handheld.density), null);
+    assert.equal(asBaseValue(AS_BASE), null);
+    const draft = setPath(setPath(inherited, 'profiles.handheld.tileSize', AS_BASE), 'colors.accent', 'brand');
+    const layer = pruneOverrides(inherited, draft);
+    assert.deepEqual(layer, { profiles: { handheld: { tileSize: 'base' } }, colors: { accent: 'brand' } });
+    const resolved = resolveTillDesign({ profiles: { handheld: { tileSize: 'l' } } }, layer);
+    assert.equal(forProfile(resolved, 'handheld').tileSize, 'auto');
+    assert.ok(!isSet('base') && !isSet(null) && isSet('l'));
+  });
+
   it('never saves a null (it inherits) nor an empty text over none', () => {
     const inherited = resolveTillDesign({ colors: { accent: '#1663D6' } });
     const draft = setPath(setPath(inherited, 'colors.accent', null), 'texts.summary', '');
@@ -213,7 +267,9 @@ describe('till design: what the editor and the preview read', () => {
   it('reads aliases and refuses phase 2 as clean', () => {
     assert.equal(canonicalTemplate('classic'), 'clean');
     assert.equal(canonicalTemplate('speed'), 'fast');
-    assert.equal(canonicalTemplate('payDock'), 'clean');
+    assert.equal(canonicalTemplate('payDock'), 'payDock');
+    assert.equal(canonicalTemplate('fancy'), 'clean');
+    assert.equal(canonicalTemplate(AS_BASE), 'clean');
     assert.equal(canonicalTemplate(undefined), 'clean');
   });
 
@@ -229,6 +285,39 @@ describe('till design: what the editor and the preview read', () => {
     assert.equal(resolveFieldMode('optional', 'off'), 'optional');
     assert.deepEqual(actionsFor(view, 'quick', null).map((a) => a.action), ['fastCard', 'cashWithChange', 'pay']);
     assert.deepEqual(actionsFor(view, 'table', null).map((a) => a.action), ['send']);
+    // עגינת תשלום's own "auto" (§2.2), over the till parameters'.
+    const dock = forProfile({ ...TILL_DESIGN_DEFAULTS, template: 'payDock' }, 'tabletLandscape');
+    assert.deepEqual(dock.actions.quick, []);
+    assert.deepEqual(actionsFor(dock, 'quick', null).map((a) => a.action), ['fastCard', 'fastCash', 'cashNotes', 'pay']);
+  });
+
+  it('reads a profile\'s own bar, "base", and what a template fixes', () => {
+    const cfg = resolveTillDesign({
+      template: 'night',
+      layout: { images: 'show', textSize: 'normal' },
+      actionBar: { table: [{ action: 'send' }, { action: 'bill' }, { action: 'split' }] },
+      profiles: {
+        handheld: { actionBar: { table: [{ action: 'send' }, { action: 'fire' }] } },
+        tabletPortrait: { actionBar: { table: [] } },
+        tabletLandscape: { actionBar: { table: 'base' }, template: 'base', columns: 'base' },
+      },
+    });
+    const table = (p: string) => forProfile(cfg, p).actions.table.map((a) => a.action);
+    assert.deepEqual(table('handheld'), ['send', 'fire']);
+    assert.deepEqual(table('tabletPortrait'), ['send', 'repeatRound', 'bill']);
+    assert.deepEqual(table('tabletLandscape'), ['send', 'bill', 'split']);
+    const land = forProfile(cfg, 'tabletLandscape');
+    assert.equal(land.template, 'night');
+    assert.equal(land.columns, 0);
+    assert.equal(land.images, 'hide');
+    assert.equal(land.textSize, 'large');
+    const visual = forProfile({ ...TILL_DESIGN_DEFAULTS, template: 'visual' }, 'tabletPortrait');
+    assert.equal(visual.tileStyle, 'dish');
+    assert.equal(visual.billPosition.table, 'drawer');
+    assert.equal(forProfile({ ...TILL_DESIGN_DEFAULTS, template: 'visual' }, 'handheld').billPosition.quick, 'bottom');
+    // The review's "גרסה ישנה" warning: phase 2's templates where a till reads them.
+    assert.deepEqual(usesPhase2Template(TILL_DESIGN_DEFAULTS), []);
+    assert.deepEqual(usesPhase2Template(setPath(cfg, 'profiles.handheld.template', 'visual')).sort(), ['night', 'visual']);
   });
 
   it('words the buttons: own label, then the texts, then the default', () => {
@@ -282,6 +371,11 @@ describe('till design: what the editor and the preview read', () => {
     assert.equal(sideBillWidth('touch', 1280), 460);
     assert.equal(sideBillWidth('touch', 1024), 369);
     assert.equal(sideBillWidth('professional', 800), 320);
+    assert.equal(sideBillWidth('courses', 1280), 640);
+    assert.equal(sideBillWidth('night', 1280), 435);
+    assert.equal(gridColumns({ style: 'dish', size: 'm', paneWidth: 1248, handheld: false }), 3);
+    assert.equal(gridColumns({ style: 'dish', size: 'm', paneWidth: 768, handheld: false }), 2);
+    assert.equal(gridColumns({ style: 'dish', size: 'm', paneWidth: 336, handheld: true }), 1);
     assert.equal(tileHeight({ style: 'card', size: 'm', density: 'compact', tileWidth: 200, withPhoto: false }), 128);
     assert.equal(tileHeight({ style: 'key', size: 'm', density: 'comfortable', tileWidth: 140, withPhoto: false }), 72);
   });
@@ -296,6 +390,37 @@ describe('till design: what the editor and the preview read', () => {
         if (profile === 'handheld') assert.ok(!['start', 'end'].includes(v.billPosition.table));
       }
     }
+  });
+});
+
+describe('till design: the visual menu\'s photos and the templates in use', () => {
+  it('counts the photos and the categories shown without them (§2.4)', () => {
+    const cats = [
+      { id: 'food', name: 'אוכל' },
+      { id: 'drink', name: 'שתייה' },
+    ];
+    const prods = [
+      { id: 'a', name: 'א', categoryId: 'food', imageUrl: 'https://x/a.jpg' },
+      { id: 'b', name: 'ב', categoryId: 'food', imageUrl: 'https://x/b.jpg' },
+      { id: 'c', name: 'ג', categoryId: 'food', imageUrl: null },
+      { id: 'd', name: 'ד', categoryId: 'drink', imageUrl: 'https://x/d.jpg' },
+      { id: 'e', name: 'ה', categoryId: 'drink', imageUrl: null },
+      { id: 'f', name: 'ו', categoryId: 'drink', imageUrl: null },
+    ];
+    const cov = imageCoverage(cats, prods);
+    assert.equal(cov.withImage, 3);
+    assert.equal(cov.percent, 50);
+    assert.deepEqual(cov.textOnly.map((c) => [c.name, c.withImage, c.total]), [['שתייה', 1, 3]]);
+    assert.deepEqual(cov.missing.map((p) => p.id), ['c', 'e', 'f']);
+    assert.equal(cov.mostlyWithout, false);
+    assert.equal(imageCoverage(cats, prods.map((p) => (p.id === 'a' ? p : { ...p, imageUrl: null }))).mostlyWithout, true);
+  });
+
+  it('lists the templates the base and the profiles use', () => {
+    let cfg = setPath(TILL_DESIGN_DEFAULTS, 'template', 'payDock');
+    cfg = setPath(cfg, 'profiles.handheld.template', 'mobile');
+    cfg = setPath(cfg, 'profiles.tabletPortrait.template', AS_BASE);
+    assert.deepEqual(templatesInUse(cfg), ['mobile', 'payDock']);
   });
 });
 

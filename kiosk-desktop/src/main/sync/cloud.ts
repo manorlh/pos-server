@@ -6,6 +6,7 @@
  * permissions — for the admin and "יציאה לשולחן העבודה", checked offline).
  */
 
+import { shopActiveKept } from '@dash-lib/shopActive';
 import type { Kv } from '../db/schema';
 
 export interface Credentials {
@@ -117,6 +118,7 @@ const K = {
   promotions: 'cloud.promotions',
   promotionsEtag: 'cloud.promotionsEtag',
   stock: 'cloud.stockLevels',
+  shopActive: 'cloud.shopActive',
 } as const;
 
 export class CloudStore {
@@ -270,6 +272,22 @@ export class CloudStore {
 
   setHeartbeat(h: HeartbeatFacts) {
     this.write(K.beat, h);
+  }
+
+  /**
+   * "סניף לא פעיל" (client lib/shopActive.ts): the cloud's last `shopActive` — kept, so a locked
+   * device starts locked with no network. Never said (a new pairing, an older server): active.
+   */
+  shopActive(): boolean {
+    return shopActiveKept(this.read<boolean>(K.shopActive));
+  }
+
+  /** Kept when it differs from what is kept; whether the device's state changed. */
+  setShopActive(active: boolean): boolean {
+    if (this.read<boolean>(K.shopActive) === active) return false;
+    const changed = this.shopActive() !== active;
+    this.write(K.shopActive, active);
+    return changed;
   }
 
   posUsers(): PosUser[] {

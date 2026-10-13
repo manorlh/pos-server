@@ -16,6 +16,8 @@ export interface TillDesignDefaults {
   defaults: TillDesignConfig;
   /** `till_design.catalog()`: templates, profiles, the template table, actions, labels, vocabularies. */
   catalog: Record<string, unknown>;
+  /** The first till version that shows phase 2's templates ("0.1.553"); absent from an older server. */
+  phase2MinVersion?: string;
 }
 
 export interface TillDesignSettings {
@@ -39,7 +41,23 @@ export interface TillDesignSettings {
 
 export interface TillDesignTargets {
   areas: Array<{ id: string; name: string }>;
-  machines: Array<{ id: string; name: string; areaId: string | null; areaName: string | null; deviceModel: string | null }>;
+  machines: Array<{
+    id: string;
+    name: string;
+    areaId: string | null;
+    areaName: string | null;
+    deviceModel: string | null;
+    /** As the till reported it ("0.1.552+b6e07db-device"). */
+    appVersion?: string | null;
+    /** Whether it shows phase 2's templates: false — "נקי" until it updates; null — unknown. */
+    phase2Templates?: boolean | null;
+  }>;
+}
+
+/** A till's version as it is shown: "0.1.552" (the build after "+" left out). */
+export function shownVersion(appVersion: string | null | undefined): string | null {
+  const head = (appVersion ?? '').trim().split('+', 1)[0];
+  return head || null;
 }
 
 export async function fetchTillDesignDefaults(): Promise<TillDesignDefaults> {

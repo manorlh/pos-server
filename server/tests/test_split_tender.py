@@ -280,7 +280,7 @@ def _cashier_report_statements() -> list[str]:
 
 
 def test_cashier_tender_split_groups_by_the_leg_method() -> None:
-    document_q, tender_q = _cashier_report_statements()
+    document_q, tender_q, tips_q = _cashier_report_statements()
 
     assert "LEFT OUTER JOIN transaction_payments" in tender_q
     assert tender_q.rstrip().endswith(
@@ -290,13 +290,19 @@ def test_cashier_tender_split_groups_by_the_leg_method() -> None:
     # document would otherwise count its gross, discounts and tips once per leg.
     assert document_q.rstrip().endswith("GROUP BY transactions.cashier_id")
     assert "transaction_payments" not in document_q
+    # The tips per tip tender (`tipsCash` / `tipsCard` / `tipsOther`) are read off the
+    # document — a tip is never a leg, so never joined to the legs.
+    assert "transaction_payments" not in tips_q
+    assert tips_q.rstrip().endswith(
+        "GROUP BY transactions.cashier_id, transactions.tip_payment_method, transactions.payment_method"
+    )
 
 
 def test_cashier_tender_split_falls_back_for_documents_with_no_legs() -> None:
     # An OUTER join, never an inner one: a document written before split tender
     # existed still has to contribute its money, or cashNet + cardNet + otherNet
     # silently stops summing to net for every historical day.
-    _document_q, tender_q = _cashier_report_statements()
+    _document_q, tender_q, _tips_q = _cashier_report_statements()
     assert "coalesce(transaction_payments.amount" in tender_q
     assert "INNER JOIN transaction_payments" not in tender_q
 

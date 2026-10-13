@@ -7,7 +7,11 @@ GET /shops/{shop_id}/main-till → the main till, `zFrom`, and what each role re
 PUT /shops/{shop_id}/main-till → `{machineId | null, zFrom}` — the super admin's alone,
                                  like the Z mode; refused while a Z run is under way
                                  (409 `z_run_in_progress`), and for a device set "לא משמש
-                                 כשרת מקומי" (409 `main_till_not_server`, docs/SPEC_LAN_MODE.md §3)
+                                 כשרת מקומי" (409 `main_till_not_server`, docs/SPEC_LAN_MODE.md §3).
+                                 Moving an existing main till to another till is the wizard's
+                                 alone (409 `use_local_server_switch`; "העברת שרת מקומי",
+                                 app/routers/local_server.py): the card names the first one,
+                                 takes it off, and sets `zFrom`.
 
 The card's switch "רשת מקומית" is `PUT /shops/{shop_id}/local-network` (app/routers/lan_server.py).
 
@@ -34,6 +38,7 @@ from app.models.till_parameter import TillParameter, TillParameterValue
 from app.models.user import User, UserRole
 from app.models.z_run import ZRun, ZRunStatus
 from app.services import lan_server as LS
+from app.services import local_server_switch as LSS
 from app.services import local_shop_z as LZ
 from app.services import main_till as MT
 from app.services import printers as K
@@ -91,6 +96,9 @@ def _out(db: Session, shop: Shop, user: User) -> dict:
         "printHost": MT.till_ref(K.print_host_of_shop(db, shop.id)),
         "tills": MT.shop_tills_out(db, shop.id),
         "canEdit": user.role == UserRole.SUPER_ADMIN,
+        # "העברת שרת מקומי" (app/services/local_server_switch.py): the one way to move the server
+        # to another till — the super admin, or a user granted the permission.
+        "canSwitch": LSS.may_switch(db, user),
         # "רשת מקומית" (docs/SPEC_LAN_MODE.md §4): the switch as stored, whether the shop is in
         # local mode now (the switch and a main till), and a row per system.
         "localNetwork": bool(getattr(shop, "local_network", False)),
@@ -150,6 +158,17 @@ def put_main_till(
     if body.machine_id is not None and str(body.machine_id) not in {str(m.id) for m in tills}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="machine_not_in_shop")
     chosen = next((m for m in tills if body.machine_id is not None and str(m.id) == str(body.machine_id)), None)
+    if previous_main is not None and chosen is not None and str(previous_main.id) != str(chosen.id):
+        # One way to move the server (P:/specs/local-server-switch.md §2ב): the wizard — the
+        # full move, the old server's state and its shift. The card still names the first main
+        # till, takes it off, and sets where the shop Z comes from.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "use_local_server_switch",
+                "message": "העברת השרת המקומי לקופה אחרת נעשית באשף \"העברת שרת מקומי\" בכרטיס הזה.",
+            },
+        )
     if chosen is not None and getattr(chosen, "independent_till", False):
         # "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): outside the shop's LAN group.
         raise HTTPException(
@@ -159,13 +178,30 @@ def put_main_till(
                 "message": "קופה עצמאית לא יכולה להיות הקופה הראשית של הסניף. בחרו קופה מבין הקופות שבזד הסניפי.",
             },
         )
+    from app.services.local_shop_z import is_remote_participant
+
+    if chosen is not None and is_remote_participant(chosen):
+        # "מרוחקת בזד הסניפי" (docs/SPEC_INDEPENDENT_TILL.md §8.14): not on the shop's local server.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "remote_main_till",
+                "message": (
+                    "קופה מרוחקת (לא מחוברת לשרת המקומי) לא יכולה להיות הקופה הראשית של הסניף. "
+                    "בחרו קופה המחוברת לשרת המקומי, או חברו אותה בכרטיס \"קופות בזד הסניפי\"."
+                ),
+            },
+        )
     from app.services import lan_server
 
     if chosen is not None and lan_server.is_excluded(db, chosen):
         # "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3): in the LAN group, never its server.
         raise lan_server.main_till_refusal(chosen)
-    if chosen is not None and getattr(chosen, "is_fiscal", True) is False:
-        # A display device (a KDS / the board) is no till (app/services/display_devices.py).
+    from app.services.local_server_device import is_local_server
+
+    if chosen is not None and getattr(chosen, "is_fiscal", True) is False and not is_local_server(chosen):
+        # A display device (a KDS / the board) is no till (app/services/display_devices.py); a
+        # dedicated local server is no till either, but the shop's preferred host.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -210,14 +246,6 @@ def put_main_till(
             status_code=refused.status_code,
             # The card's refusals are `{detail: {code, message}}`.
             content={"detail": {"code": refused.body.get("detail"), **{k: v for k, v in refused.body.items() if k != "detail"}}},
-        )
-    if previous_main is not None and chosen is not None and str(previous_main.id) != str(chosen.id):
-        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
-        from app.services.till_messages import send_server_switch_notice
-
-        send_server_switch_notice(
-            db, shop.id, MT.till_ref(chosen), MT.till_ref(previous_main),
-            getattr(current_user, "username", None) or getattr(current_user, "email", None),
         )
     out = _out(db, shop, current_user)
     targets = TP.notify_targets_for_scope(db, "shop", shop.id)

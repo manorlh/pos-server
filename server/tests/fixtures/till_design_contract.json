@@ -22,7 +22,11 @@
     "density": null,
     "billPosition": null,
     "categoryBar": null,
-    "columns": null
+    "columns": null,
+    "actionBar": {
+     "table": null,
+     "quick": null
+    }
    },
    "tabletLandscape": {
     "template": null,
@@ -31,7 +35,11 @@
     "density": null,
     "billPosition": null,
     "categoryBar": null,
-    "columns": null
+    "columns": null,
+    "actionBar": {
+     "table": null,
+     "quick": null
+    }
    },
    "tabletPortrait": {
     "template": null,
@@ -40,7 +48,11 @@
     "density": null,
     "billPosition": null,
     "categoryBar": null,
-    "columns": null
+    "columns": null,
+    "actionBar": {
+     "table": null,
+     "quick": null
+    }
    },
    "ipadPortrait": {
     "template": null,
@@ -49,7 +61,11 @@
     "density": null,
     "billPosition": null,
     "categoryBar": null,
-    "columns": null
+    "columns": null,
+    "actionBar": {
+     "table": null,
+     "quick": null
+    }
    },
    "ipadLandscape": {
     "template": null,
@@ -58,7 +74,11 @@
     "density": null,
     "billPosition": null,
     "categoryBar": null,
-    "columns": null
+    "columns": null,
+    "actionBar": {
+     "table": null,
+     "quick": null
+    }
    }
   },
   "actionBar": {
@@ -77,7 +97,8 @@
     5
    ],
    "favorites": [],
-   "repeatRound": true
+   "repeatRound": true,
+   "openTabs": false
   },
   "menu": {
    "categoryOrder": [],
@@ -101,9 +122,32 @@
   "tables": {
    "mapStyle": "auto",
    "showChairs": "auto"
+  },
+  "courses": {
+   "fireGapMinutes": 0,
+   "autoFireFirst": true
+  },
+  "payDock": {
+   "savings": true
+  },
+  "night": {
+   "hand": "right",
+   "quickAddons": true
+  },
+  "visual": {
+   "descriptionLines": 2,
+   "dietary": "auto"
+  },
+  "professional": {
+   "keyboard": false,
+   "fKeys": false
+  },
+  "orderNumber": {
+   "atOpen": false,
+   "prefix": ""
   }
  },
- "defaultsVersion": "614ff69ca827f46f",
+ "defaultsVersion": "0cd46fa96519f530",
  "catalog": {
   "schemaVersion": 1,
   "templates": [
@@ -112,13 +156,20 @@
    "professional",
    "seated",
    "fast",
-   "mobile"
-  ],
-  "phase2Templates": [
+   "mobile",
    "courses",
    "payDock",
    "night",
    "visual"
+  ],
+  "phase2Templates": [],
+  "asBase": "base",
+  "accentBrand": "brand",
+  "templateTileStyles": [
+   "dish"
+  ],
+  "templateBillPositions": [
+   "drawer"
   ],
   "templateAliases": {
    "classic": "clean",
@@ -187,8 +238,10 @@
     "tableActions": [
      "send"
     ],
+    "quickActions": [],
     "features": [],
-    "summaryCollapsible": false
+    "summaryCollapsible": false,
+    "fixed": {}
    },
    "touch": {
     "tileStyle": "photo",
@@ -213,8 +266,10 @@
      "send",
      "bill"
     ],
+    "quickActions": [],
     "features": [],
-    "summaryCollapsible": false
+    "summaryCollapsible": false,
+    "fixed": {}
    },
    "professional": {
     "tileStyle": "row",
@@ -239,10 +294,12 @@
      "send",
      "bill"
     ],
+    "quickActions": [],
     "features": [
      "searchField"
     ],
-    "summaryCollapsible": false
+    "summaryCollapsible": false,
+    "fixed": {}
    },
    "seated": {
     "tileStyle": "card",
@@ -268,10 +325,12 @@
      "bill",
      "split"
     ],
+    "quickActions": [],
     "features": [
      "seatCards"
     ],
-    "summaryCollapsible": false
+    "summaryCollapsible": false,
+    "fixed": {}
    },
    "fast": {
     "tileStyle": "key",
@@ -297,11 +356,13 @@
      "repeatRound",
      "bill"
     ],
+    "quickActions": [],
     "features": [
      "quantityPresets",
      "favorites"
     ],
-    "summaryCollapsible": false
+    "summaryCollapsible": false,
+    "fixed": {}
    },
    "mobile": {
     "tileStyle": "card",
@@ -326,10 +387,147 @@
      "send",
      "bill"
     ],
+    "quickActions": [],
     "features": [
      "seatPicker"
     ],
-    "summaryCollapsible": true
+    "summaryCollapsible": true,
+    "fixed": {}
+   },
+   "courses": {
+    "tileStyle": "card",
+    "billStyle": "courses",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "fire",
+     "bill"
+    ],
+    "quickActions": [],
+    "features": [
+     "courseLanes"
+    ],
+    "summaryCollapsible": false,
+    "fixed": {}
+   },
+   "payDock": {
+    "tileStyle": "card",
+    "billStyle": "lines",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill",
+     "pay"
+    ],
+    "quickActions": [
+     "fastCard",
+     "fastCash",
+     "cashNotes",
+     "pay"
+    ],
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "summaryCollapsible": false,
+    "fixed": {}
+   },
+   "night": {
+    "tileStyle": "key",
+    "billStyle": "compact",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "end",
+      "tabletPortrait": "bottom",
+      "ipadPortrait": "bottom",
+      "ipadLandscape": "end"
+     }
+    },
+    "tableActions": [
+     "send",
+     "repeatRound",
+     "bill"
+    ],
+    "quickActions": [],
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "summaryCollapsible": false,
+    "fixed": {
+     "images": "hide",
+     "textSize": "large"
+    }
+   },
+   "visual": {
+    "tileStyle": "dish",
+    "billStyle": "lines",
+    "billPosition": {
+     "table": {
+      "handheld": "bottom",
+      "tabletLandscape": "drawer",
+      "tabletPortrait": "drawer",
+      "ipadPortrait": "drawer",
+      "ipadLandscape": "drawer"
+     },
+     "quick": {
+      "handheld": "bottom",
+      "tabletLandscape": "drawer",
+      "tabletPortrait": "drawer",
+      "ipadPortrait": "drawer",
+      "ipadLandscape": "drawer"
+     }
+    },
+    "tableActions": [
+     "send",
+     "bill"
+    ],
+    "quickActions": [],
+    "features": [
+     "dishCards"
+    ],
+    "summaryCollapsible": false,
+    "fixed": {}
    }
   },
   "quickActions": [
@@ -342,7 +540,8 @@
    "discount",
    "customer",
    "orderDetails",
-   "clear"
+   "clear",
+   "repeatRound"
   ],
   "tableActions": [
    "send",
@@ -353,7 +552,12 @@
    "guests",
    "notes",
    "discount",
-   "repeatRound"
+   "repeatRound",
+   "fire",
+   "cashWithChange",
+   "cashNotes",
+   "fastCash",
+   "fastCard"
   ],
   "requiredAction": {
    "quick": "pay",
@@ -376,7 +580,8 @@
    "hold": "השהה",
    "customer": "לקוח",
    "orderDetails": "פרטי הזמנה",
-   "clear": "נקה הזמנה"
+   "clear": "נקה הזמנה",
+   "fire": "הוצא הבא"
   },
   "actionBarMax": 6,
   "actionLabelMax": 24,
@@ -445,6 +650,12 @@
    ],
    "menu.productOrder": [
     "productOrder"
+   ],
+   "courses": [
+    "coursesEnabled"
+   ],
+   "visual.dietary": [
+    "showDietaryMarks"
    ]
   },
   "vocab": {
@@ -523,8 +734,27 @@
     6,
     7,
     8
+   ],
+   "nightHand": [
+    "right",
+    "left"
+   ],
+   "descriptionLines": [
+    0,
+    1,
+    2
+   ],
+   "visualDietary": [
+    "auto",
+    "show",
+    "hide"
    ]
-  }
+  },
+  "fireGapMinutes": {
+   "min": 5,
+   "max": 60
+  },
+  "orderPrefixMax": 4
  },
  "forProfile": [
   {
@@ -2183,6 +2413,2673 @@
    }
   },
   {
+   "name": "courses",
+   "layers": [
+    {
+     "template": "courses"
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "courses",
+   "layers": [
+    {
+     "template": "courses"
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "courses",
+   "layers": [
+    {
+     "template": "courses"
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "courses",
+   "layers": [
+    {
+     "template": "courses"
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "courses",
+   "layers": [
+    {
+     "template": "courses"
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "payDock",
+   "layers": [
+    {
+     "template": "payDock"
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "payDock",
+   "layers": [
+    {
+     "template": "payDock"
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "payDock",
+   "layers": [
+    {
+     "template": "payDock"
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "payDock",
+   "layers": [
+    {
+     "template": "payDock"
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "payDock",
+   "layers": [
+    {
+     "template": "payDock"
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "nightFixed",
+   "layers": [
+    {
+     "template": "night",
+     "layout": {
+      "images": "show",
+      "textSize": "normal"
+     },
+     "night": {
+      "hand": "left"
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "night",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "hide",
+    "textSize": "large",
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "nightFixed",
+   "layers": [
+    {
+     "template": "night",
+     "layout": {
+      "images": "show",
+      "textSize": "normal"
+     },
+     "night": {
+      "hand": "left"
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "night",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "hide",
+    "textSize": "large",
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "nightFixed",
+   "layers": [
+    {
+     "template": "night",
+     "layout": {
+      "images": "show",
+      "textSize": "normal"
+     },
+     "night": {
+      "hand": "left"
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "night",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "hide",
+    "textSize": "large",
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "nightFixed",
+   "layers": [
+    {
+     "template": "night",
+     "layout": {
+      "images": "show",
+      "textSize": "normal"
+     },
+     "night": {
+      "hand": "left"
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "night",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "hide",
+    "textSize": "large",
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "nightFixed",
+   "layers": [
+    {
+     "template": "night",
+     "layout": {
+      "images": "show",
+      "textSize": "normal"
+     },
+     "night": {
+      "hand": "left"
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "night",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "hide",
+    "textSize": "large",
+    "features": [
+     "quantityPresets",
+     "favorites",
+     "quickAddons",
+     "thumbs"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visual",
+   "layers": [
+    {
+     "template": "visual",
+     "visual": {
+      "descriptionLines": 1,
+      "dietary": "show"
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "dish",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visual",
+   "layers": [
+    {
+     "template": "visual",
+     "visual": {
+      "descriptionLines": 1,
+      "dietary": "show"
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "dish",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "drawer",
+     "quick": "drawer"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visual",
+   "layers": [
+    {
+     "template": "visual",
+     "visual": {
+      "descriptionLines": 1,
+      "dietary": "show"
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "dish",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "drawer",
+     "quick": "drawer"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visual",
+   "layers": [
+    {
+     "template": "visual",
+     "visual": {
+      "descriptionLines": 1,
+      "dietary": "show"
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "dish",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "drawer",
+     "quick": "drawer"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visual",
+   "layers": [
+    {
+     "template": "visual",
+     "visual": {
+      "descriptionLines": 1,
+      "dietary": "show"
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "dish",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "drawer",
+     "quick": "drawer"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visualSideBill",
+   "layers": [
+    {
+     "template": "visual",
+     "layout": {
+      "billPosition": "end",
+      "tileStyle": "card"
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visualSideBill",
+   "layers": [
+    {
+     "template": "visual",
+     "layout": {
+      "billPosition": "end",
+      "tileStyle": "card"
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visualSideBill",
+   "layers": [
+    {
+     "template": "visual",
+     "layout": {
+      "billPosition": "end",
+      "tileStyle": "card"
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visualSideBill",
+   "layers": [
+    {
+     "template": "visual",
+     "layout": {
+      "billPosition": "end",
+      "tileStyle": "card"
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "visualSideBill",
+   "layers": [
+    {
+     "template": "visual",
+     "layout": {
+      "billPosition": "end",
+      "tileStyle": "card"
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "visual",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "dishCards"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "profileBars",
+   "layers": [
+    {
+     "template": "fast",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "bill",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "fastCash",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     },
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "fire",
+          "label": "הוצא"
+         }
+        ],
+        "quick": [
+         {
+          "action": "pay",
+          "label": ""
+         }
+        ]
+       }
+      },
+      "tabletPortrait": {
+       "actionBar": {
+        "table": []
+       }
+      }
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": "הוצא"
+      }
+     ],
+     "quick": [
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "profileBars",
+   "layers": [
+    {
+     "template": "fast",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "bill",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "fastCash",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     },
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "fire",
+          "label": "הוצא"
+         }
+        ],
+        "quick": [
+         {
+          "action": "pay",
+          "label": ""
+         }
+        ]
+       }
+      },
+      "tabletPortrait": {
+       "actionBar": {
+        "table": []
+       }
+      }
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "fastCash",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "profileBars",
+   "layers": [
+    {
+     "template": "fast",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "bill",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "fastCash",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     },
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "fire",
+          "label": "הוצא"
+         }
+        ],
+        "quick": [
+         {
+          "action": "pay",
+          "label": ""
+         }
+        ]
+       }
+      },
+      "tabletPortrait": {
+       "actionBar": {
+        "table": []
+       }
+      }
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "fastCash",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "profileBars",
+   "layers": [
+    {
+     "template": "fast",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "bill",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "fastCash",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     },
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "fire",
+          "label": "הוצא"
+         }
+        ],
+        "quick": [
+         {
+          "action": "pay",
+          "label": ""
+         }
+        ]
+       }
+      },
+      "tabletPortrait": {
+       "actionBar": {
+        "table": []
+       }
+      }
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "fastCash",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "profileBars",
+   "layers": [
+    {
+     "template": "fast",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "bill",
+        "label": ""
+       },
+       {
+        "action": "split",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "fastCash",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     },
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "fire",
+          "label": "הוצא"
+         }
+        ],
+        "quick": [
+         {
+          "action": "pay",
+          "label": ""
+         }
+        ]
+       }
+      },
+      "tabletPortrait": {
+       "actionBar": {
+        "table": []
+       }
+      }
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "fast",
+    "tileSize": "auto",
+    "tileStyle": "key",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "compact",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "quantityPresets",
+     "favorites"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      },
+      {
+       "action": "split",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "fastCash",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "tableTenders",
+   "layers": [
+    {
+     "template": "payDock",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "fire",
+        "label": ""
+       },
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "fastCard",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "repeatRound",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "fastCard",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "tableTenders",
+   "layers": [
+    {
+     "template": "payDock",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "fire",
+        "label": ""
+       },
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "fastCard",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "repeatRound",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "fastCard",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "tableTenders",
+   "layers": [
+    {
+     "template": "payDock",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "fire",
+        "label": ""
+       },
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "fastCard",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "repeatRound",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "fastCard",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "tableTenders",
+   "layers": [
+    {
+     "template": "payDock",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "fire",
+        "label": ""
+       },
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "fastCard",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "repeatRound",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "fastCard",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "tableTenders",
+   "layers": [
+    {
+     "template": "payDock",
+     "actionBar": {
+      "table": [
+       {
+        "action": "send",
+        "label": ""
+       },
+       {
+        "action": "fire",
+        "label": ""
+       },
+       {
+        "action": "cashNotes",
+        "label": ""
+       },
+       {
+        "action": "fastCard",
+        "label": ""
+       }
+      ],
+      "quick": [
+       {
+        "action": "repeatRound",
+        "label": ""
+       },
+       {
+        "action": "pay",
+        "label": ""
+       }
+      ]
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "payDock",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "lines",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "payDock",
+     "selectedLine"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "cashNotes",
+       "label": ""
+      },
+      {
+       "action": "fastCard",
+       "label": ""
+      }
+     ],
+     "quick": [
+      {
+       "action": "repeatRound",
+       "label": ""
+      },
+      {
+       "action": "pay",
+       "label": ""
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "backToBase",
+   "layers": [
+    {
+     "template": "touch",
+     "profiles": {
+      "handheld": {
+       "template": "mobile",
+       "tileSize": "l",
+       "columns": 3,
+       "billPosition": "sheet",
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "move",
+          "label": ""
+         }
+        ]
+       }
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {
+     "profiles": {
+      "handheld": {
+       "template": "base",
+       "tileSize": "base",
+       "columns": "base",
+       "billPosition": "base",
+       "actionBar": {
+        "table": "base"
+       }
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "backToBase",
+   "layers": [
+    {
+     "template": "touch",
+     "profiles": {
+      "handheld": {
+       "template": "mobile",
+       "tileSize": "l",
+       "columns": 3,
+       "billPosition": "sheet",
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "move",
+          "label": ""
+         }
+        ]
+       }
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {
+     "profiles": {
+      "handheld": {
+       "template": "base",
+       "tileSize": "base",
+       "columns": "base",
+       "billPosition": "base",
+       "actionBar": {
+        "table": "base"
+       }
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "backToBase",
+   "layers": [
+    {
+     "template": "touch",
+     "profiles": {
+      "handheld": {
+       "template": "mobile",
+       "tileSize": "l",
+       "columns": 3,
+       "billPosition": "sheet",
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "move",
+          "label": ""
+         }
+        ]
+       }
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {
+     "profiles": {
+      "handheld": {
+       "template": "base",
+       "tileSize": "base",
+       "columns": "base",
+       "billPosition": "base",
+       "actionBar": {
+        "table": "base"
+       }
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "profile": "tabletPortrait",
+   "expected": {
+    "profile": "tabletPortrait",
+    "width": 800,
+    "height": 1280,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "backToBase",
+   "layers": [
+    {
+     "template": "touch",
+     "profiles": {
+      "handheld": {
+       "template": "mobile",
+       "tileSize": "l",
+       "columns": 3,
+       "billPosition": "sheet",
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "move",
+          "label": ""
+         }
+        ]
+       }
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {
+     "profiles": {
+      "handheld": {
+       "template": "base",
+       "tileSize": "base",
+       "columns": "base",
+       "billPosition": "base",
+       "actionBar": {
+        "table": "base"
+       }
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "profile": "ipadPortrait",
+   "expected": {
+    "profile": "ipadPortrait",
+    "width": 768,
+    "height": 1024,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "backToBase",
+   "layers": [
+    {
+     "template": "touch",
+     "profiles": {
+      "handheld": {
+       "template": "mobile",
+       "tileSize": "l",
+       "columns": 3,
+       "billPosition": "sheet",
+       "actionBar": {
+        "table": [
+         {
+          "action": "send",
+          "label": ""
+         },
+         {
+          "action": "move",
+          "label": ""
+         }
+        ]
+       }
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {
+     "profiles": {
+      "handheld": {
+       "template": "base",
+       "tileSize": "base",
+       "columns": "base",
+       "billPosition": "base",
+       "actionBar": {
+        "table": "base"
+       }
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "profile": "ipadLandscape",
+   "expected": {
+    "profile": "ipadLandscape",
+    "width": 1024,
+    "height": 768,
+    "template": "touch",
+    "tileSize": "auto",
+    "tileStyle": "photo",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "cards",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
    "name": "aliasClassic",
    "raw": {
     "schemaVersion": 1,
@@ -2205,7 +5102,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2214,7 +5115,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2223,7 +5128,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2232,7 +5141,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2241,7 +5154,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2260,7 +5177,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2284,6 +5202,29 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "handheld",
@@ -2340,7 +5281,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2349,7 +5294,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2358,7 +5307,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2367,7 +5320,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2376,7 +5333,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2395,7 +5356,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2419,6 +5381,29 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "tabletLandscape",
@@ -2475,7 +5460,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2484,7 +5473,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2493,7 +5486,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2502,7 +5499,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2511,7 +5512,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2530,7 +5535,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2554,6 +5560,29 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "handheld",
@@ -2621,7 +5650,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2630,7 +5663,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2639,7 +5676,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2648,7 +5689,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2657,7 +5702,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2676,7 +5725,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2700,6 +5750,29 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "tabletLandscape",
@@ -2745,7 +5818,7 @@
    }
   },
   {
-   "name": "phase2Courses",
+   "name": "rawCourses",
    "raw": {
     "schemaVersion": 1,
     "template": "courses",
@@ -2767,7 +5840,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2776,7 +5853,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2785,7 +5866,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2794,7 +5879,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2803,7 +5892,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2822,7 +5915,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2846,6 +5940,407 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
+    }
+   },
+   "profile": "handheld",
+   "expected": {
+    "profile": "handheld",
+    "width": 360,
+    "height": 640,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "bottom",
+     "quick": "bottom"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "rawCourses",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "courses",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true,
+     "openTabs": false
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
+    }
+   },
+   "profile": "tabletLandscape",
+   "expected": {
+    "profile": "tabletLandscape",
+    "width": 1280,
+    "height": 800,
+    "template": "courses",
+    "tileSize": "auto",
+    "tileStyle": "card",
+    "density": "comfortable",
+    "billPosition": {
+     "table": "end",
+     "quick": "end"
+    },
+    "billStyle": "courses",
+    "summaryCollapsible": false,
+    "categoryBar": "top",
+    "columns": 0,
+    "images": "auto",
+    "textSize": "normal",
+    "features": [
+     "courseLanes"
+    ],
+    "actions": {
+     "table": [
+      {
+       "action": "send",
+       "label": ""
+      },
+      {
+       "action": "fire",
+       "label": ""
+      },
+      {
+       "action": "bill",
+       "label": ""
+      }
+     ],
+     "quick": []
+    }
+   }
+  },
+  {
+   "name": "unknownTemplate",
+   "raw": {
+    "schemaVersion": 1,
+    "template": "fancy",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true,
+     "openTabs": false
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "handheld",
@@ -2880,10 +6375,10 @@
    }
   },
   {
-   "name": "phase2Courses",
+   "name": "unknownTemplate",
    "raw": {
     "schemaVersion": 1,
-    "template": "courses",
+    "template": "fancy",
     "layout": {
      "tileSize": "auto",
      "tileStyle": "auto",
@@ -2902,7 +6397,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -2911,7 +6410,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -2920,7 +6423,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -2929,7 +6436,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -2938,7 +6449,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -2957,7 +6472,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -2981,6 +6497,29 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
    "profile": "tabletLandscape",
@@ -3078,7 +6617,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -3087,7 +6630,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -3096,7 +6643,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -3105,7 +6656,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -3114,7 +6669,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -3135,7 +6694,8 @@
      "favorites": [
       "p3"
      ],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -3162,9 +6722,32 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
-   "expectedVersion": "ef5ad2e2c5bb7858"
+   "expectedVersion": "932709f8222a8b8e"
   },
   {
    "name": "machineResetsBarToAuto",
@@ -3210,7 +6793,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletLandscape": {
       "template": null,
@@ -3219,7 +6806,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "tabletPortrait": {
       "template": null,
@@ -3228,7 +6819,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadPortrait": {
       "template": null,
@@ -3237,7 +6832,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      },
      "ipadLandscape": {
       "template": null,
@@ -3246,7 +6845,11 @@
       "density": null,
       "billPosition": null,
       "categoryBar": null,
-      "columns": null
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
      }
     },
     "actionBar": {
@@ -3265,7 +6868,8 @@
       5
      ],
      "favorites": [],
-     "repeatRound": true
+     "repeatRound": true,
+     "openTabs": false
     },
     "menu": {
      "categoryOrder": [],
@@ -3289,9 +6893,411 @@
     "tables": {
      "mapStyle": "auto",
      "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
     }
    },
-   "expectedVersion": "614ff69ca827f46f"
+   "expectedVersion": "0cd46fa96519f530"
+  },
+  {
+   "name": "machineReturnsToBase",
+   "layers": [
+    {
+     "profiles": {
+      "handheld": {
+       "tileSize": "l",
+       "template": "mobile"
+      }
+     },
+     "colors": {
+      "accent": "#1663D6"
+     }
+    },
+    {},
+    {},
+    {
+     "profiles": {
+      "handheld": {
+       "tileSize": "base",
+       "template": "base"
+      }
+     },
+     "colors": {
+      "accent": "brand"
+     }
+    }
+   ],
+   "expected": {
+    "schemaVersion": 1,
+    "template": "clean",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": "base",
+      "tileSize": "base",
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true,
+     "openTabs": false
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": "brand",
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "right",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": false,
+     "prefix": ""
+    }
+   },
+   "expectedVersion": "0caf9803320a1757"
+  },
+  {
+   "name": "profileBarOverParent",
+   "layers": [
+    {
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [
+         {
+          "action": "send"
+         },
+         {
+          "action": "bill"
+         }
+        ]
+       }
+      }
+     }
+    },
+    {
+     "courses": {
+      "fireGapMinutes": 10
+     },
+     "night": {
+      "hand": "left"
+     },
+     "orderNumber": {
+      "atOpen": true,
+      "prefix": "B"
+     }
+    },
+    {},
+    {
+     "profiles": {
+      "handheld": {
+       "actionBar": {
+        "table": [],
+        "quick": [
+         {
+          "action": "pay"
+         }
+        ]
+       }
+      }
+     },
+     "bar": {
+      "openTabs": true
+     }
+    }
+   ],
+   "expected": {
+    "schemaVersion": 1,
+    "template": "clean",
+    "layout": {
+     "tileSize": "auto",
+     "tileStyle": "auto",
+     "density": "comfortable",
+     "billPosition": "auto",
+     "categoryBar": "auto",
+     "images": "auto",
+     "columns": 0,
+     "textSize": "normal"
+    },
+    "profiles": {
+     "handheld": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": [],
+       "quick": [
+        {
+         "action": "pay",
+         "label": ""
+        }
+       ]
+      }
+     },
+     "tabletLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "tabletPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadPortrait": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     },
+     "ipadLandscape": {
+      "template": null,
+      "tileSize": null,
+      "tileStyle": null,
+      "density": null,
+      "billPosition": null,
+      "categoryBar": null,
+      "columns": null,
+      "actionBar": {
+       "table": null,
+       "quick": null
+      }
+     }
+    },
+    "actionBar": {
+     "table": [],
+     "quick": []
+    },
+    "quickCash": {
+     "notes": [],
+     "count": 3
+    },
+    "bar": {
+     "quantityPresets": [
+      1,
+      2,
+      3,
+      5
+     ],
+     "favorites": [],
+     "repeatRound": true,
+     "openTabs": true
+    },
+    "menu": {
+     "categoryOrder": [],
+     "productOrder": [],
+     "hiddenCategories": []
+    },
+    "colors": {
+     "accent": null,
+     "mode": "auto"
+    },
+    "texts": {},
+    "fields": {
+     "customerName": "auto",
+     "serviceType": "auto",
+     "guests": "auto"
+    },
+    "behavior": {
+     "summary": "auto",
+     "lineStatus": true
+    },
+    "tables": {
+     "mapStyle": "auto",
+     "showChairs": "auto"
+    },
+    "courses": {
+     "fireGapMinutes": 10,
+     "autoFireFirst": true
+    },
+    "payDock": {
+     "savings": true
+    },
+    "night": {
+     "hand": "left",
+     "quickAddons": true
+    },
+    "visual": {
+     "descriptionLines": 2,
+     "dietary": "auto"
+    },
+    "professional": {
+     "keyboard": false,
+     "fKeys": false
+    },
+    "orderNumber": {
+     "atOpen": true,
+     "prefix": "B"
+    }
+   },
+   "expectedVersion": "e65480fc4eb5de64"
   }
  ],
  "quickCash": [
@@ -3512,18 +7518,6 @@
  ],
  "validation": [
   {
-   "name": "phase2Template",
-   "layer": {
-    "template": "courses"
-   },
-   "errors": [
-    {
-     "path": "template",
-     "code": "template_not_available"
-    }
-   ]
-  },
-  {
    "name": "unknownTemplate",
    "layer": {
     "template": "fancy"
@@ -3601,7 +7595,7 @@
        "action": "send"
       },
       {
-       "action": "fastCash"
+       "action": "hold"
       }
      ]
     }
@@ -3774,6 +7768,349 @@
     "colors": {
      "accent": "#1663D6",
      "mode": "dark"
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "phase2TemplatesAccepted",
+   "layer": {
+    "template": "courses",
+    "profiles": {
+     "handheld": {
+      "template": "visual"
+     },
+     "tabletLandscape": {
+      "template": "payDock"
+     },
+     "tabletPortrait": {
+      "template": "night"
+     }
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "tableTendersAndFire",
+   "layer": {
+    "actionBar": {
+     "table": [
+      {
+       "action": "send"
+      },
+      {
+       "action": "fire"
+      },
+      {
+       "action": "cashWithChange"
+      },
+      {
+       "action": "cashNotes"
+      },
+      {
+       "action": "fastCash"
+      },
+      {
+       "action": "fastCard"
+      }
+     ]
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "quickRepeatRound",
+   "layer": {
+    "actionBar": {
+     "quick": [
+      {
+       "action": "repeatRound"
+      },
+      {
+       "action": "pay"
+      }
+     ]
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "fireOnQuick",
+   "layer": {
+    "actionBar": {
+     "quick": [
+      {
+       "action": "fire"
+      },
+      {
+       "action": "pay"
+      }
+     ]
+    }
+   },
+   "errors": [
+    {
+     "path": "actionBar.quick[0].action",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "profileBarWithoutSend",
+   "layer": {
+    "profiles": {
+     "handheld": {
+      "actionBar": {
+       "table": [
+        {
+         "action": "bill"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "errors": [
+    {
+     "path": "profiles.handheld.actionBar.table",
+     "code": "action_bar_missing_send"
+    }
+   ]
+  },
+  {
+   "name": "profileBarDuplicate",
+   "layer": {
+    "profiles": {
+     "tabletPortrait": {
+      "actionBar": {
+       "quick": [
+        {
+         "action": "pay"
+        },
+        {
+         "action": "pay"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "errors": [
+    {
+     "path": "profiles.tabletPortrait.actionBar.quick[1]",
+     "code": "duplicate"
+    }
+   ]
+  },
+  {
+   "name": "profileBarsBaseAndAuto",
+   "layer": {
+    "profiles": {
+     "handheld": {
+      "actionBar": {
+       "table": "base",
+       "quick": []
+      }
+     }
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "asBaseInProfile",
+   "layer": {
+    "profiles": {
+     "handheld": {
+      "template": "base",
+      "tileSize": "base",
+      "tileStyle": "base",
+      "density": "base",
+      "billPosition": "base",
+      "categoryBar": "base",
+      "columns": "base"
+     }
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "asBaseOutsideProfile",
+   "layer": {
+    "layout": {
+     "density": "base"
+    }
+   },
+   "errors": [
+    {
+     "path": "layout.density",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "brandAccent",
+   "layer": {
+    "colors": {
+     "accent": "brand"
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "templateOwnValuesNotChosen",
+   "layer": {
+    "layout": {
+     "tileStyle": "dish",
+     "billPosition": "drawer"
+    }
+   },
+   "errors": [
+    {
+     "path": "layout.billPosition",
+     "code": "invalid_value"
+    },
+    {
+     "path": "layout.tileStyle",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "fireGapOff",
+   "layer": {
+    "courses": {
+     "fireGapMinutes": 0,
+     "autoFireFirst": false
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "fireGapTooShort",
+   "layer": {
+    "courses": {
+     "fireGapMinutes": 3
+    }
+   },
+   "errors": [
+    {
+     "path": "courses.fireGapMinutes",
+     "code": "out_of_range"
+    }
+   ]
+  },
+  {
+   "name": "fireGapTooLong",
+   "layer": {
+    "courses": {
+     "fireGapMinutes": 61
+    }
+   },
+   "errors": [
+    {
+     "path": "courses.fireGapMinutes",
+     "code": "out_of_range"
+    }
+   ]
+  },
+  {
+   "name": "nightHand",
+   "layer": {
+    "night": {
+     "hand": "middle"
+    }
+   },
+   "errors": [
+    {
+     "path": "night.hand",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "descriptionLines",
+   "layer": {
+    "visual": {
+     "descriptionLines": 3,
+     "dietary": "always"
+    }
+   },
+   "errors": [
+    {
+     "path": "visual.descriptionLines",
+     "code": "invalid_value"
+    },
+    {
+     "path": "visual.dietary",
+     "code": "invalid_value"
+    }
+   ]
+  },
+  {
+   "name": "openTabsType",
+   "layer": {
+    "bar": {
+     "openTabs": "yes"
+    }
+   },
+   "errors": [
+    {
+     "path": "bar.openTabs",
+     "code": "invalid_type"
+    }
+   ]
+  },
+  {
+   "name": "orderPrefixDash",
+   "layer": {
+    "orderNumber": {
+     "atOpen": true,
+     "prefix": "2-"
+    }
+   },
+   "errors": [
+    {
+     "path": "orderNumber.prefix",
+     "code": "invalid_format"
+    }
+   ]
+  },
+  {
+   "name": "orderPrefixLong",
+   "layer": {
+    "orderNumber": {
+     "prefix": "ABCDE"
+    }
+   },
+   "errors": [
+    {
+     "path": "orderNumber.prefix",
+     "code": "too_long"
+    }
+   ]
+  },
+  {
+   "name": "orderPrefixHebrew",
+   "layer": {
+    "orderNumber": {
+     "atOpen": true,
+     "prefix": "ב2"
+    }
+   },
+   "errors": []
+  },
+  {
+   "name": "phase2Sections",
+   "layer": {
+    "payDock": {
+     "savings": false
+    },
+    "professional": {
+     "keyboard": true,
+     "fKeys": true
+    },
+    "bar": {
+     "openTabs": true
     }
    },
    "errors": []

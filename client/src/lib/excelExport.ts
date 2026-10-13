@@ -18,6 +18,21 @@ export interface ExcelColumn {
   kind?: ExcelCellKind;
   /** Character width; defaults by kind. */
   width?: number;
+  /**
+   * The column's report key (lib/reportColumns.ts). A sheet whose columns carry keys can be
+   * cut down to the export's chosen columns (`selectSheetColumns`); one without stays whole.
+   */
+  key?: string;
+}
+
+/** Options for the whole workbook. */
+export interface ExcelWorkbookOptions {
+  /**
+   * The report's header lines (title, business and shop, range, the chosen filters,
+   * generated at — lib/reportExport.ts), written on top of EVERY sheet, before the sheet's
+   * own `heading` lines.
+   */
+  heading?: string[];
 }
 
 export type ExcelValue = string | number | null | undefined;
@@ -128,18 +143,54 @@ export function uniqueSheetName(name: string, used: Set<string>): string {
   return candidate;
 }
 
-export async function buildWorkbook(sheets: ExcelSheet[]): Promise<ArrayBuffer> {
+/**
+ * The sheet cut down to the chosen columns, in the chosen order (`keys` are column keys).
+ * Unkeyed columns stay, in front. The totals row moves with its columns, and keeps its
+ * label ("סה״כ") in its first cell even when the label's own column was left out.
+ * `null` keys, or a sheet without keyed columns: the sheet as it is.
+ */
+export function selectSheetColumns(sheet: ExcelSheet, keys: readonly string[] | null | undefined): ExcelSheet {
+  if (!keys || !sheet.columns.some((c) => c.key)) return sheet;
+  const unkeyed = sheet.columns.map((c, i) => (c.key ? -1 : i)).filter((i) => i >= 0);
+  const keyed = keys
+    .map((k) => sheet.columns.findIndex((c) => c.key === k))
+    .filter((i, n, all) => i >= 0 && all.indexOf(i) === n);
+  const pick = [...unkeyed, ...keyed];
+  const project = (values: ExcelValue[]) => pick.map((i) => values[i] ?? null);
+  let totals = sheet.totals ? project(sheet.totals) : undefined;
+  const label = sheet.totals?.[0];
+  if (totals && typeof label === 'string' && label && !totals.includes(label)) {
+    const firstText = pick.findIndex((i) => (sheet.columns[i].kind ?? 'text') === 'text');
+    const at = firstText >= 0 && (totals[firstText] === null || totals[firstText] === '') ? firstText : -1;
+    if (at >= 0) totals = totals.map((v, i) => (i === at ? label : v));
+    else if (totals.length > 0 && (totals[0] === null || totals[0] === '')) totals = [label, ...totals.slice(1)];
+  }
+  return {
+    ...sheet,
+    columns: pick.map((i) => sheet.columns[i]),
+    rows: sheet.rows.map(project),
+    totals,
+  };
+}
+
+/** Each sheet's heading lines: the workbook's (every sheet), then the sheet's own. */
+export function sheetHeading(sheet: ExcelSheet, options?: ExcelWorkbookOptions): string[] {
+  return [...(options?.heading ?? []), ...(sheet.heading ?? [])];
+}
+
+export async function buildWorkbook(sheets: ExcelSheet[], options?: ExcelWorkbookOptions): Promise<ArrayBuffer> {
   const ExcelJS = (await import('exceljs')).default;
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
 
   const used = new Set<string>();
   for (const sheet of sheets) {
+    const heading = sheetHeading(sheet, options);
     const ws = wb.addWorksheet(uniqueSheetName(sheet.name, used), {
-      views: [{ rightToLeft: true, state: 'frozen', ySplit: (sheet.heading?.length ?? 0) + 1 }],
+      views: [{ rightToLeft: true, state: 'frozen', ySplit: heading.length + 1 }],
     });
 
-    for (const line of sheet.heading ?? []) {
+    for (const line of heading) {
       const row = ws.addRow([line]);
       row.font = { bold: row.number === 1, size: row.number === 1 ? 13 : 10 };
     }
@@ -204,11 +255,18 @@ export function downloadBlob(data: BlobPart, fileName: string, type: string): vo
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function downloadExcel(sheets: ExcelSheet[], fileName: string): Promise<void> {
-  const buffer = await buildWorkbook(sheets);
+export async function downloadExcel(
+  sheets: ExcelSheet[],
+  fileName: string,
+  options?: ExcelWorkbookOptions & {
+    /** The name as given (lib/reportExport.ts `reportFileName`), spaces kept — not `safeFileName`. */
+    readableName?: boolean;
+  },
+): Promise<void> {
+  const buffer = await buildWorkbook(sheets, options);
   downloadBlob(
     buffer,
-    `${safeFileName(fileName)}.xlsx`,
+    `${options?.readableName ? fileName : safeFileName(fileName)}.xlsx`,
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   );
 }

@@ -179,6 +179,7 @@ def _preferences_out(prefs: dict) -> UserPreferencesResponse:
         home_pages=list(user_preferences.HOME_PAGES),
         simple_mode=prefs[user_preferences.SIMPLE_MODE_KEY],
         simple_mode_default=prefs["simpleModeDefault"],
+        report_columns=prefs[user_preferences.REPORT_COLUMNS_KEY],
     )
 
 

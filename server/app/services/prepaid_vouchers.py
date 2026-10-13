@@ -1343,7 +1343,11 @@ def batch_events(db: Session, user: User, tenant_id, batch_id) -> Dict[str, Any]
 
 def batch_out(
     db: Session, batch: PrepaidVoucherBatch, stats: Optional[Dict[str, int]] = None, user: Optional[User] = None,
+    *, pauses=None,
 ) -> Dict[str, Any]:
+    """[pauses]: the tenant's open pauses (`prepaid_voucher_controls.open_pauses`) when a list read them once."""
+    from app.services.prepaid_voucher_controls import switch_state
+
     if stats is None:
         stats = _stats(db, [batch.id]).get(str(batch.id))
     company = db.query(Company.name).filter(Company.id == batch.company_id).scalar()
@@ -1417,6 +1421,9 @@ def batch_out(
         "testMode": bool(getattr(batch, "test_mode", False)),
         "testModeSince": _iso(getattr(batch, "test_mode_since", None)),
         "testModeBy": getattr(batch, "test_mode_by", None),
+        # "סדרה פעילה" (app/services/prepaid_voucher_controls.py): `active` — no pause of its own is open;
+        # `inactive` — that pause (reason, since, by); `pausedBy` — its event / production / type paused.
+        **switch_state(db, batch, pauses=pauses),
         # Kind and terms (docs/SPEC_VOUCHER_PRODUCTION.md §7).
         **terms_out(batch),
     }
@@ -1548,7 +1555,10 @@ def list_batches(db: Session, user: User, tenant_id, *, include_cancelled: bool 
         q = q.filter(PrepaidVoucherBatch.status == "active")
     batches = [b for b in q.order_by(PrepaidVoucherBatch.created_at.desc()).all() if may_manage(db, user, tenant_id, b)]
     stats = _stats(db, [b.id for b in batches])
-    return [batch_out(db, b, stats.get(str(b.id)), user) for b in batches]
+    from app.services.prepaid_voucher_controls import open_pauses
+
+    pauses = open_pauses(db, tenant_id)
+    return [batch_out(db, b, stats.get(str(b.id)), user, pauses=pauses) for b in batches]
 
 
 def _remaining_out(batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> List[Dict[str, Any]]:
@@ -1566,7 +1576,10 @@ def _remaining_out(batch: PrepaidVoucherBatch, voucher: PrepaidVoucher) -> List[
     ]
 
 
-def _redemption_out(r: PrepaidVoucherRedemption, machine_names: Dict[str, str]) -> Dict[str, Any]:
+def _redemption_out(
+    r: PrepaidVoucherRedemption, machine_names: Dict[str, str], shop_names: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    shop_names = shop_names or {}
     return {
         "id": str(r.id),
         "redeemedAt": _iso(r.redeemed_at),
@@ -1595,6 +1608,15 @@ def _redemption_out(r: PrepaidVoucherRedemption, machine_names: Dict[str, str]) 
         "productionName": getattr(r, "production_name", None),
         "offline": bool(getattr(r, "offline", False)),
         "approvedBy": getattr(r, "approved_by_pos_user_name", None),
+        # "מימוש ידני מהענן" (app/services/prepaid_voucher_manual.py): the "ידני" tag, who, why, what was forced.
+        "source": getattr(r, "source", None),
+        "manual": bool(getattr(r, "manual", False)),
+        "manualReason": getattr(r, "manual_reason", None),
+        "manualBy": getattr(r, "manual_by_user_name", None),
+        "manualOverride": list(getattr(r, "manual_override", None) or []),
+        "reverseReason": getattr(r, "reverse_reason", None),
+        "reversedBy": getattr(r, "reversed_by_user_name", None),
+        "shopName": shop_names.get(str(r.shop_id)) if r.shop_id else None,
     }
 
 
@@ -1631,7 +1653,9 @@ def voucher_out(
             if ids
             else {}
         )
-        out["redemptions"] = [_redemption_out(r, names) for r in voucher.redemptions]
+        sids = list({r.shop_id for r in voucher.redemptions if r.shop_id})
+        shops = {str(i): n for i, n in db.query(Shop.id, Shop.name).filter(Shop.id.in_(sids))} if sids else {}
+        out["redemptions"] = [_redemption_out(r, names, shops) for r in voucher.redemptions]
     return out
 
 

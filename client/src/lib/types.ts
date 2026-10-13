@@ -311,7 +311,7 @@ export interface PosSettingsV1 {
   payVoucherManualEnabled?: boolean;
   /**
    * "דרך מימוש שובר" (lib/voucherRedeemFlow.ts): how the till enters a voucher's redemption —
-   * items first (unset: today's flow), the voucher first, or both. In `effective` always resolved.
+   * items first, the voucher first, or both (unset: both). In `effective` always resolved.
    */
   voucherRedeemFlow?: VoucherRedeemFlow;
   /** "פריטים זכאים שאינם זמינים": shown blocked with the reason (unset = true) or hidden. */
@@ -338,11 +338,52 @@ export interface PosSettingsV1 {
    */
   voucherShowEntitlement?: VoucherOnOff;
   /**
+   * "מימוש אוטומטי בסריקת שובר": on (unset — a voucher scanned with items already in the cart is
+   * applied at once to the matching lines, no redeem sheet, when no choice is needed) or off (the
+   * redeem sheet opens, as before). In `effective` always resolved.
+   */
+  voucherAutoApply?: VoucherOnOff;
+  /**
+   * "מסך הצלחה במימוש שובר": always (unset — a large green screen after every sale that redeemed a
+   * voucher), auto_close (only when the voucher closed the sale by itself) or off. In `effective`
+   * always resolved.
+   */
+  voucherSuccessScreen?: VoucherSuccessScreen;
+  /** "משך מסך ההצלחה (שניות)": an integer 1–10 (unset — 3). In `effective` always resolved. */
+  voucherSuccessSeconds?: number;
+  /**
+   * "סגירת מסך 'שובר מומש'": auto (unset — by itself after the seconds above, or on a touch) or confirm
+   * (until the cashier presses "אישור"; a new scan counts as the press). In `effective` always resolved.
+   */
+  voucherSuccessDismiss?: VoucherSuccessDismiss;
+  /**
    * "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": on (unset — a strong sound once when a
    * voucher is accepted / refused) or off. In `effective` always resolved.
    */
   voucherSoundApprove?: VoucherOnOff;
   voucherSoundReject?: VoucherOnOff;
+  /**
+   * The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0; lib/voucherTillSettings.ts).
+   * In `effective` always resolved.
+   * "מצב מהיר: מימוש בלי בחירה כשהשובר ברור": off, station (unset — at the voucher station only) or all.
+   */
+  voucherFastMode?: VoucherFastMode;
+  /** "סגירה לבד במצב מהיר": on (unset) or off. */
+  voucherFastAutoClose?: VoucherOnOff;
+  /** "מצלמה בעמדת שובר": off, always or tap (unset). */
+  voucherStationCamera?: VoucherStationCamera;
+  /** "איזו מצלמה בעמדת שובר": back (unset) or front. */
+  voucherStationCameraFacing?: VoucherStationCameraFacing;
+  /** "רטט במימוש שובר": off, approve, reject or both (unset) — a device with a vibrator only. */
+  voucherVibrate?: VoucherVibrate;
+  /** "הגברת צליל שובר לעוצמה מקסימלית": on (unset) or off. */
+  voucherSoundBoost?: VoucherOnOff;
+  /** "מעבר מעמדת שובר לקטלוג רגיל": off, manager (unset — with a manager's code) or free. */
+  voucherStationCatalogSwitch?: VoucherStationCatalogSwitch;
+  /** "כותרת במסך עמדת שובר": logo (unset), text, both or none. */
+  voucherStationHeader?: VoucherStationHeader;
+  /** "כיתוב בראש עמדת שובר": up to 40 characters (unset — "עמדת מימוש שוברים"). */
+  voucherStationTitle?: string;
   /**
    * The most instalments the `card` option's picker offers, 2–36. Unset = the card
    * terminal decides.
@@ -431,8 +472,22 @@ export type VoucherRedeemFlow = 'items_first' | 'voucher_first' | 'both';
 /** "בירור יתרת שובר" — server/app/services/voucher_balance_check.py. */
 export type VoucherBalanceCheckMode = 'auto' | 'on' | 'off';
 
-/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` / `voucherShowEntitlement` / `voucherSound*` — server/app/services/voucher_station_settings.py. */
+/** `voucherAutoClose` / `voucherStation` / `voucherStationPaidItems` / `voucherShowEntitlement` / `voucherAutoApply` / `voucherSound*` — server/app/services/voucher_station_settings.py. */
 export type VoucherOnOff = 'on' | 'off';
+
+/** `voucherSuccessScreen` — server/app/services/voucher_station_settings.py. */
+export type VoucherSuccessScreen = 'always' | 'auto_close' | 'off';
+
+/** `voucherSuccessDismiss` (P:/specs/voucher-fast-mode.md §0 item 11) — server/app/services/voucher_station_settings.py. */
+export type VoucherSuccessDismiss = 'auto' | 'confirm';
+
+/** The voucher fast mode's choices (P:/specs/voucher-fast-mode.md §0) — server/app/services/voucher_station_settings.py. */
+export type VoucherFastMode = 'off' | 'station' | 'all';
+export type VoucherStationCamera = 'off' | 'always' | 'tap';
+export type VoucherStationCameraFacing = 'back' | 'front';
+export type VoucherVibrate = 'off' | 'approve' | 'reject' | 'both';
+export type VoucherStationCatalogSwitch = 'off' | 'manager' | 'free';
+export type VoucherStationHeader = 'logo' | 'text' | 'both' | 'none';
 
 /** Switch keys whose PATCH accepts `null` (= unset this layer, inherit again). */
 export type ResettableSwitchKey =
@@ -479,8 +534,21 @@ export type PosSettingsPatch = Partial<
     | 'voucherStation'
     | 'voucherStationPaidItems'
     | 'voucherShowEntitlement'
+    | 'voucherAutoApply'
+    | 'voucherSuccessScreen'
+    | 'voucherSuccessSeconds'
+    | 'voucherSuccessDismiss'
     | 'voucherSoundApprove'
     | 'voucherSoundReject'
+    | 'voucherFastMode'
+    | 'voucherFastAutoClose'
+    | 'voucherStationCamera'
+    | 'voucherStationCameraFacing'
+    | 'voucherVibrate'
+    | 'voucherSoundBoost'
+    | 'voucherStationCatalogSwitch'
+    | 'voucherStationHeader'
+    | 'voucherStationTitle'
     | ResettableSwitchKey
     | PaymentIntegrationSettingKey
   >
@@ -504,8 +572,22 @@ export type PosSettingsPatch = Partial<
   voucherStation?: VoucherOnOff | null;
   voucherStationPaidItems?: VoucherOnOff | null;
   voucherShowEntitlement?: VoucherOnOff | null;
+  voucherAutoApply?: VoucherOnOff | null;
+  voucherSuccessScreen?: VoucherSuccessScreen | null;
+  voucherSuccessSeconds?: number | null;
+  voucherSuccessDismiss?: VoucherSuccessDismiss | null;
   voucherSoundApprove?: VoucherOnOff | null;
   voucherSoundReject?: VoucherOnOff | null;
+  /** `null` = inherit the fast mode's settings from the level above again (a blank title too). */
+  voucherFastMode?: VoucherFastMode | null;
+  voucherFastAutoClose?: VoucherOnOff | null;
+  voucherStationCamera?: VoucherStationCamera | null;
+  voucherStationCameraFacing?: VoucherStationCameraFacing | null;
+  voucherVibrate?: VoucherVibrate | null;
+  voucherSoundBoost?: VoucherOnOff | null;
+  voucherStationCatalogSwitch?: VoucherStationCatalogSwitch | null;
+  voucherStationHeader?: VoucherStationHeader | null;
+  voucherStationTitle?: string | null;
   brandLogoUrl?: string | null;
   brandHeroUrl?: string | null;
   brandPrimaryColor?: string | null;
@@ -709,7 +791,7 @@ export interface PosMachine {
    * `order_status_board` (the "מוכן / לא מוכן" board). Null where the server did not compute
    * it. `kioskEnabled` false: a kiosk switched off, working as a till.
    */
-  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | null;
+  deviceRole?: 'till' | 'kiosk' | 'kds' | 'order_status_board' | 'customer_display' | 'local_server' | null;
   kioskEnabled?: boolean | null;
   /**
    * False for a display device (a KDS / the board): not a till, not an accounting system —
@@ -803,6 +885,21 @@ export interface PosMachine {
   pendingAsOf?: string | null;
   /** Hardware serial the till reports on its heartbeat (or at pairing). */
   serialNumber?: string | null;
+  /** Where the serial came from: ftpos | sunmi | kozen | build | ro.serialno (app/services/device_identity.py). */
+  serialSource?: string | null;
+  /** The app's version as the device last reported it ("0.1.248+b6e07db-device"); null = never said. */
+  appVersion?: string | null;
+  /** The address its last heartbeat came from, and its own LAN address. */
+  lastIp?: string | null;
+  lanIp?: string | null;
+  /** Its SIMs as the last heartbeat said (carrier, phone…), or null. */
+  cellular?: { sims?: Array<{ slot?: number; carrier?: string | null; phoneNumber?: string | null } | null> | null } | null;
+  /** Its shop is in "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md). */
+  trainingMode?: boolean;
+  /** Its shop is switched off; null without a shop. */
+  shopActive?: boolean | null;
+  /** Locked from "שליטה מרחוק" ("נעולה"). */
+  remoteLocked?: boolean;
   /**
    * 0..100, or `null` when the device could not read the battery at all.
    * `null` is NOT zero — render it as unknown, never as a flat battery.
@@ -1602,6 +1699,12 @@ export interface Transaction {
   totalDiscount?: number;
   documentDiscount?: number;
   whtDeduction?: number;
+  /**
+   * The tip, apart from `totalAmount` (never a tender leg), and the tender it went on
+   * (`cash` / `card`; the list's `tipPaymentMethod` is new, P:\specs\reports-upgrade.md §4.2).
+   */
+  tipAmount?: number | string | null;
+  tipPaymentMethod?: string | null;
   customerId?: string;
   cashierId?: string;
   branchId?: string;
@@ -2725,6 +2828,10 @@ export interface CashierSalesRow {
   /** "שוברי הפקה": what production vouchers paid (absent from an older server: 0). */
   productionVoucherNet?: number;
   tips: number;
+  /** `tips` by the tip's tender (P:\specs\reports-upgrade.md §4.2; absent from an older server). */
+  tipsCash?: number;
+  tipsCard?: number;
+  tipsOther?: number;
 }
 
 export interface CashierSalesReport {
@@ -2762,6 +2869,43 @@ export interface TipsByCashierRow {
  * Distinct from the per-shop `TipsReport`, which answers "who is owed what"
  * under the shop's tip-distribution policy.
  */
+/** One local day, till or shift of `GET /reports/tips` (§4.2); each view sums to the report's totals. */
+export interface TipsSliceFigures {
+  tipsTotal: number;
+  tipsCash: number;
+  tipsCard: number;
+  tipsOther: number;
+  tippedDocumentCount: number;
+  salesNet: number;
+}
+
+export interface TipsByDayRow extends TipsSliceFigures {
+  day: string;
+}
+
+export interface TipsByMachineRow extends TipsSliceFigures {
+  machineId?: string | null;
+  machineName?: string | null;
+  posNumber?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+}
+
+export interface TipsByShiftRow extends TipsSliceFigures {
+  /** Null: documents with no shift. */
+  shiftId?: string | null;
+  businessDate?: string | null;
+  sequenceNumber?: number | null;
+  machineId?: string | null;
+  machineName?: string | null;
+  posNumber?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  openedByName?: string | null;
+}
+
 export interface TipsRangeReport {
   window: ReportWindowOut;
   generatedAt: string;
@@ -2771,6 +2915,14 @@ export interface TipsRangeReport {
   tipsOther: number;
   byMethod: TipMethodRow[];
   byCashier: TipsByCashierRow[];
+  /** §4.2, absent from an older server. */
+  tippedDocumentCount?: number;
+  salesNet?: number;
+  byDay?: TipsByDayRow[];
+  byMachine?: TipsByMachineRow[];
+  /** Up to 5,000 rows; `byShiftTruncated` when cut. */
+  byShift?: TipsByShiftRow[];
+  byShiftTruncated?: boolean;
 }
 
 // ── Day summary (סיכום יומי) ────────────────────────────────────────────────
@@ -2838,6 +2990,9 @@ export interface DaySummaryContributor {
   cashSales: number;
   cardSales: number;
   tips: number;
+  /** `tips` split (§4.2; absent from an older server). */
+  cashTips?: number;
+  cardTips?: number;
   transactionsCount: number;
   expectedCash: number;
   actualCash: number | null;
@@ -3008,6 +3163,10 @@ export interface SalesByAreaRow {
   /** "שוברי הפקה". */
   productionVoucher?: Money;
   tips: Money;
+  /** `tips` by the tip's tender (§4.2; absent from an older server). */
+  tipsCash?: Money;
+  tipsCard?: Money;
+  tipsOther?: Money;
 }
 
 export type SalesByAreaTotals = Omit<SalesByAreaRow, 'areaId' | 'areaName' | 'archived'> &
@@ -3066,6 +3225,11 @@ export interface TillParameter {
   valueType: TillParameterValueType;
   /** Only for `enum`; null otherwise. */
   enumOptions?: string[] | null;
+  /**
+   * A built-in enum whose options are codes the till reads (`sellAllTab`: first / last / hidden):
+   * option → the Hebrew shown for it. null = the options are shown as they are.
+   */
+  enumLabels?: Record<string, string> | null;
   /** null = no default: a till with no value at any level does not get the key. */
   defaultValue?: TillParameterScalar | null;
   isActive: boolean;

@@ -27,6 +27,8 @@ import {
   Plus,
   FileSpreadsheet,
   Printer,
+  CheckCheck,
+  HandCoins,
   TicketCheck,
   X,
 } from 'lucide-react';
@@ -67,7 +69,8 @@ import {
   type PrepaidDuplicateRef,
   type SubmitPhase,
 } from '@/lib/prepaidBatchSubmit';
-import { changedFields, touchesContents } from '@/lib/prepaidBatchEdit';
+import { changedFields, dateFieldValue, editValidity, touchesContents } from '@/lib/prepaidBatchEdit';
+import { dayBoundIso } from '@/lib/prepaidBatchDuplicate';
 import { useBatchEditSave } from '@/components/dashboard/prepaid-vouchers/batch-edit';
 import { BulkEditDialog } from '@/components/dashboard/prepaid-vouchers/batch-bulk-edit';
 import { MAX_BULK_BATCHES, allState, selectedShown, toggleAll, toggleOne } from '@/lib/prepaidBatchBulkEdit';
@@ -75,6 +78,7 @@ import { voucherFieldsFor } from '@/lib/voucherFields';
 import { EventPicker, PrepaidProductionsView, ProductionPicker } from '@/components/dashboard/prepaid-vouchers/productions';
 import { OfflineAssignmentPanel } from '@/components/dashboard/prepaid-vouchers/offline-assignment';
 import { BatchTestModePanel, TestModeTag } from '@/components/dashboard/prepaid-vouchers/batch-test-mode';
+import { BatchActiveNotices, BatchActiveSwitch, InactiveTag, batchIsActive } from '@/components/dashboard/prepaid-vouchers/batch-active';
 import {
   BatchRowMenu,
   BatchTitle,
@@ -159,6 +163,12 @@ import { PrepaidBatchReportView } from '@/components/dashboard/prepaid-vouchers/
 import { VoucherDistributionView } from '@/components/dashboard/prepaid-vouchers/distribution/distribution-view';
 import { VoucherNote, VoucherNoteButton } from '@/components/dashboard/prepaid-vouchers/voucher-note';
 import { RedemptionHistory } from '@/components/dashboard/prepaid-vouchers/redemption-history';
+import {
+  BulkRedeemDialog,
+  ManualRedeemActions,
+  MarkRedeemedDialog,
+  useCanRedeemManually,
+} from '@/components/dashboard/prepaid-vouchers/manual-redeem';
 import { EntityMultiSelect } from '@/components/dashboard/entity-multi-select';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -173,17 +183,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const PAGE_SIZE = 100;
 const LAYOUT_KEY = 'prepaidVouchers.layout';
 
+/** A date to read ("07/10/2026"); a date field takes `dateFieldValue` (lib/prepaidBatchEdit.ts) instead. */
 function day(iso: string | null | undefined): string {
   return isoDate(iso) ? formatDate(iso) : '';
-}
-
-/** `yyyy-mm-dd` from a date input → the start / end of that day, local time, as ISO. */
-function dayBoundIso(value: string, end: boolean): string | null {
-  if (!value) return null;
-  const [y, m, d] = value.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  const at = end ? new Date(y, m - 1, d, 23, 59, 59) : new Date(y, m - 1, d, 0, 0, 0);
-  return at.toISOString();
 }
 
 const STATUS_STYLE: Record<PrepaidVoucherStatus, string> = {
@@ -312,8 +314,9 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const [companyId, setCompanyId] = useState(ed?.companyId ?? '');
   const [shopIds, setShopIds] = useState<string[]>(ed?.shopIds ?? []);
-  const [validFrom, setValidFrom] = useState(ed ? day(ed.validFrom) : '');
-  const [validUntil, setValidUntil] = useState(ed ? day(ed.validUntil) : '');
+  // Days as the date fields read them ("2026-10-07", Israel's day of the stored moment).
+  const [validFrom, setValidFrom] = useState(ed ? dateFieldValue(ed.validFrom) : '');
+  const [validUntil, setValidUntil] = useState(ed ? dateFieldValue(ed.validUntil) : '');
   const [splitAllowed, setSplitAllowed] = useState(ed?.splitAllowed ?? false);
   const issued = ed ? (ed.issuedCount ?? ed.stats.total) : 0;
   const [count, setCount] = useState(ed ? String(issued) : '50');
@@ -528,8 +531,7 @@ function CreateBatchDialog({ open, onOpenChange, onCreated, editing = null }: {
       freeText: freeText.trim() || null,
       logoUrl,
       showItems, showValidity, showCredit, showCode, barcodeType,
-      validFrom: dayBoundIso(validFrom, false),
-      validUntil: dayBoundIso(validUntil, true),
+      ...editValidity(validFrom, validUntil),
       shopIds: shopIds.length ? [...shopIds].sort() : null,
       count: n,
       productionId: productionId || null,
@@ -1201,6 +1203,7 @@ function BatchCard({ b, onOpen, selected, onSelect, onDuplicate, onRename }: {
             {termsText.kind}
           </span>
           {b.testMode ? <TestModeTag /> : null}
+          {!batchIsActive(b) && b.status !== 'cancelled' ? <InactiveTag /> : null}
           <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px]', b.status === 'cancelled' ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {statusKey ? ts(`batchStatuses.${statusKey}`) : t(`batchStatus.${b.status}`)}
           </span>
@@ -1276,11 +1279,13 @@ function LayoutPicker({ layout, onChange }: { layout: PrintLayout; onChange: (l:
   );
 }
 
-function BatchDetail({ batch, onBack, onOpenBatch }: {
+function BatchDetail({ batch, onBack, onOpenBatch, onOpenPauses }: {
   batch: PrepaidVoucherBatch;
   onBack: () => void;
   /** Another batch: the one "שכפול סדרה" made, or the one an audit line names. */
   onOpenBatch: (id: string) => void;
+  /** "בקרה ובדיקות" → "השהיית מימושים": where a pause of its event / production / type is lifted. */
+  onOpenPauses?: () => void;
 }) {
   const t = useTranslations('prepaidVouchers');
   const tk = useTranslations('prepaidVouchers.kinds');
@@ -1311,6 +1316,11 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
   const [offset, setOffset] = useState(0);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<string | null>(null);
+  // "מימוש ידני מהענן": the vouchers ticked for "סמן כמומשו", and "מימוש ידני לפי רשימה".
+  const mayRedeem = useCanRedeemManually();
+  const [picked, setPicked] = useState<string[]>([]);
+  const [markOpen, setMarkOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [view, setView] = useState<'vouchers' | 'groups' | 'report' | 'distribution'>('vouchers');
   const td = useTranslations('voucherDistribution');
   // "ערוך סדרה": the batch's form, opened with its own settings.
@@ -1583,6 +1593,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {!cancelled ? <BatchActiveSwitch batch={batch} onChanged={refresh} /> : null}
           {batch.testMode ? <TestModeTag /> : null}
           <span className={cn('rounded-full px-2 py-0.5 text-[11px]', cancelled ? STATUS_STYLE.cancelled : STATUS_STYLE.active)}>
             {t(`batchStatus.${batch.status}`)}
@@ -1594,6 +1605,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
           <DuplicateBatchButton batch={batch} onCreated={(b) => onOpenBatch(b.id)} className="print:hidden" />
         </div>
       </div>
+      {!cancelled ? <BatchActiveNotices batch={batch} onOpenPauses={onOpenPauses} /> : null}
       {editOpen ? <CreateBatchDialog open editing={batch} onOpenChange={setEditOpen} onCreated={refresh} /> : null}
       {addOpen ? (
         <AddToBatchDialog
@@ -1832,6 +1844,16 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             </Button>
           ) : null}
           <span className="ms-auto text-xs text-muted-foreground">{list.data ? t('count', { n: list.data.total }) : null}</span>
+          {mayRedeem && batch.status !== 'cancelled' ? (
+            <>
+              <Button size="sm" variant="outline" disabled={!picked.length} onClick={() => setMarkOpen(true)}>
+                <CheckCheck className="h-4 w-4" /> {t('manualMarkMany', { n: picked.length })}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+                <HandCoins className="h-4 w-4" /> {t('manualBulk')}
+              </Button>
+            </>
+          ) : null}
           <Button size="sm" variant="outline" onClick={() => void exportVouchers()} disabled={exporting || !list.data?.total}>
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />} {ta('export')}
           </Button>
@@ -1846,6 +1868,12 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             {list.data!.items.map((v) => (
               <li key={v.id} className="space-y-2 px-3 py-2">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
+                  {mayRedeem ? (
+                    <input type="checkbox" aria-label={t('manualPick', { serial: v.serial })}
+                      disabled={v.status !== 'active' && v.status !== 'partially_used'}
+                      checked={picked.includes(v.id)}
+                      onChange={(e) => setPicked(e.target.checked ? [...picked, v.id] : picked.filter((x) => x !== v.id))} />
+                  ) : null}
                   <span className="w-14 font-semibold tabular-nums">#{v.serial}</span>
                   {v.groupNo ? (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] tabular-nums">{t('groupBadge', { g: v.groupNo })}</span>
@@ -1864,6 +1892,7 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
                       })).join(' · ')}
                   </span>
                   <div className="flex gap-1">
+                    <ManualRedeemActions voucher={v} />
                     <VoucherNoteButton voucher={v} onEdit={() => setEditingNote(editingNote === v.id ? null : v.id)} />
                     <Button size="icon-sm" variant="ghost" aria-label={t('history.title')} title={t('history.title')}
                       onClick={() => setOpenHistory(openHistory === v.id ? null : v.id)}>
@@ -1900,6 +1929,10 @@ function BatchDetail({ batch, onBack, onOpenBatch }: {
             ) : null}
           </ul>
         )}
+        {markOpen ? (
+          <MarkRedeemedDialog voucherIds={picked} open={markOpen} onOpenChange={setMarkOpen} onDone={() => setPicked([])} />
+        ) : null}
+        {bulkOpen ? <BulkRedeemDialog batchName={batch.name} open={bulkOpen} onOpenChange={setBulkOpen} /> : null}
         {list.data && list.data.total > PAGE_SIZE ? (
           <div className="flex items-center justify-center gap-2">
             <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
@@ -2143,7 +2176,8 @@ export default function PrepaidVouchersPage() {
       ) : null}
 
       {selected ? (
-        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} onOpenBatch={setSelectedId} />
+        <BatchDetail key={selected.id} batch={selected} onBack={() => setSelectedId(null)} onOpenBatch={setSelectedId}
+          onOpenPauses={() => { setSelectedId(null); setView('extras'); }} />
       ) : view === 'types' ? (
         <PrepaidTypesView />
       ) : view === 'productions' ? (

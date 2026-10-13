@@ -27,7 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # ── The vocabulary ────────────────────────────────────────────────────────────
 
-LAYOUT_TEMPLATE_IDS = ("standard", "guided", "tabs", "landing", "fastfood", "cafe", "combo", "list", "magazine", "wall")
+LAYOUT_TEMPLATE_IDS = ("standard", "guided", "tabs", "landing", "fastfood", "cafe", "combo", "list", "magazine", "wall",
+                       "restaurant_rail")
 LAYOUT_CATALOGS = ("rail", "top", "landing", "list", "shelves", "magazine", "wall")
 LAYOUT_CATEGORY_ICONS = ("photo", "line", "filled", "duotone", "emoji", "none")
 LAYOUT_RAIL_SIZES = ("s", "m", "l")
@@ -46,6 +47,23 @@ LAYOUT_BASKETS = ("bar", "panel", "summary", "fab", "drawer", "receipt")
 LAYOUT_SERVICES = ("cards", "split", "rows", "sheet")
 LAYOUT_NAMES = ("card", "dock", "avatar")
 LAYOUT_REACHES = ("normal", "low")
+# "מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §3, §6): every key additive, its default today's look.
+#: The rail's items: plain (today) or an icon in a circle with the name under it.
+LAYOUT_RAIL_STYLES = ("plain", "circle")
+#: How the chosen circle stands out (circle only): filled, scaled ×1.12, both, or not at all.
+LAYOUT_RAIL_EMPHASES = ("none", "fill", "scale", "fill_scale")
+#: paged — today (catalog.oneCategory decides); continuous — one list with category headings, the rail following.
+LAYOUT_CATALOG_SCROLLS = ("paged", "continuous")
+LAYOUT_ON_OFF = ("on", "off")
+#: The windows' entrance (dish, add-ons, payment method); null — motion.sheet (today).
+LAYOUT_SHEET_MOTIONS = ("slide_up", "fade", "none")
+#: The top bar's buttons, in order; null — today's header.
+LAYOUT_TOP_BAR_ITEMS = ("club", "cancel", "search", "lang")
+LAYOUT_TOP_BAR_MAX = len(LAYOUT_TOP_BAR_ITEMS)
+LAYOUT_HELP_BUTTONS = ("off", "float")
+LAYOUT_DONE_SCREENS = ("classic", "card")
+#: "איך תרצו לשלם?" as today's screen, or a window rising over the basket with a card per method.
+LAYOUT_PAY_METHOD_VIEWS = ("screen", "sheet")
 NAME_AVATARS_MAX = 12
 NAME_AVATAR_MAX = 24
 
@@ -67,6 +85,16 @@ LAYOUT_VOCABULARY: Dict[str, Tuple[Any, ...]] = {
     "service": LAYOUT_SERVICES,
     "name": LAYOUT_NAMES,
     "reach": LAYOUT_REACHES,
+    "railStyle": LAYOUT_RAIL_STYLES,
+    "railEmphasis": LAYOUT_RAIL_EMPHASES,
+    "catalogScroll": LAYOUT_CATALOG_SCROLLS,
+    "railFollow": LAYOUT_ON_OFF,
+    "pricePill": LAYOUT_ON_OFF,
+    "sheetMotion": LAYOUT_SHEET_MOTIONS,
+    "topBar": LAYOUT_TOP_BAR_ITEMS,
+    "helpButton": LAYOUT_HELP_BUTTONS,
+    "doneScreen": LAYOUT_DONE_SCREENS,
+    "payMethodView": LAYOUT_PAY_METHOD_VIEWS,
 }
 
 #: The layout of today (template standard): every key as the kiosk drew it before `layout` existed.
@@ -92,6 +120,16 @@ LAYOUT_DEFAULTS: Dict[str, Any] = {
     "nameAvatars": [],
     "reach": "normal",
     "reachToggle": False,
+    "railStyle": "plain",
+    "railEmphasis": "fill",
+    "catalogScroll": "paged",
+    "railFollow": "on",
+    "pricePill": "off",
+    "sheetMotion": None,
+    "topBar": None,
+    "helpButton": "off",
+    "doneScreen": "classic",
+    "payMethodView": "screen",
 }
 
 #: The keys a template decides (every layout key but the template itself).
@@ -121,10 +159,17 @@ LAYOUT_TEMPLATES: Dict[str, Dict[str, Any]] = {
                             "name": "card", "magazineFeed": True}},
     "wall": {"layout": {"catalog": "wall", "categoryIcons": "emoji", "itemView": "popover", "basket": "receipt", "name": "avatar",
                         "quickAdd": "always"}},
+    # "מסעדה — פס צד": circles on the rail, one continuous menu, price pills, windows rising (§6.4).
+    "restaurant_rail": {"layout": {"catalog": "rail", "categoryIcons": "line", "railStyle": "circle", "railEmphasis": "fill_scale",
+                                   "catalogScroll": "continuous", "railFollow": "on", "card": "tile", "pricePill": "on",
+                                   "itemView": "sheet", "sheetMotion": "slide_up", "topBar": ["club", "cancel", "search"],
+                                   "doneScreen": "card", "payMethodView": "sheet"},
+                        "catalog": {"oneCategory": False}},
 }
 
-#: The templates the clients draw (the dashboard offers only these): all ten since phase 2.
-LAYOUT_TEMPLATES_READY = ("standard", "guided", "tabs", "landing", "fastfood", "cafe", "combo", "list", "magazine", "wall")
+#: The templates the clients draw (the dashboard offers only these): all of them.
+LAYOUT_TEMPLATES_READY = ("standard", "guided", "tabs", "landing", "fastfood", "cafe", "combo", "list", "magazine", "wall",
+                          "restaurant_rail")
 
 #: What an older kiosk (no `layout`) reads: theme.categoryLayout / cartStyle written from the layout.
 LAYOUT_BACK_COMPAT: Dict[str, Dict[str, str]] = {

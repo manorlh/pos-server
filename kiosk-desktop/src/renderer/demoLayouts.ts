@@ -4,6 +4,7 @@
  *   ?layout=standard|guided|tabs|landing|fastfood   the kiosk's `layout.template`
  *   &reach=low                                       the accessible mode (layout.reach)
  *   &toggle=1                                        the ♿ button (layout.reachToggle)
+ *   &topbar=all                                      every top-bar button (layout.topBar; club, search, two languages)
  *   &welcome=top|middle|bottom[&align=center]        "ברוכים הבאים" (attract.welcome)
  *   &rich=0                                          the small menu of before
  *
@@ -25,6 +26,7 @@ export function demoLayoutLayer(q: URLSearchParams): Record<string, unknown> {
   if (t && (LAYOUT_TEMPLATES as string[]).includes(t)) layout.template = t;
   if (q.get('reach') === 'low') layout.reach = 'low';
   if (q.get('toggle') === '1') layout.reachToggle = true;
+  if (q.get('topbar') === 'all') layout.topBar = ['club', 'cancel', 'search', 'lang'];
   if (Object.keys(layout).length > 0) out.layout = layout;
   const w = q.get('welcome');
   if (w === 'top' || w === 'middle' || w === 'bottom') {

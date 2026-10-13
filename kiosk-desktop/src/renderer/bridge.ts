@@ -91,6 +91,12 @@ function demoCheckout(): Record<string, unknown> {
   // `&service=take_away|eat_in`: one service type — never asked, never shown.
   const one = q.get('service');
   if (one === 'take_away' || one === 'eat_in') general.serviceTypes = [one];
+  // `&topbar=all` (with `?layout=restaurant_rail`): every top-bar button — the club on, the search on, two languages.
+  if (q.get('topbar') === 'all') {
+    general.searchEnabled = true;
+    general.languages = ['he', 'en'];
+    out.club = { enabled: true, joinUrl: 'https://example.com/club', title: '', body: '' };
+  }
   if (Object.keys(general).length > 0) out.general = general;
   // `&effects=auto|full|light`: "אפקטים" (motion.effects) — the light profile's cheaper variants.
   const effects = q.get('effects');

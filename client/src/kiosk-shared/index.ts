@@ -27,3 +27,5 @@ export * from './pay-method';
 export * from './use-vouchers';
 // "אפקטים" (`motion.effects`): the web kiosks' render profile — the config's, or the device's (auto).
 export * from './render-profile';
+// "סרגל עליון" (layout.topBar): the club's window, the search and the language on both TypeScript kiosk hosts.
+export * from './top-bar';

@@ -7,7 +7,7 @@
  * add-to-cart motion), pay on the pinpad beside the screen.
  */
 
-import { layoutOf, mealViewOf, productColumns } from '@/lib/kioskLayout';
+import { layoutOf, mealViewOf, payMethodSheet, productColumns } from '@/lib/kioskLayout';
 import { useCallback, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
@@ -32,8 +32,10 @@ import {
   engineMotionSpec,
   engineTransitionSpec,
   kioskMotionEngine,
+  kioskPayMethods,
   kioskRenderProfile,
   pickupLabel,
+  withSheetMotion,
   resolveThemeColors,
   stepMode,
   tickerBandPx,
@@ -55,6 +57,7 @@ import {
   CartScreen,
   ConfirmSheet,
   Flyer,
+  basketTotal,
   KioskBackdrop,
   KioskWallpaper,
   KioskStatusBar,
@@ -81,6 +84,7 @@ import {
 } from './preview-screens';
 import { DetailsPreview, detailsFields } from './preview-entry';
 import { GuidedFrame, LayoutCatalog, LayoutProductSheet, ReachFrame, ReachSheets, ReachToggle } from '@/kiosk-shared/layouts';
+import { PayMethodStep, type KioskLivePayMethod } from '@/kiosk-shared/pay-method';
 import { configuredText, defaultText, kioskTextOf, webTextIn } from '@/lib/kioskTexts';
 import { KioskSwap, screenOrder, screenSwap } from './preview-motion';
 import { AddedToast } from './preview-feedback';
@@ -273,6 +277,8 @@ export function KioskPreview({
   const [cartBump, setCartBump] = useState(0);
   /** The tip chosen on the preview's tip step (shown on its pay screen). */
   const [previewTip, setPreviewTip] = useState(0);
+  // "איך תרצו לשלם?" on the way to the payment (its window over the step before it, or its screen).
+  const [payAsk, setPayAsk] = useState(false);
   /** "נגיש": this customer's ♿ (layout.reachToggle), back as configured on the attract screen. */
   const [reachToggled, setReachToggled] = useState(false);
   const screenRef = useRef<HTMLDivElement>(null);
@@ -392,9 +398,11 @@ export function KioskPreview({
   const effectiveCart =
     cart.length > 0 ? cart : screen === 'cart' || screen === 'tip' || screen === 'details' || screen === 'pay' || screen === 'success' ? sampleCart : cart;
   /** The steps between the basket and the payment, as the kiosk asks them now (the tip, the details, in their order). */
-  const checkoutSteps = checkoutStepsNow(config.payment, detailsFields(config, service).length > 0, false)
-    // "איך תרצו לשלם?" (payMethod) has no preview screen yet: the preview goes from the last step to the payment.
-    .filter((s): s is 'tip' | 'details' => s !== 'payMethod');
+  const allCheckoutSteps = checkoutStepsNow(config.payment, detailsFields(config, service).length > 0, false);
+  // "איך תרצו לשלם?" (payMethod) is no screen of the preview's own: it opens over the last step on the way to
+  // the payment (payAsk) — a window rising (layout.payMethodView sheet) or today's screen.
+  const checkoutSteps = allCheckoutSteps.filter((s): s is 'tip' | 'details' => s !== 'payMethod');
+  const asksPayMethod = allCheckoutSteps.includes('payMethod');
   /** Where a step goes on to: the next checkout step, else the payment. */
   const after = (s: 'cart' | 'tip' | 'details'): PreviewScreen => (s === 'cart' ? checkoutSteps[0] : checkoutSteps[checkoutSteps.indexOf(s) + 1]) ?? 'pay';
   const before = (s: 'tip' | 'details'): PreviewScreen => checkoutSteps[checkoutSteps.indexOf(s) - 1] ?? 'cart';
@@ -411,7 +419,11 @@ export function KioskPreview({
   // "מנוע הנפשות": every event resolved once (the preset, the speed, the events' own values, the profile).
   const engine = kioskMotionEngine(config.motion, config.general, profile);
   const motion = engineMotionSpec(engine, config.theme);
-  const transitions = engineTransitionSpec(engine);
+  // "פתיחת חלונות" (layout.sheetMotion): the windows' entrance over the engine's (null — as it is).
+  const transitions = withSheetMotion(engineTransitionSpec(engine), layoutOf(config).sheetMotion, {
+    reduceMotion: config.general.reduceMotion,
+    light: profile === 'light',
+  });
   const colors = resolveThemeColors(config.theme);
   // "גודל מוצרים" (layout.productSize) moves the density's columns.
   const cols = productColumns(catalogColumns(config.theme.gridDensity, wide, panel, side), layoutOf(config).productSize, FRAME_DEVICE_DP[frame]);
@@ -446,6 +458,14 @@ export function KioskPreview({
     if (target === 'pay' && (screen === 'cart' || screen === 'catalog') && reachStep('to_pay', 'pay')) return;
     // "לתשלום" from the basket: the checkout steps first (the tip, the details), as on the kiosk.
     const s = target === 'pay' && (screen === 'cart' || screen === 'catalog') ? after('cart') : target;
+    // "איך תרצו לשלם?": asked (payment.paymentChooserSkip / methods / its mode) — it comes first, over the step.
+    if (s === 'pay' && asksPayMethod && !payAsk && (screen === 'cart' || screen === 'catalog' || screen === 'tip' || screen === 'details')) {
+      setConfirming(false);
+      if (screen === 'catalog') onScreen('cart');
+      setPayAsk(true);
+      return;
+    }
+    setPayAsk(false);
     setConfirming(false);
     if (s !== 'product') setProductId(null);
     if (s === 'cart' || s === 'attract') setPreviewTip(0);
@@ -643,6 +663,28 @@ export function KioskPreview({
   };
   useImperativeHandle(controls, () => ({ play }));
 
+  /** The payment method's window as the preview plays it: each configured method, the basket's sum, on to the payment. */
+  const toPay = () => {
+    setPayAsk(false);
+    setVisit((v) => v + 1);
+    onScreen('pay');
+  };
+  const payTiles = kioskPayMethods(config.payment.methods).map((method) => ({ method, off: null }));
+  const goodsAgorot = Math.round(basketTotal(model) * 100);
+  const payLive: KioskLivePayMethod = {
+    steps: allCheckoutSteps,
+    tiles: payTiles,
+    goodsAgorot,
+    tipAgorot: previewTip,
+    vouchers: [],
+    dueAgorot: goodsAgorot + previewTip,
+    onPick: toPay,
+    busy: false,
+    note: null,
+    error: null,
+    skip: stepMode(config, 'payMethod') === 'optional' && payTiles[0] ? { method: payTiles[0].method, onSkip: toPay } : null,
+  };
+
   const size = FRAME_SIZE[frame];
   const upsell = allProducts.filter((p) => !p.soldOut && !effectiveCart.some((l) => l.product.id === p.id)).slice(0, 4);
   // The ordering screens' message: one overlay per visit (the product sheet belongs to the catalog visit).
@@ -817,6 +859,15 @@ export function KioskPreview({
                   onSkip={closeUpsell}
                   required={stepMode(config, upsellStepModeKey(upsellWin.moment ?? { kind: 'added' })) === 'required'}
                 />
+              ) : null}
+              {payAsk ? (
+                payMethodSheet(config) ? (
+                  <PayMethodStep m={{ ...model, live: { back: () => setPayAsk(false) } }} live={payLive} />
+                ) : (
+                  <div className="absolute inset-0 z-30" style={{ background: colors.background }}>
+                    <PayMethodStep m={{ ...model, live: { back: () => setPayAsk(false) } }} live={payLive} />
+                  </div>
+                )
               ) : null}
               {screen === 'product' && product ? (
                 <ReachSheets m={model}>

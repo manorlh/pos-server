@@ -69,64 +69,53 @@ import {
   offlineOfZ,
 } from '@/components/dashboard/z-report/offline-summary';
 import { useZTitle, ZProducedBy, zNumberSourceOf } from '@/components/dashboard/z-report/z-number';
-import { useZExportSheets } from '@/components/dashboard/z-report/z-export-sheets';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { useZExportTables, zShiftsTableSpec } from '@/components/dashboard/z-report/z-export-sheets';
+import { ReportTable, StandaloneExportBar } from '@/components/dashboard/report-framework';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
+/**
+ * The Z's shifts (under a till, or the Z's own when it has no till sections): a ReportTable on
+ * the Z's columns (`z-report` · `shifts`), so the reader's columns are the Excel's too.
+ */
 function ShiftTable({ shifts }: { shifts: Shift[] }) {
   const t = useTranslations('shifts');
   const shiftLabel = useShiftLabel();
   if (shifts.length === 0) return null;
+  const spec = zShiftsTableSpec(shifts, {
+    ts: t,
+    shiftLabel,
+    tillOf: (machineId, machineName) => machineName ?? machineId,
+    screen: {
+      shift: (s) => (
+        <Link href={`/dashboard/shifts/${s.id}`} className="font-medium hover:underline">
+          {shiftLabel(s)}
+        </Link>
+      ),
+      opened: (s) => (
+        <span className="text-xs">
+          {formatDateTime(s.openedAt)}
+          {s.openedByName ? <span className="text-muted-foreground"> · {s.openedByName}</span> : null}
+        </span>
+      ),
+      closed: (s) => (
+        <span className="text-xs">
+          {formatDateTime(s.closedAt)}
+          <span className="text-muted-foreground">
+            {s.unattended ? ` · ${t('closedRemotely')}` : s.closedByName ? ` · ${s.closedByName}` : ''}
+          </span>
+        </span>
+      ),
+      counted: (s) => <CountedCash value={s.countedCash} />,
+      overShort: (s) => <OverShort value={s.discrepancy} />,
+      badges: (s) => <ShiftBadges shift={s} showStatus={false} showZ={false} />,
+    },
+  });
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{t('col.shift')}</TableHead>
-          <TableHead>{t('col.businessDate')}</TableHead>
-          <TableHead>{t('col.opened')}</TableHead>
-          <TableHead>{t('col.closed')}</TableHead>
-          <TableHead className="text-end">{t('col.sales')}</TableHead>
-          <TableHead className="text-end">{t('col.counted')}</TableHead>
-          <TableHead className="text-end">{t('col.overShort')}</TableHead>
-          <TableHead />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {shifts.map((s) => (
-          <TableRow key={s.id}>
-            <TableCell className="font-medium">
-              <Link href={`/dashboard/shifts/${s.id}`} className="hover:underline">
-                {shiftLabel(s)}
-              </Link>
-            </TableCell>
-            <TableCell>{formatDate(s.businessDate)}</TableCell>
-            <TableCell className="text-xs">
-              {formatDateTime(s.openedAt)}
-              {s.openedByName ? <span className="text-muted-foreground"> · {s.openedByName}</span> : null}
-            </TableCell>
-            <TableCell className="text-xs">
-              {formatDateTime(s.closedAt)}
-              <span className="text-muted-foreground">
-                {s.unattended ? ` · ${t('closedRemotely')}` : s.closedByName ? ` · ${s.closedByName}` : ''}
-              </span>
-            </TableCell>
-            <TableCell className="text-end">{formatCurrency(s.serverTotals?.totalSales)}</TableCell>
-            <TableCell className="text-end">
-              <CountedCash value={s.countedCash} />
-            </TableCell>
-            <TableCell className="text-end">
-              <OverShort value={s.discrepancy} />
-            </TableCell>
-            <TableCell>
-              <ShiftBadges shift={s} showStatus={false} showZ={false} />
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <div className="p-3">
+      <ReportTable reportKey="z-report" table={{ ...spec, title: undefined }} />
+    </div>
   );
 }
 
@@ -353,7 +342,7 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const t = useTranslations('zReports');
   const zTitle = useZTitle();
-  const zSheets = useZExportSheets();
+  const zExport = useZExportTables();
   usePageScope({ maxLevel: 'machine', silent: true });
   // Stamped when the print dialog opens, so the paper says when it was printed.
   const [printedAt, setPrintedAt] = useState(() => new Date().toISOString());
@@ -393,6 +382,8 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
   const sectionShifts = (s: ZReportMachineSection) => sectionShiftsOf(s, z.perMachine, z.shifts);
 
   const title = zPrintTitle([(z.zNumber ?? z.shopSequenceNumber)]);
+  // Excel with export columns: the Z, its tills, card brands, waiters and shifts (keyed tables).
+  const exported = zExport(z);
   const print = (pdf = false) => {
     if (pdf) toast.info(tp('pdfHint'));
     if (view === 'till') {
@@ -437,13 +428,15 @@ export default function ZReportDetailPage({ params }: { params: Promise<{ id: st
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {/* Excel only: the Z prints its own fiscal document (A4 or the till's paper) below. */}
-            <ReportExportToolbar
+            <StandaloneExportBar
+              reportKey="z-report"
               title={zTitle(zNumberSourceOf(z))}
+              tables={exported.tables}
+              extraSheets={exported.extraSheets}
               from={z.businessDate}
               to={z.businessDate}
-              scopeLabel={[z.shopName ?? z.business?.shopName, areaName].filter(Boolean).join(' · ')}
-              getSheets={() => zSheets(z)}
-              className="[&>button:not(:first-child)]:hidden"
+              place={[z.shopName ?? z.business?.shopName, areaName].filter(Boolean).join(' · ') || null}
+              excelOnly
             />
             <ZPrintViewToggle value={view} onChange={setView} />
             <Button size="sm" onClick={() => print()} disabled={printDisabled}>

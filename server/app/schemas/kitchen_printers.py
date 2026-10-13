@@ -198,6 +198,9 @@ class TicketIn(BaseModel):
     dining: Optional[Literal["eat_in", "take_away"]] = None
     #: A band at the head: "הדפסה חוזרת" (a reprint, approved by a manager) or "זרז" (a rush).
     notice: Optional[str] = Field(None, max_length=TICKET_TEXT_MAX)
+    #: "מצב הדרכה": a ticket of a till in training, printed "הדרכה" by whichever till prints it —
+    #: kept through the relay (the kitchen must never cook a training order as a real one).
+    training: Optional[bool] = None
 
 
 class PrintJobIn(BaseModel):

@@ -10,7 +10,8 @@
  * (the Expo's "לאיסוף" lane — the order in one line and its pickup buttons).
  */
 
-import { AlertTriangle, CloudOff, Flame, Printer, ShoppingBag, Store, Users, Utensils } from 'lucide-react';
+import { AlertTriangle, Check, CloudOff, Flame, Printer, ShoppingBag, Store, Users, Utensils } from 'lucide-react';
+import type { CSSProperties, KeyboardEvent } from 'react';
 import type { KdsField, KdsOrder, KdsTask, KdsView } from '@/lib/kdsScreenTypes';
 import {
   ackButton,
@@ -20,7 +21,9 @@ import {
   isCancelled,
   isHeld,
   isReady,
+  itemTapButton,
   orderButtons,
+  orderNumberText,
   orderTimer,
   orderTitle,
   pendingChanges,
@@ -29,13 +32,15 @@ import {
   serviceText,
   sourceText,
   taskButton,
+  taskStateText,
   TIMER_TEXT,
+  urgencyText,
   waitingFor,
   epochMs,
   type KdsButton,
   type KdsScreenRole,
 } from '@/lib/kdsBoard';
-import { itemsSummary } from '@/lib/kdsLayouts';
+import { itemsSummary, tintOf } from '@/lib/kdsLayouts';
 import { screenThresholds } from '@/lib/screenLook';
 import { Chip, TouchButton } from './parts';
 import { levelVars, useKdsLook } from './theme';
@@ -76,9 +81,33 @@ export interface CardProps {
   fill?: boolean;
   /** Its size, over the screen's density ("huge": the big layout). */
   tier?: keyof typeof SIZE;
+  /** Filtering by an item without the whole ticket (§16): only these lines. */
+  taskFilter?: (t: KdsTask) => boolean;
+  /** A tap on the ticket's header opens its menu (§16: דחוף, הכול ממתין / בהכנה / מוכן). */
+  onMenu?: (order: KdsOrder) => void;
+  /** The ticket's most height (layout px; it scrolls inside) — `maxTicketHeight`. */
+  maxHeight?: number | null;
 }
 
-export function KdsCard({ order, role, settings, nowMs, offline, fresh, flashKey, onPress, onPrint, variant = 'full', laneTasks, laneButton, fill = false, tier }: CardProps) {
+export function KdsCard({
+  order,
+  role,
+  settings,
+  nowMs,
+  offline,
+  fresh,
+  flashKey,
+  onPress,
+  onPrint,
+  variant = 'full',
+  laneTasks,
+  laneButton,
+  fill = false,
+  tier,
+  taskFilter,
+  onMenu,
+  maxHeight = null,
+}: CardProps) {
   const { theme, look } = useKdsLook();
   const show = (f: KdsField) => look.fields[f] !== false;
   const size = SIZE[tier ?? look.density] ?? SIZE.normal;
@@ -90,7 +119,7 @@ export function KdsCard({ order, role, settings, nowMs, offline, fresh, flashKey
   const service = serviceText(order.serviceType);
   const group = groupText(order);
   const changes = variant === 'summary' ? [] : pendingChanges(order).filter((c) => variant !== 'lane' || !c.taskId || (laneTasks ?? []).some((t) => t.id === c.taskId));
-  const source = variant === 'lane' ? (laneTasks ?? []) : order.tasks;
+  const source = (variant === 'lane' ? (laneTasks ?? []) : order.tasks).filter((t) => !taskFilter || taskFilter(t));
   const live = source.filter((t) => !isHeld(t));
   const held = variant === 'full' ? order.tasks.filter((t) => isHeld(t) && !isCancelled(t)) : [];
   const byRound = rounds(live);
@@ -98,9 +127,80 @@ export function KdsCard({ order, role, settings, nowMs, offline, fresh, flashKey
   const waiting = expo && variant === 'full' && !order.viewOnly && (order.groupState === 'waiting' || order.groupState === null) && !order.allReady ? waitingFor(order) : [];
   const urgent = (order.priority ?? 0) > 0;
   const lateGlow = timer.level === 'late';
+  const tint = tintOf(order, look);
+  const tintColor = tint === 'delivery' ? 'var(--k-tint-del)' : tint === 'takeAway' ? 'var(--k-tint-ta)' : null;
+  const capped = !fill && maxHeight !== null && maxHeight > 0;
+  const number = look.ticketInfo.orderNumber && variant !== 'summary' ? orderNumberText(order) : null;
+  const releasedAt = look.ticketInfo.orderTime ? hhmm(order.firstReleasedAt ?? order.createdAt) : '';
+  const headInner = (
+    <>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h2 className={`truncate font-black leading-none ${size.title}`}>
+            <bdi>{orderTitle(order)}</bdi>
+          </h2>
+          {number ? (
+            <Chip>
+              <bdi>{number}</bdi>
+            </Chip>
+          ) : null}
+          {urgent ? (
+            <Chip className="bg-[var(--k-late)] text-white">
+              <Flame size={14} /> {urgencyText(order.priority) ?? 'דחוף'}
+            </Chip>
+          ) : null}
+        </div>
+        {variant === 'lane' ? null : (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {look.ticketInfo.source ? (
+              <Chip>
+                <SourceIcon size={14} /> {sourceText(order.source)}
+              </Chip>
+            ) : null}
+            {service ? (
+              <Chip
+                className={
+                  tintColor
+                    ? 'bg-[var(--k-tint)] text-[var(--k-on-tint)]'
+                    : order.serviceType === 'take_away' || order.serviceType === 'delivery'
+                      ? 'bg-[var(--k-accent-soft)] text-[var(--k-accent-text)]'
+                      : undefined
+                }
+              >
+                {service}
+              </Chip>
+            ) : null}
+            {show('guests') && order.guests ? (
+              <Chip>
+                <Users size={14} /> {order.guests}
+              </Chip>
+            ) : null}
+            {show('table') && order.zoneName ? <Chip>{order.zoneName}</Chip> : null}
+            {order.viewOnly ? <Chip className="bg-[var(--k-chip)] text-[var(--k-muted)]">לצפייה</Chip> : null}
+            {group ? <Chip className={order.groupState === 'ready_for_pickup' ? 'bg-[var(--k-pickup)] text-[var(--k-on-pickup)]' : undefined}>{group}</Chip> : null}
+            {order.pending && offline ? (
+              <Chip className="bg-[var(--k-warn)] text-black">
+                <CloudOff size={14} /> ממתין לשליחה
+              </Chip>
+            ) : null}
+          </div>
+        )}
+      </div>
+      <div className="shrink-0 text-end text-[var(--k-lv-time)]">
+        <div className={`font-black leading-none tabular-nums ${size.time} ${lateGlow ? 'r2m-kds-late' : ''}`}>
+          {timer.minutes}
+          <span className="ms-1 text-base font-bold">דק׳</span>
+        </div>
+        <div className="mt-1 text-base font-extrabold">{TIMER_TEXT[timer.level]}</div>
+        {releasedAt ? <div className="text-sm font-bold tabular-nums text-[var(--k-muted)]">{releasedAt}</div> : null}
+      </div>
+    </>
+  );
+  const headClass = `flex w-full shrink-0 items-start justify-between gap-3 bg-[var(--k-lv-head)] text-start ${size.head}`;
+  const headStyle = tintColor ? { borderTop: `6px solid ${tintColor}` } : undefined;
   return (
     <article
-      style={levelVars(theme, timer.level)}
+      style={{ ...levelVars(theme, timer.level), ...(tintColor ? { '--k-tint': tintColor } : {}), ...(capped ? { maxHeight } : {}) } as CSSProperties}
       className={[
         'flex flex-col overflow-hidden rounded-xl border-[length:var(--k-ring-w)] border-[var(--k-lv-ring)] bg-[var(--k-card)] text-[var(--k-text)]',
         // In a column of cards a card keeps its height (it never shrinks to its header); filling a slot it scrolls inside.
@@ -109,52 +209,32 @@ export function KdsCard({ order, role, settings, nowMs, offline, fresh, flashKey
         urgent ? 'outline outline-4 outline-offset-2 outline-[var(--k-late)]' : '',
       ].join(' ')}
     >
-      <header className={`flex shrink-0 items-start justify-between gap-3 bg-[var(--k-lv-head)] ${size.head}`}>
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h2 className={`truncate font-black leading-none ${size.title}`}>
-              <bdi>{orderTitle(order)}</bdi>
-            </h2>
-            {urgent ? (
-              <Chip className="bg-[var(--k-late)] text-white">
-                <Flame size={14} /> דחוף
-              </Chip>
-            ) : null}
-          </div>
-          {variant === 'lane' ? null : (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {show('table') ? (
-                <Chip>
-                  <SourceIcon size={14} /> {sourceText(order.source)}
-                </Chip>
-              ) : null}
-              {service ? <Chip className={order.serviceType === 'take_away' ? 'bg-[var(--k-accent-soft)] text-[var(--k-accent-text)]' : undefined}>{service}</Chip> : null}
-              {show('guests') && order.guests ? (
-                <Chip>
-                  <Users size={14} /> {order.guests}
-                </Chip>
-              ) : null}
-              {show('table') && order.zoneName ? <Chip>{order.zoneName}</Chip> : null}
-              {order.viewOnly ? <Chip className="bg-[var(--k-chip)] text-[var(--k-muted)]">לצפייה</Chip> : null}
-              {group ? <Chip className={order.groupState === 'ready_for_pickup' ? 'bg-[var(--k-pickup)] text-[var(--k-on-pickup)]' : undefined}>{group}</Chip> : null}
-              {order.pending && offline ? (
-                <Chip className="bg-[var(--k-warn)] text-black">
-                  <CloudOff size={14} /> ממתין לשליחה
-                </Chip>
-              ) : null}
-            </div>
-          )}
-        </div>
-        <div className="shrink-0 text-end text-[var(--k-lv-time)]">
-          <div className={`font-black leading-none tabular-nums ${size.time} ${lateGlow ? 'r2m-kds-late' : ''}`}>
-            {timer.minutes}
-            <span className="ms-1 text-base font-bold">דק׳</span>
-          </div>
-          <div className="mt-1 text-base font-extrabold">{TIMER_TEXT[timer.level]}</div>
-        </div>
-      </header>
+      {onMenu && variant !== 'summary' ? (
+        // The ticket's menu (§16): the whole header is the target (a header with a button's role — it holds the title).
+        <header
+          role="button"
+          tabIndex={0}
+          aria-haspopup="dialog"
+          aria-label={`תפריט — ${orderTitle(order)}`}
+          onClick={() => onMenu(order)}
+          onKeyDown={(e: KeyboardEvent<HTMLElement>) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onMenu(order);
+            }
+          }}
+          className={`${headClass} cursor-pointer touch-manipulation active:brightness-110`}
+          style={headStyle}
+        >
+          {headInner}
+        </header>
+      ) : (
+        <header className={headClass} style={headStyle}>
+          {headInner}
+        </header>
+      )}
 
-      <div className={`flex flex-1 flex-col ${size.body} ${fill ? 'min-h-0 touch-pan-y overflow-y-auto overscroll-contain' : ''}`}>
+      <div className={`flex flex-1 flex-col ${size.body} ${fill || capped ? 'min-h-0 touch-pan-y overflow-y-auto overscroll-contain' : ''}`}>
         {variant !== 'lane' && ((show('waiter') && order.waiterName) || (show('name') && order.pickupName)) ? (
           <div className={`flex flex-wrap gap-x-4 px-1 text-[var(--k-muted)] ${size.sub}`}>
             {show('waiter') && order.waiterName ? (
@@ -169,7 +249,11 @@ export function KdsCard({ order, role, settings, nowMs, offline, fresh, flashKey
             ) : null}
           </div>
         ) : null}
-        {urgent && order.priorityReason && variant === 'full' ? <div className="px-1 text-base font-bold text-[var(--k-late)]">דחוף: {order.priorityReason}</div> : null}
+        {urgent && order.priorityReason && variant === 'full' ? (
+          <div className="px-1 text-base font-bold text-[var(--k-late)]">
+            {urgencyText(order.priority) ?? 'דחוף'}: {order.priorityReason}
+          </div>
+        ) : null}
         {show('notes') && order.orderNote && variant !== 'lane' ? (
           <div className={`rounded-lg bg-[var(--k-note)] px-3 py-2 font-bold text-[var(--k-on-note)] ${size.sub}`}>הערה: {order.orderNote}</div>
         ) : null}
@@ -307,11 +391,37 @@ function TaskRow({
   const show = (f: KdsField) => look.fields[f] !== false;
   const cancelled = isCancelled(t);
   const done = isReady(t) && !cancelled;
-  const button = taskButton(order, t);
+  // A tap on the row (§16 `itemTap`): the row is the target and a chip says the state; else its button, as always.
+  const tap = itemTapButton(order, t, look.itemTap);
+  const button = look.itemTap === 'button' ? taskButton(order, t) : null;
+  const readyBy = look.ticketInfo.readyBy && done ? [t.stationName, hhmm(t.readyAt)].filter(Boolean).join(' ') : '';
   const qty = t.cancelledQty > 0 && !cancelled ? `${qtyText(t.orderedQty)}→${qtyText(t.activeQty)}` : qtyText(cancelled ? t.orderedQty : t.activeQty);
-  const chips = (show('course') && t.course) || t.seat || expo || t.overPrepared || t.remakeReason || (t.pending && offline);
+  const chips = (show('course') && t.course) || t.seat || expo || t.overPrepared || t.remakeReason || (t.pending && offline) || readyBy;
+  const state = look.itemTap !== 'button' && !cancelled && !isHeld(t) ? taskStateText(t) : null;
+  const tapProps = tap
+    ? {
+        role: 'button',
+        tabIndex: 0,
+        'aria-label': `${t.name} — ${tap.label}`,
+        onClick: () => onPress(tap),
+        onKeyDown: (e: KeyboardEvent<HTMLLIElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onPress(tap);
+          }
+        },
+      }
+    : {};
   return (
-    <li className={`flex items-start gap-2 rounded-lg px-2 py-1.5 ${done ? 'bg-[var(--k-chip)]' : t.state === 'preparing' ? 'bg-[var(--k-accent-soft)]' : ''}`}>
+    <li
+      className={[
+        'flex items-start gap-2 rounded-lg px-2 py-1.5',
+        done ? 'bg-[var(--k-chip)]' : t.state === 'preparing' ? 'bg-[var(--k-accent-soft)]' : '',
+        tap ? 'min-h-[52px] cursor-pointer touch-manipulation active:brightness-125' : '',
+        tap && flash(tap) ? 'ring-4 ring-[var(--k-text)]' : '',
+      ].join(' ')}
+      {...tapProps}
+    >
       <div className="min-w-0 flex-1">
         <div className={`font-extrabold leading-tight ${itemClass} ${cancelled ? 'text-[var(--k-late)] line-through opacity-70' : done ? 'text-[var(--k-faint)] line-through' : 'text-[var(--k-text)]'}`}>
           <span className="tabular-nums">{qty}</span> × {t.name}
@@ -336,6 +446,11 @@ function TaskRow({
             {expo ? <Chip className={t.stationId ? 'bg-[var(--k-chip)] text-[var(--k-muted)]' : 'bg-[var(--k-late)] text-white'}>{t.stationName ?? 'ללא תחנה'}</Chip> : null}
             {t.overPrepared ? <Chip className="bg-[var(--k-warn)] text-black">הוכן לפני הביטול</Chip> : null}
             {t.remakeReason ? <Chip className="bg-[var(--k-warn)] text-black">הכנה מחדש: {t.remakeReason}</Chip> : null}
+            {readyBy ? (
+              <Chip className="bg-[var(--k-chip)] text-[var(--k-ready)]">
+                <Check size={13} /> {readyBy}
+              </Chip>
+            ) : null}
             {t.pending && offline ? (
               <Chip className="bg-[var(--k-warn)] text-black">
                 <CloudOff size={13} /> ממתין
@@ -345,6 +460,15 @@ function TaskRow({
         ) : null}
       </div>
       {button ? <TouchButton button={button} onPress={onPress} flashing={flash(button)} className={`shrink-0 ${btnClass}`} /> : null}
+      {state ? (
+        <span
+          className={`shrink-0 self-center rounded-lg px-2.5 py-1 text-base font-extrabold ${
+            state === 'מוכן' ? 'bg-[var(--k-ready)] text-[var(--k-on-ready)]' : state === 'בהכנה' ? 'bg-[var(--k-start)] text-[var(--k-on-start)]' : 'bg-[var(--k-quiet)] text-[var(--k-on-quiet)]'
+          }`}
+        >
+          {state}
+        </span>
+      ) : null}
     </li>
   );
 }

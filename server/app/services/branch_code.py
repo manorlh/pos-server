@@ -18,6 +18,18 @@ issue `10000057` (docs/SPEC_DOCUMENT_PREFIX.md). So:
 Shops that had none were given one by migration f3a9c2d7e1b4 (lowest free per company,
 in creation order). `branch_id_auto_assigned` records that, until the code is next saved;
 nothing asks for it to be confirmed — the code is internal.
+
+**The next code** (P:/specs/shop-code-and-inactive.md §2, owner: "קוד סניף שיהיה אוטומטי
+ברצף, עם אופציה לשנות"): the highest numeric code in the company plus 1, or 1 in a company
+with none (decision 3: "הגבוה ועוד 1", not the lowest gap). The create form is pre-filled
+with it (`GET /shops/next-branch-code`) and may be changed. The code is drawn in the save
+itself, under a lock on the company row (`lock_company`), so two shops created at once
+never get the same one:
+
+* **No code sent** (`POST /shops` without `branchId`), or the suggestion left as it was
+  (`branchIdAuto: true`): the suggestion while it is still free, else the next one — never
+  an error.
+* **A code typed by hand** that is taken: 409, as before.
 """
 from __future__ import annotations
 
@@ -85,6 +97,64 @@ def lowest_free_code(used: Iterable[Any]) -> str:
     while str(n) in taken:
         n += 1
     return str(n)
+
+
+def next_code_after(used: Iterable[Any]) -> str:
+    """
+    The code after [used]: the highest numeric one plus 1, "1" when there is none. A code
+    that is not digits (a row from before the rule) does not count. Past 7 digits — a
+    company that typed 9999999 — the lowest free code instead, so it always fits field 1231.
+    """
+    used = [normalize_branch_code(u) for u in used]
+    numbers = [int(code) for code in used if code is not None and BRANCH_CODE_RE.match(code)]
+    candidate = str(max(numbers, default=0) + 1)
+    if len(candidate) > BRANCH_CODE_MAX_LEN:
+        return lowest_free_code(used)
+    return candidate
+
+
+def _company_codes(db: Session, company_id: Any) -> list:
+    from app.models.shop import Shop
+
+    return [code for (code,) in db.query(Shop.branch_id).filter(Shop.company_id == company_id).all()]
+
+
+def next_branch_code(db: Session, company_id: Any) -> str:
+    """The code a new shop of [company_id] would get now. A peek: nothing is held."""
+    return next_code_after(_company_codes(db, company_id))
+
+
+def lock_statement(company_id: Any):
+    """`SELECT companies.id … FOR NO KEY UPDATE` — the company row `lock_company` takes."""
+    from sqlalchemy import select
+
+    from app.models.company import Company
+
+    return select(Company.id).where(Company.id == company_id).with_for_update(key_share=True)
+
+
+def lock_company(db: Session, company_id: Any) -> None:
+    """
+    Serialise the branch codes of [company_id] for the rest of the transaction: two shops
+    created (or recoded) at once take this row lock in turn, and the second reads the first's
+    code once it is committed (READ COMMITTED: each statement sees what was committed before
+    it). `FOR NO KEY UPDATE`, so rows that merely point at the company (its products, its
+    shops) are not held up by it. SQLite (the tests) ignores it.
+    """
+    db.execute(lock_statement(company_id)).first()
+
+
+def assign_on_create(db: Session, company_id: Any, suggested: Any = None) -> str:
+    """
+    The code of a new shop whose code was not typed by hand: [suggested] — what the form
+    showed — while it is still a free, well-formed code of the company; else the next one.
+    The caller holds `lock_company`.
+    """
+    used = _company_codes(db, company_id)
+    code = normalize_branch_code(suggested)
+    if code is not None and BRANCH_CODE_RE.match(code) and code not in {normalize_branch_code(u) for u in used}:
+        return code
+    return next_code_after(used)
 
 
 def shops_without_code(shops: Iterable[Any]) -> list:

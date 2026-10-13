@@ -47,6 +47,8 @@ import {
   type RosterUser,
 } from '../core/desktopExit';
 import { DESKTOP_IDLE_RETURN_KEY, idleReturnMinutesFor } from '@dash-lib/desktopIdleReturn';
+import { kioskCloseDay, newSaleAllowed, SHOP_LOCK_FLOW, SHOP_LOCK_TEXT } from '@dash-lib/shopActive';
+import { CLOSE_DAY_TEXT, closeDayCandidates, closeDayZText } from '../core/shopLock';
 import { pickVariant, type MediaRefIn } from '../core/mediaPlan';
 import { paymentGuard, type Activity } from '../core/updatePolicy';
 import { TERMINAL_CHECK_BYPASS_KEY } from '../core/terminalCheckBypass';
@@ -104,6 +106,7 @@ import type {
   PayProgress,
   PlaceOrderIn,
   PlaceOrderOut,
+  ShopLockCloseDayOut,
   StartPaymentIn,
   StartPaymentOut,
   TechnicianAction,
@@ -651,6 +654,10 @@ export class KioskService extends EventEmitter {
         mediaMissing: media.missing,
       },
       pay: this.payView(phase === 'kiosk'),
+      // "סניף לא פעיל" (client lib/shopActive.ts): the screens lock once the customer is done; the
+      // lock offers the kiosk's own close of the day ("סגירת משמרת ו-Z", shopLockCloseDay).
+      shopActive: this.cloud.shopActive(),
+      closeDay: phase === 'kiosk' && this.fiscalRole ? kioskCloseDay({ zMode: zModeOf(this.cloud.heartbeat().zMode), shiftOpen: !!this.ledger.currentShift() }) : null,
     };
     this.viewDirty = false;
     return this.viewCache;
@@ -739,6 +746,8 @@ export class KioskService extends EventEmitter {
         this.dirty();
       },
       onParameters: () => this.dirty(),
+      // "סניף לא פעיל": the screens lock (once the customer is done) or are released at once.
+      onShopActive: () => this.dirty(),
       onPendingCloseShift: (r: { requestId: string }) => {
         this.pendingClose = { requestId: r.requestId };
       },
@@ -1279,6 +1288,7 @@ export class KioskService extends EventEmitter {
   async startPayment(input: StartPaymentIn): Promise<StartPaymentOut> {
     // A screen (KDS, order status board) is not a till: it never sells.
     if (!this.fiscalRole) return { ok: false, reason: 'error', message: 'מכשיר תצוגה אינו קופה' };
+    if (!this.newSaleAllowed()) return { ok: false, reason: 'error', message: SHOP_LOCK_TEXT.title };
     if (this.pay.cardInFlight) return { ok: false, reason: 'busy', message: 'תשלום כבר בתהליך' };
     // The vouchers of the order (goods ones as legs, discount ones held for it), read field by field: the
     // browser kiosk's bridge sends them over HTTP.
@@ -1625,6 +1635,7 @@ export class KioskService extends EventEmitter {
    */
   async placeOpenOrder(input: PlaceOrderIn): Promise<PlaceOrderOut> {
     if (!this.fiscalRole || !this.isKiosk()) return { ok: false, reason: 'error', message: 'המכשיר אינו קיוסק פעיל' };
+    if (!this.newSaleAllowed()) return { ok: false, reason: 'error', message: SHOP_LOCK_TEXT.title };
     const cfg = this.config();
     if (!kioskPayMethods(cfg.payment.methods).includes('cash_at_till')) return { ok: false, reason: 'error', message: 'תשלום בקופה אינו מוגדר לקיוסק' };
     // A discount voucher is held for this kiosk's own payment: never taken to a till (removed first).
@@ -2183,8 +2194,8 @@ export class KioskService extends EventEmitter {
     this.flow = f;
     this.lastFlowScreen = f.screen;
     this.flowChangedAt = Date.now();
-    // Trading starts again (opening hours, a lock lifted): the next shift opens as the kiosk itself.
-    if (f.screen === 'attract' && ['closed', 'paused', 'no_payment'].includes(prev) && this.fiscalRole && this.isKiosk() && !this.tillZ.owed && !this.ledger.currentShift()) {
+    // Trading starts again (opening hours, a lock lifted — the shop's too): the next shift opens as the kiosk itself.
+    if (f.screen === 'attract' && ['closed', 'paused', 'no_payment', SHOP_LOCK_FLOW.screen].includes(prev) && this.fiscalRole && this.isKiosk() && !this.tillZ.owed && !this.ledger.currentShift()) {
       this.ledger.openShift(this.operator());
     }
   }
@@ -2200,6 +2211,55 @@ export class KioskService extends EventEmitter {
       cardBlocked: this.pay.blocked(),
       lastActivityAt: this.flowChangedAt,
     };
+  }
+
+  /* --------------------------------------------------- "סניף לא פעיל" */
+
+  /**
+   * A new sale may start: not once the shop's lock screen is up (the screens report it as their
+   * flow, SHOP_LOCK_FLOW) — the sale it waited for was finished before it went up.
+   */
+  private newSaleAllowed(): boolean {
+    const active = this.cloud.shopActive();
+    return newSaleAllowed(active, !active && this.flow.screen === SHOP_LOCK_FLOW.screen);
+  }
+
+  private closingDay = false;
+
+  /**
+   * "סגירת משמרת ו-Z" from the shop's lock (core/shopLock.ts): a manager's code, then the kiosk's own
+   * close for its Z mode at once — the open shift closed with the manager named, and in zMode = till
+   * the Z produced (owed first, so the tick makes it later if the cloud cannot now). Never under a
+   * payment; the code opens nothing — the lock stays until the shop is active again.
+   */
+  async shopLockCloseDay(pin: string): Promise<ShopLockCloseDayOut> {
+    if (this.cloud.shopActive()) return { ok: false, message: CLOSE_DAY_TEXT.active };
+    const kind = this.fiscalRole && this.isKiosk() ? kioskCloseDay({ zMode: zModeOf(this.cloud.heartbeat().zMode), shiftOpen: !!this.ledger.currentShift() }) : null;
+    if (!kind) return { ok: false, message: SHOP_LOCK_TEXT.nothingToClose };
+    const guard = paymentGuard(this.activity());
+    if (guard) return { ok: false, message: guard };
+    const candidates = closeDayCandidates(this.cloud.posUsers(), this.shopIdHere(), kind);
+    if (candidates.length === 0) return { ok: false, message: CLOSE_DAY_TEXT.noManager(kind) };
+    const u = await findByPin(candidates, typeof pin === 'string' ? pin : '', (p, h) => bcrypt.compare(p, h));
+    if (!u) return { ok: false, message: CLOSE_DAY_TEXT.wrongCode, wrongCode: true };
+    if (this.closingDay) return { ok: false, message: CLOSE_DAY_TEXT.running };
+    this.closingDay = true;
+    try {
+      const closer = `${closerName(this.operator())} · ${displayName(u)}`;
+      if (this.ledger.currentShift()) {
+        const r = this.ledger.closeShift({ closedByName: closer, closedByUserId: u.id, vatRate: this.vatRate() });
+        if (r.kind === 'pending') return { ok: false, message: CLOSE_DAY_TEXT.pending };
+        if (r.kind === 'closed') this.log(`shop lock: shift ${r.shift.id} closed by ${displayName(u)} (${u.id})`);
+      }
+      await this.sync.flush();
+      if (kind === 'shift_close') return { ok: true, message: CLOSE_DAY_TEXT.shiftClosed };
+      const z = await this.tillZ.produceOwed(closer);
+      this.log(`shop lock: Z asked by ${displayName(u)} (${u.id}): ${z?.kind ?? 'already running'}`);
+      return closeDayZText(z);
+    } finally {
+      this.closingDay = false;
+      this.dirty();
+    }
   }
 
   /** The shell's role (main/roles/manager.ts): a KDS / board screen reports no till facts. */

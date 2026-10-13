@@ -477,6 +477,9 @@ def _waiters_section(z: ZReport) -> Optional[dict]:
 def _till_title(s: dict) -> str:
     pos = s.get("posNumber")
     name = (s.get("machineName") or "").strip()
+    if s.get("kiosk"):
+        # A self-order kiosk's part: "קיוסק <name>", as the main till's paper prints it.
+        return f"קיוסק {name}" if name else "קיוסק"
     head = f"קופה {pos}" if pos not in (None, "") else "קופה"
     return f"{head} · {name}" if name else head
 

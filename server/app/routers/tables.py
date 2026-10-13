@@ -111,7 +111,7 @@ from app.services.elevation import consume_per_action_use
 from app.services.permissions import Scope, requires_per_action_reauth
 
 # Display devices are not tills (app/services/display_devices.py).
-from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH
+from app.middleware.auth import FISCAL_MACHINE_TOKEN, FISCAL_SYNC_PATH, HOST_MACHINE_TOKEN
 
 router = APIRouter(tags=["tables"])
 
@@ -226,15 +226,22 @@ def get_tables_state(
     return out
 
 
-@router.post("/sync/{machine_id}/tables/report", dependencies=FISCAL_MACHINE_TOKEN)
+# The tables' mirror: a till (single-till mode, a LAN host) or a dedicated local server as host.
+@router.post("/sync/{machine_id}/tables/report", dependencies=HOST_MACHINE_TOKEN)
 def report_local_tables(
     machine_id: str,
     body: TablesReportIn,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
-    """Single-till mode: the till's orders, for the dashboard. Idempotent by version."""
-    out = T.apply_local_report(db, machine, body.orders)
+    """
+    Single-till mode, and the LAN host's mirror: the till's orders, for the dashboard (and a
+    new host's seed). Idempotent by version. `formerHost: true` — a till that was the server
+    before a switch sends what it never uploaded (gap 1, P:/specs/local-server-switch.md §8):
+    only orders the cloud has not changed since the switch are applied; the rest are kept as
+    conflicts for the dashboard. Its answer then says `applied` / `conflict` per order.
+    """
+    out = T.apply_local_report(db, machine, body.orders, former_host=body.former_host)
     db.commit()
     return out
 
@@ -264,11 +271,13 @@ def get_tables_reports(
 @router.get("/sync/{machine_id}/tables/closed")
 def get_closed_tables(
     machine_id: str,
+    include_mine: bool = Query(False, alias="includeMine"),
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """"נסגרו היום": the shop's tables paid or cancelled in the last day, for "שחזור שולחן"."""
-    return {"orders": T.closed_orders(db, machine)}
+    # `is True`: called directly (the tests), the default is the Query object itself.
+    return {"orders": T.closed_orders(db, machine, include_mine=include_mine is True)}
 
 
 @router.post("/sync/{machine_id}/tables/closed/{order_id}/restore", dependencies=FISCAL_MACHINE_TOKEN)
@@ -285,7 +294,9 @@ def restore_closed_table(
     the till then opens the table with its lines. A paid order's payments are cancelled
     first, by credit notes at the till.
     """
-    order = T.mark_restored(db, machine, order_id, _actor(machine, body), approved_by=body.approved_by)
+    order = T.mark_restored(
+        db, machine, order_id, _actor(machine, body), approved_by=body.approved_by, finish=body.finish,
+    )
     db.commit()
     _wake(background_tasks, db, machine, str(order.table_id))
     return {"orderId": str(order.id), "restoredAt": order.restored_at.isoformat()}
@@ -301,33 +312,55 @@ def get_host_seed(
     return T.host_seed(db, machine)
 
 
+#: The till's own "העבר את השרת לקופה הזו" where `tillServerTakeover` is not `manager` (the
+#: default, P:/specs/local-server-switch.md §8–9): an older build that still shows the button is
+#: told where the switch is now.
+SWITCH_FROM_CLOUD_ONLY = "switch_from_cloud_only"
+SWITCH_FROM_CLOUD_ONLY_MESSAGE = (
+    "העברת השרת המקומי לקופה אחרת נעשית מהענן בלבד. "
+    "השרת המקומי לא עונה? פנו למנהל — הוא יעביר את השרת מהדשבורד (\"העברת שרת מקומי\" בדף הסניף)."
+)
+
+
 @router.post("/sync/{machine_id}/tables/take-over", dependencies=FISCAL_MACHINE_TOKEN)
 def take_over_host(
     machine_id: str,
-    body: TakeOverIn,
     background_tasks: BackgroundTasks,
+    body: Optional[TakeOverIn] = None,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """
-    "העבר את השרת לקופה הזו" (app/services/main_till.py `take_over`): the main till is down,
-    and this till becomes the shop's main till — the tables host, the print server and the
-    master of the shop Z. 409 `host_online` while the cloud still hears the old one.
+    "העבר את השרת לקופה הזו". The till parameter `tillServerTakeover`, resolved for this till
+    (app/services/local_server_switch.py, §9):
+
+    * `manager` — the same full move as `POST /shops/{id}/local-server/switch` (main till, tables
+      host, print server, shop Z master; the shop Z frozen until the old server reports; "השרת
+      הוחלף" on every till; audited "from the till" with the approving manager, `posUserName`).
+      409 `host_online` while the cloud still hears the old server — never forced from a till.
+    * otherwise (`off`, the default) — 410 `{code: switch_from_cloud_only, message}`; nothing moves.
     """
-    from app.services import main_till as MT
+    from app.services import local_server_switch as LSS
     from app.services import till_parameters as TP
 
-    out = MT.take_over(db, machine, body.pos_user_name)
+    if LSS.till_takeover_mode(db, machine) != LSS.TILL_TAKEOVER_MANAGER:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"code": SWITCH_FROM_CLOUD_ONLY, "message": SWITCH_FROM_CLOUD_ONLY_MESSAGE},
+        )
+    # One move of the shop's server at a time (P:/specs/dedicated-local-server.md §11.7).
+    with LSS.switch_lock(db, machine.shop_id, wait=True):
+        try:
+            out = LSS.switch_from_till(db, machine, body.pos_user_name if body is not None else None)
+        except Exception:
+            db.rollback()
+            raise
+        tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
+        db.commit()
     if out.get("previous") is not None:
-        # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
-        from app.services.till_messages import send_server_switch_notice
-
-        send_server_switch_notice(db, machine.shop_id, out.get("mainTill"), out.get("previous"), body.pos_user_name)
-    tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
-    db.commit()
-    # Every till re-reads its parameters and printers, and pulls the tables' new host.
-    background_tasks.add_task(TP.publish_parameters_notify, tills)
-    _wake(background_tasks, db, machine)
+        # Every till re-reads its parameters and printers, and pulls the tables' new host.
+        background_tasks.add_task(TP.publish_parameters_notify, tills)
+        _wake(background_tasks, db, machine)
     return out
 
 

@@ -109,10 +109,13 @@ function deviceModel(value: unknown): PosMachine['deviceModel'] {
   return (DEVICE_MODELS as readonly string[]).includes(s ?? '') ? (s as DeviceModel) : null;
 }
 
-/** `till` | `kiosk`; null when the server did not say. */
+/**
+ * `till` | `kiosk` | `local_server` ("שרת מקומי", P:/specs/dedicated-local-server.md); null when the server
+ * did not say (a screen is told apart by `fiscal: false`).
+ */
 function deviceRole(value: unknown): PosMachine['deviceRole'] {
   const s = nullableString(value)?.toLowerCase();
-  return s === 'till' || s === 'kiosk' ? s : null;
+  return s === 'till' || s === 'kiosk' || s === 'local_server' ? s : null;
 }
 
 /** What the device runs, as the server says (else what it said at pairing); null when unknown. */

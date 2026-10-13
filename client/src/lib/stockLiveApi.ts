@@ -179,7 +179,20 @@ export interface TargetRow {
   dayEnd: string;
   name: string | null;
   label: string;
+  /** The shop's name (P:\specs\reports-upgrade.md §4.6); absent from an older server. */
+  shopName?: string | null;
 }
+
+/**
+ * A `GET /targets/progress` row as the server sends it: `TargetProgress` and the fields the
+ * targets' export reads (§4.6 `shopName`), optional — an older server does not send them.
+ */
+export type TargetProgressRow = TargetProgress & {
+  shopId?: string;
+  shopName?: string | null;
+  /** When it was reached (ISO), null while it is not. */
+  reachedAt?: string | null;
+};
 
 export async function fetchTargets(s: { companyId?: string | null; shopId?: string | null }): Promise<TargetRow[]> {
   return (await api.get('/targets', { params: { companyId: s.companyId || undefined, shopId: s.shopId || undefined } })).data;

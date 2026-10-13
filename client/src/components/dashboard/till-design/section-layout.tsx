@@ -3,7 +3,8 @@
 /**
  * "פריסה": the tiles (size — "auto" is the till parameters' "גודל ריבוע מוצר", style, density,
  * columns, images, text size), the bill's position and the category bar — for every device, and
- * the chosen device profile's own overrides ("כמו הבסיס" = null).
+ * the chosen device profile's own overrides ("כמו הבסיס" = null, or "base" over a value the
+ * level above set — phase 2 §3.10).
  */
 
 import { useTranslations } from 'next-intl';
@@ -18,7 +19,9 @@ import {
   TEXT_SIZES,
   TILE_SIZES,
   TILE_STYLES,
+  asBaseValue,
   canonicalTemplate,
+  isSet,
   forProfile,
   legacyTileKey,
   LEGACY_FALLBACK,
@@ -27,24 +30,25 @@ import {
 import { useTillEditor, useTillField } from './editor-context';
 import { AutoHint, FieldShell, NullableSegmentField, OptionSelect, SectionCard, SegmentField } from './fields';
 
-/** The select's "כמו הבסיס" (null) for the profile's columns. */
+/** The select's "כמו הבסיס" (null, or "base") for the profile's columns. */
 const BASE = '__base';
 
 function ColumnsField({ path, nullable }: { path: string; nullable: boolean }) {
   const t = useTranslations('tillDesign.layout');
-  const f = useTillField<number | null>(path);
+  const f = useTillField<number | string | null>(path);
+  const over = isSet(f.inheritedValue);
   const options = [
-    ...(nullable ? [{ value: BASE, label: t('asBase') }] : []),
+    ...(nullable ? [{ value: BASE, label: over ? t('asBaseOver') : t('asBase') }] : []),
     ...COLUMNS_CHOICES.map((n) => ({ value: String(n), label: n === 0 ? t('columnsAuto') : String(n) })),
   ];
   return (
     <FieldShell path={path} label={t('columns')} hint={t('columnsHint')}>
       <OptionSelect
-        value={f.value === null || f.value === undefined ? (nullable ? BASE : '0') : String(f.value)}
+        value={!isSet(f.value) ? (nullable ? BASE : '0') : String(f.value)}
         disabled={f.disabled}
         ariaLabel={t('columns')}
         options={options}
-        onChange={(v) => f.set(v === BASE || v === '' ? null : Number(v))}
+        onChange={(v) => f.set(v === BASE || v === '' ? asBaseValue(f.inheritedValue) : Number(v))}
         className="w-48"
       />
     </FieldShell>
@@ -56,6 +60,7 @@ export function LayoutSection() {
   const tv = useTranslations('tillDesign.values');
   const tp = useTranslations('tillDesign.profiles');
   const tm = useTranslations('tillDesign.mode');
+  const tt = useTranslations('tillDesign.templates');
   const ed = useTillEditor();
   const legacy = ed.legacy ?? LEGACY_FALLBACK;
   const view = forProfile(ed.draft, ed.profile);
@@ -66,6 +71,7 @@ export function LayoutSection() {
   const tileAuto = MODES.map((mode) => `${tm(mode)} ${tv(`tileSize.${legacy.tileSize[legacyTileKey(ed.profile, mode)]}`)}`).join(' · ');
   const billAuto = MODES.map((mode) => `${tm(mode)}: ${tv(`billPosition.${TEMPLATE_DEFAULTS[template].billPosition[mode][ed.profile]}`)}`).join(' · ');
   const styleAuto = tv(`tileStyle.${TEMPLATE_DEFAULTS[template].tileStyle}`);
+  const fixed = TEMPLATE_DEFAULTS[template].fixed;
 
   const opts = <V extends string>(values: readonly V[], key: string) => values.map((v) => ({ value: v, label: tv(`${key}.${String(v)}` as string) }));
   const p = (key: ProfileOverrideKey) => `profiles.${ed.profile}.${key}`;
@@ -93,9 +99,19 @@ export function LayoutSection() {
           options={opts(BILL_POSITIONS, 'billPosition')}
         />
         <SegmentField path="layout.categoryBar" label={t('categoryBar')} hint={t('categoryBarHint')} options={opts(CATEGORY_BARS, 'categoryBar')} />
-        <SegmentField path="layout.images" label={t('images')} hint={t('imagesHint')} options={opts(IMAGES, 'images')} />
+        <SegmentField
+          path="layout.images"
+          label={t('images')}
+          hint={fixed.images ? <AutoHint>{t('fixedByTemplate', { template: tt(`${template}.name`) })}</AutoHint> : t('imagesHint')}
+          options={opts(IMAGES, 'images')}
+        />
         <ColumnsField path="layout.columns" nullable={false} />
-        <SegmentField path="layout.textSize" label={t('textSize')} options={opts(TEXT_SIZES, 'textSize')} />
+        <SegmentField
+          path="layout.textSize"
+          label={t('textSize')}
+          hint={fixed.textSize ? <AutoHint>{t('fixedByTemplate', { template: tt(`${template}.name`) })}</AutoHint> : undefined}
+          options={opts(TEXT_SIZES, 'textSize')}
+        />
       </SectionCard>
 
       <SectionCard
@@ -103,17 +119,18 @@ export function LayoutSection() {
         description={handheld ? t('profileHandheld') : t('profileDescription')}
         paths={[`profiles.${ed.profile}`]}
       >
-        <NullableSegmentField path={p('tileSize')} label={t('tileSize')} nullLabel={t('asBase')} options={opts(TILE_SIZES, 'tileSize')} />
-        <NullableSegmentField path={p('tileStyle')} label={t('tileStyle')} nullLabel={t('asBase')} options={opts(TILE_STYLES, 'tileStyle')} />
-        <NullableSegmentField path={p('density')} label={t('density')} nullLabel={t('asBase')} options={opts(DENSITIES, 'density')} />
+        <NullableSegmentField path={p('tileSize')} label={t('tileSize')} nullLabel={t('asBase')} nullOverLabel={t('asBaseOver')} options={opts(TILE_SIZES, 'tileSize')} />
+        <NullableSegmentField path={p('tileStyle')} label={t('tileStyle')} nullLabel={t('asBase')} nullOverLabel={t('asBaseOver')} options={opts(TILE_STYLES, 'tileStyle')} />
+        <NullableSegmentField path={p('density')} label={t('density')} nullLabel={t('asBase')} nullOverLabel={t('asBaseOver')} options={opts(DENSITIES, 'density')} />
         <NullableSegmentField
           path={p('billPosition')}
           label={t('billPosition')}
           nullLabel={t('asBase')}
+          nullOverLabel={t('asBaseOver')}
           options={opts(BILL_POSITIONS, 'billPosition').map((o) => ({ ...o, disabled: handheld && (o.value === 'start' || o.value === 'end') }))}
         />
         {handheld ? null : (
-          <NullableSegmentField path={p('categoryBar')} label={t('categoryBar')} nullLabel={t('asBase')} options={opts(CATEGORY_BARS, 'categoryBar')} />
+          <NullableSegmentField path={p('categoryBar')} label={t('categoryBar')} nullLabel={t('asBase')} nullOverLabel={t('asBaseOver')} options={opts(CATEGORY_BARS, 'categoryBar')} />
         )}
         <ColumnsField path={p('columns')} nullable />
       </SectionCard>

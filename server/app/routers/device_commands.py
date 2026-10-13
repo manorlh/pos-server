@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.middleware.auth import (
     FISCAL_SYNC_PATH,
+    HOST_SYNC_PATH,
     get_active_tenant_id,
     get_current_machine_admin,
     get_current_user,
@@ -72,6 +73,8 @@ class CommandIn(BaseModel):
     action: Literal[
         "lock", "unlock", "sync_now", "refresh_catalog", "sign_out", "restart_app", "install_update", "upload_logs",
     ]
+    # (A local server's own — `print_test_page`, `clear_print_queue` — go through
+    # `POST /machines/{id}/local-server/commands`, which checks their printer and confirmation.)
     message: Optional[str] = Field(None, max_length=300)
     machine_ids: Optional[List[uuid.UUID]] = Field(None, alias="machineIds", max_length=500)
     shop_id: Optional[uuid.UUID] = Field(None, alias="shopId")
@@ -135,8 +138,11 @@ def _devices(db: Session, user: User, tenant_id, *, machine_ids=None, shop_id=No
         q = q.join(Shop, Shop.id == POSMachine.shop_id).filter(Shop.company_id == company_id)
     else:
         q = kiosk_control._scoped_machine_query(db, user, tenant_id)
+    from app.services.local_server_device import is_local_server
+
+    # Tills and kiosks — and a dedicated local server ("שרת מקומי"), which takes remote commands too.
     machines = [m for m in q.order_by(POSMachine.shop_id, POSMachine.pos_number, POSMachine.name).all()
-                if getattr(m, "is_fiscal", True) is not False and m.shop_id is not None]
+                if (getattr(m, "is_fiscal", True) is not False or is_local_server(m)) and m.shop_id is not None]
     narrow = _narrowing(db, user)
     allowed = []
     for m in machines:
@@ -842,7 +848,8 @@ def till_unlocked(
     return {"state": svc.state_out(svc.state_of(db, machine.id)), "command": svc.command_out(row) if row is not None else None}
 
 
-@till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=FISCAL_SYNC_PATH)
+# A dedicated local server answers its commands too (P:/specs/dedicated-local-server.md §11.5).
+@till_router.post("/{machine_id}/device-commands/{command_id}/ack", dependencies=HOST_SYNC_PATH)
 def till_ack(
     machine_id: str,
     command_id: str,

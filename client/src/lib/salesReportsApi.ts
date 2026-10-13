@@ -5,7 +5,15 @@
 import { api, type ReportWindowParams } from './api';
 import type { ReportWindowOut } from './types';
 
-type Params = ReportWindowParams & { cashierId?: string };
+/** `companyId`: the company and its subsidiaries (P:\specs\reports-upgrade.md §4.1). */
+type Params = ReportWindowParams & { cashierId?: string; companyId?: string };
+
+/** A tip's tender, apart from the takings (§4.2). */
+export interface TipTenderRow {
+  method: 'cash' | 'card' | 'other';
+  amount: number;
+  documents: number;
+}
 
 export interface PaymentMethodRow {
   day: string;
@@ -34,6 +42,9 @@ export interface PaymentMethodsReport {
   rows: PaymentMethodRow[];
   totals: PaymentMethodTotal[];
   total: number;
+  /** Tips by tender — never inside `rows` / `totals` / `total` (§4.2; absent from an older server). */
+  tips?: TipTenderRow[];
+  tipsTotal?: number;
 }
 
 export interface HourlyCell {
@@ -42,15 +53,19 @@ export interface HourlyCell {
   hour: number;
   net: number;
   documents: number;
+  /** Tips in this cell, apart from `net` (§4.2). */
+  tips?: number;
 }
 
 export interface HourlyReport {
   window: ReportWindowOut;
   generatedAt: string;
   cells: HourlyCell[];
-  byHour: { hour: number; net: number; documents: number; averageBasket: number }[];
+  byHour: { hour: number; net: number; documents: number; averageBasket: number; tips?: number }[];
   total: number;
   documents: number;
+  /** §4.2, apart from `total`. */
+  tipsTotal?: number;
 }
 
 export interface DepartmentRow {
@@ -130,7 +145,7 @@ export async function fetchPaymentMethodsReport(params: Params): Promise<Payment
 }
 
 /** `companyId` (the company and its subsidiaries) narrows like `shopId`; the control board's chart. */
-export async function fetchHourlyReport(params: Params & { companyId?: string }): Promise<HourlyReport> {
+export async function fetchHourlyReport(params: Params): Promise<HourlyReport> {
   return (await api.get<HourlyReport>('/reports/hourly', { params })).data;
 }
 

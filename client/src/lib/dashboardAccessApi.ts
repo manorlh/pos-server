@@ -70,7 +70,8 @@ export interface UserAccessDetail {
 }
 
 export interface AccessCatalog {
-  sections: { id: SectionId; label: string; hint: string; pages: string[] }[];
+  /** `superAdminOnly`: granted by the super admin alone, and not part of full access ("העברת שרת מקומי"). */
+  sections: { id: SectionId; label: string; hint: string; pages: string[]; superAdminOnly?: boolean }[];
   levels: AccessLevel[];
   defaultTemplate: string;
   templates: AccessTemplate[];

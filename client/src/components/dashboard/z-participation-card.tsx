@@ -1,11 +1,13 @@
 'use client';
 
 /**
- * "קופות בזד הסניפי" on a shop — "קופה עצמאית בתוך סניף". Every till of the shop, ticked =
- * in the shop's Z ("Z סניפי"), unticked = an independent till: its own Z in its own
- * numbering, never part of the shop Z, and never leaning on the main till ("שרת מקומי")
- * for tables or printing. A till in the older "Z לכל קופה" stays apart until it is
- * changed. Under the list, the main till — picked from the ticked tills only.
+ * "קופות בזד הסניפי" on a shop. Every till of the shop has two settings
+ * (P:/specs/dedicated-local-server.md §12): "מחוברת לשרת המקומי" כן / לא — leaning on the main
+ * till ("שרת מקומי") for tables and printing, or not — and "ה-Z" סניפי / נפרד. So a till is in
+ * the shop Z on the server; "מרוחקת בזד הסניפי" — in the shop Z, off the server (the device
+ * preset `remote_shop_z`: its part reaches the main till through the cloud); "קופה עצמאית" — its
+ * own Z in its own numbering, never part of the shop Z; or, set with the shop's Z mode, "Z בקופה,
+ * בתוך הסניף". Under the list, the main till — picked from the tills in the shop Z on the server.
  *
  * The super admin's alone (pos-server `PUT /shops/{id}/z-participation`), all or nothing,
  * and only for tills with no open shift and no closed shifts awaiting a Z; everyone else
@@ -25,19 +27,21 @@ import { axiosErrorToToastMessage } from '@/lib/apiError';
 import {
   buildParticipationBody,
   canBeRemote,
-  choiceForTick,
   effectOf,
   exclusionLocked,
   exclusionPreTicked,
+  explainKeyOf,
   initialChoices,
   initialExclusions,
   initialLinks,
   isKnownRefusal,
   linkHintOf,
   mainTillOptions,
+  nextChoice,
   producerBusyOf,
   refusalOf,
   roleOf,
+  settingsOf,
   sortTills,
   summarySegments,
   switchBlockOf,
@@ -110,10 +114,10 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
 
   const tills = sortTills(data.tills);
   const body = buildParticipationBody(data, choices, mainTillId || null, links, exclusions);
-  const issues = validateParticipation(data, choices, mainTillId || null, exclusions);
+  const issues = validateParticipation(data, choices, mainTillId || null, exclusions, links);
   const mainIssue = issues.find((i) => i.kind === 'main_not_participating');
   const excludedMainIssue = issues.find((i) => i.kind === 'main_excluded');
-  const options = mainTillOptions(data.tills, choices, exclusions);
+  const options = mainTillOptions(data.tills, choices, exclusions, links);
 
   // 409 `shop_z_producer_busy`: the shop Z's producer has not handed over; a super admin may force it.
   const [producerBusy, setProducerBusy] = useState<ProducerBusy | null>(null);
@@ -164,14 +168,17 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
     return isKnownRefusal(r.code) ? t(`errors.${r.code}`, { till }) : r.code;
   };
   const choiceOf = (x: ZParticipationTill): ZRole => choices[x.machineId] ?? roleOf(x);
-  const set = (id: string, role: ZRole) => {
-    setRefusal(null);
-    setChoices((c) => ({ ...c, [id]: role }));
-  };
   const busy = !data.canEdit || save.isPending;
-  const setLink = (id: string, link: TillLink) => {
+  // One of the two settings changed: the role and the link it leads to (lib/zParticipation.ts).
+  const setSettings = (
+    x: ZParticipationTill,
+    change: { connected?: boolean; shopZ?: boolean },
+    opts: { remoteAllowed: boolean },
+  ) => {
+    const next = nextChoice({ role: choiceOf(x), link: links[x.machineId] ?? 'lan' }, change, opts);
     setRefusal(null);
-    setLinks((l) => ({ ...l, [id]: link }));
+    setChoices((c) => ({ ...c, [x.machineId]: next.role }));
+    setLinks((l) => ({ ...l, [x.machineId]: next.link }));
   };
   const setExcluded = (id: string, on: boolean) => {
     setRefusal(null);
@@ -188,28 +195,22 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
       ) : (
         <ul className="divide-y rounded-md border">
           {tills.map((x) => {
-            const initial = roleOf(x);
             const choice = choiceOf(x);
             const block = switchBlockOf(x);
             const isMain = !!mainTillId && x.machineId === mainTillId && choice === 'shop_z';
             const link: TillLink = links[x.machineId] ?? 'lan';
-            const remoteAllowed = canBeRemote(x.machineId, choice, mainTillId || null);
-            const effect = effectOf(choice, remoteAllowed && link === 'remote');
-            const hint = remoteAllowed ? linkHintOf(link, x.seenOnLan) : null;
+            const remoteAllowed = showLinks && canBeRemote(x.machineId, 'shop_z', mainTillId || null);
+            const settings = settingsOf(choice, choice === 'shop_z' && (remoteAllowed || x.linkFixed) ? link : 'lan');
+            const opts = { remoteAllowed };
+            const effect = effectOf(choice, choice === 'shop_z' && !settings.connected);
+            const hint = choice === 'shop_z' && remoteAllowed && !x.linkFixed ? linkHintOf(link, x.seenOnLan) : null;
             const id = `zp-${shopId}-${x.machineId}`;
+            // Fixed by what it is: the main till is the server; a Windows device is closed through the cloud.
+            const connectedFixed = isMain || (choice === 'shop_z' && !!x.linkFixed);
             return (
               <li key={x.machineId} className="space-y-1 px-3 py-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label htmlFor={id} className="flex items-center gap-2 text-sm">
-                    <input
-                      id={id}
-                      type="checkbox"
-                      className="h-4 w-4 accent-primary"
-                      checked={choice === 'shop_z'}
-                      // A till that cannot change sides now is not offered the change.
-                      disabled={busy || !!block}
-                      onChange={(e) => set(x.machineId, choiceForTick(initial, e.target.checked))}
-                    />
+                  <span className="flex items-center gap-2 text-sm">
                     <span className="font-medium">{tillLabel(x)}</span>
                     {x.kiosk ? (
                       <Badge variant="outline" className="h-4 px-1 text-[10px]">
@@ -218,7 +219,7 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                     ) : x.name && x.name !== tillLabel(x) ? (
                       <span className="text-xs text-muted-foreground">{x.name}</span>
                     ) : null}
-                  </label>
+                  </span>
                   <span className="flex flex-wrap items-center gap-1">
                     {isMain ? <Badge>{t('localServer')}</Badge> : null}
                     <Badge
@@ -227,28 +228,66 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                     >
                       {t(`effect.${effect}`)}
                     </Badge>
-                    {/* "Z לכל קופה" moves to the independent side only on the user's word. */}
-                    {initial === 'own_z' && choice !== 'shop_z' && data.canEdit && !block ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-xs"
-                        disabled={save.isPending}
-                        onClick={() => set(x.machineId, choice === 'own_z' ? 'independent' : 'own_z')}
-                      >
-                        {choice === 'own_z' ? t('makeIndependent') : t('keepOwnZ')}
-                      </Button>
-                    ) : null}
                   </span>
                 </div>
+                {/* The two settings (§12). A till that cannot change now is not offered the change. */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 ps-6">
+                  <label htmlFor={`${id}-connected`} className="flex items-center gap-2 text-xs">
+                    <span>{t('settings.connected')}</span>
+                    <select
+                      id={`${id}-connected`}
+                      className="border-input bg-background h-7 rounded-md border px-2 text-xs disabled:opacity-70"
+                      value={settings.connected ? 'yes' : 'no'}
+                      disabled={busy || !!block || connectedFixed}
+                      onChange={(e) => setSettings(x, { connected: e.target.value === 'yes' }, opts)}
+                    >
+                      <option value="yes">{t('settings.yes')}</option>
+                      {/* In the shop Z, off the server: never the main till, and only where the shop has one. */}
+                      <option value="no" disabled={settings.shopZ && !remoteAllowed}>
+                        {t('settings.no')}
+                      </option>
+                    </select>
+                  </label>
+                  <label htmlFor={`${id}-z`} className="flex items-center gap-2 text-xs">
+                    <span>{t('settings.z')}</span>
+                    <select
+                      id={`${id}-z`}
+                      className="border-input bg-background h-7 rounded-md border px-2 text-xs disabled:opacity-70"
+                      value={settings.shopZ ? 'shop' : 'own'}
+                      disabled={busy || !!block || isMain}
+                      onChange={(e) => setSettings(x, { shopZ: e.target.value === 'shop' }, opts)}
+                    >
+                      <option value="shop">{t('settings.shopZ')}</option>
+                      <option value="own">{t('settings.ownZ')}</option>
+                    </select>
+                  </label>
+                  {/* What the main till hears: a hint only, never a change by itself. */}
+                  {hint ? (
+                    <span
+                      className={
+                        hint === 'maybeRemote'
+                          ? 'text-xs text-amber-700/80 dark:text-amber-400/80'
+                          : 'text-xs text-muted-foreground'
+                      }
+                    >
+                      {t(`link.${hint}`)}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="ps-6 text-xs text-muted-foreground">
+                  {isMain
+                    ? t('link.mainServer')
+                    : choice === 'shop_z' && x.linkFixed
+                      ? t('link.fixedWindows')
+                      : t(`explain.${explainKeyOf(settings)}`)}
+                </p>
                 {block && data.canEdit ? (
                   <p className="ps-6 text-xs text-amber-700 dark:text-amber-400">
                     {block === 'open_shift' ? t('blocked.openShift') : t('blocked.awaitingZ', { n: x.awaitingZ })}
                   </p>
                 ) : null}
-                {/* "לא משמש כשרת מקומי": in the LAN group and the shop Z, never its server. */}
-                {choice !== 'independent' ? (
+                {/* "לא משמש כשרת מקומי": on the local server, never its server. Off it: never one anyway. */}
+                {settings.connected ? (
                   <div className="flex flex-wrap items-center gap-2 ps-6">
                     <label htmlFor={`${id}-lan`} className="flex items-center gap-2 text-xs">
                       <input
@@ -267,38 +306,6 @@ function ZParticipationForm({ shopId, data }: { shopId: string; data: ZParticipa
                       <span className="text-xs text-muted-foreground">{t('lanServer.mainTill')}</span>
                     ) : exclusionPreTicked(x, exclusions) ? (
                       <span className="text-xs text-amber-700/80 dark:text-amber-400/80">{t('lanServer.preTicked')}</span>
-                    ) : null}
-                  </div>
-                ) : null}
-                {/* On the shop's LAN, or elsewhere and closed through the cloud. The main till
-                    is the LAN server; an independent till is outside the shop Z altogether. */}
-                {showLinks && isMain ? (
-                  <p className="ps-6 text-xs text-muted-foreground">{t('link.mainServer')}</p>
-                ) : showLinks && remoteAllowed && x.linkFixed ? (
-                  <p className="ps-6 text-xs text-muted-foreground">{t('link.fixedWindows')}</p>
-                ) : showLinks && remoteAllowed ? (
-                  <div className="flex flex-wrap items-center gap-2 ps-6">
-                    <select
-                      aria-label={t('link.label')}
-                      className="border-input bg-background h-7 rounded-md border px-2 text-xs disabled:opacity-70"
-                      value={link}
-                      disabled={busy}
-                      onChange={(e) => setLink(x.machineId, e.target.value === 'remote' ? 'remote' : 'lan')}
-                    >
-                      <option value="lan">{t('link.lan')}</option>
-                      <option value="remote">{t('link.remote')}</option>
-                    </select>
-                    {/* What the main till hears: a hint only, never a change by itself. */}
-                    {hint ? (
-                      <span
-                        className={
-                          hint === 'maybeRemote'
-                            ? 'text-xs text-amber-700/80 dark:text-amber-400/80'
-                            : 'text-xs text-muted-foreground'
-                        }
-                      >
-                        {t(`link.${hint}`)}
-                      </span>
                     ) : null}
                   </div>
                 ) : null}

@@ -14,10 +14,14 @@ from app.services.sell_screen import SELL_SCREEN_SETTING_KEYS
 from app.services.voucher_redeem_settings import VOUCHER_FLOW_SETTING_KEYS
 from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
 from app.services.voucher_station_settings import (
+    VOUCHER_AUTO_APPLY_SETTING_KEYS,
+    VOUCHER_FAST_MODE_SETTING_KEYS,
     VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
     VOUCHER_SOUND_SETTING_KEYS,
     VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
     VOUCHER_STATION_SETTING_KEYS,
+    VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
+    VOUCHER_SUCCESS_SETTING_KEYS,
 )
 
 MANAGED_SETTING_KEYS = (
@@ -89,9 +93,23 @@ MANAGED_SETTING_KEYS = (
     # voucherShowEntitlement — the cashier's "what the customer gets" card on every voucher scan
     # (same module, 13.10.2026).
     *VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
+    # voucherAutoApply — a voucher scanned over a cart applied at once to the matching lines, no
+    # redeem sheet, when no choice is needed (same module, 12.10.2026).
+    *VOUCHER_AUTO_APPLY_SETTING_KEYS,
+    # voucherSuccessScreen, voucherSuccessSeconds — the green success screen after a voucher
+    # redemption and how long it stays (same module, 12.10.2026).
+    *VOUCHER_SUCCESS_SETTING_KEYS,
+    # voucherSuccessDismiss — the green screen closes by itself or on the cashier's "אישור" (same
+    # module, 13.10.2026, P:/specs/voucher-fast-mode.md §0 item 11).
+    *VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
     # voucherSoundApprove, voucherSoundReject — the strong approve / reject sounds of a voucher
     # redemption (same module, 12.10.2026).
     *VOUCHER_SOUND_SETTING_KEYS,
+    # voucherFastMode, voucherFastAutoClose, voucherStationCamera, voucherStationCameraFacing,
+    # voucherVibrate, voucherSoundBoost, voucherStationCatalogSwitch, voucherStationHeader,
+    # voucherStationTitle — the voucher fast mode and its station (same module, 13.10.2026,
+    # P:/specs/voucher-fast-mode.md §0).
+    *VOUCHER_FAST_MODE_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).
@@ -265,6 +283,7 @@ def build_business_info(
         # `businessInfo` override in settings does not change the dealer type
         # (docs/SPEC_BUSINESS_TYPE.md, open question 7).
         dealer_type=dealer_type_of(company),
+        phone=str(bi_override.get("phone") or "").strip() or None,
     )
 
 

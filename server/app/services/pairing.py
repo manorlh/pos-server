@@ -180,6 +180,14 @@ def validate_pairing_code(
     from app.services import display_devices
 
     device_platform = display_devices.check_platform(pairing_code, device_info)
+    # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): no device is paired into an inactive
+    # shop — the code's shop, or the shop of the till a replacement takes over. 409 `shop_inactive`
+    # before anything is created; the code stays unused for when the shop is back on.
+    refuse_inactive_target(db, pairing_code)
+    # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): a Windows / browser device has no training mode,
+    # so it never lands in a shop in it — the code's shop, or the replaced terminal's — 409
+    # `training_mode.DeviceUnsupported`, before anything is created (the code stays unused).
+    _check_training_fit(db, pairing_code, device_platform)
 
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
@@ -225,6 +233,8 @@ def validate_pairing_code(
             # non-fiscal machine from the start, so it never draws a register number.
             is_fiscal=display_devices.is_fiscal_role(getattr(pairing_code, "device_role", None)),
             platform=device_platform,
+            # "שרת מקומי" (P:/specs/dedicated-local-server.md §11.1): non-fiscal, and the shop's host-to-be.
+            is_local_server=getattr(pairing_code, "device_role", None) == display_devices.ROLE_LOCAL_SERVER,
         )
 
     pairing_code.is_used = True
@@ -269,6 +279,45 @@ def validate_pairing_code(
     return pos_machine
 
 
+def refuse_inactive_target(db: Session, pairing_code: PairingCode) -> None:
+    """
+    409 `shop_inactive` (app/services/shop_active.py) when [pairing_code] would put a device in
+    an inactive shop: the shop it was made for, or — a replacement code — its till's shop.
+    """
+    from app.services import shop_active
+
+    shop_id = getattr(pairing_code, "shop_id", None)
+    target_id = getattr(pairing_code, "target_machine_id", None)
+    if shop_id is None and target_id is not None:
+        target = db.query(POSMachine).filter(POSMachine.id == target_id).first()
+        shop_id = getattr(target, "shop_id", None)
+    if shop_id is None:
+        return
+    shop_active.refuse_pairing(db.query(Shop).filter(Shop.id == shop_id).first())
+
+
+def _check_training_fit(db: Session, pairing_code: PairingCode, device_platform: str) -> None:
+    """`training_mode.check_device_fits` for the shop this code lands the device in."""
+    from app.services import device_profile
+    from app.services import training_mode
+
+    if training_mode.platform_supported(device_platform):
+        return  # an Android device fits any shop
+    shop_id = pairing_code.shop_id
+    role = getattr(pairing_code, "device_role", None)
+    if pairing_code.target_machine_id is not None:
+        # A replacement takes the terminal's shop and its role.
+        target = db.query(POSMachine).filter(POSMachine.id == pairing_code.target_machine_id).first()
+        if target is None:
+            return
+        shop_id = target.shop_id
+        role = device_profile.current_role(db, target)
+    if shop_id is None:
+        return
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    training_mode.check_device_fits(shop, device_platform, role)
+
+
 def _serial_source(device_info: Optional[dict]) -> Optional[str]:
     """`device_info.serial_source`, beside a serial (app/services/device_identity.py)."""
     from app.services.device_identity import serial_source_from_device_info
@@ -287,6 +336,7 @@ def create_pos_machine(
     device_model: Optional[str] = None,
     is_fiscal: bool = True,
     platform: Optional[str] = None,
+    is_local_server: bool = False,
 ) -> POSMachine:
     """
     Create a new POS machine row in PAIRED status (not yet assigned to a shop).
@@ -327,8 +377,9 @@ def create_pos_machine(
         serial_number=serial_from_device_info(device_info),
         # Where it came from: the vendor SDK, Android's own, or `ro.serialno` (device_identity).
         serial_source=_serial_source(device_info),
-        is_fiscal=bool(is_fiscal),
+        is_fiscal=bool(is_fiscal) and not is_local_server,
         platform=platform or platform_of_device_info(device_info),
+        is_local_server=bool(is_local_server),
     )
     db.add(pos_machine)
     db.flush()
@@ -358,6 +409,12 @@ def assign_machine_to_shop(
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if not shop:
         return None
+    # "סניף לא פעיל": never into an inactive shop (409 `shop_inactive`) — whichever flow got here.
+    # A machine already in it is not moved, so re-assigning it there changes nothing.
+    if str(machine.shop_id) != str(shop.id):
+        from app.services import shop_active
+
+        shop_active.refuse_pairing(shop)
 
     # Also settles the register number: the shop's next one, or the one this machine
     # already holds in this shop. Every pairing flow that lands a till in a shop —

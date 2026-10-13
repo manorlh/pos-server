@@ -33,7 +33,7 @@ DeviceModel = Literal[
 #: "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a till, a self-order kiosk, a KDS
 #: kitchen screen or the "מוכן / לא מוכן" board. The last two are display devices: not tills
 #: and not accounting systems (app/services/display_devices.py).
-DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display"]
+DeviceRole = Literal["till", "kiosk", "kds", "order_status_board", "customer_display", "local_server"]
 
 #: What the device runs (app/services/display_devices.py `PLATFORMS`). "web": the browser kiosk
 #: the dashboard app serves at `/k` (a kiosk only — docs/SPEC_KIOSK.md §27).
@@ -237,6 +237,13 @@ class MachineHeartbeatBody(BaseModel):
     #: What this build can do, e.g. ["device_logs_v1"] ("שליחת לוגים לענן"), cleaned in
     #: app/services/device_logs.py `apply_heartbeat`. Absent (an older build): as it was.
     capabilities: Optional[List[Any]] = None
+    #: "שרת מקומי ייעודי" (P:/specs/dedicated-local-server.md §11.4): the server's state — connected
+    #: tills, open orders, the print queue, the printers — cleaned field by field in
+    #: app/services/local_server_device.py `clean_status` (never a 422). Absent: as it was.
+    local_server: Optional[Dict[str, Any]] = Field(None, alias="localServer")
+    #: The device's LAN identity for discovery (§11.6): `{publicKey, alg: "ES256"}`, an EC P-256 key;
+    #: one that is not is dropped. Absent: as it was.
+    lan_identity: Optional[Dict[str, Any]] = Field(None, alias="lanIdentity")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -323,6 +330,17 @@ class POSMachineResponse(POSMachineBase):
     replacements: Optional[List[Dict[str, Any]]] = None
     #: "קופה עצמאית" (docs/SPEC_INDEPENDENT_TILL.md): its own Z, outside the shop's LAN group.
     independent_till: bool = Field(False, alias="independentTill")
+    #: The devices page's filters (the machines list carries them): its shop in "מצב הדרכה",
+    #: its shop switched off (null without a shop, or on an answer that did not compute it),
+    #: and "נעולה" — locked from "שליטה מרחוק" (app/services/device_commands.py).
+    training_mode: bool = Field(False, alias="trainingMode")
+    shop_active: Optional[bool] = Field(None, alias="shopActive")
+    remote_locked: bool = Field(False, alias="remoteLocked")
+
+    @field_validator("training_mode", "remote_locked", mode="before")
+    @classmethod
+    def _unset_flag_is_false(cls, value):
+        return bool(value)
 
     @field_validator("independent_till", mode="before")
     @classmethod

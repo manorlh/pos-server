@@ -62,8 +62,10 @@ from app.routers import (
     till_messages as till_messages_router,
     prepaid_vouchers as prepaid_vouchers_router,
     prepaid_voucher_extras as prepaid_voucher_extras_router,
+    prepaid_voucher_manual as prepaid_voucher_manual_router,
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
+    local_server as local_server_router,
     lan_server as lan_server_router,
     z_mode as z_mode_router,
     z_participation as z_participation_router,
@@ -237,8 +239,12 @@ app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 # Settlement, deliveries, replacements, §15 reports, §18 controls and the simulator (helper).
 app.include_router(prepaid_voucher_extras_router.router, prefix=_prefix)
+# "מימוש ידני מהענן": manual redemption from the dashboard, one, many, and its undo.
+app.include_router(prepaid_voucher_manual_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
+# "העברת שרת מקומי" and "סגירת משמרת מהענן" (P:/specs/local-server-switch.md §8).
+app.include_router(local_server_router.router, prefix=_prefix)
 # "רשת מקומית" and "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3–4).
 app.include_router(lan_server_router.router, prefix=_prefix)
 app.include_router(z_mode_router.router, prefix=_prefix)
@@ -288,6 +294,10 @@ app.include_router(catalog_import_router.router, prefix=_prefix)
 app.include_router(catalog_import_router.public_router, prefix=_prefix)
 # "מצב הדרכה" and the demo menu (docs/SPEC_TRAINING_MODE.md).
 app.include_router(training_mode_router.router, prefix=_prefix)
+# "בניית חברת הדגמה" (P:/specs/demo-company.md): the super admin's one-click live demo company.
+from app.routers import demo_company as demo_company_router  # noqa: E402
+
+app.include_router(demo_company_router.router, prefix=_prefix)
 # "עובד מחובר בקופה אחת בלבד" (docs/SPEC_EXCLUSIVE_LOGIN.md): the till's claim / heartbeat /
 # release, and the dashboard's who-is-signed-in-where.
 app.include_router(user_sessions_router.till_router, prefix=_prefix)
@@ -397,6 +407,18 @@ def start_exception_alerts_worker():
     from app.services.exception_alerts.worker import start_background_worker as start_alerts_worker
 
     start_alerts_worker(SessionLocal)
+
+
+@app.on_event("startup")
+def start_local_server_failover_worker():
+    """
+    "גיבוי אוטומטי לשרת המקומי" every 30 s (app/services/local_server_failover.py) — it acts only in a
+    shop that switched it on; LOCAL_SERVER_FAILOVER_WORKER_ENABLED=false stops the check altogether.
+    """
+    from app.database import SessionLocal
+    from app.services.local_server_failover import start_background_worker as start_failover_worker
+
+    start_failover_worker(SessionLocal)
 
 
 @app.on_event("startup")
@@ -516,6 +538,14 @@ from app.routers import business_cards as business_cards_router  # noqa: E402
 
 app.include_router(business_cards_router.router, prefix=_prefix)
 app.include_router(business_cards_router.public_router, prefix=_prefix)
+
+# Reports export (P:/specs/reports-upgrade.md §4.3, §4.5): a company's default export columns
+# per report, and the report PDF drawn on the server.
+from app.routers import report_export_defaults as report_export_defaults_router  # noqa: E402
+from app.routers import report_pdf as report_pdf_router  # noqa: E402
+
+app.include_router(report_export_defaults_router.router, prefix=_prefix)
+app.include_router(report_pdf_router.router, prefix=_prefix)
 
 
 @app.on_event("startup")

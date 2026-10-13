@@ -126,8 +126,11 @@ def server_candidates(db: Session, machines: Iterable[POSMachine]) -> List[POSMa
     excluded ones. Every host election reads from this, in the given order.
     """
     from app.services.independent_till import lan_members
+    from app.services.local_shop_z import is_remote_participant
 
-    members = lan_members(machines)
+    # Nor a participant set "מרוחק (דרך הענן)" — "מרוחקת בזד הסניפי", not on the shop's local
+    # server (SPEC_INDEPENDENT_TILL §8.14): whatever is set on it, it is never the server.
+    members = [m for m in lan_members(machines) if not is_remote_participant(m)]
     kds = kds_screen_ids(db, [m.id for m in members if not getattr(m, "lan_server_excluded", False)])
     return [m for m in members if exclusion_of(m, kds) is None]
 
@@ -265,6 +268,19 @@ def set_excluded(db: Session, user: User, machine: POSMachine, excluded: bool, *
     if user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
     now = now or datetime.now(timezone.utc)
+    from app.services.local_server_device import is_local_server
+
+    if excluded and is_local_server(machine):
+        # "שרת מקומי" exists to serve the shop: it is never "לא משמש כשרת מקומי".
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "local_server_cannot_be_excluded",
+                "message": f"{_label(machine)} הוא שרת מקומי ייעודי — הוא תמיד יכול לשמש כשרת. "
+                           "כדי שלא ישמש כשרת, העבירו את השרת למכשיר אחר.",
+                "machineId": str(machine.id),
+            },
+        )
     if excluded and machine.shop_id is not None:
         main = main_till_of_shop(db, machine.shop_id)
         if main is not None and main.id == machine.id:
@@ -479,6 +495,14 @@ def sync_state(db: Session, shop, *, now: Optional[datetime] = None) -> Dict[str
     host = tables_host_of_shop(db, shop.id) or main_till_of_shop(db, shop.id)
     if host is None:
         return {"state": "none", "host": None, "pending": 0, "oldestAgeSeconds": None, "alert": False}
+    return host_sync_state(host, now=now)
+
+
+def host_sync_state(host: POSMachine, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    """`sync_state` of one device that serves (or served) the LAN — the shop's host, or a local server's card."""
+    from app.services.machine_status import is_online
+
+    now = now or datetime.now(timezone.utc)
     report = host.lan_sync if isinstance(getattr(host, "lan_sync", None), dict) else None
     at = getattr(host, "lan_sync_reported_at", None)
     if at is not None and at.tzinfo is None:

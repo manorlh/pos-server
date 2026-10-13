@@ -11,45 +11,62 @@
  * upsell, payment failures, and every kiosk side by side — the table the CSV export takes,
  * with the funnel and the abandonment by step. Refreshed every five minutes while auto refresh
  * is on.
+ *
+ * On the report framework where it fits (P:\specs\reports-upgrade.md §5): the view — period,
+ * the page's own scope, the kiosk picked — lives in the URL (lib/insightsView.ts), so a link
+ * reproduces it; the per-kiosk table is a report table (sortable, the reader's columns, cards
+ * on a phone); the export bar is the framework's (Excel with the header on every sheet, a real
+ * PDF of the per-kiosk table, export columns and the company's default, print as before), the
+ * CSV beside it.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
-import { ChevronRight, RefreshCw, TabletSmartphone } from 'lucide-react';
+import { ChevronRight, Download, RefreshCw, TabletSmartphone } from 'lucide-react';
 import { agorot } from '@/lib/insightsApi';
 import { cn } from '@/lib/utils';
+import { downloadCsv } from '@/lib/csv';
 import { formatShortDate } from '@/lib/format';
+import { insightsPeriodParams, insightsViewQuery, type InsightsRange, type InsightsViewSpec } from '@/lib/insightsView';
+import { todayIso } from '@/lib/reportWindow';
 import {
+  buildKioskCsv,
   durationText,
+  kioskCsvFilename,
   pctText,
   type KioskHeadline,
   type KioskInsightsParams,
   type KioskRef,
 } from '@/lib/kioskInsights';
 import { fetchKioskInsights } from '@/lib/kioskInsightsApi';
-import { ALL_COMPANIES, EMPTY_ORG_SCOPE, type OrgScope } from '@/components/dashboard/org-scope-cascade';
+import { ALL_COMPANIES, type OrgScope } from '@/components/dashboard/org-scope-cascade';
 import { ScopePicker, useOrgScopeLabel } from '@/components/dashboard/live/scope-picker';
 import { Card, Delta, IOS, InsightsSurface, Muted, SectionHeader, Segmented, SkeletonCard, Switch, Widget } from '@/components/dashboard/insights/ios';
 import { DatePicker } from '@/components/ui/date-picker';
+import { Button } from '@/components/ui/button';
 import { scopeParams } from '@/components/dashboard/insights/scope-params';
+import { useInsightsExportScope, useInsightsView } from '@/components/dashboard/insights/use-insights-view';
 import { AbandonmentChart, ByHourChart, DailyChart, FunnelChart, OrderTimeChart } from '@/components/dashboard/kiosk-insights/charts';
-import { PaymentsBlock, PerKioskTable, TopItemsList, UpsellBlock } from '@/components/dashboard/kiosk-insights/tables';
+import {
+  KIOSK_INSIGHTS_REPORT,
+  PaymentsBlock,
+  PerKioskTable,
+  TopItemsList,
+  UpsellBlock,
+  usePerKioskTable,
+} from '@/components/dashboard/kiosk-insights/tables';
 import { useKioskInsightsSheets } from '@/components/dashboard/kiosk-insights/export-sheets';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { useKioskLabels } from '@/components/dashboard/kiosk-insights/labels';
+import { ReportExportBar, type ReportTableSpec } from '@/components/dashboard/report-framework';
 
 const AUTO_REFRESH_MS = 5 * 60_000;
 
-type Range = '7' | '28' | '90' | 'custom';
-
-function isoDaysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+/** The view in the URL: the period, the scope and the kiosk picked (defaults left out). */
+const VIEW: InsightsViewSpec = { allCompanies: ALL_COMPANIES, extras: { kiosk: '' } };
 
 function kioskLabel(k: KioskRef): string {
   return [k.name || k.machineName, k.shopName].filter(Boolean).join(' · ');
@@ -59,17 +76,25 @@ export default function KioskInsightsPage() {
   const t = useTranslations('kioskInsights');
   const ti = useTranslations('insights');
   const kioskSheets = useKioskInsightsSheets();
+  const L = useKioskLabels();
 
-  const [scope, setScope] = useState<OrgScope>({ ...EMPTY_ORG_SCOPE, companyId: ALL_COMPANIES });
+  // The view lives in the URL (a link reproduces it); auto refresh is the reader's own.
+  const { view, update } = useInsightsView(VIEW);
+  const scope: OrgScope = view.scope;
   const scopeName = useOrgScopeLabel(scope);
-  const [range, setRange] = useState<Range>('28');
-  const [customFrom, setCustomFrom] = useState(() => isoDaysAgo(28));
-  const [customTo, setCustomTo] = useState(() => isoDaysAgo(1));
+  const range = view.range;
+  const setRange = (next: InsightsRange) => update({ range: next });
+  const customFrom = view.from;
+  const customTo = view.to;
+  const setCustom = (patch: { from?: string; to?: string }) => {
+    // A cleared field keeps the period as it was.
+    if (patch.from !== '' && patch.to !== '') update({ range: 'custom', ...patch });
+  };
   const [auto, setAuto] = useState(true);
-  const [kioskId, setKioskId] = useState('');
+  const kioskId = view.extras.kiosk;
+  const setKioskId = useCallback((v: string) => update({ extras: { kiosk: v } }), [update]);
 
-  const base: KioskInsightsParams =
-    range === 'custom' ? { ...scopeParams(scope), from: customFrom, to: customTo } : { ...scopeParams(scope), days: Number(range) };
+  const base: KioskInsightsParams = { ...scopeParams(scope), ...insightsPeriodParams(view) };
   const params: KioskInsightsParams = kioskId ? { ...base, kioskId } : base;
 
   const report = useQuery({
@@ -99,13 +124,23 @@ export default function KioskInsightsPage() {
     return () => window.clearInterval(id);
   }, []);
 
-  const changeScope = (next: OrgScope) => {
-    setScope(next);
-    setKioskId('');
-  };
+  const changeScope = (next: OrgScope) => update({ scope: next, extras: { kiosk: '' } });
+  // Back to the insights with the same period and scope.
+  const backQuery = insightsViewQuery(view, ALL_COMPANIES);
+  const backHref = backQuery ? `/dashboard/insights?${backQuery}` : '/dashboard/insights';
 
   // The scope line of the export: the page's own scope (not the dashboard's), and the kiosk picked.
-  const exportScope = [scopeName, ...kiosks.filter((k) => k.machineId === kioskId).map(kioskLabel)].join(' · ');
+  const exportPlace = [scopeName, ...kiosks.filter((k) => k.machineId === kioskId).map(kioskLabel)].join(' · ');
+  const exportScope = useInsightsExportScope(scope, ALL_COMPANIES, exportPlace);
+  // The headline and every kiosk are report tables (the per-kiosk one is the PDF's); the rest
+  // of the sheets follow them. While a new view loads, the one on screen is not exported.
+  const perKiosk = usePerKioskTable({ data, selectedId: kioskId, onSelect: setKioskId });
+  const exportReady = !!data?.hasKiosks && !report.isPlaceholderData;
+  const kpiTable = data ? kioskSheets.kpiTable(data) : null;
+  const exportTables = [...(kpiTable ? [kpiTable] : []), perKiosk.exported as ReportTableSpec<unknown>];
+  const exportCsv = () => {
+    if (data) downloadCsv(kioskCsvFilename(data.period), buildKioskCsv(data, L.csv));
+  };
 
   const period = data?.period;
   const cur = data?.headline.current ?? null;
@@ -127,7 +162,7 @@ export default function KioskInsightsPage() {
 
   return (
     <InsightsSurface>
-      <Link href="/dashboard/insights" className="mb-1 inline-flex items-center gap-0.5 px-1 text-[15px] text-[#007AFF] dark:text-[#0A84FF]">
+      <Link href={backHref} className="mb-1 inline-flex items-center gap-0.5 px-1 text-[15px] text-[#007AFF] dark:text-[#0A84FF]">
         <ChevronRight className="h-4 w-4" aria-hidden />
         {t('backToInsights')}
       </Link>
@@ -142,33 +177,47 @@ export default function KioskInsightsPage() {
           </p>
           <h1 className="text-[34px] font-bold leading-tight tracking-tight">{t('title')}</h1>
         </div>
-        <div className="mb-1 flex shrink-0 items-center gap-2">
-          {/* Every table of the report (one response, so every row), a sheet each. */}
-          <ReportExportToolbar
-            title={t('title')}
-            from={period?.from}
-            to={period?.to}
-            scopeLabel={exportScope}
-            disabled={!data?.hasKiosks}
-            getSheets={() => kioskSheets(data!)}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              void report.refetch();
-              if (kioskId) void all.refetch();
-            }}
-            aria-label={ti('refresh')}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#007AFF] shadow-sm active:opacity-60 dark:bg-[#1C1C1E]"
-          >
-            <RefreshCw className={cn('h-[18px] w-[18px]', report.isFetching && 'animate-spin')} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void report.refetch();
+            if (kioskId) void all.refetch();
+          }}
+          aria-label={ti('refresh')}
+          className="mb-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-[#007AFF] shadow-sm active:opacity-60 dark:bg-[#1C1C1E]"
+        >
+          <RefreshCw className={cn('h-[18px] w-[18px]', report.isFetching && 'animate-spin')} />
+        </button>
+      </div>
+
+      {/* Excel · PDF · Print · export columns · CSV — every table of the report (one response, so every row). */}
+      <div className="mt-3 px-1">
+        <ReportExportBar
+          reportKey={KIOSK_INSIGHTS_REPORT}
+          title={t('title')}
+          tables={exportTables}
+          extraSheets={() => (data ? kioskSheets.extraSheets(data) : [])}
+          pdfTableId="main"
+          from={exportReady ? period?.from : null}
+          to={exportReady ? period?.to : null}
+          business={exportScope.business}
+          place={exportScope.place}
+          filterLines={[]}
+          companyId={exportScope.companyId}
+          companyName={exportScope.companyName}
+          disabled={!exportReady}
+          actions={
+            <Button variant="outline" size="sm" onClick={exportCsv} disabled={!exportReady} title={t('exportHint')}>
+              <Download className="h-4 w-4" aria-hidden />
+              {t('export')}
+            </Button>
+          }
+        />
       </div>
 
       {/* Period */}
       <div className="mt-4 overflow-x-auto px-1 pb-1">
-        <Segmented
+        <Segmented<InsightsRange>
           value={range}
           onChange={setRange}
           label={ti('range.label')}
@@ -188,8 +237,8 @@ export default function KioskInsightsPage() {
             <DatePicker
               value={customFrom}
               max={customTo}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
+              onChange={(e) => setCustom({ from: e.target.value })}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => setCustom({ from: r.from, to: r.to }) }}
               dir="ltr"
               className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
@@ -199,9 +248,9 @@ export default function KioskInsightsPage() {
             <DatePicker
               value={customTo}
               min={customFrom}
-              max={isoDaysAgo(0)}
-              onChange={(e) => setCustomTo(e.target.value)}
-              range={{ from: customFrom, to: customTo, onSelect: (r) => { setCustomFrom(r.from); setCustomTo(r.to); } }}
+              max={todayIso()}
+              onChange={(e) => setCustom({ to: e.target.value })}
+              range={{ from: customFrom, to: customTo, onSelect: (r) => setCustom({ from: r.from, to: r.to }) }}
               dir="ltr"
               className="w-40 shrink-0 text-[15px] text-[#007AFF]"
             />
@@ -379,7 +428,7 @@ export default function KioskInsightsPage() {
           ) : null}
 
           <SectionHeader>{t('sections.perKiosk')}</SectionHeader>
-          <PerKioskTable rows={data.perKiosk} selectedId={kioskId} onSelect={setKioskId} />
+          <PerKioskTable table={perKiosk.screen} />
         </div>
       )}
 

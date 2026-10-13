@@ -688,3 +688,19 @@ def test_an_order_with_no_service_reaches_the_tills_with_none(w):
     assert out["accepted"] == ["o-none"] and out["rejected"] == []
     o = next(x for x in listed(w) if x["localId"] == "o-none")
     assert o["serviceType"] is None
+
+
+def test_a_kiosk_in_another_place_hands_its_pay_at_till_order_to_the_shops_tills_through_the_cloud(w):
+    """A kiosk in the shop Z set "מרוחק (דרך הענן)" (SPEC_INDEPENDENT_TILL §8.15): "תשלום בקופה" works — through the cloud."""
+    from app.services import local_shop_z as LZ
+
+    LZ.set_remote_till_ids(w.shop, [w.kiosk.id])
+    w.db.commit()
+    assert LZ.is_remote_participant(w.kiosk)
+    out = post(w, order())
+    assert out["accepted"] == ["o-1"]
+    woken = {m for m, event, _ in w.woken if event == S.WAKE_EVENT}
+    assert str(w.till.id) in woken and str(w.till2.id) in woken
+    assert [o["localId"] for o in listed(w)] == ["o-1"]
+    assert lock(w, w.till, "o-1")["lockedBy"]
+    assert paid(w, w.till, "o-1")["state"] == "paid"

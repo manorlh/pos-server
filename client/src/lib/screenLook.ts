@@ -16,13 +16,19 @@ import type {
   BoardDisplay,
   BoardLayout,
   BoardMedia,
+  KdsBehaviour,
   KdsColumnsBy,
   KdsDensity,
   KdsDisplay,
+  KdsExternalOrders,
   KdsField,
+  KdsItemTap,
   KdsLayout,
+  KdsOrderType,
   KdsSoundEvent,
   KdsSoundTone,
+  KdsTicketInfo,
+  KdsTicketOrder,
   ScreenDisplay,
   ScreenThemeName,
 } from './kdsScreenTypes';
@@ -48,6 +54,39 @@ export const MEDIA_SECONDS_DEFAULT = 8;
 export const TITLE_MAX = 60;
 export const PROMO_MAX = 140;
 
+/* How the kitchen screen behaves (docs/SPEC_KDS.md §16; server kds_display.py `behaviour_out`). */
+export const KDS_ITEM_TAPS: readonly KdsItemTap[] = ['button', 'cycle', 'ready'];
+export const KDS_TICKET_ORDERS: readonly KdsTicketOrder[] = ['fifo', 'lifo'];
+export const KDS_EXTERNAL_ORDERS: readonly KdsExternalOrders[] = ['all', 'hide', 'only'];
+export const KDS_ORDER_TYPES: readonly KdsOrderType[] = ['eatIn', 'takeAway', 'delivery'];
+export const KDS_SERVICE_TINTS: ReadonlyArray<'takeAway' | 'delivery'> = ['takeAway', 'delivery'];
+export const KDS_TICKET_INFO: readonly KdsTicketInfo[] = ['source', 'orderTime', 'orderNumber', 'readyBy'];
+export const PER_ROW_MIN = 2;
+export const PER_ROW_MAX = 10;
+export const TICKET_HEIGHT_MIN = 240;
+export const TICKET_HEIGHT_MAX = 3000;
+export const OVERFLOW_MIN = 5;
+export const OVERFLOW_MAX = 200;
+
+/** Today's behaviour: a screen whose look has none of the keys. */
+export const DEFAULT_KDS_BEHAVIOUR: KdsBehaviour = {
+  toolbar: true,
+  allDay: false,
+  itemTap: 'button',
+  ticketOrder: 'fifo',
+  perRow: null,
+  maxTicketHeight: null,
+  keepReadyOpen: true,
+  filterFullTicket: false,
+  stationRush: false,
+  urgencyLevels: false,
+  overflowAt: null,
+  orderTypes: { eatIn: true, takeAway: true, delivery: true },
+  externalOrders: 'all',
+  serviceTint: { takeAway: false, delivery: false },
+  ticketInfo: { source: true, orderTime: false, orderNumber: false, readyBy: false },
+};
+
 /** Today's sounds: a new order chimes, a cancellation / note knocks, nothing when a card turns late. */
 export const DEFAULT_SOUNDS: Readonly<Record<KdsSoundEvent, KdsSoundTone>> = { new: 'chime', change: 'knock', late: 'off' };
 
@@ -65,6 +104,7 @@ export const DEFAULT_KDS_DISPLAY: KdsDisplay = {
   sounds: { ...DEFAULT_SOUNDS },
   clock: true,
   counts: true,
+  ...DEFAULT_KDS_BEHAVIOUR,
 };
 
 export const DEFAULT_BOARD_DISPLAY: BoardDisplay = {
@@ -79,7 +119,15 @@ export const DEFAULT_BOARD_DISPLAY: BoardDisplay = {
   promoText: null,
 };
 
-export const DEFAULT_SCREEN_DISPLAY: ScreenDisplay = { ...DEFAULT_BOARD_DISPLAY, ...DEFAULT_KDS_DISPLAY, fields: { ...DEFAULT_KDS_DISPLAY.fields }, sounds: { ...DEFAULT_SOUNDS } };
+export const DEFAULT_SCREEN_DISPLAY: ScreenDisplay = {
+  ...DEFAULT_BOARD_DISPLAY,
+  ...DEFAULT_KDS_DISPLAY,
+  fields: { ...DEFAULT_KDS_DISPLAY.fields },
+  sounds: { ...DEFAULT_SOUNDS },
+  orderTypes: { ...DEFAULT_KDS_BEHAVIOUR.orderTypes },
+  serviceTint: { ...DEFAULT_KDS_BEHAVIOUR.serviceTint },
+  ticketInfo: { ...DEFAULT_KDS_BEHAVIOUR.ticketInfo },
+};
 
 /** How dense the tickets are: a card's least width and the gaps (px, before the font scale). */
 export const DENSITY_SPEC: Readonly<Record<KdsDensity, { minWidth: number; gap: number }>> = {
@@ -177,6 +225,42 @@ export function kdsDisplayOf(raw: unknown): KdsDisplay {
     sounds: Object.fromEntries(KDS_SOUND_EVENTS.map((e) => [e, oneOf(sounds[e], KDS_SOUND_TONES, DEFAULT_SOUNDS[e])])) as Record<KdsSoundEvent, KdsSoundTone>,
     clock: flag(r.clock, true),
     counts: flag(r.counts, true),
+    ...kdsBehaviourOf(r, flag(fields.table, true)),
+  };
+}
+
+/**
+ * How the kitchen screen behaves (§16), cleaned like the cloud does (`behaviour_out`): a missing or
+ * unknown value is today's. `ticketInfo.source` follows the "table" field when absent (it used to be
+ * the same switch).
+ */
+export function kdsBehaviourOf(raw: unknown, tableShown = true): KdsBehaviour {
+  const r = rec(raw);
+  const types = rec(r.orderTypes);
+  const tint = rec(r.serviceTint);
+  const info = rec(r.ticketInfo);
+  const d = DEFAULT_KDS_BEHAVIOUR;
+  return {
+    toolbar: flag(r.toolbar, d.toolbar),
+    allDay: flag(r.allDay, d.allDay),
+    itemTap: oneOf(r.itemTap, KDS_ITEM_TAPS, d.itemTap),
+    ticketOrder: oneOf(r.ticketOrder, KDS_TICKET_ORDERS, d.ticketOrder),
+    perRow: intIn(r.perRow, PER_ROW_MIN, PER_ROW_MAX),
+    maxTicketHeight: intIn(r.maxTicketHeight, TICKET_HEIGHT_MIN, TICKET_HEIGHT_MAX),
+    keepReadyOpen: flag(r.keepReadyOpen, d.keepReadyOpen),
+    filterFullTicket: flag(r.filterFullTicket, d.filterFullTicket),
+    stationRush: flag(r.stationRush, d.stationRush),
+    urgencyLevels: flag(r.urgencyLevels, d.urgencyLevels),
+    overflowAt: intIn(r.overflowAt, OVERFLOW_MIN, OVERFLOW_MAX),
+    orderTypes: Object.fromEntries(KDS_ORDER_TYPES.map((t) => [t, flag(types[t], true)])) as Record<KdsOrderType, boolean>,
+    externalOrders: oneOf(r.externalOrders, KDS_EXTERNAL_ORDERS, d.externalOrders),
+    serviceTint: { takeAway: flag(tint.takeAway, false), delivery: flag(tint.delivery, false) },
+    ticketInfo: {
+      source: flag(info.source, tableShown),
+      orderTime: flag(info.orderTime, false),
+      orderNumber: flag(info.orderNumber, false),
+      readyBy: flag(info.readyBy, false),
+    },
   };
 }
 
@@ -246,6 +330,27 @@ export function lookFromQuery(q: URLSearchParams, route: 'kds' | 'board', demoMe
         .map((p) => p.split(':'))
         .filter((p) => p.length === 2),
     );
+    // How it behaves (§16): `tap`, `order`, `row`, `maxh`, `keep=0`, `full=1`, `rush=1`, `levels=1`,
+    // `overflow`, `types` (hidden, comma separated), `ext`, `tint`, `info`, `hide=source`, `toolbar=0`, `allday=1`.
+    const list = (key: string) => new Set((q.get(key) ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+    raw.itemTap = q.get('tap') ?? undefined;
+    raw.ticketOrder = q.get('order') ?? undefined;
+    raw.perRow = q.get('row') ?? undefined;
+    raw.maxTicketHeight = q.get('maxh') ?? undefined;
+    raw.keepReadyOpen = q.get('keep') !== '0';
+    raw.filterFullTicket = q.get('full') === '1';
+    raw.stationRush = q.get('rush') === '1';
+    raw.urgencyLevels = q.get('levels') === '1';
+    raw.overflowAt = q.get('overflow') ?? undefined;
+    const hiddenTypes = list('types');
+    raw.orderTypes = Object.fromEntries(KDS_ORDER_TYPES.map((t) => [t, !hiddenTypes.has(t)]));
+    raw.externalOrders = q.get('ext') ?? undefined;
+    const tint = list('tint');
+    raw.serviceTint = Object.fromEntries(KDS_SERVICE_TINTS.map((t) => [t, tint.has(t)]));
+    const info = list('info');
+    raw.ticketInfo = { source: info.has('source') || (!hidden.has('source') && !hidden.has('table')), orderTime: info.has('orderTime'), orderNumber: info.has('orderNumber'), readyBy: info.has('readyBy') };
+    raw.toolbar = q.get('toolbar') !== '0';
+    raw.allDay = q.get('allday') === '1';
   }
   return screenDisplayOf(raw);
 }
@@ -277,6 +382,29 @@ export function lookQuery(d: ScreenDisplay, route: 'kds' | 'board'): string {
     if (!d.counts) q.set('counts', '0');
     const sounds = KDS_SOUND_EVENTS.filter((e) => d.sounds[e] !== DEFAULT_SOUNDS[e]).map((e) => `${e}:${d.sounds[e]}`);
     if (sounds.length) q.set('sound', sounds.join(','));
+    // How it behaves (§16), only what differs from today.
+    const b = DEFAULT_KDS_BEHAVIOUR;
+    if (d.itemTap !== b.itemTap) q.set('tap', d.itemTap);
+    if (d.ticketOrder !== b.ticketOrder) q.set('order', d.ticketOrder);
+    if (d.perRow !== null) q.set('row', String(d.perRow));
+    if (d.maxTicketHeight !== null) q.set('maxh', String(d.maxTicketHeight));
+    if (!d.keepReadyOpen) q.set('keep', '0');
+    if (d.filterFullTicket) q.set('full', '1');
+    if (d.stationRush) q.set('rush', '1');
+    if (d.urgencyLevels) q.set('levels', '1');
+    if (d.overflowAt !== null) q.set('overflow', String(d.overflowAt));
+    const types = KDS_ORDER_TYPES.filter((t) => !d.orderTypes[t]);
+    if (types.length) q.set('types', types.join(','));
+    if (d.externalOrders !== b.externalOrders) q.set('ext', d.externalOrders);
+    const tint = KDS_SERVICE_TINTS.filter((t) => d.serviceTint[t]);
+    if (tint.length) q.set('tint', tint.join(','));
+    // The source is said only when it differs from the "table" field (it follows it when absent).
+    const info = KDS_TICKET_INFO.filter((i) => (i === 'source' ? d.ticketInfo.source && !d.fields.table : d.ticketInfo[i]));
+    if (info.length) q.set('info', info.join(','));
+    // The source chip hidden on its own (the "table" field shown).
+    if (!d.ticketInfo.source && d.fields.table) q.set('hide', [...(q.get('hide') ?? '').split(',').filter(Boolean), 'source'].join(','));
+    if (!d.toolbar) q.set('toolbar', '0');
+    if (d.allDay) q.set('allday', '1');
   }
   return `/${route}?${q.toString()}`;
 }

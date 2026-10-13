@@ -20,7 +20,9 @@ export type BulkField =
   | 'showCode' | 'showItems' | 'showValidity' | 'showCredit' | 'printTillValue' | 'barcodeType'
   | 'totalQty'
   // "מצב בדיקה" (every kind; each batch's own audit line).
-  | 'testMode';
+  | 'testMode'
+  // "סדרה פעילה" (every kind; each batch's own audit line, the reason with it).
+  | 'active';
 
 /**
  * Which batches a setting is for: every one, goods only (a discount is a discount on the document),
@@ -28,7 +30,7 @@ export type BulkField =
  */
 export type BulkScope = 'all' | 'goods' | 'discount' | 'groups';
 
-export type BulkSection = 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'print' | 'test';
+export type BulkSection = 'validity' | 'where' | 'rules' | 'accounting' | 'contents' | 'print' | 'test' | 'active';
 
 export interface BulkFieldDef {
   field: BulkField;
@@ -61,12 +63,13 @@ export const BULK_FIELDS: readonly BulkFieldDef[] = [
   { field: 'printTillValue', scope: 'goods', section: 'print' },
   { field: 'barcodeType', scope: 'all', section: 'print' },
   { field: 'testMode', scope: 'all', section: 'test' },
+  { field: 'active', scope: 'all', section: 'active' },
 ];
 
-export const BULK_SECTIONS: readonly BulkSection[] = ['validity', 'where', 'rules', 'contents', 'accounting', 'print', 'test'];
+export const BULK_SECTIONS: readonly BulkSection[] = ['active', 'validity', 'where', 'rules', 'contents', 'accounting', 'print', 'test'];
 
 /** Settings of a batch, not of what its vouchers give (lib/voucherFields.ts knows nothing of them): always offered. */
-const BATCH_ONLY_FIELDS: ReadonlySet<BulkField> = new Set<BulkField>(['testMode']);
+const BATCH_ONLY_FIELDS: ReadonlySet<BulkField> = new Set<BulkField>(['testMode', 'active']);
 
 /** The part of a batch the scope reads. */
 export interface BulkBatchKind {

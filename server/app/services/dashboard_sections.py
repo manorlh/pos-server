@@ -77,6 +77,9 @@ SECTIONS: Tuple[Section, ...] = (
         (
             "/dashboard/products", "/dashboard/categories", "/dashboard/modifiers", "/dashboard/upsells",
             "/dashboard/menus", "/dashboard/assortment", "/dashboard/display-order",
+            # "ניהול קטלוג מהקופה": filed with the catalog, still the super admin's alone — its
+            # routes (`/till-parameters/catalog-admin`) stay SUPER_ADMIN in ROUTE_RULES.
+            "/dashboard/catalog-admin",
         ),
     ),
     # "ערוצים דיגיטליים" (specs/digital-menu-ordering-cards-plan.md §21): the digital menu's and the
@@ -152,6 +155,12 @@ SECTIONS: Tuple[Section, ...] = (
         (),
     ),
     Section(
+        "prepaid_voucher_redeem", "מימוש ידני של שוברים",
+        "מימוש ידני של שוברי הפקה מהענן כשהסורק לא עבד: שובר בודד, \"סמן כמומש\", רשימת קודים וביטול מימוש "
+        "ידני. עריכה: מממש. מי שיש לו עריכה ב\"שוברי הפקה\" מורשה גם כן.",
+        (),
+    ),
+    Section(
         "prepaid_voucher_controls", "בקרת מימוש שוברי הפקה",
         "השהיית מימושים, מכסות מימוש, אצוות בדיקה לצוות ושובר חלופי. צפייה: רואה; עריכה: משהה, "
         "קובע מכסות, מנפיק שוברי בדיקה ושוברים חלופיים.",
@@ -183,6 +192,15 @@ SECTIONS: Tuple[Section, ...] = (
         "קופות ומכשירים: צימוד, העברה, הסרה, הפעלה מחדש, תצורת עבודה, קופה ראשית ורשת מקומית.",
         ("/dashboard/machines",),
     ),
+    # "העברת שרת מקומי" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §7):
+    # the support's permission, without a role of its own. Only the super admin grants it, and
+    # "גישה מלאה" never implies it (`SUPER_ADMIN_GRANTED`).
+    Section(
+        "local_server_switch", "העברת שרת מקומי",
+        "העברת השרת המקומי (הקופה הראשית) של סניף לקופה אחרת מהענן, כולל כפייה כשהשרת הישן עוד נשמע "
+        "וסגירת המשמרת שלו מהענן. עריכה: מעביר. רק מנהל-על מעניק, וגישה מלאה לא כוללת אותה.",
+        (),
+    ),
     Section("tables", "שולחנות", "אזורים, שולחנות, הזמנות ודוח שולחנות.", ("/dashboard/tables",)),
     Section("kiosks", "קיוסקים", "קיוסקים, הגדרותיהם ותקינות מכשירים.", ("/dashboard/kiosks", "/dashboard/kiosks/health")),
     Section("till_design", "עיצוב קופה", "מסכי ההזמנה של הקופות.", ("/dashboard/till-design",)),
@@ -209,6 +227,11 @@ SECTIONS: Tuple[Section, ...] = (
 
 SECTION_IDS: FrozenSet[str] = frozenset(s.id for s in SECTIONS)
 SECTION_BY_ID: Dict[str, Section] = {s.id: s for s in SECTIONS}
+
+#: Permissions only the super admin grants, each held only where a profile names it — never by
+#: "גישה מלאה" or a role (the caller checks the profile itself, app/services/local_server_switch.py
+#: `may_switch`). Nobody else may give them on (app/services/dashboard_access.py `grantable`).
+SUPER_ADMIN_GRANTED: FrozenSet[str] = frozenset({"local_server_switch"})
 
 #: "מנהל ארגון" — what a new dashboard user gets until the super admin opens more (the owner,
 #: 07.10.2026: "כברירת מחדל צריך להיות לו: דוחות, מוצרים וזדים"). Quick actions come with the
@@ -346,6 +369,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/notifications/mock-inbox", SUPER_ADMIN),
     ("POST", "/notifications/worker/run-once", SUPER_ADMIN),
     ("PUT", "/shops/{}/work-types", SUPER_ADMIN),
+    # "בניית חברת הדגמה" (app/routers/demo_company.py).
+    (_ALL, "/demo-company*", SUPER_ADMIN),
     # Permissions of the users one manages: the users section (and only what one holds — the router).
     (_ALL, "/dashboard-access/users*", S("users")),
     (_GET, "/dashboard-access/catalog", S("users")),
@@ -423,6 +448,12 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("POST", "/prepaid-vouchers/groups/check", S("prepaid_vouchers", level=VIEW)),
     # "שכפול סדרה" makes a batch: the same section and level as batch create (POST /prepaid-vouchers/batches).
     ("POST", "/prepaid-vouchers/batches/{}/duplicate", S("prepaid_vouchers")),
+    # "סדרה פעילה" on / off is "ערוך סדרה" (`active`): the same section and level as PATCH /prepaid-vouchers/batches/{id}.
+    ("PUT", "/prepaid-vouchers/batches/{}/active", S("prepaid_vouchers")),
+    # "מימוש ידני מהענן" (app/services/prepaid_voucher_manual.py): its own permission, or edit on the vouchers;
+    # the preview too (it is the redeem's first step). The till's reverse is `/sync/…` (TILL).
+    (_ALL, "/prepaid-vouchers/manual-redeem*", S("prepaid_voucher_redeem", "prepaid_vouchers", level=EDIT)),
+    ("POST", "/prepaid-vouchers/redemptions/{}/reverse", S("prepaid_voucher_redeem", "prepaid_vouchers", level=EDIT)),
     (_ALL, "/prepaid-vouchers/*", S("prepaid_vouchers")),
     (_ALL, "/promotions*", S("promotions")),
     # ── Z and shifts ──
@@ -508,6 +539,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # The cockpit's "מצב אירוע חי" reads the events too (making and confirming one stays a report action).
     (_GET, "/report-events*", S("reports", "live_event", level=VIEW)),
     (_ALL, "/report-events*", S("reports")),
+    # The report PDF (P:/specs/reports-upgrade.md §4.5): it draws only what the caller already
+    # sees and sends (any report page exports — the drawer's, a Z's), so anyone signed in.
+    ("POST", "/reports/pdf", REFERENCE),
+    # "ברירת מחדל לייצוא" (§4.3): read beside any report; set by whoever edits reports, and
+    # then only by the company's manager, a distributor or a super admin (the route checks).
+    (_GET, "/report-export-defaults*", REFERENCE),
+    (_ALL, "/report-export-defaults*", S("reports")),
     # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.
     (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", "cockpit", level=VIEW)),
     # What the cockpit ("הניהול שלי") reads: the board, its comparisons, events and vouchers.
@@ -569,6 +607,8 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_GET, "/machines/{}/payment-devices", S("till_settings", "devices", level=VIEW)),
     (_ALL, "/machines/{}/catalog", S("products")),
     ("POST", "/machines/{}/close-shift", S("z")),
+    # "סגירת משמרת מהענן" (app/routers/local_server.py): the remote close's own section.
+    (_ALL, "/machines/{}/shifts/close-from-cloud", S("z")),
     ("POST", "/machines/{}/shifts/{}/administrative-close", S("z")),
     (_ALL, "/machines/{}/support-z", S("z")),
     ("POST", "/machines/{}/till-z", S("z")),
@@ -580,6 +620,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # "שליטה מרחוק": restart a till, make it sync now — from the cockpit, without the device admin.
     (_ALL, "/machines/{}/reboot", S("devices", "device_control")),
     ("POST", "/machines/{}/sync", S("devices", "device_control")),
+    # "שרת מקומי" (app/routers/local_server.py, P:/specs/dedicated-local-server.md §7): the device page's
+    # card, and its remote commands — the people of "שליטה מרחוק".
+    (_GET, "/machines/{}/local-server", S("devices", "device_control", level=VIEW)),
+    ("POST", "/machines/{}/local-server/commands", S("devices", "device_control")),
     ("POST", "/machines/{}/transmit", S("z")),
     (_ALL, "/machines/*", S("devices")),
     # ── A shop's own sub-resources (the shop itself is a look-up, above) ──
@@ -587,6 +631,18 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     ("PUT", "/shops/{}/local-network", S("devices")),
     (_ALL, "/shops/{}/local-shop-z*", S("z")),
     (_ALL, "/shops/{}/main-till", S("devices")),
+    # "העברת שרת מקומי" (app/routers/local_server.py): read with the card; the switch is the
+    # grantable permission's (the route then checks the profile itself).
+    (_GET, "/shops/{}/local-server", S("devices", "local_server_switch", level=VIEW)),
+    ("POST", "/shops/{}/local-server/switch", S("local_server_switch")),
+    # "גיבוי אוטומטי לשרת המקומי" (§11.7): read with the card; changed by the grantable permission's
+    # holder or the super admin (the route checks the profile itself, and audits).
+    (_GET, "/shops/{}/local-server/failover", S("devices", "local_server_switch", level=VIEW)),
+    ("PUT", "/shops/{}/local-server/failover", S("local_server_switch")),
+    # "תפקידי השרת המקומי" (§11.9): the same people as the switch.
+    (_GET, "/shops/{}/local-server/roles", S("devices", "local_server_switch", level=VIEW)),
+    ("PUT", "/shops/{}/local-server/roles", S("local_server_switch")),
+    ("POST", "/shops/{}/local-server/former-host-changes/ack", S("devices", "tables")),
     (_GET, "/shops/{}/work-config", S("devices")),
     (_ALL, "/shops/{}/menu-broadcast*", S("products")),
     (_GET, "/shops/{}/next-register-number", S("devices", "organization", level=VIEW)),
@@ -674,7 +730,14 @@ def rule_for(method: str, path: str) -> RouteRule:
 
 def catalogue() -> List[dict]:
     """The sections as the dashboard's permissions dialog shows them."""
-    return [{"id": s.id, "label": s.label, "hint": s.hint, "pages": list(s.pages)} for s in SECTIONS]
+    return [
+        {
+            "id": s.id, "label": s.label, "hint": s.hint, "pages": list(s.pages),
+            # Given by the super admin alone; "גישה מלאה" does not include it.
+            **({"superAdminOnly": True} if s.id in SUPER_ADMIN_GRANTED else {}),
+        }
+        for s in SECTIONS
+    ]
 
 
 def sections_summary(sections: Iterable[Tuple[str, str]]) -> List[dict]:

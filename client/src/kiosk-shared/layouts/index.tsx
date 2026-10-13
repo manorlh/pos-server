@@ -12,14 +12,15 @@
  */
 
 import { useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
-import { catalogKindOf, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
-import { CatalogScreen, ProductSheet, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
+import { HandHelping } from 'lucide-react';
+import { catalogKindOf, helpFloats, itemViewOf, layoutOf, mealViewOf, type LayoutCatalog } from '@/lib/kioskLayout';
+import { CatalogScreen, ProductSheet, searchedModel, type PGroup, type PLine, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { MealChooser, MealSheet, StepsProductSheet } from './item';
 import { PagesProductSheet } from './pages';
 import { itemFlowOf, itemFlowPages, usesItemPages } from '@/lib/kioskItemFlow';
 import { ReachDishContext } from './reach';
 import { guidedCheckout, LandingCatalog, serviceStepOf } from './landing';
-import { GuidedBar, LayoutActionsContext } from './parts';
+import { GuidedBar, LayoutActionsContext, kt } from './parts';
 import { ListCatalog } from './list';
 import { MagazineCatalog } from './magazine';
 import { RailCatalog } from './rail';
@@ -62,9 +63,53 @@ const CATALOGS: Partial<Record<LayoutCatalog, ComponentType<CatalogProps>>> = {
   wall: WallCatalog,
 };
 
-/** The menu screen: the layout's catalog (today's, for standard), with "רוצים להפוך לארוחה?" over it. */
-export function LayoutCatalog(props: CatalogProps) {
-  const { m } = props;
+/**
+ * "כפתור קריאה לצוות" (layout.helpButton = float, P:/specs/kiosk-rail-motion.md §6.1): a round button at
+ * the bottom end corner, over the basket; a tap sends the help request (the host's live.help — the
+ * tills' "בקשת עזרה") and says so for a moment.
+ */
+export function HelpFab({ m, bottom = 92 }: { m: PreviewModel; bottom?: number }) {
+  const [sent, setSent] = useState(false);
+  useEffect(() => {
+    if (!sent) return;
+    const id = window.setTimeout(() => setSent(false), 2800);
+    return () => window.clearTimeout(id);
+  }, [sent]);
+  return (
+    <>
+      <button
+        type="button"
+        data-help-fab
+        aria-label={kt(m, 'help')}
+        onClick={() => {
+          m.live?.help?.();
+          setSent(true);
+        }}
+        className="absolute end-3 z-20 flex h-14 w-14 items-center justify-center rounded-full transition-transform duration-150 active:scale-90"
+        style={{ bottom, background: m.c.button, color: m.c.buttonText, boxShadow: m.light ? 'none' : '0 6px 16px rgba(0,0,0,0.18)' }}
+      >
+        <HandHelping className="h-6 w-6" />
+      </button>
+      {sent ? (
+        <div
+          role="status"
+          className="absolute inset-x-6 z-20 rounded-2xl px-4 py-3 text-center kt-13 font-semibold"
+          style={{ bottom: bottom + 64, background: m.c.surface, color: m.c.text, border: `1px solid ${m.c.border}` }}
+        >
+          {kt(m, 'helpSent')}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The menu screen: the layout's catalog (today's, for standard), with "רוצים להפוך לארוחה?" over it. The top bar's
+ * search (a real kiosk) shows every layout the matching dishes only (searchedModel); no search — the model as it is.
+ */
+export function LayoutCatalog({ m: given, ...rest }: CatalogProps) {
+  const m = searchedModel(given);
+  const props: CatalogProps = { ...rest, m };
   const [meal, setMeal] = useState<PProduct | null>(null);
   const kind = catalogKindOf(m.cfg);
   const Catalog = kind ? CATALOGS[kind] : undefined;
@@ -79,6 +124,7 @@ export function LayoutCatalog(props: CatalogProps) {
     <LayoutActionsContext.Provider value={{ askMeal: (p) => setMeal(p) }}>
       <div className="relative h-full">
         {Catalog ? <Catalog {...props} /> : <CatalogScreen {...props} />}
+        {helpFloats(m.cfg) ? <HelpFab m={m} /> : null}
         {meal ? (
           <MealChooser
             m={m}

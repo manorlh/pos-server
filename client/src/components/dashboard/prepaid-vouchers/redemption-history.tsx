@@ -9,6 +9,7 @@ import { itemText } from '@/lib/prepaidVoucherProducts';
 import { formatDateTime, isoDate } from '@/lib/format';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RedemptionFlags } from './redemption-flags';
+import { ManualRedemptionTag, ManualUndo } from './manual-redeem';
 import { cn } from '@/lib/utils';
 
 function time(iso: string | null | undefined): string {
@@ -43,11 +44,16 @@ export function RedemptionHistory({ voucherId }: { voucherId: string }) {
           ) : null}
           <span className={cn('font-medium', r.reversedAt && 'line-through')}>{time(r.redeemedAt)}</span>
           {' · '}
-          {r.machineName ?? t('unknownTill')}
+          {r.machineName ?? (r.manual ? r.shopName ?? t('unknownTill') : t('unknownTill'))}
           {r.posUserName ? ` · ${r.posUserName}` : ''}
           {' — '}
           {r.uses ? discountUseText(r) : r.items.map(lineText).join(', ')}
           <RedemptionFlags flags={r.flags} />
+          <ManualRedemptionTag r={r} />
+          {r.reversedAt && r.reverseReason ? (
+            <span className="block text-muted-foreground">{t('reverseReason', { reason: r.reverseReason })}</span>
+          ) : null}
+          {r.manual && !r.reversedAt ? <ManualUndo redemptionId={r.id} voucherId={voucherId} /> : null}
           {r.forfeited.length ? (
             <span className="text-destructive">
               {' '}({t('forfeited', { items: r.forfeited.map(lineText).join(', ') })})

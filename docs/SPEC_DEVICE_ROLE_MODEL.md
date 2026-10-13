@@ -23,6 +23,7 @@
 | קיוסק (`kiosk`) | עמדת הזמנה עצמית ללקוחות: בוחרים, משלמים ומקבלים מספר איסוף. צוות נכנס בקוד מנהל. | שורת `kiosk_devices` (`app/services/kiosk_control.py`) |
 | מסך מטבח (`kds`) | מסך — לא קופה, בלי מכירות ובלי חשבונאות. מציג למטבח את ההזמנות לפי עמדות. | `is_fiscal = false` + שורת `kds_devices` (station / expo / manager) |
 | מסך מוכן / לא מוכן (`order_status_board`) | מסך — לא קופה, בלי מכירות ובלי חשבונאות. מספרי הזמנות בהכנה ומוכנות לאיסוף. | `is_fiscal = false` + שורת `kds_devices` בתפקיד `pickup` |
+| שרת מקומי (`local_server`) | מכשיר אנדרואיד שלא מוכר: מנהל את השולחנות, ההדפסות וה-Z הסניפי, וכל הקופות נשענות עליו. §2.5 | `is_fiscal = false` + `pos_machines.is_local_server` |
 
 - **אין עמודת תפקיד.** התפקיד נגזר משורת `kiosk_devices` / `kds_devices` — אותם מקורות שעמוד הקיוסקים ועמוד ה-KDS משתמשים בהם,
   כך שהעמודים לעולם לא סותרים זה את זה (`app/services/device_profile.py` `role_of` / `current_role` / `effective_role`).
@@ -98,6 +99,26 @@
 - **נתונים קיימים:** ה-migration לא משנה סטטוס חשבונאי של אף מכונה. קופה שכבר הציגה מסך KDS לפני הכלל (שורת `kds_devices` על
   מכונה חשבונאית) נשארת קופה — עריכת המסך שלה לא ממירה אותה — והדשבורד מסמן אותה "מסך מטבח על קופה" (`kdsScreen` על מכונה עם
   `fiscal: true`). כדי שתהיה מסך בלבד: מסירים ומוסיפים מחדש כ"מסך מטבח".
+
+### 2.5 שרת מקומי ייעודי (`local_server`)
+
+האפיון המלא והחוזה עם המכשיר: `P:/specs/dedicated-local-server.md` (§10 החלטות הבעלים, §11 החוזה). בקצרה:
+
+- **צימוד:** קוד `deviceRole: "local_server"` מחייב סניף (`400 local_server_requires_shop`) ו-Android
+  (`422 local_server_android_only`). המכונה נוצרת לא-חשבונאית עם `is_local_server = true`: בלי מספר קופה ובלי קידומת.
+  שם ברירת המחדל: "שרת מקומי". שינוי תפקיד לשרת או ממנו — רק בצימוד חדש (`409 device_role_change_requires_pairing`).
+- **לא קופה:** כל נקודת קצה חשבונאית מחזירה לו `403 local_server_not_a_till` (ולא `device_not_fiscal`). נקודות הקצה
+  של מארח פתוחות לו (`require_host_machine` / `HOST_SYNC_PATH`, `app/middleware/auth.py`): שיקוף השולחנות, ה-Z הסניפי
+  המקומי וה-Z הסניפי של קופת המאסטר, ותשובה לפקודה.
+- **רישוי:** לא נספר כרישיון קופה (`license.countsAsTillLicense: false`), ותום רישיון לא עוצר אותו.
+- **מארח מועדף:** בקבוצת הרשת של הסניף (`independent_till.lan_members`), וכל בחירת מארח מעדיפה אותו על פני קופה
+  (`local_server_device.host_order`). לעולם לא משתתף ב-Z ולא קופה עצמאית.
+- **העברה וגיבוי אוטומטי:** `app/services/local_server_switch.py`, `app/services/local_server_failover.py`.
+- **תפקידים לבחירה לכל סניף** (§11.9 באפיון): שולחנות, הדפסות (או "ללא שרת הדפסות") ו-Z סניפי, כל אחד בשרת או
+  בקופה — `app/services/local_server_roles.py`, `GET/PUT /shops/{id}/local-server/roles`.
+- **ניטור ופקודות:** `app/services/local_server_device.py`, `GET /machines/{id}/local-server`,
+  `POST /machines/{id}/local-server/commands`.
+- **Migration:** `e4a7c2d9b1f3_local_server_device` (אחרי `3bfb94dbebb2`), additive ואידמפוטנטי.
 
 ## 3. "מכשירי הסליקה הם חיצוניים" — קיוסק ומסופון
 

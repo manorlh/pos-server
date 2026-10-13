@@ -13,6 +13,7 @@ import type { AppliedDiscountVoucher } from '@dash-lib/kioskVouchers';
 import type { KCategory, KGroup, KProduct } from '../main/kiosk/catalog';
 import type { FunnelEvent } from '../core/kioskFunnel';
 import type { BatteryAlertView } from '../core/batteryAlerts';
+import type { CloseDayKind } from '@dash-lib/shopActive';
 
 export type KioskPhase = 'unpaired' | 'waiting' | 'kiosk';
 
@@ -85,6 +86,21 @@ export interface KioskView {
    * cannot (Hebrew), else null.
    */
   pay: { methods: PaymentMethod[]; usable: PaymentMethod[]; cardOff: string | null };
+  /**
+   * "סניף לא פעיל" (client lib/shopActive.ts): false — the shop was turned off in the cloud; the
+   * screens lock once the customer on them is done, until it is on again. Absent (the Android
+   * bundle's bridge: the APK draws its own lock) is active.
+   */
+  shopActive?: boolean;
+  /** "סגירת משמרת ו-Z" from that lock: what the kiosk's own close would be now; null — nothing to close. */
+  closeDay?: CloseDayKind | null;
+}
+
+/** "סגירת משמרת ו-Z" on the shop's lock: done (or done later by itself), or why not, in Hebrew. `wrongCode`: the pad asks again. */
+export interface ShopLockCloseDayOut {
+  ok: boolean;
+  message: string;
+  wrongCode?: boolean;
 }
 
 /** "מזומן בקופה": the order to the tills, with the vouchers already redeemed towards it. */
@@ -339,6 +355,11 @@ export interface KioskBridge {
   technicianUnlock(code: string): Promise<{ outcome: 'granted' | 'wrong' | 'locked_out' | 'locked'; triesLeft: number; lockedForMs: number }>;
   technicianInfo(): Promise<TechnicianInfo>;
   technicianAction(action: TechnicianAction): Promise<{ ok: boolean; message?: string }>;
+  /**
+   * "סגירת משמרת ו-Z" on the shop's lock ("סניף לא פעיל"): a manager's code, then the kiosk's own
+   * close for its Z mode; the lock stays. Absent where the host has none (the Android bundle, a demo).
+   */
+  shopLockCloseDay?(pin: string): Promise<ShopLockCloseDayOut>;
   on<K extends keyof KioskEvents>(event: K, fn: (payload: KioskEvents[K]) => void): () => void;
 }
 

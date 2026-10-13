@@ -73,6 +73,9 @@ from app.schemas.reports import (
     ShopTransactionRow,
     TipMethodRow,
     TipsByCashierRow,
+    TipsByDayRow,
+    TipsByMachineRow,
+    TipsByShiftRow,
     TipsRangeReportResponse,
 )
 from app.services.areas import transaction_area_predicate
@@ -343,6 +346,7 @@ def build_scoped_transaction_query(
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
     area_filter=None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> Optional[Query]:
     """
     The reportable-document set for a dashboard user, already time- and hour-filtered.
@@ -350,6 +354,9 @@ def build_scoped_transaction_query(
     `area_filter` (`app.services.areas.parse_area_filter`) narrows on the area each
     document's shift was stamped with — never the till's area now, so moving a till
     does not move what an area took. A document with no shift is "no area".
+
+    `company_id` narrows to that company and its subsidiaries (as on the overview). It
+    only narrows the caller's scope: an unknown company is nothing, never everything.
 
     Returns None when the user's role grants access to nothing, which every caller
     turns into an empty report rather than an error (same convention as
@@ -379,7 +386,52 @@ def build_scoped_transaction_query(
     area_pred = transaction_area_predicate(area_filter)
     if area_pred is not None:
         query = query.filter(area_pred)
+    if isinstance(company_id, uuid_mod.UUID):
+        from app.services.company_hierarchy import descendant_company_ids
+
+        group = descendant_company_ids(db, company_id)
+        query = query.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
     return query
+
+
+def tip_bucket(tip_method: Optional[str], payment_method: Optional[str]) -> str:
+    """
+    The tender a tip went on: "cash", "card" or "other".
+
+    `tip_payment_method` is the truth when the till sent it; otherwise the tip rode on the
+    sale's own tender. A split-tender document reads "mixed" and lands in "other" rather
+    than guessing a leg; an exchange or a production voucher pays for goods, never a tip.
+    One rule for every report that shows tips, so none can disagree.
+    """
+    method = normalize_tender(tip_method or payment_method)
+    return method if method in ("cash", "card") else "other"
+
+
+def tips_by_bucket(tx_q: Query, key) -> Dict[object, Dict[str, float]]:
+    """
+    Tips per `key` and tip tender: `{key: {"cash", "card", "other", "tipped"}}`.
+
+    Tips are not tender legs (docs/SHIFTS_API.md), so they are read off the document —
+    never folded into a payment method's takings.
+    """
+    rows = (
+        tx_q.with_entities(
+            key.label("bucket_key"),
+            Transaction.tip_payment_method.label("tip_method"),
+            Transaction.payment_method.label("payment_method"),
+            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
+            func.coalesce(func.sum(case((Transaction.tip_amount > 0, 1), else_=0)), 0).label("tipped"),
+        )
+        .filter(Transaction.tip_amount != 0)
+        .group_by(key, Transaction.tip_payment_method, Transaction.payment_method)
+        .all()
+    )
+    out: Dict[object, Dict[str, float]] = {}
+    for r in rows:
+        bucket = out.setdefault(r.bucket_key, {"cash": 0.0, "card": 0.0, "other": 0.0, "tipped": 0})
+        bucket[tip_bucket(r.tip_method, r.payment_method)] += _to_float(r.tips)
+        bucket["tipped"] += int(r.tipped or 0)
+    return out
 
 
 def _load_cashier_names(db: Session, cashier_ids: Sequence[str]) -> Dict[str, PosUser]:
@@ -511,6 +563,7 @@ def build_product_sales_report(
     limit: int = PRODUCT_ROWS_DEFAULT,
     area_filter=None,
     meals: str = "components",
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> ProductSalesReportResponse:
     """
     `meals`: "components" (the default) reports a meal's line as its components with
@@ -524,6 +577,7 @@ def build_product_sales_report(
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id, area_filter=area_filter,
+        company_id=company_id,
     )
     if tx_q is None:
         return ProductSalesReportResponse(
@@ -675,6 +729,7 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
         document_count=0, sales_count=0, refunds_count=0,
         gross=0.0, discounts=0.0, refunds=0.0, net=0.0, average_basket=0.0,
         cash_net=0.0, card_net=0.0, other_net=0.0, exchange_net=0.0, production_voucher_net=0.0, tips=0.0,
+        tips_cash=0.0, tips_card=0.0, tips_other=0.0,
         production_voucher_deductions=0.0,
     )
     base.update(kwargs)
@@ -684,6 +739,7 @@ def _empty_cashier_row(**kwargs) -> CashierSalesRow:
 def _new_sales_bucket() -> Dict[str, float]:
     return {
         "gross": 0.0, "discounts": 0.0, "refunds": 0.0, "tips": 0.0,
+        "tips_cash": 0.0, "tips_card": 0.0, "tips_other": 0.0,
         "sales_count": 0, "refunds_count": 0,
         "cash_net": 0.0, "card_net": 0.0, "other_net": 0.0, "exchange_net": 0.0,
         "production_voucher_net": 0.0,
@@ -693,13 +749,14 @@ def _new_sales_bucket() -> Dict[str, float]:
     }
 
 
-def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, float]]:
+def _sales_buckets(tx_q: Query, key, *, joins=(), tip_split: bool = False) -> Dict[object, Dict[str, float]]:
     """
     The per-cashier report's money, grouped by `key` instead of the cashier.
 
     One definition for every "sales by X" table, so the rows of two of them over the
     same documents can never disagree on what gross, discounts, refunds, net or a tender
-    split is. `joins` are (entity, onclause) outer joins `key` needs.
+    split is. `joins` are (entity, onclause) outer joins `key` needs. `tip_split` adds the
+    tips per tip tender (`tips_cash` / `tips_card` / `tips_other`, `tip_bucket`).
     """
     for entity, onclause in joins:
         tx_q = tx_q.outerjoin(entity, onclause)
@@ -776,6 +833,11 @@ def _sales_buckets(tx_q: Query, key, *, joins=()) -> Dict[object, Dict[str, floa
     for r in tender_rows:
         bucket = agg.setdefault(r.bucket_key or None, _new_sales_bucket())
         bucket[f"{normalize_tender(r.method)}_net"] += _to_float(r.net)
+    if tip_split:
+        for bucket_key, tips in tips_by_bucket(tx_q, key).items():
+            bucket = agg.setdefault(bucket_key or None, _new_sales_bucket())
+            for m in ("cash", "card", "other"):
+                bucket[f"tips_{m}"] += tips[m]
     return agg
 
 
@@ -788,11 +850,13 @@ def build_cashier_sales_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     area_filter=None,
+    cashier_id: Optional[str] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> CashierSalesReportResponse:
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id,
-        area_filter=area_filter,
+        area_filter=area_filter, cashier_id=cashier_id, company_id=company_id,
     )
     if tx_q is None:
         return CashierSalesReportResponse(
@@ -800,7 +864,7 @@ def build_cashier_sales_report(
             totals=_empty_cashier_row(cashier_name="Total"), rows=[],
         )
 
-    agg = _sales_buckets(tx_q, Transaction.cashier_id)
+    agg = _sales_buckets(tx_q, Transaction.cashier_id, tip_split=True)
 
     pos_users = _load_cashier_names(db, [k for k in agg.keys() if k])
 
@@ -831,6 +895,9 @@ def build_cashier_sales_report(
                 exchange_net=b["exchange_net"],
                 production_voucher_net=b["production_voucher_net"],
                 tips=b["tips"],
+                tips_cash=b["tips_cash"],
+                tips_card=b["tips_card"],
+                tips_other=b["tips_other"],
             )
         )
 
@@ -858,6 +925,9 @@ def build_cashier_sales_report(
         exchange_net=sum(r.exchange_net for r in out_rows),
         production_voucher_net=sum(r.production_voucher_net for r in out_rows),
         tips=sum(r.tips for r in out_rows),
+        tips_cash=sum(r.tips_cash for r in out_rows),
+        tips_card=sum(r.tips_card for r in out_rows),
+        tips_other=sum(r.tips_other for r in out_rows),
     )
     return CashierSalesReportResponse(
         window=window.to_schema(), generated_at=now, totals=totals, rows=out_rows,
@@ -892,7 +962,7 @@ def build_sales_by_area_report(
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(db, current_user, tenant_id, window, shop_id=shop.id)
     agg = (
-        _sales_buckets(tx_q, Shift.area_id, joins=((Shift, Shift.id == Transaction.shift_id),))
+        _sales_buckets(tx_q, Shift.area_id, joins=((Shift, Shift.id == Transaction.shift_id),), tip_split=True)
         if tx_q is not None
         else {}
     )
@@ -924,6 +994,9 @@ def build_sales_by_area_report(
             exchange=_cents(bucket["exchange_net"]),
             production_voucher=_cents(bucket["production_voucher_net"]),
             tips=_cents(bucket["tips"]),
+            tips_cash=_cents(bucket["tips_cash"]),
+            tips_card=_cents(bucket["tips_card"]),
+            tips_other=_cents(bucket["tips_other"]),
         )
 
     rows = [row(area_id, bucket) for area_id, bucket in agg.items() if area_id is not None]
@@ -954,7 +1027,7 @@ def build_sales_by_area_report(
             f: total(f)
             for f in (
                 "gross", "discounts", "production_voucher_deductions", "net", "refunds", "cash", "card", "other",
-                "production_voucher", "tips",
+                "production_voucher", "tips", "tips_cash", "tips_card", "tips_other",
             )
         },
     )
@@ -971,6 +1044,78 @@ def build_sales_by_area_report(
 
 # ── 2c. Tips report ───────────────────────────────────────────────────────────
 
+#: Shift rows listed in the tips report's per-shift breakdown; the totals still cover all.
+TIPS_BY_SHIFT_MAX = 5_000
+
+
+def _new_tip_bucket() -> Dict[str, float]:
+    return {"tips_total": 0.0, "cash": 0.0, "card": 0.0, "other": 0.0, "tipped": 0, "sales_net": 0.0}
+
+
+def _tip_rollup(tx_q: Query, *keys) -> Dict[tuple, Dict[str, float]]:
+    """
+    Tips and net takings per `keys` (a tuple of key values), each tip on its tender
+    (`tip_bucket`). Every document counts toward `sales_net`, tipped or not, so a row can
+    show tips as a share of what it sold.
+    """
+    refund_cond = _is_refund_condition()
+    sale_net = Transaction.total_amount - func.coalesce(Transaction.document_discount, 0)
+    rows = (
+        tx_q.with_entities(
+            *[k.label(f"k{i}") for i, k in enumerate(keys)],
+            Transaction.tip_payment_method.label("tip_method"),
+            Transaction.payment_method.label("payment_method"),
+            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
+            func.coalesce(func.sum(case((Transaction.tip_amount > 0, 1), else_=0)), 0).label("tipped"),
+            # Net takings alongside the tips, so the UI can show tips as a share of
+            # sales without a second round trip.
+            func.coalesce(func.sum(case((refund_cond, 0), else_=sale_net)), 0).label("sales_net"),
+            func.coalesce(func.sum(case((refund_cond, Transaction.total_amount), else_=0)), 0).label("refunds"),
+        )
+        .group_by(*keys, Transaction.tip_payment_method, Transaction.payment_method)
+        .all()
+    )
+    out: Dict[tuple, Dict[str, float]] = {}
+    for r in rows:
+        key = tuple(getattr(r, f"k{i}") for i in range(len(keys)))
+        bucket = out.setdefault(key, _new_tip_bucket())
+        tips = _to_float(r.tips)
+        bucket["tips_total"] += tips
+        bucket[tip_bucket(r.tip_method, r.payment_method)] += tips
+        bucket["tipped"] += int(r.tipped or 0)
+        bucket["sales_net"] += _to_float(r.sales_net) - _to_float(r.refunds)
+    return out
+
+
+def _merge_tip_bucket(into: Dict[str, float], other: Dict[str, float]) -> None:
+    for k, v in other.items():
+        into[k] += v
+
+
+def _tip_money(b: Dict[str, float]) -> Dict[str, Any]:
+    return dict(
+        tips_total=_cents(b["tips_total"]),
+        tips_cash=_cents(b["cash"]),
+        tips_card=_cents(b["card"]),
+        tips_other=_cents(b["other"]),
+        tipped_document_count=int(b["tipped"]),
+        sales_net=_cents(b["sales_net"]),
+    )
+
+
+def _local_day(window: ReportWindow, value) -> date:
+    """A Postgres `date(timezone(tz, created_at))`, or (SQLite) the UTC instant made local."""
+    if isinstance(value, datetime):
+        moment = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return moment.astimezone(_load_zoneinfo(window.tz_name)).date()
+    if isinstance(value, date):
+        return value
+    text = str(value)
+    if len(text) <= 10:
+        return date.fromisoformat(text)
+    return _local_day(window, datetime.fromisoformat(text))
+
+
 def build_tips_range_report(
     db: Session,
     current_user: User,
@@ -980,11 +1125,17 @@ def build_tips_range_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     area_filter=None,
+    cashier_id: Optional[str] = None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> TipsRangeReportResponse:
+    """
+    Tips over the range: per tip tender, per cashier, per local day, per till and per
+    shift. Every breakdown is over the same documents, so each adds up to the totals.
+    """
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id,
-        area_filter=area_filter,
+        area_filter=area_filter, cashier_id=cashier_id, company_id=company_id,
     )
     if tx_q is None:
         return TipsRangeReportResponse(
@@ -993,80 +1144,34 @@ def build_tips_range_report(
             by_method=[], by_cashier=[],
         )
 
-    refund_cond = _is_refund_condition()
-    sale_net = Transaction.total_amount - func.coalesce(Transaction.document_discount, 0)
+    by_cashier = {k[0] or None: v for k, v in _tip_rollup(tx_q, Transaction.cashier_id).items()}
+    overall = _new_tip_bucket()
+    for b in by_cashier.values():
+        _merge_tip_bucket(overall, b)
 
-    rows = (
+    # Documents per tip tender (only those that carried a tip).
+    tipped_by_method = {"cash": 0, "card": 0, "other": 0}
+    method_rows = (
         tx_q.with_entities(
-            Transaction.cashier_id.label("cashier_id"),
             Transaction.tip_payment_method.label("tip_method"),
             Transaction.payment_method.label("payment_method"),
-            func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
-            func.coalesce(
-                func.sum(case((Transaction.tip_amount > 0, 1), else_=0)), 0
-            ).label("tipped_count"),
-            # Net takings alongside the tips, so the UI can show tips as a share of
-            # sales without a second round trip.
-            func.coalesce(func.sum(case((refund_cond, 0), else_=sale_net)), 0).label("sales_gross_net"),
-            func.coalesce(
-                func.sum(case((refund_cond, Transaction.total_amount), else_=0)), 0
-            ).label("refunds"),
+            func.count(Transaction.id).label("documents"),
         )
-        .group_by(
-            Transaction.cashier_id,
-            Transaction.tip_payment_method,
-            Transaction.payment_method,
-        )
+        .filter(Transaction.tip_amount > 0)
+        .group_by(Transaction.tip_payment_method, Transaction.payment_method)
         .all()
     )
-
-    by_method: Dict[str, Dict[str, float]] = {
-        m: {"amount": 0.0, "documents": 0} for m in ("cash", "card", "other")
-    }
-    by_cashier: Dict[Optional[str], Dict[str, float]] = {}
-
-    for r in rows:
-        tips = _to_float(r.tips)
-        tipped = int(r.tipped_count or 0)
-        # `tip_payment_method` is the truth when the till sent it; otherwise the tip
-        # rode on the sale's own tender. Same fallback as services/tips.py and
-        # dashboard_stats, so the three surfaces cannot disagree.
-        #
-        # A split-tender document has no single tender for the tip to have ridden on,
-        # so its `payment_method` reads "mixed" and the fallback lands in `other`
-        # rather than guessing a leg. That is the honest answer: only the till knows
-        # which tender the tip went on, and it says so in `tip_payment_method`.
-        method = normalize_tender(r.tip_method or r.payment_method)
-        if method not in ("cash", "card"):
-            # A document settled by `exchange` alone took no money a tip could ride on, and a
-            # production voucher pays for goods, never a tip: either is "other" here.
-            method = "other"
-
-        by_method[method]["amount"] += tips
-        by_method[method]["documents"] += tipped
-
-        key = r.cashier_id or None
-        bucket = by_cashier.setdefault(
-            key,
-            {
-                "tips_total": 0.0, "cash": 0.0, "card": 0.0, "other": 0.0,
-                "tipped": 0, "sales_net": 0.0,
-            },
-        )
-        bucket["tips_total"] += tips
-        bucket[method] += tips
-        bucket["tipped"] += tipped
-        bucket["sales_net"] += _to_float(r.sales_gross_net) - _to_float(r.refunds)
+    for r in method_rows:
+        tipped_by_method[tip_bucket(r.tip_method, r.payment_method)] += int(r.documents or 0)
 
     pos_users = _load_cashier_names(db, [k for k in by_cashier.keys() if k])
-
     cashier_rows: List[TipsByCashierRow] = []
-    for cashier_id, b in by_cashier.items():
-        pu = pos_users.get(cashier_id) if cashier_id else None
+    for cid, b in by_cashier.items():
+        pu = pos_users.get(cid) if cid else None
         cashier_rows.append(
             TipsByCashierRow(
-                cashier_id=cashier_id,
-                cashier_name=_display_name(pu) or (cashier_id if cashier_id else None),
+                cashier_id=cid,
+                cashier_name=_display_name(pu) or (cid if cid else None),
                 worker_number=pu.worker_number if pu else None,
                 tips_total=b["tips_total"],
                 tips_cash=b["cash"],
@@ -1079,22 +1184,100 @@ def build_tips_range_report(
     cashier_rows.sort(key=lambda x: x.tips_total, reverse=True)
     cashier_rows = cashier_rows[:CASHIER_ROWS_MAX]
 
+    # ── Per local day ──
+    try:
+        pg = db.get_bind().dialect.name == "postgresql"
+    except Exception:  # noqa: BLE001 — an unbound session only builds SQL: Postgres's
+        pg = True
+    day_key = func.date(func.timezone(window.tz_name, Transaction.created_at)) if pg else Transaction.created_at
+    days: Dict[date, Dict[str, float]] = {}
+    for (raw,), b in _tip_rollup(tx_q, day_key).items():
+        _merge_tip_bucket(days.setdefault(_local_day(window, raw), _new_tip_bucket()), b)
+    by_day = [TipsByDayRow(day=d, **_tip_money(b)) for d, b in sorted(days.items())]
+
+    # ── Per till ──
+    machines_raw = _tip_rollup(tx_q, Transaction.machine_id)
+    machine_ids = [k[0] for k in machines_raw if k[0] is not None]
+    machines = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(machine_ids)).all()} if machine_ids else {}
+    shop_ids = {m.shop_id for m in machines.values() if m.shop_id}
+    shop_names = {r.id: r.name for r in db.query(Shop.id, Shop.name).filter(Shop.id.in_(shop_ids)).all()} if shop_ids else {}
+    by_machine = []
+    for (mid,), b in machines_raw.items():
+        m = machines.get(mid)
+        by_machine.append(
+            TipsByMachineRow(
+                machine_id=mid,
+                machine_name=m.name if m is not None else None,
+                pos_number=m.pos_number if m is not None else None,
+                shop_id=m.shop_id if m is not None else None,
+                shop_name=shop_names.get(m.shop_id) if m is not None else None,
+                **_tip_money(b),
+            )
+        )
+    by_machine.sort(key=lambda r: (r.shop_name or "", r.machine_name or "", str(r.machine_id)))
+
+    # ── Per shift ──
+    shifts_raw = _tip_rollup(tx_q, Transaction.shift_id)
+    shift_ids = [k[0] for k in shifts_raw if k[0] is not None]
+    shifts: Dict[Any, Shift] = {}
+    for start in range(0, len(shift_ids), 1000):
+        chunk = shift_ids[start:start + 1000]
+        shifts.update({s.id: s for s in db.query(Shift).filter(Shift.id.in_(chunk)).all()})
+    extra_machine_ids = {s.machine_id for s in shifts.values()} - set(machines)
+    if extra_machine_ids:
+        machines.update({m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(extra_machine_ids)).all()})
+    extra_shop_ids = {s.shop_id for s in shifts.values() if s.shop_id} - set(shop_names)
+    if extra_shop_ids:
+        shop_names.update({r.id: r.name for r in db.query(Shop.id, Shop.name).filter(Shop.id.in_(extra_shop_ids)).all()})
+    by_shift = []
+    for (sid,), b in shifts_raw.items():
+        s = shifts.get(sid)
+        m = machines.get(s.machine_id) if s is not None else None
+        by_shift.append(
+            TipsByShiftRow(
+                shift_id=sid,
+                business_date=s.business_date if s is not None else None,
+                sequence_number=s.sequence_number if s is not None else None,
+                machine_id=s.machine_id if s is not None else None,
+                machine_name=m.name if m is not None else None,
+                pos_number=m.pos_number if m is not None else None,
+                shop_id=s.shop_id if s is not None else None,
+                shop_name=shop_names.get(s.shop_id) if s is not None else None,
+                opened_at=s.opened_at if s is not None else None,
+                closed_at=s.closed_at if s is not None else None,
+                opened_by_name=s.opened_by if s is not None else None,
+                **_tip_money(b),
+            )
+        )
+    # Newest first; documents with no shift last.
+    by_shift.sort(
+        key=lambda r: (
+            r.shift_id is not None,
+            r.business_date or date.min,
+            r.opened_at.isoformat() if r.opened_at else "",
+        ),
+        reverse=True,
+    )
+    by_shift_truncated = len(by_shift) > TIPS_BY_SHIFT_MAX
+
     return TipsRangeReportResponse(
         window=window.to_schema(),
         generated_at=now,
-        tips_total=sum(v["amount"] for v in by_method.values()),
-        tips_cash=by_method["cash"]["amount"],
-        tips_card=by_method["card"]["amount"],
-        tips_other=by_method["other"]["amount"],
+        tips_total=overall["tips_total"],
+        tips_cash=overall["cash"],
+        tips_card=overall["card"],
+        tips_other=overall["other"],
+        tipped_document_count=int(overall["tipped"]),
+        sales_net=_cents(overall["sales_net"]),
         by_method=[
-            TipMethodRow(
-                method=m,
-                amount=by_method[m]["amount"],
-                document_count=int(by_method[m]["documents"]),
-            )
+            TipMethodRow(method=m, amount=overall[m], document_count=tipped_by_method[m])
             for m in ("cash", "card", "other")
         ],
         by_cashier=cashier_rows,
+        by_day=by_day,
+        by_machine=by_machine,
+        by_shift=by_shift[:TIPS_BY_SHIFT_MAX],
+        by_shift_truncated=by_shift_truncated,
     )
 
 
@@ -1442,6 +1625,8 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
                 cash_sales=_to_float(_dec_or_zero(z.total_cash_sales)),
                 card_sales=_to_float(_dec_or_zero(z.total_card_sales)),
                 tips=_to_float(_dec_or_zero(z.total_tips)),
+                cash_tips=_to_float(_dec_or_zero(z.total_cash_tips)),
+                card_tips=_to_float(_dec_or_zero(z.total_card_tips)),
                 transactions_count=int(z.transactions_count or 0),
                 expected_cash=_to_float(_dec_or_zero(z.expected_cash)),
                 actual_cash=_to_float(z.actual_cash) if z.actual_cash is not None else None,
@@ -1473,6 +1658,8 @@ def _contributors_of(z: ZReport) -> List[DaySummaryContributor]:
                 cash_sales=_to_float(_dec_or_zero(section.get("totalCash"))),
                 card_sales=_to_float(_dec_or_zero(section.get("totalCard"))),
                 tips=_to_float(_dec_or_zero(section.get("totalTips"))),
+                cash_tips=_to_float(_dec_or_zero(section.get("totalCashTips"))),
+                card_tips=_to_float(_dec_or_zero(section.get("totalCardTips"))),
                 transactions_count=int(section.get("transactionsCount") or 0),
                 expected_cash=_to_float(_dec_or_zero(section.get("expectedCash"))),
                 actual_cash=_float_or_none(section.get("countedCash")),
