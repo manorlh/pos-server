@@ -51,7 +51,7 @@ class Section:
 SECTIONS: Tuple[Section, ...] = (
     Section(
         "reports", "דוחות",
-        "סקירה, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים, יומן חריגות, מגירת "
+        "סקירה, בעיות, דוחות מכירות, עסקאות, תובנות, התאמות, שידורים, אירועים, חריגים, יומן חריגות, מגירת "
         "מזומן ודוח למס הכנסה. עריכה: אירועים, סקירת חריגים וטיפול ביומן, עלויות מוצרים, זיכוי מרחוק וזיכוי "
         "באשראי מהענן.",
         (
@@ -64,6 +64,8 @@ SECTIONS: Tuple[Section, ...] = (
             "/dashboard/menu-reports", "/dashboard/hourly-sales", "/dashboard/department-sales",
             "/dashboard/document-sequence", "/dashboard/cash-variance", "/dashboard/exceptions",
             "/dashboard/exceptions-log", "/dashboard/cash-drawer", "/dashboard/tax-reports", "/dashboard/targets",
+            # "בעיות" (P:/specs/manager-problems.md §3): the open problems of every kind, one screen.
+            "/dashboard/problems",
         ),
     ),
     Section(
@@ -537,6 +539,10 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     (_ALL, "/push/alerts*", S("alerts")),
     (_GET, "/push/history", S("alerts")),
     (_ALL, "/push/*", SELF),
+    # "בעיות": the problems screen is a report (its "טופל" goes through the log's / the alerts' own
+    # routes); the groups I hid are mine.
+    (_ALL, "/problems/preferences", SELF),
+    (_GET, "/problems", S("reports")),
     (_GET, "/insights/kiosks", S("reports", "kiosks", level=VIEW)),
     ("PUT", "/insights/product-costs/{}", S("reports", "products", level=EDIT)),
     # "פעולות מהירות" (the cockpit's and the insights' quick message, quick / ad-hoc promotion

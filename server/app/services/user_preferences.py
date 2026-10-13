@@ -16,6 +16,9 @@ computer too — never only in one browser's storage.
   user shows (`visible`) and their order (`order`). Merged per report on write: a report sent as
   null is removed, `reportColumns: null` removes all. Keys as the company's export defaults'
   (app/services/report_export_defaults.py); at most `MAX_REPORT_COLUMN_REPORTS` reports.
+* `problemsHiddenGroups` — "בעיות" (P:/specs/manager-problems.md §3): the groups the user hid on
+  that screen (`GET/PUT /problems/preferences`, app/services/problems.py `GROUPS`). Not part of
+  `read_preferences` (the profile's): read and written by its own two functions below.
 
 Reading is forgiving (an unknown key or value reads as the default, never a 500); writing
 is strict (an unknown value is a 422), so nothing but known values is ever stored.
@@ -34,6 +37,7 @@ SIMPLE_MODE_KEY = "simpleMode"
 REPORT_COLUMNS_KEY = "reportColumns"
 #: "בקשות אישור גם בשעות שקטות": a remote approval request reaches the phone in quiet hours too.
 APPROVALS_QUIET_KEY = "approvalsInQuietHours"
+PROBLEMS_HIDDEN_KEY = "problemsHiddenGroups"
 MAX_REPORT_COLUMN_REPORTS = 200
 DEFAULT_HOME_PAGE = "board"
 #: The opening pages offered in the profile, in the order offered.
@@ -165,3 +169,37 @@ def update_preferences(db: Session, user: User, patch: Dict[str, Any]) -> Dict[s
     db.commit()
     db.refresh(user)
     return read_preferences(user, db)
+
+
+def read_problems_hidden(user: User) -> List[str]:
+    """"בעיות": the groups this user hid, known ones only, in the screen's order."""
+    from app.services.problems import GROUPS
+
+    raw = getattr(user, "preferences", None)
+    stored = raw.get(PROBLEMS_HIDDEN_KEY) if isinstance(raw, dict) else None
+    chosen = set(stored) if isinstance(stored, list) else set()
+    return [g for g in GROUPS if g in chosen]
+
+
+def write_problems_hidden(db: Session, user: User, groups: Any) -> List[str]:
+    """Replace the hidden groups (a list of `GROUPS` keys; [] or null shows them all); 422 otherwise."""
+    from app.services.problems import GROUPS
+
+    if groups is None:
+        groups = []
+    if not isinstance(groups, list) or any(not isinstance(g, str) or g not in GROUPS for g in groups):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"hiddenGroups must be a list of: {', '.join(GROUPS)}",
+        )
+    current = dict(user.preferences) if isinstance(user.preferences, dict) else {}
+    ordered = [g for g in GROUPS if g in set(groups)]
+    if ordered:
+        current[PROBLEMS_HIDDEN_KEY] = ordered
+    else:
+        current.pop(PROBLEMS_HIDDEN_KEY, None)
+    # A new dict, so the JSON column is seen as changed.
+    user.preferences = current or None
+    db.commit()
+    db.refresh(user)
+    return read_problems_hidden(user)

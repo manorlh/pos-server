@@ -6,8 +6,9 @@
  * the loading, error and empty states in one shape. The page brings its data, its stat cards
  * and its `ReportTable`s as children. See §5 of the spec for a minimal page.
  */
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
+import { SlidersHorizontal } from 'lucide-react';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { findBySameId } from '@/lib/entityLookup';
 import type { PageScopeResolution } from '@/lib/pageScope';
@@ -16,6 +17,8 @@ import type { ExcelSheet } from '@/lib/excelExport';
 import type { ReportFilterLine } from '@/lib/reportExport';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ReportContext } from './report-context';
 import { ReportExportBar } from './report-export-bar';
@@ -92,7 +95,28 @@ export interface ReportPageProps {
   ready?: boolean;
   /** Skeleton shape while loading. */
   loading?: 'cards' | 'table';
+  /**
+   * Below `md`, the filter bar in a bottom sheet behind one button (its label, and the sheet's
+   * title) instead of on the page. Absent: the bar on the page at every width, as always.
+   */
+  phoneFilters?: { label: string; title: string };
   children?: ReactNode;
+}
+
+const BELOW_MD = '(max-width: 767.98px)';
+
+/** Whether the window is narrower than `md` (false on the server and when not asked). */
+function useBelowMd(enabled: boolean): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      if (!enabled || typeof window === 'undefined' || !window.matchMedia) return () => undefined;
+      const media = window.matchMedia(BELOW_MD);
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    },
+    () => enabled && typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(BELOW_MD).matches,
+    () => false,
+  );
 }
 
 /**
@@ -123,10 +147,21 @@ export function ReportPage({
   export: exportConfig,
   loading = 'cards',
   ready,
+  phoneFilters,
   children,
 }: ReportPageProps) {
   const tc = useTranslations('common');
   const description = useFilterDescription(filters, { shopId: bar?.shopId, methodOptions: bar?.methodOptions });
+  const phone = useBelowMd(!!phoneFilters);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  // The sheet closes once the filters it set are run.
+  const appliedKey = JSON.stringify(filters.applied);
+  const [seenApplied, setSeenApplied] = useState(appliedKey);
+  if (seenApplied !== appliedKey) {
+    setSeenApplied(appliedKey);
+    setSheetOpen(false);
+  }
+  const filterBar = <ReportFilterBar filters={filters} isFetching={query.isFetching} {...bar} />;
 
   const search = filters.isClient('search') ? (filters.applied?.values.q ?? '') : '';
   const context = useMemo(() => ({ reportKey, search }), [reportKey, search]);
@@ -143,7 +178,29 @@ export function ReportPage({
         {headerExtra}
 
         <ScopeGate resolution={resolution}>
-          <ReportFilterBar filters={filters} isFetching={query.isFetching} {...bar} />
+          {phone && phoneFilters ? (
+            <div className="space-y-1 print:hidden">
+              <Button variant="outline" className="min-h-11 w-full justify-start" onClick={() => setSheetOpen(true)}>
+                <SlidersHorizontal className="size-4" aria-hidden />
+                {phoneFilters.label}
+              </Button>
+              {description.lines.length ? (
+                <p className="text-muted-foreground truncate px-1 text-xs">
+                  {description.lines.map((l) => `${l.label}: ${l.value}`).join(' · ')}
+                </p>
+              ) : null}
+              <Dialog open={sheetOpen} onOpenChange={setSheetOpen}>
+                <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>{phoneFilters.title}</DialogTitle>
+                  </DialogHeader>
+                  {filterBar}
+                </DialogContent>
+              </Dialog>
+            </div>
+          ) : (
+            filterBar
+          )}
 
           {!(ready ?? filters.applied !== null) ? (
             <p className="text-muted-foreground py-12 text-center text-sm">{prompt}</p>

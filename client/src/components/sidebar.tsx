@@ -75,6 +75,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { entitySelectItems } from '@/lib/selectItems';
 import { forgetThisBrowserOnSignOut } from '@/lib/pushAlertsApi';
+import { badgeCount, badgeText } from '@/lib/problems';
+import { useProblems } from '@/lib/problemsApi';
 import { toast } from 'sonner';
 import { setTheme, useTheme } from '@/lib/theme';
 import { PendingApprovalsBadge } from '@/components/dashboard/approvals/pending-badge';
@@ -178,6 +180,9 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
       internalUser?.role === 'distributor' ||
       internalUser?.role === 'company_manager' ||
       internalUser?.role === 'shop_manager');
+  // "בעיות": every dashboard role but the cashier (the server's `scoped()` refuses a cashier).
+  const isStaff =
+    authHydrated && !!internalUser?.role && internalUser.role !== 'cashier' && internalUser.role !== 'producer_view';
 
   // Same three gates as before, now expressed once and applied to the grouped
   // table in lib/navigation. Nobody gains an entry they did not already have.
@@ -193,6 +198,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
     if (item.gate === 'produceZ') return canProduceZ;
     if (item.gate === 'superAdmin') return isSuperAdmin;
     if (item.gate === 'settingsWrite') return canWriteSettings;
+    if (item.gate === 'staff') return isStaff;
     return true;
   };
 
@@ -207,7 +213,7 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
       })).filter((section) => section.items.length > 0),
     // `allows` closes over the three capability flags; recompute when they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, roleAccess.hidden, dashboardAccess, simpleMode],
+    [canReadUsers, canManagePosUsers, canManageBranding, isSuperAdmin, canWriteSettings, isStaff, roleAccess.hidden, dashboardAccess, simpleMode],
   );
 
   const activeEntry = findNavEntry(pathname);
@@ -253,7 +259,8 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
         {t(item.labelKey)}
         {/* "בקשות אישור": how many wait for me (hidden at 0). */}
         {item.href === APPROVALS_HREF ? <PendingApprovalsBadge active={active} /> : null}
-        {active && <ChevronLeft className="me-auto h-3 w-3" />}
+        {item.badge === 'problems' ? <ProblemsBadge active={active} /> : null}
+        {active && <ChevronLeft className={cn('h-3 w-3', item.badge ? 'ms-1' : 'me-auto')} />}
       </Link>
     );
   };
@@ -490,5 +497,27 @@ export function Sidebar({ className, onNavigate }: { className?: string; onNavig
         onOpenChange={setSettingsOpen}
       />
     </>
+  );
+}
+
+/**
+ * "בעיות": the open problems beside the menu entry (hidden groups left out) — the screen's own
+ * answer (`GET /problems`, one cache entry with the page when it is not narrowed), every minute.
+ */
+function ProblemsBadge({ active }: { active: boolean }) {
+  const t = useTranslations('problems');
+  const problems = useProblems({}, { refetchMs: 60_000 });
+  const count = badgeCount(problems.data);
+  if (count <= 0) return null;
+  return (
+    <span
+      className={cn(
+        'ms-auto min-w-5 rounded-full px-1.5 py-0.5 text-center text-[11px] leading-none font-semibold tabular-nums',
+        active ? 'bg-primary-foreground text-primary' : 'bg-destructive text-white',
+      )}
+      aria-label={t('navBadge', { count })}
+    >
+      {badgeText(count)}
+    </span>
   );
 }

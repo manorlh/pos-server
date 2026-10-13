@@ -14,6 +14,10 @@
  *
  * An SMS link (`/x/<code>` → `?code=<code>`) opens the one entry it names, whatever its date:
  * no other filter, no summary.
+ *
+ * On a phone (below `md`, P:/specs/manager-problems.md §4) the log is a card per entry — kind,
+ * severity, shop and till, time, amount and "טופל" — instead of the wide table, and the filters
+ * open in a bottom sheet. A wide screen is unchanged.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -217,6 +221,15 @@ export default function ExceptionsLogPage() {
   });
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
+  // Below `md`: a card per entry (the table stays the wide screen's, and the print's).
+  const phoneCards = (
+    <LogCards
+      rows={items}
+      code={code}
+      canHandle={canHandle}
+      onHandle={(row, acknowledged) => setHandling({ row, acknowledged, note: row.note ?? '' })}
+    />
+  );
   const totalPages = list.data ? Math.max(1, Math.ceil(list.data.total / list.data.pageSize)) : 1;
   const kindOptions = (kinds.data?.kinds ?? []).map((k) => ({ value: k.key, label: k.label }));
   const kindLabel = useCallback(
@@ -515,7 +528,10 @@ export default function ExceptionsLogPage() {
               companyName={exportScope.companyName}
               disabled={!items.length}
             />
-            <ReportTable table={table} reportKey="exceptions-log" />
+            <div className="hidden md:block print:block">
+              <ReportTable table={table} reportKey="exceptions-log" />
+            </div>
+            {phoneCards}
           </>
         )}
         {dialog}
@@ -571,6 +587,7 @@ export default function ExceptionsLogPage() {
       }}
       query={reportQueryState(list)}
       ready
+      phoneFilters={{ label: t('phone.filters'), title: t('phone.filtersTitle') }}
       prompt={t('empty')}
       export={list.data ? { tables: allExportTables, filterLines, from, to } : null}
     >
@@ -600,7 +617,10 @@ export default function ExceptionsLogPage() {
         </>
       ) : null}
 
-      <ReportTable table={table} />
+      <div className="hidden md:block print:block">
+        <ReportTable table={table} />
+      </div>
+      {phoneCards}
       {pager}
       {dialog}
     </ReportPage>
@@ -665,5 +685,99 @@ function SmsChip({ d }: { d: SmsDispatch }) {
       {d.statusLabel}
       <span className="opacity-80">· {d.recipientLabel || d.recipient}</span>
     </span>
+  );
+}
+
+/** The log on a phone: one card per entry (P:/specs/manager-problems.md §4). */
+function LogCards({
+  rows,
+  code,
+  canHandle,
+  onHandle,
+}: {
+  rows: LogEntry[];
+  code: string;
+  canHandle: boolean;
+  onHandle: (row: LogEntry, acknowledged: boolean) => void;
+}) {
+  const t = useTranslations('exceptionsLog');
+  if (rows.length === 0) {
+    return (
+      <p className="text-muted-foreground bg-card rounded-lg border py-8 text-center text-sm md:hidden print:hidden">{t('empty')}</p>
+    );
+  }
+  return (
+    <ul className="space-y-2 md:hidden print:hidden">
+      {rows.map((r) => {
+        const till = [r.machineName, r.posNumber ? t('register', { n: r.posNumber }) : null].filter(Boolean).join(' · ');
+        const place = [r.shopName, till].filter(Boolean).join(' · ');
+        const links = sourceLinks(r);
+        return (
+          <li
+            key={r.id}
+            className={cn(
+              'bg-card rounded-xl border p-3',
+              code && r.code === code && 'border-amber-400 bg-amber-50 dark:bg-amber-950/30',
+              r.acknowledged && 'opacity-75',
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', SEVERITY_TONE[r.severity])}>{r.kindLabel}</span>
+              <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{formatDateTime(r.occurredAt)}</span>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 text-sm break-words">{place || '—'}</span>
+              {r.amount != null ? (
+                <span className="shrink-0 font-semibold tabular-nums" title={t('phone.amount')}>
+                  {formatCurrency(r.amount)}
+                </span>
+              ) : null}
+            </div>
+            {r.summary ? <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">{r.summary}</p> : null}
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-muted-foreground">{t(`severities.${r.severity}`)}</span>
+                {links.map((l) => (
+                  <Link key={l.kind} href={l.href} className="text-primary inline-flex min-h-8 items-center gap-1 hover:underline">
+                    <ExternalLink className="size-3" />
+                    {l.kind === 'document'
+                      ? l.number
+                        ? t('document', { n: l.number })
+                        : t('openDocument')
+                      : l.kind === 'shift'
+                        ? l.number != null
+                          ? t('shift', { n: l.number })
+                          : t('openShift')
+                        : l.number != null
+                          ? t('z', { n: String(l.number) })
+                          : t('openZ')}
+                  </Link>
+                ))}
+              </span>
+              {canHandle ? (
+                <Button
+                  size="sm"
+                  variant={r.acknowledged ? 'ghost' : 'outline'}
+                  className="min-h-10"
+                  onClick={() => onHandle(r, !r.acknowledged)}
+                >
+                  {r.acknowledged ? <RotateCcw className="size-4" /> : <Check className="size-4" />}
+                  {r.acknowledged ? t('reopen') : t('markHandled')}
+                </Button>
+              ) : (
+                <Badge variant={r.acknowledged ? 'default' : 'destructive'}>
+                  {r.acknowledged ? t('phone.handledShort') : t('phone.openShort')}
+                </Badge>
+              )}
+            </div>
+            {r.acknowledged && r.acknowledgedBy ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                {t('handledBy', { who: r.acknowledgedBy, at: formatDateTime(r.acknowledgedAt) })}
+              </p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

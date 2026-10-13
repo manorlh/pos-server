@@ -67,6 +67,7 @@ import {
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  Siren,
   SlidersHorizontal,
   SlidersVertical,
   Sparkles,
@@ -98,7 +99,9 @@ export type NavGate =
   | 'branding'
   | 'produceZ'
   | 'superAdmin'
-  | 'settingsWrite';
+  | 'settingsWrite'
+  /** Every dashboard role but the cashier (the exceptions log's own rule, `scoped()`). */
+  | 'staff';
 
 export interface NavItem {
   href: string;
@@ -111,6 +114,8 @@ export interface NavItem {
    * so `/dashboard/shops/<id>` still shows "Shops" as the active section.
    */
   matchPrefixes?: string[];
+  /** A count beside the label: `problems` — the open problems ("בעיות", lib/problemsApi.ts). */
+  badge?: 'problems';
 }
 
 export interface NavSection {
@@ -141,6 +146,8 @@ export const NAV_SECTIONS: NavSection[] = [
       // "בקשות אישור": the tills' requests for a manager's approval — pending (with the count in the
       // menu, components/sidebar.tsx) and history; a push opens one request (`/dashboard/approvals/<id>`).
       { href: '/dashboard/approvals', labelKey: 'approvals', icon: ClipboardCheck, matchPrefixes: ['/dashboard/approvals/'] },
+      // "בעיות": every open problem on one screen, with their count (P:/specs/manager-problems.md §3).
+      { href: '/dashboard/problems', labelKey: 'problems', icon: Siren, gate: 'staff', badge: 'problems' },
       // A message every targeted till must acknowledge; the machine-admin roles, which
       // are exactly the settings-write set.
       { href: '/dashboard/till-messages', labelKey: 'tillMessages', icon: Megaphone, gate: 'settingsWrite' },
@@ -437,7 +444,10 @@ export const SIMPLE_NAV_SECTIONS: NavSection[] = [
   {
     id: 'mine',
     labelKey: 'sections.mine',
-    items: [{ href: '/dashboard', labelKey: 'cockpit', icon: LayoutDashboard }],
+    items: [
+      { href: '/dashboard', labelKey: 'cockpit', icon: LayoutDashboard },
+      { href: '/dashboard/problems', labelKey: 'problems', icon: Siren, gate: 'staff', badge: 'problems' },
+    ],
   },
   {
     id: 'simpleReports',

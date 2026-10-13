@@ -77,6 +77,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
       '/dashboard/menu-reports', '/dashboard/hourly-sales', '/dashboard/department-sales',
       '/dashboard/document-sequence', '/dashboard/cash-variance', '/dashboard/exceptions',
       '/dashboard/exceptions-log', '/dashboard/cash-drawer', '/dashboard/tax-reports', '/dashboard/targets',
+      // "בעיות" (P:/specs/manager-problems.md §3).
+      '/dashboard/problems',
     ],
   },
   { id: 'z', pages: ['/dashboard/shifts', '/dashboard/z-reports/new', '/dashboard/z-reports'], editPages: ['/dashboard/z-reports/new'] },

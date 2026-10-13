@@ -520,6 +520,10 @@ app.include_router(push_alerts_router.router, prefix=_prefix)
 from app.routers import push_policy as push_policy_router  # noqa: E402
 
 app.include_router(push_policy_router.router, prefix=_prefix)
+# "בעיות": every open problem in one call, and the groups each user hid (app/services/problems.py).
+from app.routers import problems as problems_router  # noqa: E402
+
+app.include_router(problems_router.router, prefix=_prefix)
 # "עמדת מפיק": the producer's read-only portal, and the owner's side on the event.
 from app.routers import event_producers as event_producers_router, producer as producer_router  # noqa: E402
 

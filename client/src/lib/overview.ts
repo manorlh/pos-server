@@ -32,18 +32,16 @@ export function isTillOnline(m: PosMachine | undefined, nowMs: number): boolean 
 const UPDATE_PROBLEMS = new Set(['failed', 'declined']);
 
 /**
- * How many alert badges the till shows — the machines page's alerts column (terminal
- * mismatch, the server's flags but the Z backlog, unsent documents, documents with no
- * shift) plus the card terminal in offline mode and a failed or declined app update.
+ * How many alerts the till has — the machines page's alerts column (terminal mismatch, the
+ * server's flags, unsent documents, documents with no shift), the closed shifts no Z has taken
+ * yet (P:/specs/manager-problems.md §5: a forgotten Z is an alert on the board too), the card
+ * terminal in offline mode and a failed or declined app update.
  */
 export function tillAlertCount(m: PosMachine | undefined, rollout?: AppReleaseRolloutRow): number {
   if (!m) return 0;
   const flags = m.statusFlags ?? [];
-  let n = flags.filter(
-    (f) =>
-      f !== 'closed_shifts_awaiting_z' &&
-      !(f === 'transmission_overdue' && flags.includes('transmission_critical')),
-  ).length;
+  // The critical transmission says it all when both are set.
+  let n = flags.filter((f) => !(f === 'transmission_overdue' && flags.includes('transmission_critical'))).length;
   if (m.terminalStatus === 'mismatch') n++;
   if (m.pinpadAddressMissing) n++;
   if (m.pendingAsOf && (m.pendingDocuments ?? 0) > 0) n++;
@@ -53,9 +51,13 @@ export function tillAlertCount(m: PosMachine | undefined, rollout?: AppReleaseRo
   return n;
 }
 
-/** Just the part `MachineAlerts` draws, so the page renders it only when it has something. */
+/**
+ * Just the part `MachineAlerts` draws, so the page renders it only when it has something — not
+ * the Z backlog (the shift column counts it) nor the terminal's offline mode.
+ */
 export function machinesColumnAlertCount(m: PosMachine): number {
-  return tillAlertCount(m) - (m.terminalOfflineMode ? 1 : 0);
+  const awaitingZ = (m.statusFlags ?? []).includes('closed_shifts_awaiting_z') ? 1 : 0;
+  return tillAlertCount(m) - awaitingZ - (m.terminalOfflineMode ? 1 : 0);
 }
 
 export type OverviewFilter = 'all' | 'offline' | 'openShift' | 'alerts';
