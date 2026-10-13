@@ -28,10 +28,12 @@ import {
   EMPTY_SWITCH_FORM,
   eligibleTargets,
   hostOnline,
+  lastSwitchKey,
   shiftStep,
   switchBlock,
   switchBody,
   switchSummary,
+  tillTakeoverKey,
   type LanTillRef,
   type LocalServerState,
   type LocalServerSwitchForm,
@@ -265,14 +267,16 @@ function ServerStep({ state, form, set }: StepProps) {
       </div>
       {state.lastSwitch ? (
         <p className="text-xs text-muted-foreground">
-          {t('lastSwitch', {
+          {t(lastSwitchKey(state.lastSwitch), {
             from: label(state.lastSwitch.from),
             to: label(state.lastSwitch.to),
             at: formatDateTime(state.lastSwitch.at),
-            by: state.lastSwitch.by,
+            by: state.lastSwitch.approvedBy ?? state.lastSwitch.by,
           })}
         </p>
       ) : null}
+      {/* "העברת שרת מקומי מהקופה" (the till parameter `tillServerTakeover`). */}
+      <p className="text-xs text-muted-foreground">{t(tillTakeoverKey(state.tillTakeover))}</p>
       {s.online ? (
         <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive">
           <p className="flex items-start gap-2">

@@ -14,11 +14,14 @@ import {
   LAN_SYSTEMS,
   SWITCH_BLOCKS,
   SWITCH_SUMMARY_KEYS,
+  TILL_TAKEOVER_MODES,
   ageText,
   closeFromCloudBlock,
   eligibleTargets,
   hostOnline,
   isSilent,
+  lastSwitchKey,
+  tillTakeoverKey,
   parseCountedCash,
   shiftStep,
   silentSecondsAt,
@@ -282,5 +285,21 @@ describe('the wizard "העברת שרת מקומי"', () => {
       assert.ok(he.exceptions.types[k], k);
       assert.ok(he.exceptionSettings.desc[k], k);
     }
+    // "העברת שרת מקומי מהקופה" (§9): the wizard's lines, and the parameter's values in words.
+    for (const k of ['lastSwitchFromTill', 'tillTakeoverOff', 'tillTakeoverManager']) assert.ok(ls.wizard[k], k);
+    const tp = (he as unknown as { tillParameters: { enumLabels: Record<string, Record<string, string>> } }).tillParameters;
+    for (const mode of TILL_TAKEOVER_MODES) assert.ok(tp.enumLabels.tillServerTakeover[mode], mode);
+  });
+});
+
+describe('"העברת שרת מקומי מהקופה" (tillServerTakeover)', () => {
+  it('reads anything but manager as the cloud only', () => {
+    assert.equal(tillTakeoverKey('manager'), 'tillTakeoverManager');
+    for (const v of ['off', undefined, null, '', 'MANAGER', 'on']) assert.equal(tillTakeoverKey(v), 'tillTakeoverOff', String(v));
+  });
+  it('says a switch from a till as one', () => {
+    assert.equal(lastSwitchKey({ source: 'till' }), 'lastSwitchFromTill');
+    assert.equal(lastSwitchKey({ source: 'cloud' }), 'lastSwitch');
+    assert.equal(lastSwitchKey({}), 'lastSwitch');
   });
 });

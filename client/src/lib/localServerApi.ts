@@ -30,6 +30,9 @@ export interface CloudClosedShift {
 export interface LocalServerSwitchResult {
   switchedAt: string;
   switchedBy: string;
+  /** Always `cloud` here (`till`: the till's own take-over, where `tillServerTakeover` allows it). */
+  source?: 'cloud' | 'till';
+  approvedBy?: string | null;
   mainTill: LanTillRef | null;
   previous: LanTillRef | null;
   moved: string[];

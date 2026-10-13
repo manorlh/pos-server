@@ -248,7 +248,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
           {imageKind ? t('image') : t(`types.${parameter.valueType}`)}
           {' · '}
           {t('default')}:{' '}
-          {hasDefault && !imageKind ? formatValue(parameter.defaultValue) : null}
+          {hasDefault && !imageKind ? formatValue(parameter.defaultValue, parameter.key) : null}
           {hasDefault && imageKind ? (
             <span className="font-mono" dir="ltr">
               {String(parameter.defaultValue)}
@@ -297,7 +297,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
                       {imageKind ? (
                         <ParameterImageThumb url={String(row.value)} alt={parameter.label} />
                       ) : (
-                        formatValue(row.value)
+                        formatValue(row.value, parameter.key)
                       )}
                     </TableCell>
                     <TableCell>
@@ -444,6 +444,7 @@ export function ParameterValuesPanel({ parameter }: { parameter: TillParameter }
               <ParameterValueInput
                 type={parameter.valueType}
                 enumOptions={parameter.enumOptions}
+                parameterKey={parameter.key}
                 imageKind={imageKind}
                 draft={draft}
                 onChange={setDraft}

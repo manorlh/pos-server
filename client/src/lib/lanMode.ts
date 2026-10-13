@@ -191,6 +191,23 @@ export interface LocalServerSwitchRecord {
   forced: boolean;
   closedShift: { shiftId: string; closedAt: string | null; countedCash: string | null } | null;
   releasedShopZ: boolean;
+  /** `cloud`: this wizard; `till`: the till's own button (`tillServerTakeover` = manager), `approvedBy` its manager. */
+  source?: 'cloud' | 'till';
+  approvedBy?: string | null;
+}
+
+/** The till parameter `tillServerTakeover` ("העברת שרת מקומי מהקופה"): `off` — the cloud only. */
+export const TILL_TAKEOVER_MODES = ['off', 'manager'] as const;
+export type TillTakeoverMode = (typeof TILL_TAKEOVER_MODES)[number];
+
+/** The wizard's line on it: the message key under `localServer.wizard` (an unknown value reads as off). */
+export function tillTakeoverKey(mode: string | null | undefined): 'tillTakeoverOff' | 'tillTakeoverManager' {
+  return mode === 'manager' ? 'tillTakeoverManager' : 'tillTakeoverOff';
+}
+
+/** "העברה אחרונה" as said: from this wizard, or from a till with its manager's approval. */
+export function lastSwitchKey(record: Pick<LocalServerSwitchRecord, 'source'>): 'lastSwitch' | 'lastSwitchFromTill' {
+  return record.source === 'till' ? 'lastSwitchFromTill' : 'lastSwitch';
 }
 
 export interface LocalServerState {
@@ -207,6 +224,8 @@ export interface LocalServerState {
   canSwitch: boolean;
   canForce: boolean;
   canReleaseShopZ: boolean;
+  /** `tillServerTakeover` as the shop resolves it (a till may hold its own value). */
+  tillTakeover?: TillTakeoverMode;
   lastSwitch: LocalServerSwitchRecord | null;
   switches: LocalServerSwitchRecord[];
   formerHostChanges: { count: number; items: FormerHostChange[]; checked: FormerHostChange[] };
