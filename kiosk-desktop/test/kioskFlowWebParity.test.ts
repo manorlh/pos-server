@@ -134,3 +134,28 @@ describe('the browser kiosk reads scans the same way', () => {
     }
   });
 });
+
+// "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip, P:/specs/kiosk-rail-motion.md §3א): this kiosk
+// asks "איך תרצו לשלם?" through the shared kioskPayChooser (KioskApp), as the browser kiosk does.
+import { KIOSK_DEFAULTS, kioskPayChooser, resolveKioskConfig } from '@dash-lib/kioskConfig';
+
+describe('the payment method window on the Windows kiosk (kioskPayChooser)', () => {
+  it('auto — the default: the card alone, nothing to choose, goes straight to the card', () => {
+    expect(KIOSK_DEFAULTS.payment.paymentChooserSkip).toBe('auto');
+    expect(kioskPayChooser(resolveKioskConfig({ payment: { methods: ['card'] } }), ['card'], ['card'])).toEqual({ asks: false, optional: false, fallback: 'card' });
+  });
+
+  it('asked with a voucher, cash at the till or installments; never — always', () => {
+    expect(kioskPayChooser(resolveKioskConfig({ payment: { methods: ['card', 'voucher'] } }), ['card', 'voucher'], ['card', 'voucher']).asks).toBe(true);
+    expect(kioskPayChooser(resolveKioskConfig({ payment: { methods: ['card', 'cash_at_till'] } }), ['card', 'cash_at_till'], ['card', 'cash_at_till']).asks).toBe(true);
+    expect(kioskPayChooser(resolveKioskConfig({ payment: { methods: ['card'] } }), ['card'], ['card'], { installments: true }).asks).toBe(true);
+    expect(kioskPayChooser(resolveKioskConfig({ payment: { methods: ['card'], paymentChooserSkip: 'never' } }), ['card'], ['card']).asks).toBe(true);
+  });
+
+  it('the same under every layout template', () => {
+    for (const template of ['standard', 'guided', 'tabs', 'landing', 'fastfood', 'cafe', 'combo', 'list', 'magazine', 'wall', 'restaurant_rail']) {
+      expect(kioskPayChooser(resolveKioskConfig({ layout: { template }, payment: { methods: ['card'] } }), ['card'], ['card']).asks).toBe(false);
+      expect(kioskPayChooser(resolveKioskConfig({ layout: { template }, payment: { methods: ['card'], paymentChooserSkip: 'never' } }), ['card'], ['card']).asks).toBe(true);
+    }
+  });
+});

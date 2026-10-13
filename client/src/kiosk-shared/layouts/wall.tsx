@@ -12,7 +12,7 @@ import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { contrastText } from '@/lib/kioskConfig';
 import { kioskIcon } from '@/lib/kioskIcons';
-import { layoutOf, wallColumns } from '@/lib/kioskLayout';
+import { catalogContinuous, layoutOf, wallColumns } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { cardStyle, textSize, type PCategory, type PProduct, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { categoryIconId } from './icons';
@@ -26,7 +26,7 @@ function tintOf(m: PreviewModel, cat: PCategory): string {
 }
 
 export function WallCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
-  const one = m.cfg.catalog.oneCategory;
+  const one = !catalogContinuous(m.cfg);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const { spy, onScroll, jump } = useSectionSpy(m, scrollerRef);
   const current = m.categories.find((c) => c.id === activeCategory) ?? m.categories[0] ?? null;

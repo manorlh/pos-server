@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { basketDocked, basketKindOf, heroShown, layoutOf } from '@/lib/kioskLayout';
+import { basketDocked, basketKindOf, catalogContinuous, heroShown, layoutOf } from '@/lib/kioskLayout';
 import { KioskSwap, itemEnter } from '@/components/dashboard/kiosks/preview-motion';
 import { CartPanel, CatalogHeader, textSize, type PCategory, type PreviewModel } from '@/components/dashboard/kiosks/preview-screens';
 import { TickerSlot, PREVIEW_FOOTER_PX } from '@/components/dashboard/kiosks/preview-ticker';
@@ -20,7 +20,7 @@ import { kioskIcon } from '@/lib/kioskIcons';
 
 export function TabsCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
   const layout = layoutOf(m.cfg);
-  const one = m.cfg.catalog.oneCategory;
+  const one = !catalogContinuous(m.cfg);
   const current = m.categories.find((c) => c.id === activeCategory) ?? m.categories[0] ?? null;
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);

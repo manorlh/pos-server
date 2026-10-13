@@ -11,7 +11,8 @@
       "combo",
       "list",
       "magazine",
-      "wall"
+      "wall",
+      "restaurant_rail"
     ],
     "catalog": [
       "rail",
@@ -107,6 +108,51 @@
     "reach": [
       "normal",
       "low"
+    ],
+    "railStyle": [
+      "plain",
+      "circle"
+    ],
+    "railEmphasis": [
+      "none",
+      "fill",
+      "scale",
+      "fill_scale"
+    ],
+    "catalogScroll": [
+      "paged",
+      "continuous"
+    ],
+    "railFollow": [
+      "on",
+      "off"
+    ],
+    "pricePill": [
+      "on",
+      "off"
+    ],
+    "sheetMotion": [
+      "slide_up",
+      "fade",
+      "none"
+    ],
+    "topBar": [
+      "club",
+      "cancel",
+      "search",
+      "lang"
+    ],
+    "helpButton": [
+      "off",
+      "float"
+    ],
+    "doneScreen": [
+      "classic",
+      "card"
+    ],
+    "payMethodView": [
+      "screen",
+      "sheet"
     ]
   },
   "defaults": {
@@ -130,7 +176,17 @@
     "name": "card",
     "nameAvatars": [],
     "reach": "normal",
-    "reachToggle": false
+    "reachToggle": false,
+    "railStyle": "plain",
+    "railEmphasis": "fill",
+    "catalogScroll": "paged",
+    "railFollow": "on",
+    "pricePill": "off",
+    "sheetMotion": null,
+    "topBar": null,
+    "helpButton": "off",
+    "doneScreen": "classic",
+    "payMethodView": "screen"
   },
   "templates": {
     "standard": {
@@ -241,6 +297,30 @@
         "name": "avatar",
         "quickAdd": "always"
       }
+    },
+    "restaurant_rail": {
+      "layout": {
+        "catalog": "rail",
+        "categoryIcons": "line",
+        "railStyle": "circle",
+        "railEmphasis": "fill_scale",
+        "catalogScroll": "continuous",
+        "railFollow": "on",
+        "card": "tile",
+        "pricePill": "on",
+        "itemView": "sheet",
+        "sheetMotion": "slide_up",
+        "topBar": [
+          "club",
+          "cancel",
+          "search"
+        ],
+        "doneScreen": "card",
+        "payMethodView": "sheet"
+      },
+      "catalog": {
+        "oneCategory": false
+      }
     }
   },
   "implemented": [
@@ -253,7 +333,8 @@
     "combo",
     "list",
     "magazine",
-    "wall"
+    "wall",
+    "restaurant_rail"
   ],
   "backCompat": {
     "categoryLayout": {
@@ -323,7 +404,8 @@
   },
   "limits": {
     "nameAvatarsMax": 12,
-    "nameAvatarMax": 24
+    "nameAvatarMax": 24,
+    "topBarMax": 4
   },
   "resolveCases": [
     {
@@ -578,6 +660,80 @@
       "expect": {
         "theme.cartStyle": "panel"
       }
+    },
+    {
+      "name": "restaurant_rail: the rail of circles over one continuous menu, a side rail for an old kiosk",
+      "layers": [
+        {
+          "layout": {
+            "template": "restaurant_rail"
+          }
+        }
+      ],
+      "expect": {
+        "layout.catalog": "rail",
+        "layout.railStyle": "circle",
+        "layout.railEmphasis": "fill_scale",
+        "layout.catalogScroll": "continuous",
+        "layout.pricePill": "on",
+        "layout.sheetMotion": "slide_up",
+        "layout.topBar": [
+          "club",
+          "cancel",
+          "search"
+        ],
+        "layout.doneScreen": "card",
+        "layout.payMethodView": "sheet",
+        "layout.helpButton": "off",
+        "theme.categoryLayout": "side",
+        "catalog.oneCategory": false,
+        "motion.sheet": "scale"
+      }
+    },
+    {
+      "name": "restaurant_rail: a shop's explicit oneCategory and sheetMotion beat the template",
+      "layers": [
+        {
+          "layout": {
+            "template": "restaurant_rail"
+          }
+        },
+        {
+          "catalog": {
+            "oneCategory": true
+          },
+          "layout": {
+            "sheetMotion": "fade",
+            "pricePill": "off"
+          }
+        }
+      ],
+      "expect": {
+        "layout.catalogScroll": "continuous",
+        "catalog.oneCategory": true,
+        "layout.sheetMotion": "fade",
+        "layout.pricePill": "off"
+      }
+    },
+    {
+      "name": "the new keys stay today's under every older template",
+      "layers": [
+        {
+          "layout": {
+            "template": "fastfood"
+          }
+        }
+      ],
+      "expect": {
+        "layout.railStyle": "plain",
+        "layout.catalogScroll": "paged",
+        "layout.pricePill": "off",
+        "layout.sheetMotion": null,
+        "layout.topBar": null,
+        "layout.helpButton": "off",
+        "layout.doneScreen": "classic",
+        "layout.payMethodView": "screen"
+      }
     }
   ],
   "parseCases": [
@@ -605,7 +761,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -634,7 +800,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -664,7 +840,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -694,7 +880,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -725,7 +921,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -755,7 +961,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -785,7 +1001,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "low",
-        "reachToggle": true
+        "reachToggle": true,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -833,7 +1059,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -863,7 +1099,17 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     },
     {
@@ -893,7 +1139,247 @@
         "name": "card",
         "nameAvatars": [],
         "reach": "normal",
-        "reachToggle": false
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": null,
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
+      }
+    },
+    {
+      "name": "only the template restaurant_rail (an older cloud): circles, one list, pills, windows rising",
+      "layout": {
+        "template": "restaurant_rail"
+      },
+      "expect": {
+        "template": "restaurant_rail",
+        "catalog": "rail",
+        "categoryIcons": "line",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": "tile",
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "circle",
+        "railEmphasis": "fill_scale",
+        "catalogScroll": "continuous",
+        "railFollow": "on",
+        "pricePill": "on",
+        "sheetMotion": "slide_up",
+        "topBar": [
+          "club",
+          "cancel",
+          "search"
+        ],
+        "helpButton": "off",
+        "doneScreen": "card",
+        "payMethodView": "sheet"
+      }
+    },
+    {
+      "name": "restaurant_rail: unknown values of the new keys are the template's; a known one stays",
+      "layout": {
+        "template": "restaurant_rail",
+        "railStyle": "hexagon",
+        "railEmphasis": "glow",
+        "sheetMotion": "spin",
+        "pricePill": "off",
+        "doneScreen": "poster"
+      },
+      "expect": {
+        "template": "restaurant_rail",
+        "catalog": "rail",
+        "categoryIcons": "line",
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": "tile",
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "circle",
+        "railEmphasis": "fill_scale",
+        "catalogScroll": "continuous",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": "slide_up",
+        "topBar": [
+          "club",
+          "cancel",
+          "search"
+        ],
+        "helpButton": "off",
+        "doneScreen": "card",
+        "payMethodView": "sheet"
+      }
+    },
+    {
+      "name": "the new keys on standard: each as set",
+      "layout": {
+        "railStyle": "circle",
+        "railEmphasis": "scale",
+        "catalogScroll": "continuous",
+        "railFollow": "off",
+        "pricePill": "on",
+        "sheetMotion": "fade",
+        "topBar": [
+          "search",
+          "lang"
+        ],
+        "helpButton": "float",
+        "doneScreen": "card",
+        "payMethodView": "sheet"
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "circle",
+        "railEmphasis": "scale",
+        "catalogScroll": "continuous",
+        "railFollow": "off",
+        "pricePill": "on",
+        "sheetMotion": "fade",
+        "topBar": [
+          "search",
+          "lang"
+        ],
+        "helpButton": "float",
+        "doneScreen": "card",
+        "payMethodView": "sheet"
+      }
+    },
+    {
+      "name": "topBar: an unknown item is dropped (a newer cloud), the rest kept in order; not a list - the template's",
+      "layout": {
+        "topBar": [
+          "lang",
+          "points",
+          "cancel"
+        ]
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": [
+          "lang",
+          "cancel"
+        ],
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
+      }
+    },
+    {
+      "name": "topBar: an empty list is a bar without buttons (not today's header)",
+      "layout": {
+        "topBar": []
+      },
+      "expect": {
+        "template": "standard",
+        "catalog": null,
+        "categoryIcons": null,
+        "railSize": "m",
+        "landingColumns": 3,
+        "productSize": "m",
+        "landingShowCounts": true,
+        "hero": "off",
+        "magazineFeed": false,
+        "card": null,
+        "flow": "free",
+        "itemView": "sheet",
+        "quickAdd": "off",
+        "mealView": "sheet",
+        "mealUpsell": "off",
+        "basket": null,
+        "service": "cards",
+        "name": "card",
+        "nameAvatars": [],
+        "reach": "normal",
+        "reachToggle": false,
+        "railStyle": "plain",
+        "railEmphasis": "fill",
+        "catalogScroll": "paged",
+        "railFollow": "on",
+        "pricePill": "off",
+        "sheetMotion": null,
+        "topBar": [],
+        "helpButton": "off",
+        "doneScreen": "classic",
+        "payMethodView": "screen"
       }
     }
   ]

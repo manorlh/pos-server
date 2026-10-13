@@ -53,7 +53,7 @@ import { KIOSK_ICON_DATA } from './kioskIconData';
 import { KIOSK_TEXT_REGISTRY_DATA } from './kioskTextRegistryData';
 import { KIOSK_TEXTS, configuredText, defaultText, isKioskTextKey, kioskTextOf, textShownUnder, validateKioskTexts, webTextOverride } from './kioskTexts';
 
-const TEMPLATES_SHA256 = 'bf83cc7ab875bec0e3411b0e927fb1b5ef013c9d09e72927f48bb975867324b1';
+const TEMPLATES_SHA256 = 'd605d6d7532b7a8e29fc07e75fe793ec44c807f3fa0e5f5f047553db829a0877';
 const ICONS_SHA256 = '75ac9c79776f320370b5c73429009e4daa77a13bf3d90fbdccd8b94dd5c64fa6';
 const REGISTRY_SHA256 = 'fc07e8b1f8350ea35238ef67c012e7c63129a81b4f229a3fd4ba0f4c708c3240';
 
@@ -367,5 +367,262 @@ describe('"גודל מוצרים" (layout.productSize — the Android kiosk\'s K
     assert.ok(bad.some((e) => e.path === 'layout.productSize'));
     const ok = validateLayout({ layout: { ...KIOSK_LAYOUT_DEFAULTS, productSize: 'l' }, attract: KIOSK_DEFAULTS.attract });
     assert.equal(ok.filter((e) => e.path === 'layout.productSize').length, 0);
+  });
+});
+
+import {
+  CANCEL_BG_DEFAULT,
+  RAIL_MOTION_COLOR_KEYS,
+  SHEET_SPRING_EASE,
+  checkoutStepsNow,
+  contrastRatio,
+  kioskAsksPayMethod,
+  payMethodAsk,
+  railMotionColors,
+  railMotionContrastIssues,
+  resolveThemeColors,
+  stepMode,
+  transitionSpec,
+  withSheetMotion,
+} from './kioskConfig';
+import {
+  LAYOUT_TOP_BAR_ITEMS,
+  catalogContinuous,
+  doneCard,
+  payMethodSheet,
+  pricePillOn,
+  railCircles,
+  railEmphasisOf,
+  railFollows,
+  sheetMotionOf,
+  topBarItems,
+} from './kioskLayout';
+
+describe('"מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): additive, today\'s look by default', () => {
+  const NEW_KEYS = ['railStyle', 'railEmphasis', 'catalogScroll', 'railFollow', 'pricePill', 'sheetMotion', 'topBar', 'helpButton', 'doneScreen', 'payMethodView'];
+  const baseline = JSON.parse(fixture('kiosk_resolve_baseline_1013.json')) as { cases: Array<{ name: string; layers: Layers; resolved: Record<string, unknown> }> };
+
+  it('the baseline holds every older template in every style', () => {
+    const names = new Set(baseline.cases.map((c) => c.name));
+    for (const style of ['ios', 'wolt', 'classic', 'minimal_dark', 'tech']) {
+      for (const t of LAYOUT_TEMPLATES_READY.filter((x) => x !== 'restaurant_rail')) assert.ok(names.has(`${t} in ${style}`), `${t} in ${style}`);
+    }
+  });
+
+  for (const c of baseline.cases) {
+    it(`resolves as before the change: ${c.name}`, () => {
+      const cfg = JSON.parse(JSON.stringify(resolveKioskConfig(...c.layers))) as Record<string, Record<string, unknown>>;
+      for (const k of NEW_KEYS) {
+        assert.deepEqual(cfg.layout[k], (KIOSK_LAYOUT_DEFAULTS as unknown as Record<string, unknown>)[k], k);
+        delete cfg.layout[k];
+      }
+      for (const k of RAIL_MOTION_COLOR_KEYS) {
+        assert.equal(cfg.theme[k], null, k);
+        delete cfg.theme[k];
+      }
+      assert.equal(cfg.payment.paymentChooserSkip, 'auto');
+      delete cfg.payment.paymentChooserSkip;
+      assert.deepEqual(cfg, c.resolved);
+    });
+  }
+
+  it('the defaults draw today: plain rail, paged, no pill, motion.sheet, today\'s header and success', () => {
+    const cfg = resolveKioskConfig({});
+    assert.equal(railCircles(cfg), false);
+    assert.equal(catalogContinuous(cfg), false);
+    assert.equal(railFollows(cfg), true);
+    assert.equal(pricePillOn(cfg), false);
+    assert.equal(sheetMotionOf(cfg), null);
+    assert.equal(topBarItems(cfg), null);
+    assert.equal(doneCard(cfg), false);
+    assert.equal(payMethodSheet(cfg), false);
+    // A config from before the keys (an older server) reads the same.
+    const older = { layout: { template: 'standard' } } as unknown as KioskConfig;
+    assert.equal(railCircles(older), false);
+    assert.equal(sheetMotionOf(older), null);
+    assert.equal(topBarItems(older), null);
+  });
+
+  it('restaurant_rail sets the look, one list for an older kiosk too; explicit keys win', () => {
+    const cfg = resolveKioskConfig({ layout: { template: 'restaurant_rail' } });
+    assert.equal(cfg.layout.catalog, 'rail');
+    assert.equal(railCircles(cfg), true);
+    assert.deepEqual(railEmphasisOf(cfg), { fill: true, scale: 1.12 });
+    assert.equal(catalogContinuous(cfg), true);
+    assert.equal(cfg.catalog.oneCategory, false);
+    assert.equal(pricePillOn(cfg), true);
+    assert.equal(sheetMotionOf(cfg), 'slide_up');
+    assert.equal(doneCard(cfg), true);
+    assert.equal(payMethodSheet(cfg), true);
+    assert.equal(cfg.theme.categoryLayout, 'side');
+    assert.deepEqual(validateKioskConfig(cfg), []);
+    const own = resolveKioskConfig({ layout: { template: 'restaurant_rail' } }, { catalog: { oneCategory: true }, layout: { railEmphasis: 'none', topBar: [] } });
+    assert.equal(own.catalog.oneCategory, true);
+    assert.equal(catalogContinuous(own), true, 'catalogScroll continuous whatever oneCategory says');
+    assert.deepEqual(railEmphasisOf(own), { fill: false, scale: 1 });
+    assert.deepEqual(topBarItems(own), []);
+  });
+
+  it('switching to restaurant_rail and back moves only what followed the template', () => {
+    const parent = resolveKioskConfig({});
+    const draft: KioskConfig = JSON.parse(JSON.stringify(parent));
+    draft.layout.helpButton = 'float';
+    const oldBase = rebaseLayout(parent, {}, 'standard', KIOSK_DEFAULTS);
+    const newBase = rebaseLayout(parent, {}, 'restaurant_rail', KIOSK_DEFAULTS);
+    const moved = switchLayoutTemplate(draft, oldBase, newBase, 'restaurant_rail');
+    assert.equal(moved.layout.railStyle, 'circle');
+    assert.equal(moved.catalog.oneCategory, false);
+    assert.equal(moved.layout.helpButton, 'float');
+    const back = switchLayoutTemplate(moved, newBase, oldBase, 'standard');
+    assert.equal(back.layout.railStyle, 'plain');
+    assert.equal(back.layout.sheetMotion, null);
+    assert.equal(back.layout.topBar, null);
+    assert.equal(back.catalog.oneCategory, true);
+    assert.equal(back.layout.helpButton, 'float');
+  });
+
+  it('validates the new keys: unknown values and items are refused', () => {
+    const ok = validateLayout({ layout: { ...KIOSK_LAYOUT_DEFAULTS, railStyle: 'circle', topBar: ['lang', 'cancel'], sheetMotion: 'fade' }, attract: KIOSK_DEFAULTS.attract });
+    assert.deepEqual(ok, []);
+    const bad = validateLayout({
+      layout: {
+        ...KIOSK_LAYOUT_DEFAULTS,
+        railStyle: 'hexagon' as never,
+        railEmphasis: 'glow' as never,
+        catalogScroll: 'infinite' as never,
+        railFollow: true as never,
+        pricePill: 'yes' as never,
+        sheetMotion: 'spin' as never,
+        helpButton: 'corner' as never,
+        doneScreen: 'poster' as never,
+        payMethodView: 'modal' as never,
+        topBar: ['club', 'points'] as never,
+      },
+      attract: KIOSK_DEFAULTS.attract,
+    });
+    assert.deepEqual(
+      bad.map((e) => e.path).sort(),
+      ['catalogScroll', 'doneScreen', 'helpButton', 'payMethodView', 'pricePill', 'railEmphasis', 'railFollow', 'railStyle', 'sheetMotion', 'topBar'].map((k) => `layout.${k}`),
+    );
+    const dup = validateLayout({ layout: { ...KIOSK_LAYOUT_DEFAULTS, topBar: ['club', 'club'] }, attract: KIOSK_DEFAULTS.attract });
+    assert.deepEqual(dup.map((e) => e.code), ['duplicate']);
+    // The editor offers every value of the new keys (none "בקרוב").
+    for (const k of NEW_KEYS.filter((x) => x !== 'topBar')) {
+      for (const v of (LAYOUT_VOCABULARY as Record<string, readonly unknown[]>)[k]) assert.ok(layoutValueReady(k as never, v), `${k}=${String(v)}`);
+    }
+    assert.ok(layoutValueReady('sheetMotion', null));
+    assert.ok(layoutValueReady('template', 'restaurant_rail'));
+  });
+
+  it('the top bar shows what the kiosk can do: club with the club or vouchers, search when on, lang with a second language', () => {
+    const cfg = resolveKioskConfig({ layout: { topBar: [...LAYOUT_TOP_BAR_ITEMS] } });
+    assert.deepEqual(topBarItems(cfg), ['cancel']);
+    const all = resolveKioskConfig({
+      layout: { topBar: ['lang', 'search', 'club', 'cancel'] },
+      general: { searchEnabled: true, languages: ['he', 'en'] },
+      payment: { methods: ['card', 'voucher'] },
+    });
+    assert.deepEqual(topBarItems(all), ['lang', 'search', 'club', 'cancel']);
+    const newer = { ...all, layout: { ...all.layout, topBar: ['points', 'cancel'] as never } };
+    assert.deepEqual(topBarItems(newer), ['cancel']);
+  });
+
+  it('colours: each null from the palette, a set one as it is, and the readable words', () => {
+    const theme = resolveKioskConfig({}).theme;
+    const base = resolveThemeColors(theme);
+    const c = railMotionColors(theme);
+    assert.equal(c.cardBg, base.surface);
+    assert.equal(c.photoBg, c.cardBg);
+    assert.equal(c.railBg, base.surface);
+    assert.equal(c.railSelectedBg, theme.primaryColor.toUpperCase());
+    assert.equal(c.cancelBg, CANCEL_BG_DEFAULT);
+    assert.equal(c.railIcon, base.text);
+    assert.ok(contrastRatio(c.pricePillText, c.pricePillBg) >= 4.5);
+    const set = railMotionColors({ ...theme, pricePillBg: '#e8dcc4', pricePillText: '#ffffff', photoBg: '#1e3a8a', backgroundColor: '#0b0b0d' });
+    assert.equal(set.pricePillBg, '#E8DCC4');
+    assert.equal(set.pricePillText, '#FFFFFF');
+    assert.equal(set.photoBg, '#1E3A8A');
+    // A dark background: the words turn light by themselves (as today's kioskThemeColors).
+    assert.equal(resolveThemeColors({ ...theme, backgroundColor: '#0b0b0d' }).dark, true);
+    const issues = railMotionContrastIssues({ ...theme, pricePillBg: '#e8dcc4', pricePillText: '#ffffff' });
+    assert.deepEqual(issues.map((i) => i.pair), ['pricePill']);
+    assert.ok(issues[0].ratio < 4.5);
+    assert.deepEqual(railMotionContrastIssues(theme), []);
+    // Validation: "#RRGGBB" only.
+    const v = validateKioskConfig({ ...resolveKioskConfig({}), theme: { ...theme, railBg: 'red', cardBg: '#FFF' } });
+    assert.deepEqual(v.map((e) => e.path).sort(), ['theme.cardBg', 'theme.railBg']);
+  });
+
+  it('sheetMotion over the transitions: null as today, slide_up on a spring, none with reduced motion, no spring when light', () => {
+    const t = transitionSpec(KIOSK_DEFAULTS.motion, { reduceMotion: false });
+    assert.equal(withSheetMotion(t, null), t);
+    const up = withSheetMotion(t, 'slide_up');
+    assert.equal(up.sheet, 'slide_up');
+    assert.equal(up.sheetEase, SHEET_SPRING_EASE);
+    assert.equal(withSheetMotion(t, 'slide_up', { light: true }).sheetEase, undefined);
+    assert.equal(withSheetMotion(t, 'slide_up', { reduceMotion: true }).sheetMs, 0);
+    assert.equal(withSheetMotion(t, 'fade').sheet, 'fade');
+    assert.equal(withSheetMotion(t, 'none').sheet, 'none');
+    assert.equal(up.categorySwitch, t.categorySwitch, 'nothing else moves');
+  });
+
+  it('"דלג על בחירת אמצעי תשלום": auto skips the card alone (today), never always asks', () => {
+    assert.equal(KIOSK_DEFAULTS.payment.paymentChooserSkip, 'auto');
+    assert.equal(kioskAsksPayMethod(['card']), false);
+    assert.equal(kioskAsksPayMethod(['card'], 'auto'), false);
+    assert.equal(kioskAsksPayMethod(['card'], 'never'), true);
+    assert.equal(kioskAsksPayMethod(['card', 'split_card'], 'auto'), true);
+    assert.deepEqual(payMethodAsk(['card'], ['card'], 'required'), { asks: false, optional: false, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['card'], ['card'], 'required', 'never'), { asks: true, optional: false, fallback: 'card' });
+    assert.deepEqual(payMethodAsk(['card'], ['card'], 'off', 'never'), { asks: false, optional: false, fallback: 'card' }, 'an explicit off still wins');
+    const never = resolveKioskConfig({ payment: { methods: ['card'], paymentChooserSkip: 'never' } });
+    assert.equal(stepMode(never, 'payMethod'), 'required');
+    assert.ok(checkoutStepsNow(never.payment, false, false).includes('payMethod'));
+    const auto = resolveKioskConfig({ payment: { methods: ['card'] } });
+    assert.equal(stepMode(auto, 'payMethod'), 'off');
+    assert.ok(!checkoutStepsNow(auto.payment, false, false).includes('payMethod'));
+    const bad = validateKioskConfig({ ...auto, payment: { ...auto.payment, paymentChooserSkip: 'always' as never } });
+    assert.deepEqual(bad.map((e) => e.path), ['payment.paymentChooserSkip']);
+  });
+});
+
+import { kioskPayChooser } from './kioskConfig';
+
+describe('kioskPayChooser — "דלג על בחירת אמצעי תשלום" on every kiosk (the web and Windows kiosks call it)', () => {
+  const cfgOf = (layer: Record<string, unknown>) => resolveKioskConfig(layer);
+
+  it('auto (absent too): exactly one available method, the card, nothing else to choose — straight to the card', () => {
+    const cfg = cfgOf({ payment: { methods: ['card'] } });
+    assert.deepEqual(kioskPayChooser(cfg, ['card'], ['card']), { asks: false, optional: false, fallback: 'card' });
+    const older = { ...cfg, payment: { ...cfg.payment, paymentChooserSkip: undefined } };
+    assert.equal(kioskPayChooser(older, ['card'], ['card']).asks, false);
+  });
+
+  it('the window shows with a second method, a voucher, cash at the till, a split or installments', () => {
+    const cfg = cfgOf({ payment: { methods: ['card', 'voucher'] } });
+    assert.equal(kioskPayChooser(cfg, ['card', 'voucher'], ['card', 'voucher']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card', 'cash_at_till'] } }), ['card', 'cash_at_till'], ['card', 'cash_at_till']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['cash_at_till'] } }), ['cash_at_till'], ['cash_at_till']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card', 'split_card'] } }), ['card', 'split_card'], ['card', 'split_card']).asks, true);
+    assert.equal(kioskPayChooser(cfgOf({ payment: { methods: ['card'] } }), ['card'], ['card'], { installments: true }).asks, true);
+  });
+
+  it('never: the window even with the card alone; an explicit "כבוי" step still charges the card without asking', () => {
+    assert.deepEqual(kioskPayChooser(cfgOf({ payment: { methods: ['card'], paymentChooserSkip: 'never' } }), ['card'], ['card']), {
+      asks: true,
+      optional: false,
+      fallback: 'card',
+    });
+    const off = cfgOf({ payment: { methods: ['card'], paymentChooserSkip: 'never', stepModes: { payMethod: 'off' } } });
+    assert.equal(kioskPayChooser(off, ['card'], ['card']).asks, false);
+  });
+
+  it('the same in every layout template', () => {
+    for (const template of LAYOUT_TEMPLATES_READY) {
+      const cfg = cfgOf({ layout: { template }, payment: { methods: ['card'] } });
+      assert.equal(kioskPayChooser(cfg, ['card'], ['card']).asks, false, template);
+      const never = cfgOf({ layout: { template }, payment: { methods: ['card'], paymentChooserSkip: 'never' } });
+      assert.equal(kioskPayChooser(never, ['card'], ['card']).asks, true, template);
+    }
   });
 });

@@ -23,6 +23,7 @@ import {
   Check,
   ChevronRight,
   CircleHelp,
+  Clock,
   CreditCard,
   Heart,
   Languages,
@@ -92,13 +93,15 @@ import {
   wallpaperOn,
   wallpaperScrim,
   kioskRestLookOverBackdrop,
+  railMotionColors,
 } from '@/lib/kioskConfig';
+import { kioskTextOf } from '@/lib/kioskTexts';
 import type { ResolvedMotionEngine } from '@/lib/kioskMotionEngine';
 import type { LivePayPhase, PreviewScreen } from '@/kiosk-shared/types';
 import { attractStackOrder, welcomeOf, welcomeTopHeight, WelcomeBlock } from '@/kiosk-shared/layouts/welcome';
 import { CategoryVisual } from '@/kiosk-shared/layouts/icons';
 import { lineOptionsOf, useDishSheet, type DishSheet } from './preview-dish';
-import { layoutOf, reachLow } from '@/lib/kioskLayout';
+import { catalogContinuous, doneCard, layoutOf, pricePillOn, reachLow, sheetMotionOf, topBarItems, type LayoutTopBarItem } from '@/lib/kioskLayout';
 import { KioskSwap, MOTION_CSS, itemEnter, sheetEnter } from './preview-motion';
 import { ERROR_COLOR, FEEDBACK_CSS, SuccessMark, badgePop, engineRoot, errorFx, revealIn, successFx } from './preview-feedback';
 import { EntryHeader, EntryWindow } from './preview-entry';
@@ -265,6 +268,8 @@ export interface KioskLive {
   /** The success screen's real order. */
   success?: {
     pickupLabel: string;
+    /** "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave, when asked. */
+    customerName?: string | null;
     paid: number;
     /** ask: the question is shown; the rest say what happened to the receipt. */
     receipt: 'ask' | 'printing' | 'printed' | 'declined' | 'none' | 'failed';
@@ -276,6 +281,11 @@ export interface KioskLive {
   noteField?: (value: string, onChange: (v: string) => void) => ReactNode;
   /** Hide the customer fields on the cart: the real kiosk asks them on their own screen. */
   detailsScreen?: boolean;
+  /**
+   * "סרגל עליון" (layout.topBar): what the club, search and language buttons do on this kiosk. A real
+   * kiosk shows only the buttons it can honour (cancel is startOver); the preview shows them all.
+   */
+  topBar?: { club?: () => void; search?: () => void; lang?: () => void };
   /** "עזרה" on the attract screen calls the staff (a help request to the tills). */
   help?: () => void;
   /** "רוצים להוסיף טיפ לצוות?" — the real tip step (TipScreen); the preview keeps its own. */
@@ -598,6 +608,41 @@ export function cardStyle(m: PreviewModel): CSSProperties {
         boxShadow: dark ? '0 6px 18px rgba(0,0,0,0.45)' : '0 6px 18px rgba(17,24,39,0.08), 0 1px 3px rgba(17,24,39,0.06)',
       };
   }
+}
+
+/* "מסעדה — פס צד" (P:/specs/kiosk-rail-motion.md §6): the dish card's own colours and the price pill. */
+
+/** A dish's card: the card of today, on theme.cardBg when the business set one (its words readable on it). */
+export function dishCardStyle(m: PreviewModel): CSSProperties {
+  const base = cardStyle(m);
+  if (!m.cfg.theme.cardBg) return base;
+  const rc = railMotionColors(m.cfg.theme);
+  return { ...base, background: rc.cardBg, color: rc.cardText };
+}
+
+/** The dish's picture area: on theme.photoBg when set (as today otherwise). */
+export function photoBgStyle(m: Pick<PreviewModel, 'cfg'>): CSSProperties | undefined {
+  return m.cfg.theme.photoBg ? { background: railMotionColors(m.cfg.theme).photoBg } : undefined;
+}
+
+/** "מחיר בגלולה" (layout.pricePill): the price across the card's bottom in a pill (pricePillBg / pricePillText). */
+export function PricePill({ m, p, className }: { m: PreviewModel; p: PProduct; className?: string }) {
+  const rc = railMotionColors(m.cfg.theme);
+  return (
+    <span
+      data-price-pill
+      className={cn('flex w-full items-center justify-center rounded-full px-3 py-1.5 kt-15 font-extrabold tabular-nums', className)}
+      style={{
+        background: rc.pricePillBg,
+        color: rc.pricePillText,
+        textDecoration: p.soldOut ? 'line-through' : undefined,
+        opacity: p.soldOut ? 0.6 : 1,
+        ...textSize(m, 'productPrice', 15),
+      }}
+    >
+      {m.money(p.price)}
+    </span>
+  );
 }
 
 export function buttonStyle(m: PreviewModel, variant: 'primary' | 'soft' = 'primary'): CSSProperties {
@@ -1602,9 +1647,9 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
       disabled={p.soldOut}
       onClick={() => m.openProduct(p)}
       className="k-tap group relative flex w-full flex-col overflow-hidden text-start transition-transform duration-150 active:scale-[0.98] disabled:cursor-not-allowed"
-      style={cardStyle(m)}
+      style={dishCardStyle(m)}
     >
-      <div className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio }}>
+      <div className="relative w-full overflow-hidden" style={{ aspectRatio: m.ratio, ...photoBgStyle(m) }}>
         <ProductImage m={m} p={p} className="h-full w-full" style={p.soldOut ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined} />
         {p.soldOut ? (
           <span className="absolute start-2 top-2 rounded-full bg-black/70 px-2 py-0.5 kt-10 font-bold text-white">{m.t('soldOut')}</span>
@@ -1635,9 +1680,13 @@ export function ProductCard({ m, p }: { m: PreviewModel; p: PProduct }) {
           </div>
         ) : null}
         <DietaryChips m={m} tags={p.dietaryTags} />
-        <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'productPrice', 13) }}>
-          {m.money(p.price)}
-        </div>
+        {pricePillOn(m.cfg) ? (
+          <PricePill m={m} p={p} className="mt-1.5" />
+        ) : (
+          <div className="kt-13 font-bold tabular-nums" style={{ color: m.c.primary, ...textSize(m, 'productPrice', 13) }}>
+            {m.money(p.price)}
+          </div>
+        )}
       </div>
     </button>
   );
@@ -1909,10 +1958,79 @@ function FeaturedRow({ m }: { m: PreviewModel }) {
 }
 
 /** The menu's header; `search` false: the screen keeps its own search field (the list layout). */
+/** A registry text in the screen's language (the business's words first). */
+function regText(m: PreviewModel, key: string): string {
+  return m.kt ? m.kt(key) : kioskTextOf(m.cfg, 'he', key);
+}
+
+/**
+ * "סרגל עליון" (layout.topBar, spec §6.1): in place of today's title row — the club button on the start
+ * side (club: "חבר מועדון / קופונים" with ✦), the rest on the end side in their order: "ביטול הזמנה" red
+ * (cancelBg — empties the basket, back to the start), the search, the language.
+ */
+export function TopBar({ m, items: configured }: { m: PreviewModel; items: LayoutTopBarItem[] }) {
+  const rc = railMotionColors(m.cfg.theme);
+  // A real kiosk: only the buttons it can honour (never a button that does nothing).
+  const items = m.live ? configured.filter((i) => i === 'cancel' || !!m.live?.topBar?.[i]) : configured;
+  const pill = 'flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3.5 kt-13 font-bold transition-transform duration-150 active:scale-95';
+  const button = (item: LayoutTopBarItem) => {
+    if (item === 'club') {
+      return (
+        <button key={item} type="button" data-top="club" onClick={m.live?.topBar?.club} className={pill} style={{ background: `${m.c.primary}14`, color: m.c.primary }}>
+          <Sparkles className="h-4 w-4" />
+          {regText(m, 'clubTitle')}
+        </button>
+      );
+    }
+    if (item === 'cancel') {
+      return (
+        <button
+          key={item}
+          type="button"
+          data-top="cancel"
+          className={pill}
+          style={{ background: rc.cancelBg, color: rc.cancelText }}
+          onClick={() => {
+            if (m.live?.startOver) return m.live.startOver();
+            m.setCart([]);
+            m.go('attract');
+          }}
+        >
+          {regText(m, 'idleCancel')}
+        </button>
+      );
+    }
+    if (item === 'search') {
+      return (
+        <button key={item} type="button" data-top="search" onClick={m.live?.topBar?.search} aria-label={regText(m, 'searchTitle')} className={cn(pill, 'w-10 justify-center px-0')} style={cardStyle(m)}>
+          <Search className="h-4 w-4" />
+        </button>
+      );
+    }
+    const langs = m.cfg.general.languages ?? [];
+    return (
+      <button key={item} type="button" data-top="lang" onClick={m.live?.topBar?.lang} className={pill} style={cardStyle(m)}>
+        <Languages className="h-4 w-4" />
+        <span className="uppercase">{langs[1] ?? langs[0] ?? 'he'}</span>
+      </button>
+    );
+  };
+  // The club on the start side, the rest at the end (their order kept).
+  return (
+    <div data-top-bar className="flex items-center gap-2 px-3">
+      {items.filter((i) => i === 'club').map(button)}
+      <span className="flex-1" />
+      {items.filter((i) => i !== 'club').map(button)}
+    </div>
+  );
+}
+
 export function CatalogHeader({ m, children, search = true }: { m: PreviewModel; children?: ReactNode; search?: boolean }) {
   const header = m.cfg.screenImages?.catalogHeader;
+  const bar = topBarItems(m.cfg);
   return (
     <div className="z-10 shrink-0 space-y-2 pb-1 pt-3 backdrop-blur-md" style={{ background: `${m.c.background}E6` }}>
+      {bar !== null ? <TopBar m={m} items={bar} /> : (
       <div className="flex items-center gap-2 px-3">
         <LiveBack m={m} size={32} />
         <Logo m={m} size={30} />
@@ -1928,12 +2046,13 @@ export function CatalogHeader({ m, children, search = true }: { m: PreviewModel;
           </button>
         ) : null}
       </div>
+      )}
       {header ? (
         <div className="mx-3 overflow-hidden" style={{ borderRadius: m.radius, height: 64 }}>
           <Img src={header.url} className="h-full w-full object-cover" />
         </div>
       ) : null}
-      {search && m.cfg.general.searchEnabled && !m.live ? (
+      {search && bar === null && m.cfg.general.searchEnabled && !m.live ? (
         <div className="mx-3 flex items-center gap-2 px-3 py-2 text-xs" style={{ ...cardStyle(m), borderRadius: 999, color: m.c.mutedText }}>
           <Search className="h-3.5 w-3.5" /> {m.t('search')}
         </div>
@@ -2020,7 +2139,7 @@ function SideCatalog({ m }: { m: PreviewModel }) {
     if (found && found !== active) setActive(found);
   };
 
-  const one = m.cfg.catalog.oneCategory;
+  const one = !catalogContinuous(m.cfg);
   const pick = (id: string) => {
     setActive(id);
     m.onCategoryPicked?.(id);
@@ -2079,7 +2198,7 @@ function SideCatalog({ m }: { m: PreviewModel }) {
  */
 function TopCatalog({ m, activeCategory, onCategory }: { m: PreviewModel; activeCategory: string | null; onCategory: (id: string) => void }) {
   const current = m.categories.find((c) => c.id === activeCategory) ?? m.categories[0];
-  const one = m.cfg.catalog.oneCategory;
+  const one = !catalogContinuous(m.cfg);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const pick = (id: string) => {
     onCategory(id);
@@ -2178,6 +2297,8 @@ export function ProductSheet({
   const { cfg } = m;
   const full = variant === 'full';
   const compact = variant === 'compact';
+  // "פתיחת חלונות: מלמטה למעלה" (layout.sheetMotion): the window docks at the bottom, full width.
+  const docked = variant === 'sheet' && sheetMotionOf(cfg) === 'slide_up';
   // The choices priced as the till prices them (lib/kioskMoney.ts): free ones, quantities, "מעט / הרבה / בצד".
   const dish = useDishSheet(product, groups);
   const [qty, setQty] = useState(1);
@@ -2214,7 +2335,7 @@ export function ProductSheet({
   };
 
   return (
-    <div className={cn('absolute inset-0 z-30 flex flex-col items-center justify-center', !full && 'p-3')}>
+    <div className={cn('absolute inset-0 z-30 flex flex-col items-center', docked ? 'justify-end pt-6' : 'justify-center', !full && !docked && 'p-3')}>
       <button
         type="button"
         aria-label={m.t('close')}
@@ -2223,12 +2344,18 @@ export function ProductSheet({
         onClick={onClose}
       />
       <div
+        data-docked={docked || undefined}
         className={cn(
           'relative flex w-full flex-col overflow-hidden',
-          full ? 'h-full' : variant === 'modal' ? 'max-h-[86%] max-w-[360px]' : compact ? 'max-h-[86%] max-w-[400px]' : 'max-h-[90%] max-w-[420px]',
+          full ? 'h-full' : docked ? 'max-h-[92%]' : variant === 'modal' ? 'max-h-[86%] max-w-[360px]' : compact ? 'max-h-[86%] max-w-[400px]' : 'max-h-[90%] max-w-[420px]',
           sheetEnter(m.transitions).panel,
         )}
-        style={{ ...sheetEnter(m.transitions).style, background: m.c.surface, color: m.c.text, borderRadius: full ? 0 : Math.max(16, m.radius) }}
+        style={{
+          ...sheetEnter(m.transitions).style,
+          background: m.c.surface,
+          color: m.c.text,
+          borderRadius: full ? 0 : docked ? `${Math.max(20, m.radius)}px ${Math.max(20, m.radius)}px 0 0` : Math.max(16, m.radius),
+        }}
       >
         {full ? (
           <button
@@ -3296,7 +3423,138 @@ export function PayScreen({ m, tipAgorot = 0 }: { m: PreviewModel; tipAgorot?: n
 
 /* ---------------------------------------------------------------- success */
 
+/** A ring emptying over `total` seconds around the seconds left ("התחל הזמנה חדשה"). */
+function CountdownRing({ left, total, color, size = 34 }: { left: number; total: number; color: string; size?: number }) {
+  const r = 15;
+  const c = 2 * Math.PI * r;
+  const share = total > 0 ? Math.max(0, Math.min(1, left / total)) : 0;
+  return (
+    <span data-countdown className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
+      <svg viewBox="0 0 36 36" className="absolute inset-0 h-full w-full -rotate-90" aria-hidden>
+        <circle cx="18" cy="18" r={r} fill="none" stroke={color} strokeOpacity={0.25} strokeWidth="3" />
+        <circle
+          cx="18"
+          cy="18"
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - share)}
+          style={{ transition: 'stroke-dashoffset 1s linear' }}
+        />
+      </svg>
+      <span className="relative text-xs font-extrabold tabular-nums">{left}</span>
+    </span>
+  );
+}
+
+/** The preview's countdown: `total` down to 0, then again (the real kiosk passes its own seconds). */
+function usePreviewCountdown(total: number, on: boolean): number {
+  const [ticks, setTicks] = useState(0);
+  useEffect(() => {
+    if (!on) return;
+    const id = window.setInterval(() => setTicks((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [on]);
+  return total - (ticks % total);
+}
+
+/**
+ * "מסך סיום: כרטיס" (layout.doneScreen = card, spec §6.1): a card in the middle — 😋, the title, the
+ * customer's name, the number big, the service and the time, the receipt's line — and "הזמנה חדשה" with
+ * a ring counting down the seconds before the kiosk starts over.
+ */
+function SuccessCard({ m }: { m: PreviewModel }) {
+  const { cfg } = m;
+  const live = m.live?.success;
+  const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1, cfg.pickup.labelFormat);
+  const receipt = live ? (live.receipt === 'ask' ? 'ask' : live.receipt === 'printing' || live.receipt === 'printed' ? 'always' : 'never') : cfg.payment.receiptPolicy;
+  const total = Math.max(1, cfg.timers.successSec);
+  const previewLeft = usePreviewCountdown(total, !live);
+  const left = live ? live.secondsLeft : previewLeft;
+  const rc = railMotionColors(cfg.theme);
+  const fx = successFx(m.engine);
+  const clock = new Date(m.nowMs);
+  const hhmm = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`;
+  const service = serviceNone(m) ? null : m.service;
+  const enter = sheetEnter(m.transitions);
+  return (
+    <ScreenBody m={m}>
+      <div className="flex min-h-full flex-col items-center justify-center p-4">
+        <div
+          data-done-card
+          className={cn('w-full max-w-[440px] space-y-3 p-6 text-center', enter.panel)}
+          style={{ ...enter.style, ...cardStyle(m), background: rc.cardBg, color: rc.cardText, borderRadius: Math.max(22, m.radius) }}
+        >
+          <div className={cn('mx-auto text-6xl leading-none', !fx && 'kiosk-pop')} aria-hidden>
+            😋
+          </div>
+          <h2 className="text-2xl font-extrabold">{m.txt('successTitle')}</h2>
+          {live?.customerName ? <p className="text-base font-semibold">{live.customerName}</p> : null}
+          <div>
+            <div
+              data-pickup
+              className={cn('text-6xl font-black tabular-nums', fx?.number.className)}
+              dir="ltr"
+              style={{ ...fx?.number.style, color: m.c.primary, fontFamily: chromeOf(m).monoFigures ? MONO_FIGURES_STACK : undefined }}
+            >
+              {label}
+            </div>
+            <div className="kt-11 font-semibold" style={{ color: m.c.mutedText }}>
+              {m.txt('pickupLabel')}
+            </div>
+          </div>
+          <div className="flex items-center justify-center gap-8 kt-13 font-semibold">
+            {service ? (
+              <span className="inline-flex items-center gap-1.5">
+                {service === 'take_away' ? <ShoppingBag className="h-4 w-4" /> : <UtensilsCrossed className="h-4 w-4" />}
+                {service === 'take_away' ? m.txt('takeAwayLabel') : m.txt('eatInLabel')}
+              </span>
+            ) : null}
+            <span className="inline-flex items-center gap-1.5 tabular-nums" dir="ltr">
+              <Clock className="h-4 w-4" />
+              {hhmm}
+            </span>
+          </div>
+          {receipt === 'always' ? <p className="text-base font-bold">{m.t('receiptAlways')}</p> : null}
+          {cfg.success.message.trim() ? <p className="text-sm font-semibold">{cfg.success.message}</p> : null}
+          {receipt === 'ask' ? (
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">{m.t('receiptAsk')}</div>
+              <div className="grid grid-cols-2 gap-2">
+                <BigButton m={m} variant="soft" onClick={live ? () => live.onReceipt(false) : undefined}>
+                  {m.t('receiptNo')}
+                </BigButton>
+                <BigButton m={m} onClick={live ? () => live.onReceipt(true) : undefined}>
+                  {m.t('receiptYes')}
+                </BigButton>
+              </div>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            data-new-order
+            onClick={live ? live.onNewOrder : () => m.go('attract')}
+            className="flex w-full items-center justify-center gap-3 px-4 py-3.5 text-lg font-extrabold transition-transform duration-150 active:scale-[0.98]"
+            style={{ ...buttonStyle(m), borderRadius: Math.max(14, m.btnRadius === 999 ? 18 : m.btnRadius) }}
+          >
+            <CountdownRing left={left} total={total} color={m.c.buttonText} />
+            <span className="flex-1 text-center">{m.t('newOrder')}</span>
+          </button>
+        </div>
+      </div>
+    </ScreenBody>
+  );
+}
+
 export function SuccessScreen({ m }: { m: PreviewModel }) {
+  if (doneCard(m.cfg)) return <SuccessCard m={m} />;
+  return <ClassicSuccess m={m} />;
+}
+
+function ClassicSuccess({ m }: { m: PreviewModel }) {
   const { cfg } = m;
   const live = m.live?.success;
   const label = live ? live.pickupLabel : pickupLabel(cfg.pickup.prefix, Number.isFinite(cfg.pickup.start) ? cfg.pickup.start : 1, cfg.pickup.labelFormat);

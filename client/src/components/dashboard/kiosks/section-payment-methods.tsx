@@ -18,6 +18,7 @@ import {
   SPLIT_CARD_MIN_PER_CARD,
   kioskAsksPayMethod,
   moveItem,
+  type PaymentChooserSkip,
   type PaymentMethod,
 } from '@/lib/kioskConfig';
 import { useKioskField } from './editor-context';
@@ -162,11 +163,27 @@ export function SplitCardFields() {
   );
 }
 
-/** The "איך תרצו לשלם?" row of the steps' order: always last; on with more than one method. */
+/**
+ * "דלג על בחירת אמצעי תשלום כשיש רק אשראי ללא תשלומים" (payment.paymentChooserSkip, spec §3א): on —
+ * auto, today's rule (the card alone goes straight to the card); off — never, the window always.
+ */
+export function PaymentChooserSkipField() {
+  const t = useTranslations('kiosks.payment');
+  const f = useKioskField<PaymentChooserSkip | undefined>('payment.paymentChooserSkip');
+  const on = f.value !== 'never';
+  return (
+    <FieldShell path="payment.paymentChooserSkip" label={t('chooserSkip')} hint={t('chooserSkipHint')}>
+      <Switch checked={on} disabled={f.disabled} aria-label={t('chooserSkip')} onCheckedChange={(v) => f.set(v ? 'auto' : 'never')} />
+    </FieldShell>
+  );
+}
+
+/** The "איך תרצו לשלם?" row of the steps' order: always last; on with more than one method (or never skipped). */
 export function PayMethodStepRow({ n }: { n: number }) {
   const t = useTranslations('kiosks.payment');
   const methods = useKioskField<string[]>('payment.methods');
-  const asked = kioskAsksPayMethod(methods.value);
+  const skip = useKioskField<PaymentChooserSkip | undefined>('payment.paymentChooserSkip');
+  const asked = kioskAsksPayMethod(methods.value, skip.value);
   return (
     <li className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
       <span className="flex min-w-0 items-center gap-2">

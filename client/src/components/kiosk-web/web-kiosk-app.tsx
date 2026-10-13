@@ -36,10 +36,10 @@ import {
   messagePlacement,
   engineMotionSpec,
   engineTransitionSpec,
+  withSheetMotion,
   kioskMotionEngine,
   resolveThemeColors,
-  stepMode,
-  payMethodAsk,
+  kioskPayChooser,
   tickerBandPx,
   typeScaleFactor,
   typeWeights,
@@ -210,7 +210,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // can sell, unless the card through the bridge is the only way, or the step is off and the card is
   // usable — then straight to the pinpad, as the Windows kiosk; "רשות" may be passed with the default.
   const sells = webSells(view.pay.methods, cardReady);
-  const payAsk = payMethodAsk(view.pay.methods, view.pay.usable, stepMode(cfg, 'payMethod'));
+  // "דלג על בחירת אמצעי תשלום" (payment.paymentChooserSkip — kioskPayChooser): the card alone skips it, unless never.
+  const payAsk = kioskPayChooser(cfg, view.pay.methods, view.pay.usable);
   const asks = payAsk.asks;
   const fallbackMethod: 'card' | 'cash_at_till' = payAsk.fallback === 'card' ? 'card' : 'cash_at_till';
   const rulesFor = useCallback((cartEmpty: boolean): KioskFlowRules => ({ ...rulesOf(cfgIn, cartEmpty), asksPayMethod: asks }), [cfgIn, asks]);
@@ -753,7 +754,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
   // "מנוע הנפשות": every event resolved once — the preset, the speed, the events' own values, this profile.
   const engine = useMemo(() => kioskMotionEngine(cfg.motion, cfg.general, profile), [cfg.motion, cfg.general, profile]);
   const motion = engineMotionSpec(engine, cfg.theme);
-  const transitions = engineTransitionSpec(engine);
+  // "פתיחת חלונות" (layout.sheetMotion, the rail-motion look): the windows' entrance over the engine's.
+  const transitions = withSheetMotion(engineTransitionSpec(engine), layoutOf(cfg).sheetMotion, { reduceMotion: cfg.general.reduceMotion, light: profile === 'light' });
   // The screen change towards this screen: back home by homeReturn, into the basket by cartOpen, else pageTransition.
   const swap = screenSwap(transitions, engine, flow.screen === 'confirm' ? 'catalog' : flow.screen);
   const colors = resolveThemeColors(cfg.theme);
@@ -844,6 +846,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       flow.screen === 'success' && cardPay && cardPay.phase === 'approved'
         ? {
             pickupLabel: cardPay.pickupLabel ?? '',
+            // "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave.
+            customerName: details.name.trim() || null,
             paid: cardPay.amountAgorot / 100,
             receipt: cardPay.receipt ?? 'none',
             onReceipt: (print) => void svc.bridge?.receiptChoice(cardPay.orderId, print),
