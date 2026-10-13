@@ -879,10 +879,13 @@ class TestMigration:
         config.set_main_option("script_location", str(root / "alembic"))
         script = ScriptDirectory.from_config(config)
         # The release of 13.10.2026 joins this branch's head with its sibling PRs' in one merge
-        # revision (78c88a7afc4f); this migration stays on that single head's line (later ones —
-        # the phone-alert types' data migrations — chain on top).
+        # revision (78c88a7afc4f); the release of 14.10.2026 joins the two heads built on that one
+        # (8d4f2a6c1e93 the phone-alert types, a7c3e9f1d2b4 remote approvals) in 9f55dd368692.
+        # This migration stays on the single head's line; later ones chain on top.
         heads = script.get_heads()
         assert len(heads) == 1
-        assert "78c88a7afc4f" in {r.revision for r in script.walk_revisions("base", heads[0])}
+        line = {r.revision for r in script.walk_revisions("base", heads[0])}
+        assert {"9f55dd368692", "78c88a7afc4f"} <= line
+        assert set(script.get_revision("9f55dd368692").down_revision) == {"8d4f2a6c1e93", "a7c3e9f1d2b4"}
         assert "e4a7c2d9b1f3" in script.get_revision("78c88a7afc4f").down_revision
         assert "e4a7c2d9b1f3" in {r.revision for r in script.walk_revisions("base", "78c88a7afc4f")}
