@@ -63,7 +63,7 @@ test('dialogs that used to wait for the till send, track in the background and c
     assert.match(src(file), /trackCommand\(|track[A-Z]\w+\(/, `${file} follows its command in the background`);
   }
   // The device rows carry the chip.
-  for (const file of ['components/dashboard/machines/machine-row.tsx', 'components/dashboard/cockpit/cockpit.tsx', 'components/dashboard/kiosks/kiosk-list.tsx']) {
+  for (const file of ['components/dashboard/machines/devices-list.tsx', 'components/dashboard/cockpit/cockpit.tsx', 'components/dashboard/kiosks/kiosk-list.tsx']) {
     assert.match(src(file), /<DeviceCommandChip /, `${file} shows the row's chip`);
   }
 });
