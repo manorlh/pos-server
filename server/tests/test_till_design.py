@@ -599,6 +599,12 @@ def test_targets_say_which_tills_show_phase2(w):
     by_name = {m["name"]: m for m in out["machines"]}
     assert by_name["Till 1"]["phase2Templates"] is True
     assert by_name["Till 2"]["phase2Templates"] is False and by_name["Till 2"]["appVersion"] == "0.1.552+b6e07db"
+    # The first build that ships the till side: 0.1.576 (integration/2026-10-13 @ 9baed71b).
+    assert T.PHASE2_MIN_VERSION_CODE == 576
+    w.counter_till.app_version = "0.1.575+aaaaaaa-device"
+    assert T.shows_phase2(w.counter_till) is False
+    w.counter_till.app_version = "0.1.576+9baed71-device"
+    assert T.shows_phase2(w.counter_till) is True
     # Never said, or not an Android till: unknown.
     w.counter_till.app_version = None
     assert T.shows_phase2(w.counter_till) is None

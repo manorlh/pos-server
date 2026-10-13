@@ -165,7 +165,7 @@ export function ReviewDialog({
   targets: TillDesignTargets | null;
   saving: boolean;
   onConfirm: () => void;
-  /** The first till version that shows phase 2's templates ("0.1.553"). */
+  /** The first till version that shows phase 2's templates ("0.1.576"). */
   phase2MinVersion?: string | null;
   /** "תפריט ויזואלי" with fewer than 30% of the catalogue photographed. */
   mostlyWithoutPhotos?: boolean;

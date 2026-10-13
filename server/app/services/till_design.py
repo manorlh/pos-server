@@ -77,8 +77,9 @@ TEMPLATES = (
 #: "להסתיר את מה שעוד לא בנוי" (decision 1), so nothing is shown as "בקרוב" any more.
 PHASE2_TEMPLATES: Tuple[str, ...] = ()
 #: The till build that first shows phase 2's templates (an older one shows "נקי" in their
-#: place): the APK after 0.1.552. One constant — set it to the build that ships the till side.
-PHASE2_MIN_VERSION_CODE = 553
+#: place): 0.1.576, the first integration APK that ships the till side (integration/2026-10-13
+#: @ 9baed71b). One constant — the dashboard reads it from the server.
+PHASE2_MIN_VERSION_CODE = 576
 #: Phase 2's templates, for the "גרסה ישנה" warning before a save.
 PHASE2_NEW_TEMPLATES = ("courses", "payDock", "night", "visual")
 #: Old names, read as their template (the till accepts them too; the cloud stores the new name).

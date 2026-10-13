@@ -633,8 +633,8 @@
 
 ### 14.8 גרסת הקופה
 
-- **הקבוע:** `PHASE2_MIN_VERSION_CODE = 553` ב-`till_design.py`. אפשר לשנות אותו במקום אחד, אחרי שה-APK נבנה.
+- **הקבוע:** `PHASE2_MIN_VERSION_CODE = 576` ב-`till_design.py` (ה-APK הראשון של האינטגרציה שכולל את צד הקופה: integration/2026-10-13 @ 9baed71b). משנים אותו במקום אחד.
 - **מה הדשבורד מקבל:**
   - **`GET /till-design/targets`:** לכל קופה `appVersion` ו-`phase2Templates`. `true` / `false`; `null` כשהגרסה לא ידועה, או כשזו לא קופת אנדרואיד.
-  - **`GET /till-design/defaults`:** `phase2MinVersion` (`"0.1.553"`).
+  - **`GET /till-design/defaults`:** `phase2MinVersion` (`"0.1.576"`).
 - **אזהרה בסקירה:** כשההגדרה משתמשת באחת מארבע התבניות, הדשבורד מציג ליד כל קופה ישנה: "גרסה 0.1.NNN — תציג 'נקי' עד עדכון".
