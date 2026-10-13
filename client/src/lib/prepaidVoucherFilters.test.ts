@@ -15,7 +15,9 @@ import {
   pageStateToQuery,
   rateText,
   searchGroups,
+  voucherFilterLines,
   withFilter,
+  type VoucherFilterWords,
   type VoucherFilters,
 } from './prepaidVoucherFilters';
 
@@ -115,6 +117,64 @@ describe('texts', () => {
     assert.deepEqual(searchGroups({ batches: [1], vouchers: [], tills: [2], employees: [] }, ['vouchers', 'batches', 'tills', 'employees']), [
       'batches',
       'tills',
+    ]);
+  });
+});
+
+describe('voucherFilterLines (the export header in words)', () => {
+  const words: VoucherFilterWords = {
+    label: (k) => `L:${k}`,
+    option: (k, v) => `${k}=${v}`,
+    name: (k, id) => ({ s1: 'מרכז', s2: 'צפון', m1: 'קופה 1', u1: 'דנה' } as Record<string, string>)[id] ?? null,
+    day: (iso) => iso.split('-').reverse().join('/'),
+    min: 'מ-',
+    max: 'עד',
+  };
+
+  it('nothing set: no lines', () => {
+    assert.deepEqual(voucherFilterLines(EMPTY_FILTERS, words), []);
+  });
+
+  it('every kind of filter, in the bar order; unknown ids as they are', () => {
+    const f: VoucherFilters = {
+      ...EMPTY_FILTERS,
+      customer: ['קייטרינג אלון', 'הפקות דנה'],
+      shopId: ['s1', 's2', 'zz'],
+      accounting: 'payment',
+      valueMin: '10',
+      priceMax: '50',
+      createdBy: 'u1',
+      issuedFrom: '2026-10-01',
+      issuedTo: '2026-10-05',
+      validOn: '2026-10-03',
+      from: '2026-10-02',
+      machineId: ['m1'],
+      state: 'open',
+      group: '3',
+      q: ' 123 ',
+    };
+    assert.deepEqual(voucherFilterLines(f, words), [
+      { label: 'L:customer', value: 'קייטרינג אלון, הפקות דנה' },
+      { label: 'L:shopId', value: 'מרכז, צפון, zz' },
+      { label: 'L:accounting', value: 'accounting=payment' },
+      { label: 'L:value', value: 'מ-10' },
+      { label: 'L:price', value: 'עד 50' },
+      { label: 'L:createdBy', value: 'דנה' },
+      { label: 'L:issued', value: 'מ-01/10/2026 עד 05/10/2026' },
+      { label: 'L:validOn', value: '03/10/2026' },
+      { label: 'L:redeemed', value: 'מ-02/10/2026' },
+      { label: 'L:machineId', value: 'קופה 1' },
+      { label: 'L:state', value: 'state=open' },
+      { label: 'L:group', value: '3' },
+      { label: 'L:q', value: '123' },
+    ]);
+  });
+
+  it('omitted filters stay out (the redemption days in the range line); one day once', () => {
+    const f: VoucherFilters = { ...EMPTY_FILTERS, from: '2026-10-02', to: '2026-10-04', issuedFrom: '2026-10-01', issuedTo: '2026-10-01', testMode: 'yes' };
+    assert.deepEqual(voucherFilterLines(f, words, ['from', 'to']), [
+      { label: 'L:testMode', value: 'testMode=yes' },
+      { label: 'L:issued', value: '01/10/2026' },
     ]);
   });
 });
