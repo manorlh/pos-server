@@ -91,7 +91,7 @@ def _by_name(w, name):
 
 def test_the_restaurant_and_bar_template_is_the_royal_spirit_demo():
     templates = {t["key"]: t for t in DM.templates_out()["templates"]}
-    assert set(templates) == {"restaurant", "bar", "cafe", "restaurant_bar"}
+    assert set(templates) == {"restaurant", "bar", "cafe", "restaurant_bar", "snack_bar"}
     assert templates["restaurant_bar"]["counts"] == {
         "categories": 14, "products": 76, "groups": 22, "meals": 4, "upsells": 2, "notes": 6, "courses": 3,
     }

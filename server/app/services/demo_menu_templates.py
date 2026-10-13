@@ -3,7 +3,8 @@ The demo menus ("תפריט דמה", docs/SPEC_TRAINING_MODE.md) — data only.
 
 One catalogue of demo content (categories with their products and prices, modifier
 groups, product menus, meals, prep notes, courses and upsells) — the restaurant and bar
-built for the "רויאל ספיריט" demo, plus a café. A template is the list of categories it
+built for the "רויאל ספיריט" demo, plus a café and a snack bar ("מזנון", the demo company's quick
+counter — app/services/demo_company.py). A template is the list of categories it
 takes; everything else follows by name and is kept only when what it names is in the
 template (app/services/demo_menu.py `plan`): a group's linked option whose product is not
 there is dropped, a meal slot loses the products that are not there, an upsell whose
@@ -36,6 +37,22 @@ CATEGORIES: List[Tuple[str, str, List[Tuple[str, float]]]] = [
     ("מאפים", "#D97706", [("קרואסון חמאה", 14), ("קרואסון שקדים", 18), ("מאפה גבינה", 16), ("עוגיית שוקולד צ׳יפס", 10), ("מאפין אוכמניות", 14)]),
     ("כריכים", "#65A30D", [("כריך טונה", 38), ("כריך חביתה", 34), ("כריך מוצרלה ופסטו", 40), ("טוסט גבינות", 36), ("בייגל סלמון", 46)]),
     ("שתייה קרה", "#06B6D4", [("אייס קפה", 18), ("אייס לאטה", 20), ("שייק בננה תמר", 24), ("ברד לימונענע", 16), ("מים בבקבוק", 10)]),
+    # The snack bar's own ("מזנון", the demo company's quick counter — P:/specs/demo-company.md).
+    ("פלאפל ושווארמה", "#D97706", [
+        ("פלאפל בפיתה", 18), ("פלאפל בלאפה", 24), ("פלאפל בבאגט", 24), ("מנת פלאפל", 36),
+        ("שווארמה בפיתה", 38), ("שווארמה בלאפה", 46), ("שווארמה בבאגט", 46), ("מנת שווארמה", 62),
+    ]),
+    ("טוסטים וכריכים", "#65A30D", [
+        ("טוסט גבינה צהובה", 28), ("טוסט טונה", 34), ("טוסט פיצה", 32), ("באגט שניצל", 44), ("באגט חביתה", 32),
+    ]),
+    ("צ׳יפס ותוספות", "#64748B", [
+        ("צ׳יפס קטן", 14), ("צ׳יפס גדול", 20), ("חצילים מטוגנים", 16), ("כרובית מטוגנת", 18), ("סלט ישראלי", 18),
+    ]),
+    ("שתייה קלה וקפה", "#0EA5E9", [
+        ("פחית קולה", 10), ("פחית קולה זירו", 10), ("פחית ספרייט", 10), ("בקבוק מים", 8), ("מיץ ענבים", 10),
+        ("קפה שחור", 8), ("נס קפה", 10), ("הפוך קטן", 12), ("תה נענע", 8),
+    ]),
+    ("ארוחות קומבו", "#8B5CF6", [("קומבו פלאפל", 34), ("קומבו שווארמה", 54), ("קומבו טוסט", 42)]),
 ]
 
 
@@ -108,6 +125,15 @@ GROUPS: Dict[str, Dict[str, Any]] = {
              "options": [opt("חביתה", isDefault=True), opt("עין"), opt("מקושקשת"), opt("עלומה", 2)]},
     "pastry_warm": {"name": "חימום מאפה", "kind": "choice", "categories": ["מאפים"], "maxSelect": 1,
                     "options": [opt("מחומם", isDefault=True), opt("לא מחומם")]},
+    # The snack bar's own: the salads and sauces are free, the extras are paid.
+    "snack_salads": {"name": "סלטים בפנים", "kind": "addon", "categories": ["פלאפל ושווארמה"], "allowPre": True,
+                     "options": [opt(n) for n in ["חומוס", "טחינה", "סלט ירקות", "כרוב", "חמוצים", "בצל ופטרוזיליה"]]},
+    "snack_sauces": {"name": "רטבים — מזנון", "kind": "addon", "categories": ["פלאפל ושווארמה", "טוסטים וכריכים"],
+                     "allowPre": True, "options": [opt(n) for n in ["חריף", "עמבה", "סחוג", "קטשופ", "מיונז"]]},
+    "snack_paid": {"name": "תוספות בתשלום — מזנון", "kind": "addon", "categories": ["פלאפל ושווארמה", "טוסטים וכריכים"],
+                   "allowQuantity": True,
+                   "options": [opt("ביצה קשה", 4, maxQty=2), opt("גבינה צהובה", 4, maxQty=2), opt("חציל מטוגן", 4, maxQty=2),
+                               opt("צ׳יפס בפנים", 3), opt("אבוקדו", 6)]},
 }
 
 #: The product's own groups (`groups`, in order; `None` = keep the category's), its own
@@ -138,6 +164,10 @@ PRODUCT_MENUS: List[Dict[str, Any]] = [
     # The café's own.
     {"products": ["ארוחת בוקר ישראלית", "שקשוקה"], "groups": ["eggs"], "notes": [("בלי בצל", False), ("לחם בצד", False), ("חריף", False)]},
     {"products": ["אייס קפה", "אייס לאטה"], "groups": ["milk", "coffee_extras"], "notes": [("בלי קרח", False), ("לקחת", False)]},
+    # The snack bar's own.
+    {"products": ["מנת פלאפל", "מנת שווארמה"], "notes": [("הכל בצד", False), ("בלי חריף", False), ("לקחת", False)]},
+    {"products": ["הפוך קטן", "נס קפה"], "groups": ["milk", "coffee_extras"], "notes": [("רותח", False), ("לקחת", False)]},
+    {"products": ["קפה שחור", "תה נענע"], "groups": ["coffee_extras"]},
 ]
 
 #: meal product → its slots. Each option is (product, upcharge, default).
@@ -178,6 +208,25 @@ MEALS: Dict[str, List[Dict[str, Any]]] = {
         {"name": "קפה", "options": [("קפה הפוך", 0, True), ("אמריקנו", 0, False), ("אספרסו", 0, False)]},
         {"name": "מאפה", "options": [("קרואסון חמאה", 0, True), ("קרואסון שקדים", 3, False), ("מאפה גבינה", 1, False)]},
     ],
+    # The snack bar's own: a main, a side and a can.
+    "קומבו פלאפל": [
+        {"name": "פלאפל", "options": [("פלאפל בפיתה", 0, True), ("פלאפל בלאפה", 6, False), ("פלאפל בבאגט", 6, False)]},
+        {"name": "תוספת", "options": [("צ׳יפס קטן", 0, True), ("חצילים מטוגנים", 2, False), ("סלט ישראלי", 4, False)]},
+        {"name": "שתייה", "options": [("פחית קולה", 0, True), ("פחית קולה זירו", 0, False), ("פחית ספרייט", 0, False),
+                                      ("בקבוק מים", 0, False), ("מיץ ענבים", 0, False)]},
+    ],
+    "קומבו שווארמה": [
+        {"name": "שווארמה", "options": [("שווארמה בפיתה", 0, True), ("שווארמה בלאפה", 8, False), ("שווארמה בבאגט", 8, False)]},
+        {"name": "תוספת", "options": [("צ׳יפס קטן", 0, True), ("חצילים מטוגנים", 2, False), ("סלט ישראלי", 4, False)]},
+        {"name": "שתייה", "options": [("פחית קולה", 0, True), ("פחית קולה זירו", 0, False), ("פחית ספרייט", 0, False),
+                                      ("בקבוק מים", 0, False), ("מיץ ענבים", 0, False)]},
+    ],
+    "קומבו טוסט": [
+        {"name": "טוסט", "options": [("טוסט גבינה צהובה", 0, True), ("טוסט טונה", 6, False), ("טוסט פיצה", 4, False)]},
+        {"name": "תוספת", "options": [("צ׳יפס קטן", 0, True), ("חצילים מטוגנים", 2, False), ("סלט ישראלי", 4, False)]},
+        {"name": "שתייה", "options": [("פחית קולה", 0, True), ("פחית קולה זירו", 0, False), ("פחית ספרייט", 0, False),
+                                      ("בקבוק מים", 0, False), ("מיץ ענבים", 0, False), ("הפוך קטן", 2, False)]},
+    ],
 }
 
 #: The chips every dish gets (the company's "הערות לכל מנה").
@@ -203,6 +252,8 @@ UPSELLS: List[Dict[str, Any]] = [
      "templates": ["cafe"]},
     {"name": "צ׳ייסר ליד הבירה", "trigger": "בירות", "product": "צ׳ייסר וודקה", "message": "צ׳ייסר ליד הבירה?",
      "templates": ["bar"]},
+    {"name": "צ׳יפס ליד המנה", "trigger": "פלאפל ושווארמה", "product": "צ׳יפס קטן", "message": "להוסיף צ׳יפס?",
+     "templates": ["snack_bar"]},
 ]
 
 #: The templates: the categories each takes, in till order.
@@ -228,5 +279,11 @@ TEMPLATES: Dict[str, Dict[str, Any]] = {
         "description": "התפריט המלא של ההדגמה ברויאל ספיריט: המטבח והבר יחד.",
         "categories": ["ראשונות", "סלטים", "המבורגרים", "עיקריות", "פסטות ופיצות", "תוספות", "קינוחים", "ארוחות",
                        "שתייה קלה", "שתייה חמה", "בירות", "קוקטיילים", "אלכוהול", "יין"],
+    },
+    "snack_bar": {
+        "name": "מזנון",
+        "description": "פלאפל ושווארמה (פיתה, לאפה, באגט ומנה), טוסטים וכריכים, צ׳יפס ותוספות, שתייה קלה וקפה "
+                       "וארוחות קומבו. סלטים ורטבים חינם, תוספות בתשלום.",
+        "categories": ["פלאפל ושווארמה", "טוסטים וכריכים", "צ׳יפס ותוספות", "שתייה קלה וקפה", "ארוחות קומבו"],
     },
 }

@@ -460,6 +460,10 @@ class BusinessInfoSync(BaseModel):
     #: "סוג עוסק" of the company (docs/SPEC_BUSINESS_TYPE.md): "company" | "licensed" |
     #: "exempt". `vatNumber` above is then the ח.פ., the עוסק מורשה or the עוסק פטור number.
     dealer_type: str = Field("company", alias="dealerType")
+    #: The business's phone under the receipt header (`businessInfo.phone` on the company's settings
+    #: layer — "טלפון לחשבונית"); null prints none. The till has printed it since it had a field
+    #: for it; the cloud never sent one before.
+    phone: Optional[str] = None
 
     class Config:
         populate_by_name = True

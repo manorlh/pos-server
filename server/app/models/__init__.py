@@ -111,6 +111,8 @@ from app.models.product_cost import ProductCost
 from app.models.insight_quick_action import InsightQuickAction
 from app.models.report_event import ReportEvent, ReportEventMachine, ReportEventMachineChange
 from app.models.training import DemoMenuItem, TrainingAuditLog, TrainingDocument
+# "בניית חברת הדגמה": what the one-click demo company build made (app/services/demo_company.py).
+from app.models.demo_company import DemoCompanyItem
 from app.models.pos_user_session import PosUserSession
 # "נוכחות עובדים" (docs/SPEC_ATTENDANCE.md) — separate from PosUserSession on purpose.
 from app.models.attendance import AttendanceAdjustment, AttendanceBreak, AttendanceShift, EmployeeRole
@@ -255,7 +257,7 @@ __all__ = [
     "UpsellRule", "UpsellStat", "MenuCourse", "MenuSyncState", "TransactionItemPart",
     "ReportEvent", "ReportEventMachine", "ReportEventMachineChange",
     "InsightQuickAction",
-    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem",
+    "TrainingDocument", "TrainingAuditLog", "DemoMenuItem", "DemoCompanyItem",
     "PosUserSession",
     "EmployeeRole", "AttendanceShift", "AttendanceBreak", "AttendanceAdjustment",
     "CatalogPublication", "ShopWorkTypes",

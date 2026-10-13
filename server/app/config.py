@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # Empty = <pairing_mobile_app_base_url>/c (app/services/business_cards.py).
     business_card_base_url: str = ""
 
+    # "בניית חברת הדגמה" (app/services/demo_company.py): the demo employees' till codes,
+    # "manager=…,cashier=…,waiter=…" (4–6 digits each) — kept out of the code and out of every
+    # answer on purpose. Unset (or a role missing): that employee gets a random code nobody sees,
+    # to be set on "משתמשי קופה".
+    demo_company_pos_codes: str = ""
+
     # "התראות SMS על חריגות" (app/services/exception_alerts). Which SMS provider the
     # exception alerts use: "dry_run" (the default — nothing leaves the server; every
     # message is recorded in the exceptions log and the process log only) or

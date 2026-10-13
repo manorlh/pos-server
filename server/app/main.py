@@ -288,6 +288,10 @@ app.include_router(catalog_import_router.router, prefix=_prefix)
 app.include_router(catalog_import_router.public_router, prefix=_prefix)
 # "מצב הדרכה" and the demo menu (docs/SPEC_TRAINING_MODE.md).
 app.include_router(training_mode_router.router, prefix=_prefix)
+# "בניית חברת הדגמה" (P:/specs/demo-company.md): the super admin's one-click live demo company.
+from app.routers import demo_company as demo_company_router  # noqa: E402
+
+app.include_router(demo_company_router.router, prefix=_prefix)
 # "עובד מחובר בקופה אחת בלבד" (docs/SPEC_EXCLUSIVE_LOGIN.md): the till's claim / heartbeat /
 # release, and the dashboard's who-is-signed-in-where.
 app.include_router(user_sessions_router.till_router, prefix=_prefix)
