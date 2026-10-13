@@ -16,6 +16,12 @@ GET /app-releases/windows/latest/download -> kiosks|devices:view
 PATCH /app-releases/{release_id} -> super_admin
 GET /app-releases/{release_id}/assignments -> super_admin
 POST /app-releases/{release_id}/assignments -> super_admin
+GET /approvals -> approvals:view
+GET /approvals/catalog -> approval_settings|approvals|pos_users:view
+GET /approvals/pending-count -> approvals:view
+GET /approvals/policy -> approval_settings:view
+PUT /approvals/policy -> approval_settings:edit
+POST /approvals/{request_id}/decide -> approvals:edit
 PATCH /areas/{area_id} -> organization:edit
 POST /areas/{area_id}/archive -> organization:edit
 PUT /areas/{area_id}/machines -> organization:edit
@@ -670,6 +676,8 @@ GET /shops/{shop_id}/pos-users -> pos_users:view
 POST /shops/{shop_id}/pos-users -> pos_users:edit
 DELETE /shops/{shop_id}/pos-users/{pos_user_id} -> pos_users:edit
 PUT /shops/{shop_id}/pos-users/{pos_user_id} -> pos_users:edit
+GET /shops/{shop_id}/pos-users/{pos_user_id}/approval-overrides -> pos_users:view
+PUT /shops/{shop_id}/pos-users/{pos_user_id}/approval-overrides -> pos_users:edit
 POST /shops/{shop_id}/pos-users/{pos_user_id}/reset-pin -> pos_users:edit
 PUT /shops/{shop_id}/pos-users/{pos_user_id}/till-role -> pos_users:edit
 PUT /shops/{shop_id}/print-host -> printers:edit
@@ -909,6 +917,7 @@ GET /transmit-requests/{request_id} -> z:view
 POST /transmit-requests/{request_id}/cancel -> z:edit
 GET /users -> users:view
 POST /users -> users:edit
+GET /users/linked-employees/candidates -> users:view
 GET /users/me -> self
 GET /users/me/preferences -> self
 PUT /users/me/preferences -> self
@@ -918,6 +927,8 @@ DELETE /users/{user_id} -> users:edit
 GET /users/{user_id} -> users:view
 PUT /users/{user_id} -> users:edit
 POST /users/{user_id}/activate -> users:edit
+GET /users/{user_id}/linked-employees -> users:view
+PUT /users/{user_id}/linked-employees -> users:edit
 DELETE /users/{user_id}/till-pin -> users:edit
 POST /users/{user_id}/till-pin -> users:edit
 GET /vouchers -> vouchers|products:view

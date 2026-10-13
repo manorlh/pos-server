@@ -62,6 +62,8 @@ GROUPS: Tuple[Tuple[str, str], ...] = (
     ("shift", "משמרת, Z ודוחות"),
     ("drawer", "מגירת מזומן ותנועות מזומן"),
     ("admin", "ניהול בקופה"),
+    # "בקשת אישור ממנהל מהנייד" (P:/specs/manager-approval-mobile.md §0, §4).
+    ("approvals", "אישור מרחוק (מהנייד)"),
 )
 
 
@@ -241,6 +243,37 @@ PERMISSIONS: Tuple[PermissionSpec, ...] = (
 )
 # fmt: on
 
+
+def _remote_approval_permissions() -> Tuple[PermissionSpec, ...]:
+    """
+    "רשאי לאשר מרחוק" — one permission per request type (P:/specs/manager-approval-mobile.md §0,
+    §3, §4): `APPROVE_REMOTE.<type>`, with the type's ceiling ("תקרת אישור"), edited in the same
+    roles editor. A remote approver needs it at `allow`; the ceiling, when set, bounds what they
+    approve (else the role's existing limit on the underlying permission —
+    app/services/remote_approvals/eligibility.py).
+    """
+    from app.services.remote_approvals.catalog import TYPES, UNIT_AMOUNT, UNIT_COUNT, UNIT_PERCENT
+
+    limit_of = {
+        UNIT_AMOUNT: (LimitSpec("maxAmount", "תקרת אישור (₪)", "amount", 0, 1_000_000),),
+        UNIT_PERCENT: (LimitSpec("maxPercent", "תקרת אישור (%)", "percent", 0, 100),),
+        UNIT_COUNT: (LimitSpec("maxCount", "תקרת אישור (מספר תשלומים)", "count", 0, 99),),
+    }
+    return tuple(
+        PermissionSpec(
+            t.permission_code, f"רשאי לאשר מרחוק — {t.label}", "approvals",
+            f"אישור מהנייד של בקשת \"{t.label}\" שנשלחה מהקופה (המאשר רואה: {t.sees}).",
+            devices=_ALL + (DEVICE_WINDOWS,), limits=limit_of.get(t.unit, ()),
+        )
+        for t in TYPES
+    )
+
+
+#: The `APPROVE_REMOTE.<type>` codes ("רשאי לאשר מרחוק").
+REMOTE_APPROVAL_PERMISSIONS: Tuple[PermissionSpec, ...] = _remote_approval_permissions()
+REMOTE_APPROVAL_CODES: FrozenSet[str] = frozenset(p.code for p in REMOTE_APPROVAL_PERMISSIONS)
+PERMISSIONS = PERMISSIONS + REMOTE_APPROVAL_PERMISSIONS
+
 PERMISSIONS_BY_CODE: Dict[str, PermissionSpec] = {p.code: p for p in PERMISSIONS}
 CODES: Tuple[str, ...] = tuple(PERMISSIONS_BY_CODE)
 
@@ -312,7 +345,7 @@ LEGACY_APPROVAL_CODES: FrozenSet[str] = frozenset({
 })
 #: Approving for others was a shop manager's alone — and so was leaving the Windows kiosk
 #: (its admin, with "יציאה מהתוכנה", opened for a shop manager's PIN only).
-LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"})
+LEGACY_CASHIER_DENIED: FrozenSet[str] = frozenset({"CASH_DRAWER.APPROVE_OPEN", "DESKTOP_EXIT", "KIOSK_TILL_MODE"}) | REMOTE_APPROVAL_CODES
 
 
 def _matrix(**states: str) -> Dict[str, str]:
@@ -386,6 +419,9 @@ _SPEC_MATRIX: Dict[str, Tuple[str, str, str, str]] = {
     "DESKTOP_EXIT":                      (D, D, D, A),
     # The owner (09.10.2026): a manager switches a kiosk to the till ("מצב עבודה"); the others never.
     "KIOSK_TILL_MODE":                   (D, D, D, A),
+    # "רשאי לאשר מרחוק" (every request type): the supervisor and the manager; who actually receives
+    # requests is the policy's `approverRoles` (app/services/remote_approvals/catalog.py).
+    **{code: (D, D, A, A) for code in sorted(REMOTE_APPROVAL_CODES)},
 }
 # fmt: on
 
