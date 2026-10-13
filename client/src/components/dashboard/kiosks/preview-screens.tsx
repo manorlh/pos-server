@@ -281,6 +281,11 @@ export interface KioskLive {
   noteField?: (value: string, onChange: (v: string) => void) => ReactNode;
   /** Hide the customer fields on the cart: the real kiosk asks them on their own screen. */
   detailsScreen?: boolean;
+  /**
+   * "סרגל עליון" (layout.topBar): what the club, search and language buttons do on this kiosk. A real
+   * kiosk shows only the buttons it can honour (cancel is startOver); the preview shows them all.
+   */
+  topBar?: { club?: () => void; search?: () => void; lang?: () => void };
   /** "עזרה" on the attract screen calls the staff (a help request to the tills). */
   help?: () => void;
   /** "רוצים להוסיף טיפ לצוות?" — the real tip step (TipScreen); the preview keeps its own. */
@@ -1963,13 +1968,15 @@ function regText(m: PreviewModel, key: string): string {
  * side (club: "חבר מועדון / קופונים" with ✦), the rest on the end side in their order: "ביטול הזמנה" red
  * (cancelBg — empties the basket, back to the start), the search, the language.
  */
-export function TopBar({ m, items }: { m: PreviewModel; items: LayoutTopBarItem[] }) {
+export function TopBar({ m, items: configured }: { m: PreviewModel; items: LayoutTopBarItem[] }) {
   const rc = railMotionColors(m.cfg.theme);
+  // A real kiosk: only the buttons it can honour (never a button that does nothing).
+  const items = m.live ? configured.filter((i) => i === 'cancel' || !!m.live?.topBar?.[i]) : configured;
   const pill = 'flex h-10 shrink-0 items-center gap-1.5 rounded-2xl px-3.5 kt-13 font-bold transition-transform duration-150 active:scale-95';
   const button = (item: LayoutTopBarItem) => {
     if (item === 'club') {
       return (
-        <button key={item} type="button" data-top="club" className={pill} style={{ background: `${m.c.primary}14`, color: m.c.primary }}>
+        <button key={item} type="button" data-top="club" onClick={m.live?.topBar?.club} className={pill} style={{ background: `${m.c.primary}14`, color: m.c.primary }}>
           <Sparkles className="h-4 w-4" />
           {regText(m, 'clubTitle')}
         </button>
@@ -1995,14 +2002,14 @@ export function TopBar({ m, items }: { m: PreviewModel; items: LayoutTopBarItem[
     }
     if (item === 'search') {
       return (
-        <button key={item} type="button" data-top="search" aria-label={regText(m, 'searchTitle')} className={cn(pill, 'w-10 justify-center px-0')} style={cardStyle(m)}>
+        <button key={item} type="button" data-top="search" onClick={m.live?.topBar?.search} aria-label={regText(m, 'searchTitle')} className={cn(pill, 'w-10 justify-center px-0')} style={cardStyle(m)}>
           <Search className="h-4 w-4" />
         </button>
       );
     }
     const langs = m.cfg.general.languages ?? [];
     return (
-      <button key={item} type="button" data-top="lang" className={pill} style={cardStyle(m)}>
+      <button key={item} type="button" data-top="lang" onClick={m.live?.topBar?.lang} className={pill} style={cardStyle(m)}>
         <Languages className="h-4 w-4" />
         <span className="uppercase">{langs[1] ?? langs[0] ?? 'he'}</span>
       </button>

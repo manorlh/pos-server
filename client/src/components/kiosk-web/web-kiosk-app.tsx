@@ -836,6 +836,8 @@ export function WebKioskApp({ view, svc, words }: { view: WebKioskView; svc: Web
       flow.screen === 'success' && cardPay && cardPay.phase === 'approved'
         ? {
             pickupLabel: cardPay.pickupLabel ?? '',
+            // "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave.
+            customerName: details.name.trim() || null,
             paid: cardPay.amountAgorot / 100,
             receipt: cardPay.receipt ?? 'none',
             onReceipt: (print) => void svc.bridge?.receiptChoice(cardPay.orderId, print),

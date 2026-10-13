@@ -715,6 +715,8 @@ export function KioskApp({ view }: { view: KioskView }) {
       flow.screen === 'success' && pay
         ? {
             pickupLabel: pay.pickupLabel ?? '',
+            // "מסך סיום: כרטיס" (layout.doneScreen): the name the customer gave.
+            customerName: details.name.trim() || null,
             paid: pay.amountAgorot / 100,
             receipt: pay.receipt ?? 'none',
             onReceipt: (print) => void kiosk.receiptChoice(pay.orderId, print),
