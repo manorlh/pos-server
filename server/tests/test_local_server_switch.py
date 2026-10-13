@@ -649,29 +649,32 @@ def test_the_former_server_applies_only_what_the_cloud_did_not_change(w):
         order(table, a, 4, 55), order(other, b, 3, 45), order(table, d, 1, 20), order(third, c, 1, 10),
     ], former_host=True)
     assert out["formerHost"] is True
-    assert out["conflict"] == [str(a)]
-    assert set(out["applied"]) == {str(b), str(d), str(c)}
+    # The new one on table 5 is a conflict too: table 5 is open in the cloud (the new server's order a),
+    # and two open orders on one table is a table nobody sees (reliability audit 13.10.2026,
+    # app/services/tables_handover.py).
+    assert out["conflict"] == [str(a), str(d)]
+    assert set(out["applied"]) == {str(b), str(c)}
     assert {r["orderId"]: r["status"] for r in out["results"]} == {
-        str(a): "conflict", str(b): "applied", str(d): "applied", str(c): "applied",
+        str(a): "conflict", str(b): "applied", str(d): "conflict", str(c): "applied",
     }
     # The cloud kept the new server's table 5; took the rest.
     assert w.db.get(TableOrder, a).total == Decimal("80.00")
-    assert w.db.get(TableOrder, b).version == 3 and w.db.get(TableOrder, d) is not None
+    assert w.db.get(TableOrder, b).version == 3 and w.db.get(TableOrder, d) is None
     # "X שינויים מהשרת הקודם", with the list.
     changes = LSS.state(w.db, w.shop, w.admin)["formerHostChanges"]
-    assert changes["count"] == 1
-    [entry] = changes["items"]
+    assert changes["count"] == 2
+    entry = next(e for e in changes["items"] if e["orderId"] == str(a))
     assert entry["orderId"] == str(a) and entry["tableNumber"] == 5
     assert entry["till"]["total"] == 55.0 and entry["cloud"]["total"] == 80.0
     assert entry["machine"]["machineId"] == str(t1.id)
     # Sent again: kept once.
     report(w, t1, [order(table, a, 4, 55)], former_host=True)
-    assert LSS.former_host_changes_out(w.shop)["count"] == 1
+    assert LSS.former_host_changes_out(w.shop)["count"] == 2
     # "סמן כנבדק".
     out = LR.post_former_host_changes_ack(
         w.shop.id, LR.AckIn(), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
-    assert out["acknowledged"] == 1 and out["formerHostChanges"]["count"] == 0
+    assert out["acknowledged"] == 2 and out["formerHostChanges"]["count"] == 0
     assert out["formerHostChanges"]["checked"][0]["acknowledgedBy"] == "admin"
 
 

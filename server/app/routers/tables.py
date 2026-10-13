@@ -271,11 +271,13 @@ def get_tables_reports(
 @router.get("/sync/{machine_id}/tables/closed")
 def get_closed_tables(
     machine_id: str,
+    include_mine: bool = Query(False, alias="includeMine"),
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
     db: Session = Depends(get_db),
 ):
     """"נסגרו היום": the shop's tables paid or cancelled in the last day, for "שחזור שולחן"."""
-    return {"orders": T.closed_orders(db, machine)}
+    # `is True`: called directly (the tests), the default is the Query object itself.
+    return {"orders": T.closed_orders(db, machine, include_mine=include_mine is True)}
 
 
 @router.post("/sync/{machine_id}/tables/closed/{order_id}/restore", dependencies=FISCAL_MACHINE_TOKEN)
@@ -292,7 +294,9 @@ def restore_closed_table(
     the till then opens the table with its lines. A paid order's payments are cancelled
     first, by credit notes at the till.
     """
-    order = T.mark_restored(db, machine, order_id, _actor(machine, body), approved_by=body.approved_by)
+    order = T.mark_restored(
+        db, machine, order_id, _actor(machine, body), approved_by=body.approved_by, finish=body.finish,
+    )
     db.commit()
     _wake(background_tasks, db, machine, str(order.table_id))
     return {"orderId": str(order.id), "restoredAt": order.restored_at.isoformat()}

@@ -1643,10 +1643,16 @@ class ProducerGuard:
             seen.add(shop.id)
             ensure_pin(db, shop, now=self.now)
             self.shops.append(shop)
+        # The same transitions move tables between modes: never with a table open where it would be
+        # left behind (app/services/tables_mode_guard.py — refused, never forced).
+        from app.services.tables_mode_guard import TablesModeGuard
+
+        self.tables = TablesModeGuard(db, self.shops)
 
     def check(self, *, force: bool = False, user=None) -> None:
         from app.models.user import UserRole
 
+        self.tables.check()
         self.db.flush()
         for shop in self.shops:
             pin = _pin(shop) or ensure_pin(self.db, shop, now=self.now)
