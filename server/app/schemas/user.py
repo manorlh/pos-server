@@ -147,6 +147,11 @@ class UserResponse(UserBase):
     #: to authorise actions at a terminal. Derived from the hash's presence — the
     #: hash itself is never serialised anywhere.
     has_till_pin: bool = Field(False, alias="hasTillPin")
+    #: "התראות בנייד" (app/services/push_policy.py), on the list only: the user's own level
+    #: ("off" | "reminder" | "required"; null = inherit) and their devices — `{devices,
+    #: lastSuccessAt, lastFailureAt, tone: green|yellow|red, required}`.
+    push_required: Optional[str] = Field(None, alias="pushRequired")
+    push_health: Optional[dict] = Field(None, alias="pushHealth")
     id: uuid.UUID
     is_active: bool = Field(..., alias="isActive")
     created_at: datetime = Field(..., alias="createdAt")

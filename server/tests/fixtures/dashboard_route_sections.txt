@@ -116,6 +116,8 @@ PUT /companies/{company_id} -> organization:edit
 GET /companies/{company_id}/dealer-turnover -> organization|reports:view
 POST /companies/{company_id}/menu-broadcast -> products:edit
 GET /companies/{company_id}/menu-broadcast/preview -> products:view
+GET /companies/{company_id}/push-policy -> users|organization:view
+PUT /companies/{company_id}/push-policy -> users|organization:edit
 GET /companies/{company_id}/settings -> till_settings:view
 PATCH /companies/{company_id}/settings -> till_settings:edit
 GET /companies/{company_id}/till-drawer-params -> till_settings|pos_users:view
@@ -140,6 +142,8 @@ PUT /customers/{customer_id} -> customers:edit
 GET /dashboard-access/audit -> super_admin
 GET /dashboard-access/catalog -> users:view
 GET /dashboard-access/me -> self
+GET /dashboard-access/push-policy -> super_admin
+PUT /dashboard-access/push-policy -> super_admin
 GET /dashboard-access/templates -> users:view
 POST /dashboard-access/templates -> super_admin
 DELETE /dashboard-access/templates/{template_id} -> super_admin
@@ -569,6 +573,7 @@ GET /push/history -> alerts:view
 GET /push/options -> self
 GET /push/preferences -> self
 PUT /push/preferences -> self
+GET /push/status -> self
 POST /push/test -> self
 GET /remote-credits -> reports|z:view
 POST /remote-credits -> reports|z:edit
@@ -918,6 +923,8 @@ DELETE /users/{user_id} -> users:edit
 GET /users/{user_id} -> users:view
 PUT /users/{user_id} -> users:edit
 POST /users/{user_id}/activate -> users:edit
+GET /users/{user_id}/push-policy -> users:view
+PUT /users/{user_id}/push-policy -> users:edit
 DELETE /users/{user_id}/till-pin -> users:edit
 POST /users/{user_id}/till-pin -> users:edit
 GET /vouchers -> vouchers|products:view
