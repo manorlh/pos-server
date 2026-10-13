@@ -3,12 +3,17 @@
 /**
  * "חסום / אזל" — the one block dialog for every place (specs/item-blocks-targets.md §4.1, §11; pos-server
  * app/routers/item_blocks.py): what (a product, or a whole category), where (any of "קופה" / "קיוסק" /
- * "הזמנות אונליין" / "תפריט דיגיטלי" — all four by default), the level (the shop, points of sale,
- * devices — the tills and / or kiosks the channels name —, an event, device groups, the company),
- * "אזל" or "חסום", the kiosks' look, how long, and a reason. The item's blocks in force are listed
- * under it, each removable on its own.
+ * "הזמנות אונליין" / "תפריט דיגיטלי"), the level (the shop, points of sale, devices — the tills and / or
+ * kiosks the channels name —, an event, device groups, the company), "אזל" or "חסום", the kiosks' look,
+ * how long, and a reason. The item's blocks in force are listed under it, each removable on its own.
+ * The channels, the level and how long start from the shop's "חסימה מהירה" defaults (`quickDefaults`
+ * of the targets; P:/specs/item-block-control.md §4) — until the user picks; a link at the top leads
+ * to the quick page itself.
  */
 import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { Zap } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -18,7 +23,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { api } from '@/lib/api';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { cn } from '@/lib/utils';
-import { useScope } from '@/lib/scope';
+import { useScope, useScopeQuery } from '@/lib/scope';
+import { durationOfQuick, QUICK_BLOCK_PATH, scopedHref, sheetChannels, sheetLevel } from '@/lib/quickBlock';
 import {
   BLOCK_CHANNELS,
   CHANNEL_LABELS,
@@ -171,17 +177,21 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   const [category, setCategory] = useState<PickedItem | null>(context?.categoryId ? { id: context.categoryId, name: '' } : null);
   const [kind, setKind] = useState<BlockKind>('sold_out');
   const [note, setNote] = useState('');
-  // Null until changed: "קיוסק" alone when the context's device is a kiosk, else all four.
+  // Null until changed: "קיוסק" alone when the context's device is a kiosk, else the quick defaults' channels.
   const [channelsPick, setChannelsPick] = useState<BlockChannel[] | null>(null);
   const contextMachine = context?.machineId ?? null;
-  const [levelPick, setLevelPick] = useState<Level>(contextMachine ? 'devices' : scope.areaId ? 'areas' : 'shop');
+  // Null until changed (and with no device / point of sale in the context): the quick defaults' level.
+  const [levelPick, setLevelPick] = useState<Level | null>(contextMachine ? 'devices' : scope.areaId ? 'areas' : null);
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set([contextMachine ?? scope.machineId, scope.areaId].filter((x): x is string => !!x)),
   );
   const [eventId, setEventId] = useState<string | null>(scope.eventId ?? null);
   const [look, setLook] = useState<KioskDisplay | null>(null);
-  // "עד סוף היום" by default: a forgotten "אזל" ends with the business day, not never.
-  const [duration, setDuration] = useState<DurationChoice>({ mode: 'end_of_day' });
+  // Null until changed: the quick defaults' duration — "עד סוף היום" unless they say otherwise (a
+  // forgotten "אזל" ends with the business day, not never).
+  const [durationPick, setDurationPick] = useState<DurationChoice | null>(null);
+  const pathname = usePathname();
+  const scopeQuery = useScopeQuery((s) => s.query);
 
   // A product / category named by the context comes with its id only: its name, for the sheet.
   const productName = useQuery({
@@ -204,7 +214,10 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   const t = targets.data;
   // A device named by the context may be a kiosk: start on "קיוסק" alone then.
   const machineIsKiosk = !!contextMachine && !!t?.kiosks.some((k) => k.id === contextMachine);
-  const channels: BlockChannel[] = channelsPick ?? (machineIsKiosk ? ['kiosk'] : [...BLOCK_CHANNELS]);
+  // The shop's "חסימה מהירה" defaults, once its targets are in (all four, the shop, "עד סוף היום" before).
+  const quick = t?.quickDefaults;
+  const channels: BlockChannel[] = channelsPick ?? sheetChannels(quick, machineIsKiosk);
+  const duration: DurationChoice = durationPick ?? durationOfQuick(quick?.duration);
   const onDevices = channels.includes('pos') || channels.includes('kiosk');
   const offDevices = channels.includes('online') || channels.includes('menu');
   const devices = devicesOf(t, channels);
@@ -217,7 +230,8 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
   if (onDevices && (t?.events.length ?? 0) > 0) levels.push('event');
   if (onDevices && (t?.groups.length ?? 0) > 0) levels.push('groups');
   if (t?.company) levels.push('company');
-  const level: Level = levels.includes(levelPick) ? levelPick : 'shop';
+  const wantedLevel: Level = levelPick ?? sheetLevel(quick, !!t?.company);
+  const level: Level = levels.includes(wantedLevel) ? wantedLevel : 'shop';
   const chosen = levelTargets(level, { shopId, companyId: scope.companyId ?? null, eventId, picked, targets: t, devices });
 
   const item = itemType === 'category' ? category : product;
@@ -266,6 +280,11 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
       </div>
     );
   const named = (r: { id: string; name: string; posNumber?: string | null }) => ({ id: r.id, label: r.posNumber ? `${r.name} (${r.posNumber})` : r.name });
+  // "חסימה מהירה ←": the phone's one-tap page, for this shop (not from the page itself).
+  const quickHref =
+    pathname === QUICK_BLOCK_PATH
+      ? null
+      : scopedHref(QUICK_BLOCK_PATH, scopeQuery, { shop: shopId ? shopChoices.find((s) => s.id === shopId) ?? { id: shopId } : null });
 
   return (
     <Dialog open onOpenChange={(open) => !open && onDone()}>
@@ -274,6 +293,17 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
           <DialogTitle>חסום / אזל</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {quickHref ? (
+            <Link
+              href={quickHref}
+              onClick={onDone}
+              className="-my-2 inline-flex min-h-11 flex-wrap items-center gap-x-1.5 rounded-lg text-sm font-medium text-primary hover:underline"
+            >
+              <Zap className="size-4" aria-hidden />
+              חסימה מהירה ←
+              <span className="font-normal text-muted-foreground">זמין / אזל / חסום בלחיצה אחת</span>
+            </Link>
+          ) : null}
           <div className="space-y-1.5">
             <Label>מה</Label>
             <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="פריט או מחלקה">
@@ -409,7 +439,14 @@ export function BlockItemSheet({ scope, context, onDone }: LiveControlSheetProps
 
           <div className="space-y-1.5">
             <Label>משך</Label>
-            <DurationPicker value={duration} onChange={setDuration} shopId={shopId} verb={kind === 'blocked' ? 'חסום עד' : 'אזל עד'} />
+            {/* Keyed by the shop's targets: the picker starts again from the quick defaults once they are in. */}
+            <DurationPicker
+              key={`${shopId ?? ''}:${t ? 'quick' : 'wait'}`}
+              value={duration}
+              onChange={setDurationPick}
+              shopId={shopId}
+              verb={kind === 'blocked' ? 'חסום עד' : 'אזל עד'}
+            />
           </div>
 
           <div className="space-y-1.5">

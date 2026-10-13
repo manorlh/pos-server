@@ -141,6 +141,24 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
 
 export const SECTION_IDS: SectionId[] = DASHBOARD_SECTIONS.map((s) => s.id);
 
+/**
+ * Pages another section opens too, besides the one they sit under: "חסימה מהירה" is a stock page and
+ * "חסימות ואזל"'s (P:/specs/item-block-control.md §4: "מדור המלאי או שליטה חיה"). Only `pageAccess`
+ * and `navHrefAllowed` read it; `sectionForPath` stays the page's own section.
+ */
+export const PAGES_ALSO_OPENED_BY: Readonly<Record<string, readonly SectionId[]>> = {
+  '/dashboard/stock/quick-block': ['item_blocks'],
+};
+
+function alsoOpened(access: DashboardAccess, pathname: string): boolean {
+  const raw = pathname.split('?')[0];
+  const path = raw.length > 1 && raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  const level = levelForPath(path);
+  return Object.entries(PAGES_ALSO_OPENED_BY).some(
+    ([page, sections]) => (path === page || path.startsWith(`${page}/`)) && sections.some((s) => canAccess(access, s, level)),
+  );
+}
+
 /** "מנהל סניף / אירוע" and "מנהל אזור" — they run a place from the cockpit (server `MANAGER_TEMPLATES`). */
 export const MANAGER_TEMPLATES = ['branch_manager', 'area_manager'] as const;
 
@@ -251,7 +269,7 @@ export function canSeeSales(access: DashboardAccess): boolean {
 export function navHrefAllowed(access: DashboardAccess, href: string): boolean {
   if (!access.restricted || isHomePath(href)) return true;
   const section = sectionForPath(href);
-  return section === undefined || canAccess(access, section, levelForPath(href));
+  return section === undefined || canAccess(access, section, levelForPath(href)) || alsoOpened(access, href);
 }
 
 /** The menu's groups with the entries this user may not open left out (and empty groups dropped). */
@@ -272,6 +290,7 @@ export function pageAccess(access: DashboardAccess, pathname: string | null | un
   if (!access.restricted || isHomePath(pathname)) return 'ok';
   const section = sectionForPath(pathname);
   if (section === undefined || canAccess(access, section, levelForPath(pathname))) return 'ok';
+  if (pathname && alsoOpened(access, pathname)) return 'ok';
   return 'denied';
 }
 
