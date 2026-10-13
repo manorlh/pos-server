@@ -279,6 +279,9 @@ class TableRestoreIn(_Camel):
     pos_user_id: Optional[str] = Field(None, alias="posUserId", max_length=100)
     pos_user_name: Optional[str] = Field(None, alias="posUserName", max_length=200)
     approved_by: Optional[str] = Field(None, alias="approvedBy", max_length=200)
+    #: The till opens the restored order under an id derived from this one: it may claim the order
+    #: again to finish a restore its answer was lost to (app/services/tables.py `mark_restored`).
+    finish: bool = False
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────

@@ -1718,18 +1718,24 @@ def apply_local_report(
     changed since that switch (the new server, the dashboard) is not applied — it is kept
     for the shop page ("X שינויים מהשרת הקודם", app/services/local_server_switch.py). The
     answer then adds `results` (`[{orderId, status: applied | conflict}]`) and the two lists.
+
+    A LAN-mode till that is not the tables host (any more) and still pushes as one is judged the
+    same way, and in a judged report an open order on a table that has another open order is a
+    conflict — never two open orders on one table (app/services/tables_handover.py).
     """
     from app.services import local_server_switch as LSS
+    from app.services import tables_handover as TH
 
     accepted: List[str] = []
     skipped: List[str] = []
     applied: List[str] = []
     conflicts: List[str] = []
     reasons: Dict[Any, Optional[str]] = {}
-    shop = db.get(Shop, machine.shop_id) if former_host and machine.shop_id is not None else None
-    since = LSS.switched_away_at(shop, machine) if former_host else None
+    judged = former_host or TH.judged_report(db, machine)
+    shop = db.get(Shop, machine.shop_id) if judged and machine.shop_id is not None else None
+    since = LSS.switched_away_at(shop, machine) if judged else None
     received = _now()
-    for item in orders:
+    for item in (TH.closures_first(orders) if judged else orders):
         table = db.get(DiningTable, item.table_id)
         if table is None or machine.shop_id is None or table.shop_id != machine.shop_id:
             skipped.append(str(item.id))
@@ -1738,10 +1744,18 @@ def apply_local_report(
         if row is not None and (row.source != "local" or row.shop_id != machine.shop_id):
             skipped.append(str(item.id))
             continue
-        if former_host and row is not None and shop is not None and LSS.changed_in_cloud_since(row, machine, since):
+        if judged and row is not None and shop is not None and LSS.changed_in_cloud_since(row, machine, since):
             LSS.record_former_host_change(shop, machine, item, row, since=since, now=received)
             conflicts.append(str(item.id))
             continue
+        if judged and shop is not None and item.status == "open":
+            # The table is open in the cloud under another order (the new server seated it): taking
+            # this one too would leave two open orders on one table.
+            other = TH.other_open_order(db, table.id, item.id)
+            if other is not None:
+                LSS.record_former_host_change(shop, machine, item, other, since=since, now=received)
+                conflicts.append(str(item.id))
+                continue
         if row is not None and (row.version or 0) >= item.version:
             accepted.append(str(item.id))
             applied.append(str(item.id))
@@ -1805,6 +1819,9 @@ def apply_local_report(
         accepted.append(str(item.id))
         applied.append(str(item.id))
     out: Dict[str, Any] = {"accepted": accepted, "skipped": skipped}
+    if conflicts and not former_host:
+        # A host that did not know it is one no more: what the cloud kept, in addition to today's answer.
+        out["conflict"] = conflicts
     if former_host:
         out.update({
             "formerHost": True,
@@ -1845,6 +1862,12 @@ def host_seed(db: Session, machine: POSMachine) -> dict:
         )
         .all()
     )
+    # An open order without its dishes is a «קופה אחת» till's own (its report never carries them —
+    # an independent till beside the LAN group): never the server's to serve, or the table would be
+    # open in both places (app/services/tables_mode_guard.py `is_single_order`).
+    from app.services.tables_mode_guard import is_single_order
+
+    rows = [o for o in rows if not (o.status == "open" and is_single_order(o))]
     return {"orders": [_host_order_out(o) for o in rows]}
 
 
@@ -2760,7 +2783,9 @@ def _area_locked_orders(db: Session, machine: POSMachine, orders: Sequence[Table
     return [o for o in orders if scope.covers_shared(_order_zone_area(db, o, zone_areas))]
 
 
-def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] = None) -> List[dict]:
+def closed_orders(
+    db: Session, machine: POSMachine, *, now: Optional[datetime] = None, include_mine: bool = False,
+) -> List[dict]:
     """
     The till's "נסגרו היום": its shop's tables paid or cancelled in the last day, not merged
     and not restored yet, newest first — with what was on them (`cartJson`) and every
@@ -2769,6 +2794,8 @@ def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] =
     if machine.shop_id is None:
         return []
     now = now or _now()
+    from app.services import tables_handover as TH
+
     rows = (
         db.query(TableOrder)
         .filter(
@@ -2776,12 +2803,17 @@ def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] =
             TableOrder.status.in_(("paid", "cancelled")),
             TableOrder.closed_at >= now - CLOSED_WINDOW,
             TableOrder.merged_into_id.is_(None),
-            TableOrder.restored_at.is_(None),
+            # Not restored yet — or (`include_mine`, a till that finishes its restores) restored by this
+            # very till a moment ago and maybe not finished: it may finish it (`mark_restored`).
+            or_(TableOrder.restored_at.is_(None), TableOrder.restored_at >= now - TH.RESTORE_RETRY_WINDOW)
+            if include_mine else TableOrder.restored_at.is_(None),
         )
         .order_by(TableOrder.closed_at.desc())
         .limit(100)
         .all()
     )
+    if include_mine:
+        rows = [o for o in rows if o.restored_at is None or TH.restored_by(db, o, machine, now)]
     zones = db.query(TableZone).filter(TableZone.shop_id == machine.shop_id).all()
     zone_names = {z.id: z.name for z in zones}
     # "נעילת הקופה לנקודת המכירה שלה" (app/services/area_lock.py): a locked till restores the tables
@@ -2805,6 +2837,8 @@ def closed_orders(db: Session, machine: POSMachine, *, now: Optional[datetime] =
             "cancelReason": o.cancel_reason_text,
             "cartJson": o.cart_json,
             "extrasJson": o.extras_json,
+            # This till claimed it already: "finish the restore" (the restored order's id is fixed — never twice).
+            "restoredByThisTill": o.restored_at is not None,
         }
         for o in rows
     ]
@@ -2817,13 +2851,23 @@ def mark_restored(
     actor: Actor,
     *,
     approved_by: Optional[str] = None,
+    finish: bool = False,
     now: Optional[datetime] = None,
 ) -> TableOrder:
     """
     A till restores a closed order ("שחזור שולחן"): claimed here first, once — a second
     till (or a second tap) gets 409 `already_restored` — then the till opens the table with
     its lines. The order itself stays as it was (its documents are what they are).
+
+    The claim is one conditional UPDATE (`restored_at IS NULL`): two tills racing for the same
+    order cannot both win — the order is never opened twice. With `finish` (a till that opens the
+    restored order under an id derived from this one, so a restore that did finish is never
+    opened a second time), the till that claimed it may claim it again within
+    `RESTORE_RETRY_WINDOW`: its answer was lost, or the table it chose could not be opened — the
+    restore is finished, never stranded. Without it (an older till), once is once.
     """
+    from app.services import tables_handover as TH
+
     order = db.get(TableOrder, _uuid(order_id))
     if order is None or order.shop_id != machine.shop_id:
         raise _not_found("order_not_found")
@@ -2834,13 +2878,26 @@ def mark_restored(
         raise area_lock.refusal("table")
     if order.status not in ("paid", "cancelled") or order.merged_into_id is not None:
         raise _conflict("order_not_closed")
+    now = now or _now()
     if order.restored_at is not None:
+        if finish and TH.restored_by(db, order, machine, now):
+            return order
         raise _conflict("already_restored")
-    order.restored_at = now or _now()
-    order.restored_by_pos_user_name = actor.pos_user_name
+    claimed = (
+        db.query(TableOrder)
+        .filter(TableOrder.id == order.id, TableOrder.restored_at.is_(None))
+        .update(
+            {TableOrder.restored_at: now, TableOrder.restored_by_pos_user_name: actor.pos_user_name},
+            synchronize_session=False,
+        )
+    )
+    db.refresh(order)
+    if not claimed:
+        # Another till claimed it a moment ago.
+        raise _conflict("already_restored")
     table = db.get(DiningTable, order.table_id)
     record_event(
-        db, "restore", table, order, actor=actor,
+        db, "restore", table, order, actor=actor, now=now,
         details={"status": order.status, "approvedBy": approved_by, "transactionIds": _transaction_ids(order)},
     )
     db.flush()

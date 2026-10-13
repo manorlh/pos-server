@@ -1786,6 +1786,11 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
     handed out and not acknowledged within `JOB_LEASE` is handed out again.
     """
     now = now or _now()
+    # The print host moved here: the jobs a silent former host holds for its printers come with it
+    # (app/services/print_relay_handover.py).
+    from app.services.print_relay_handover import take_over_stale_jobs
+
+    take_over_stale_jobs(db, machine, now)
     rows = (
         db.query(KitchenPrintJob)
         .filter(
@@ -1818,6 +1823,8 @@ def pending_jobs(db: Session, machine: POSMachine, now: Optional[datetime] = Non
             "ticket": job.payload,
             "createdAt": _iso(job.created_at),
             "expiresAt": _iso(job.expires_at),
+            # Moved here from a print host that went silent holding it: maybe on paper there already.
+            "resent": bool((job.payload or {}).get("resent")),
         })
     db.flush()
     return out

@@ -1727,8 +1727,22 @@ def set_work_types(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="super_admin_only")
     now = _now()
     before = review_state(db, shop)
+    # A change of the tables mode passes the shop Z's guard, as on the parameters page — the clean
+    # break, and no table left open where no till looks any more (app/services/tables_mode_guard.py).
+    from app.services import local_shop_z as LZ
+
+    guard = LZ.ProducerGuard(db, [shop], now=now)
     # Audited in `till_parameter_changes`, like the parameters page (P:/specs/shop-work-config.md §6).
     parameters_changed = write_shop_tables(db, shop, user, tables=tables, tables_mode=tables_mode, now=now)
+    if parameters_changed:
+        try:
+            guard.check(user=user)
+        except LZ.LocalShopZRefused as refused:
+            db.rollback()
+            raise HTTPException(
+                status_code=refused.status_code,
+                detail={"code": refused.body.get("detail"), **{k: v for k, v in refused.body.items() if k != "detail"}},
+            ) from refused
 
     if review_override is not None:
         if review_override not in REVIEW_OPTIONS:
