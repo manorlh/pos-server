@@ -29,6 +29,7 @@ export type SectionId =
   | 'prepaid_voucher_prices'
   | 'voucher_discount_override'
   | 'prepaid_voucher_settlement'
+  | 'prepaid_voucher_redeem'
   | 'prepaid_voucher_controls'
   | 'promotions'
   | 'customers'
@@ -109,6 +110,8 @@ export const DASHBOARD_SECTIONS: DashboardSection[] = [
   { id: 'voucher_discount_override', pages: [] },
   // No page of its own: the "התחשבנות" tab and the commercial reports inside the prepaid vouchers page.
   { id: 'prepaid_voucher_settlement', pages: [] },
+  // No page of its own: "מימוש ידני מהענן" inside the prepaid vouchers page (or edit on prepaid_vouchers).
+  { id: 'prepaid_voucher_redeem', pages: [] },
   // No page of its own: pauses, quotas, test batches and replacement vouchers inside the prepaid vouchers page.
   { id: 'prepaid_voucher_controls', pages: [] },
   { id: 'promotions', pages: ['/dashboard/promotions'] },

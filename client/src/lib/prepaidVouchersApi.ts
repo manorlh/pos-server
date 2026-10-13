@@ -544,6 +544,15 @@ export interface PrepaidRedemption {
   discountAmount?: number | null;
   /** What the cloud's re-check found when the sale confirmed it (late, over_use, …). */
   flags?: string[];
+  /** "מימוש ידני מהענן" (the scanner failed): "dashboard", who, why, the rules a super admin forced. */
+  source?: string | null;
+  manual?: boolean;
+  manualReason?: string | null;
+  manualBy?: string | null;
+  manualOverride?: string[];
+  reverseReason?: string | null;
+  reversedBy?: string | null;
+  shopName?: string | null;
 }
 
 export interface PrepaidVoucher {
@@ -816,7 +825,9 @@ export type PrepaidEventAction =
   | 'create' | 'add' | 'assign_groups' | 'update' | 'cancel_batch' | 'cancel_group' | 'cancel_voucher' | 'use_flagged'
   | 'offline_assign' | 'offline_release' | 'offline_force_release' | 'export' | 'test_mode_on' | 'test_mode_off'
   /** "שכפול סדרה": on the new batch (`details.batchId` / `batchName`: the source) and on the source (the new one). */
-  | 'duplicated_from' | 'duplicated_to';
+  | 'duplicated_from' | 'duplicated_to'
+  /** "מימוש ידני מהענן" and its undo (`details.summary`, `details.overrideText` when forced). */
+  | 'manual_redeem' | 'manual_redeem_reversed';
 
 export interface PrepaidBatchEvent {
   id: string;

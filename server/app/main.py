@@ -62,6 +62,7 @@ from app.routers import (
     till_messages as till_messages_router,
     prepaid_vouchers as prepaid_vouchers_router,
     prepaid_voucher_extras as prepaid_voucher_extras_router,
+    prepaid_voucher_manual as prepaid_voucher_manual_router,
     till_shop_z as till_shop_z_router,
     main_till as main_till_router,
     lan_server as lan_server_router,
@@ -237,6 +238,8 @@ app.include_router(till_messages_router.router, prefix=_prefix)
 app.include_router(prepaid_vouchers_router.router, prefix=_prefix)
 # Settlement, deliveries, replacements, §15 reports, §18 controls and the simulator (helper).
 app.include_router(prepaid_voucher_extras_router.router, prefix=_prefix)
+# "מימוש ידני מהענן": manual redemption from the dashboard, one, many, and its undo.
+app.include_router(prepaid_voucher_manual_router.router, prefix=_prefix)
 app.include_router(till_shop_z_router.router, prefix=_prefix)
 app.include_router(main_till_router.router, prefix=_prefix)
 # "רשת מקומית" and "לא משמש כשרת מקומי" (docs/SPEC_LAN_MODE.md §3–4).

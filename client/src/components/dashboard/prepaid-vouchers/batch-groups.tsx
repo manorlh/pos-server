@@ -90,6 +90,9 @@ function EventLine({ e, batch, onOpenBatch }: {
       ) : null}
       {e.userName ? <span className="text-muted-foreground"> · {t('by', { name: e.userName })}</span> : null}
       {e.reason ? <span className="block text-muted-foreground">{t('reason', { reason: e.reason })}</span> : null}
+      {Array.isArray(e.details?.overrideText) && e.details.overrideText.length ? (
+        <span className="block text-amber-800 dark:text-amber-200">{t('forced', { rules: (e.details.overrideText as string[]).join(', ') })}</span>
+      ) : null}
       {changes.length ? (
         <ul className="mt-0.5 space-y-0.5 text-muted-foreground">
           {changes.map((c) => (
