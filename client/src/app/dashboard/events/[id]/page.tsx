@@ -7,29 +7,23 @@
  * the exceptions and the reconciliations against the Z and the card transmissions.
  *
  * Live while the event is a draft (refreshed every minute until it ends); once confirmed
- * it is the frozen snapshot, and says so. "ייצוא לאקסל" downloads the server's workbook,
- * "הדפסה" prints this page (the controls hide, sections keep together), "אישור האירוע"
- * freezes it after the checks, "השוואה" opens the compare view.
+ * it is the frozen snapshot, and says so. "אישור האירוע" freezes it after the checks,
+ * "השוואה" opens the compare view.
+ *
+ * Exported through the reports' export bar (P:\specs\reports-upgrade.md §2ב–ד, key
+ * `event-report`): "אקסל" is still the server's workbook (every sheet, at the timeline's
+ * bucket); "PDF" a real file of the tills table, with the columns chosen in "עמודות
+ * לייצוא"; "הדפסה" prints this page (the controls hide, sections keep together). The
+ * timeline's bucket is in the URL (`?bucket=15|60`; 30 by default).
  */
 
-import { use, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  ArrowRight,
-  FileSpreadsheet,
-  GitCompareArrows,
-  Loader2,
-  Lock,
-  Pencil,
-  Printer,
-  RefreshCw,
-  ShieldCheck,
-  Ticket,
-} from 'lucide-react';
+import { ArrowRight, GitCompareArrows, Lock, Pencil, RefreshCw, ShieldCheck, Ticket } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { usePageScope, useSyncScopeFromRoute } from '@/lib/scope';
 import { downloadEventExcel, eventErrorMessage, fetchEventReport, type BucketMinutes, type EventReport } from '@/lib/eventsApi';
@@ -40,16 +34,40 @@ import { EventFormDialog } from '@/components/dashboard/events/event-form-dialog
 import { ConfirmEventDialog } from '@/components/dashboard/events/confirm-event-dialog';
 import { EventInsights, EventKpis, TenderSplit } from '@/components/dashboard/events/event-overview';
 import { EventTimeline } from '@/components/dashboard/events/event-timeline';
-import { EventExceptions, EventShifts, EventTills } from '@/components/dashboard/events/event-tills';
+import {
+  EVENT_REPORT_KEY,
+  EventExceptions,
+  EventShifts,
+  EventTills,
+  useEventTillsTable,
+} from '@/components/dashboard/events/event-tills';
 import { EventItems, EventSegments } from '@/components/dashboard/events/event-items';
 import { EventReconcile } from '@/components/dashboard/events/event-reconcile';
 import { EventSection, ReconcileChip, StatusChip } from '@/components/dashboard/events/event-parts';
 import { LiveEventLink } from '@/components/dashboard/event-live/live-event-link';
 import { ProducerAccessDialog } from '@/components/dashboard/event-live/producer-access-dialog';
+import { ReportExportBar, useReportExportScope, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { Button } from '@/components/ui/button';
 
 const WRITE_ROLES = new Set(['super_admin', 'distributor', 'company_manager', 'shop_manager']);
 const LIVE_REFRESH_MS = 60_000;
+const DEFAULT_BUCKET: BucketMinutes = 30;
+
+/** `?bucket=` → 15 / 30 / 60 (anything else: the default). */
+function bucketOf(raw: string | null): BucketMinutes {
+  const n = Number(raw);
+  return n === 15 || n === 60 ? n : DEFAULT_BUCKET;
+}
+
+/** `Date.now()`, re-read every `everyMs`: "live" turns off when the event ends, without a reload. */
+function useNowMs(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), everyMs);
+    return () => window.clearInterval(timer);
+  }, [everyMs]);
+  return now;
+}
 
 /** Points the scope bar at the event's shop — mounted once the event is known, so loading never resets it. */
 function ScopeFromEvent({ companyId, shopId }: { companyId: string | null; shopId: string }) {
@@ -65,16 +83,29 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
   const { id } = use(params);
   const t = useTranslations('events.page');
   const te = useTranslations('events');
+  const tr = useTranslations('events.report');
   const router = useRouter();
   const role = useAuth((s) => s.user?.role);
   const canWrite = !!role && WRITE_ROLES.has(role);
   usePageScope({ maxLevel: 'shop', silent: true });
 
-  const [bucket, setBucket] = useState<BucketMinutes>(30);
+  // The timeline's bucket (and the Excel's) is in the URL: a link shows the same chart.
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const bucket = bucketOf(searchParams.get('bucket'));
+  const setBucket = useCallback(
+    (next: BucketMinutes) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === DEFAULT_BUCKET) params.delete('bucket');
+      else params.set('bucket', String(next));
+      const q = params.toString();
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
   const [editOpen, setEditOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [producerOpen, setProducerOpen] = useState(false);
-  const [exporting, setExporting] = useState(false);
 
   const query = useQuery<EventReport>({
     queryKey: ['event-report', id],
@@ -87,36 +118,18 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
   });
   const report = query.data;
   const event = report?.event;
+  const tills = useEventTillsTable(report);
+  const exportScope = useReportExportScope(event?.shopName ?? null);
+  const now = useNowMs(LIVE_REFRESH_MS);
 
-  // A print that started here leaves the report layout on until the dialog closes.
-  useEffect(() => {
-    const clear = () => {
-      if (document.documentElement.dataset.print === 'report') delete document.documentElement.dataset.print;
-    };
-    window.addEventListener('afterprint', clear);
-    return () => window.removeEventListener('afterprint', clear);
-  }, []);
-
+  /** "אקסל": the server's workbook (every sheet), not one the page builds. */
   const onExcel = async () => {
     if (!report) return;
-    setExporting(true);
     try {
       await downloadEventExcel(id, bucket, `${safeFileName(`דוח אירוע - ${report.event.name}`)} - ${report.event.startDate}.xlsx`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('excelFailed'));
-    } finally {
-      setExporting(false);
     }
-  };
-
-  const onPrint = () => {
-    document.documentElement.dataset.print = 'report';
-    const previous = document.title;
-    if (report) document.title = safeFileName(`${report.event.name} ${report.event.startDate}`);
-    window.setTimeout(() => {
-      window.print();
-      document.title = previous;
-    }, 50);
   };
 
   if (query.isLoading) {
@@ -154,14 +167,14 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
 
   const tz = report.timezone;
   const draft = event.status === 'draft';
-  const live = draft && Date.parse(event.endsAt) > Date.now();
+  const live = draft && Date.parse(event.endsAt) > now;
   const levels = countByLevel(report.insights);
 
   return (
     <InsightsSurface className="print:mx-0 print:rounded-none print:bg-white print:p-0">
       <ScopeFromEvent companyId={event.companyId} shopId={event.shopId} />
-      {/* Title */}
-      <div className="flex flex-wrap items-end justify-between gap-3 px-1">
+      {/* Title; in print the export's header goes under it */}
+      <div className="flex flex-wrap items-end justify-between gap-3 px-1 print:block">
         <div className="min-w-0 space-y-1">
           <Link href="/dashboard/events" className="flex items-center gap-1 text-[15px] text-[#007AFF] print:hidden">
             <ArrowRight className="h-4 w-4" aria-hidden />
@@ -179,42 +192,53 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
             {te('tills', { count: event.machines.length })}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 print:hidden">
-          <LiveEventLink eventId={event.id} className="h-8 rounded-lg border border-[#FF3B30]/40 px-2.5 text-sm" />
-          {canWrite ? (
-            <Button variant="outline" size="sm" onClick={() => setProducerOpen(true)}>
-              <Ticket className="h-4 w-4" aria-hidden />
-              {te('producerTab')}
-            </Button>
-          ) : null}
-          <Button variant="outline" size="sm" onClick={() => void query.refetch()} disabled={query.isFetching || report.frozen} aria-label={t('refresh')}>
-            <RefreshCw className={cn('h-4 w-4', query.isFetching && 'animate-spin')} aria-hidden />
-          </Button>
-          <Button variant="outline" size="sm" onClick={onExcel} disabled={exporting}>
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileSpreadsheet className="h-4 w-4" aria-hidden />}
-            {t('excel')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={onPrint}>
-            <Printer className="h-4 w-4" aria-hidden />
-            {t('print')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/events?compare=${event.id}`)}>
-            <GitCompareArrows className="h-4 w-4" aria-hidden />
-            {t('compare')}
-          </Button>
-          {canWrite && draft ? (
+        {/* אקסל (the server's workbook) · PDF (the tills) · הדפסה · עמודות לייצוא, then the event's own buttons */}
+        <ReportExportBar
+          reportKey={EVENT_REPORT_KEY}
+          title={tr('title', { name: event.name })}
+          tables={[tills] as ReportTableSpec<unknown>[]}
+          excel={onExcel}
+          from={event.startDate}
+          to={event.endDate}
+          business={exportScope.business}
+          place={exportScope.place}
+          filterLines={[
+            { label: tr('window'), value: `${clockLabel(event.startsAt, tz, true)} – ${clockLabel(event.endsAt, tz, true)}` },
+            ...(event.producerName ? [{ label: tr('producer'), value: event.producerName }] : []),
+          ]}
+          companyId={exportScope.companyId}
+          companyName={exportScope.companyName}
+          actions={
             <>
-              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
-                <Pencil className="h-4 w-4" aria-hidden />
-                {t('edit')}
+              <LiveEventLink eventId={event.id} className="h-8 rounded-lg border border-[#FF3B30]/40 px-2.5 text-sm" />
+              {canWrite ? (
+                <Button variant="outline" size="sm" onClick={() => setProducerOpen(true)}>
+                  <Ticket className="h-4 w-4" aria-hidden />
+                  {te('producerTab')}
+                </Button>
+              ) : null}
+              <Button variant="outline" size="sm" onClick={() => void query.refetch()} disabled={query.isFetching || report.frozen} aria-label={t('refresh')}>
+                <RefreshCw className={cn('h-4 w-4', query.isFetching && 'animate-spin')} aria-hidden />
               </Button>
-              <Button size="sm" className="bg-[#34C759] text-white hover:bg-[#2DB14F]" onClick={() => setConfirmOpen(true)}>
-                <ShieldCheck className="h-4 w-4" aria-hidden />
-                {t('confirm')}
+              <Button variant="outline" size="sm" onClick={() => router.push(`/dashboard/events?compare=${event.id}`)}>
+                <GitCompareArrows className="h-4 w-4" aria-hidden />
+                {t('compare')}
               </Button>
+              {canWrite && draft ? (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                    <Pencil className="h-4 w-4" aria-hidden />
+                    {t('edit')}
+                  </Button>
+                  <Button size="sm" className="bg-[#34C759] text-white hover:bg-[#2DB14F]" onClick={() => setConfirmOpen(true)}>
+                    <ShieldCheck className="h-4 w-4" aria-hidden />
+                    {t('confirm')}
+                  </Button>
+                </>
+              ) : null}
             </>
-          ) : null}
-        </div>
+          }
+        />
       </div>
 
       {/* State banner */}
@@ -261,7 +285,7 @@ export default function EventReportPage({ params }: { params: Promise<{ id: stri
       </EventSection>
 
       <EventSection id="tills" title={t('sections.tills')}>
-        <EventTills report={report} />
+        <EventTills table={tills} />
       </EventSection>
 
       <EventSection id="items" title={t('sections.items')}>

@@ -9,9 +9,13 @@
  * switching tills, signing out or the idle lock never end a shift. Only a clock-out or a
  * manager's recorded action here does. Read by every role but the cashier, within their
  * shops; corrected and closed by the till users' managers.
+ *
+ * The tab is in the URL (`?tab=report`), so a link to the report — its days and filters
+ * are in the URL too — opens on the report.
  */
 
-import { useState } from 'react';
+import { useCallback } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import { AttendanceReport } from '@/components/dashboard/attendance/attendance-report';
@@ -26,7 +30,21 @@ type Tab = (typeof TABS)[number];
 export default function AttendancePage() {
   const t = useTranslations('attendance');
   const { user } = useAuth();
-  const [tab, setTab] = useState<Tab>('live');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const raw = searchParams.get('tab');
+  const tab: Tab = TABS.find((k) => k === raw) ?? 'live';
+  const setTab = useCallback(
+    (next: Tab) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === 'live') params.delete('tab');
+      else params.set('tab', next);
+      const query = params.toString();
+      router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   if (user?.role === 'cashier') {
     return (
