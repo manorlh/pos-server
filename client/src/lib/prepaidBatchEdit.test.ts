@@ -9,11 +9,14 @@ import {
   CONTENT_FIELDS,
   changedFields,
   changesByCategory,
+  dateFieldValue,
+  editValidity,
   editValueText,
   sameSetting,
   touchesContents,
   type EditValueFormat,
 } from './prepaidBatchEdit';
+import { dayBoundIso } from './prepaidBatchDuplicate';
 
 const f: EditValueFormat = {
   money: (v) => `₪${v.toFixed(2)}`,
@@ -84,5 +87,76 @@ describe('editValueText', () => {
     assert.equal(editValueText('count', 5, f), '5');
     assert.equal(editValueText('productionId', { id: 'p1', name: 'הפקות כהן' }, f), 'הפקות כהן');
     assert.equal(editValueText('reportEventId', null, f), '—');
+  });
+});
+
+describe('dateFieldValue: the validity as the form\'s date fields read it', () => {
+  it('a day as the dashboard writes it, day first', () => {
+    assert.equal(dateFieldValue('07/10/2026'), '2026-10-07');
+    assert.equal(dateFieldValue('13/10/2026'), '2026-10-13');
+    assert.equal(dateFieldValue('7.1.2027'), '2027-01-07');
+  });
+
+  it('a stored moment: the day it falls on in Israel, not UTC\'s', () => {
+    // 01/10/2026 00:00 Israel (UTC+3) is still 30/09 in UTC.
+    assert.equal(dateFieldValue('2026-09-30T21:00:00+00:00'), '2026-10-01');
+    // 31/12/2026 23:59:59 Israel (UTC+2).
+    assert.equal(dateFieldValue('2026-12-31T21:59:59+00:00'), '2026-12-31');
+    assert.equal(dateFieldValue('2026-12-31T22:00:00.000Z'), '2027-01-01');
+    assert.equal(dateFieldValue('2026-10-01T00:00:00+03:00'), '2026-10-01');
+    assert.equal(dateFieldValue('2026-09-30T21:00:00+00:00', 'UTC'), '2026-09-30');
+    // A plain day is that day.
+    assert.equal(dateFieldValue('2026-10-07'), '2026-10-07');
+  });
+
+  it('none: empty', () => {
+    assert.equal(dateFieldValue(null), '');
+    assert.equal(dateFieldValue(undefined), '');
+    assert.equal(dateFieldValue(''), '');
+    assert.equal(dateFieldValue('   '), '');
+  });
+
+  it('not a real day: empty (never a guessed one)', () => {
+    assert.equal(dateFieldValue('31/02/2026'), '');
+    assert.equal(dateFieldValue('10/13/2026'), ''); // not read month first
+    assert.equal(dateFieldValue('2026-02-30'), '');
+    assert.equal(dateFieldValue('2026-10-07Tlater'), '');
+    assert.equal(dateFieldValue('next week'), '');
+    assert.equal(dateFieldValue('Oct 7 2026'), '');
+  });
+});
+
+describe('editValidity: a day left as it opened is not a change', () => {
+  const batch = { validFrom: '2026-09-30T21:00:00+00:00', validUntil: '2026-12-31T21:59:59+00:00' };
+  const from = dateFieldValue(batch.validFrom);
+  const until = dateFieldValue(batch.validUntil);
+  const opened: Record<string, unknown> = { name: 'פסטיבל', ...editValidity(from, until) };
+
+  it('the form opens with the batch\'s days, not empty ones', () => {
+    assert.equal(from, '2026-10-01');
+    assert.equal(until, '2026-12-31');
+    assert.deepEqual(editValidity(from, until), { validFrom: dayBoundIso('2026-10-01', false), validUntil: dayBoundIso('2026-12-31', true) });
+  });
+
+  it('untouched days are never sent, also when something else changed', () => {
+    assert.deepEqual(changedFields(opened, { name: 'פסטיבל', ...editValidity(from, until) }), {});
+    assert.deepEqual(changedFields(opened, { name: 'חורף', ...editValidity(from, until) }), { name: 'חורף' });
+  });
+
+  it('a day changed is sent alone (the end of the new last day); changed back, nothing', () => {
+    assert.deepEqual(changedFields(opened, { name: 'פסטיבל', ...editValidity(from, '2027-01-15') }), {
+      validUntil: dayBoundIso('2027-01-15', true),
+    });
+    assert.deepEqual(changedFields(opened, { name: 'פסטיבל', ...editValidity('2026-10-05', until) }), {
+      validFrom: dayBoundIso('2026-10-05', false),
+    });
+    assert.deepEqual(changedFields(opened, { name: 'פסטיבל', ...editValidity('2026-10-01', '2026-12-31') }), {});
+  });
+
+  it('a day cleared is sent as none; a batch without dates sends none while untouched', () => {
+    assert.deepEqual(changedFields(opened, { name: 'פסטיבל', ...editValidity('', until) }), { validFrom: null });
+    const bare: Record<string, unknown> = editValidity(dateFieldValue(null), dateFieldValue(null));
+    assert.deepEqual(bare, { validFrom: null, validUntil: null });
+    assert.deepEqual(changedFields(bare, editValidity('', '')), {});
   });
 });
