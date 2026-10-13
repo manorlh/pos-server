@@ -11,23 +11,36 @@ docs/SPEC_TRAINING_MODE.md, phase 1).
 * A training document after the shop left training mode is dropped and logged.
 * Shifts (open and close — no 409 for documents the real table does not hold), the
   till's Z, its events and its own training documents are quarantined the same way.
-* Turning it on is refused while a real shift is open; turning it off checks the name,
-  reports blockers, purges the quarantine and the training table orders, and logs.
+* Turning it on is refused unless every active device of the shop is training-capable (an
+  Android build whose heartbeat says `training_mode_v1`; Windows, the browser, an older
+  build or a device not reported yet are not — a shop with no device may), and while a real
+  shift is open; turning it off checks the name, reports blockers, purges the quarantine and
+  the training table orders, and logs.
+* A Windows / browser device is never added to a shop in training mode (the code, its
+  redemption, an assignment, a move); an Android one is, and an older build of it is a
+  warning on the card.
 * The flag reaches the till: `GET /machines/me`, the heartbeat and the settings sync.
 
 Runs on the in-memory SQLite world of tests/shift_world.py.
 """
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException, Response
+from fastapi.responses import JSONResponse
 
 from app.models.audit_exception import TillEvent
+from app.models.kds import KdsDevice
+from app.models.kiosk import KioskDevice
+from app.models.pairing_code import PairingCode
+from app.models.pos_machine import PairingStatus, POSMachine, set_kiosk_cache
 from app.models.shift import Shift, ShiftStatus
+from app.models.shop import Shop
 from app.models.sync_log import SyncLog
 from app.models.tables import DiningTable, TableOrder, TableZone
 from app.models.training import TrainingAuditLog, TrainingDocument
@@ -36,29 +49,36 @@ from app.models.user import User, UserRole
 from app.models.z_report import ZReport
 from app.routers import exceptions as exceptions_router
 from app.routers import machines as machines_router
+from app.routers import pairing as pairing_router
 from app.routers import shops as shops_router
 from app.routers import sync as sync_router
 from app.routers import training_mode as R
 from app.schemas.audit_exception import TillEventIn
+from app.schemas.pairing_code import MachineAssignRequest, PairingCodeGenerateRequest, PairingCodeValidate
+from app.schemas.pos_machine import MachineHeartbeatBody, POSMachineUpdate
 from app.schemas.shift import ShiftCloseIn, ShiftOpenIn
 from app.schemas.shop import ShopCreate
 from app.schemas.till_z import TillZIn
 from app.schemas.transaction import TransactionsBatchEnvelope
 from app.services import ably_notify
 from app.services import exceptions as exceptions_service
+from app.services import pairing as P
 from app.services import training_mode as TM
 from shift_world import NOW, TODAY, accept_str_uuids, make_world
 
 
 @pytest.fixture
 def w(monkeypatch):
-    # The phase-1 machinery, as it will run once the devices implement training mode; turning it
-    # on is blocked until then (TM.AVAILABLE — tested below with `w_blocked`).
-    monkeypatch.setattr(TM, "AVAILABLE", True)
     accept_str_uuids(monkeypatch)
     world = make_world()
+    # Every till runs a build with training mode (its heartbeat said `training_mode_v1`); the
+    # rule itself — every device of the shop capable — is tested below ("Which devices").
+    for till in [*world.tills, world.other_till]:
+        till.capabilities = ["remote_close_v2", TM.CAPABILITY]
+    world.db.flush()
     monkeypatch.setattr(ably_notify, "publish_close_shift_notify", lambda *a, **k: None)
     monkeypatch.setattr(ably_notify, "publish_settings_notify", lambda *a, **k: None)
+    monkeypatch.setattr(ably_notify, "publish_transmit_notify", lambda *a, **k: None)
     world.synced = []
     monkeypatch.setattr(sync_router, "publish_transactions_synced", lambda *a, **k: world.synced.append(a))
     world.detected = []
@@ -528,52 +548,163 @@ def test_a_new_shop_opens_in_training_mode_when_asked(w, monkeypatch):
     assert ShopResponse.model_validate(trained).model_dump(by_alias=True)["trainingMode"] is True
 
 
-# ── Blocked until the devices implement it (PARITY.md gap 6) ─────────────────────
+# ── Which devices can run it (docs/SPEC_TRAINING_MODE.md, "מי יכול להיכנס") ──────────
 
 
-@pytest.fixture
-def w_blocked(w, monkeypatch):
-    monkeypatch.setattr(TM, "AVAILABLE", False)
-    return w
+def _device(w, name, *, shop=None, platform="android", caps=(TM.CAPABILITY,), beat=True, fiscal=True,
+            active=True, pos_number=None):
+    m = POSMachine(
+        id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=(shop or w.shop).id, distributor_id=w.admin.id,
+        name=name, machine_code=f"D-{uuid.uuid4().hex[:8]}", pos_number=pos_number, is_active=active,
+        pairing_status=PairingStatus.ASSIGNED, platform=platform, is_fiscal=fiscal,
+        last_heartbeat_at=NOW - timedelta(seconds=5) if beat else None,
+        capabilities=list(caps) if caps is not None else None,
+    )
+    w.db.add(m)
+    w.db.flush()
+    return m
 
 
-def test_turning_it_on_is_refused_while_no_device_implements_it(w_blocked):
-    w = w_blocked
-    with pytest.raises(HTTPException) as err:
+def _kiosk(w, machine):
+    w.db.add(KioskDevice(machine_id=machine.id, tenant_id=w.tenant.id, shop_id=machine.shop_id,
+                         company_id=w.company.id, name=machine.name))
+    w.db.flush()
+    set_kiosk_cache(machine, None)
+    return machine
+
+
+def _kds(w, machine, role="expo"):
+    w.db.add(KdsDevice(id=uuid.uuid4(), tenant_id=w.tenant.id, shop_id=machine.shop_id, machine_id=machine.id,
+                       name=machine.name, role=role, station_ids=[]))
+    w.db.flush()
+    return machine
+
+
+def _status(w):
+    return R.get_training_mode(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
+
+
+def _refusal(out):
+    assert isinstance(out, JSONResponse), out
+    return out.status_code, json.loads(out.body)
+
+
+def test_every_device_capable_it_may_be_turned_on(w):
+    status_out = _status(w)
+    assert status_out["available"] is True and status_out["notReady"] == []
+    assert _enable(w)["trainingMode"] is True
+
+
+def test_an_older_android_build_holds_it_back_with_the_reason(w):
+    old = w.tills[1]
+    old.capabilities = ["remote_close_v2", "device_logs_v1"]  # a build from before training mode
+    w.db.flush()
+    with pytest.raises(HTTPException) as refused:
         _enable(w)
-    assert err.value.status_code == 409 and err.value.detail["code"] == TM.NOT_AVAILABLE
-    assert "הדרכה" in err.value.detail["message"]
+    assert refused.value.status_code == 409 and refused.value.detail["code"] == TM.DEVICES_NOT_READY
+    assert "הדרכה" in refused.value.detail["message"]
+    [device] = refused.value.detail["devices"]
+    assert device["id"] == str(old.id) and device["name"] == old.name and device["kind"] == "till"
+    assert (device["reasonCode"], device["reason"]) == (TM.REASON_OLD_BUILD, "גרסת קופה ישנה — יש לעדכן")
     w.db.expire_all()
+    assert w.shop.training_mode is False and w.db.query(TrainingAuditLog).count() == 0
+    status_out = _status(w)
+    assert status_out["available"] is False
+    assert [d["id"] for d in status_out["notReady"]] == [str(old.id)]
+    # Updated (its next heartbeat says so): it may.
+    old.capabilities = [TM.CAPABILITY]
+    w.db.flush()
+    assert _enable(w)["trainingMode"] is True
+
+
+def test_windows_browser_and_silent_devices_hold_it_back_whatever_their_role(w):
+    windows_kiosk = _kiosk(w, _device(w, "קיוסק כניסה", platform="windows", caps=None))
+    browser_kds = _kds(w, _device(w, "מטבח", platform="web", caps=None, fiscal=False))
+    browser_board = _kds(w, _device(w, "מסך איסוף", platform="web", caps=None, fiscal=False), role="pickup")
+    android_kds = _kds(w, _device(w, "מטבח 2", fiscal=False))  # capable: not listed
+    silent = _device(w, "קופה חדשה", caps=None, beat=False)
+    old_kiosk = _kiosk(w, _device(w, "קיוסק ישן", caps=["remote_close_v2"]))
+    _device(w, "קופה ישנה שהוצאה משימוש", caps=None, active=False)  # retired: not counted
+    _device(w, "קיוסק Windows בסניף אחר", shop=w.other_shop, platform="windows", caps=None)  # another shop's
+    with pytest.raises(HTTPException) as refused:
+        _enable(w)
+    devices = {d["id"]: d for d in refused.value.detail["devices"]}
+    assert set(devices) == {str(m.id) for m in (windows_kiosk, browser_kds, browser_board, silent, old_kiosk)}
+    assert str(android_kds.id) not in devices
+    kiosk = devices[str(windows_kiosk.id)]
+    assert (kiosk["kind"], kiosk["platform"], kiosk["reasonCode"]) == ("kiosk", "windows", TM.REASON_PLATFORM)
+    assert kiosk["reason"] == "קיוסק Windows — עוד לא תומך במצב הדרכה"
+    assert devices[str(browser_kds.id)]["kind"] == "kds"
+    assert devices[str(browser_kds.id)]["reason"] == "מסך מטבח (KDS) בדפדפן — עוד לא תומך במצב הדרכה"
+    assert devices[str(browser_board.id)]["kind"] == "order_status_board"
+    assert (devices[str(silent.id)]["reasonCode"], devices[str(silent.id)]["reason"]) == (
+        TM.REASON_NOT_REPORTED, "המכשיר לא דיווח עדיין",
+    )
+    assert devices[str(old_kiosk.id)]["reason"] == "גרסת קיוסק ישנה — יש לעדכן"
     assert w.shop.training_mode is False
-    assert w.db.query(TrainingAuditLog).count() == 0
-    status_out = R.get_training_mode(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)
-    assert status_out["available"] is False and status_out["trainingMode"] is False
 
 
-def test_a_new_shop_cannot_open_in_training_mode_while_it_is_blocked(w_blocked, monkeypatch):
+def test_a_windows_till_is_named_as_one():
+    till = POSMachine(platform="windows", capabilities=[TM.CAPABILITY], last_heartbeat_at=NOW)
+    assert TM.not_ready_reason(till, "till") == (TM.REASON_PLATFORM, "קופת Windows — עוד לא תומכת במצב הדרכה")
+    assert TM.capable(till) is False
+    assert TM.capable(POSMachine(platform="android", capabilities=[TM.CAPABILITY])) is True
+    # A row from before the platform column: what the device said at pairing, else Android.
+    assert TM.capable(POSMachine(device_info={"platform": "web"}, capabilities=[TM.CAPABILITY])) is False
+    assert TM.capable(POSMachine(capabilities=None)) is False
+
+
+def test_a_shop_with_no_device_may_enter_it(w):
+    empty = Shop(id=uuid.uuid4(), tenant_id=w.tenant.id, company_id=w.company.id, name="ריק", settings={})
+    w.db.add(empty)
+    w.db.flush()
+    assert TM.devices_not_ready(w.db, empty) == []
+    TM.start(w.db, empty, w.admin)
+    assert empty.training_mode is True
+
+
+def test_the_heartbeat_is_what_makes_a_till_capable(w):
+    till = w.tills[0]
+
+    def beat(caps):
+        body = MachineHeartbeatBody.model_validate({"appVersion": "0.1.400", **({"capabilities": caps} if caps is not None else {})})
+        machines_router.post_my_heartbeat(body=body, machine=till, db=w.db, request=None)
+
+    beat(["remote_close_v2", "device_logs_v1"])
+    assert [d["reasonCode"] for d in TM.devices_not_ready(w.db, w.shop)] == [TM.REASON_OLD_BUILD]
+    beat(["remote_close_v2", "training_mode_v1"])
+    assert TM.devices_not_ready(w.db, w.shop) == []
+    # A build that stops saying it (put back to an older one) is not capable any more.
+    beat(None)
+    assert [d["reasonCode"] for d in TM.devices_not_ready(w.db, w.shop)] == [TM.REASON_OLD_BUILD]
+
+
+def test_in_training_an_older_android_build_is_a_warning_on_the_card(w):
+    _enable(w)
+    till = w.tills[1]
+    till.capabilities = ["remote_close_v2"]  # paired / put back to a build without training mode
+    w.db.flush()
+    status_out = _status(w)
+    assert status_out["trainingMode"] is True
+    assert [(d["id"], d["reasonCode"]) for d in status_out["notReady"]] == [(str(till.id), TM.REASON_OLD_BUILD)]
+
+
+def test_a_new_shop_opens_in_training_mode_with_no_device_to_wait_for(w, monkeypatch):
     import app.routers.shops as shops_module
 
-    w = w_blocked
     monkeypatch.setattr(shops_module, "ensure_default_pos_user", lambda *a, **k: None)
     monkeypatch.setattr(shops_module, "reconcile_shops", lambda *a, **k: set())
-    with pytest.raises(HTTPException) as err:
-        shops_router.create_shop(
-            ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True, "branchId": "803"}),
-            current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
-        )
-    assert err.value.detail["code"] == TM.NOT_AVAILABLE
-    plain = shops_router.create_shop(
-        ShopCreate.model_validate({"name": "רגיל", "companyId": str(w.company.id), "branchId": "804"}),
+    shop = shops_router.create_shop(
+        ShopCreate.model_validate({"name": "חדש", "companyId": str(w.company.id), "trainingMode": True, "branchId": "803"}),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
     )
-    assert plain.training_mode is False
+    assert shop.training_mode is True
+    assert TM.status_out(w.db, shop, w.admin)["notReady"] == []
 
 
-def test_a_shop_already_in_training_mode_can_still_leave_it(w_blocked):
-    w = w_blocked
-    # Turned on before the block (a dev or production shop that has it on today).
-    w.shop.training_mode = True
-    w.db.flush()
+def test_a_shop_in_training_mode_can_leave_it_whatever_its_devices(w):
+    _enable(w)
+    _kiosk(w, _device(w, "קיוסק", platform="windows", caps=None))
     out = R.disable_training_mode(
         w.shop.id, R.DisableIn(confirmName=w.shop.name, force=True), BackgroundTasks(),
         current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
@@ -581,7 +712,104 @@ def test_a_shop_already_in_training_mode_can_still_leave_it(w_blocked):
     assert "deleted" in out
     w.db.expire_all()
     assert w.shop.training_mode is False
-    # Turning it on again is what is refused, and nothing else.
+    # Turning it on again is what the Windows kiosk holds back.
     with pytest.raises(HTTPException) as err:
         _enable(w)
-    assert err.value.detail["code"] == TM.NOT_AVAILABLE
+    assert err.value.detail["code"] == TM.DEVICES_NOT_READY
+
+
+# ── Adding a device to a shop in training mode ─────────────────────────────────
+
+
+@pytest.fixture
+def wt(w, monkeypatch):
+    """The world's shop in training mode, committed (a refusal rolls the session back)."""
+    TM.start(w.db, w.shop, w.admin)
+    w.db.commit()
+
+    def _seat(db, machine_id, shop_id):  # the register number's regex is Postgres-only
+        machine = db.get(POSMachine, machine_id)
+        machine.shop_id = shop_id
+        machine.pairing_status = PairingStatus.ASSIGNED
+        db.flush()
+        return machine
+
+    monkeypatch.setattr(P, "assign_machine_to_shop", _seat)
+    return w
+
+
+def _generate(w, **body):
+    return pairing_router.generate_pairing_code(
+        body=PairingCodeGenerateRequest(**body), current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db,
+    )
+
+
+def _code(w, *, shop=None, target=None, platform=None, role=None):
+    code = PairingCode(
+        id=uuid.uuid4(), code=f"T{uuid.uuid4().hex[:7].upper()}", distributor_id=w.admin.id,
+        tenant_id=w.tenant.id, shop_id=shop.id if shop is not None else None, target_machine_id=target,
+        platform=platform, device_role=role,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5), is_used=False,
+    )
+    w.db.add(code)
+    w.db.commit()
+    return _armed(code)
+
+
+def _armed(code):
+    """SQLite gives the expiry back without its zone: set it aware again before a redemption."""
+    code.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+    return code
+
+
+def test_no_windows_or_browser_code_for_a_shop_in_training_mode(wt):
+    w = wt
+    status_code, body = _refusal(_generate(w, shopId=w.shop.id, deviceRole="till", platform="windows"))
+    assert (status_code, body["detail"]) == (409, TM.DEVICE_UNSUPPORTED)
+    assert w.shop.name in body["message"] and "קופת Windows" in body["message"]
+    status_code, body = _refusal(_generate(w, shopId=w.shop.id, deviceRole="kds", platform="web"))
+    assert (status_code, body["detail"], body["kind"]) == (409, TM.DEVICE_UNSUPPORTED, "kds")
+    # An Android device is let in; so is a Windows one into a shop not in training mode.
+    assert _generate(w, shopId=w.shop.id, deviceRole="till", platform="android").shop_id == w.shop.id
+    assert _generate(w, shopId=w.other_shop.id, deviceRole="till", platform="windows").platform == "windows"
+
+
+def test_a_windows_device_redeeming_a_code_for_a_shop_in_training_mode_is_refused(wt):
+    w = wt
+    code = _code(w, shop=w.shop)  # made before the shop entered training mode, no platform named
+    before = w.db.query(POSMachine).count()
+    status_code, body = _refusal(pairing_router.validate_pairing(
+        PairingCodeValidate(code=code.code, device_info={"platform": "windows"}), db=w.db,
+    ))
+    assert (status_code, body["detail"]) == (409, TM.DEVICE_UNSUPPORTED)
+    w.db.expire_all()
+    assert w.db.query(POSMachine).count() == before and w.db.get(PairingCode, code.id).is_used is False
+    # An Android device pairs; its first heartbeat says what its build can do.
+    machine = P.validate_pairing_code(w.db, _armed(w.db.get(PairingCode, code.id)).code, {"model": "F20"}, "קופה 3")
+    assert machine.shop_id == w.shop.id
+    assert [d["reasonCode"] for d in TM.devices_not_ready(w.db, w.shop)] == [TM.REASON_NOT_REPORTED]
+
+
+def test_a_replacement_lands_in_the_terminals_shop_and_is_checked_there(wt):
+    w = wt
+    code = _code(w, target=w.tills[0].id)
+    with pytest.raises(TM.DeviceUnsupported):
+        P.validate_pairing_code(w.db, code.code, {"platform": "web"}, None)
+
+
+def test_no_windows_device_assigned_or_moved_into_a_shop_in_training_mode(wt):
+    w = wt
+    loose = _device(w, "קיוסק Windows", shop=w.other_shop, platform="windows", caps=None)
+    loose.pairing_status = PairingStatus.PAIRED
+    w.db.commit()
+    status_code, body = _refusal(pairing_router.assign_machine(
+        str(loose.id), MachineAssignRequest(shopId=w.shop.id), current_user=w.admin,
+        active_tenant_id=w.tenant.id, db=w.db,
+    ))
+    assert (status_code, body["detail"]) == (409, TM.DEVICE_UNSUPPORTED)
+    status_code, body = _refusal(machines_router.update_machine(
+        str(loose.id), POSMachineUpdate(shopId=w.shop.id), w.admin, w.tenant.id, w.db,
+    ))
+    assert (status_code, body["detail"]) == (409, TM.DEVICE_UNSUPPORTED)
+    w.db.expire_all()
+    assert w.db.get(POSMachine, loose.id).shop_id == w.other_shop.id

@@ -42,25 +42,82 @@ export interface TrainingModeStatus {
   /** May turn it on and off (super admin, dealer, or a manager who manages the shop). */
   canManage: boolean;
   /**
-   * False while no device implements training mode (server `training_mode.AVAILABLE`): it
-   * cannot be turned on — 409 `training_not_available` — since a practice sale would be a
-   * real tax document. Turning it off stays open.
+   * Whether it may be turned on, as far as the devices go: every active device of the shop
+   * runs a build with training mode (an Android build whose heartbeat says
+   * `training_mode_v1`), or the shop has none. Otherwise the enable is refused with 409
+   * `training_devices_not_ready` — a practice sale on such a device would be a real tax
+   * document. Turning it off never depends on it.
    */
   available?: boolean;
+  /**
+   * The shop's devices that cannot run training mode, and why. Off: what holds the enable
+   * back. On: a warning — they sell for real.
+   */
+  notReady?: TrainingDeviceNotReady[];
   counts: TrainingCounts;
   /** Newest first, at most 20. */
   log: TrainingLogEntry[];
 }
 
+/** Why a device cannot run training mode (server `training_mode.REASON_*`). */
+export type TrainingNotReadyReason = 'platform_unsupported' | 'old_build' | 'not_reported';
+
+/** A device of the shop that cannot run training mode (`notReady[]`, the 409's `devices[]`). */
+export interface TrainingDeviceNotReady {
+  id: string;
+  machineId?: string;
+  name: string;
+  posNumber?: string | number | null;
+  /** `till` | `kiosk` | `kds` | `order_status_board` | `customer_display`. */
+  kind: string;
+  /** `android` | `windows` | `web`. */
+  platform?: string;
+  appVersion?: string | null;
+  lastHeartbeatAt?: string | null;
+  /** `platform_unsupported`: Windows / the browser; `old_build`; `not_reported`: no heartbeat yet. */
+  reasonCode: TrainingNotReadyReason | string;
+  /** The server's Hebrew, e.g. "קיוסק Windows — עוד לא תומך במצב הדרכה". */
+  reason: string;
+}
+
 /**
- * Whether a new shop may open in training mode: false while no device implements it (as the
- * server's `training_mode.AVAILABLE`, which refuses it with 409 `training_not_available`).
+ * A new shop opens in training mode by default (docs/SPEC_TRAINING_MODE.md "ברירת מחדל"): the
+ * create form's switch is pre-checked. A new shop has no device yet, so nothing holds it back.
  */
-export const TRAINING_MODE_AVAILABLE = false;
+export const NEW_SHOP_TRAINING_DEFAULT = true;
 
 /** Whether "הפעל מצב הדרכה" may be offered: only a server that says so. */
 export function trainingCanBeEnabled(data: Pick<TrainingModeStatus, 'available'>): boolean {
   return data.available === true;
+}
+
+function isNotReadyDevice(v: unknown): v is TrainingDeviceNotReady {
+  const d = v as Partial<TrainingDeviceNotReady> | null;
+  return !!d && typeof d === 'object' && typeof d.id === 'string' && typeof d.reason === 'string';
+}
+
+/** The devices that cannot run it, from the status (`notReady`) or a 409's detail (`devices`). */
+export function notReadyDevices(
+  source: Pick<TrainingModeStatus, 'notReady'> | { devices?: unknown } | Record<string, unknown> | null | undefined,
+): TrainingDeviceNotReady[] {
+  const s = (source ?? {}) as { notReady?: unknown; devices?: unknown };
+  const raw = Array.isArray(s.notReady) ? s.notReady : Array.isArray(s.devices) ? s.devices : [];
+  return raw.filter(isNotReadyDevice);
+}
+
+/**
+ * In a shop in training mode: the devices that sell for real (Windows / the browser, an
+ * older build) apart from those not reported yet (they may well be capable — waiting).
+ */
+export function splitNotReady(devices: TrainingDeviceNotReady[] | null | undefined): {
+  sellingForReal: TrainingDeviceNotReady[];
+  waiting: TrainingDeviceNotReady[];
+} {
+  const list = devices ?? [];
+  return {
+    sellingForReal: list.filter((d) => d.reasonCode !== 'not_reported'),
+    waiting: list.filter((d) => d.reasonCode === 'not_reported'),
+  };
 }
 
 export interface TrainingTillRef {

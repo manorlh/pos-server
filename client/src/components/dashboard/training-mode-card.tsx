@@ -8,8 +8,10 @@
  * quarantine), turns the mode on, opens the "מעבר לעבודה אמיתית" wizard that turns it
  * off, and holds the training report — the practice sales summed, to see they arrive.
  *
- * Turning it on is disabled, with a note, while the server says it is not `available`: no
- * device implements it yet, so a practice sale would be a real tax document (PARITY.md gap 6).
+ * Turning it on is disabled while the server says it is not `available`: a device of the shop
+ * cannot run training mode (Windows, the browser, an older Android build, one that has not
+ * reported yet), so a practice sale on it would be a real tax document. The card lists those
+ * devices and why (`notReady`). While it is on, the same list is a warning: they sell for real.
  *
  * Everyone who sees the shop sees the card; the buttons are for `canManage` (super admin,
  * dealer, or a manager who manages the shop — pos-server app/routers/training_mode.py).
@@ -25,10 +27,17 @@ import {
   enableTrainingMode,
   fetchTrainingMode,
   fetchTrainingReport,
+  type TrainingDeviceNotReady,
   type TrainingModeStatus,
   type TrainingTillRef,
 } from '@/lib/trainingModeApi';
-import { apiErrorInfo, hasQuarantinedData, trainingCanBeEnabled } from '@/lib/trainingMode';
+import {
+  apiErrorInfo,
+  hasQuarantinedData,
+  notReadyDevices,
+  splitNotReady,
+  trainingCanBeEnabled,
+} from '@/lib/trainingMode';
 import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/format';
 import { usePaymentMethodLabel } from '@/components/dashboard/shifts/shift-parts';
 import { TrainingModeDisableWizard } from '@/components/dashboard/training-mode-disable-wizard';
@@ -83,8 +92,12 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
   const [wizardOpen, setWizardOpen] = useState(false);
   const on = data.trainingMode;
   const quarantined = hasQuarantinedData(data.counts);
-  // Not implemented on any device yet: a practice sale would be a real document (server 409).
+  // Every device of the shop runs a build with training mode (or there is none); else the
+  // server refuses the enable — a practice sale on such a device would be a real document.
   const available = trainingCanBeEnabled(data);
+  const notReady = notReadyDevices(data);
+  // In training mode: the devices that sell for real, and those not heard from yet.
+  const { sellingForReal, waiting } = splitNotReady(on ? notReady : []);
 
   const statusLine = on
     ? data.startedAt
@@ -96,13 +109,23 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
       ? data.endedBy?.name
         ? t('endedBy', { at: formatDateTime(data.endedAt), name: data.endedBy.name })
         : t('endedAt', { at: formatDateTime(data.endedAt) })
-      : available
-        ? t('neverEnabled')
-        : t('neverEnabledUnavailable');
+      : t('neverEnabled');
 
   return (
     <>
       <p className={on ? 'text-sm font-medium text-orange-700 dark:text-orange-300' : 'text-sm'}>{statusLine}</p>
+
+      {sellingForReal.length > 0 ? (
+        <NotReadyList
+          tone="danger"
+          title={t('warningTitle', { count: sellingForReal.length })}
+          devices={sellingForReal}
+          hint={t('warningHint')}
+        />
+      ) : null}
+      {waiting.length > 0 ? (
+        <NotReadyList tone="warn" title={t('waitingTitle', { count: waiting.length })} devices={waiting} />
+      ) : null}
 
       {on || quarantined ? (
         <div className="space-y-1">
@@ -135,7 +158,9 @@ function TrainingModeBody({ shopId, shopName, data }: { shopId: string; shopName
       ) : (
         <p className="text-xs text-amber-700 dark:text-amber-400">{t('readOnly')}</p>
       )}
-      {!on && !available ? <p className="text-xs text-amber-700 dark:text-amber-400">{t('notAvailable')}</p> : null}
+      {!on && !available ? (
+        <NotReadyList tone="warn" title={t('notReadyTitle')} devices={notReady} hint={t('notReadyHint')} />
+      ) : null}
 
       {on || quarantined ? <TrainingReportSection shopId={shopId} /> : null}
 
@@ -165,6 +190,9 @@ function EnableDialogBody({ shopId, shopName, onClose }: { shopId: string; shopN
   const qc = useQueryClient();
   // Tills with a real shift open — the server refuses until they close it.
   const [blockedBy, setBlockedBy] = useState<TrainingTillRef[] | null>(null);
+  // Devices that cannot run training mode (a device paired, or put back to an older build,
+  // since the card was loaded) — the server refuses until they are updated or removed.
+  const [notReady, setNotReady] = useState<TrainingDeviceNotReady[] | null>(null);
 
   const enable = useMutation({
     mutationFn: () => enableTrainingMode(shopId),
@@ -178,14 +206,15 @@ function EnableDialogBody({ shopId, shopName, onClose }: { shopId: string; shopN
     },
     onError: (err: unknown) => {
       const { status, code, detail } = apiErrorInfo(err);
-      if (code === 'real_shift_open') {
-        setBlockedBy(Array.isArray(detail?.tills) ? (detail.tills as TrainingTillRef[]) : []);
+      if (code === 'training_devices_not_ready') {
+        setBlockedBy(null);
+        setNotReady(notReadyDevices(detail));
+        void qc.invalidateQueries({ queryKey: ['training-mode', shopId] });
         return;
       }
-      if (code === 'training_not_available') {
-        void qc.invalidateQueries({ queryKey: ['training-mode', shopId] });
-        toast.error(t('notAvailable'));
-        onClose();
+      if (code === 'real_shift_open') {
+        setNotReady(null);
+        setBlockedBy(Array.isArray(detail?.tills) ? (detail.tills as TrainingTillRef[]) : []);
         return;
       }
       toast.error(status === 403 ? t('forbidden') : axiosErrorToToastMessage(err, tc('error')));
@@ -200,6 +229,9 @@ function EnableDialogBody({ shopId, shopName, onClose }: { shopId: string; shopN
       <div className="space-y-2 text-sm">
         <p>{t('body', { shop: shopName })}</p>
         <p className="text-muted-foreground">{t('bodyKeep')}</p>
+        {notReady ? (
+          <NotReadyList tone="danger" title={t('notReady')} devices={notReady} hint={t('notReadyHint')} />
+        ) : null}
         {blockedBy ? (
           <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive">
             <p>{t('realShiftOpen')}</p>
@@ -218,10 +250,46 @@ function EnableDialogBody({ shopId, shopName, onClose }: { shopId: string; shopN
           {tc('cancel')}
         </Button>
         <Button className="bg-orange-500 text-white hover:bg-orange-600" onClick={() => enable.mutate()} disabled={enable.isPending}>
-          {enable.isPending ? t('working') : blockedBy ? t('retry') : t('confirm')}
+          {enable.isPending ? t('working') : blockedBy || notReady ? t('retry') : t('confirm')}
         </Button>
       </DialogFooter>
     </>
+  );
+}
+
+/**
+ * The shop's devices that cannot run training mode, each with the server's reason ("קיוסק
+ * Windows — עוד לא תומך במצב הדרכה", "גרסת קופה ישנה — יש לעדכן"…): why it cannot be turned
+ * on, or — in training mode — a warning that they sell for real.
+ */
+function NotReadyList({
+  tone,
+  title,
+  devices,
+  hint,
+}: {
+  tone: 'danger' | 'warn';
+  title: string;
+  devices: TrainingDeviceNotReady[];
+  hint?: string;
+}) {
+  const t = useTranslations('trainingMode.card');
+  const box =
+    tone === 'danger'
+      ? 'border-destructive/40 bg-destructive/5 text-destructive'
+      : 'border-amber-300 bg-amber-50/70 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300';
+  return (
+    <div role={tone === 'danger' ? 'alert' : undefined} className={`space-y-1 rounded-md border p-3 text-xs ${box}`}>
+      <p className="text-sm font-medium">{title}</p>
+      {devices.length > 0 ? (
+        <ul className="list-inside list-disc space-y-0.5">
+          {devices.map((d) => (
+            <li key={d.id}>{t('notReadyItem', { name: d.name, reason: d.reason })}</li>
+          ))}
+        </ul>
+      ) : null}
+      {hint ? <p className="opacity-90">{hint}</p> : null}
+    </div>
   );
 }
 

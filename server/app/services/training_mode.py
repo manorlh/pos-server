@@ -23,10 +23,28 @@ Everything else — a document without the flag and without the "ה-" number —
 document and takes the real path unchanged, even while the shop is in training mode: a
 till that has not picked up the flag yet still sells for real (the spec's edge case).
 
-**Turning it on** is refused for now (`AVAILABLE`, 409 `training_not_available`): no device
-implements phase 2 yet, so a practice sale would be a real document. Once they do, it is
-refused while a real shift is open on any till of the shop: a till switches only at a shift
-boundary. **Turning it off** (the dashboard's wizard) deletes
+**Which shops may turn it on: the devices decide, per shop.** A device that does not
+implement phase 2 would sell for real in a shop in training mode (a real tax document, a
+real card charge), so turning it on (409 `training_devices_not_ready`, with the devices) is
+refused unless EVERY active device of the shop — till, kiosk, KDS, board, customer display,
+whatever its role — is *training-capable*: an Android device whose last heartbeat said
+`training_mode_v1` in its `capabilities` (pos-android #54; `pos_machines.capabilities`,
+replaced every beat, so a build put back to an older one is not capable any more). Not
+capable: a Windows device and a browser device (no training mode there yet), an Android
+device on an older build, and one that has not sent a heartbeat yet (`devices_not_ready`).
+A shop with no device at all may enter it — the typical new shop, opened in training mode
+from the start. It is also refused while a real shift is open on any till of the shop
+(409 `real_shift_open`): a till switches only at a shift boundary.
+
+**Adding a device to a shop in training mode.** A device of a kind that has no training
+mode (Windows, the browser) is refused when it would land in such a shop — the pairing
+code, its redemption, the QR claim, an assignment or a move (409
+`shop_in_training_device_unsupported`, `check_device_fits`). An Android device is let in:
+it says what it can do on its first heartbeat. One whose heartbeat lacks the capability
+(an older build) is listed on the dashboard's card (`status_out` `notReady`) as a warning:
+it sells for real in a shop in training mode.
+
+**Turning it off** (the dashboard's wizard) deletes
 the quarantine and the shop's open table orders (and the orders paid with training
 documents), optionally removes the demo menu (app/services/demo_menu.py), and logs who,
 when and what was deleted.
@@ -74,16 +92,16 @@ REAL = "real"
 QUARANTINE = "quarantine"
 DROP = "drop"
 
-#: Whether a shop may be put in training mode at all. **Off until the devices implement it**
-#: (docs/SPEC_TRAINING_MODE.md phase 2): no Android till, kiosk, Windows kiosk or browser
-#: flags a training document or uses the "ה-" series today, so a "practice" sale in a shop in
-#: training mode would be a real tax document and a real card charge (PARITY.md gap 6).
-#: Only turning it ON is blocked: a shop already in it can still leave, and the quarantine
-#: still takes whatever a device flags.
-AVAILABLE = False
+#: What a device's heartbeat says (`capabilities`) when its build implements training mode —
+#: the "ה-" series, the simulated card, its own training Z, `training: true` on everything it
+#: sends (docs/SPEC_TRAINING_MODE.md phase 2; pos-android #54). The Android app sends it in
+#: every role (till, kiosk, KDS, board, customer display); Windows and the browser do not.
+CAPABILITY = "training_mode_v1"
 
 #: The 409 / 422 codes (`detail.code`).
-NOT_AVAILABLE = "training_not_available"
+DEVICES_NOT_READY = "training_devices_not_ready"
+#: A device of a kind with no training mode, into a shop in training mode (`detail`, flat).
+DEVICE_UNSUPPORTED = "shop_in_training_device_unsupported"
 REAL_SHIFT_OPEN = "real_shift_open"
 NOT_IN_TRAINING = "not_in_training"
 NAME_MISMATCH = "name_mismatch"
@@ -92,6 +110,11 @@ BLOCKERS = "blockers"
 #: Why a till holds the shop back from leaving training mode (`blockers[].code`).
 UNSYNCED_TILL = "unsynced_till"
 OPEN_TABLES = "open_tables"
+
+#: Why a device is not training-capable (`notReady[].reasonCode` / `devices[].reasonCode`).
+REASON_PLATFORM = "platform_unsupported"  # Windows or the browser: no training mode there yet
+REASON_OLD_BUILD = "old_build"  # Android, its last heartbeat without the capability
+REASON_NOT_REPORTED = "not_reported"  # Android, no heartbeat yet
 
 #: The settings notify reason when the flag moves.
 NOTIFY_REASON = "training_mode"
@@ -471,6 +494,157 @@ def receive_documents(db: Session, machine: POSMachine, documents: Iterable[Any]
     return results
 
 
+# ── Which devices can run it ──────────────────────────────────────────────────
+
+#: A device's role as the dashboard names it (app/services/display_devices.py `ROLES`).
+_KIND_NAMES = {
+    "till": "קופה",
+    "kiosk": "קיוסק",
+    "kds": "מסך מטבח (KDS)",
+    "order_status_board": "מסך מוכן / לא מוכן",
+    "customer_display": "מסך לקוח",
+}
+
+
+def _platform_word(platform: Optional[str]) -> str:
+    from app.services import display_devices as DD
+
+    return platform if platform in DD.PLATFORMS else DD.PLATFORM_ANDROID
+
+
+def _device_label(kind: Optional[str], platform: str) -> str:
+    """The device as the reasons name it: קיוסק Windows, קופת Windows, מסך מטבח (KDS) בדפדפן…"""
+    from app.services import display_devices as DD
+
+    name = _KIND_NAMES.get(kind or "till", "מכשיר")
+    if platform == DD.PLATFORM_WINDOWS:
+        return {"till": "קופת Windows", "kiosk": "קיוסק Windows"}.get(kind or "till", f"{name} ב-Windows")
+    if platform == DD.PLATFORM_WEB:
+        return f"{name} בדפדפן"
+    return name
+
+
+def _platform_reason(kind: Optional[str], platform: str) -> str:
+    verb = "תומכת" if (kind or "till") == "till" else "תומך"
+    return f"{_device_label(kind, platform)} — עוד לא {verb} במצב הדרכה"
+
+
+def platform_supported(platform: Optional[str]) -> bool:
+    """Android (or not said: Android). Windows and the browser have no training mode yet."""
+    from app.services import display_devices as DD
+
+    return _platform_word(platform) == DD.PLATFORM_ANDROID
+
+
+def capable(machine: POSMachine) -> bool:
+    """An Android device whose last heartbeat said `training_mode_v1`."""
+    from app.services import display_devices as DD
+
+    caps = getattr(machine, "capabilities", None) or []
+    return platform_supported(DD.platform_of(machine)) and isinstance(caps, list) and CAPABILITY in caps
+
+
+def not_ready_reason(machine: POSMachine, kind: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """`(reasonCode, Hebrew reason)` for a device that cannot run training mode; None when it can."""
+    from app.services import display_devices as DD
+
+    platform = DD.platform_of(machine)
+    if not platform_supported(platform):
+        return REASON_PLATFORM, _platform_reason(kind, platform)
+    if capable(machine):
+        return None
+    if getattr(machine, "last_heartbeat_at", None) is None:
+        return REASON_NOT_REPORTED, "המכשיר לא דיווח עדיין"
+    which = {"till": "קופה", "kiosk": "קיוסק"}.get(kind or "till", "אפליקציה")
+    return REASON_OLD_BUILD, f"גרסת {which} ישנה — יש לעדכן"
+
+
+def devices_not_ready(db: Session, shop: Shop) -> List[Dict[str, Any]]:
+    """
+    The shop's active devices that cannot run training mode, with why (`not_ready_reason`).
+    Empty: it may be turned on (as far as the devices go) — a shop with no device too.
+    """
+    from app.services import device_profile as DP
+    from app.services import display_devices as DD
+
+    machines = _shop_tills(db, shop)  # every active device of the shop, whatever its role
+    if not machines:
+        return []
+    kiosks = DP.prime_kiosks(db, machines)
+    out: List[Dict[str, Any]] = []
+    for machine in machines:
+        kind = DP.role_of(kiosks.get(machine.id), machine)
+        why = not_ready_reason(machine, kind)
+        if why is None:
+            continue
+        out.append({
+            "id": str(machine.id),
+            "machineId": str(machine.id),
+            "name": machine.name,
+            "posNumber": machine.pos_number,
+            "kind": kind,
+            "platform": DD.platform_of(machine),
+            "appVersion": getattr(machine, "app_version", None),
+            "lastHeartbeatAt": _iso(getattr(machine, "last_heartbeat_at", None)),
+            "reasonCode": why[0],
+            "reason": why[1],
+        })
+    return out
+
+
+class DeviceUnsupported(ValueError):
+    """
+    A device of a kind with no training mode (Windows, the browser) going into a shop in
+    training mode: it would sell for real there. Answered 409 with `body`
+    (`{"detail": "shop_in_training_device_unsupported", "message": <Hebrew>, …}`, the shape
+    of the pairing refusals beside it).
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+    def __init__(self, shop: Shop, platform: str, kind: Optional[str]):
+        super().__init__(DEVICE_UNSUPPORTED)
+        label = _device_label(kind, platform)
+        verb = "תומכת" if (kind or "till") == "till" else "תומך"
+        self.body = {
+            "detail": DEVICE_UNSUPPORTED,
+            "message": (
+                f"הסניף {shop.name} במצב הדרכה, ו{label} עוד לא {verb} במצב הדרכה — מכירה במכשיר "
+                "כזה הייתה נרשמת כמסמך חשבונאי אמיתי. אפשר להוסיף לסניף הזה עכשיו רק מכשיר Android, "
+                "או להעביר את הסניף לעבודה אמיתית (כרטיס \"מצב הדרכה\" בעמוד הסניף) ואז להוסיף."
+            ),
+            "shopId": str(shop.id),
+            "platform": platform,
+            "kind": kind or "till",
+        }
+
+
+def check_device_fits(
+    shop: Optional[Shop],
+    platform: Optional[str],
+    kind: Optional[str] = None,
+    *,
+    db: Optional[Session] = None,
+    machine: Optional[POSMachine] = None,
+) -> None:
+    """
+    Raise `DeviceUnsupported` when a device of this platform would land in a shop in
+    training mode it cannot run. An Android device always fits: it says on its first
+    heartbeat whether its build can (an older one is a warning on the card, `status_out`).
+    `kind` (the device's role, for the message) is looked up from `machine` only then.
+    """
+    if platform_supported(platform) or not is_on(shop):
+        return
+    if kind is None and machine is not None:
+        from app.services import device_profile as DP
+
+        try:
+            kind = DP.current_role(db, machine)
+        except Exception:  # noqa: BLE001 - the role only words the message
+            kind = None
+    raise DeviceUnsupported(shop, _platform_word(platform), kind)
+
+
 # ── The dashboard's card ──────────────────────────────────────────────────────
 
 
@@ -524,12 +698,17 @@ def status_out(db: Session, shop: Shop, user: User) -> Dict[str, Any]:
         .limit(20)
         .all()
     )
+    not_ready = devices_not_ready(db, shop)
     return {
         "shopId": str(shop.id),
         "shopName": shop.name,
         "trainingMode": is_on(shop),
-        #: False: it cannot be turned on yet (`AVAILABLE`); the dashboard shows why.
-        "available": AVAILABLE,
+        #: Whether it may be turned on, as far as the devices go: every active device of the shop
+        #: is training-capable (or there is none). A real shift open is answered at the enable.
+        "available": not not_ready,
+        #: The devices that cannot run it, and why: off — what holds the enable back; on — a
+        #: warning, they sell for real (an older Android build, one not reported yet).
+        "notReady": not_ready,
         "startedAt": _iso(shop.training_started_at),
         "startedBy": _user_ref(db, shop.training_started_by),
         "endedAt": _iso(shop.training_ended_at),
@@ -541,6 +720,7 @@ def status_out(db: Session, shop: Shop, user: User) -> Dict[str, Any]:
 
 
 def _shop_tills(db: Session, shop: Shop) -> List[POSMachine]:
+    """The shop's active devices — tills, kiosks and screens alike — by register number."""
     from app.services.main_till import till_order
 
     tills = (
@@ -598,17 +778,23 @@ def _flag_moved(shop: Shop, now: datetime) -> None:
 
 def start(db: Session, shop: Shop, user: Optional[User], *, check_shifts: bool = True) -> None:
     """
-    Turn it on. 409 `training_not_available` while the devices do not implement it
-    (`AVAILABLE`); 409 `real_shift_open` (with the tills) while a real shift is open.
+    Turn it on. 409 `training_devices_not_ready` (with the devices, `devices_not_ready`)
+    unless every active device of the shop is training-capable — none at all is fine (a new
+    shop); 409 `real_shift_open` (with the tills) while a real shift is open.
     """
     if is_on(shop):
         return
-    if not AVAILABLE:
+    not_ready = devices_not_ready(db, shop)
+    if not_ready:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "code": NOT_AVAILABLE,
-                "message": "מצב הדרכה עדיין לא זמין: הקופות והקיוסקים לא תומכים בו, ומכירה בו הייתה נרשמת כמסמך אמיתי.",
+                "code": DEVICES_NOT_READY,
+                "message": (
+                    "אי אפשר להפעיל מצב הדרכה: יש בסניף מכשירים שלא תומכים בו, ומכירה בהם הייתה נרשמת "
+                    "כמסמך חשבונאי אמיתי. עדכנו אותם או הסירו אותם מהסניף, ונסו שוב."
+                ),
+                "devices": not_ready,
             },
         )
     if check_shifts:

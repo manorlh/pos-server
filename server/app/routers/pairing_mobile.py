@@ -2,6 +2,7 @@ import uuid as uuid_mod
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -29,6 +30,7 @@ from app.schemas.pairing_mobile import (
     PairingSessionSummary,
 )
 from app.services import access
+from app.services import training_mode as TM
 from app.services.pairing_mobile import (
     PairingMobileError,
     build_mobile_url,
@@ -176,6 +178,10 @@ def mobile_claim(
         )
     except PairingMobileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except TM.DeviceUnsupported as refused:
+        # A Windows / browser device into a shop in training mode ("מצב הדרכה"): nothing created.
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
     return MobileClaimResponse(
         machine_id=machine.id,
         machine_code=machine.machine_code,

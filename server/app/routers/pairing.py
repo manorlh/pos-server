@@ -18,6 +18,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
 from app.services import access, device_profile, display_devices, shop_active
+from app.services import training_mode as TM
 from app.services import work_config as WC
 from app.services.pairing import (
     AdoptionRefused,
@@ -90,6 +91,14 @@ def generate_pairing_code(
     web_refused = display_devices.web_platform_refusal(body.platform, device_role)
     if web_refused is not None:
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=web_refused)
+    # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): Windows and the browser have no training mode — no
+    # code for one into a shop in it (409 `shop_in_training_device_unsupported`), said while the
+    # dialog is open. An Android device is let in (its first heartbeat says what its build can do).
+    if shop_id is not None and not TM.platform_supported(body.platform):
+        try:
+            TM.check_device_fits(db.get(Shop, shop_id), body.platform, device_role)
+        except TM.DeviceUnsupported as refused:
+            return JSONResponse(status_code=refused.status_code, content=refused.body)
     kiosk_options, kds_options = display_devices.pairing_options(device_role, options)
     # "תצורת עבודה" (docs/SPEC_DEVICE_WORK_CONFIG.md): checked now, as for a new device of that
     # role in that shop — the same refusals the device page answers, while the dialog is open.
@@ -150,6 +159,11 @@ def validate_pairing(
         # and the code stays unused (docs/SPEC_DEVICE_ROLE_MODEL.md §2.3).
         db.rollback()
         return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=exc.body)
+    except TM.DeviceUnsupported as refused:
+        # A Windows / browser device into a shop in training mode ("מצב הדרכה"): nothing was
+        # created and the code stays unused.
+        db.rollback()
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
 
     if not machine:
         raise HTTPException(
@@ -223,6 +237,11 @@ def assign_machine(
     ensure_same_tenant(machine_row.tenant_id, active_tenant_id)
     if current_user.role.value != "super_admin" and machine_row.distributor_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    # "מצב הדרכה": a Windows / browser device never into a shop in training mode (409).
+    try:
+        TM.check_device_fits(shop, display_devices.platform_of(machine_row), db=db, machine=machine_row)
+    except TM.DeviceUnsupported as refused:
+        return JSONResponse(status_code=refused.status_code, content=refused.body)
 
     machine = assign_machine_to_shop(db, machine_uuid, sid)
 
