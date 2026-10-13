@@ -580,6 +580,10 @@ class SettingsSyncResponse(BaseModel):
     #: "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): the shop's flag, on every response,
     #: "unchanged" included (also `settings.trainingMode` on a full / delta pull).
     training_mode: bool = Field(False, alias="trainingMode")
+    #: "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): false — the shop was turned off
+    #: by the super admin and the device locks. On every response, "unchanged" included (also
+    #: `settings.shopActive` on a full / delta pull); true for a device in no shop.
+    shop_active: bool = Field(True, alias="shopActive")
     #: Where each terminal-config key (`clearingServer`, `expectedTerminalNumber`,
     #: `forceTerminalNumber`) comes from — "machine", "area", "shop", "company", "tenant" —
     #: on a full / delta pull. A kiosk or a till on an external pinpad writes its terminal only

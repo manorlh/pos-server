@@ -619,11 +619,10 @@ class TestBranchCodes:
             fn(*args, **kwargs)
         return e.value
 
-    def test_a_new_shop_needs_a_code(self, w, shops):
-        e = self._refused(self._create, w, shops)
-        assert e.status_code == 400 and "קוד סניף הוא שדה חובה" in e.detail
-        e = self._refused(self._create, w, shops, branchId="  ")
-        assert e.status_code == 400
+    def test_a_new_shop_always_gets_a_code(self, w, shops):
+        # None sent: the company's next one (P:/specs/shop-code-and-inactive.md §2), never a 400.
+        assert self._create(w, shops).branch_id == "1"
+        assert self._create(w, shops, branchId="  ").branch_id == "2"
 
     @pytest.mark.parametrize("bad", ["A1", "12345678", "1-2", "١"])
     def test_digits_one_to_seven(self, w, shops, bad):

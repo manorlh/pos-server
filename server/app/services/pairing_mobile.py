@@ -233,6 +233,11 @@ def claim_device_pairing(
         raise PairingMobileError("Company or shop not found")
     if company.tenant_id != session.tenant_id:
         raise PairingMobileError("Access denied")
+    # "סניף לא פעיל" (app/services/shop_active.py): 409 `shop_inactive` before the machine is
+    # made; the device keeps waiting, and may be claimed into another shop.
+    from app.services import shop_active
+
+    shop_active.refuse_pairing(shop)
 
     resolved_machine_name = machine_name or row.machine_name
     pos_machine = create_pos_machine(

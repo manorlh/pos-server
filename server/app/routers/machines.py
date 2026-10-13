@@ -17,6 +17,7 @@ from app.services import device_management
 from app.services import document_prefix
 from app.services import lan_server
 from app.services import support_z, till_reset
+from app.services import shop_active
 from app.database import get_db
 from app.schemas.pos_machine import POSMachineUpdate, POSMachineResponse, MachineHeartbeatBody
 from app.schemas.device_profile import DeviceProfileIn
@@ -617,6 +618,10 @@ def get_my_machine(
             if shop is not None and getattr(shop, "training_mode", False) and shop.training_started_at
             else None
         ),
+        # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): false locks the device —
+        # till, kiosk, KDS, customer display — once its current sale ends; only the super admin
+        # turning the shop back on releases it, never a manager code. True in no shop.
+        "shopActive": shop_active.is_active(shop),
         **machine_realtime_refresh_info(machine=machine),
     }
 
@@ -882,6 +887,9 @@ def post_my_heartbeat(
         **_till_z_run(db, machine),
         # "מצב הדרכה", every beat too: the till switches at its next shift boundary.
         "trainingMode": bool(machine.shop is not None and getattr(machine.shop, "training_mode", False)),
+        # "סניף לא פעיל", every beat too: the device locks (or is released) on the beat after
+        # the change, should it have missed the realtime signal.
+        "shopActive": shop_active.is_active(machine.shop),
     }
     # Support produced this till's Z from the cloud (offline till Z §4.6): the till makes
     # nothing for that period and keeps its data of it read-only.
@@ -1015,6 +1023,9 @@ def update_machine(
             # another company's included, and draw that shop's register number.
             if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.DISTRIBUTOR):
                 _check_shop_access(current_user, shop, db)
+            # "סניף לא פעיל": no device moves into an inactive shop (409 `shop_inactive`).
+            if leaving:
+                shop_active.refuse_pairing(shop)
             if not shop_belongs_to_company(db, sid, shop.company_id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -1681,6 +1692,9 @@ def create_replacement_pairing_code(
     if not machine:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Machine not found")
     ensure_same_tenant(machine.tenant_id, active_tenant_id)
+    # "סניף לא פעיל": a replacement unit is a new device paired into the till's shop — refused
+    # while the shop is inactive (409 `shop_inactive`), here and when a code is redeemed.
+    shop_active.refuse_pairing(machine.shop)
 
     # Checked here as well as at redemption so the operator is told now, while they are
     # looking at the screen, rather than when the engineer is standing at the counter

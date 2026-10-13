@@ -76,6 +76,7 @@ from app.services.refund_settings import resolve_refund_settings
 from app.services.sell_screen import resolve_sell_screen
 from app.services import general_item
 from app.services import item_ticket
+from app.services import shop_active
 from app.services.areas import as_utc, get_area, machine_area_for_sync
 from app.schemas.transaction import (
     TransactionsBatchEnvelope,
@@ -2412,6 +2413,7 @@ def get_settings_sync(
             business_info=None,
             area=area,
             training_mode=bool(shop.training_mode),
+            shop_active=shop_active.is_active(shop),
         )
 
     effective = {k: all_settings[k] for k in MANAGED_SETTING_KEYS if k in all_settings}
@@ -2512,6 +2514,9 @@ def get_settings_sync(
             effective[key] = value
     # "מצב הדרכה": the shop's flag, never a layer's setting (docs/SPEC_TRAINING_MODE.md).
     effective["trainingMode"] = bool(shop.training_mode)
+    # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): the shop's flag likewise — false
+    # locks the device; only the super admin turning the shop back on releases it.
+    effective["shopActive"] = shop_active.is_active(shop)
     business_info = build_business_info(company, shop, all_settings)
     # "סוג עוסק" (docs/SPEC_BUSINESS_TYPE.md): the company's, on every full / delta pull,
     # beside the identity. The till picks its document type and VAT by it.
@@ -2538,6 +2543,7 @@ def get_settings_sync(
         business_info=business_info,
         area=area,
         training_mode=bool(shop.training_mode),
+        shop_active=shop_active.is_active(shop),
         terminal_config_sources=terminal_sources,
     )
 

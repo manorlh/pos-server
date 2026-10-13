@@ -180,6 +180,10 @@ def validate_pairing_code(
     from app.services import display_devices
 
     device_platform = display_devices.check_platform(pairing_code, device_info)
+    # "סניף לא פעיל" (P:/specs/shop-code-and-inactive.md §3): no device is paired into an inactive
+    # shop — the code's shop, or the shop of the till a replacement takes over. 409 `shop_inactive`
+    # before anything is created; the code stays unused for when the shop is back on.
+    refuse_inactive_target(db, pairing_code)
 
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
@@ -267,6 +271,23 @@ def validate_pairing_code(
     work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def refuse_inactive_target(db: Session, pairing_code: PairingCode) -> None:
+    """
+    409 `shop_inactive` (app/services/shop_active.py) when [pairing_code] would put a device in
+    an inactive shop: the shop it was made for, or — a replacement code — its till's shop.
+    """
+    from app.services import shop_active
+
+    shop_id = getattr(pairing_code, "shop_id", None)
+    target_id = getattr(pairing_code, "target_machine_id", None)
+    if shop_id is None and target_id is not None:
+        target = db.query(POSMachine).filter(POSMachine.id == target_id).first()
+        shop_id = getattr(target, "shop_id", None)
+    if shop_id is None:
+        return
+    shop_active.refuse_pairing(db.query(Shop).filter(Shop.id == shop_id).first())
 
 
 def _serial_source(device_info: Optional[dict]) -> Optional[str]:
@@ -358,6 +379,12 @@ def assign_machine_to_shop(
     shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if not shop:
         return None
+    # "סניף לא פעיל": never into an inactive shop (409 `shop_inactive`) — whichever flow got here.
+    # A machine already in it is not moved, so re-assigning it there changes nothing.
+    if str(machine.shop_id) != str(shop.id):
+        from app.services import shop_active
+
+        shop_active.refuse_pairing(shop)
 
     # Also settles the register number: the shop's next one, or the one this machine
     # already holds in this shop. Every pairing flow that lands a till in a shop —

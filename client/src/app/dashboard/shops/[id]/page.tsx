@@ -47,6 +47,7 @@ import { MainTillCard } from '@/components/dashboard/main-till-card';
 import { WorkTypesCard } from '@/components/dashboard/work-types-card';
 import { ShopWorkProfileCard } from '@/components/dashboard/shop-work-profile';
 import { TrainingBadge, TrainingStripe } from '@/components/dashboard/training-badge';
+import { ShopInactiveBadge, ShopInactiveStripe } from '@/components/dashboard/shop-active';
 import { TrainingModeCard } from '@/components/dashboard/training-mode-card';
 import { DemoMenuCard } from '@/components/dashboard/demo-menu-card';
 import { AreaName } from '@/components/dashboard/areas/area-filter';
@@ -164,6 +165,8 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="space-y-6">
       <TrainingStripe shop={shop} />
+      {/* "סניף לא פעיל": its devices are locked; everything below — its reports too — stays. */}
+      <ShopInactiveStripe shop={shop} />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -171,9 +174,7 @@ export default function ShopDetailPage({ params }: { params: Promise<{ id: strin
             <NumberPill n={shop.shopNumber} className="text-sm" />
             <h1 className="text-2xl font-bold">{shop.name}</h1>
             <TrainingBadge shop={shop} />
-            <Badge variant={shop.isActive ? 'outline' : 'destructive'}>
-              {shop.isActive ? tc('active') : tc('inactive')}
-            </Badge>
+            {shop.isActive ? <Badge variant="outline">{tc('active')}</Badge> : <ShopInactiveBadge shop={shop} />}
           </div>
           {company ? (
             <p className="text-sm text-muted-foreground">

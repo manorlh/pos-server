@@ -294,6 +294,8 @@
     "src/lib/prepaidBatchDuplicate.test.ts",
     "src/lib/catalogAdmin.ts",
     "src/lib/catalogAdmin.test.ts",
-    "src/lib/voucherWorkSettings.test.ts"
+    "src/lib/voucherWorkSettings.test.ts",
+    "src/lib/shopActive.ts",
+    "src/lib/shopActive.test.ts"
   ]
 }

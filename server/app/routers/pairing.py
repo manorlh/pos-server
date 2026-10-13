@@ -17,7 +17,7 @@ from app.models.shop import Shop
 from app.models.company import Company
 from app.models.user import User
 from app.middleware.auth import get_current_distributor, get_active_tenant_id, ensure_same_tenant
-from app.services import access, device_profile, display_devices
+from app.services import access, device_profile, display_devices, shop_active
 from app.services import work_config as WC
 from app.services.pairing import (
     AdoptionRefused,
@@ -71,6 +71,10 @@ def generate_pairing_code(
         if not company:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
         ensure_same_tenant(company.tenant_id, active_tenant_id)
+    if shop_id is not None:
+        # "סניף לא פעיל": no code for an inactive shop (409 `shop_inactive`, Hebrew) — said
+        # while the dialog is open; redeeming one made before is refused too.
+        shop_active.refuse_pairing(db.query(Shop).filter(Shop.id == shop_id).first())
 
     # "סוג מכשיר (תפקיד)" (docs/SPEC_DEVICE_ROLE_MODEL.md): a kiosk needs a shop and valid
     # controlling tills; a KDS / board a shop and its screen — said now, while the dialog is

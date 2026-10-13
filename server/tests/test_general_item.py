@@ -81,6 +81,8 @@ _TABLES = (
     "transaction_items", "users",
     "shop_areas", "area_product_overrides", "category_availability_overrides",
     "org_number_sequences",
+    # Who opened a shop inactive, and why (app/services/shop_active.py).
+    "shop_active_log",
     # The menu block rides the catalog pull (docs/SPEC_MENU_MODIFIERS.md §10.1).
     "modifier_groups", "modifier_options", "modifier_links", "prep_note_presets", "meal_slots",
     "meal_slot_options", "upsell_rules", "menu_courses", "menu_sync_state",
@@ -149,9 +151,11 @@ def world(monkeypatch):
     branch_codes = itertools.count(1)
 
     def shop(name, company, active=True):
-        # Through the endpoint, so the product-rule hook runs as it does in production.
+        # Through the endpoint, so the product-rule hook runs as it does in production. Opening
+        # one inactive is the super admin's, with a reason (P:/specs/shop-code-and-inactive.md §3).
         return shops_router.create_shop(
-            ShopCreate(name=name, companyId=company.id, isActive=active, branchId=str(next(branch_codes))),
+            ShopCreate(name=name, companyId=company.id, isActive=active, branchId=str(next(branch_codes)),
+                       activeReason=None if active else "נפתח כלא פעיל"),
             current_user=admin, active_tenant_id=tid, db=db,
         )
 
@@ -353,7 +357,7 @@ class TestReach:
     def test_a_reactivated_shop_gets_it(self, world):
         w = world
         shops_router.update_shop(
-            str(w.h_off.id), ShopUpdate(isActive=True),
+            str(w.h_off.id), ShopUpdate(isActive=True, activeReason="חזרה לפעילות"),
             current_user=w.admin, active_tenant_id=w.tid, db=w.db,
         )
         assert str(w.h_off.id) in _rows(w, _general(w, w.H))
