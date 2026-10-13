@@ -47,9 +47,10 @@ who typed their code on the device): active, of the device's shop, with "חסי�
 (ITEM_BLOCK) allowed by the cloud's roster — 403 `item_block_requires_manager` otherwise. A device
 writes inside its shop only: the shop, its own point of sale (or the controlled kiosk's), itself, a
 device of that point of sale, a kiosk it controls, an event of the shop. A kiosk — and a till acting
-for a kiosk it controls — blocks for kiosks only. A till acting for itself also within its role
-("חסימות מהקופה"), and beyond its local caps only with an approver holding ITEM_BLOCK_WIDE — 403
-`block_scope_not_allowed` otherwise, for a block and for a release alike.
+for a kiosk it controls — blocks for kiosks only. A till acting for itself whose build says
+`item_block_control_v1` on its heartbeat also within its role ("חסימות מהקופה"), and beyond its local
+caps only with an approver holding ITEM_BLOCK_WIDE — 403 `block_scope_not_allowed` otherwise, for a
+block and for a release alike; an older till keeps today's rules.
 """
 from __future__ import annotations
 
@@ -1260,10 +1261,16 @@ def _device_rows(
 
 
 def _till_rules(db: Session, machine: POSMachine, origin: str):
-    """The till's block rules when it acts for itself; None for a kiosk or a controlling till's kiosk panel."""
+    """
+    The till's block rules when it acts for itself and its build knows them (`item_block_control_v1`
+    on its heartbeat); None — today's rules — for an older till, a kiosk or a controlling till's
+    kiosk panel.
+    """
     from app.services import item_block_control as control
 
-    return control.rules_for_machine(db, machine) if origin == "till" else None
+    if origin != "till" or not control.capable(machine):
+        return None
+    return control.rules_for_machine(db, machine)
 
 
 @till_router.get("/{machine_id}/item-blocks")

@@ -206,6 +206,8 @@ def ctl(dev):
     dev.narrow = user("narrow", {"ITEM_BLOCK": "allow", "ITEM_BLOCK_WIDE": "deny"})
     dev.asks = user("asks", {"ITEM_BLOCK": "allow", "ITEM_BLOCK_WIDE": "approval"})
     dev.waiter = user("waiter", {"ITEM_BLOCK": "deny", "ITEM_BLOCK_WIDE": "deny"})
+    # h1's build knows the rules (its heartbeat said so); an older till: TestAnOlderTill.
+    dev.h1.capabilities = ["remote_close_v2", C.CAPABILITY]
     TP.ensure_builtin_parameters(dev.db)
     dev.db.commit()
     return dev
@@ -334,6 +336,52 @@ class TestTillWrites:
         assert panel["block"]["origin"] == "controller"
         # Released from the kiosk panel — named or not — though h1 is a regular till with the tills' channel only.
         assert _clear(ctl, ctl.h1, panel["block"]["id"], ctl.mgr)["inForce"] is False
+
+
+class TestAnOlderTill:
+    """A till whose heartbeat does not say `item_block_control_v1` keeps today's rules — the cloud may go first."""
+
+    @pytest.fixture
+    def old(self, ctl):
+        _role(ctl, ctl.h1, role="none", localRelease=False)  # would refuse everything if it applied
+        return ctl
+
+    @pytest.mark.parametrize("capabilities", [None, [], ["remote_close_v2"], "item_block_control_v1"])
+    def test_it_blocks_the_whole_shop_on_every_channel_as_before(self, old, capabilities):
+        old.h1.capabilities = capabilities
+        old.db.commit()
+        out = _dev_block(old, old.h1, old.mgr)
+        assert (out["block"]["level"], out["block"]["channels"]) == ("area", ALL), "all four channels by default"
+        out = _dev_block(old, old.h1, old.mgr, level="shop", channels=ALL)
+        assert out["block"]["level"] == "shop" and out["block"]["removable"] is True
+        # The old check still stands: ITEM_BLOCK, inside its shop.
+        assert _refusal(_dev_block(old, old.h1, old.cashier)) == (403, "item_block_requires_manager")
+
+    def test_it_releases_as_before_and_its_list_is_todays(self, old):
+        old.h1.capabilities = None
+        old.db.commit()
+        shop = _block(old, "shop", old.h_shop.id)
+        company = _block(old, "company", old.H.id)
+        listed = R.device_blocks(str(old.h1.id), kiosk_id=None, machine=old.h1, db=old.db, pos_user_id=str(old.narrow.id))
+        assert "itemBlocks" not in listed and "allowed" not in listed
+        rows = {r["id"]: r for r in listed["blocks"]}
+        assert (rows[str(shop.id)]["removable"], rows[str(company.id)]["removable"]) == (True, False)
+        assert _clear(old, old.h1, shop.id, old.narrow)["inForce"] is False
+        assert _refusal(_clear(old, old.h1, company.id, old.mgr)) == (403, "not_from_here")
+
+    def test_the_same_till_is_enforced_once_it_says_it(self, old):
+        old.h1.capabilities = [C.CAPABILITY]
+        old.db.commit()
+        assert _refusal(_dev_block(old, old.h1, old.mgr)) == (403, "block_scope_not_allowed")
+        assert "itemBlocks" in R.device_blocks(str(old.h1.id), kiosk_id=None, machine=old.h1, db=old.db)
+
+    def test_it_still_gets_its_role_in_the_parameters(self, old):
+        from app.routers.sync import get_till_parameters_sync
+
+        old.h1.capabilities = None
+        old.db.commit()
+        out = get_till_parameters_sync(str(old.h1.id), machine=old.h1, request=None, db=old.db)
+        assert out.parameters["itemBlocks"]["role"] == "none", "harmless to an older APK; ready for the update"
 
 
 class TestTillReleases:

@@ -90,6 +90,13 @@ DENY = "deny"
 LEVEL_WORDS = {"machine": "הקופה הזו", "area": "נקודת המכירה", "shop": "הסניף"}
 CHANNEL_WORDS = {"pos": "קופות", "kiosk": "קיוסק", "online": "הזמנות אונליין", "menu": "תפריט דיגיטלי"}
 
+#: What a till's build says on its heartbeat (`pos_machines.capabilities`, replaced every beat) when
+#: it knows these rules: its sheet offers what its role allows and explains a refusal. A till that
+#: does not say it — an older APK, or one not heard from since its update — keeps the rules it had
+#: (any level of its point of sale and the shop, all four channels; no `block_scope_not_allowed`),
+#: so the cloud may go first.
+CAPABILITY = "item_block_control_v1"
+
 #: The till's explanation instead of a "שחרר" it may not offer (§1).
 HINT_CLOUD = "שחרור מהענן"
 HINT_MANAGING = "שחרור מהקופה המנהלת / מהענן"
@@ -316,6 +323,12 @@ def rules_for_machine(
     else:
         main = is_main_till(db, machine, parameters)
     return rules_of(values, sources, is_main_till=main)
+
+
+def capable(machine: Any) -> bool:
+    """Whether the till's last heartbeat said `item_block_control_v1` (its role is then enforced)."""
+    caps = getattr(machine, "capabilities", None)
+    return isinstance(caps, list) and CAPABILITY in caps
 
 
 def till_out(db: Session, machine: POSMachine, parameters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
