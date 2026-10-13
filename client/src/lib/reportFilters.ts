@@ -102,6 +102,8 @@ const KEY_FIELDS: Record<ReportFilterKey, (keyof ReportFilterValues)[]> = {
 
 const PLAIN_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_TEXT = 120;
+/** A report's own option can hold a list of ids (`shops=a,b,c`). */
+const MAX_EXTRA = 2000;
 
 export function defaultReportFilters(spec: ReportFilterSpec, today: string): ReportFilterValues {
   return {
@@ -123,8 +125,8 @@ function offers(spec: ReportFilterSpec, key: ReportFilterKey): boolean {
   return spec.filters.includes(key);
 }
 
-function text(raw: string | null): string {
-  return (raw ?? '').trim().slice(0, MAX_TEXT);
+function text(raw: string | null, max = MAX_TEXT): string {
+  return (raw ?? '').trim().slice(0, max);
 }
 
 function hour(raw: string | null, min: number, max: number): number | null {
@@ -176,7 +178,7 @@ export function parseReportFilters(
 
   const extras: Record<string, string> = {};
   for (const [key, fallback] of Object.entries(spec.extras ?? {})) {
-    extras[key] = text(params.get(key)) || fallback;
+    extras[key] = text(params.get(key), MAX_EXTRA) || fallback;
   }
   return { values, extras, applied };
 }
@@ -284,4 +286,20 @@ function normalizeSearch(s: string): string {
     .replace(/[״"׳'`]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * The scope as the report endpoints take it: the shop and the till as they are, the company
+ * (§4.1: it and its subsidiaries) only when nothing narrower is chosen — and only for an
+ * endpoint that takes it.
+ */
+export function scopeApiParams(
+  scope: { companyId?: string | null; shopId?: string | null; machineId?: string | null },
+  withCompany = true,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (scope.shopId) out.shopId = scope.shopId;
+  if (scope.machineId) out.machineId = scope.machineId;
+  if (withCompany && !scope.shopId && !scope.machineId && scope.companyId) out.companyId = scope.companyId;
+  return out;
 }

@@ -5,61 +5,57 @@
  *
  * A weekday × hour heat map of net takings in the tenant's timezone, for planning shifts,
  * and the same per hour summed over the week.
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §5): days, area and cashier in the URL
+ * (the endpoint takes both, §4.1 — no hour band: the hours are the report). Tips are their
+ * own column when the server sends them (§4.2), never inside `net`.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency, formatHour, formatQuantity } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
+import { formatCurrency, formatHour } from '@/lib/format';
+import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
 import { fetchHourlyReport, type HourlyReport } from '@/lib/salesReportsApi';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { RangeFilter, type DayRange } from '@/components/dashboard/range-filter';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import {
-  ReportErrorState,
-  ReportWindowSummary,
-} from '@/components/dashboard/report-window-summary';
-import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
 const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
 
+const SPEC: ReportFilterSpec = {
+  filters: ['area', 'cashier'],
+  defaultDaysBack: 27,
+};
+
+type HourRow = HourlyReport['byHour'][number];
+
 export default function HourlySalesPage() {
   const t = useTranslations('hourlyReport');
-  const tc = useTranslations('common');
-  const { resolution, effective } = usePageScope({ maxLevel: 'machine', unsupported: ['company'] });
+  const { resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  const filters = useReportFilters(SPEC);
 
-  const [range, setRange] = useState<DayRange>({ from: daysBackIso(27), to: todayIso() });
-  const [applied, setApplied] = useState<DayRange | null>(null);
+  const params = useMemo(
+    () => (filters.apiParams ? { ...filters.apiParams, ...scopeApiParams(effective) } : null),
+    [effective, filters.apiParams],
+  );
 
-  const params = useMemo(() => {
-    if (!applied) return null;
-    return {
-      ...applied,
-      ...(effective.shopId ? { shopId: effective.shopId } : {}),
-      ...(effective.machineId ? { machineId: effective.machineId } : {}),
-    };
-  }, [applied, effective.shopId, effective.machineId]);
-
-  const { data, isLoading, isFetching, isError, error } = useQuery<HourlyReport>({
+  const query = useQuery<HourlyReport>({
     queryKey: ['report-hourly', params],
     queryFn: () => fetchHourlyReport(params!),
     enabled: params !== null,
   });
+  const data = query.data;
 
   const grid = useMemo(() => {
-    const map = new Map<string, { net: number; documents: number }>();
+    const map = new Map<string, { net: number; documents: number; tips?: number }>();
     for (const c of data?.cells ?? []) map.set(`${c.weekday}-${c.hour}`, c);
     const hours = (data?.byHour ?? []).map((h) => h.hour);
     const max = Math.max(0, ...(data?.cells ?? []).map((c) => c.net));
@@ -68,141 +64,126 @@ export default function HourlySalesPage() {
 
   const dayName = (d: number) => t(`weekday.${d}`);
 
+  const table = useMemo<ReportTableSpec<HourRow>>(() => {
+    const hasTips = Boolean(data && (data.tipsTotal !== undefined || data.byHour.some((h) => h.tips !== undefined)));
+    const columns: ReportColumn<HourRow>[] = [
+      { key: 'hour', header: t('col.hour'), required: true, width: 8, value: (h) => formatHour(h.hour), sortable: false },
+      { key: 'net', header: t('col.net'), kind: 'money', value: (h) => h.net, total: data?.total, className: 'font-medium' },
+      { key: 'documents', header: t('col.documents'), kind: 'number', value: (h) => h.documents, total: data?.documents },
+      { key: 'averageBasket', header: t('col.averageBasket'), kind: 'money', value: (h) => h.averageBasket },
+      ...(hasTips
+        ? [{ key: 'tips', header: t('col.tips'), kind: 'money' as const, value: (h: HourRow) => h.tips ?? 0, total: data?.tipsTotal ?? null }]
+        : []),
+    ];
+    return {
+      id: 'main',
+      title: t('byHourTitle'),
+      columns,
+      rows: data?.byHour ?? [],
+      rowKey: (h) => String(h.hour),
+      totalsLabel: t('total'),
+      emptyText: t('noRows'),
+    };
+  }, [data, t]);
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-      </div>
-
-      <ScopeGate resolution={resolution}>
-        <RangeFilter value={range} onChange={setRange} onRun={() => setApplied(range)} isFetching={isFetching} />
-
-        {!applied ? (
-          <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>
-        ) : isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : data ? (
-          <div className="space-y-4">
-            <ReportExportToolbar
-              title={t('title')}
-              from={data.window.from}
-              to={data.window.to}
-              getSheets={() => [
+    <ReportPage
+      reportKey="hourly-sales"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      resolution={resolution}
+      filters={filters}
+      bar={{ shopId: effective.shopId }}
+      query={reportQueryState(query)}
+      prompt={t('selectFilters')}
+      loading="table"
+      export={
+        data
+          ? {
+              tables: [table],
+              // The heat map is not a table of columns: its sheet goes as it is, first, as always.
+              extraSheets: () => [
                 {
                   name: t('heatTitle'),
                   columns: [
                     { header: t('col.hour'), width: 8 },
                     ...WEEKDAYS.map((d) => ({ header: dayName(d), kind: 'money' as const })),
                   ],
-                  rows: grid.hours.map((h) => [
-                    formatHour(h),
-                    ...WEEKDAYS.map((d) => grid.map.get(`${d}-${h}`)?.net ?? null),
-                  ]),
+                  rows: grid.hours.map((h) => [formatHour(h), ...WEEKDAYS.map((d) => grid.map.get(`${d}-${h}`)?.net ?? null)]),
                 },
-                {
-                  name: t('byHourTitle'),
-                  columns: [
-                    { header: t('col.hour'), width: 8 },
-                    { header: t('col.net'), kind: 'money' },
-                    { header: t('col.documents'), kind: 'number' },
-                    { header: t('col.averageBasket'), kind: 'money' },
-                  ],
-                  rows: data.byHour.map((h) => [formatHour(h.hour), h.net, h.documents, h.averageBasket]),
-                  totals: [t('total'), data.total, data.documents, null],
-                },
-              ]}
-            />
-            <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
+              ],
+              extraSheetsFirst: true,
+              from: data.window.from,
+              to: data.window.to,
+            }
+          : null
+      }
+    >
+      {data ? (
+        <>
+          <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
 
-            {grid.hours.length === 0 ? (
-              <p className="text-muted-foreground py-10 text-center text-sm">{t('noRows')}</p>
-            ) : (
-              <div className="rounded-lg border bg-card overflow-x-auto p-3">
-                <h2 className="mb-2 text-sm font-medium">{t('heatTitle')}</h2>
-                <table className="w-full border-separate border-spacing-0.5 text-xs">
-                  <thead>
-                    <tr>
-                      <th className="text-muted-foreground w-14 text-start font-normal">{t('col.hour')}</th>
-                      {WEEKDAYS.map((d) => (
-                        <th key={d} className="text-muted-foreground font-normal">
-                          {dayName(d)}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {grid.hours.map((h) => (
-                      <tr key={h}>
-                        <td className="text-muted-foreground tabular-nums">{formatHour(h)}</td>
-                        {WEEKDAYS.map((d) => {
-                          const cell = grid.map.get(`${d}-${h}`);
-                          const ratio = cell && grid.max > 0 ? Math.max(0, cell.net) / grid.max : 0;
-                          return (
-                            <td
-                              key={d}
-                              className="h-8 rounded text-center tabular-nums"
-                              style={{
-                                backgroundColor: cell ? `rgba(37, 99, 235, ${0.08 + ratio * 0.72})` : undefined,
-                                color: ratio > 0.55 ? 'white' : undefined,
-                              }}
-                              title={
-                                cell
-                                  ? t('cellTitle', {
+          {grid.hours.length === 0 ? (
+            <p className="text-muted-foreground py-10 text-center text-sm">{t('noRows')}</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border bg-card p-3">
+              <h2 className="mb-2 text-sm font-medium">{t('heatTitle')}</h2>
+              <table className="w-full min-w-[28rem] border-separate border-spacing-0.5 text-xs">
+                <thead>
+                  <tr>
+                    <th className="text-muted-foreground w-14 text-start font-normal">{t('col.hour')}</th>
+                    {WEEKDAYS.map((d) => (
+                      <th key={d} className="text-muted-foreground font-normal">
+                        {dayName(d)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {grid.hours.map((h) => (
+                    <tr key={h}>
+                      <td className="text-muted-foreground tabular-nums">{formatHour(h)}</td>
+                      {WEEKDAYS.map((d) => {
+                        const cell = grid.map.get(`${d}-${h}`);
+                        const ratio = cell && grid.max > 0 ? Math.max(0, cell.net) / grid.max : 0;
+                        return (
+                          <td
+                            key={d}
+                            className="h-8 rounded text-center tabular-nums"
+                            style={{
+                              backgroundColor: cell ? `rgba(37, 99, 235, ${0.08 + ratio * 0.72})` : undefined,
+                              color: ratio > 0.55 ? 'white' : undefined,
+                            }}
+                            title={
+                              cell
+                                ? [
+                                    t('cellTitle', {
                                       day: dayName(d),
                                       hour: formatHour(h),
                                       net: formatCurrency(cell.net),
                                       documents: cell.documents,
-                                    })
-                                  : undefined
-                              }
-                            >
-                              {cell ? Math.round(cell.net).toLocaleString('he-IL') : ''}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="rounded-lg border bg-card overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('col.hour')}</TableHead>
-                    <TableHead className="text-end">{t('col.net')}</TableHead>
-                    <TableHead className="text-end">{t('col.documents')}</TableHead>
-                    <TableHead className="text-end">{t('col.averageBasket')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.byHour.map((h) => (
-                    <TableRow key={h.hour}>
-                      <TableCell className="tabular-nums">{formatHour(h.hour)}</TableCell>
-                      <TableCell className="text-end tabular-nums">{formatCurrency(h.net)}</TableCell>
-                      <TableCell className="text-end tabular-nums">{formatQuantity(h.documents)}</TableCell>
-                      <TableCell className="text-end tabular-nums">{formatCurrency(h.averageBasket)}</TableCell>
-                    </TableRow>
+                                    }),
+                                    cell.tips ? t('cellTips', { tips: formatCurrency(cell.tips) }) : '',
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')
+                                : undefined
+                            }
+                          >
+                            {cell ? Math.round(cell.net).toLocaleString('he-IL') : ''}
+                          </td>
+                        );
+                      })}
+                    </tr>
                   ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow>
-                    <TableCell className="font-semibold">{t('total')}</TableCell>
-                    <TableCell className="text-end font-bold tabular-nums">{formatCurrency(data.total)}</TableCell>
-                    <TableCell className="text-end tabular-nums">{formatQuantity(data.documents)}</TableCell>
-                    <TableCell />
-                  </TableRow>
-                </TableFooter>
-              </Table>
+                </tbody>
+              </table>
             </div>
-          </div>
-        ) : null}
-      </ScopeGate>
-    </div>
+          )}
+
+          <ReportTable table={table} />
+        </>
+      ) : null}
+    </ReportPage>
   );
 }

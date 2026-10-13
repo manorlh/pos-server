@@ -11,6 +11,7 @@ import {
   matchesSearch,
   parseReportFilters,
   reportApiParams,
+  scopeApiParams,
   writeReportFilters,
   type ReportFilterSpec,
 } from './reportFilters';
@@ -371,5 +372,14 @@ describe('PDF body (§4.5)', () => {
     const body = exportTablePdfBody(table, null, { title: 't', subtitleLines: [], filterLines: [], fileName: 'f' });
     assert.equal(body.columns[1].kind, 'date');
     assert.equal(exportTableSheet(table, null).columns.length, 3);
+  });
+});
+
+describe('the scope as report params', () => {
+  it('shop and till as they are; the company only when nothing narrower', () => {
+    assert.deepEqual(scopeApiParams({ companyId: 'c', shopId: 's', machineId: 'm' }), { shopId: 's', machineId: 'm' });
+    assert.deepEqual(scopeApiParams({ companyId: 'c', shopId: null, machineId: null }), { companyId: 'c' });
+    assert.deepEqual(scopeApiParams({ companyId: 'c' }, false), {});
+    assert.deepEqual(scopeApiParams({}), {});
   });
 });

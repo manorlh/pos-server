@@ -503,11 +503,15 @@ export type ReportWindowParams = {
   machineId?: string;
   /** An area id, or `none` for sales of shifts with no area (and of no shift). */
   areaId?: string;
+  /** The company and its subsidiaries (P:\specs\reports-upgrade.md §4.1). */
+  companyId?: string;
+  /** A pos_user, as the rows' `cashierId` (§4.1). */
+  cashierId?: string;
 };
 
 export async function fetchProductSalesReport(
   /** `meals`: "components" (default) reports a meal as its components; "meals" as the meal. */
-  params: ReportWindowParams & { cashierId?: string; limit?: number; meals?: 'components' | 'meals' },
+  params: ReportWindowParams & { limit?: number; meals?: 'components' | 'meals' },
 ): Promise<ProductSalesReport> {
   const { data } = await api.get<ProductSalesReport>('/reports/products', { params });
   return data;
@@ -1057,6 +1061,9 @@ export async function fetchSalesByArea(params: {
   shopId: string;
   dateFrom: string;
   dateTo: string;
+  /** The same hour band on each day (both or neither). */
+  fromHour?: number;
+  toHour?: number;
 }): Promise<SalesByAreaReport> {
   const { data } = await api.get<SalesByAreaReport>('/reports/sales-by-area', { params });
   return data;

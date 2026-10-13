@@ -58,6 +58,7 @@ export interface ReportExportBarProps {
   tables: ReportTableSpec<unknown>[];
   /** Sheets that are not a table of the page (a heat map…), appended as they are. */
   extraSheets?: () => ExcelSheet[];
+  extraSheetsFirst?: boolean;
   pdfTableId?: string;
   from?: string | null;
   to?: string | null;
@@ -94,6 +95,7 @@ export function ReportExportBar({
   title,
   tables,
   extraSheets,
+  extraSheetsFirst = false,
   pdfTableId,
   from,
   to,
@@ -158,7 +160,8 @@ export function ReportExportBar({
     setBusy('excel');
     try {
       const sheets = resolved.map((r) => exportTableSheet(toExportTable(r.table, q, title), r.keys));
-      await downloadExcel([...sheets, ...(extraSheets?.() ?? [])], fileName, {
+      const extra = extraSheets?.() ?? [];
+      await downloadExcel(extraSheetsFirst ? [...extra, ...sheets] : [...sheets, ...extra], fileName, {
         heading: headerLines(new Date().toISOString()),
         readableName: true,
       });

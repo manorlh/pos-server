@@ -9,41 +9,51 @@
  *   meaningful hour dimension, and meaningless without a shop.
  * * **Range** (`GET /reports/tips`) — "how much tip money came in, on what tender,
  *   when". This is the one that takes the hour-of-day window, because the question
- *   it answers ("what do the evening shifts collect") is an hourly question.
+ *   it answers ("what do the evening shifts collect") is an hourly question. Viewed by
+ *   cashier (with the tenders), by day, by till and by shift (P:\specs\reports-upgrade.md
+ *   §4.2) — every view sums to the same totals, shown on top.
  *
  * The two modes need different things from the shared scope, so the page's scope
- * spec follows the mode: distribution *requires* a shop, range accepts a shop or a
- * device and cannot express a company. The scope bar re-labels itself accordingly
- * when the mode switches.
+ * spec follows the mode: distribution *requires* a shop, range accepts a company (§4.1),
+ * a shop or a device. The mode is in the URL (`?mode=range`) with the filters (§5).
  */
 
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { Banknote, Coins, CreditCard, Wallet } from 'lucide-react';
 import { fetchTipsRangeReport, fetchTipsReport } from '@/lib/api';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
-import type { TipMethod, TipsRangeReport, TipsReport } from '@/lib/types';
-import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
+import { formatCurrency, formatHashNumber } from '@/lib/format';
+import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import type {
+  TipCashierRow,
+  TipMethod,
+  TipMethodRow,
+  TipsByCashierRow,
+  TipsByDayRow,
+  TipsByMachineRow,
+  TipsByShiftRow,
+  TipsRangeReport,
+  TipsReport,
+  TipsSliceFigures,
+} from '@/lib/types';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
-import {
-  ReportErrorState,
-  ReportWindowSummary,
-} from '@/components/dashboard/report-window-summary';
-import { Label } from '@/components/ui/label';
-import { DatePicker } from '@/components/ui/date-picker';
+import { ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
 type Mode = 'distribution' | 'range';
+type View = 'cashier' | 'day' | 'till' | 'shift';
 
 const METHOD_ICON: Record<TipMethod, React.ElementType> = {
   cash: Banknote,
@@ -51,71 +61,63 @@ const METHOD_ICON: Record<TipMethod, React.ElementType> = {
   other: Coins,
 };
 
+/** Distribution: a range of trading days (today by default), no hours. */
+const DIST_SPEC: ReportFilterSpec = { filters: [], defaultDaysBack: 0 };
+const RANGE_SPEC: ReportFilterSpec = {
+  filters: ['hours', 'area', 'cashier', 'search'],
+  clientFilters: ['search'],
+};
+
+type Figures = Pick<TipsSliceFigures, 'tipsTotal' | 'tipsCash' | 'tipsCard' | 'tipsOther' | 'tippedDocumentCount' | 'salesNet'>;
+
 export default function TipsReportPage() {
   const t = useTranslations('tips');
   const tc = useTranslations('common');
-  const [mode, setMode] = useState<Mode>('distribution');
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const mode: Mode = searchParams.get('mode') === 'range' ? 'range' : 'distribution';
+  const setMode = (next: Mode) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === 'range') params.set('mode', 'range');
+    else params.delete('mode');
+    const q = params.toString();
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  };
 
   const { resolution, effective } = usePageScope(
-    mode === 'distribution'
-      ? { maxLevel: 'shop', minLevel: 'shop' }
-      : { maxLevel: 'machine', unsupported: ['company'] },
+    mode === 'distribution' ? { maxLevel: 'shop', minLevel: 'shop' } : { maxLevel: 'machine' },
   );
   const shopId = effective.shopId ?? '';
-  const scopeMachineId = effective.machineId;
 
-  // ── Distribution report (per shop, per date range) ──
-  const [from, setFrom] = useState(todayIso());
-  const [to, setTo] = useState(todayIso());
-  const [runKey, setRunKey] = useState(0);
+  const dist = useReportFilters(DIST_SPEC);
+  const range = useReportFilters(RANGE_SPEC);
+
   /*
    * `?shiftId=` — one shift's tips, which is how a shift's X links here. The report
    * then runs at once on that shift instead of a date range, until the operator
    * picks dates again.
    */
-  const searchParams = useSearchParams();
   const [shiftId, setShiftId] = useState<string | null>(() => searchParams.get('shiftId'));
+  const distFilters = useMemo(
+    () => ({
+      ...dist,
+      run: () => {
+        setShiftId(null);
+        dist.run();
+      },
+    }),
+    [dist],
+  );
 
-  // ── Range report (day range × hour band) ──
-  const [rangeFilters, setRangeFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
-    hours: WHOLE_DAY,
+  // ── Distribution ──
+  const distParams = dist.applied?.values;
+  const distQuery = useQuery<TipsReport>({
+    queryKey: ['tips-report', shopId, shiftId ?? `${distParams?.from}|${distParams?.to}`],
+    queryFn: () => fetchTipsReport(shopId, shiftId ? { shiftId } : { from: distParams!.from, to: distParams!.to }),
+    enabled: mode === 'distribution' && Boolean(shopId) && (Boolean(shiftId) || Boolean(distParams)),
   });
-  const [appliedRange, setAppliedRange] = useState<ReportFiltersState | null>(null);
-
-  const {
-    data: report,
-    isLoading,
-    isFetching,
-    isError,
-    error,
-  } = useQuery<TipsReport>({
-    queryKey: ['tips-report', shopId, shiftId ?? `${from}|${to}`, runKey],
-    queryFn: () => fetchTipsReport(shopId, shiftId ? { shiftId } : { from, to }),
-    enabled:
-      mode === 'distribution' &&
-      Boolean(shopId) &&
-      (shiftId ? true : Boolean(from) && Boolean(to) && runKey > 0),
-  });
-
-  const rangeParams = useMemo(() => {
-    if (!appliedRange) return null;
-    return {
-      from: appliedRange.from,
-      to: appliedRange.to,
-      ...(shopId ? { shopId } : {}),
-      ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
-      ...hourQueryParams(appliedRange.hours),
-      ...(appliedRange.areaId ? { areaId: appliedRange.areaId } : {}),
-    };
-  }, [appliedRange, scopeMachineId, shopId]);
-
-  const rangeQuery = useQuery<TipsRangeReport>({
-    queryKey: ['report-tips', rangeParams],
-    queryFn: () => fetchTipsRangeReport(rangeParams!),
-    enabled: mode === 'range' && rangeParams !== null,
-  });
+  const report = distQuery.data;
 
   const distLabel = (d: string) => {
     if (d === 'equal_pool') return t('distEqual');
@@ -123,19 +125,197 @@ export default function TipsReportPage() {
     return t('distDirect');
   };
 
+  const distTable = useMemo<ReportTableSpec<TipCashierRow>>(
+    () => ({
+      id: 'main',
+      title: t('modeDistribution'),
+      columns: [
+        { key: 'cashier', header: t('cashier'), required: true, value: (r) => r.cashierName ?? null, className: 'font-medium' },
+        { key: 'workerNumber', header: t('workerNumber'), width: 10, value: (r) => r.workerNumber ?? null },
+        { key: 'tipsCollected', header: t('tipsCollected'), kind: 'money', value: (r) => r.tipsCollected, total: report?.totalTips },
+        { key: 'cashTips', header: t('cashTips'), kind: 'money', value: (r) => r.cashTips, total: report?.totalCashTips },
+        { key: 'cardTips', header: t('cardTips'), kind: 'money', value: (r) => r.cardTips, total: report?.totalCardTips },
+        { key: 'sales', header: t('sales'), kind: 'money', value: (r) => r.salesTotal },
+        {
+          key: 'amountOwed',
+          header: t('amountOwed'),
+          kind: 'money',
+          value: (r) => r.amountOwed,
+          total: report ? report.cashiers.reduce((sum, r) => sum + r.amountOwed, 0) : undefined,
+          className: 'font-semibold',
+        },
+      ],
+      rows: report?.cashiers ?? [],
+      rowKey: (r, i) => r.cashierId ?? `row-${i}`,
+      totalsLabel: tc('total'),
+      emptyText: tc('noResults'),
+    }),
+    [report, t, tc],
+  );
+
+  // ── Range ──
+  const rangeParams = useMemo(
+    () => (range.apiParams ? { ...range.apiParams, ...scopeApiParams(effective) } : null),
+    [effective, range.apiParams],
+  );
+  const rangeQuery = useQuery<TipsRangeReport>({
+    queryKey: ['report-tips', rangeParams],
+    queryFn: () => fetchTipsRangeReport(rangeParams!),
+    enabled: mode === 'range' && rangeParams !== null,
+  });
+  const d = rangeQuery.data;
+  const [view, setView] = useState<View>('cashier');
+
   const methodLabel = (m: TipMethod) => {
     if (m === 'cash') return t('cashTips');
     if (m === 'card') return t('cardTips');
     return t('otherTips');
   };
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-      </div>
+  const rangeTables = useMemo(() => {
+    if (!d) return null;
+    const sum = (pick: (r: TipsByCashierRow) => number) => d.byCashier.reduce((s, r) => s + pick(r), 0);
+    const tot: Figures = {
+      tipsTotal: d.tipsTotal,
+      tipsCash: d.tipsCash,
+      tipsCard: d.tipsCard,
+      tipsOther: d.tipsOther,
+      tippedDocumentCount: d.tippedDocumentCount ?? sum((r) => r.tippedDocumentCount),
+      salesNet: d.salesNet ?? sum((r) => r.salesNet),
+    };
+    /** The figures every view shares, with the report's totals. */
+    function figures<R extends Figures>(): ReportColumn<R>[] {
+      return [
+        { key: 'tipsTotal', header: t('tipsTotal'), kind: 'money', value: (r) => r.tipsTotal, total: tot.tipsTotal, className: 'font-semibold' },
+        { key: 'tipsCash', header: t('cashTips'), kind: 'money', value: (r) => r.tipsCash, total: tot.tipsCash },
+        { key: 'tipsCard', header: t('cardTips'), kind: 'money', value: (r) => r.tipsCard, total: tot.tipsCard },
+        { key: 'tipsOther', header: t('otherTips'), kind: 'money', value: (r) => r.tipsOther, total: tot.tipsOther },
+        { key: 'tippedDocuments', header: t('tippedDocuments'), kind: 'number', value: (r) => r.tippedDocumentCount, total: tot.tippedDocumentCount },
+        { key: 'salesNet', header: t('salesNet'), kind: 'money', value: (r) => r.salesNet, total: tot.salesNet },
+      ];
+    }
+    const tillName = (r: { machineName?: string | null; posNumber?: string | null; machineId?: string | null }) =>
+      r.machineName
+        ? r.posNumber
+          ? t('tillName', { name: r.machineName, n: r.posNumber })
+          : r.machineName
+        : (r.machineId ?? '—');
 
+    const cashier: ReportTableSpec<TipsByCashierRow> = {
+      id: 'main',
+      title: t('cashier'),
+      columns: [
+        { key: 'cashier', header: t('cashier'), required: true, value: (r) => r.cashierName ?? t('unknownCashier'), className: 'font-medium' },
+        { key: 'workerNumber', header: t('workerNumber'), width: 10, value: (r) => r.workerNumber ?? null, className: 'text-muted-foreground text-xs' },
+        ...figures<TipsByCashierRow>(),
+      ],
+      rows: d.byCashier,
+      rowKey: (r, i) => r.cashierId ?? `row-${i}`,
+      totalsLabel: tc('total'),
+      emptyText: t('rangeNoRows'),
+    };
+    const methods: ReportTableSpec<TipMethodRow> = {
+      id: 'methods',
+      title: t('method'),
+      columns: [
+        {
+          key: 'method',
+          header: t('method'),
+          required: true,
+          value: (r) => methodLabel(r.method),
+          className: 'font-medium',
+          cell: (r) => {
+            const Icon = METHOD_ICON[r.method] ?? Coins;
+            return (
+              <span className="flex items-center gap-2">
+                <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+                {methodLabel(r.method)}
+              </span>
+            );
+          },
+        },
+        { key: 'amount', header: t('amount'), kind: 'money', value: (r) => r.amount, total: d.tipsTotal },
+        {
+          key: 'tippedDocuments',
+          header: t('tippedDocuments'),
+          kind: 'number',
+          value: (r) => r.documentCount,
+          total: d.byMethod.reduce((s, r) => s + r.documentCount, 0),
+        },
+      ],
+      rows: d.byMethod,
+      rowKey: (r) => r.method,
+      totalsLabel: tc('total'),
+      emptyText: t('rangeNoRows'),
+    };
+    const days: ReportTableSpec<TipsByDayRow> | null = d.byDay
+      ? {
+          id: 'days',
+          title: t('view.day'),
+          columns: [{ key: 'day', header: t('col.day'), kind: 'date', required: true, value: (r) => r.day }, ...figures<TipsByDayRow>()],
+          rows: d.byDay,
+          rowKey: (r) => r.day,
+          totalsLabel: tc('total'),
+          emptyText: t('rangeNoRows'),
+        }
+      : null;
+    const tills: ReportTableSpec<TipsByMachineRow> | null = d.byMachine
+      ? {
+          id: 'tills',
+          title: t('view.till'),
+          columns: [
+            { key: 'till', header: t('col.till'), required: true, value: tillName, className: 'font-medium' },
+            { key: 'shop', header: t('col.shop'), value: (r) => r.shopName ?? null, className: 'text-muted-foreground' },
+            ...figures<TipsByMachineRow>(),
+          ],
+          rows: d.byMachine,
+          rowKey: (r, i) => r.machineId ?? `none-${i}`,
+          totalsLabel: tc('total'),
+          emptyText: t('rangeNoRows'),
+        }
+      : null;
+    const shifts: ReportTableSpec<TipsByShiftRow> | null = d.byShift
+      ? {
+          id: 'shifts',
+          title: t('view.shift'),
+          columns: [
+            {
+              key: 'shift',
+              header: t('col.shift'),
+              required: true,
+              value: (r) => (r.shiftId ? (r.sequenceNumber != null ? formatHashNumber(r.sequenceNumber) : r.shiftId) : t('noShift')),
+              className: 'font-medium',
+            },
+            { key: 'businessDate', header: t('col.businessDate'), kind: 'date', value: (r) => r.businessDate ?? null },
+            { key: 'till', header: t('col.till'), value: tillName },
+            { key: 'shop', header: t('col.shop'), value: (r) => r.shopName ?? null, className: 'text-muted-foreground', defaultHidden: true },
+            { key: 'openedAt', header: t('col.openedAt'), kind: 'datetime', value: (r) => r.openedAt ?? null },
+            { key: 'closedAt', header: t('col.closedAt'), kind: 'datetime', value: (r) => r.closedAt ?? null },
+            { key: 'openedBy', header: t('col.openedBy'), value: (r) => r.openedByName ?? null },
+            ...figures<TipsByShiftRow>(),
+          ],
+          rows: d.byShift,
+          rowKey: (r, i) => r.shiftId ?? `none-${i}`,
+          totalsLabel: tc('total'),
+          emptyText: t('rangeNoRows'),
+        }
+      : null;
+    return { tot, cashier, methods, days, tills, shifts };
+    // `methodLabel` only reads `t`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d, t, tc]);
+
+  const views: { id: View; label: string }[] = [
+    { id: 'cashier', label: t('view.cashier') },
+    ...(rangeTables?.days ? [{ id: 'day' as const, label: t('view.day') }] : []),
+    ...(rangeTables?.tills ? [{ id: 'till' as const, label: t('view.till') }] : []),
+    ...(rangeTables?.shifts ? [{ id: 'shift' as const, label: t('view.shift') }] : []),
+  ];
+  const shownView: View = views.some((v) => v.id === view) ? view : 'cashier';
+  const pdfTableId = { cashier: 'main', day: 'days', till: 'tills', shift: 'shifts' }[shownView];
+
+  const header = (
+    <>
       <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('modeLabel')}>
         <Button
           role="tab"
@@ -159,323 +339,140 @@ export default function TipsReportPage() {
       <p className="text-muted-foreground text-xs">
         {mode === 'distribution' ? t('modeDistributionHint') : t('modeRangeHint')}
       </p>
+    </>
+  );
 
-      <ScopeGate resolution={resolution}>
-        {mode === 'distribution' ? (
+  if (mode === 'distribution') {
+    return (
+      <ReportPage
+        reportKey="tips-distribution"
+        title={t('title')}
+        subtitle={t('subtitle')}
+        headerExtra={header}
+        resolution={resolution}
+        filters={distFilters}
+        bar={{ shopId, hint: shiftId ? t('forShift') : undefined }}
+        query={reportQueryState(distQuery)}
+        ready={Boolean(shiftId) || dist.applied !== null}
+        prompt={t('selectFilters')}
+        loading="table"
+        export={
+          report
+            ? {
+                title: `${t('title')} · ${t('modeDistribution')}`,
+                tables: [distTable],
+                from: shiftId ? (report.fromDate ?? null) : distParams?.from,
+                to: shiftId ? (report.toDate ?? null) : distParams?.to,
+              }
+            : null
+        }
+      >
+        {report ? (
           <>
-            <div className="flex flex-wrap gap-4 items-end print:hidden">
-              <div className="space-y-1">
-                <Label>{t('from')}</Label>
-                <DatePicker
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>{t('to')}</Label>
-                <DatePicker
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                  range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-                />
-              </div>
-              <Button
-                disabled={!shopId || !from || !to || isFetching}
-                onClick={() => {
-                  setShiftId(null);
-                  setRunKey((k) => k + 1);
-                }}
-              >
-                {isFetching ? tc('loading') : t('runReport')}
-              </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{distLabel(report.distribution)}</Badge>
+              <span className="text-sm text-muted-foreground">
+                {t('summary', {
+                  tips: formatCurrency(report.totalTips),
+                  cash: formatCurrency(report.totalCashTips),
+                  card: formatCurrency(report.totalCardTips),
+                })}
+              </span>
             </div>
-            {shiftId ? (
-              <p className="text-muted-foreground text-xs">{t('forShift')}</p>
-            ) : null}
-
-            {runKey === 0 && !shiftId ? (
-              <p className="text-muted-foreground text-sm py-8 text-center">{t('selectFilters')}</p>
-            ) : isLoading ? (
-              <Skeleton className="h-48 w-full" />
-            ) : isError ? (
-              <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-            ) : report ? (
-              <div className="space-y-4">
-                <ReportExportToolbar
-                  title={`${t('title')} · ${t('modeDistribution')}`}
-                  from={from}
-                  to={to}
-                  getSheets={() => ({
-                    name: t('modeDistribution'),
-                    columns: [
-                      { header: t('cashier') },
-                      { header: t('workerNumber'), width: 10 },
-                      { header: t('tipsCollected'), kind: 'money' },
-                      { header: t('cashTips'), kind: 'money' },
-                      { header: t('cardTips'), kind: 'money' },
-                      { header: t('sales'), kind: 'money' },
-                      { header: t('amountOwed'), kind: 'money' },
-                    ],
-                    rows: report.cashiers.map((r) => [
-                      r.cashierName ?? null, r.workerNumber ?? null, r.tipsCollected, r.cashTips, r.cardTips,
-                      r.salesTotal, r.amountOwed,
-                    ]),
-                    totals: [
-                      tc('total'), null, report.totalTips, report.totalCashTips, report.totalCardTips, null,
-                      report.cashiers.reduce((sum, r) => sum + r.amountOwed, 0),
-                    ],
-                  })}
-                />
-                <div className="flex flex-wrap gap-2 items-center">
-                  <Badge variant="outline">{distLabel(report.distribution)}</Badge>
-                  <span className="text-sm text-muted-foreground">
-                    {t('summary', {
-                      tips: formatCurrency(report.totalTips),
-                      cash: formatCurrency(report.totalCashTips),
-                      card: formatCurrency(report.totalCardTips),
-                    })}
-                  </span>
-                </div>
-                <div className="rounded-lg border bg-card overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('cashier')}</TableHead>
-                        <TableHead>{t('workerNumber')}</TableHead>
-                        <TableHead>{t('tipsCollected')}</TableHead>
-                        <TableHead>{t('cashTips')}</TableHead>
-                        <TableHead>{t('cardTips')}</TableHead>
-                        <TableHead>{t('sales')}</TableHead>
-                        <TableHead>{t('amountOwed')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {report.cashiers.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                            {tc('noResults')}
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        report.cashiers.map((row, i) => (
-                          <TableRow key={row.cashierId ?? `row-${i}`}>
-                            <TableCell className="font-medium">{row.cashierName ?? '—'}</TableCell>
-                            <TableCell>{row.workerNumber ?? '—'}</TableCell>
-                            <TableCell>{formatCurrency(row.tipsCollected)}</TableCell>
-                            <TableCell>{formatCurrency(row.cashTips)}</TableCell>
-                            <TableCell>{formatCurrency(row.cardTips)}</TableCell>
-                            <TableCell>{formatCurrency(row.salesTotal)}</TableCell>
-                            <TableCell className="font-semibold">{formatCurrency(row.amountOwed)}</TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            ) : null}
+            <ReportTable table={distTable} />
           </>
-        ) : (
-          <>
-            <ReportFilters
-              value={rangeFilters}
-              onChange={setRangeFilters}
-              onRun={() => setAppliedRange(rangeFilters)}
-              showArea
-              areaShopId={shopId || null}
-              isFetching={rangeQuery.isFetching}
+        ) : null}
+      </ReportPage>
+    );
+  }
+
+  const exportTables = rangeTables
+    ? ([
+        rangeTables.cashier,
+        rangeTables.methods,
+        ...(rangeTables.days ? [rangeTables.days] : []),
+        ...(rangeTables.tills ? [rangeTables.tills] : []),
+        ...(rangeTables.shifts ? [rangeTables.shifts] : []),
+      ] as ReportTableSpec<unknown>[])
+    : [];
+
+  return (
+    <ReportPage
+      reportKey="tips"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      headerExtra={header}
+      resolution={resolution}
+      filters={range}
+      bar={{ shopId: shopId || null }}
+      query={reportQueryState(rangeQuery)}
+      prompt={t('rangeSelectFilters')}
+      export={
+        d
+          ? {
+              title: `${t('title')} · ${t('modeRange')}`,
+              tables: exportTables,
+              pdfTableId,
+              from: d.window.from,
+              to: d.window.to,
+            }
+          : null
+      }
+    >
+      {d && rangeTables ? (
+        <>
+          <ReportWindowSummary window={d.window} generatedAt={d.generatedAt} />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <ReportStatCard
+              title={t('tipsTotal')}
+              value={formatCurrency(d.tipsTotal)}
+              subtitle={t('totalsLine', {
+                count: rangeTables.tot.tippedDocumentCount,
+                sales: formatCurrency(rangeTables.tot.salesNet),
+              })}
+              icon={Wallet}
+              emphasis
             />
+            <ReportStatCard title={t('cashTips')} value={formatCurrency(d.tipsCash)} icon={Banknote} />
+            <ReportStatCard title={t('cardTips')} value={formatCurrency(d.tipsCard)} icon={CreditCard} />
+            <ReportStatCard title={t('otherTips')} value={formatCurrency(d.tipsOther)} icon={Coins} />
+          </div>
 
-            {!appliedRange ? (
-              <p className="text-muted-foreground py-12 text-center text-sm">{t('rangeSelectFilters')}</p>
-            ) : rangeQuery.isLoading ? (
-              <div className="space-y-4">
-                <Skeleton className="h-24 w-full" />
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-28 w-full" />
-                  ))}
-                </div>
-                <Skeleton className="h-64 w-full" />
-              </div>
-            ) : rangeQuery.isError ? (
-              <ReportErrorState message={axiosErrorToToastMessage(rangeQuery.error, tc('error'))} />
-            ) : rangeQuery.data ? (
-              <div className="space-y-4">
-                <ReportExportToolbar
-                  title={`${t('title')} · ${t('modeRange')}`}
-                  from={rangeQuery.data.window.from}
-                  to={rangeQuery.data.window.to}
-                  getSheets={() => {
-                    const d = rangeQuery.data!;
-                    return [
-                      {
-                        name: t('cashier'),
-                        columns: [
-                          { header: t('cashier') },
-                          { header: t('workerNumber'), width: 10 },
-                          { header: t('tipsTotal'), kind: 'money' },
-                          { header: t('cashTips'), kind: 'money' },
-                          { header: t('cardTips'), kind: 'money' },
-                          { header: t('otherTips'), kind: 'money' },
-                          { header: t('tippedDocuments'), kind: 'number' },
-                          { header: t('salesNet'), kind: 'money' },
-                        ],
-                        rows: d.byCashier.map((r) => [
-                          r.cashierName ?? t('unknownCashier'), r.workerNumber ?? null, r.tipsTotal, r.tipsCash,
-                          r.tipsCard, r.tipsOther, r.tippedDocumentCount, r.salesNet,
-                        ]),
-                        totals: [
-                          tc('total'), null, d.tipsTotal, d.tipsCash, d.tipsCard, d.tipsOther,
-                          d.byCashier.reduce((sum, r) => sum + r.tippedDocumentCount, 0),
-                          d.byCashier.reduce((sum, r) => sum + r.salesNet, 0),
-                        ],
-                      },
-                      {
-                        name: t('method'),
-                        columns: [
-                          { header: t('method') },
-                          { header: t('amount'), kind: 'money' },
-                          { header: t('tippedDocuments'), kind: 'number' },
-                        ],
-                        rows: d.byMethod.map((r) => [methodLabel(r.method), r.amount, r.documentCount]),
-                        totals: [tc('total'), d.tipsTotal, d.byMethod.reduce((sum, r) => sum + r.documentCount, 0)],
-                      },
-                    ];
-                  }}
-                />
-                <ReportWindowSummary
-                  window={rangeQuery.data.window}
-                  generatedAt={rangeQuery.data.generatedAt}
-                />
+          {views.length > 1 ? (
+            <div className="flex flex-wrap gap-2 print:hidden" role="tablist" aria-label={t('viewLabel')}>
+              {views.map((v) => (
+                <Button
+                  key={v.id}
+                  role="tab"
+                  aria-selected={shownView === v.id}
+                  variant={shownView === v.id ? 'secondary' : 'ghost'}
+                  size="sm"
+                  onClick={() => setView(v.id)}
+                >
+                  {v.label}
+                </Button>
+              ))}
+            </div>
+          ) : null}
 
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  <ReportStatCard
-                    title={t('tipsTotal')}
-                    value={formatCurrency(rangeQuery.data.tipsTotal)}
-                    icon={Wallet}
-                    emphasis
-                  />
-                  <ReportStatCard
-                    title={t('cashTips')}
-                    value={formatCurrency(rangeQuery.data.tipsCash)}
-                    icon={Banknote}
-                  />
-                  <ReportStatCard
-                    title={t('cardTips')}
-                    value={formatCurrency(rangeQuery.data.tipsCard)}
-                    icon={CreditCard}
-                  />
-                  <ReportStatCard
-                    title={t('otherTips')}
-                    value={formatCurrency(rangeQuery.data.tipsOther)}
-                    icon={Coins}
-                  />
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-                  <div className="rounded-lg border bg-card overflow-hidden">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t('method')}</TableHead>
-                          <TableHead className="text-end">{t('amount')}</TableHead>
-                          <TableHead className="text-end">{t('tippedDocuments')}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {rangeQuery.data.byMethod.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
-                              {t('rangeNoRows')}
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          rangeQuery.data.byMethod.map((row) => {
-                            const Icon = METHOD_ICON[row.method] ?? Coins;
-                            return (
-                              <TableRow key={row.method}>
-                                <TableCell className="font-medium">
-                                  <span className="flex items-center gap-2">
-                                    <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
-                                    {methodLabel(row.method)}
-                                  </span>
-                                </TableCell>
-                                <TableCell className="text-end tabular-nums">
-                                  {formatCurrency(row.amount)}
-                                </TableCell>
-                                <TableCell className="text-end tabular-nums">
-                                  {formatQuantity(row.documentCount)}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  <div className="rounded-lg border bg-card overflow-x-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>{t('cashier')}</TableHead>
-                          <TableHead>{t('workerNumber')}</TableHead>
-                          <TableHead className="text-end">{t('tipsTotal')}</TableHead>
-                          <TableHead className="text-end">{t('cashTips')}</TableHead>
-                          <TableHead className="text-end">{t('cardTips')}</TableHead>
-                          <TableHead className="text-end">{t('otherTips')}</TableHead>
-                          <TableHead className="text-end">{t('tippedDocuments')}</TableHead>
-                          <TableHead className="text-end">{t('salesNet')}</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {rangeQuery.data.byCashier.length === 0 ? (
-                          <TableRow>
-                            <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                              {t('rangeNoRows')}
-                            </TableCell>
-                          </TableRow>
-                        ) : (
-                          rangeQuery.data.byCashier.map((row, i) => (
-                            <TableRow key={row.cashierId ?? `row-${i}`}>
-                              <TableCell className="font-medium">
-                                {row.cashierName ?? t('unknownCashier')}
-                              </TableCell>
-                              <TableCell className="text-muted-foreground text-xs">
-                                {row.workerNumber ?? '—'}
-                              </TableCell>
-                              <TableCell className="text-end font-semibold tabular-nums">
-                                {formatCurrency(row.tipsTotal)}
-                              </TableCell>
-                              <TableCell className="text-end tabular-nums">
-                                {formatCurrency(row.tipsCash)}
-                              </TableCell>
-                              <TableCell className="text-end tabular-nums">
-                                {formatCurrency(row.tipsCard)}
-                              </TableCell>
-                              <TableCell className="text-end tabular-nums">
-                                {formatCurrency(row.tipsOther)}
-                              </TableCell>
-                              <TableCell className="text-end tabular-nums">
-                                {formatQuantity(row.tippedDocumentCount)}
-                              </TableCell>
-                              <TableCell className="text-end tabular-nums">
-                                {formatCurrency(row.salesNet)}
-                              </TableCell>
-                            </TableRow>
-                          ))
-                        )}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </>
-        )}
-      </ScopeGate>
-    </div>
+          {shownView === 'cashier' ? (
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+              <ReportTable table={rangeTables.methods} />
+              <ReportTable table={rangeTables.cashier} />
+            </div>
+          ) : shownView === 'day' && rangeTables.days ? (
+            <ReportTable table={rangeTables.days} />
+          ) : shownView === 'till' && rangeTables.tills ? (
+            <ReportTable table={rangeTables.tills} />
+          ) : shownView === 'shift' && rangeTables.shifts ? (
+            <>
+              {d.byShiftTruncated ? <p className="text-xs text-amber-700 dark:text-amber-300">{t('shiftsTruncated')}</p> : null}
+              <ReportTable table={rangeTables.shifts} />
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </ReportPage>
   );
 }

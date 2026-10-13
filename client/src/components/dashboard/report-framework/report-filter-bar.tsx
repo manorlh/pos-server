@@ -192,13 +192,13 @@ export function ReportFilterBar({
         {has('hours') ? (
           <div className="min-w-0 space-y-1">
             <Label className="text-xs">{t('hours')}</Label>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Select
                 value={String(v.fromHour)}
                 onValueChange={(x) => set({ fromHour: Number(x ?? 0) })}
                 items={HOUR_OPTIONS_FROM.map((h) => ({ value: String(h), label: formatHour(h) }))}
               >
-                <SelectTrigger className="min-w-0 flex-1" aria-label={t('from')}>
+                <SelectTrigger className="w-[5.75rem]" aria-label={t('from')}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -215,7 +215,7 @@ export function ReportFilterBar({
                 onValueChange={(x) => set({ toHour: Number(x ?? 24) })}
                 items={HOUR_OPTIONS_TO.map((h) => ({ value: String(h), label: formatHour(h) }))}
               >
-                <SelectTrigger className="min-w-0 flex-1" aria-label={t('to')}>
+                <SelectTrigger className="w-[5.75rem]" aria-label={t('to')}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

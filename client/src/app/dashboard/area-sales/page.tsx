@@ -8,41 +8,42 @@
  * shifts with no area (and sales with no shift) make the "no area" row. The rows sum
  * to the shop's total for the window — the server guarantees it, the page only shows
  * it. Archived areas still appear when they had sales in the window.
+ *
+ * One shop at a time: `GET /reports/sales-by-area` requires `shopId` (P:\specs\reports-upgrade.md
+ * §4.1). On the report framework (§5): days, hours on each day and a search in the URL; tips
+ * split by tender when the server sends it (§4.2).
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { Download } from 'lucide-react';
 import { fetchSalesByArea } from '@/lib/api';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope } from '@/lib/scope';
-import { formatCurrency } from '@/lib/format';
-import { daysBackIso, todayIso } from '@/lib/reportWindow';
 import { downloadCsv, toCsv } from '@/lib/csv';
+import type { ReportFilterSpec } from '@/lib/reportFilters';
 import type { SalesByAreaReport, SalesByAreaRow } from '@/lib/types';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { DatePicker } from '@/components/ui/date-picker';
-import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
 const MONEY_COLS = [
   'gross', 'discounts', 'productionVoucherDeductions', 'net', 'refunds', 'cash', 'card', 'productionVoucher', 'other', 'tips',
 ] as const;
-const COLS = 2 + MONEY_COLS.length;
+/** The tips split (§4.2): shown when the server sends it. */
+const TIP_COLS = ['tipsCash', 'tipsCard', 'tipsOther'] as const;
+
+const SPEC: ReportFilterSpec = {
+  filters: ['hours', 'search'],
+  clientFilters: ['search'],
+};
 
 export default function SalesByAreaPage() {
   const t = useTranslations('areaSales');
@@ -52,196 +53,115 @@ export default function SalesByAreaPage() {
   const { scope, resolution, effective } = usePageScope({ maxLevel: 'shop', minLevel: 'shop' });
   const shopId = effective.shopId;
   const shopName = scope.shop?.name ?? '';
+  const filters = useReportFilters(SPEC);
 
-  const [from, setFrom] = useState(daysBackIso(6));
-  const [to, setTo] = useState(todayIso());
-  const [applied, setApplied] = useState<{ from: string; to: string } | null>(null);
-  const rangeInvalid = !from || !to || from > to;
+  const params = useMemo(() => {
+    const p = filters.apiParams;
+    if (!p || !shopId) return null;
+    return {
+      shopId,
+      dateFrom: String(p.from),
+      dateTo: String(p.to),
+      ...(p.fromHour !== undefined ? { fromHour: Number(p.fromHour), toHour: Number(p.toHour) } : {}),
+    };
+  }, [filters.apiParams, shopId]);
 
-  const params = useMemo(
-    () => (applied && shopId ? { shopId, dateFrom: applied.from, dateTo: applied.to } : null),
-    [applied, shopId],
-  );
-
-  const { data, isLoading, isFetching, isError, error } = useQuery<SalesByAreaReport>({
+  const query = useQuery<SalesByAreaReport>({
     queryKey: ['report-sales-by-area', params],
     queryFn: () => fetchSalesByArea(params!),
     enabled: params !== null,
   });
+  const data = query.data;
 
-  const rowName = (row: Pick<SalesByAreaRow, 'areaId' | 'areaName'>) =>
-    row.areaId === null ? t('unassigned') : (row.areaName ?? row.areaId);
+  const table = useMemo<ReportTableSpec<SalesByAreaRow>>(() => {
+    const rowName = (row: Pick<SalesByAreaRow, 'areaId' | 'areaName'>) =>
+      row.areaId === null ? t('unassigned') : (row.areaName ?? row.areaId);
+    const totals = data?.totals;
+    const hasTipSplit = Boolean(data && (totals?.tipsCash !== undefined || data.rows.some((r) => r.tipsCash !== undefined)));
+    const columns: ReportColumn<SalesByAreaRow>[] = [
+      {
+        key: 'area',
+        header: t('col.area'),
+        required: true,
+        value: rowName,
+        className: 'font-medium',
+        cell: (row) => (
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <span className={row.areaId === null ? 'text-muted-foreground' : undefined}>{rowName(row)}</span>
+            {row.archived ? <Badge variant="outline">{t('archivedBadge')}</Badge> : null}
+          </span>
+        ),
+      },
+      { key: 'archived', header: t('col.archived'), width: 8, exportOnly: true, value: (r) => (r.archived ? tc('yes') : null) },
+      { key: 'transactions', header: t('col.transactions'), kind: 'number', value: (r) => r.transactionsCount, total: totals?.transactionsCount },
+      ...MONEY_COLS.map(
+        (c): ReportColumn<SalesByAreaRow> => ({
+          key: c,
+          header: t(`col.${c}`),
+          kind: 'money',
+          value: (r) => r[c] ?? null,
+          total: totals?.[c] ?? null,
+          className: c === 'net' ? 'font-semibold' : undefined,
+        }),
+      ),
+      ...(hasTipSplit
+        ? TIP_COLS.map(
+            (c): ReportColumn<SalesByAreaRow> => ({
+              key: c,
+              header: t(`col.${c}`),
+              kind: 'money',
+              value: (r) => r[c] ?? null,
+              total: totals?.[c] ?? null,
+            }),
+          )
+        : []),
+    ];
+    return {
+      id: 'main',
+      title: t('title'),
+      columns,
+      rows: data?.rows ?? [],
+      rowKey: (r) => r.areaId ?? '__none__',
+      totalsLabel: t('totals'),
+      emptyText: t('noRows'),
+    };
+  }, [data, t, tc]);
 
+  /** The CSV the page always offered: every column, the server's values. */
   const exportCsv = () => {
     if (!data || !params) return;
-    const header = [
-      t('col.area'),
-      t('col.archived'),
-      t('col.transactions'),
-      ...MONEY_COLS.map((c) => t(`col.${c}`)),
-    ];
-    const rows = data.rows.map((r) => [
-      rowName(r),
-      r.archived ? tc('yes') : '',
-      r.transactionsCount,
-      ...MONEY_COLS.map((c) => r[c]),
-    ]);
-    rows.push([
-      t('totals'),
-      '',
-      data.totals.transactionsCount,
-      ...MONEY_COLS.map((c) => data.totals[c]),
-    ]);
+    const cols = table.columns;
+    const header = cols.map((c) => c.header);
+    const rows = table.rows.map((r) => cols.map((c) => c.value(r)));
+    rows.push(cols.map((c, i) => (i === 0 ? t('totals') : (c.total ?? ''))));
     const safeShop = shopName.replace(/[\\/:*?"<>|]+/g, '_').trim() || params.shopId;
     downloadCsv(`sales-by-area_${safeShop}_${params.dateFrom}_${params.dateTo}.csv`, toCsv(header, rows));
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-      </div>
-
-      <ScopeGate resolution={resolution}>
-        <div className="rounded-lg border bg-card p-4 space-y-3 print:hidden">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="area-sales-from" className="text-xs">
-                {t('from')}
-              </Label>
-              <DatePicker
-                id="area-sales-from"
-                value={from}
-                max={to || undefined}
-                aria-invalid={rangeInvalid || undefined}
-                onChange={(e) => setFrom(e.target.value)}
-                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="area-sales-to" className="text-xs">
-                {t('to')}
-              </Label>
-              <DatePicker
-                id="area-sales-to"
-                value={to}
-                min={from || undefined}
-                aria-invalid={rangeInvalid || undefined}
-                onChange={(e) => setTo(e.target.value)}
-                range={{ from, to, onSelect: (r) => { setFrom(r.from); setTo(r.to); } }}
-              />
-            </div>
-            <Button disabled={rangeInvalid || isFetching} onClick={() => setApplied({ from, to })}>
-              {isFetching ? t('running') : t('run')}
+    <ReportPage
+      reportKey="area-sales"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      resolution={resolution}
+      filters={filters}
+      bar={{ shopId, hint: t('stampHint') }}
+      query={reportQueryState(query)}
+      prompt={t('selectFilters')}
+      loading="table"
+      export={data && params ? { tables: [table], from: params.dateFrom, to: params.dateTo, place: shopName } : null}
+    >
+      {data ? (
+        <ReportTable
+          table={table}
+          actions={
+            <Button variant="outline" size="sm" onClick={exportCsv}>
+              <Download className="h-4 w-4" aria-hidden />
+              {t('exportCsv')}
             </Button>
-            {data && !isError ? (
-              <Button variant="outline" onClick={exportCsv}>
-                <Download className="h-4 w-4 me-1" aria-hidden />
-                {t('exportCsv')}
-              </Button>
-            ) : null}
-          </div>
-          {from && to && from > to ? (
-            <p className="text-destructive text-xs">{t('rangeInvalid')}</p>
-          ) : null}
-          <p className="text-muted-foreground text-xs">{t('stampHint')}</p>
-        </div>
-
-        {data && !isError && params ? (
-          <ReportExportToolbar
-            title={t('title')}
-            from={params.dateFrom}
-            to={params.dateTo}
-            scopeLabel={shopName}
-            getSheets={() => ({
-              name: t('title'),
-              columns: [
-                { header: t('col.area') },
-                { header: t('col.archived'), width: 8 },
-                { header: t('col.transactions'), kind: 'number' },
-                ...MONEY_COLS.map((c) => ({ header: t(`col.${c}`), kind: 'money' as const })),
-              ],
-              rows: data.rows.map((r) => [
-                rowName(r), r.archived ? tc('yes') : null, r.transactionsCount, ...MONEY_COLS.map((c) => r[c]),
-              ]),
-              totals: [t('totals'), null, data.totals.transactionsCount, ...MONEY_COLS.map((c) => data.totals[c])],
-            })}
-          />
-        ) : null}
-        {!applied ? (
-          <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>
-        ) : isLoading ? (
-          <Skeleton className="h-64 w-full" />
-        ) : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : data ? (
-          <div className="rounded-lg border bg-card overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('col.area')}</TableHead>
-                  <TableHead className="text-end">{t('col.transactions')}</TableHead>
-                  {MONEY_COLS.map((c) => (
-                    <TableHead key={c} className="text-end">
-                      {t(`col.${c}`)}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={COLS} className="text-muted-foreground py-10 text-center">
-                      {t('noRows')}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  data.rows.map((row) => (
-                    <TableRow key={row.areaId ?? '__none__'}>
-                      <TableCell className="font-medium">
-                        <span className="inline-flex flex-wrap items-center gap-2">
-                          <span className={row.areaId === null ? 'text-muted-foreground' : undefined}>
-                            {rowName(row)}
-                          </span>
-                          {row.archived ? <Badge variant="outline">{t('archivedBadge')}</Badge> : null}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-end tabular-nums">{row.transactionsCount}</TableCell>
-                      {MONEY_COLS.map((c) => (
-                        <TableCell
-                          key={c}
-                          className={`text-end tabular-nums ${c === 'net' ? 'font-semibold' : ''}`}
-                        >
-                          {formatCurrency(row[c])}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-              {data.rows.length > 0 ? (
-                <TableFooter>
-                  <TableRow>
-                    <TableCell className="font-semibold">{t('totals')}</TableCell>
-                    <TableCell className="text-end font-medium tabular-nums">
-                      {data.totals.transactionsCount}
-                    </TableCell>
-                    {MONEY_COLS.map((c) => (
-                      <TableCell
-                        key={c}
-                        className={`text-end tabular-nums ${c === 'net' ? 'font-bold' : 'font-medium'}`}
-                      >
-                        {formatCurrency(data.totals[c])}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                </TableFooter>
-              ) : null}
-            </Table>
-          </div>
-        ) : null}
-      </ScopeGate>
-    </div>
+          }
+        />
+      ) : null}
+    </ReportPage>
   );
 }

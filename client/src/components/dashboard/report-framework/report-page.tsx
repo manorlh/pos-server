@@ -32,10 +32,23 @@ export interface ReportQueryState {
   hasData: boolean;
 }
 
+/** A react-query result as `ReportPage` reads it. */
+export function reportQueryState(q: {
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  error: unknown;
+  data: unknown;
+}): ReportQueryState {
+  return { isLoading: q.isLoading, isFetching: q.isFetching, isError: q.isError, error: q.error, hasData: q.data !== undefined };
+}
+
 export interface ReportExportConfig {
   /** The tables that go to Excel (each a sheet) and the PDF (the first, or `pdfTableId`). */
   tables: ReportTableSpec<unknown>[];
   extraSheets?: () => ExcelSheet[];
+  /** The extra sheets before the tables' (default: after). */
+  extraSheetsFirst?: boolean;
   pdfTableId?: string;
   /** The range the server used (`data.window`), else the applied one. */
   from?: string | null;
@@ -60,6 +73,8 @@ export interface ReportPageProps {
   /** Shown before the first run. */
   prompt: string;
   export?: ReportExportConfig | null;
+  /** The report runs without a range in the URL (a link to one shift). Default: the URL has one. */
+  ready?: boolean;
   /** Skeleton shape while loading. */
   loading?: 'cards' | 'table';
   children?: ReactNode;
@@ -77,6 +92,7 @@ export function ReportPage({
   prompt,
   export: exportConfig,
   loading = 'cards',
+  ready,
   children,
 }: ReportPageProps) {
   const tc = useTranslations('common');
@@ -104,7 +120,7 @@ export function ReportPage({
         <ScopeGate resolution={resolution}>
           <ReportFilterBar filters={filters} isFetching={query.isFetching} {...bar} />
 
-          {!filters.applied ? (
+          {!(ready ?? filters.applied !== null) ? (
             <p className="text-muted-foreground py-12 text-center text-sm">{prompt}</p>
           ) : query.isLoading ? (
             <div className="space-y-4" aria-busy="true">
@@ -127,9 +143,10 @@ export function ReportPage({
                   title={exportConfig.title ?? title}
                   tables={exportConfig.tables}
                   extraSheets={exportConfig.extraSheets}
+                  extraSheetsFirst={exportConfig.extraSheetsFirst}
                   pdfTableId={exportConfig.pdfTableId}
-                  from={exportConfig.from ?? filters.applied.values.from}
-                  to={exportConfig.to ?? filters.applied.values.to}
+                  from={exportConfig.from ?? filters.applied?.values.from}
+                  to={exportConfig.to ?? filters.applied?.values.to}
                   business={business}
                   place={place}
                   filterLines={description.lines}

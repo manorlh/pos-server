@@ -1911,7 +1911,14 @@
     "rangeSelectFilters": "בחרו טווח תאריכים וחלון שעות, ולחצו \"הצג דוח\"",
     "rangeNoRows": "לא נמצאו טיפים בטווח שנבחר",
     "unknownCashier": "ללא קופאי",
-    "forShift": "מוצגים הטיפים של משמרת אחת (מדו״ח ה-X שלה). בחירת תאריכים והרצה תחזיר לדו״ח לפי טווח."
+    "forShift": "מוצגים הטיפים של משמרת אחת (מדו״ח ה-X שלה). בחירת תאריכים והרצה תחזיר לדו״ח לפי טווח.",
+    "viewLabel": "תצוגה",
+    "noShift": "ללא משמרת",
+    "tillName": "{name} (קופה {n})",
+    "totalsLine": "{count} מסמכים עם טיפ · מכירות נטו {sales}",
+    "shiftsTruncated": "מוצגות 5,000 המשמרות הראשונות — צמצמו את הטווח כדי לראות את כולן. הסיכומים כוללים את כל המשמרות.",
+    "view": {"cashier": "לפי קופאי", "day": "לפי יום", "till": "לפי קופה", "shift": "לפי משמרת"},
+    "col": {"day": "יום", "till": "קופה", "shop": "סניף", "shift": "משמרת", "businessDate": "תאריך עסקים", "openedAt": "נפתחה", "closedAt": "נסגרה", "openedBy": "נפתחה ע״י"}
   },
   "taxReports": {
     "title": "דוחות מס (ממשק פתוח)",
@@ -4715,7 +4722,9 @@
       "discounts": "הנחות",
       "refunds": "החזרים",
       "net": "נטו"
-    }
+    },
+    "categoryNote": "סינון לפי מחלקה: מוצגים המוצרים של המחלקה (ושל תתי-המחלקות שלה), והסיכומים הם של השורות האלה.",
+    "categoryNoteTruncated": "סינון לפי מחלקה: מוצגים המוצרים של המחלקה מתוך {rowLimit} השורות שהוחזרו — הגדילו את תקרת השורות כדי לראות את כולם."
   },
   "cashierSales": {
     "title": "מכירות לפי קופאי",
@@ -4734,7 +4743,8 @@
       "documents": "מסמכים",
       "documentsBreakdown": "{sales} מכירות · {refunds} החזרים",
       "averageBasket": "ממוצע לעסקה",
-      "tips": "טיפים: {tips}"
+      "tips": "טיפים: {tips}",
+      "tipsSplit": "טיפים: {tips} (מזומן {cash} · אשראי {card})"
     },
     "reconcile": {
       "title": "התאמת אמצעי תשלום: מזומן + אשראי + שוברי הפקה + אחר = נטו",
@@ -4753,7 +4763,10 @@
       "productionVoucherDeductions": "שוברי הפקה (קיזוז)",
       "productionVoucherNet": "שוברי הפקה נטו",
       "otherNet": "אחר נטו",
-      "tips": "טיפים"
+      "tips": "טיפים",
+      "tipsCash": "טיפים במזומן",
+      "tipsCard": "טיפים באשראי",
+      "tipsOther": "טיפים אחר"
     }
   },
   "branding": {
@@ -4929,7 +4942,9 @@
       "variance": "הפרש",
       "total": "סה״כ",
       "documents": "מסמכים",
-      "zCount": "({count} דוחות Z)"
+      "zCount": "({count} דוחות Z)",
+      "cashTips": "טיפים במזומן",
+      "cardTips": "טיפים באשראי"
     },
     "drill": {
       "caption": "הקופות שמרכיבות את היום, שורה לכל קופה בכל דו״ח Z. \"פתח\" מוביל לדו״ח עצמו.",
@@ -4946,7 +4961,9 @@
       "unattended": "נסגרה מרחוק",
       "notCounted": "לא נספר",
       "zNumber": "מספר Z",
-      "reconstructed": "משוחזר"
+      "reconstructed": "משוחזר",
+      "cashTips": "טיפים במזומן",
+      "cardTips": "טיפים באשראי"
     },
     "empty": {
       "title": "אין דוחות Z בטווח",
@@ -5471,7 +5488,10 @@
       "productionVoucher": "שוברי הפקה",
       "productionVoucherDeductions": "שוברי הפקה (קיזוז)",
       "other": "אחר",
-      "tips": "טיפים"
+      "tips": "טיפים",
+      "tipsCash": "טיפים במזומן",
+      "tipsCard": "טיפים באשראי",
+      "tipsOther": "טיפים אחר"
     }
   },
   "transmission": {
@@ -8682,7 +8702,8 @@
       "method": "אמצעי תשלום",
       "amount": "סכום",
       "documents": "מסמכים",
-      "share": "אחוז"
+      "share": "אחוז",
+      "tippedDocuments": "מסמכים עם טיפ"
     },
     "method": {
       "cash": "מזומן",
@@ -8696,7 +8717,9 @@
       "bit": "ביט",
       "check": "צ׳ק",
       "cheque": "צ׳ק"
-    }
+    },
+    "tipsTitle": "טיפים לפי אמצעי תשלום",
+    "tipsNote": "הטיפים אינם כלולים בסכומים של אמצעי התשלום שלמעלה."
   },
   "hourlyReport": {
     "title": "מכירות לפי שעה",
@@ -8711,7 +8734,8 @@
       "hour": "שעה",
       "net": "נטו",
       "documents": "מסמכים",
-      "averageBasket": "סל ממוצע"
+      "averageBasket": "סל ממוצע",
+      "tips": "טיפים"
     },
     "weekday": {
       "0": "ראשון",
@@ -8721,7 +8745,8 @@
       "4": "חמישי",
       "5": "שישי",
       "6": "שבת"
-    }
+    },
+    "cellTips": "טיפים {tips}"
   },
   "departmentReport": {
     "title": "מכירות לפי מחלקה",
