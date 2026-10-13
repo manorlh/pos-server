@@ -886,12 +886,23 @@ def dashboard_cancel_table(
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
-    """A manager cancels a stuck open table (409 `table_locked` while a till is inside)."""
+    """
+    A manager cancels a stuck open table (409 `table_locked` while a till is inside; 409
+    `table_on_live_host` for an order the LAN mode's host serves while it is online). The
+    kitchen gets a void ticket of what it had, through the relay (`voidTickets`).
+    """
+    from app.services import printers as K
+    from app.services import table_void_tickets as VT
+
     table = T._live_table(db, table_id, active_tenant_id)
     shop = _writable_shop(db, table.shop_id, current_user, active_tenant_id)
     out = T.dashboard_cancel(db, current_user, shop, table, body)
+    printing = VT.notify_targets(db, out.get("voidTickets") or [])
     db.commit()
     _wake_shop(background_tasks, db, shop.id)
+    if printing:
+        # The tills that print the void tickets: woken now (they also look on their heartbeat).
+        background_tasks.add_task(K.publish_job_notify, printing)
     return out
 
 

@@ -2669,18 +2669,50 @@ def live(db: Session, shop: Shop, *, now: Optional[datetime] = None) -> dict:
             opened = as_utc(order.opened_at)
             row["minutesOpen"] = int((now - opened).total_seconds() // 60) if opened else None
         rows.append(row)
+    # Void tickets of tables cancelled here that are not on paper yet ("בון ביטול ממתין למדפסת").
+    from app.services import table_void_tickets as VT
+
+    try:
+        void_tickets = VT.shop_void_tickets(db, shop.id, now)
+    except Exception:  # noqa: BLE001 - the floor is shown without them
+        logger.exception("void tickets of shop %s not read", shop.id)
+        void_tickets = []
     return {
         "serverTime": now.isoformat(),
         "zones": [zone_out(z) for z in zones],
         "tables": rows,
         "summary": {"openTables": open_count, "openTotal": float(open_total), "guests": guests},
+        "voidTickets": void_tickets,
     }
+
+
+def _refuse_live_lan_host(db: Session, shop: Shop, order: TableOrder, now: datetime) -> None:
+    """
+    The LAN mode: an order its tables host serves (the cloud's copy of it carries its dishes; a
+    single till's report never does) is the host's while the host is online. A cancel here would
+    not reach its floor — the host takes the cloud's copy only when it next seeds (`host_seed`) —
+    while the kitchen's void ticket stopped the cooking of a table still open there: 409
+    `table_on_live_host`, cancel it at a till. A host not heard is what this cancel is for.
+    """
+    if order.source != "local" or order.cart_json is None:
+        return
+    host = tables_host_of_shop(db, shop.id)
+    if host is None or mode_of(machine_params(db, host).get(TABLES_MODE_KEY)) != MODE_LAN:
+        return
+    from app.services.machine_status import is_online
+    from app.services.printers import machine_label
+
+    if host.is_active and is_online(host.last_heartbeat_at, now=now):
+        raise _conflict("table_on_live_host", host=machine_label(host))
 
 
 def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, body, *, now: Optional[datetime] = None) -> dict:
     """
     A manager cancels a stuck open order from the dashboard (a till gone, a mode
     switched off with tables open). Recorded like a till's cancel, the user as approver.
+    The kitchen is told as after a till's cancel: a void ticket of what it had, once, and
+    its screens' tasks cancelled (app/services/table_void_tickets.py) — the answer says
+    which tickets wait for their printer (`voidTickets`).
     """
     now = now or _now()
     reason = active_reason(db, shop.tenant_id, body.reason_id)
@@ -2695,9 +2727,19 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
         )
     if order is None:
         raise _conflict("table_order_not_open")
+    # Two cancels at once (a double click, a retry): the row is held to the end of the request and
+    # read again — the second finds it closed, and the kitchen is told once.
+    order = (
+        db.query(TableOrder).filter(TableOrder.id == order.id).with_for_update().populate_existing().one()
+    )
+    if order.status != "open":
+        raise _conflict("table_order_not_open")
     if lock_live(table, now):
         raise _locked(db, table, now)
+    _refuse_live_lan_host(db, shop, order, now)
     name = user.username or user.email
+    # The till that last worked it: the void tickets follow its view of the printers.
+    worked_by = order.updated_machine_id
     order.version = (order.version or 0) + 1
     order.status = "cancelled"
     order.closed_at = now
@@ -2719,7 +2761,11 @@ def dashboard_cancel(db: Session, user: User, shop: Shop, table: DiningTable, bo
     machine = db.get(POSMachine, order.opened_machine_id) if order.opened_machine_id else None
     if machine is not None:
         record_cancel_exception(db, machine, order, reason_name=reason.name)
-    return order_summary(order)
+    from app.services import table_void_tickets as VT
+
+    out = order_summary(order)
+    out.update(VT.on_dashboard_cancel(db, order, table, user_id=user.id, by_name=name, worked_by=worked_by, now=now))
+    return out
 
 
 def dashboard_force_release(db: Session, user: User, table: DiningTable, *, now: Optional[datetime] = None) -> dict:
