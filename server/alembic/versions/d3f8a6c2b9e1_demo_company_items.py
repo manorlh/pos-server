@@ -32,7 +32,9 @@ INDEXES = (("ix_demo_company_items_company", ["company_id"]),)
 def _offline() -> bool:
     try:
         return context.is_offline_mode()
-    except NameError:  # run by hand (a test) outside alembic's environment: its migration context says
+    except (NameError, AttributeError):
+        # Run by hand (a test) outside alembic's environment — never set up (NameError), or torn down
+        # by an earlier `alembic` run in the same process (the proxy is None): its migration context says.
         try:
             return bool(op.get_context().as_sql)
         except Exception:  # noqa: BLE001
