@@ -139,6 +139,10 @@ class PosSettingsV1Patch(BaseModel):
     #: "משך מסך ההצלחה (שניות)": 1–10 (unset — 3). Outside the range is a 422; `null` in a PATCH resets
     #: the layer.
     voucher_success_seconds: Optional[int] = Field(None, alias="voucherSuccessSeconds", ge=1, le=10)
+    #: "סגירת מסך 'שובר מומש'": "auto" (unset — by itself after the seconds above, or on a touch) or
+    #: "confirm" (until the cashier presses "אישור"; a new scan counts as the press). Anything else is a
+    #: 422; `null` in a PATCH resets the layer.
+    voucher_success_dismiss: Optional[Literal["auto", "confirm"]] = Field(None, alias="voucherSuccessDismiss")
     #: "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": "on" (unset — a strong sound when a
     #: voucher is accepted / refused) or "off". Anything else is a 422; `null` in a PATCH resets the layer.
     voucher_sound_approve: Optional[Literal["on", "off"]] = Field(None, alias="voucherSoundApprove")

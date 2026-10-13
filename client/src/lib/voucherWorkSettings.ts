@@ -26,6 +26,7 @@ import {
   VOUCHER_STATION_PAID_ITEMS_VALUES,
   VOUCHER_STATION_TITLE_MAX,
   VOUCHER_STATION_VALUES,
+  VOUCHER_SUCCESS_DISMISS_VALUES,
   VOUCHER_SUCCESS_SCREEN_VALUES,
   VOUCHER_SUCCESS_SECONDS_VALUES,
   isVoucherFastChoiceKey,
@@ -40,6 +41,7 @@ import {
   resolveVoucherStation,
   resolveVoucherStationPaidItems,
   resolveVoucherStationTitle,
+  resolveVoucherSuccessDismiss,
   resolveVoucherSuccessScreen,
   resolveVoucherSuccessSeconds,
   voucherFastChoiceValues,
@@ -67,7 +69,7 @@ export const VOUCHER_WORK_GROUPS = [
       'voucherBalanceCheck',
     ],
   },
-  { id: 'close', keys: ['voucherAutoClose', 'voucherSuccessScreen', 'voucherSuccessSeconds'] },
+  { id: 'close', keys: ['voucherAutoClose', 'voucherSuccessScreen', 'voucherSuccessDismiss', 'voucherSuccessSeconds'] },
   {
     id: 'station',
     keys: [
@@ -120,6 +122,7 @@ const CHOICE_VALUES: Partial<Record<VoucherWorkKey, readonly string[]>> = {
   voucherBalanceCheck: VOUCHER_BALANCE_CHECK_MODES,
   voucherAutoClose: VOUCHER_AUTO_CLOSE_VALUES,
   voucherSuccessScreen: VOUCHER_SUCCESS_SCREEN_VALUES,
+  voucherSuccessDismiss: VOUCHER_SUCCESS_DISMISS_VALUES,
   voucherStation: VOUCHER_STATION_VALUES,
   voucherStationPaidItems: VOUCHER_STATION_PAID_ITEMS_VALUES,
   voucherSoundApprove: VOUCHER_SOUND_VALUES,
@@ -165,6 +168,8 @@ export function resolveVoucherWorkValue(key: VoucherWorkKey, own: unknown, inher
       return resolveVoucherSuccessScreen(own, inherited);
     case 'voucherSuccessSeconds':
       return resolveVoucherSuccessSeconds(own, inherited);
+    case 'voucherSuccessDismiss':
+      return resolveVoucherSuccessDismiss(own, inherited);
     case 'voucherStation':
       return resolveVoucherStation(own, inherited);
     case 'voucherStationPaidItems':
@@ -204,8 +209,9 @@ export function voucherWorkVisibleKeys(group: VoucherWorkGroupId, own: VoucherWo
 /**
  * Why a setting does nothing at this level right now (it is shown dimmed, still editable), or null:
  * the station's settings while the voucher station is off; "סגירה לבד במצב מהיר" while the fast mode is
- * off; which camera while the station's camera is off; the title while the header shows no text; the
- * seconds while the success screen is off; the boost while both sounds are off.
+ * off; which camera while the station's camera is off; the title while the header shows no text; how
+ * the success screen closes, and its seconds, while it is off; the seconds while the cashier closes it
+ * with "אישור" (`voucherSuccessDismiss` "confirm"); the boost while both sounds are off.
  */
 export type VoucherWorkDependency =
   | 'stationOff'
@@ -213,6 +219,7 @@ export type VoucherWorkDependency =
   | 'cameraOff'
   | 'headerNoText'
   | 'successScreenOff'
+  | 'dismissConfirm'
   | 'soundsOff';
 
 export function voucherWorkDependency(key: VoucherWorkKey, effective: VoucherWorkValues): VoucherWorkDependency | null {
@@ -224,7 +231,10 @@ export function voucherWorkDependency(key: VoucherWorkKey, effective: VoucherWor
   if (key === 'voucherStationTitle' && effective.voucherStationHeader !== 'text' && effective.voucherStationHeader !== 'both') {
     return 'headerNoText';
   }
-  if (key === 'voucherSuccessSeconds' && effective.voucherSuccessScreen === 'off') return 'successScreenOff';
+  if ((key === 'voucherSuccessSeconds' || key === 'voucherSuccessDismiss') && effective.voucherSuccessScreen === 'off') {
+    return 'successScreenOff';
+  }
+  if (key === 'voucherSuccessSeconds' && effective.voucherSuccessDismiss === 'confirm') return 'dismissConfirm';
   if (key === 'voucherSoundBoost' && effective.voucherSoundApprove === 'off' && effective.voucherSoundReject === 'off') {
     return 'soundsOff';
   }
@@ -251,8 +261,9 @@ const phrase = (effective: VoucherWorkValues, key: VoucherWorkKey): VoucherWorkP
 
 /**
  * A group's line in the summary, in plain words: what is in force at this level. A phrase that changes
- * nothing is left out (the fast mode's close while it is off, the seconds without a success screen, the
- * station's details while it is off, which camera with none, the boost with no sound).
+ * nothing is left out (the fast mode's close while it is off, how the success screen closes without
+ * one, the station's details while it is off, which camera with none, the boost with no sound). The
+ * success screen closing by itself reads as its seconds ("נסגר לבד אחרי 3 שניות"); on "אישור", as that.
  */
 export function voucherWorkSummary(group: VoucherWorkGroupId, effective: VoucherWorkValues): VoucherWorkPhrase[] {
   const p = (key: VoucherWorkKey) => phrase(effective, key);
@@ -270,7 +281,9 @@ export function voucherWorkSummary(group: VoucherWorkGroupId, effective: Voucher
       return [
         p('voucherAutoClose'),
         p('voucherSuccessScreen'),
-        ...(effective.voucherSuccessScreen === 'off' ? [] : [p('voucherSuccessSeconds')]),
+        ...(effective.voucherSuccessScreen === 'off'
+          ? []
+          : [effective.voucherSuccessDismiss === 'confirm' ? p('voucherSuccessDismiss') : p('voucherSuccessSeconds')]),
       ];
     case 'station':
       if (effective.voucherStation !== 'on') return [p('voucherStation')];

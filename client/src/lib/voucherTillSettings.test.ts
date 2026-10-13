@@ -28,7 +28,12 @@ import {
   VOUCHER_SUCCESS_SECONDS_MAX,
   VOUCHER_SUCCESS_SECONDS_MIN,
   VOUCHER_SUCCESS_SECONDS_VALUES,
+  VOUCHER_SUCCESS_DISMISS_DEFAULT,
+  VOUCHER_SUCCESS_DISMISS_KEY,
+  VOUCHER_SUCCESS_DISMISS_VALUES,
   isVoucherBalanceCheckMode,
+  isVoucherSuccessDismiss,
+  resolveVoucherSuccessDismiss,
   isVoucherOnOff,
   isVoucherSuccessScreen,
   isVoucherSuccessSeconds,
@@ -383,4 +388,28 @@ test('station title: what a typed title sends — normalized, blank is null (inh
   assert.equal(voucherStationTitlePatch('  \n'), null);
   assert.equal(voucherStationTitlePatch(null), null);
   assert.equal(voucherStationTitlePatch(undefined), null);
+});
+
+// ── "סגירת מסך 'שובר מומש'" (voucherSuccessDismiss, 13.10.2026, P:/specs/voucher-fast-mode.md §0 item 11) ──
+
+test("voucherSuccessDismiss: the server's key, values and default (auto)", () => {
+  assert.equal(VOUCHER_SUCCESS_DISMISS_KEY, 'voucherSuccessDismiss');
+  assert.deepEqual([...VOUCHER_SUCCESS_DISMISS_VALUES], ['auto', 'confirm']);
+  assert.equal(VOUCHER_SUCCESS_DISMISS_DEFAULT, 'auto');
+});
+
+test('voucherSuccessDismiss: its own value, then the inherited one, then auto; junk is unset', () => {
+  for (const v of ['auto', 'confirm']) {
+    assert.equal(isVoucherSuccessDismiss(v), true);
+    assert.equal(resolveVoucherSuccessDismiss(v, 'auto'), v);
+    assert.equal(resolveVoucherSuccessDismiss(undefined, v), v);
+  }
+  assert.equal(resolveVoucherSuccessDismiss('auto', 'confirm'), 'auto');
+  assert.equal(resolveVoucherSuccessDismiss(null, 'confirm'), 'confirm');
+  assert.equal(resolveVoucherSuccessDismiss(undefined, undefined), 'auto');
+  for (const junk of ['AUTO', 'Confirm', ' confirm', 'on', 'tap', '', 0, true, {}, ['confirm']]) {
+    assert.equal(isVoucherSuccessDismiss(junk), false);
+    assert.equal(resolveVoucherSuccessDismiss(junk, junk), 'auto');
+    assert.equal(resolveVoucherSuccessDismiss(junk, 'confirm'), 'confirm');
+  }
 });

@@ -352,6 +352,11 @@ export interface PosSettingsV1 {
   /** "משך מסך ההצלחה (שניות)": an integer 1–10 (unset — 3). In `effective` always resolved. */
   voucherSuccessSeconds?: number;
   /**
+   * "סגירת מסך 'שובר מומש'": auto (unset — by itself after the seconds above, or on a touch) or confirm
+   * (until the cashier presses "אישור"; a new scan counts as the press). In `effective` always resolved.
+   */
+  voucherSuccessDismiss?: VoucherSuccessDismiss;
+  /**
    * "צליל אישור במימוש שובר" / "צליל סירוב במימוש שובר": on (unset — a strong sound once when a
    * voucher is accepted / refused) or off. In `effective` always resolved.
    */
@@ -473,6 +478,9 @@ export type VoucherOnOff = 'on' | 'off';
 /** `voucherSuccessScreen` — server/app/services/voucher_station_settings.py. */
 export type VoucherSuccessScreen = 'always' | 'auto_close' | 'off';
 
+/** `voucherSuccessDismiss` (P:/specs/voucher-fast-mode.md §0 item 11) — server/app/services/voucher_station_settings.py. */
+export type VoucherSuccessDismiss = 'auto' | 'confirm';
+
 /** The voucher fast mode's choices (P:/specs/voucher-fast-mode.md §0) — server/app/services/voucher_station_settings.py. */
 export type VoucherFastMode = 'off' | 'station' | 'all';
 export type VoucherStationCamera = 'off' | 'always' | 'tap';
@@ -529,6 +537,7 @@ export type PosSettingsPatch = Partial<
     | 'voucherAutoApply'
     | 'voucherSuccessScreen'
     | 'voucherSuccessSeconds'
+    | 'voucherSuccessDismiss'
     | 'voucherSoundApprove'
     | 'voucherSoundReject'
     | 'voucherFastMode'
@@ -566,6 +575,7 @@ export type PosSettingsPatch = Partial<
   voucherAutoApply?: VoucherOnOff | null;
   voucherSuccessScreen?: VoucherSuccessScreen | null;
   voucherSuccessSeconds?: number | null;
+  voucherSuccessDismiss?: VoucherSuccessDismiss | null;
   voucherSoundApprove?: VoucherOnOff | null;
   voucherSoundReject?: VoucherOnOff | null;
   /** `null` = inherit the fast mode's settings from the level above again (a blank title too). */

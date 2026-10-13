@@ -52,6 +52,16 @@ inherited the same way:
                                           an integer outside 1–10 is a 422 on write, and anything
                                           but such an integer reads as 3
 
+And one more, added 13.10.2026 (P:/specs/voucher-fast-mode.md §0 item 11, "פיצ'ר דינמי"), set and
+inherited the same way:
+
+    voucherSuccessDismiss  "auto"    — "סגירת מסך 'שובר מומש'": the green screen closes by itself after
+                                       voucherSuccessSeconds, or on a touch (the default)
+                           "confirm" — it stays until the cashier presses a large "אישור", so they know
+                                       the voucher went through; a new scan counts as that press and
+                                       goes on to the next voucher, so the queue never stalls
+    It applies to every voucher success screen: the usual till (the auto apply's too) and the station.
+
 And two more, added 12.10.2026 ("צליל אישור חזק וצליל סירוב חזק, אפשר לבטל אותם בפרמטרים — לגבי
 השוברים במימוש"), set and inherited the same way:
 
@@ -164,6 +174,16 @@ DEFAULT_SUCCESS_SCREEN = SUCCESS_ALWAYS
 DEFAULT_SUCCESS_SECONDS = 3
 
 VOUCHER_SUCCESS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_SCREEN_KEY, VOUCHER_SUCCESS_SECONDS_KEY)
+
+#: 13.10.2026 (P:/specs/voucher-fast-mode.md §0 item 11): how the green "שובר מומש" screen closes.
+VOUCHER_SUCCESS_DISMISS_KEY = "voucherSuccessDismiss"
+SUCCESS_DISMISS_AUTO = "auto"
+SUCCESS_DISMISS_CONFIRM = "confirm"
+SUCCESS_DISMISS_VALUES: Tuple[str, ...] = (SUCCESS_DISMISS_AUTO, SUCCESS_DISMISS_CONFIRM)
+#: Unset everywhere: by itself after voucherSuccessSeconds (or on a touch).
+DEFAULT_SUCCESS_DISMISS = SUCCESS_DISMISS_AUTO
+
+VOUCHER_SUCCESS_DISMISS_SETTING_KEYS: Tuple[str, ...] = (VOUCHER_SUCCESS_DISMISS_KEY,)
 
 #: 12.10.2026: the strong approve / reject sounds when a voucher is redeemed.
 VOUCHER_SOUND_APPROVE_KEY = "voucherSoundApprove"
@@ -297,6 +317,16 @@ def resolve_voucher_success(merged: Mapping[str, Any]) -> Dict[str, Any]:
         if isinstance(screen, str) and screen in SUCCESS_SCREEN_VALUES
         else DEFAULT_SUCCESS_SCREEN,
         VOUCHER_SUCCESS_SECONDS_KEY: _success_seconds(merged.get(VOUCHER_SUCCESS_SECONDS_KEY)),
+    }
+
+
+def resolve_voucher_success_dismiss(merged: Mapping[str, Any]) -> Dict[str, Any]:
+    """`voucherSuccessDismiss` resolved from a merged settings dict; unknown or missing = "auto". A view only."""
+    dismiss = merged.get(VOUCHER_SUCCESS_DISMISS_KEY)
+    return {
+        VOUCHER_SUCCESS_DISMISS_KEY: dismiss
+        if isinstance(dismiss, str) and dismiss in SUCCESS_DISMISS_VALUES
+        else DEFAULT_SUCCESS_DISMISS,
     }
 
 

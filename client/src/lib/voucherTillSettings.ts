@@ -25,6 +25,9 @@
  *   sale by itself) or `off` (the usual end-of-sale screen only).
  * - `voucherSuccessSeconds` (12.10.2026) — "משך מסך ההצלחה (שניות)": an integer 1–10 (unset: 3);
  *   anything else counts as unset.
+ * - `voucherSuccessDismiss` (13.10.2026, P:/specs/voucher-fast-mode.md §0 item 11) — "סגירת מסך 'שובר
+ *   מומש'": `auto` (unset: by itself after the seconds, or on a touch) or `confirm` (until the cashier
+ *   presses "אישור"; a new scan counts as the press and goes on to the next voucher).
  * - `voucherSoundApprove` / `voucherSoundReject` (12.10.2026) — "צליל אישור במימוש שובר" / "צליל סירוב
  *   במימוש שובר": `on` (unset: a strong sound once when a voucher is accepted / refused in red) or `off`.
  * - The voucher fast mode (13.10.2026, P:/specs/voucher-fast-mode.md §0 — "המכשיר עובר להיות בקר
@@ -55,6 +58,7 @@ import type {
   VoucherStationCameraFacing,
   VoucherStationCatalogSwitch,
   VoucherStationHeader,
+  VoucherSuccessDismiss,
   VoucherSuccessScreen,
   VoucherVibrate,
 } from './types';
@@ -68,6 +72,7 @@ export const VOUCHER_SHOW_ENTITLEMENT_KEY = 'voucherShowEntitlement' as const;
 export const VOUCHER_AUTO_APPLY_KEY = 'voucherAutoApply' as const;
 export const VOUCHER_SUCCESS_SCREEN_KEY = 'voucherSuccessScreen' as const;
 export const VOUCHER_SUCCESS_SECONDS_KEY = 'voucherSuccessSeconds' as const;
+export const VOUCHER_SUCCESS_DISMISS_KEY = 'voucherSuccessDismiss' as const;
 export const VOUCHER_SOUND_APPROVE_KEY = 'voucherSoundApprove' as const;
 export const VOUCHER_SOUND_REJECT_KEY = 'voucherSoundReject' as const;
 
@@ -78,6 +83,7 @@ export const VOUCHER_STATION_PAID_ITEMS_VALUES: readonly VoucherOnOff[] = ['off'
 export const VOUCHER_SHOW_ENTITLEMENT_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_AUTO_APPLY_VALUES: readonly VoucherOnOff[] = ['on', 'off'];
 export const VOUCHER_SUCCESS_SCREEN_VALUES: readonly VoucherSuccessScreen[] = ['always', 'auto_close', 'off'];
+export const VOUCHER_SUCCESS_DISMISS_VALUES: readonly VoucherSuccessDismiss[] = ['auto', 'confirm'];
 export const VOUCHER_SUCCESS_SECONDS_MIN = 1;
 export const VOUCHER_SUCCESS_SECONDS_MAX = 10;
 /** 1, 2, …, 10: every choice the dashboard offers. */
@@ -95,6 +101,7 @@ export const VOUCHER_SHOW_ENTITLEMENT_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_AUTO_APPLY_DEFAULT: VoucherOnOff = 'on';
 export const VOUCHER_SUCCESS_SCREEN_DEFAULT: VoucherSuccessScreen = 'always';
 export const VOUCHER_SUCCESS_SECONDS_DEFAULT = 3;
+export const VOUCHER_SUCCESS_DISMISS_DEFAULT: VoucherSuccessDismiss = 'auto';
 export const VOUCHER_SOUND_DEFAULT: VoucherOnOff = 'on';
 
 export function isVoucherBalanceCheckMode(value: unknown): value is VoucherBalanceCheckMode {
@@ -177,6 +184,17 @@ export function resolveVoucherSuccessSeconds(own: unknown, inherited: unknown): 
   if (isVoucherSuccessSeconds(own)) return own;
   if (isVoucherSuccessSeconds(inherited)) return inherited;
   return VOUCHER_SUCCESS_SECONDS_DEFAULT;
+}
+
+export function isVoucherSuccessDismiss(value: unknown): value is VoucherSuccessDismiss {
+  return typeof value === 'string' && (VOUCHER_SUCCESS_DISMISS_VALUES as readonly string[]).includes(value);
+}
+
+/** "סגירת מסך 'שובר מומש'" at a layer: its own, else the inherited one, else "auto". */
+export function resolveVoucherSuccessDismiss(own: unknown, inherited: unknown): VoucherSuccessDismiss {
+  if (isVoucherSuccessDismiss(own)) return own;
+  if (isVoucherSuccessDismiss(inherited)) return inherited;
+  return VOUCHER_SUCCESS_DISMISS_DEFAULT;
 }
 
 /** "צליל אישור / סירוב במימוש שובר" at a layer: its own, else the inherited one, else "on". */

@@ -108,6 +108,8 @@ export function VoucherWorkSettings({
     if (control.kind === 'seconds' || control.kind === 'text') return String(v);
     if (key === 'voucherRedeemFlow') return t(`voucherFlow.${v}`);
     if (key === 'voucherBalanceCheck') return t(`voucherBalance.${v}`);
+    // "נסגר לבד אחרי X שניות": X is the seconds in force at this level.
+    if (key === 'voucherSuccessDismiss') return t(`voucherSuccessDismiss.${v}`, { n: Number(effective.voucherSuccessSeconds) });
     if (control.values.every((c) => c === 'on' || c === 'off')) return t(`voucherOnOff.${v}`);
     return t(`${key}.${v}`);
   };

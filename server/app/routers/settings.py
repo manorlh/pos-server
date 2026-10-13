@@ -169,6 +169,7 @@ def _voucher_flow_patch(data: PosSettingsV1Patch) -> Dict[str, Any]:
         *voucher_station.VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
         *voucher_station.VOUCHER_AUTO_APPLY_SETTING_KEYS,
         *voucher_station.VOUCHER_SUCCESS_SETTING_KEYS,
+        *voucher_station.VOUCHER_SUCCESS_DISMISS_SETTING_KEYS,
         *voucher_station.VOUCHER_SOUND_SETTING_KEYS,
         *voucher_station.VOUCHER_FAST_MODE_SETTING_KEYS,
     )
@@ -391,6 +392,7 @@ def _inherited_preview(layers: List[Any]):
     effective.update(voucher_station.resolve_show_entitlement(effective))
     effective.update(voucher_station.resolve_auto_apply(effective))
     effective.update(voucher_station.resolve_voucher_success(effective))
+    effective.update(voucher_station.resolve_voucher_success_dismiss(effective))
     effective.update(voucher_station.resolve_voucher_sounds(effective))
     effective.update(voucher_station.resolve_voucher_fast_mode(effective))
     effective.update(resolve_sell_screen(effective))

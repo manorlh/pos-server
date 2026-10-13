@@ -36,6 +36,7 @@ const DEFAULTS: VoucherWorkValues = {
   voucherBalanceCheck: 'auto',
   voucherAutoClose: 'on',
   voucherSuccessScreen: 'always',
+  voucherSuccessDismiss: 'auto',
   voucherSuccessSeconds: 3,
   voucherStation: 'off',
   voucherStationPaidItems: 'off',
@@ -65,7 +66,13 @@ test('the four groups, their order and every setting in exactly one of them', ()
     'voucherShowEntitlement',
     'voucherBalanceCheck',
   ]);
-  assert.deepEqual([...voucherWorkGroupKeys('close')], ['voucherAutoClose', 'voucherSuccessScreen', 'voucherSuccessSeconds']);
+  // How the success screen closes sits between the screen and its seconds (13.10.2026, §0 item 11).
+  assert.deepEqual([...voucherWorkGroupKeys('close')], [
+    'voucherAutoClose',
+    'voucherSuccessScreen',
+    'voucherSuccessDismiss',
+    'voucherSuccessSeconds',
+  ]);
   assert.deepEqual([...voucherWorkGroupKeys('station')], [
     'voucherStation',
     'voucherStationPaidItems',
@@ -76,8 +83,8 @@ test('the four groups, their order and every setting in exactly one of them', ()
     'voucherStationTitle',
   ]);
   assert.deepEqual([...voucherWorkGroupKeys('sound')], ['voucherSoundApprove', 'voucherSoundReject', 'voucherSoundBoost', 'voucherVibrate']);
-  assert.equal(VOUCHER_WORK_KEYS.length, 21);
-  assert.equal(new Set(VOUCHER_WORK_KEYS).size, 21);
+  assert.equal(VOUCHER_WORK_KEYS.length, 22);
+  assert.equal(new Set(VOUCHER_WORK_KEYS).size, 22);
   assert.deepEqual(Object.keys(DEFAULTS).sort(), [...VOUCHER_WORK_KEYS].sort());
   for (const g of VOUCHER_WORK_GROUPS) for (const key of g.keys) assert.equal(voucherWorkGroupOf(key), g.id);
   assert.equal(isVoucherWorkKey('voucherVibrate'), true);
@@ -95,6 +102,7 @@ test('each setting keeps its control and values', () => {
   assert.deepEqual(voucherWorkControl('voucherVibrate'), { kind: 'choice', values: ['off', 'approve', 'reject', 'both'] });
   assert.deepEqual(voucherWorkControl('voucherStationHeader'), { kind: 'choice', values: ['logo', 'text', 'both', 'none'] });
   assert.deepEqual(voucherWorkControl('voucherSuccessSeconds'), { kind: 'seconds', values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] });
+  assert.deepEqual(voucherWorkControl('voucherSuccessDismiss'), { kind: 'choice', values: ['auto', 'confirm'] });
   assert.deepEqual(voucherWorkControl('voucherStationTitle'), { kind: 'text', max: 40 });
   for (const key of VOUCHER_WORK_KEYS) assert.ok(voucherWorkControl(key), key);
 });
@@ -114,6 +122,8 @@ test("a level's own value: only a known one counts", () => {
   assert.equal(isVoucherWorkValue('voucherStationTitle', null), false);
   assert.equal(isVoucherWorkValue('voucherSoundApprove', 'ON'), false);
   assert.equal(isVoucherWorkValue('voucherRedeemFlow', null), false);
+  assert.equal(isVoucherWorkValue('voucherSuccessDismiss', 'confirm'), true);
+  assert.equal(isVoucherWorkValue('voucherSuccessDismiss', 'manual'), false);
 });
 
 test('nothing set anywhere: the defaults', () => {
@@ -173,6 +183,8 @@ test('each other dependency, and only while it holds', () => {
     ['voucherStationTitle', { voucherStation: 'on', voucherStationHeader: 'logo' }, { voucherStation: 'on', voucherStationHeader: 'text' }, 'headerNoText'],
     ['voucherStationTitle', { voucherStation: 'on', voucherStationHeader: 'none' }, { voucherStation: 'on', voucherStationHeader: 'both' }, 'headerNoText'],
     ['voucherSuccessSeconds', { voucherSuccessScreen: 'off' }, { voucherSuccessScreen: 'auto_close' }, 'successScreenOff'],
+    ['voucherSuccessDismiss', { voucherSuccessScreen: 'off' }, { voucherSuccessScreen: 'always' }, 'successScreenOff'],
+    ['voucherSuccessSeconds', { voucherSuccessDismiss: 'confirm' }, { voucherSuccessDismiss: 'auto' }, 'dismissConfirm'],
     ['voucherSoundBoost', { voucherSoundApprove: 'off', voucherSoundReject: 'off' }, { voucherSoundApprove: 'off' }, 'soundsOff'],
   ];
   for (const [key, holds, released, dep] of cases) {
@@ -181,6 +193,14 @@ test('each other dependency, and only while it holds', () => {
   }
   // Inherited values count the same as this level's own.
   assert.equal(voucherWorkDependency('voucherFastAutoClose', voucherWorkEffective({}, { voucherFastMode: 'off' })), 'fastModeOff');
+  // With no success screen at all, that comes first: the seconds are not used either way.
+  assert.equal(
+    voucherWorkDependency('voucherSuccessSeconds', voucherWorkEffective({ voucherSuccessDismiss: 'confirm' }, { voucherSuccessScreen: 'off' })),
+    'successScreenOff',
+  );
+  // "confirm" inherited from the level above dims this level's seconds too.
+  assert.equal(voucherWorkDependency('voucherSuccessSeconds', voucherWorkEffective({ voucherSuccessSeconds: 5 }, { voucherSuccessDismiss: 'confirm' })), 'dismissConfirm');
+  assert.equal(voucherWorkDependency('voucherSuccessDismiss', voucherWorkEffective({ voucherSuccessDismiss: 'confirm' }, undefined)), null);
   // With the station off, that comes first.
   assert.equal(voucherWorkDependency('voucherStationCameraFacing', voucherWorkEffective({ voucherStationCamera: 'off' }, undefined)), 'stationOff');
   // Nothing else depends on anything.
@@ -220,6 +240,16 @@ test('the summary leaves out what changes nothing', () => {
   );
   assert.equal(words(voucherWorkSummary('redeem', e)).includes('voucherFastAutoClose=on'), false);
   assert.deepEqual(words(voucherWorkSummary('close', e)), ['voucherAutoClose=on', 'voucherSuccessScreen=off']);
+  // Closed on "אישור": that, rather than the seconds.
+  assert.deepEqual(words(voucherWorkSummary('close', voucherWorkEffective({ voucherSuccessDismiss: 'confirm', voucherSuccessSeconds: 6 }, undefined))), [
+    'voucherAutoClose=on',
+    'voucherSuccessScreen=always',
+    'voucherSuccessDismiss=confirm',
+  ]);
+  assert.deepEqual(
+    words(voucherWorkSummary('close', voucherWorkEffective({ voucherSuccessDismiss: 'confirm', voucherSuccessScreen: 'off' }, undefined))),
+    ['voucherAutoClose=on', 'voucherSuccessScreen=off'],
+  );
   assert.deepEqual(words(voucherWorkSummary('station', e)), [
     'voucherStation=on',
     'voucherStationPaidItems=off',
