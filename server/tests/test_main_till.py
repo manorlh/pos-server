@@ -501,9 +501,12 @@ def test_the_tills_own_take_over_is_closed(w):
     set_param(w, "tablesMode", "shop", w.shop.id, LAN)
     make_main(w, t1)
     _heard(t1, 3600)
-    # "העבר את השרת לקופה הזו" from an older build: 410, in Hebrew, and nothing moves.
+    # "העבר את השרת לקופה הזו" with `tillServerTakeover` at its default ("רק מהענן"): 410, in
+    # Hebrew, and nothing moves (`manager`: tests/test_local_server_switch.py).
     with pytest.raises(HTTPException) as e:
-        tables_router.take_over_host(str(t2.id), TakeOverIn(posUserName="מנהל"), machine=t2)
+        tables_router.take_over_host(
+            str(t2.id), BackgroundTasks(), TakeOverIn(posUserName="מנהל"), machine=t2, db=w.db,
+        )
     assert e.value.status_code == 410
     assert e.value.detail["code"] == "switch_from_cloud_only"
     assert "מהענן" in e.value.detail["message"]

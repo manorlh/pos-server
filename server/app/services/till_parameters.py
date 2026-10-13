@@ -1679,6 +1679,13 @@ from app.services.independent_z_only import PARAMETER_SPECS as _INDEPENDENT_Z_ON
 
 BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _INDEPENDENT_Z_ONLY_SPECS)
 
+# "העברת שרת מקומי מהקופה" (app/services/local_server_switch.py, P:/specs/local-server-switch.md §9):
+# `off` — the cloud only (the till's take-over answers 410); `manager` — the till's own button, a
+# manager approving, the same full move as the dashboard's switch.
+from app.services.local_server_switch import PARAMETER_SPECS as _LOCAL_SERVER_SPECS  # noqa: E402
+
+BUILTIN_PARAMETERS = BUILTIN_PARAMETERS + tuple(BuiltinParameter(**spec) for spec in _LOCAL_SERVER_SPECS)
+
 # "ניהול קטלוג מהקופה" (specs/till-catalog-management.md §6.1): the till's catalog screen — on or off,
 # what it shows, adding products, and without an open shift. Edited on the dashboard's "ניהול קטלוג
 # מהקופה" page by level; the till also gets `catalogAdminView` (app/services/catalog_admin.py).

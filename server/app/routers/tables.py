@@ -307,8 +307,9 @@ def get_host_seed(
     return T.host_seed(db, machine)
 
 
-#: The till's own "העבר את השרת לקופה הזו" is gone (P:/specs/local-server-switch.md §8): an older
-#: build that still shows the button is told where the switch is now.
+#: The till's own "העבר את השרת לקופה הזו" where `tillServerTakeover` is not `manager` (the
+#: default, P:/specs/local-server-switch.md §8–9): an older build that still shows the button is
+#: told where the switch is now.
 SWITCH_FROM_CLOUD_ONLY = "switch_from_cloud_only"
 SWITCH_FROM_CLOUD_ONLY_MESSAGE = (
     "העברת השרת המקומי לקופה אחרת נעשית מהענן בלבד. "
@@ -319,18 +320,41 @@ SWITCH_FROM_CLOUD_ONLY_MESSAGE = (
 @router.post("/sync/{machine_id}/tables/take-over", dependencies=FISCAL_MACHINE_TOKEN)
 def take_over_host(
     machine_id: str,
+    background_tasks: BackgroundTasks,
     body: Optional[TakeOverIn] = None,
     machine: POSMachine = Depends(get_pos_machine_from_sync_machine_token),
+    db: Session = Depends(get_db),
 ):
     """
-    Closed (13.10.2026): the local server moves from the cloud only ("העברת שרת מקומי",
-    `POST /shops/{id}/local-server/switch`, app/services/local_server_switch.py). 410
-    `{code: switch_from_cloud_only, message}` — nothing moves.
+    "העבר את השרת לקופה הזו". The till parameter `tillServerTakeover`, resolved for this till
+    (app/services/local_server_switch.py, §9):
+
+    * `manager` — the same full move as `POST /shops/{id}/local-server/switch` (main till, tables
+      host, print server, shop Z master; the shop Z frozen until the old server reports; "השרת
+      הוחלף" on every till; audited "from the till" with the approving manager, `posUserName`).
+      409 `host_online` while the cloud still hears the old server — never forced from a till.
+    * otherwise (`off`, the default) — 410 `{code: switch_from_cloud_only, message}`; nothing moves.
     """
-    raise HTTPException(
-        status_code=status.HTTP_410_GONE,
-        detail={"code": SWITCH_FROM_CLOUD_ONLY, "message": SWITCH_FROM_CLOUD_ONLY_MESSAGE},
-    )
+    from app.services import local_server_switch as LSS
+    from app.services import till_parameters as TP
+
+    if LSS.till_takeover_mode(db, machine) != LSS.TILL_TAKEOVER_MANAGER:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"code": SWITCH_FROM_CLOUD_ONLY, "message": SWITCH_FROM_CLOUD_ONLY_MESSAGE},
+        )
+    try:
+        out = LSS.switch_from_till(db, machine, body.pos_user_name if body is not None else None)
+    except Exception:
+        db.rollback()
+        raise
+    tills = TP.notify_targets_for_scope(db, "shop", machine.shop_id)
+    db.commit()
+    if out.get("previous") is not None:
+        # Every till re-reads its parameters and printers, and pulls the tables' new host.
+        background_tasks.add_task(TP.publish_parameters_notify, tills)
+        _wake(background_tasks, db, machine)
+    return out
 
 
 @router.post("/sync/{machine_id}/tables/{table_id}/enter", dependencies=FISCAL_MACHINE_TOKEN)

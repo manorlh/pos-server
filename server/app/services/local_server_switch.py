@@ -6,7 +6,10 @@ fallen server's shift is closed from the cloud (P:/specs/local-server-switch.md,
 * **The switch** (`POST /shops/{id}/local-server/switch`): the same full move the till's own
   "העבר את השרת לקופה הזו" made (`main_till.take_over`: `mainTill`, `tablesHostTill`,
   `printHostTill`, `shopZMasterTill`), the notice "השרת הוחלף" on every till, and an audit
-  record. The till's own take-over now answers 410 `switch_from_cloud_only`. Refused with 409
+  record. The till's own take-over answers 410 `switch_from_cloud_only` — unless the till parameter
+  `tillServerTakeover` is `manager` for it (§9): then it makes this same move, its protections
+  included and nothing forced, recorded "from the till" with the approving manager's name
+  (`switch_from_till`). Refused with 409
   `host_online` while the cloud still hears the old server ("כנראה בעיית רשת בין הקופות"),
   unless `force`. Options in the same step: close the old server's open shift from the cloud
   (`closeOldShift` + `countedCash`) and release the shop Z production at once (`releaseShopZ`,
@@ -258,7 +261,14 @@ INELIGIBLE = {
 }
 
 
-def ineligible_reason(db: Session, machine: POSMachine, now: Optional[datetime] = None) -> Optional[str]:
+def ineligible_reason(
+    db: Session, machine: POSMachine, now: Optional[datetime] = None, *, require_online: bool = True,
+) -> Optional[str]:
+    """
+    Why `machine` cannot become the shop's server, or None. `require_online=False`: the till is
+    asking itself (its own take-over) — it is talking to the cloud right now, whatever its last
+    heartbeat says.
+    """
     from app.services import lan_server
     from app.services.display_devices import PLATFORM_ANDROID, platform_of
     from app.services.independent_till import is_independent
@@ -280,7 +290,7 @@ def ineligible_reason(db: Session, machine: POSMachine, now: Optional[datetime] 
         return "kiosk"
     if platform_of(machine) != PLATFORM_ANDROID:
         return "not_android"
-    if not is_online(machine.last_heartbeat_at, now=now):
+    if require_online and not is_online(machine.last_heartbeat_at, now=now):
         return "offline"
     return None
 
@@ -322,11 +332,16 @@ def state(db: Session, shop: Shop, user: Any, now: Optional[datetime] = None) ->
     server = current_server(db, shop)
     allowed = may_switch(db, user)
     producer = LZ.effective_producer(db, shop, now=now).to_json(db)
+    shop_params = resolve_for_shop(db, shop)
     return {
         "shopId": str(shop.id),
         "server": till_state(db, server, now) if server is not None else None,
         "candidates": [c for c in candidates(db, shop, now) if server is None or c["machineId"] != str(server.id)],
-        "tablesLan": mode_of(resolve_for_shop(db, shop).get(TABLES_MODE_KEY)) == MODE_LAN,
+        "tablesLan": mode_of(shop_params.get(TABLES_MODE_KEY)) == MODE_LAN,
+        # "העברת שרת מקומי מהקופה" (§9) as the shop resolves it (a till may hold its own value).
+        "tillTakeover": (
+            TILL_TAKEOVER_MANAGER if shop_params.get(TILL_TAKEOVER_KEY) == TILL_TAKEOVER_MANAGER else TILL_TAKEOVER_OFF
+        ),
         "localMode": LZ.local_mode_of_shop(db, shop),
         "shopZ": producer,
         "closeFromCloudAfterSeconds": int(CLOSE_FROM_CLOUD_AFTER.total_seconds()),
@@ -383,9 +398,7 @@ def switch(
     server's shift cannot be closed from the cloud while it is heard), `no_open_shift`.
     """
     from app.services import local_shop_z as LZ
-    from app.services import main_till as MT
     from app.services.machine_status import is_online
-    from app.services.till_messages import send_server_switch_notice
 
     now = _now(now)
     require_switch(db, user)
@@ -427,39 +440,80 @@ def switch(
         if not shift_to_close:
             raise _no_open_shift(old)
 
-    out = MT.take_over(db, target, who(user), force=True, require_lan=False, now=now)
-    previous = out.get("previous")
-    closed = None
-    if shift_to_close:
-        closed = close_from_cloud(
+    return _move(
+        db, shop, target, old,
+        by=who(user), by_user_id=str(user.id) if getattr(user, "id", None) else None,
+        source=SOURCE_CLOUD, approved_by=None, forced=host_online,
+        close_old=(lambda: close_from_cloud(
             db, user, old, counted_cash=counted_cash, reason="העברת שרת מקומי", now=now, context="switch",
-        )
-    if release_shop_z:
-        LZ.handover_now(db, user, shop, now=now)
+        )) if shift_to_close else None,
+        release=(lambda: LZ.handover_now(db, user, shop, now=now)) if release_shop_z else None,
+        now=now,
+    )
+
+
+SOURCE_CLOUD = "cloud"
+SOURCE_TILL = "till"
+
+
+def _move(
+    db: Session,
+    shop: Shop,
+    target: POSMachine,
+    old: Optional[POSMachine],
+    *,
+    by: str,
+    by_user_id: Optional[str],
+    source: str,
+    approved_by: Optional[str],
+    forced: bool,
+    close_old=None,
+    release=None,
+    now: datetime,
+) -> Dict[str, Any]:
+    """
+    The move itself, after every check (the dashboard's switch, or a till's own take-over where
+    `tillServerTakeover` allows it): the full take-over, the old server's shift closed and the
+    shop Z released when asked, the notice to every till, the record and its audit exception.
+    """
+    from app.services import local_shop_z as LZ
+    from app.services import main_till as MT
+    from app.services.till_messages import send_server_switch_notice
+
+    out = MT.take_over(db, target, by, force=True, require_lan=False, now=now)
+    previous = out.get("previous")
+    closed = close_old() if close_old is not None else None
+    if release is not None:
+        release()
     producer = LZ.effective_producer(db, shop, now=now).to_json(db)
     if previous is not None:
         # "השרת הוחלף — יש לבדוק תקינות נתונים" on every till of the shop (the owner).
-        send_server_switch_notice(db, shop.id, out.get("mainTill"), previous, who(user), now=now)
+        send_server_switch_notice(db, shop.id, out.get("mainTill"), previous, by, now=now)
     record = {
         "id": str(uuid.uuid4()),
         "at": now.isoformat(),
-        "by": who(user),
-        "byUserId": str(user.id) if getattr(user, "id", None) else None,
+        "by": by,
+        "byUserId": by_user_id,
+        # "cloud": the dashboard's wizard; "till": the till's own button (§9), a manager approving.
+        "source": source,
+        "approvedBy": approved_by,
         "from": previous if previous is not None else _ref(old),
         "to": out.get("mainTill"),
         "moved": list(out.get("moved") or []),
-        "forced": bool(host_online),
+        "forced": bool(forced),
         "closedShift": (
             {k: closed.get(k) for k in ("shiftId", "closedAt", "countedCash", "documentsOnCloud")} if closed else None
         ),
-        "releasedShopZ": bool(release_shop_z),
+        "releasedShopZ": release is not None,
     }
     _put(shop, SWITCHES_KEY, (switches(shop) + [record])[-SWITCHES_KEPT:])
     _record_switch(db, target, shop, record)
-    logger.warning("shop %s: local server switched from the cloud: %s", shop.id, record)
+    logger.warning("shop %s: local server switched (%s): %s", shop.id, source, record)
     return {
         "switchedAt": record["at"],
         "switchedBy": record["by"],
+        "source": source,
+        "approvedBy": approved_by,
         "mainTill": out.get("mainTill"),
         "previous": record["from"],
         "moved": record["moved"],
@@ -471,6 +525,96 @@ def switch(
     }
 
 
+# ── The till's own take-over, where the parameter allows it (§9) ─────────────
+
+#: "העברת שרת מקומי מהקופה" (§9, the owner 13.10.2026): whether the till's "העבר את השרת לקופה
+#: הזו" works — `off` (the default): the cloud only, the till's take-over answers 410; `manager`:
+#: from the till with a manager's approval, the same full move as the dashboard's switch.
+TILL_TAKEOVER_KEY = "tillServerTakeover"
+TILL_TAKEOVER_OFF = "off"
+TILL_TAKEOVER_MANAGER = "manager"
+TILL_TAKEOVER_OPTIONS = (TILL_TAKEOVER_OFF, TILL_TAKEOVER_MANAGER)
+
+#: The built-in till parameter (app/services/till_parameters.py adds it): set at every level,
+#: audited and delivered like the others.
+PARAMETER_SPECS = (
+    dict(
+        key=TILL_TAKEOVER_KEY,
+        label="העברת שרת מקומי מהקופה",
+        value_type="enum",
+        enum_options=TILL_TAKEOVER_OPTIONS,
+        default_value=TILL_TAKEOVER_OFF,
+        description=(
+            "האם אפשר להעביר את השרת המקומי (הקופה הראשית) לקופה אחרת מהקופה עצמה, כשהשרת לא עונה. "
+            "«off» — רק מהענן (ברירת המחדל): הכפתור \"העבר את השרת לקופה הזו\" לא מופיע בקופה, וההעברה "
+            "נעשית בדשבורד באשף \"העברת שרת מקומי\". "
+            "«manager» — מהקופה, באישור מנהל: הכפתור מופיע כשהשרת לא עונה, וההעברה זהה לזו שמהענן — "
+            "קופה ראשית, שרת שולחנות, שרת הדפסות ומפיק Z סניפי; נדחית כשהענן עדיין שומע את השרת הקודם "
+            "(בלי כפייה מהקופה); הפקת ה-Z הסניפי מוקפאת עד שהשרת הקודם מדווח; כל הקופות מקבלות \"השרת "
+            "הוחלף\"; ונרשמת ביומן \"מהקופה\" עם שם המנהל שאישר. המשמרת של השרת שנפל נסגרת רק מהענן. "
+            "נקבע לפי הקופה שמבקשת לקחת את התפקיד: חברה, סניף, נקודת מכירה או קופה."
+        ),
+    ),
+)
+
+
+def till_takeover_mode(db: Session, machine: POSMachine) -> str:
+    """`tillServerTakeover` as resolved for `machine` (the till asking to take the role); off on doubt."""
+    from app.services.till_parameters import till_parameters_for_machine
+
+    try:
+        value = till_parameters_for_machine(db, machine).parameters.get(TILL_TAKEOVER_KEY)
+    except Exception:  # noqa: BLE001 - fail closed: the cloud only
+        logger.exception("tillServerTakeover unreadable for %s", machine.id)
+        return TILL_TAKEOVER_OFF
+    return TILL_TAKEOVER_MANAGER if value == TILL_TAKEOVER_MANAGER else TILL_TAKEOVER_OFF
+
+
+def switch_from_till(
+    db: Session, machine: POSMachine, manager_name: Optional[str] = None, *, now: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """
+    "העבר את השרת לקופה הזו" where `tillServerTakeover` is `manager` (the caller checked it): the
+    same full move as the dashboard's switch, with its protections — 409 `host_online` while the
+    cloud still hears the old server (never forced from a till), 409 `target_not_eligible` for a
+    till that cannot serve; the shop Z frozen as always; the old server's shift is not closed
+    (the cloud does that). Recorded "from the till" with the approving manager's name. A till
+    that already is the server: nothing moves (`previous` null), as the take-over always was.
+    """
+    from app.services import local_shop_z as LZ
+    from app.services.machine_status import is_online
+
+    now = _now(now)
+    shop = db.get(Shop, machine.shop_id) if machine.shop_id is not None else None
+    if shop is None:
+        raise _refusal(status.HTTP_400_BAD_REQUEST, "machine_has_no_shop", "הקופה אינה משויכת לסניף.")
+    reason = ineligible_reason(db, machine, now, require_online=False)
+    if reason is not None:
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "target_not_eligible", f"{till_label(machine)}: {INELIGIBLE[reason]}.",
+            reason=reason,
+        )
+    old = current_server(db, shop)
+    if old is not None and old.id == machine.id:
+        producer = LZ.effective_producer(db, shop, now=now).to_json(db)
+        return {
+            "mainTill": _ref(machine), "previous": None, "moved": [], "source": SOURCE_TILL,
+            "shopZHandover": producer.get("handover"),
+        }
+    if old is not None and is_online(old.last_heartbeat_at, now=now):
+        raise _refusal(
+            status.HTTP_409_CONFLICT, "host_online", HOST_ONLINE_MESSAGE.format(till=till_label(old)),
+            host=_ref(old), canForce=False,
+        )
+    manager = (manager_name or "").strip()[:200] or None
+    return _move(
+        db, shop, machine, old,
+        by=manager or till_label(machine), by_user_id=None,
+        source=SOURCE_TILL, approved_by=manager, forced=False,
+        now=now,
+    )
+
+
 def _summary(record: Dict[str, Any]) -> str:
     def name(ref: Optional[dict]) -> str:
         if not ref:
@@ -478,7 +622,14 @@ def _summary(record: Dict[str, Any]) -> str:
         number = ref.get("posNumber")
         return f"קופה {number}" if number else (ref.get("name") or "—")
 
-    parts = [f"השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} ע״י {record.get('by')}"]
+    if record.get("source") == SOURCE_TILL:
+        approved = record.get("approvedBy")
+        parts = [
+            f"השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} מהקופה"
+            + (f", באישור המנהל {approved}" if approved else "")
+        ]
+    else:
+        parts = [f"השרת המקומי הועבר מ{name(record.get('from'))} ל{name(record.get('to'))} ע״י {record.get('by')}"]
     if record.get("forced"):
         parts.append("בכפייה — הענן עוד שמע את השרת הקודם")
     if record.get("closedShift"):

@@ -352,6 +352,136 @@ def test_the_wizard_state(w):
     assert main_router.get_main_till(w.shop.id, current_user=w.admin, active_tenant_id=w.tenant.id, db=w.db)["canSwitch"] is True
 
 
+# ── The till's own take-over, by the parameter (§9) ──────────────────────────
+
+
+def take_over(w, till, manager="מנהלת דנה"):
+    from app.routers import tables as tables_router
+    from app.schemas.tables import TakeOverIn
+
+    w.db.commit()  # a refusal rolls back to here
+    return tables_router.take_over_host(
+        str(till.id), BackgroundTasks(), TakeOverIn(posUserName=manager), machine=till, db=w.db,
+    )
+
+
+def test_the_parameter_is_built_in_off_by_default_and_reaches_the_till(w):
+    parameter = w.db.query(TillParameter).filter(TillParameter.key == LSS.TILL_TAKEOVER_KEY).one()
+    assert parameter.value_type == "enum" and list(parameter.enum_options) == ["off", "manager"]
+    assert parameter.default_value == "off" and parameter.is_active
+    assert parameter.label == "העברת שרת מקומי מהקופה"
+    assert "רק מהענן" in parameter.description and "מהקופה, באישור מנהל" in parameter.description
+    keys = [p.key for p in TP.BUILTIN_PARAMETERS]
+    assert keys.count(LSS.TILL_TAKEOVER_KEY) == 1 and TP.KEY_PATTERN.match(LSS.TILL_TAKEOVER_KEY)
+    assert LSS.TILL_TAKEOVER_KEY not in TP.ADMIN_ONLY_KEYS  # the customer's own to set (§9)
+    t1, _ = w.tills
+    assert TP.till_parameters_for_machine(w.db, t1).parameters[LSS.TILL_TAKEOVER_KEY] == "off"
+    assert LSS.till_takeover_mode(w.db, t1) == LSS.TILL_TAKEOVER_OFF
+    assert LSS.state(w.db, w.shop, w.admin)["tillTakeover"] == "off"
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "manager")
+    assert TP.till_parameters_for_machine(w.db, t1).parameters[LSS.TILL_TAKEOVER_KEY] == "manager"
+    assert LSS.till_takeover_mode(w.db, t1) == LSS.TILL_TAKEOVER_MANAGER
+    assert LSS.state(w.db, w.shop, w.admin)["tillTakeover"] == "manager"  # the wizard says so
+
+
+def test_a_change_of_the_parameter_is_in_its_change_log(w):
+    from app.services import till_parameter_audit as AUDIT
+
+    parameter = w.db.query(TillParameter).filter(TillParameter.key == LSS.TILL_TAKEOVER_KEY).one()
+    now = datetime.now(timezone.utc)
+    assert TP.write_value(w.db, parameter, "shop", w.shop.id, "manager", user=w.admin, now=now)
+    w.db.flush()
+    [row] = AUDIT.changes_for(w.db, LSS.TILL_TAKEOVER_KEY)
+    assert (row.scope_type, row.scope_id, row.old_value, row.new_value) == ("shop", w.shop.id, None, "manager")
+    assert row.user_id == w.admin.id
+
+
+def test_off_the_tills_take_over_is_refused_and_nothing_moves(w):
+    t1, t2 = w.tills
+    MT.set_main_till(w.db, w.shop, t1.id)
+    heard(t1, 3600)
+    e = refused(take_over, w, t2)
+    assert e.status_code == 410 and e.detail["code"] == "switch_from_cloud_only" and "מהענן" in e.detail["message"]
+    assert MT.main_till_of_shop(w.db, w.shop.id).id == t1.id
+    assert notices(w) == [] and exceptions_of(w, LSS.SWITCH_EXCEPTION) == []
+
+
+def test_manager_the_till_makes_the_same_full_move_recorded_from_the_till(w):
+    t1, t2 = w.tills
+    set_param(w, "tablesMode", "shop", w.shop.id, LAN)
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "manager")
+    for key in (MT.MAIN_TILL_KEY, "tablesHostTill", "printHostTill", MT.SHOP_Z_MASTER_KEY):
+        set_param(w, key, "machine", t1.id, True)
+    shift = w.shift(t1, 4, status=ShiftStatus.OPEN)
+    heard(t1, 3600)
+    out = take_over(w, t2)
+    assert out["source"] == "till" and out["approvedBy"] == "מנהלת דנה" and out["forced"] is False
+    assert out["previous"]["machineId"] == str(t1.id) and out["mainTill"]["machineId"] == str(t2.id)
+    assert set(out["moved"]) == {MT.MAIN_TILL_KEY, "tablesHostTill", "printHostTill", MT.SHOP_Z_MASTER_KEY}
+    for key in (MT.MAIN_TILL_KEY, "tablesHostTill", "printHostTill", MT.SHOP_Z_MASTER_KEY):
+        assert held(w, key, t2) and not held(w, key, t1), key
+    # The shop Z stays with the old server until it reports (the old producer pinned).
+    from app.services import local_shop_z as LZ
+
+    assert not LZ.effective_producer(w.db, w.shop).is_local_of(t2.id)
+    # The fallen server's shift is the cloud's to close, never the till's.
+    w.db.refresh(shift)
+    assert shift.status == ShiftStatus.OPEN and out["closedShift"] is None and out["releasedShopZ"] is False
+    # The notice, naming the manager; the audit "from the till" with the manager's name.
+    [(message, tills)] = notices(w)
+    assert tills == {str(t1.id), str(t2.id)} and "מנהלת דנה" in message.body
+    [row] = exceptions_of(w, LSS.SWITCH_EXCEPTION)
+    assert row.details["source"] == "till" and row.details["approvedBy"] == "מנהלת דנה"
+    assert row.details["byUserId"] is None and "מהקופה" in row.details["summary"]
+    assert "באישור המנהל מנהלת דנה" in row.details["summary"]
+    assert LSS.state(w.db, w.shop, w.admin)["lastSwitch"]["source"] == "till"
+    # Gap 1 reads this switch too: the old server's later report is checked against it.
+    assert LSS.switched_away_at(w.shop, t1) is not None
+    # Again from the same till: it is the server already — nothing moves, no second notice.
+    again = take_over(w, t2)
+    assert again["previous"] is None and len(notices(w)) == 1
+
+
+def test_manager_the_old_server_still_heard_is_refused_never_forced(w):
+    t1, t2 = w.tills
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "manager")
+    MT.set_main_till(w.db, w.shop, t1.id)
+    heard(t1, 10)
+    e = refused(take_over, w, t2)
+    assert e.status_code == 409 and e.detail["code"] == "host_online"
+    assert e.detail["canForce"] is False and "בעיית רשת" in e.detail["message"]
+    assert e.detail["host"]["machineId"] == str(t1.id)
+    assert MT.main_till_of_shop(w.db, w.shop.id).id == t1.id and notices(w) == []
+
+
+def test_the_parameter_is_read_for_the_till_asking(w):
+    t1, t2 = w.tills
+    MT.set_main_till(w.db, w.shop, t1.id)
+    heard(t1, 3600)
+    # On for the shop, off for this very till: refused.
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "manager")
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "machine", t2.id, "off")
+    assert refused(take_over, w, t2).status_code == 410
+    # Off for the shop, on for this till: it moves.
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "off")
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "machine", t2.id, "manager")
+    assert take_over(w, t2)["mainTill"]["machineId"] == str(t2.id)
+
+
+def test_manager_a_till_that_cannot_serve_is_refused(w):
+    t1, t2 = w.tills
+    set_param(w, LSS.TILL_TAKEOVER_KEY, "shop", w.shop.id, "manager")
+    MT.set_main_till(w.db, w.shop, t1.id)
+    heard(t1, 3600)
+    t2.platform = "windows"
+    e = refused(take_over, w, t2)
+    assert e.status_code == 409 and e.detail["code"] == "target_not_eligible" and e.detail["reason"] == "not_android"
+    t2.platform = "android"
+    # The till asking is talking to the cloud now: a stale heartbeat of its own does not refuse it.
+    heard(t2, 3600)
+    assert take_over(w, t2)["mainTill"]["machineId"] == str(t2.id)
+
+
 # ── "סגירת משמרת מהענן" ──────────────────────────────────────────────────────
 
 
