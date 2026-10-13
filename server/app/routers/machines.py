@@ -1020,6 +1020,16 @@ def update_machine(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="shopId does not belong to its company",
                 )
+            # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): a Windows / browser device has no training
+            # mode — never moved into a shop in it (409 `shop_in_training_device_unsupported`).
+            if str(sid) != str(machine.shop_id):
+                from app.services import training_mode
+
+                try:
+                    training_mode.check_device_fits(shop, display_devices.platform_of(machine), db=db, machine=machine)
+                except training_mode.DeviceUnsupported as refused:
+                    db.rollback()
+                    return JSONResponse(status_code=refused.status_code, content=refused.body)
             machine.tenant_id = shop.tenant_id or machine.tenant_id
             machine.pairing_status = PairingStatus.ASSIGNED
         # Not a plain setattr: changing shop gives up this shop's register number

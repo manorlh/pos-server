@@ -180,6 +180,10 @@ def validate_pairing_code(
     from app.services import display_devices
 
     device_platform = display_devices.check_platform(pairing_code, device_info)
+    # "מצב הדרכה" (docs/SPEC_TRAINING_MODE.md): a Windows / browser device has no training mode,
+    # so it never lands in a shop in it — the code's shop, or the replaced terminal's — 409
+    # `training_mode.DeviceUnsupported`, before anything is created (the code stays unused).
+    _check_training_fit(db, pairing_code, device_platform)
 
     tenant_id = pairing_code.tenant_id or resolve_tenant_id_for_user(
         db, pairing_code.distributor_id
@@ -267,6 +271,28 @@ def validate_pairing_code(
     work_config.apply_on_pairing(db, pairing_code, pos_machine)
 
     return pos_machine
+
+
+def _check_training_fit(db: Session, pairing_code: PairingCode, device_platform: str) -> None:
+    """`training_mode.check_device_fits` for the shop this code lands the device in."""
+    from app.services import device_profile
+    from app.services import training_mode
+
+    if training_mode.platform_supported(device_platform):
+        return  # an Android device fits any shop
+    shop_id = pairing_code.shop_id
+    role = getattr(pairing_code, "device_role", None)
+    if pairing_code.target_machine_id is not None:
+        # A replacement takes the terminal's shop and its role.
+        target = db.query(POSMachine).filter(POSMachine.id == pairing_code.target_machine_id).first()
+        if target is None:
+            return
+        shop_id = target.shop_id
+        role = device_profile.current_role(db, target)
+    if shop_id is None:
+        return
+    shop = db.query(Shop).filter(Shop.id == shop_id).first()
+    training_mode.check_device_fits(shop, device_platform, role)
 
 
 def _serial_source(device_info: Optional[dict]) -> Optional[str]:
