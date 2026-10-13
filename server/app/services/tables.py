@@ -857,6 +857,11 @@ def lan_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any]]
     if is_independent(machine):
         # "קופה עצמאית": it never uses the shop's tables host.
         return None
+    from app.services.local_shop_z import is_remote_participant
+
+    if is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי" (not on the local server, SPEC_INDEPENDENT_TILL §8.14): never either.
+        return None
     host = tables_host_of_shop(db, machine.shop_id)
     if host is None:
         return None

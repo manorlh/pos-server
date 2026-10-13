@@ -159,6 +159,20 @@ def put_main_till(
                 "message": "קופה עצמאית לא יכולה להיות הקופה הראשית של הסניף. בחרו קופה מבין הקופות שבזד הסניפי.",
             },
         )
+    from app.services.local_shop_z import is_remote_participant
+
+    if chosen is not None and is_remote_participant(chosen):
+        # "מרוחקת בזד הסניפי" (docs/SPEC_INDEPENDENT_TILL.md §8.14): not on the shop's local server.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "remote_main_till",
+                "message": (
+                    "קופה מרוחקת (לא מחוברת לשרת המקומי) לא יכולה להיות הקופה הראשית של הסניף. "
+                    "בחרו קופה המחוברת לשרת המקומי, או חברו אותה בכרטיס \"קופות בזד הסניפי\"."
+                ),
+            },
+        )
     from app.services import lan_server
 
     if chosen is not None and lan_server.is_excluded(db, chosen):

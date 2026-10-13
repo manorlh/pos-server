@@ -126,8 +126,11 @@ def server_candidates(db: Session, machines: Iterable[POSMachine]) -> List[POSMa
     excluded ones. Every host election reads from this, in the given order.
     """
     from app.services.independent_till import lan_members
+    from app.services.local_shop_z import is_remote_participant
 
-    members = lan_members(machines)
+    # Nor a participant set "מרוחק (דרך הענן)" — "מרוחקת בזד הסניפי", not on the shop's local
+    # server (SPEC_INDEPENDENT_TILL §8.14): whatever is set on it, it is never the server.
+    members = [m for m in lan_members(machines) if not is_remote_participant(m)]
     kds = kds_screen_ids(db, [m.id for m in members if not getattr(m, "lan_server_excluded", False)])
     return [m for m in members if exclusion_of(m, kds) is None]
 

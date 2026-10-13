@@ -1308,6 +1308,16 @@ def print_host_block(db: Session, machine: POSMachine) -> Optional[Dict[str, Any
         if not getattr(machine, "is_kiosk", False):
             return None
         away_kiosk = True
+    else:
+        from app.services.local_shop_z import is_remote_participant
+
+        # "מרוחקת בזד הסניפי" (not on the shop's local server, SPEC_INDEPENDENT_TILL §8.14): in the
+        # shop Z but off its LAN — exactly as an independent till: no print server, its own
+        # printers; a remote kiosk the away form, as an independent kiosk.
+        if is_remote_participant(machine):
+            if not getattr(machine, "is_kiosk", False):
+                return None
+            away_kiosk = True
     host = print_host_of_shop(db, machine.shop_id)
     if host is None:
         return None
@@ -1358,7 +1368,10 @@ def hosted_by_tills(db: Session, machine: POSMachine, printers: Iterable[Kitchen
     ids.discard(machine.id)
     if not ids:
         return {}
-    lan = not is_independent(machine) or bool(getattr(machine, "is_kiosk", False))
+    from app.services.local_shop_z import is_remote_participant
+
+    # Off the shop's LAN too: a remote participant ("מרוחקת בזד הסניפי") that is no kiosk.
+    lan = not (is_independent(machine) or is_remote_participant(machine)) or bool(getattr(machine, "is_kiosk", False))
     tills = {m.id: m for m in db.query(POSMachine).filter(POSMachine.id.in_(list(ids))).all()}
     rows = {
         r.machine_id: r

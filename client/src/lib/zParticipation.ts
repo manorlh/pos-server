@@ -5,10 +5,20 @@
  * the shop's main till ("שרת מקומי") for tables or printing. pos-server
  * `GET/PUT /shops/{id}/z-participation`.
  *
- * Pure rules for the card on the shop page: the effect of each till's checkbox, the PUT
+ * Pure rules for the card on the shop page: the effect of each till's choice, the PUT
  * body (only what changed), what blocks a save, the refusals the server sends, and the
  * summary line. No imports, so `npm test` compiles it alone. The API calls are in
  * lib/zParticipationApi.ts.
+ *
+ * Each till has two settings (P:/specs/dedicated-local-server.md §12): "מחוברת לשרת המקומי"
+ * כן / לא, and "ה-Z" סניפי / נפרד ([TillSettings]) — on the existing flags:
+ *
+ *   מחוברת,    סניפי — `shop_z`, link `lan`      מחוברת,    נפרד — `own_z` ("Z בקופה, בתוך הסניף")
+ *   לא מחוברת, סניפי — `shop_z`, link `remote`   לא מחוברת, נפרד — `independent`
+ *
+ * "לא מחוברת, בזד הסניפי" is the device preset "קופה מרוחקת בזד הסניפי" (`remote_shop_z`): its
+ * shifts are in the shop Z, and it is off the shop's local server (pos-server
+ * `local_shop_z.is_remote_participant`).
  */
 
 /**
@@ -89,6 +99,8 @@ export interface ZParticipationState {
 export interface ZParticipationBody {
   participants: string[];
   independent: string[];
+  /** Tills that become "Z בקופה, בתוך הסניף" (their own Z, on the local server); sent only when there is one. */
+  ownZ?: string[];
   mainTillId?: string | null;
   /** A super admin's "העבר בכל זאת": switch although the producer has not handed over. */
   forceProducerSwitch?: boolean;
@@ -254,6 +266,57 @@ export function canBeRemote(machineId: string, choice: ZRole, mainTillId: string
   return choice === 'shop_z' && machineId !== (mainTillId || null);
 }
 
+// ── The two settings: "מחוברת לשרת המקומי" and "ה-Z" ─────────────────────────────
+
+/** A till's two settings on the card. */
+export interface TillSettings {
+  /** "מחוברת לשרת המקומי": כן — it leans on the shop's main till for tables and printing. */
+  connected: boolean;
+  /** "ה-Z": סניפי — its shifts are in the shop Z; false — its own Z ("נפרד"). */
+  shopZ: boolean;
+}
+
+export interface TillChoice {
+  role: ZRole;
+  link: TillLink;
+}
+
+/** The settings a role and link mean. */
+export function settingsOf(role: ZRole, link: TillLink): TillSettings {
+  if (role === 'shop_z') return { connected: link !== 'remote', shopZ: true };
+  if (role === 'own_z') return { connected: true, shopZ: false };
+  return { connected: false, shopZ: false };
+}
+
+/** Which way the settings named by [settingsOf] lead: a message key under `independentTill.explain`. */
+export function explainKeyOf(s: TillSettings): 'shopZ' | 'remote' | 'ownZ' | 'independent' {
+  if (s.shopZ) return s.connected ? 'shopZ' : 'remote';
+  return s.connected ? 'ownZ' : 'independent';
+}
+
+/**
+ * The card's choice after one of the two settings changed.
+ *
+ * All four are offered: "מחוברת" with "Z נפרד" is "Z בקופה, בתוך הסניף", "לא מחוברת" with it
+ * "קופה עצמאית".
+ * - [remoteAllowed]: "לא מחוברת" with the shop Z ("מרוחקת בזד הסניפי") — not for the main till
+ *   (it is the local server), and only where the shop works with one.
+ */
+export function nextChoice(
+  current: TillChoice,
+  change: { connected?: boolean; shopZ?: boolean },
+  opts: { remoteAllowed: boolean },
+): TillChoice {
+  const now = settingsOf(current.role, current.link);
+  const want: TillSettings = { connected: change.connected ?? now.connected, shopZ: change.shopZ ?? now.shopZ };
+  if (want.shopZ) {
+    if (want.connected) return { role: 'shop_z', link: 'lan' };
+    // "לא מחוברת, בזד הסניפי" where it may be; else it stays on the server.
+    return opts.remoteAllowed ? { role: 'shop_z', link: 'remote' } : { role: 'shop_z', link: 'lan' };
+  }
+  return want.connected ? { role: 'own_z', link: 'lan' } : { role: 'independent', link: 'lan' };
+}
+
 /**
  * The tills set remote after the edit, by number — the `remote` list the PUT sends whole.
  * A till that left the shop Z or became the main till drops out of it.
@@ -344,14 +407,17 @@ export function buildParticipationBody(
 ): ZParticipationBody | null {
   const participants: string[] = [];
   const independent: string[] = [];
+  const ownZ: string[] = [];
   for (const t of sortTills(state.tills)) {
     const was = roleOf(t);
     const now = choices[t.machineId] ?? was;
     if (now === was) continue;
     if (now === 'shop_z') participants.push(t.machineId);
     else if (now === 'independent') independent.push(t.machineId);
+    else ownZ.push(t.machineId);
   }
   const body: ZParticipationBody = { participants, independent };
+  if (ownZ.length) body.ownZ = ownZ;
   const mainChanged = (mainTillId || null) !== mainIdOf(state);
   if (mainChanged) body.mainTillId = mainTillId || null;
   // The remote list, whole, when it differs from the saved one (the server's `link`s).
@@ -374,7 +440,9 @@ export function buildParticipationBody(
     excludedChanged = before.length !== after.length || before.some((id, i) => id !== after[i]);
     if (excludedChanged) body.lanServerExcluded = after;
   }
-  return participants.length || independent.length || mainChanged || remoteChanged || excludedChanged ? body : null;
+  return participants.length || independent.length || ownZ.length || mainChanged || remoteChanged || excludedChanged
+    ? body
+    : null;
 }
 
 export type ParticipationIssue =
@@ -384,14 +452,15 @@ export type ParticipationIssue =
 
 /**
  * What stops a save: the main till must be one of the ticked tills, and a till with an
- * open shift (or closed shifts awaiting a Z) cannot change sides — the server would
- * refuse the whole save.
+ * open shift (or closed shifts awaiting a Z) cannot change either setting — its Z, or
+ * whether it is on the local server ([links]) — the server would refuse the whole save.
  */
 export function validateParticipation(
   state: Pick<ZParticipationState, 'tills'>,
   choices: ZChoices,
   mainTillId: string | null,
   exclusions?: ZExclusions,
+  links?: ZLinks,
 ): ParticipationIssue[] {
   const issues: ParticipationIssue[] = [];
   if (mainTillId) {
@@ -407,7 +476,15 @@ export function validateParticipation(
   }
   for (const t of sortTills(state.tills)) {
     const now = choices[t.machineId] ?? roleOf(t);
-    if (now === roleOf(t)) continue;
+    // On or off the local server, in the shop Z both ways: the same clean break (not for a
+    // device closed through the cloud by its platform, whose setting changes nothing).
+    const linkMoved =
+      !!links &&
+      now === 'shop_z' &&
+      roleOf(t) === 'shop_z' &&
+      !t.linkFixed &&
+      (links[t.machineId] ?? (t.link === 'remote' ? 'remote' : 'lan')) !== (t.link === 'remote' ? 'remote' : 'lan');
+    if (now === roleOf(t) && !linkMoved) continue;
     const reason = switchBlockOf(t);
     if (reason) issues.push({ kind: 'blocked', machineId: t.machineId, reason });
   }
@@ -415,11 +492,18 @@ export function validateParticipation(
 }
 
 /** The tills a main till may be picked from: the ticked ones, by number — never one "לא משמש כשרת מקומי". */
-export function mainTillOptions<T extends ZParticipationTill>(tills: T[], choices: ZChoices, exclusions?: ZExclusions): T[] {
+export function mainTillOptions<T extends ZParticipationTill>(
+  tills: T[],
+  choices: ZChoices,
+  exclusions?: ZExclusions,
+  links?: ZLinks,
+): T[] {
   return sortTills(
     tills.filter(
       (t) =>
         (choices[t.machineId] ?? roleOf(t)) === 'shop_z' &&
+        // "מרוחקת בזד הסניפי": not on the local server — never the server itself.
+        (links?.[t.machineId] ?? (t.link === 'remote' ? 'remote' : 'lan')) !== 'remote' &&
         !exclusionLocked(t) &&
         !(exclusions?.[t.machineId] ?? !!t.lanServerExcluded),
     ),

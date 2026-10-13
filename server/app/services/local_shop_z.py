@@ -47,7 +47,9 @@ dashboard and on the main till) — never renumbered, never filed into the shop'
 gap or a second holder of a number.
 
 Independent tills ("קופה עצמאית", app/services/independent_till.py) are not participants:
-not listed, not closed, not in the figures.
+not listed, not closed, not in the figures. A participant set "מרוחק (דרך הענן)" — "לא מחוברת
+לשרת, בזד הסניפי", the device preset `remote_shop_z` — is closed through the cloud and kept off
+the shop's LAN (`is_remote_participant`, SPEC_INDEPENDENT_TILL §8.14).
 """
 from __future__ import annotations
 
@@ -1925,13 +1927,113 @@ def closes_through_cloud(machine: POSMachine, remote: Optional[set] = None) -> b
     """
     from app.services.display_devices import PLATFORM_WINDOWS, platform_of
 
-    return str(machine.id) in (remote or set()) or platform_of(machine) == PLATFORM_WINDOWS
+    if platform_of(machine) == PLATFORM_WINDOWS:
+        return True
+    # Set "מרוחק (דרך הענן)" — and really one ("מרוחקת בזד הסניפי"): a stale entry naming the main
+    # till (the local server itself) is not.
+    return str(machine.id) in (remote or set()) and is_remote_participant(machine)
 
 
 def remote_till_ids(shop: Optional[Shop]) -> set:
     """The participants set to close through the cloud ("מרוחק (דרך הענן)")."""
     rows = ((shop.settings or {}) if shop is not None else {}).get(REMOTE_TILLS_KEY)
     return {str(r) for r in rows} if isinstance(rows, list) else set()
+
+
+def is_remote_participant(machine: Optional[POSMachine], *, raw_parameters: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    "מרוחקת בזד הסניפי" — a till (or kiosk) of the shop Z set "מרוחק (דרך הענן)": not on the shop's
+    local server (P:/specs/dedicated-local-server.md §12 — "לא מחוברת לשרת, בזד הסניפי"; the
+    device preset `remote_shop_z`, app/services/work_config.py). Its shifts are in the shop Z —
+    the cloud's run takes them, and in local mode the main till takes its part through the
+    cloud (`closes_through_cloud`) — but it is off the shop's LAN, so the cloud never hands it
+    the LAN tables host or the print server (its own printers), never elects it a host, and its
+    tables are «קופה אחת» or off (`remote_parameters`).
+
+    The stored setting only: a Windows device is closed through the cloud by its platform, but
+    is otherwise left as it was. A stale entry is not one: only a till in the shop Z (not one made
+    independent or "Z לכל קופה" since), and never a till marked the main till — the local server
+    itself (the card refuses that, but a list from before may still name it).
+
+    `raw_parameters`: the till's parameters as the levels set them, when the caller has them.
+    """
+    from app.services.display_devices import PLATFORM_WINDOWS, platform_of
+
+    if machine is None or getattr(machine, "independent_till", False) or getattr(machine, "z_mode", None) == "till":
+        return False
+    if platform_of(machine) == PLATFORM_WINDOWS:
+        return False
+    shop = getattr(machine, "shop", None)
+    if shop is None or str(machine.id) not in remote_till_ids(shop):
+        return False
+    from app.services.main_till import MAIN_TILL_KEY, is_on
+
+    if raw_parameters is None:
+        from sqlalchemy.orm import object_session
+
+        from app.services.till_parameters import raw_parameters_for_machine
+
+        db = object_session(machine)
+        raw_parameters = raw_parameters_for_machine(db, machine) if db is not None else {}
+    return not is_on(raw_parameters.get(MAIN_TILL_KEY))
+
+
+def remote_parameters(resolved: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    The parameters as a remote participant reads them (pure): every host flag off — it is
+    never the shop's server — and a shared `tablesMode` («רשת מקומית», «מסונכרן») read as
+    «קופה אחת»: it has no LAN tables host, and the shop's tables are not its own.
+    """
+    from app.services.independent_till import HOST_KEYS, TABLES_MODE_KEY, TABLES_OFF, TABLES_SINGLE
+    from app.services.tables import MODE_OFF, mode_of
+
+    out = dict(resolved)
+    for key in HOST_KEYS:
+        if key in out:
+            out[key] = False
+    if TABLES_MODE_KEY in out:
+        out[TABLES_MODE_KEY] = TABLES_OFF if mode_of(out[TABLES_MODE_KEY]) == MODE_OFF else TABLES_SINGLE
+    return out
+
+
+#: How far back a remote participant is told its shifts' Zs: the shop's latest Zs, by number
+#: (not by date — a till away for longer still hears them), and of those its latest 40 — as many
+#: as the LAN board keeps for a till.
+ASSIGNED_ZS_SCANNED = 200
+ASSIGNED_KEPT = 40
+
+
+def shift_assignments(db: Session, machine: POSMachine) -> List[dict]:
+    """
+    Which of this till's shifts the shop's local Zs took — `[{zId, number, shiftIds}]`, oldest
+    first, as the LAN board says it to a till on the LAN (`assigned`). Handed to a remote
+    participant with its close (`pendingShopZPart.assigned`): it marks them first, so its next
+    part never names a shift a Z already took — the LAN board tells its tills the same before
+    every close (SPEC_INDEPENDENT_TILL §8.3). A late part's carry shifts are the cloud's.
+    """
+    if machine.shop_id is None:
+        return []
+    zs = (
+        db.query(ZReport)
+        .filter(ZReport.shop_id == machine.shop_id, ZReport.shop_sequence_number.isnot(None))
+        .order_by(ZReport.shop_sequence_number.desc())
+        .limit(ASSIGNED_ZS_SCANNED)
+        .all()
+    )
+    out = []
+    for z in reversed(zs):
+        report = z.offline_report or {}
+        if report.get("kind") != "local_shop_z":
+            continue
+        ids = [
+            str(s)
+            for part in (report.get("tills") or [])
+            if isinstance(part, dict) and str(part.get("machineId")) == str(machine.id) and not part.get("late")
+            for s in (part.get("shiftIds") or [])
+        ]
+        if ids:
+            out.append({"zId": str(z.id), "number": z.shop_sequence_number, "shiftIds": ids})
+    return out[-ASSIGNED_KEPT:]
 
 
 def set_remote_till_ids(shop: Shop, ids: Iterable[Any]) -> None:
@@ -2068,7 +2170,13 @@ def take_pending_remote_part(db: Session, machine: POSMachine, *, now: Optional[
     if row.state == "requested":
         row.state = "delivered"
         row.delivered_at = now
-    return {"requestId": row.request_id, "roundId": row.round_id, "force": bool(row.force)}
+    out = {"requestId": row.request_id, "roundId": row.round_id, "force": bool(row.force)}
+    # Its shifts the shop's local Zs already took: marked before it closes and builds its part
+    # (the LAN board's `assigned`), so a part never names one twice. Absent: none.
+    assigned = shift_assignments(db, machine)
+    if assigned:
+        out["assigned"] = assigned
+    return out
 
 
 def report_remote_part(db: Session, machine: POSMachine, body: dict, *, now: Optional[datetime] = None) -> dict:
@@ -2096,6 +2204,22 @@ def report_remote_part(db: Session, machine: POSMachine, body: dict, *, now: Opt
         return _remote_out(row)
     if row.state == "taken":
         return _remote_out(row)
+    taken = _taken_by_a_z(db, machine, body) if final else {}
+    if taken:
+        # A part that names a shift a Z already took is never handed to the main till — a shift
+        # is in one Z only. The till hears which Z took it (`pendingShopZPart.assigned`, its
+        # heartbeat's `recentShiftZs`) and answers again; the request stays live till then.
+        numbers = sorted({n for n in taken.values() if n is not None})
+        raise RemotePartRefused(status.HTTP_409_CONFLICT, {
+            "detail": "shift_in_another_z",
+            "shiftIds": sorted(taken),
+            "zNumbers": numbers,
+            "message": (
+                "המשמרת כבר נכללה ב-Z סניפי"
+                + (f" מס׳ {', '.join(str(n) for n in numbers)}" if numbers else "")
+                + " — הקופה תתעדכן ותענה שוב."
+            ),
+        })
     row.outcome = outcome
     row.message = (str(body.get("message")) if body.get("message") is not None else None)
     row.report = {**body, "machineId": str(machine.id)}
@@ -2107,6 +2231,38 @@ def report_remote_part(db: Session, machine: POSMachine, body: dict, *, now: Opt
         row.delivered_at = now
     db.flush()
     return _remote_out(row)
+
+
+def _taken_by_a_z(db: Session, machine: POSMachine, body: dict) -> Dict[str, Optional[int]]:
+    """
+    The shifts a remote part names that a Z already took — `{shiftId: Z number}`: linked to a Z
+    in the cloud, or named by a local shop Z the cloud holds (`shift_assignments`). Empty: none.
+    """
+    section = body.get("section") if isinstance(body, dict) else None
+    named = {str(s) for s in ((section or {}).get("shiftIds") or [])} if isinstance(section, dict) else set()
+    if not named:
+        return {}
+    out: Dict[str, Optional[int]] = {}
+    for a in shift_assignments(db, machine):
+        for sid in a["shiftIds"]:
+            if sid in named:
+                out[sid] = a["number"]
+    ids = []
+    for sid in named - set(out):
+        try:
+            ids.append(uuid.UUID(sid))
+        except ValueError:
+            continue
+    if ids:
+        rows = (
+            db.query(Shift.id, ZReport.shop_sequence_number, ZReport.machine_sequence_number)
+            .join(ZReport, ZReport.id == Shift.z_report_id)
+            .filter(Shift.id.in_(ids), Shift.machine_id == machine.id)
+            .all()
+        )
+        for sid, shop_number, till_number in rows:
+            out[str(sid)] = shop_number if shop_number is not None else till_number
+    return out
 
 
 def take_remote_parts(db: Session, shop: Shop, z: ZReport) -> None:

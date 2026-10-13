@@ -391,6 +391,17 @@ def _switch_refusal(db: Session, machine: POSMachine, mode: str, now: datetime) 
             "code": "independent_till", **ref,
             "message": f"{label} מוגדרת כקופה עצמאית — מצרפים אותה ל-Z הסניפי בכרטיס \"קופות בזד הסניפי\" בדף הסניף.",
         }
+    from app.services.local_shop_z import is_remote_participant
+
+    if mode == Z_TILL and is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי": off the local server; its Z is chosen on the card, with that.
+        return {
+            "code": "remote_till", **ref,
+            "message": (
+                f"{label} מוגדרת \"מרוחקת בזד הסניפי\" (לא מחוברת לשרת המקומי) — את ה-Z שלה משנים בכרטיס "
+                "\"קופות בזד הסניפי\" בדף הסניף."
+            ),
+        }
     open_shift = (
         db.query(Shift.id).filter(Shift.machine_id == machine.id, Shift.status == ShiftStatus.OPEN).first()
     )

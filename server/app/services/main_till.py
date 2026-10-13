@@ -51,6 +51,8 @@ NOT_MASTER = "not_master_till"
 ONLY_FROM_MAIN = "z_only_from_main_till"
 #: An independent till ("קופה עצמאית", app/services/independent_till.py) asked for the shop Z.
 INDEPENDENT = "independent_till"
+#: A participant set "מרוחק (דרך הענן)" ("מרוחקת בזד הסניפי") asked to become the shop's server.
+REMOTE = "remote_till"
 
 
 def is_on(value: Any) -> bool:
@@ -235,6 +237,11 @@ def take_over(db: Session, machine: POSMachine, operator: Optional[str] = None) 
     if is_independent(machine):
         # "קופה עצמאית": outside the shop's LAN group — it never becomes its server.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=INDEPENDENT)
+    from app.services.local_shop_z import is_remote_participant
+
+    if is_remote_participant(machine):
+        # "מרוחקת בזד הסניפי": not on the shop's local server — it never becomes it either.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=REMOTE)
     from app.services import lan_server
 
     if lan_server.is_excluded(db, machine):
