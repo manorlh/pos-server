@@ -3788,7 +3788,15 @@
     },
     "cardBrand": "מותג",
     "cardAcquirerShort": "סולק: {name}",
-    "cardIssuerShort": "מנפיק: {name}"
+    "cardIssuerShort": "מנפיק: {name}",
+    "report": {
+      "tip": "טיפ",
+      "tipMethod": "טיפ — אמצעי תשלום",
+      "actions": "פעולות",
+      "searchHint": "החיפוש מוצא: {what}.",
+      "allDays": "עד שמפיקים טווח תאריכים מוצגים המסמכים האחרונים מכל התאריכים.",
+      "documents": "{count, plural, one {מסמך אחד} other {# מסמכים}}"
+    }
   },
   "forceClose": {
     "label": "כפה סגירה (גם באמצע מכירה)",
@@ -5213,6 +5221,16 @@
     "export": {
       "method": "אמצעי תשלום",
       "amount": "סכום"
+    },
+    "report": {
+      "tips": "טיפים",
+      "cashTips": "טיפים במזומן",
+      "cardTips": "טיפים באשראי",
+      "tipsSplit": "מזומן {cash} · אשראי {card}",
+      "total": "סה״כ",
+      "totalPage": "סה״כ בעמוד",
+      "allDays": "עד שמפיקים טווח תאריכים מוצגות כל המשמרות, החדשות קודם.",
+      "shifts": "{count, plural, one {משמרת אחת} other {# משמרות}}"
     }
   },
   "zWizard": {

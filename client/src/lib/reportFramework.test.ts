@@ -17,6 +17,7 @@ import {
 } from './reportFilters';
 import {
   fromServerPrefs,
+  groupRuns,
   moveColumn,
   nextSort,
   orderedColumnKeys,
@@ -40,6 +41,17 @@ import {
   type ExportTable,
 } from './reportExport';
 import { selectSheetColumns, sheetHeading, type ExcelSheet } from './excelExport';
+import { listOf, listValue, transactionsQuery, txExtrasOf } from './transactionsFilters';
+import {
+  listSheetCells,
+  paymentColumnKey,
+  sumMoney,
+  transactionExportColumns,
+  zTableColumns,
+  zTillColumns,
+} from './listExportColumns';
+import { transactionsSheet, zTableSheets } from './reportSheets';
+import type { TransactionExportRow, ZTable } from './reportCenterTypes';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -381,5 +393,128 @@ describe('the scope as report params', () => {
     assert.deepEqual(scopeApiParams({ companyId: 'c', shopId: null, machineId: null }), { companyId: 'c' });
     assert.deepEqual(scopeApiParams({ companyId: 'c' }, false), {});
     assert.deepEqual(scopeApiParams({}), {});
+  });
+});
+
+describe('rows in runs of one group (a list by day)', () => {
+  it('a heading wherever the group changes, carrying the run’s rows', () => {
+    const rows = [
+      { id: 1, day: '2026-10-13' },
+      { id: 2, day: '2026-10-13' },
+      { id: 3, day: '2026-10-12' },
+      { id: 4, day: '2026-10-13' },
+    ];
+    const runs = groupRuns(rows, (r) => r.day);
+    assert.deepEqual(
+      runs.map((r) => (r ? [r.group, r.rows.map((x) => x.id)] : null)),
+      [['2026-10-13', [1, 2]], null, ['2026-10-12', [3]], ['2026-10-13', [4]]],
+    );
+    assert.deepEqual(groupRuns([], (r: { day: string }) => r.day), []);
+  });
+});
+
+describe('the transactions list: its own filters in the URL → the query', () => {
+  it('lists are comma-separated in the URL, de-duplicated, empty parts dropped', () => {
+    assert.deepEqual(listOf(' a,b,,c '), ['a', 'b', 'c']);
+    assert.deepEqual(listOf(''), []);
+    assert.equal(listValue(['b', 'a', 'b', ' ']), 'b,a');
+  });
+
+  it('a first visit: no days, the newest documents of every day', () => {
+    const q = transactionsQuery({ extras: txExtrasOf({}), shopId: 's' });
+    assert.deepEqual(q, { shopId: 's' });
+  });
+
+  it('every filter under the endpoint name; lists as lists', () => {
+    const q = transactionsQuery({
+      from: '2026-10-01',
+      to: '2026-10-13',
+      q: ' 20000057 ',
+      shopId: 's',
+      extras: txExtrasOf({
+        card: '1234', item: 'קפה', method: 'card', tills: 'm1,m2', types: '320,-400', employees: 'e1',
+        statuses: 'completed,refunded', amountMin: '10', amountMax: '99.5', doc: '2-57', basket: '0f8fad5b-d9cb-469f-a165-70867728950e',
+      }),
+    });
+    assert.deepEqual(q, {
+      shopId: 's', from: '2026-10-01', to: '2026-10-13', q: '20000057', cardLast4: '1234', item: 'קפה', method: 'card',
+      machineIds: ['m1', 'm2'], documentTypes: ['320', '-400'], cashierIds: ['e1'], statuses: ['completed', 'refunded'],
+      amountMin: '10', amountMax: '99.5', documentNumber: '2-57', basketId: '0f8fad5b-d9cb-469f-a165-70867728950e',
+    });
+  });
+
+  it('the scope till wins over a list of tills; "failed" and nonsense never go out', () => {
+    const q = transactionsQuery({
+      machineId: 'm9',
+      extras: txExtrasOf({ tills: 'm1', method: 'failed', card: '12', types: 'abc', statuses: 'gone', amountMin: '1e3', doc: 'x' }),
+    });
+    assert.deepEqual(q, { machineId: 'm9' });
+  });
+});
+
+describe('the lists server exports as report columns (same cells and totals as their sheets)', () => {
+  const t = (k: string) => k;
+  const row = (over: Partial<TransactionExportRow>): TransactionExportRow => ({
+    id: 'a', createdAt: '2026-10-06T10:00:00Z', documentNumber: '20000057', documentType: 320, status: 'completed',
+    shopName: 'הרצליה', machineId: 'm', machineName: 'קופה 1', posNumber: '1', cashierId: 'c', cashierName: 'דנה',
+    paymentMethod: 'cash', totalAmount: '117.00', documentDiscount: '0.00', collected: '117.00', signedAmount: '117.00',
+    vatAmount: '17.85', netOfVat: '99.15', vatRate: '18.00', tipAmount: '5.00', tipPaymentMethod: 'card', cash: '112.00',
+    card: '0.00', other: '0.00', exchange: '0.00', productionVoucher: '5.00', legs: 2, cardBrands: ['visa'], cardLast4: [],
+    approvalNumbers: [], refundOf: null, shiftNumber: 1, zNumber: null, customerName: null, customerVatNumber: null,
+    mealKind: null, ...over,
+  });
+  const labels = { documentType: (n: number | null) => `type:${n}`, status: (s: string) => s, method: (m: string) => `pm:${m}` };
+
+  it('transactions: every column of the sheet, plus the tender of the tip', () => {
+    const rows = [row({}), row({ tipAmount: '0.00', tipPaymentMethod: null, totalAmount: '-20.00', signedAmount: '-20.00' })];
+    const cols = transactionExportColumns(t, labels);
+    const legacy = transactionsSheet(rows, t, 'x', labels);
+    const at = cols.findIndex((c) => c.key === 'tipMethod');
+    const without = cols.filter((c) => c.key !== 'tipMethod');
+    const cells = listSheetCells(without, rows, 'total');
+    assert.deepEqual(without.map((c) => c.header), legacy.columns.map((c) => c.header));
+    assert.deepEqual(cells.rows, legacy.rows);
+    assert.deepEqual(cells.totals, legacy.totals);
+    const all = listSheetCells(cols, rows, 'total');
+    assert.deepEqual(all.rows.map((r) => r[at]), ['pm:card', null]);
+    assert.equal(new Set(cols.map((c) => c.key)).size, cols.length);
+  });
+
+  it('the Z table: a keyed column per payment method, every money column totalled', () => {
+    const table: ZTable = {
+      window: { from: '2026-10-01', to: '2026-10-07', dateBasis: 'business', timezone: 'Asia/Jerusalem' },
+      total: 1,
+      paymentMethods: ['cash', 'card'],
+      zs: [
+        {
+          id: 'a', zNumber: 7, zType: 'shop', zTypeLabel: 'Z סניפי', origin: 'cloud', shopName: 'הרצליה', machineName: null,
+          posNumber: null, tills: 'קופה 1', businessDate: '2026-10-06', productionDate: null, openedAt: null, periodEnd: null,
+          closedAt: null, invoiceRange: null, creditNoteRange: null, receiptRange: null, invoiceCount: 9, creditNoteDocuments: 0,
+          receiptCount: 0, transactionsCount: 9, salesCount: 9, creditNotesCount: 0, nonSaleDocumentsCount: 0, shiftCount: 2,
+          machineCount: 2, grossSales: '100.00', discountsTotal: '0.00', lineDiscountsTotal: null, promotionDiscountsTotal: null,
+          totalSales: '100.00', totalRefunds: '0.00', netSales: '100.00', vatTotal: '14.53', netOfVat: '85.47', cashSales: '60.00',
+          cardSales: '40.00', payments: { cash: '60.00', card: '40.00' }, totalTips: '3.00', cashTips: '1.00', cardTips: '2.00',
+          expectedCash: null, actualCash: null, discrepancy: null, lateDocuments: 0, amendedDocuments: 1, totalsMismatch: true,
+          builtOffline: false,
+          transmission: {
+            batchCount: 1, successfulBatches: 1, failedBatches: 0, batchNumbers: ['777'], batchesAmount: '40.00', cardLegs: 1,
+            transmittedLegs: 1, untransmittedLegs: 0, untransmittedAmount: '0.00',
+          },
+        },
+      ],
+      tills: [],
+    };
+    const [zs, tills] = zTableSheets(table, t, (m) => `pm:${m}`);
+    const zc = zTableColumns(t, (m) => `pm:${m}`, table.paymentMethods);
+    const cells = listSheetCells(zc, table.zs, 'total');
+    assert.deepEqual(zc.map((c) => c.header), zs.columns.map((c) => c.header));
+    assert.deepEqual(cells.rows, zs.rows);
+    assert.deepEqual(cells.totals, zs.totals);
+    assert.ok(zc.some((c) => c.key === paymentColumnKey('card')));
+    assert.deepEqual(zTillColumns(t, (m) => `pm:${m}`, table.paymentMethods).map((c) => c.header), tills.columns.map((c) => c.header));
+  });
+
+  it('money sums to the agora, decimal strings and empty cells alike', () => {
+    assert.equal(sumMoney(['0.10', '0.20', null, '', 0.3]), 0.6);
   });
 });

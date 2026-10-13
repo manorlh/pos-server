@@ -1602,6 +1602,12 @@ export interface Transaction {
   totalDiscount?: number;
   documentDiscount?: number;
   whtDeduction?: number;
+  /**
+   * The tip, apart from `totalAmount` (never a tender leg), and the tender it went on
+   * (`cash` / `card`; the list's `tipPaymentMethod` is new, P:\specs\reports-upgrade.md §4.2).
+   */
+  tipAmount?: number | string | null;
+  tipPaymentMethod?: string | null;
   customerId?: string;
   cashierId?: string;
   branchId?: string;

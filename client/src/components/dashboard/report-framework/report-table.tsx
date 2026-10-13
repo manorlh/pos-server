@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { formatCurrency, formatDate, formatDateTime, formatQuantity } from '@/lib/format';
 import type { ExcelCellKind, ExcelValue } from '@/lib/excelExport';
 import {
+  groupRuns,
   moveColumn,
   nextSort,
   orderedColumnKeys,
@@ -115,6 +116,14 @@ export function ReportTable<R>({
     [searched, sort, sortColumn],
   );
 
+  // A list in runs of one group (a day): a heading opens each run, in the report's order only.
+  const runs = useMemo(() => (table.groupOf && !sort ? groupRuns(rows, table.groupOf) : null), [rows, sort, table]);
+  const runHeading = (i: number) => {
+    const run = runs?.[i];
+    return run ? (table.groupHeading ? table.groupHeading(run.group, run.rows) : run.group) : null;
+  };
+  const rowClick = table.expand ? undefined : table.onRowClick;
+
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const toggleOpen = (key: string) =>
     setOpen((prev) => {
@@ -133,6 +142,10 @@ export function ReportTable<R>({
   const totalOf = (c: ReportColumn<R>, i: number) => {
     if (c.totalCell !== undefined) return c.totalCell;
     if (c.total !== undefined && c.total !== null) return formatReportValue(c.kind, c.total);
+    if (c.total === undefined && c.totalOf) {
+      const computed = c.totalOf(table.rows);
+      if (computed !== null && computed !== undefined) return formatReportValue(c.kind, computed);
+    }
     return i === 0 ? table.totalsLabel : null;
   };
   const align = (c: ReportColumn<R>) => (isNumeric(c) ? 'text-end tabular-nums' : 'text-start');
@@ -217,15 +230,23 @@ export function ReportTable<R>({
               rows.map((row, i) => {
                 const key = table.rowKey(row, i);
                 const isOpen = open.has(key);
+                const heading = runHeading(i);
                 return (
                   <Fragment key={key}>
+                    {heading !== null ? (
+                      <tr className="bg-muted/40">
+                        <td colSpan={colSpan} className="px-2 py-1.5 text-xs font-medium">
+                          {heading}
+                        </td>
+                      </tr>
+                    ) : null}
                     <tr
                       className={cn(
                         'border-b transition-colors hover:bg-muted/50',
-                        expandable && 'cursor-pointer',
+                        (expandable || rowClick) && 'cursor-pointer',
                         table.rowClassName?.(row),
                       )}
-                      onClick={expandable ? () => toggleOpen(key) : undefined}
+                      onClick={expandable ? () => toggleOpen(key) : rowClick ? () => rowClick(row) : undefined}
                       aria-expanded={expandable ? isOpen : undefined}
                     >
                       {expandable ? (
@@ -287,26 +308,35 @@ export function ReportTable<R>({
             const key = table.rowKey(row, i);
             const [first, ...rest] = visible;
             const isOpen = open.has(key);
+            const heading = runHeading(i);
             return (
-              <div key={key} className={cn('rounded-lg border bg-card p-3', table.rowClassName?.(row))}>
-                {first ? <div className="mb-2 font-medium break-words">{cellOf(first, row)}</div> : null}
-                <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-                  {rest.map((c) => (
-                    <div key={c.key} className="min-w-0">
-                      <dt className="text-muted-foreground truncate text-xs">{c.header}</dt>
-                      <dd className="tabular-nums break-words">{cellOf(c, row)}</dd>
-                    </div>
-                  ))}
-                </dl>
-                {expandable ? (
-                  <>
-                    <Button variant="ghost" size="sm" className="mt-2 h-7 px-2" onClick={() => toggleOpen(key)}>
-                      {isOpen ? t('hideDetails') : t('details')}
-                    </Button>
-                    {isOpen ? <div className="mt-2 -mx-3 overflow-x-auto border-t">{table.expand!(row)}</div> : null}
-                  </>
+              <Fragment key={key}>
+                {heading !== null ? (
+                  <div className="bg-muted/40 rounded-md px-3 py-1.5 text-xs font-medium">{heading}</div>
                 ) : null}
-              </div>
+                <div
+                  className={cn('rounded-lg border bg-card p-3', rowClick && 'cursor-pointer hover:bg-muted/50', table.rowClassName?.(row))}
+                  onClick={rowClick ? () => rowClick(row) : undefined}
+                >
+                  {first ? <div className="mb-2 font-medium break-words">{cellOf(first, row)}</div> : null}
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                    {rest.map((c) => (
+                      <div key={c.key} className="min-w-0">
+                        <dt className="text-muted-foreground truncate text-xs">{c.header}</dt>
+                        <dd className="tabular-nums break-words">{cellOf(c, row)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  {expandable ? (
+                    <>
+                      <Button variant="ghost" size="sm" className="mt-2 h-7 px-2" onClick={() => toggleOpen(key)}>
+                        {isOpen ? t('hideDetails') : t('details')}
+                      </Button>
+                      {isOpen ? <div className="mt-2 -mx-3 overflow-x-auto border-t">{table.expand!(row)}</div> : null}
+                    </>
+                  ) : null}
+                </div>
+              </Fragment>
             );
           })
         )}

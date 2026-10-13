@@ -14,31 +14,40 @@
  * filter, so a company in scope is called out rather than silently widened to the whole
  * organization.
  *
+ * On the report framework (P:\specs\reports-upgrade.md §5): the days and the area in the
+ * report bar, the status, "awaiting Z", the shop and the till beside them — all in the URL
+ * under the keys they always had (`status`, `awaitingZ`, `branch`, `till`, `area`, `from`,
+ * `to`, `page`), so the machines page's `?awaitingZ=1` and a shift's "back to the list" land
+ * as before. A first visit lists every shift, newest first; a range narrows once run. The
+ * table has the tips (§2ה, cash and card apart in the export) and a totals row (this page's
+ * shifts on screen; every shift in the export, which takes every page).
+ *
  * An open shift is closed from here as the devices page closes it ("סגור משמרת": the remote
  * close, or a dead till's administrative close), one at a time or all of the place's at once
  * (components/dashboard/shifts/shift-close.tsx).
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FilePlus2, ListFilter } from 'lucide-react';
 import { AREA_NONE, fetchShifts, type ShiftListParams } from '@/lib/api';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
 import { usePageScope, useScopeQuery } from '@/lib/scope';
 import { findBySameId } from '@/lib/entityLookup';
 import { fetchAllPages } from '@/lib/fetchAllPages';
-import { formatCurrency, formatDate, formatDateTimeInZone } from '@/lib/format';
+import { formatCurrency, formatDateTimeInZone, moneyValue } from '@/lib/format';
 import { useTenantTimeZone } from '@/lib/auth';
 import { useCanProduceZ, zWizardHref } from '@/lib/zAccess';
-import { shiftPlace, shiftRegisterNumber, tillOptions, toggleOpenOnly } from '@/lib/shiftsPage';
-import type { ShiftListResponse, ShiftStatus } from '@/lib/types';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
-import { AreaFilterSelect, AreaName } from '@/components/dashboard/areas/area-filter';
+import { sumMoney } from '@/lib/listExportColumns';
+import { parseReportFilters, type ReportFilterSpec } from '@/lib/reportFilters';
+import type { ReportFilterLine } from '@/lib/reportExport';
+import { todayIso } from '@/lib/reportWindow';
+import { shiftPlace, shiftRegisterNumber, tillOptions, toggleOpenOnly, type ShiftStatusFilter } from '@/lib/shiftsPage';
+import type { Money, Shift, ShiftListResponse } from '@/lib/types';
+import { AreaName } from '@/components/dashboard/areas/area-filter';
 import { useShopAreas } from '@/components/dashboard/areas/use-shop-areas';
-import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import {
   CountedCash,
   OverShort,
@@ -51,58 +60,54 @@ import {
   useShiftCloseDialogs,
   useTillLabel,
 } from '@/components/dashboard/shifts/shift-close';
+import {
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { Button, buttonVariants } from '@/components/ui/button';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
 
 const PAGE_SIZE = 50;
-const COLS = 15;
 
 /** A select's "all" (a Base UI select item needs a value). */
 const ALL = '__all__';
 
-type StatusFilter = 'all' | ShiftStatus;
+/**
+ * The days and the area in the bar; the status, "awaiting Z" and the page's own shop / till as
+ * the report's extras — under the URL keys the list always used.
+ */
+const SPEC: ReportFilterSpec = {
+  filters: ['area'],
+  extras: { status: '', awaitingZ: '', branch: '', till: '' },
+};
 
-const PLAIN_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** The page's filters, from the URL — so Back, a reload and a shared link keep them. */
-function filtersFrom(sp: URLSearchParams | { get(name: string): string | null }) {
-  const rawStatus = sp.get('status');
-  const awaitingZ = sp.get('awaitingZ') === '1';
-  const from = sp.get('from') ?? '';
-  const to = sp.get('to') ?? '';
-  const page = Math.max(1, Math.floor(Number(sp.get('page') ?? '1')) || 1);
-  // `none` = shifts stamped with no area; otherwise an area id of the shop in scope.
-  const area = sp.get('area') ?? '';
-  // The page's own "סניף" and "קופה" (beside the scope bar's shop and till).
-  const branch = sp.get('branch') ?? '';
-  const till = sp.get('till') ?? '';
-  const status: StatusFilter = awaitingZ
-    ? // Awaiting a Z means closed: an open shift is never waiting for one.
-      'closed'
-    : rawStatus === 'open' || rawStatus === 'closed'
-      ? rawStatus
+function statusOf(extras: Record<string, string>): { status: ShiftStatusFilter; awaitingZ: boolean } {
+  const awaitingZ = extras.awaitingZ === '1';
+  // Awaiting a Z means closed: an open shift is never waiting for one.
+  const status: ShiftStatusFilter = awaitingZ
+    ? 'closed'
+    : extras.status === 'open' || extras.status === 'closed'
+      ? extras.status
       : 'all';
-  return {
-    status,
-    awaitingZ,
-    from: PLAIN_DATE.test(from) ? from : '',
-    to: PLAIN_DATE.test(to) ? to : '',
-    area,
-    branch,
-    till,
-    page,
-  };
+  return { status, awaitingZ };
+}
+
+/** Money summed, or null when no row has it (a page of open shifts has no count). */
+function sumOrNull<R>(rows: R[], pick: (row: R) => Money | null | undefined): number | null {
+  const values = rows.map(pick).filter((v) => v !== null && v !== undefined && v !== '');
+  return values.length ? sumMoney(values) : null;
 }
 
 export default function ShiftsPage() {
   const t = useTranslations('shifts');
-  const tc = useTranslations('common');
+  const tr = useTranslations('shifts.report');
   const router = useRouter();
+  const pathname = usePathname();
   const shiftLabel = useShiftLabel();
   const canProduceZ = useCanProduceZ();
   const { scope, resolution, effective, ready } = usePageScope({
@@ -112,71 +117,43 @@ export default function ShiftsPage() {
   const tz = useTenantTimeZone();
   const tillLabel = useTillLabel();
   const closer = useShiftCloseDialogs(scope.machines);
+  const filters = useReportFilters(SPEC);
 
-  // `?awaitingZ=1` is how the machines page's "closed shifts awaiting a Z" flag lands here.
+  // What the list runs on: the URL (`?awaitingZ=1` from the machines page needs no run).
   const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const { status, awaitingZ, from, to, area, branch, till, page } = filtersFrom(searchParams);
+  const urlKey = searchParams.toString();
+  const parsed = useMemo(() => parseReportFilters(new URLSearchParams(urlKey), SPEC, todayIso()), [urlKey]);
+  const { status, awaitingZ } = statusOf(parsed.extras);
+  const area = parsed.values.areaId;
+  const from = parsed.applied ? parsed.values.from : '';
+  const to = parsed.applied ? parsed.values.to : '';
+  const page = Math.max(1, Math.floor(Number(searchParams.get('page') ?? '1')) || 1);
   // The shop and till the list is filtered on: the scope bar's, else the page's own.
-  const place = shiftPlace({ shopId: effective.shopId, machineId: effective.machineId }, { branch, till }, scope.machines);
+  const place = shiftPlace(
+    { shopId: effective.shopId, machineId: effective.machineId },
+    { branch: parsed.extras.branch ?? '', till: parsed.extras.till ?? '' },
+    scope.machines,
+  );
   const shopId = place.shopId;
   const machineId = place.machineId;
-  const rangeInvalid = !!from && !!to && from > to;
+
   // A shift's page links back to exactly this list — scope and filters — and carries the
   // scope itself so the bar above it keeps naming the same shop and till.
   const scopeQuery = useScopeQuery((st) => st.query);
   const detailHref = (id: string) => {
     const q = new URLSearchParams(scopeQuery.replace(/^\?/, ''));
-    q.set('list', searchParams.toString());
+    q.set('list', urlKey);
     return `/dashboard/shifts/${id}?${q.toString()}`;
   };
 
-  /** Change filters in the URL, keeping the scope's own params beside them. */
-  const setFilters = useCallback(
-    (
-      patch: Partial<{
-        status: StatusFilter;
-        awaitingZ: boolean;
-        from: string;
-        to: string;
-        area: string;
-        branch: string;
-        till: string;
-        page: number;
-      }>,
-    ) => {
-      const next = new URLSearchParams(searchParams.toString());
-      const put = (key: string, value: string | null) => (value ? next.set(key, value) : next.delete(key));
-      if ('status' in patch) put('status', patch.status && patch.status !== 'all' ? patch.status : null);
-      if ('awaitingZ' in patch) put('awaitingZ', patch.awaitingZ ? '1' : null);
-      if ('from' in patch) put('from', patch.from ?? null);
-      if ('to' in patch) put('to', patch.to ?? null);
-      if ('area' in patch) put('area', patch.area ?? null);
-      if ('branch' in patch) put('branch', patch.branch ?? null);
-      if ('till' in patch) put('till', patch.till ?? null);
-      // Any filter change is a new result set: back to its first page.
-      const nextPage = 'page' in patch ? (patch.page ?? 1) : 1;
-      put('page', nextPage > 1 ? String(nextPage) : null);
-      const q = next.toString();
-      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
-    },
-    [pathname, router, searchParams],
-  );
-
-  // A new scope is a new result set too. An area belongs to one shop, so another shop
-  // drops the area filter (keeping "no area", which means the same thing anywhere).
-  const scopeKey = `${shopId ?? ''}|${machineId ?? ''}`;
-  const shopKey = shopId ?? '';
-  const lastScopeKey = useRef(scopeKey);
-  const lastShopKey = useRef(shopKey);
-  useEffect(() => {
-    if (lastScopeKey.current === scopeKey) return;
-    lastScopeKey.current = scopeKey;
-    const shopChanged = lastShopKey.current !== shopKey;
-    lastShopKey.current = shopKey;
-    if (shopChanged && area && area !== AREA_NONE) setFilters({ area: '' });
-    else if (page > 1) setFilters({ page: 1 });
-  }, [area, page, scopeKey, setFilters, shopKey]);
+  /** Another page of the same list (the filters stay as they are in the URL). */
+  const setPage = (next: number) => {
+    const q = new URLSearchParams(urlKey);
+    if (next > 1) q.set('page', String(next));
+    else q.delete('page');
+    const s = q.toString();
+    router.replace(s ? `${pathname}?${s}` : pathname, { scroll: false });
+  };
 
   const params = useMemo<ShiftListParams>(() => {
     const p: ShiftListParams = { page, pageSize: PAGE_SIZE };
@@ -192,25 +169,57 @@ export default function ShiftsPage() {
     return p;
   }, [shopId, machineId, status, awaitingZ, from, to, area, page]);
 
-  const { data, isLoading, isFetching, isError, error } = useQuery<ShiftListResponse>({
+  // Any other filter or scope is a new result set: back to its first page. An area belongs
+  // to one shop, so another shop drops it (keeping "no area", which means the same anywhere).
+  const filterKey = JSON.stringify({ ...params, page: undefined });
+  const lastFilterKey = useRef(filterKey);
+  const lastShop = useRef(shopId ?? '');
+  useEffect(() => {
+    if (lastFilterKey.current === filterKey) return;
+    lastFilterKey.current = filterKey;
+    const shopChanged = lastShop.current !== (shopId ?? '');
+    lastShop.current = shopId ?? '';
+    if (!(page > 1) && !(shopChanged && area && area !== AREA_NONE)) return;
+    const q = new URLSearchParams(urlKey);
+    q.delete('page');
+    if (shopChanged && area && area !== AREA_NONE) q.delete('area');
+    const s = q.toString();
+    router.replace(s ? `${pathname}?${s}` : pathname, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the filters change
+  }, [filterKey]);
+
+  const rangeInvalid = !!from && !!to && from > to;
+  const list = useQuery<ShiftListResponse>({
     queryKey: ['shifts', params],
     queryFn: () => fetchShifts(params),
     placeholderData: (prev) => prev,
     enabled: ready && !rangeInvalid,
   });
-
+  const data = list.data;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   // A page past the end (a bookmarked ?page=9, or rows taken into a Z meanwhile) is
   // moved to the last page that has rows.
   useEffect(() => {
-    if (data && !isFetching && page > totalPages) setFilters({ page: totalPages });
-  }, [data, isFetching, page, setFilters, totalPages]);
+    if (data && !list.isFetching && page > totalPages) setPage(totalPages);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setPage reads the live URL
+  }, [data, list.isFetching, page, totalPages]);
+
+  // ── The page's own filters in the bar (the draft; "הפק דוח" runs them) ──
+  const draft = statusOf(filters.draftExtras);
+  const draftPlace = shiftPlace(
+    { shopId: effective.shopId, machineId: effective.machineId },
+    { branch: filters.draftExtras.branch ?? '', till: filters.draftExtras.till ?? '' },
+    scope.machines,
+  );
+  const setDraftStatus = (next: { status: ShiftStatusFilter; awaitingZ: boolean }) => {
+    filters.setExtra('status', next.status === 'all' ? '' : next.status);
+    filters.setExtra('awaitingZ', next.awaitingZ ? '1' : '');
+  };
   const statusItems = [
     { value: 'all', label: t('filter.statusAll') },
     { value: 'open', label: t('status.open') },
     { value: 'closed', label: t('status.closed') },
   ];
-
   // "סניף" and "קופה": the shops in reach, and the chosen shop's tills ("קופה 2 · בר").
   const shopNameOf = (id: string | null | undefined) => (id ? (findBySameId(scope.shops, id)?.name ?? '') : '');
   const shopItems = [
@@ -221,19 +230,113 @@ export default function ShiftsPage() {
   ];
   const tillItems = [
     { value: ALL, label: t('filter.tillAll') },
-    ...tillOptions(scope.machines, shopId, shopNameOf).map((o) => ({
+    ...tillOptions(scope.machines, draftPlace.shopId, shopNameOf).map((o) => ({
       value: o.id,
-      label: shopId
+      label: draftPlace.shopId
         ? tillLabel(o.name, o.number)
         : t('filter.tillWithShop', { till: tillLabel(o.name, o.number), shop: shopNameOf(o.shopId) }),
     })),
   ];
   // A shop or till from a link whose list has not loaded (or is out of reach) still shows as chosen.
-  if (shopId && !shopItems.some((i) => i.value === shopId)) shopItems.push({ value: shopId, label: t('filter.unknown') });
-  if (machineId && !tillItems.some((i) => i.value === machineId)) {
-    tillItems.push({ value: machineId, label: findBySameId(scope.machines, machineId)?.name ?? t('filter.unknown') });
+  if (draftPlace.shopId && !shopItems.some((i) => i.value === draftPlace.shopId)) {
+    shopItems.push({ value: draftPlace.shopId, label: t('filter.unknown') });
   }
-  const openOnly = status === 'open' && !awaitingZ;
+  if (draftPlace.machineId && !tillItems.some((i) => i.value === draftPlace.machineId)) {
+    tillItems.push({ value: draftPlace.machineId, label: findBySameId(scope.machines, draftPlace.machineId)?.name ?? t('filter.unknown') });
+  }
+  const openOnly = draft.status === 'open' && !draft.awaitingZ;
+
+  const barFields = (
+    <>
+      <div className="min-w-0 space-y-1">
+        <Label className="text-xs">{t('filter.status')}</Label>
+        <Select
+          value={draft.status}
+          onValueChange={(v) => setDraftStatus({ status: (v ?? 'all') as ShiftStatusFilter, awaitingZ: false })}
+          items={statusItems}
+          // "Awaiting a Z" already means closed.
+          disabled={draft.awaitingZ}
+        >
+          <SelectTrigger className="w-full min-w-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {statusItems.map((item) => (
+              <SelectItem key={item.value} value={item.value} label={item.label}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-0 space-y-1" title={draftPlace.shopLocked ? t('filter.lockedByScope') : undefined}>
+        <Label className="text-xs">{t('filter.shop')}</Label>
+        <Select
+          value={draftPlace.shopId ?? ALL}
+          // Another shop: its tills and areas are others — both start over.
+          onValueChange={(v) => {
+            filters.setExtra('branch', !v || v === ALL ? '' : String(v));
+            filters.setExtra('till', '');
+          }}
+          items={shopItems}
+          disabled={draftPlace.shopLocked}
+        >
+          <SelectTrigger className="w-full min-w-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {shopItems.map((item) => (
+              <SelectItem key={item.value} value={item.value} label={item.label}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="min-w-0 space-y-1" title={draftPlace.tillLocked ? t('filter.lockedByScope') : undefined}>
+        <Label className="text-xs">{t('filter.till')}</Label>
+        <Select
+          value={draftPlace.machineId ?? ALL}
+          onValueChange={(v) => filters.setExtra('till', !v || v === ALL ? '' : String(v))}
+          items={tillItems}
+          disabled={draftPlace.tillLocked}
+        >
+          <SelectTrigger className="w-full min-w-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {tillItems.map((item) => (
+              <SelectItem key={item.value} value={item.value} label={item.label}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="col-span-full flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* "רק פתוחות": the status select's "open" in one tap, in step with it. */}
+        <Button
+          size="sm"
+          variant={openOnly ? 'default' : 'outline'}
+          aria-pressed={openOnly}
+          className="rounded-full"
+          onClick={() => setDraftStatus(toggleOpenOnly(draft))}
+        >
+          <ListFilter className="h-4 w-4 me-1" aria-hidden />
+          {t('filter.openOnly')}
+        </Button>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-primary"
+            checked={draft.awaitingZ}
+            onChange={(e) => setDraftStatus({ status: e.target.checked ? 'closed' : draft.status, awaitingZ: e.target.checked })}
+          />
+          {t('filter.awaitingZ')}
+        </label>
+      </div>
+    </>
+  );
 
   // What "סגור את כל המשמרות הפתוחות" takes: the list's place — never its dates or status.
   const { data: areas = [] } = useShopAreas(shopId, true);
@@ -244,339 +347,271 @@ export default function ShiftsPage() {
     if (area) p.areaId = area;
     return p;
   }, [area, machineId, shopId]);
+  const areaName = area ? (area === AREA_NONE ? t('close.bulkNoArea') : (areas.find((a) => a.id === area)?.name ?? t('filter.unknown'))) : null;
   const placeLabel = [
     shopId ? shopNameOf(shopId) || t('filter.unknown') : t('close.bulkAllShops'),
     machineId ? (findBySameId(scope.machines, machineId)?.name ?? t('filter.unknown')) : null,
-    area
-      ? area === AREA_NONE
-        ? t('close.bulkNoArea')
-        : (areas.find((a) => a.id === area)?.name ?? t('filter.unknown'))
-      : null,
+    areaName,
   ]
     .filter(Boolean)
     .join(' · ');
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3 print:hidden">
-        <div>
-          <h1 className="text-2xl font-bold">{t('title')}</h1>
-          <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-        </div>
-        {canProduceZ ? (
-          <Link href={zWizardHref(shopId, machineId)} className={buttonVariants({ size: 'sm' })}>
-            <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
-            {t('produceZ')}
+  // ── The table: this page on screen, every page in the export ──
+  const pageOnly = Boolean(data && data.total > data.items.length);
+  const table = useMemo<ReportTableSpec<Shift>>(() => {
+    const machineOf = (s: Shift) => findBySameId(scope.machines, s.machineId);
+    const open = (s: Shift) => s.status === 'open';
+    const columns: ReportColumn<Shift>[] = [
+      {
+        key: 'shift',
+        header: t('col.shift'),
+        required: true,
+        width: 14,
+        value: (s) => shiftLabel(s),
+        className: 'font-medium',
+        cell: (s) => (
+          <Link href={detailHref(s.id)} className="hover:underline" onClick={(e) => e.stopPropagation()}>
+            {shiftLabel(s)}
           </Link>
-        ) : null}
-      </div>
+        ),
+      },
+      { key: 'businessDate', header: t('col.businessDate'), kind: 'date', value: (s) => s.businessDate },
+      {
+        key: 'posNumber',
+        header: t('col.posNumber'),
+        width: 10,
+        value: (s) => shiftRegisterNumber(s, machineOf(s)),
+        className: 'tabular-nums',
+      },
+      {
+        key: 'till',
+        header: t('col.till'),
+        value: (s) => s.machineName ?? machineOf(s)?.name ?? null,
+        cell: (s) => (
+          <>
+            {s.machineName ?? machineOf(s)?.name ?? '—'}
+            {/* An independent till shows its cashier no shifts: the shift is an internal record. */}
+            {machineOf(s)?.independentTill ? <div className="text-xs text-muted-foreground">{t('internalShift')}</div> : null}
+          </>
+        ),
+      },
+      { key: 'shop', header: t('col.shop'), value: (s) => s.shopName ?? findBySameId(scope.shops, s.shopId)?.name ?? null },
+      { key: 'area', header: t('col.area'), width: 14, value: (s) => s.areaName ?? null, cell: (s) => <AreaName name={s.areaName} /> },
+      {
+        key: 'opened',
+        header: t('col.opened'),
+        kind: 'datetime',
+        value: (s) => s.openedAt,
+        className: 'text-xs',
+        cell: (s) => (
+          <>
+            <div>{formatDateTimeInZone(s.openedAt, tz)}</div>
+            {s.openedByName ? <div className="text-muted-foreground">{s.openedByName}</div> : null}
+          </>
+        ),
+      },
+      { key: 'openedBy', header: t('detail.openedBy'), exportOnly: true, value: (s) => s.openedByName ?? null },
+      {
+        key: 'closed',
+        header: t('col.closed'),
+        kind: 'datetime',
+        value: (s) => (open(s) ? null : (s.closedAt ?? null)),
+        className: 'text-xs',
+        cell: (s) =>
+          open(s) ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <>
+              <div>{formatDateTimeInZone(s.closedAt, tz)}</div>
+              <div className="text-muted-foreground">{s.unattended ? t('closedRemotely') : (s.closedByName ?? '')}</div>
+            </>
+          ),
+      },
+      {
+        key: 'closedBy',
+        header: t('detail.closedBy'),
+        exportOnly: true,
+        value: (s) => (open(s) ? null : s.unattended ? t('closedRemotely') : (s.closedByName ?? null)),
+      },
+      {
+        key: 'sales',
+        header: t('col.sales'),
+        kind: 'money',
+        value: (s) => s.serverTotals?.totalSales ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.serverTotals?.totalSales),
+        className: 'font-medium',
+        cell: (s) => (
+          <>
+            {formatCurrency(s.serverTotals?.totalSales)}
+            {(s.offlineDeclinedCount ?? 0) > 0 ? (
+              <div className="text-destructive text-xs font-normal whitespace-nowrap">
+                {t('offlineDeclined', { count: s.offlineDeclinedCount ?? 0, amount: formatCurrency(s.offlineDeclinedAmount) })}
+              </div>
+            ) : null}
+          </>
+        ),
+      },
+      {
+        key: 'cash',
+        header: t('col.cash'),
+        kind: 'money',
+        value: (s) => s.serverTotals?.totalCash ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.serverTotals?.totalCash),
+      },
+      {
+        // The tips, apart from the takings (§2ה); cash and card under them, and apart in the export.
+        key: 'tips',
+        header: tr('tips'),
+        kind: 'money',
+        value: (s) => s.serverTotals?.totalTips ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.serverTotals?.totalTips),
+        cell: (s) =>
+          moneyValue(s.serverTotals?.totalTips) ? (
+            <>
+              {formatCurrency(s.serverTotals?.totalTips)}
+              <div className="text-muted-foreground text-xs font-normal whitespace-nowrap">
+                {tr('tipsSplit', {
+                  cash: formatCurrency(s.serverTotals?.totalCashTips),
+                  card: formatCurrency(s.serverTotals?.totalCardTips),
+                })}
+              </div>
+            </>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        key: 'cashTips',
+        header: tr('cashTips'),
+        kind: 'money',
+        exportOnly: true,
+        value: (s) => s.serverTotals?.totalCashTips ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.serverTotals?.totalCashTips),
+      },
+      {
+        key: 'cardTips',
+        header: tr('cardTips'),
+        kind: 'money',
+        exportOnly: true,
+        value: (s) => s.serverTotals?.totalCardTips ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.serverTotals?.totalCardTips),
+      },
+      {
+        key: 'expected',
+        header: t('col.expected'),
+        kind: 'money',
+        value: (s) => s.expectedCash ?? null,
+        totalOf: (rows) => sumOrNull(rows, (s) => s.expectedCash),
+      },
+      {
+        key: 'counted',
+        header: t('col.counted'),
+        kind: 'money',
+        value: (s) => (open(s) ? null : (s.countedCash ?? null)),
+        totalOf: (rows) => sumOrNull(rows.filter((s) => !open(s)), (s) => s.countedCash),
+        cell: (s) => (open(s) ? '—' : <CountedCash value={s.countedCash} />),
+      },
+      {
+        key: 'overShort',
+        header: t('col.overShort'),
+        kind: 'money',
+        value: (s) => (open(s) ? null : (s.discrepancy ?? null)),
+        totalOf: (rows) => sumOrNull(rows.filter((s) => !open(s)), (s) => s.discrepancy),
+        cell: (s) => (open(s) ? '—' : <OverShort value={s.discrepancy} />),
+      },
+      {
+        key: 'state',
+        header: t('col.state'),
+        screenOnly: true,
+        sortable: false,
+        value: (s) => s.status,
+        cell: (s) => <ShiftBadges shift={s} />,
+      },
+      {
+        key: 'actions',
+        header: t('col.actions'),
+        screenOnly: true,
+        sortable: false,
+        value: () => null,
+        cell: (s) => (
+          <span onClick={(e) => e.stopPropagation()}>
+            <ShiftCloseAction shift={s} canClose={canProduceZ} closer={closer} />
+          </span>
+        ),
+      },
+    ];
+    return {
+      id: 'main',
+      title: t('title'),
+      columns,
+      rows: data?.items ?? [],
+      rowKey: (s) => s.id,
+      // This page's shifts on screen (said so when there are more); every shift in the export.
+      totalsLabel: pageOnly ? tr('totalPage') : tr('total'),
+      emptyText: t('empty'),
+      onRowClick: (s) => router.push(detailHref(s.id)),
+      exportRows: () =>
+        fetchAllPages((p, pageSize) => fetchShifts({ ...params, page: p, pageSize }), { pageSize: 200 }),
+    };
+    // detailHref reads the URL and the scope: both are in the deps through urlKey / scopeQuery.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canProduceZ, closer, data, pageOnly, params, router, scope.machines, scope.shops, scopeQuery, shiftLabel, t, tr, tz, urlKey]);
 
-      <ScopeGate resolution={resolution}>
-        <div className="rounded-lg border bg-card p-4 space-y-3 print:hidden">
-          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <div className="space-y-1">
-              <Label className="text-xs">{t('filter.status')}</Label>
-              <Select
-                value={status}
-                onValueChange={(v) => setFilters({ status: (v ?? 'all') as StatusFilter })}
-                items={statusItems}
-                // "Awaiting a Z" already means closed.
-                disabled={awaitingZ}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {statusItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value} label={item.label}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{t('filter.from')}</Label>
-              <DatePicker
-                value={from}
-                max={to || undefined}
-                aria-invalid={rangeInvalid || undefined}
-                onChange={(e) => setFilters({ from: e.target.value })}
-                range={{ from, to, onSelect: (r) => setFilters({ from: r.from, to: r.to }) }}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{t('filter.to')}</Label>
-              <DatePicker
-                value={to}
-                min={from || undefined}
-                aria-invalid={rangeInvalid || undefined}
-                onChange={(e) => setFilters({ to: e.target.value })}
-                range={{ from, to, onSelect: (r) => setFilters({ from: r.from, to: r.to }) }}
-              />
-            </div>
-            <div className="space-y-1" title={place.shopLocked ? t('filter.lockedByScope') : undefined}>
-              <Label className="text-xs">{t('filter.shop')}</Label>
-              <Select
-                value={shopId ?? ALL}
-                // Another shop: its tills and areas are others — both start over.
-                onValueChange={(v) =>
-                  setFilters({ branch: !v || v === ALL ? '' : String(v), till: '', area: area === AREA_NONE ? area : '' })
-                }
-                items={shopItems}
-                disabled={place.shopLocked}
-              >
-                <SelectTrigger className="min-w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {shopItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value} label={item.label}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1" title={place.tillLocked ? t('filter.lockedByScope') : undefined}>
-              <Label className="text-xs">{t('filter.till')}</Label>
-              <Select
-                value={machineId ?? ALL}
-                onValueChange={(v) => setFilters({ till: !v || v === ALL ? '' : String(v) })}
-                items={tillItems}
-                disabled={place.tillLocked}
-              >
-                <SelectTrigger className="min-w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {tillItems.map((item) => (
-                    <SelectItem key={item.value} value={item.value} label={item.label}>
-                      {item.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <AreaFilterSelect
-              shopId={shopId}
-              value={area}
-              onChange={(next) => setFilters({ area: next })}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            {/* "רק פתוחות": the status select's "open" in one tap, in step with it. */}
-            <Button
-              size="sm"
-              variant={openOnly ? 'default' : 'outline'}
-              aria-pressed={openOnly}
-              className="rounded-full"
-              onClick={() => setFilters(toggleOpenOnly({ status, awaitingZ }))}
-            >
-              <ListFilter className="h-4 w-4 me-1" aria-hidden />
-              {t('filter.openOnly')}
-            </Button>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-primary"
-                checked={awaitingZ}
-                onChange={(e) => setFilters({ awaitingZ: e.target.checked })}
-              />
-              {t('filter.awaitingZ')}
-            </label>
-            <div className="ms-auto">
-              <BulkCloseOpenShifts
-                place={placeParams}
-                placeLabel={placeLabel}
-                machines={scope.machines}
-                canClose={canProduceZ}
-              />
-            </div>
-          </div>
-          {rangeInvalid ? (
-            <p className="text-destructive text-xs">{t('filter.rangeInvalid')}</p>
-          ) : null}
-          <p className="text-muted-foreground text-xs">{t('filter.dateHint')}</p>
-        </div>
+  // ── What the export header says the page's own filters are ──
+  const extraLines: ReportFilterLine[] = [];
+  if (awaitingZ) extraLines.push({ label: t('filter.status'), value: t('filter.awaitingZ') });
+  else if (status !== 'all') extraLines.push({ label: t('filter.status'), value: t(`status.${status}`) });
+  const exportPlace =
+    [shopId ? shopNameOf(shopId) : null, machineId ? (findBySameId(scope.machines, machineId)?.name ?? null) : null]
+      .filter(Boolean)
+      .join(' · ') || null;
 
-        {!rangeInvalid && data && data.items.length > 0 ? (
-          <ReportExportToolbar
-            title={t('title')}
-            from={from || undefined}
-            to={to || undefined}
-            // Every shift of these filters, not just this page (the list's largest page is 200).
-            getSheets={async () => ({
-              name: t('title'),
-              columns: [
-                { header: t('col.shift'), width: 14 },
-                { header: t('col.businessDate'), kind: 'date' },
-                { header: t('col.posNumber'), width: 10 },
-                { header: t('col.till') },
-                { header: t('col.shop') },
-                { header: t('col.area'), width: 14 },
-                { header: t('col.opened'), kind: 'datetime' },
-                { header: t('col.closed'), kind: 'datetime' },
-                { header: t('col.sales'), kind: 'money' },
-                { header: t('col.cash'), kind: 'money' },
-                { header: t('col.expected'), kind: 'money' },
-                { header: t('col.counted'), kind: 'money' },
-                { header: t('col.overShort'), kind: 'money' },
-              ],
-              rows: (
-                await fetchAllPages((p, pageSize) => fetchShifts({ ...params, page: p, pageSize }), { pageSize: 200 })
-              ).map((s) => [
-                shiftLabel(s), s.businessDate,
-                shiftRegisterNumber(s, findBySameId(scope.machines, s.machineId)),
-                s.machineName ?? findBySameId(scope.machines, s.machineId)?.name ?? null,
-                s.shopName ?? findBySameId(scope.shops, s.shopId)?.name ?? null,
-                s.areaName ?? null, s.openedAt, s.status === 'open' ? null : (s.closedAt ?? null),
-                s.serverTotals?.totalSales ?? null, s.serverTotals?.totalCash ?? null, s.expectedCash ?? null,
-                s.status === 'open' ? null : (s.countedCash ?? null), s.status === 'open' ? null : (s.discrepancy ?? null),
-              ]),
-            })}
-          />
-        ) : null}
-        {rangeInvalid ? null : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : (
-          <div className="rounded-lg border bg-card overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t('col.shift')}</TableHead>
-                  <TableHead>{t('col.businessDate')}</TableHead>
-                  <TableHead className="whitespace-nowrap">{t('col.posNumber')}</TableHead>
-                  <TableHead>{t('col.till')}</TableHead>
-                  <TableHead>{t('col.shop')}</TableHead>
-                  <TableHead>{t('col.area')}</TableHead>
-                  <TableHead>{t('col.opened')}</TableHead>
-                  <TableHead>{t('col.closed')}</TableHead>
-                  <TableHead className="text-end">{t('col.sales')}</TableHead>
-                  <TableHead className="text-end">{t('col.cash')}</TableHead>
-                  <TableHead className="text-end">{t('col.expected')}</TableHead>
-                  <TableHead className="text-end">{t('col.counted')}</TableHead>
-                  <TableHead className="text-end">{t('col.overShort')}</TableHead>
-                  <TableHead>{t('col.state')}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{t('col.actions')}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={i}>
-                      <TableCell colSpan={COLS}>
-                        <Skeleton className="h-6 w-full" />
-                      </TableCell>
-                    </TableRow>
-                  ))
-                ) : !data || data.items.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={COLS} className="py-6 text-center text-muted-foreground">
-                      {t('empty')}
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  data.items.map((s) => {
-                    const machine = findBySameId(scope.machines, s.machineId);
-                    const machineName = s.machineName ?? machine?.name ?? '—';
-                    const shopName = s.shopName ?? findBySameId(scope.shops, s.shopId)?.name;
-                    const number = shiftRegisterNumber(s, machine);
-                    return (
-                      <TableRow
-                        key={s.id}
-                        className="cursor-pointer"
-                        onClick={() => router.push(detailHref(s.id))}
-                      >
-                        <TableCell className="font-medium whitespace-nowrap">
-                          <Link
-                            href={detailHref(s.id)}
-                            className="hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {shiftLabel(s)}
-                          </Link>
-                        </TableCell>
-                        <TableCell>{formatDate(s.businessDate)}</TableCell>
-                        <TableCell className="tabular-nums">
-                          {number !== null ? number : <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell>
-                          {machineName}
-                          {/* An independent till shows its cashier no shifts: the shift is an internal record. */}
-                          {machine?.independentTill ? (
-                            <div className="text-xs text-muted-foreground">{t('internalShift')}</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {shopName ?? <span className="text-muted-foreground">—</span>}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          <AreaName name={s.areaName} />
-                        </TableCell>
-                        <TableCell className="text-xs whitespace-nowrap">
-                          <div>{formatDateTimeInZone(s.openedAt, tz)}</div>
-                          {s.openedByName ? (
-                            <div className="text-muted-foreground">{s.openedByName}</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-xs whitespace-nowrap">
-                          {s.status === 'open' ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <>
-                              <div>{formatDateTimeInZone(s.closedAt, tz)}</div>
-                              <div className="text-muted-foreground">
-                                {s.unattended ? t('closedRemotely') : (s.closedByName ?? '')}
-                              </div>
-                            </>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-end font-medium">
-                          {formatCurrency(s.serverTotals?.totalSales)}
-                          {(s.offlineDeclinedCount ?? 0) > 0 ? (
-                            <div className="text-destructive text-xs font-normal whitespace-nowrap">
-                              {t('offlineDeclined', {
-                                count: s.offlineDeclinedCount ?? 0,
-                                amount: formatCurrency(s.offlineDeclinedAmount),
-                              })}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-end">
-                          {formatCurrency(s.serverTotals?.totalCash)}
-                        </TableCell>
-                        <TableCell className="text-end">{formatCurrency(s.expectedCash)}</TableCell>
-                        <TableCell className="text-end">
-                          {s.status === 'open' ? '—' : <CountedCash value={s.countedCash} />}
-                        </TableCell>
-                        <TableCell className="text-end">
-                          {s.status === 'open' ? '—' : <OverShort value={s.discrepancy} />}
-                        </TableCell>
-                        <TableCell>
-                          <ShiftBadges shift={s} />
-                        </TableCell>
-                        <TableCell>
-                          <ShiftCloseAction shift={s} canClose={canProduceZ} closer={closer} />
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+  return (
+    <>
+      <ReportPage
+        reportKey="shifts"
+        title={t('title')}
+        subtitle={t('subtitle')}
+        headerExtra={
+          <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+            <BulkCloseOpenShifts place={placeParams} placeLabel={placeLabel} machines={scope.machines} canClose={canProduceZ} />
+            {canProduceZ ? (
+              <Link href={zWizardHref(shopId, machineId)} className={buttonVariants({ size: 'sm' })}>
+                <FilePlus2 className="h-4 w-4 me-1" aria-hidden />
+                {t('produceZ')}
+              </Link>
+            ) : null}
           </div>
-        )}
-
-        {!rangeInvalid && data && data.total > 0 ? (
+        }
+        resolution={resolution}
+        filters={filters}
+        bar={{
+          shopId: draftPlace.shopId,
+          children: barFields,
+          hint: [t('filter.dateHint'), parsed.applied ? '' : tr('allDays')].filter(Boolean).join(' '),
+        }}
+        query={reportQueryState(list)}
+        prompt={t('empty')}
+        ready
+        loading="table"
+        export={{
+          tables: [table as ReportTableSpec<unknown>],
+          from: from || null,
+          to: to || null,
+          place: exportPlace,
+          filterLines: extraLines,
+          disabled: !data || data.total === 0,
+        }}
+      >
+        <ReportTable table={table} />
+        {data && data.total > 0 ? (
           <div className="flex items-center justify-end gap-2 text-sm print:hidden">
+            <span className="text-muted-foreground me-auto text-xs">{tr('shifts', { count: data.total })}</span>
             <Button
               size="sm"
               variant="outline"
-              disabled={page <= 1 || isFetching}
-              onClick={() => setFilters({ page: Math.max(1, page - 1) })}
+              disabled={page <= 1 || list.isFetching}
+              onClick={() => setPage(Math.max(1, page - 1))}
               aria-label={t('prevPage')}
             >
               <ChevronRight className="h-4 w-4" />
@@ -587,16 +622,16 @@ export default function ShiftsPage() {
             <Button
               size="sm"
               variant="outline"
-              disabled={page >= totalPages || isFetching}
-              onClick={() => setFilters({ page: Math.min(totalPages, page + 1) })}
+              disabled={page >= totalPages || list.isFetching}
+              onClick={() => setPage(Math.min(totalPages, page + 1))}
               aria-label={t('nextPage')}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
           </div>
         ) : null}
-      </ScopeGate>
+      </ReportPage>
       {closer.dialogs}
-    </div>
+    </>
   );
 }

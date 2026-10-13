@@ -7,6 +7,7 @@ export { ReportPage, reportQueryState, type ReportPageProps, type ReportExportCo
 export { ReportTable, formatReportValue, searchRows } from './report-table';
 export { ReportFilterBar, type ReportFilterBarProps } from './report-filter-bar';
 export { ReportExportBar, toExportTable } from './report-export-bar';
+export { StandaloneExportBar, type StandaloneExportBarProps } from './standalone-export-bar';
 export { useReportFilters, type ReportFiltersController } from './use-report-filters';
 export { useReportContext } from './report-context';
 export { useCashierOptions, useCategoryOptions, type FilterOption } from './use-filter-options';

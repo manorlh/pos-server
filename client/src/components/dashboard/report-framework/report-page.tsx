@@ -13,6 +13,7 @@ import { findBySameId } from '@/lib/entityLookup';
 import type { PageScopeResolution } from '@/lib/pageScope';
 import { useScope } from '@/lib/scope';
 import type { ExcelSheet } from '@/lib/excelExport';
+import type { ReportFilterLine } from '@/lib/reportExport';
 import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { ReportErrorState } from '@/components/dashboard/report-window-summary';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -46,7 +47,7 @@ export function reportQueryState(q: {
 export interface ReportExportConfig {
   /** The tables that go to Excel (each a sheet) and the PDF (the first, or `pdfTableId`). */
   tables: ReportTableSpec<unknown>[];
-  extraSheets?: () => ExcelSheet[];
+  extraSheets?: () => ExcelSheet[] | Promise<ExcelSheet[]>;
   /** The extra sheets before the tables' (default: after). */
   extraSheetsFirst?: boolean;
   pdfTableId?: string;
@@ -57,6 +58,15 @@ export interface ReportExportConfig {
   place?: string | null;
   /** The export's title, when not the page's (a mode of the report). */
   title?: string;
+  /** Excel only (no PDF / print): a page that prints its own documents. */
+  excelOnly?: boolean;
+  /**
+   * The report's own filters (its `extras`: a status, a list of tills…) as the export header
+   * names them, after the bar's ("סטטוס: פתוחות").
+   */
+  filterLines?: ReportFilterLine[];
+  /** No rows yet: the buttons wait. */
+  disabled?: boolean;
 }
 
 export interface ReportPageProps {
@@ -149,10 +159,12 @@ export function ReportPage({
                   to={exportConfig.to ?? filters.applied?.values.to}
                   business={business}
                   place={place}
-                  filterLines={description.lines}
+                  filterLines={exportConfig.filterLines?.length ? [...description.lines, ...exportConfig.filterLines] : description.lines}
                   hours={description.hours}
                   companyId={companyId}
                   companyName={companyName}
+                  excelOnly={exportConfig.excelOnly}
+                  disabled={exportConfig.disabled}
                 />
               ) : null}
               {children}
