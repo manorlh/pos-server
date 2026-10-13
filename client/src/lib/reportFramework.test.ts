@@ -52,6 +52,15 @@ import {
 } from './listExportColumns';
 import { transactionsSheet, zTableSheets } from './reportSheets';
 import type { TransactionExportRow, ZTable } from './reportCenterTypes';
+import {
+  cashVarianceTotals,
+  isUuid,
+  offlineDeclinedRows,
+  promotionChoices,
+  sequenceGapRows,
+  sequenceGapText,
+  varianceTone,
+} from './auditReports';
 
 const TODAY = '2026-10-13';
 const SPEC: ReportFilterSpec = {
@@ -516,5 +525,96 @@ describe('the lists server exports as report columns (same cells and totals as t
 
   it('money sums to the agora, decimal strings and empty cells alike', () => {
     assert.equal(sumMoney(['0.10', '0.20', null, '', 0.3]), 0.6);
+  });
+});
+
+describe('control reports: cash variance, sequence, offline runs, promotions', () => {
+  it('a cash difference: over is green with a plus, short red, zero plain', () => {
+    assert.equal(varianceTone(12.5), 'over');
+    assert.equal(varianceTone(-0.1), 'short');
+    assert.equal(varianceTone(0), 'even');
+  });
+
+  it('the per-cashier totals: every shift, the counted ones, Σ over / short to the agora, the net', () => {
+    const tot = cashVarianceTotals(
+      [
+        { over: 0.1, short: 0 },
+        { over: 0.2, short: 5.05 },
+        { over: 0, short: 0 },
+      ],
+      7,
+      2,
+      -4.75,
+    );
+    assert.deepEqual(tot, { shifts: 7, counted: 5, over: 0.3, short: 5.05, net: -4.75 });
+    assert.deepEqual(cashVarianceTotals([], 0, 0, 0), { shifts: 0, counted: 0, over: 0, short: 0, net: 0 });
+  });
+
+  it('a gap is one number or a run; every gap is its own sheet row', () => {
+    assert.equal(sequenceGapText({ fromNumber: 1043, toNumber: 1043 }), '1043');
+    assert.equal(sequenceGapText({ fromNumber: 1043, toNumber: 1047 }), '1043–1047');
+    const rows = sequenceGapRows([
+      {
+        machineId: 'm1',
+        machineName: 'קופה 1',
+        documentType: 320,
+        gaps: [
+          { fromNumber: 5, toNumber: 5, missing: 1 },
+          { fromNumber: 9, toNumber: 11, missing: 3 },
+        ],
+      },
+      { machineId: 'm2', shopName: 'מרכז', documentType: null, gaps: [] },
+    ]);
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.machineName, r.shopName, r.documentType, r.fromNumber, r.toNumber, r.missing]),
+      [
+        ['m1:320:5', 'קופה 1', null, 320, 5, 5, 1],
+        ['m1:320:9', 'קופה 1', null, 320, 9, 11, 3],
+      ],
+    );
+  });
+
+  it('each declined uid of each run, with its run, in the runs’ order', () => {
+    const runs = [
+      { id: 'a', declined: [{ uid: 'x' }, { uid: 'y' }] },
+      { id: 'b', declined: [] },
+      { id: 'c', declined: [{ uid: 'z' }] },
+    ];
+    const rows = offlineDeclinedRows<{ uid: string }, (typeof runs)[number]>(runs);
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.run.id, r.leg.uid]),
+      [
+        ['a:0', 'a', 'x'],
+        ['a:1', 'a', 'y'],
+        ['c:0', 'c', 'z'],
+      ],
+    );
+  });
+
+  it('the promotion filter: the tenant’s promotions and the report’s deleted ones, one per id, by name', () => {
+    const choices = promotionChoices(
+      [
+        { id: 'p2', name: 'ב — שני' },
+        { id: 'p1', name: 'א — ראשון' },
+      ],
+      [
+        { promotionId: 'p1', name: 'שם ישן' },
+        { promotionId: 'gone', name: 'ג — נמחק' },
+        { promotionId: null, name: null },
+      ],
+    );
+    assert.deepEqual(choices, [
+      { id: 'p1', name: 'א — ראשון' },
+      { id: 'p2', name: 'ב — שני' },
+      { id: 'gone', name: 'ג — נמחק' },
+    ]);
+  });
+
+  it('only a uuid goes to the server as an id', () => {
+    assert.equal(isUuid('3f2b8c1e-9d4a-4f6b-8e2a-1c5d7e9f0a3b'), true);
+    assert.equal(isUuid('3F2B8C1E-9D4A-4F6B-8E2A-1C5D7E9F0A3B'), true);
+    assert.equal(isUuid('not-a-uuid'), false);
+    assert.equal(isUuid(''), false);
+    assert.equal(isUuid(null), false);
   });
 });
