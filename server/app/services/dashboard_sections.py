@@ -539,6 +539,13 @@ ROUTE_RULES: List[Tuple[str, str, RouteRule]] = [
     # The cockpit's "מצב אירוע חי" reads the events too (making and confirming one stays a report action).
     (_GET, "/report-events*", S("reports", "live_event", level=VIEW)),
     (_ALL, "/report-events*", S("reports")),
+    # The report PDF (P:/specs/reports-upgrade.md §4.5): it draws only what the caller already
+    # sees and sends (any report page exports — the drawer's, a Z's), so anyone signed in.
+    ("POST", "/reports/pdf", REFERENCE),
+    # "ברירת מחדל לייצוא" (§4.3): read beside any report; set by whoever edits reports, and
+    # then only by the company's manager, a distributor or a super admin (the route checks).
+    (_GET, "/report-export-defaults*", REFERENCE),
+    (_ALL, "/report-export-defaults*", S("reports")),
     # The control board's "שוברים" card: the redemptions in scope — a report, and the vouchers' own.
     (_GET, "/reports/prepaid-vouchers", S("reports", "prepaid_vouchers", "cockpit", level=VIEW)),
     # What the cockpit ("הניהול שלי") reads: the board, its comparisons, events and vouchers.

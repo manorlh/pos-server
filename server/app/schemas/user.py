@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from typing import Optional, List
+from typing import Dict, Optional, List
 from datetime import datetime
 import uuid
 from app.models.user import UserRole
@@ -101,6 +101,17 @@ class CurrentUserResponse(UserBase):
     preferences: Optional[dict] = None
 
 
+class ReportColumnsPreference(BaseModel):
+    """One report's columns as the user sees them (specs/reports-upgrade.md §4.4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The column keys shown.
+    visible: List[str] = Field(default_factory=list)
+    #: Every column key in the user's order (dragged).
+    order: List[str] = Field(default_factory=list)
+
+
 class UserPreferencesUpdate(BaseModel):
     """`PUT /users/me/preferences` — only the keys sent change; null = back to the default."""
 
@@ -109,6 +120,9 @@ class UserPreferencesUpdate(BaseModel):
     home_page: Optional[str] = Field(None, alias="homePage")
     #: "תצוגת מנהל פשוטה"; null = the default for the user's role / template.
     simple_mode: Optional[bool] = Field(None, alias="simpleMode")
+    #: "עמודות": per report key, merged — only the reports sent change; a report's null
+    #: removes it; `reportColumns: null` removes them all.
+    report_columns: Optional[Dict[str, Optional[ReportColumnsPreference]]] = Field(None, alias="reportColumns")
 
 
 class UserPreferencesResponse(BaseModel):
@@ -120,6 +134,8 @@ class UserPreferencesResponse(BaseModel):
     simple_mode: bool = Field(False, alias="simpleMode")
     #: What `simpleMode` is when the user has not chosen (their role / template's).
     simple_mode_default: bool = Field(False, alias="simpleModeDefault")
+    #: `{reportKey: {visible, order}}`; `{}` when none was chosen.
+    report_columns: Dict[str, Dict[str, List[str]]] = Field(default_factory=dict, alias="reportColumns")
 
 
 class UserResponse(UserBase):

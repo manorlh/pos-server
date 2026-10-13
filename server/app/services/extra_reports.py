@@ -53,11 +53,11 @@ from app.schemas.extra_reports import (
     HourlyRow,
     PaymentMethodRow,
     PaymentMethodsReportResponse,
+    PaymentMethodTip,
     PaymentMethodTotal,
     SequenceGap,
     SequenceRow,
 )
-from app.services.company_hierarchy import descendant_company_ids
 from app.services.reports import (
     ReportWindow,
     _is_refund_condition,
@@ -66,6 +66,7 @@ from app.services.reports import (
     build_scoped_transaction_query,
     hour_window_predicate,
     normalize_tender,
+    tips_by_bucket,
 )
 from app.services.scoping import scope_query_by_user, scope_transactions_by_user
 from app.services.tenders import signed_tender_amount_expr, tender_method_expr
@@ -119,13 +120,44 @@ def build_payment_methods_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    area_filter=None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> PaymentMethodsReportResponse:
+    """
+    The takings per tender; the tips apart (`tips`, `tipsTotal`, by the tender the tip went
+    on) — a tip is not a tender leg and is never inside a method's amount.
+    """
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=area_filter, company_id=company_id,
     )
     if tx_q is None:
-        return PaymentMethodsReportResponse(window=window.to_schema(), generated_at=now, rows=[], totals=[], total=0.0)
+        return PaymentMethodsReportResponse(
+            window=window.to_schema(), generated_at=now, rows=[], totals=[], total=0.0,
+            tips=[PaymentMethodTip(method=m, amount=0.0, documents=0) for m in ("cash", "card", "other")],
+            tips_total=0.0,
+        )
+    tip_rows = tips_by_bucket(tx_q, Transaction.tenant_id)
+    tip_acc = {"cash": 0.0, "card": 0.0, "other": 0.0}
+    tipped = {"cash": 0, "card": 0, "other": 0}
+    tipped_rows = (
+        tx_q.with_entities(
+            Transaction.tip_payment_method, Transaction.payment_method, func.count(Transaction.id)
+        )
+        .filter(Transaction.tip_amount > 0)
+        .group_by(Transaction.tip_payment_method, Transaction.payment_method)
+        .all()
+    )
+    from app.services.reports import tip_bucket
+
+    for tip_method, pay_method, n in tipped_rows:
+        tipped[tip_bucket(tip_method, pay_method)] += int(n or 0)
+    for b in tip_rows.values():
+        for m in tip_acc:
+            tip_acc[m] += b[m]
+    tips_out = [PaymentMethodTip(method=m, amount=_cents(tip_acc[m]), documents=tipped[m]) for m in ("cash", "card", "other")]
+    tips_total = _cents(sum(tip_acc.values()))
 
     method = func.lower(tender_method_expr())
     day = (
@@ -185,7 +217,8 @@ def build_payment_methods_report(
         for m, t in sorted(totals.items(), key=lambda kv: -kv[1][0])
     ]
     return PaymentMethodsReportResponse(
-        window=window.to_schema(), generated_at=now, rows=out_rows, totals=total_rows, total=grand
+        window=window.to_schema(), generated_at=now, rows=out_rows, totals=total_rows, total=grand,
+        tips=tips_out, tips_total=tips_total,
     )
 
 
@@ -201,6 +234,8 @@ def build_card_brands_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    area_filter=None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> CardBrandsReportResponse:
     """
     Card legs per shop × brand (מותג) × acquirer (חברת סליקה), sales and credit notes
@@ -214,7 +249,8 @@ def build_card_brands_report(
         sales_count=0, sales_amount=0.0, refunds_count=0, refunds_amount=0.0, net=0.0,
     )
     tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=area_filter, company_id=company_id,
     )
     if tx_q is None:
         return empty
@@ -310,12 +346,9 @@ def build_hourly_report(
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
         db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
-        area_filter=area_filter,
+        area_filter=area_filter, company_id=company_id,
     )
-    if tx_q is not None and company_id is not None:
-        group = descendant_company_ids(db, company_id)
-        tx_q = tx_q.filter(Transaction.shop_id.in_(db.query(Shop.id).filter(Shop.company_id.in_(group))))
-    grid: Dict[Tuple[int, int], List] = defaultdict(lambda: [0.0, 0, 0])  # net, docs, sales
+    grid: Dict[Tuple[int, int], List] = defaultdict(lambda: [0.0, 0, 0, 0.0])  # net, docs, sales, tips
     if tx_q is not None:
         net = _signed_document_net()
         is_sale = case((_is_refund_condition(), 0), else_=1)
@@ -333,6 +366,7 @@ def build_hourly_report(
                 func.coalesce(func.sum(net), 0).label("net"),
                 func.count(Transaction.id).label("documents"),
                 func.coalesce(func.sum(is_sale), 0).label("sales"),
+                func.coalesce(func.sum(Transaction.tip_amount), 0).label("tips"),
             )
             .group_by(*keys)
             .all()
@@ -348,9 +382,10 @@ def build_hourly_report(
             cell[0] += _to_float(r.net)
             cell[1] += int(r.documents or 0)
             cell[2] += int(r.sales or 0)
+            cell[3] += _to_float(r.tips)
 
     cells = [
-        HourlyCell(weekday=k[0], hour=k[1], net=_cents(v[0]), documents=v[1])
+        HourlyCell(weekday=k[0], hour=k[1], net=_cents(v[0]), documents=v[1], tips=_cents(v[3]))
         for k, v in sorted(grid.items())
     ]
     by_hour = []
@@ -358,13 +393,18 @@ def build_hourly_report(
         net = sum(v[0] for k, v in grid.items() if k[1] == hour)
         docs = sum(v[1] for k, v in grid.items() if k[1] == hour)
         sales = sum(v[2] for k, v in grid.items() if k[1] == hour)
+        tips = sum(v[3] for k, v in grid.items() if k[1] == hour)
         if docs:
             by_hour.append(
-                HourlyRow(hour=hour, net=_cents(net), documents=docs, average_basket=_cents(net / sales) if sales else 0.0)
+                HourlyRow(
+                    hour=hour, net=_cents(net), documents=docs,
+                    average_basket=_cents(net / sales) if sales else 0.0, tips=_cents(tips),
+                )
             )
     return HourlyReportResponse(
         window=window.to_schema(), generated_at=now, cells=cells, by_hour=by_hour,
         total=_cents(sum(v[0] for v in grid.values())), documents=sum(v[1] for v in grid.values()),
+        tips_total=_cents(sum(v[3] for v in grid.values())),
     )
 
 
@@ -380,11 +420,17 @@ def build_department_report(
     shop_id: Optional[uuid_mod.UUID] = None,
     machine_id: Optional[uuid_mod.UUID] = None,
     cashier_id: Optional[str] = None,
+    area_filter=None,
+    company_id: Optional[uuid_mod.UUID] = None,
 ) -> DepartmentReportResponse:
-    """Line money per product category — the product report's rules, one level up."""
+    """
+    Line money per product category — the product report's rules, one level up. No tips:
+    a tip belongs to the document, never to an item.
+    """
     now = datetime.now(timezone.utc)
     tx_q = build_scoped_transaction_query(
-        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id
+        db, current_user, tenant_id, window, shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id,
+        area_filter=area_filter, company_id=company_id,
     )
     empty = DepartmentRow(units=0, gross=0, discounts=0, refunds=0, net=0, share=100.0)
     if tx_q is None:

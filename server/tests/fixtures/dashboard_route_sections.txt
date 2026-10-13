@@ -600,6 +600,9 @@ GET /report-events/{event_id}/readiness -> reports|live_event:view
 GET /report-events/{event_id}/report -> reports|live_event:view
 GET /report-events/{event_id}/till-changes -> reports|live_event:view
 POST /report-events/{event_id}/tills -> reports:edit
+GET /report-export-defaults -> reference
+GET /report-export-defaults/audit -> reference
+PUT /report-export-defaults/{report_key} -> reports:edit
 GET /reports/card-brands -> reports:view
 GET /reports/cash-variance -> reports:view
 GET /reports/cashiers -> reports:view
@@ -617,6 +620,7 @@ GET /reports/modifier-sales -> reports|products:view
 GET /reports/offline-authorizations -> reports:view
 GET /reports/overview -> reports|cockpit:view
 GET /reports/payment-methods -> reports:view
+POST /reports/pdf -> reference
 GET /reports/prepaid-vouchers -> reports|prepaid_vouchers|cockpit:view
 GET /reports/products -> reports:view
 GET /reports/promotions -> reports|promotions:view

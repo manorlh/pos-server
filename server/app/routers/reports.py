@@ -83,6 +83,15 @@ from app.services.reports import (
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+def _uuid_or_none(value):
+    """A handler called directly (tests) sees the `Query(...)` default itself: no filter."""
+    return value if isinstance(value, uuid.UUID) else None
+
+
+def _str_or_none(value):
+    return value if isinstance(value, str) and value else None
+
+
 # Shared query-parameter documentation. `from`/`to` are calendar days in the report
 # timezone; `fromHour`/`toHour` narrow every one of those days to an hour window.
 _FROM_DESC = "Start day (inclusive), in the report timezone. Defaults to 30 days back."
@@ -99,6 +108,7 @@ _AREA_DESC = (
     "An area's id, or `none`. Filters on the area each document's shift was stamped "
     "with when the cloud created it — never the till's area now. No shift is `none`."
 )
+_COMPANY_DESC = "Narrow to this company and its subsidiaries (only ever narrows the caller's scope)."
 _TZ_DESC = (
     "IANA timezone the days and hours are measured in. "
     "Defaults to the tenant's configured timezone, else Asia/Jerusalem."
@@ -123,6 +133,7 @@ def get_product_sales_report(
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
     meals: str = Query("components", pattern="^(components|meals)$",
                        description="components: a meal's line as its components; meals: as the meal"),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
@@ -142,7 +153,8 @@ def get_product_sales_report(
     return build_product_sales_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id, cashier_id=cashier_id, limit=limit,
-        area_filter=parse_area_filter(area_id), meals=meals,
+        area_filter=parse_area_filter(area_id), meals=meals if isinstance(meals, str) else "components",
+        company_id=_uuid_or_none(company_id),
     )
 
 
@@ -160,12 +172,15 @@ def get_cashier_sales_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """
-    Per pos_user over the range: documents, gross, refunds, net, cash/card split.
+    Per pos_user over the range: documents, gross, refunds, net, cash/card split, and the
+    tips apart (`tips`, split `tipsCash` / `tipsCard` / `tipsOther`).
     Dashboard-only (Clerk/user JWT).
     """
     window = resolve_report_window(
@@ -177,6 +192,7 @@ def get_cashier_sales_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id,
         area_filter=parse_area_filter(area_id),
+        cashier_id=_str_or_none(cashier_id), company_id=_uuid_or_none(company_id),
     )
 
 
@@ -235,12 +251,15 @@ def get_tips_range_report(
     shop_id: Optional[uuid.UUID] = Query(None, alias="shopId"),
     machine_id: Optional[uuid.UUID] = Query(None, alias="machineId"),
     area_id: Optional[str] = Query(None, alias="areaId", description=_AREA_DESC),
+    cashier_id: Optional[str] = Query(None, alias="cashierId"),
+    company_id: Optional[uuid.UUID] = Query(None, alias="companyId", description=_COMPANY_DESC),
     current_user: User = Depends(get_current_user),
     active_tenant_id=Depends(get_active_tenant_id),
     db: Session = Depends(get_db),
 ):
     """
-    Tips over the range, split by tip payment method and per cashier.
+    Tips over the range, split by tip payment method, and per cashier, local day, till
+    and shift (`byDay`, `byMachine`, `byShift`) — each adding up to the totals.
     Dashboard-only (Clerk/user JWT).
 
     Distinct from `GET /shops/{shopId}/tips/report`, which stays as it is: that one
@@ -256,6 +275,7 @@ def get_tips_range_report(
         db, current_user, active_tenant_id, window,
         shop_id=shop_id, machine_id=machine_id,
         area_filter=parse_area_filter(area_id),
+        cashier_id=_str_or_none(cashier_id), company_id=_uuid_or_none(company_id),
     )
 
 
