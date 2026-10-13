@@ -176,6 +176,16 @@ class PosSettingsV1Patch(BaseModel):
     #: "כיתוב בראש עמדת שובר": free text, whitespace collapsed and trimmed; over 40 characters is a 422
     #: with a Hebrew message (`voucher_station_title_too_long`); blank = `null`, the layer inherits.
     voucher_station_title: Optional[str] = Field(None, alias="voucherStationTitle")
+    # ── "בחר פריט לשובר", 13.10.2026 (P:/specs/voucher-station-fast-flows.md §4; resolved in
+    # app/services/voucher_station_settings.py). `null` in a PATCH resets the layer to inherit.
+    #: "הסבר לעובד מה לבחור": a guide strip on the order screen (unset — true). A bool, like
+    #: voucherShowUnavailable.
+    voucher_guide: Optional[bool] = Field(None, alias="voucherGuide")
+    #: "אחרי סריקת שובר שדורש פריטים": "eligible" (unset — only the items the voucher applies to) or
+    #: "all" (the whole menu, the eligible items tagged). Anything else is a 422.
+    voucher_pick_filter: Optional[Literal["eligible", "all"]] = Field(None, alias="voucherPickFilter")
+    #: "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית" (unset — true). A bool.
+    voucher_auto_pick_single: Optional[bool] = Field(None, alias="voucherAutoPickSingle")
 
     @field_validator("voucher_station_title")
     @classmethod

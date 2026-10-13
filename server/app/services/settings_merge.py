@@ -16,6 +16,7 @@ from app.services.voucher_balance_check import VOUCHER_BALANCE_SETTING_KEYS
 from app.services.voucher_station_settings import (
     VOUCHER_AUTO_APPLY_SETTING_KEYS,
     VOUCHER_FAST_MODE_SETTING_KEYS,
+    VOUCHER_PICK_SETTING_KEYS,
     VOUCHER_SHOW_ENTITLEMENT_SETTING_KEYS,
     VOUCHER_SOUND_SETTING_KEYS,
     VOUCHER_STATION_PAID_ITEMS_SETTING_KEYS,
@@ -110,6 +111,9 @@ MANAGED_SETTING_KEYS = (
     # voucherStationTitle — the voucher fast mode and its station (same module, 13.10.2026,
     # P:/specs/voucher-fast-mode.md §0).
     *VOUCHER_FAST_MODE_SETTING_KEYS,
+    # voucherGuide, voucherPickFilter, voucherAutoPickSingle — the "בחר פריט לשובר" order screen after a
+    # scan of a voucher that needs items (same module, 13.10.2026, P:/specs/voucher-station-fast-flows.md §4).
+    *VOUCHER_PICK_SETTING_KEYS,
     # The most instalments the `card` option's picker offers; unset = the terminal decides.
     "payInstallmentsMax",
     # "סדר אמצעי התשלום": the payment methods in the till's order (payment_options.py).

@@ -65,6 +65,17 @@ import {
   voucherStationTitleLength,
   voucherStationTitlePatch,
   voucherStationTitleTooLong,
+  VOUCHER_AUTO_PICK_SINGLE_DEFAULT,
+  VOUCHER_AUTO_PICK_SINGLE_KEY,
+  VOUCHER_GUIDE_DEFAULT,
+  VOUCHER_GUIDE_KEY,
+  VOUCHER_PICK_FILTER_DEFAULT,
+  VOUCHER_PICK_FILTER_KEY,
+  VOUCHER_PICK_FILTER_VALUES,
+  isVoucherPickFilter,
+  resolveVoucherAutoPickSingle,
+  resolveVoucherGuide,
+  resolveVoucherPickFilter,
 } from './voucherTillSettings';
 import { resolveVoucherRedeemFlow } from './voucherRedeemFlow';
 import type { PosSettingsPatch, PosSettingsV1 } from './types';
@@ -421,4 +432,58 @@ test('voucherSuccessDismiss: its own value, then the inherited one, then auto; j
     assert.equal(resolveVoucherSuccessDismiss(junk, junk), 'auto');
     assert.equal(resolveVoucherSuccessDismiss(junk, 'confirm'), 'confirm');
   }
+});
+
+// ── "בחר פריט לשובר" (voucherGuide / voucherPickFilter / voucherAutoPickSingle, 13.10.2026,
+// P:/specs/voucher-station-fast-flows.md §4) ──
+
+test("voucherGuide / voucherPickFilter / voucherAutoPickSingle: the server's keys, values and defaults", () => {
+  assert.equal(VOUCHER_GUIDE_KEY, 'voucherGuide');
+  assert.equal(VOUCHER_PICK_FILTER_KEY, 'voucherPickFilter');
+  assert.equal(VOUCHER_AUTO_PICK_SINGLE_KEY, 'voucherAutoPickSingle');
+  assert.deepEqual([...VOUCHER_PICK_FILTER_VALUES], ['eligible', 'all']);
+  assert.equal(VOUCHER_GUIDE_DEFAULT, true);
+  assert.equal(VOUCHER_PICK_FILTER_DEFAULT, 'eligible');
+  assert.equal(VOUCHER_AUTO_PICK_SINGLE_DEFAULT, true);
+});
+
+test('voucherGuide / voucherAutoPickSingle: a real boolean of its own, then the inherited one, then true', () => {
+  for (const resolve of [resolveVoucherGuide, resolveVoucherAutoPickSingle]) {
+    assert.equal(resolve(undefined, undefined), true);
+    assert.equal(resolve(false, true), false);
+    assert.equal(resolve(true, false), true);
+    assert.equal(resolve(undefined, false), false);
+    assert.equal(resolve(null, false), false);
+    for (const junk of ['false', 'off', 'on', 0, 1, '', {}, [false]]) {
+      assert.equal(resolve(junk, junk), true);
+      assert.equal(resolve(junk, false), false);
+    }
+  }
+});
+
+test('voucherPickFilter: its own value, then the inherited one, then eligible; junk is unset', () => {
+  for (const v of ['eligible', 'all']) {
+    assert.equal(isVoucherPickFilter(v), true);
+    assert.equal(resolveVoucherPickFilter(v, 'eligible'), v);
+    assert.equal(resolveVoucherPickFilter(undefined, v), v);
+  }
+  assert.equal(resolveVoucherPickFilter('eligible', 'all'), 'eligible');
+  assert.equal(resolveVoucherPickFilter(null, 'all'), 'all');
+  assert.equal(resolveVoucherPickFilter(undefined, undefined), 'eligible');
+  for (const junk of ['ALL', 'Eligible', ' all', 'on', 'off', '', 0, true, {}, ['all']]) {
+    assert.equal(isVoucherPickFilter(junk), false);
+    assert.equal(resolveVoucherPickFilter(junk, junk), 'eligible');
+    assert.equal(resolveVoucherPickFilter(junk, 'all'), 'all');
+  }
+});
+
+test('the PATCH type takes each value and null (inherit again)', () => {
+  const patches: PosSettingsPatch[] = [
+    { voucherGuide: false, voucherPickFilter: 'all', voucherAutoPickSingle: false },
+    { voucherGuide: null, voucherPickFilter: null, voucherAutoPickSingle: null },
+  ];
+  const effective: PosSettingsV1 = { voucherGuide: true, voucherPickFilter: 'eligible', voucherAutoPickSingle: true };
+  assert.equal(patches.length, 2);
+  assert.equal(resolveVoucherPickFilter(patches[0].voucherPickFilter, effective.voucherPickFilter), 'all');
+  assert.equal(resolveVoucherGuide(patches[1].voucherGuide, effective.voucherGuide), true);
 });

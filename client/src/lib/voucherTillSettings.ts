@@ -42,6 +42,12 @@
  *   `voucherStationHeader` "כותרת במסך עמדת שובר": `logo` (unset), `text`, `both` or `none`;
  *   `voucherStationTitle` "כיתוב בראש עמדת שובר": up to 40 characters as one trimmed line (unset, blank
  *   or longer: "עמדת מימוש שוברים"; the server refuses a longer one, in Hebrew).
+ * - "בחר פריט לשובר" (13.10.2026, P:/specs/voucher-station-fast-flows.md §4 — a scanned voucher that needs
+ *   items opens the order screen with the voucher on the sale):
+ *   `voucherGuide` "הסבר לעובד מה לבחור": a boolean (unset: true — a guide strip with what the voucher
+ *   allows and how many are left); `voucherPickFilter` "אחרי סריקת שובר שדורש פריטים": `eligible` (unset:
+ *   only the eligible items) or `all` (the whole menu, the eligible items tagged);
+ *   `voucherAutoPickSingle` "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית": a boolean (unset: true).
  *
  * A layer's own value wins; else what it inherits (the server sends `effective` resolved); else the
  * default. `null` in a PATCH = this layer inherits again.
@@ -53,6 +59,7 @@ import type {
   VoucherBalanceCheckMode,
   VoucherFastMode,
   VoucherOnOff,
+  VoucherPickFilter,
   VoucherRedeemFlow,
   VoucherStationCamera,
   VoucherStationCameraFacing,
@@ -374,4 +381,42 @@ export function resolveVoucherStationTitle(own: unknown, inherited: unknown): st
 export function voucherStationTitlePatch(typed: unknown): string | null {
   const v = typeof typed === 'string' ? normalizeVoucherStationTitle(typed) : '';
   return v === '' ? null : v;
+}
+
+// ── "בחר פריט לשובר" (13.10.2026, P:/specs/voucher-station-fast-flows.md §4) ──
+
+export const VOUCHER_GUIDE_KEY = 'voucherGuide' as const;
+export const VOUCHER_PICK_FILTER_KEY = 'voucherPickFilter' as const;
+export const VOUCHER_AUTO_PICK_SINGLE_KEY = 'voucherAutoPickSingle' as const;
+
+export const VOUCHER_PICK_FILTER_VALUES: readonly VoucherPickFilter[] = ['eligible', 'all'];
+
+/** Unset everywhere: the guide strip shown, only the eligible items, a lone eligible item picked by itself. */
+export const VOUCHER_GUIDE_DEFAULT = true;
+export const VOUCHER_PICK_FILTER_DEFAULT: VoucherPickFilter = 'eligible';
+export const VOUCHER_AUTO_PICK_SINGLE_DEFAULT = true;
+
+export function isVoucherPickFilter(value: unknown): value is VoucherPickFilter {
+  return typeof value === 'string' && (VOUCHER_PICK_FILTER_VALUES as readonly string[]).includes(value);
+}
+
+/** "הסבר לעובד מה לבחור" at a layer: its own, else the inherited one, else true; only a real boolean counts. */
+export function resolveVoucherGuide(own: unknown, inherited: unknown): boolean {
+  if (typeof own === 'boolean') return own;
+  if (typeof inherited === 'boolean') return inherited;
+  return VOUCHER_GUIDE_DEFAULT;
+}
+
+/** "אחרי סריקת שובר שדורש פריטים" at a layer: its own, else the inherited one, else "eligible". */
+export function resolveVoucherPickFilter(own: unknown, inherited: unknown): VoucherPickFilter {
+  if (isVoucherPickFilter(own)) return own;
+  if (isVoucherPickFilter(inherited)) return inherited;
+  return VOUCHER_PICK_FILTER_DEFAULT;
+}
+
+/** "כשיש רק פריט מתאים אחד — בחר אותו אוטומטית" at a layer: its own, else the inherited one, else true. */
+export function resolveVoucherAutoPickSingle(own: unknown, inherited: unknown): boolean {
+  if (typeof own === 'boolean') return own;
+  if (typeof inherited === 'boolean') return inherited;
+  return VOUCHER_AUTO_PICK_SINGLE_DEFAULT;
 }

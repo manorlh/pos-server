@@ -21,6 +21,7 @@ import {
   VOUCHER_AUTO_APPLY_VALUES,
   VOUCHER_AUTO_CLOSE_VALUES,
   VOUCHER_BALANCE_CHECK_MODES,
+  VOUCHER_PICK_FILTER_VALUES,
   VOUCHER_SHOW_ENTITLEMENT_VALUES,
   VOUCHER_SOUND_VALUES,
   VOUCHER_STATION_PAID_ITEMS_VALUES,
@@ -34,8 +35,11 @@ import {
   isVoucherSuccessSeconds,
   resolveVoucherAutoApply,
   resolveVoucherAutoClose,
+  resolveVoucherAutoPickSingle,
   resolveVoucherBalanceCheck,
   resolveVoucherFastChoice,
+  resolveVoucherGuide,
+  resolveVoucherPickFilter,
   resolveVoucherShowEntitlement,
   resolveVoucherSound,
   resolveVoucherStation,
@@ -62,6 +66,11 @@ export const VOUCHER_WORK_GROUPS = [
     keys: [
       'voucherRedeemFlow',
       'voucherShowUnavailable',
+      // "בחר פריט לשובר" (P:/specs/voucher-station-fast-flows.md §4): the order screen a voucher that
+      // needs items opens on its scan.
+      'voucherGuide',
+      'voucherPickFilter',
+      'voucherAutoPickSingle',
       'voucherAutoApply',
       'voucherFastMode',
       'voucherFastAutoClose',
@@ -105,8 +114,9 @@ export function voucherWorkGroupOf(key: VoucherWorkKey): VoucherWorkGroupId {
 }
 
 /**
- * A setting's control: a row of choices (every string setting, on / off included), the shown / hidden
- * switch of `voucherShowUnavailable` (a boolean), the seconds 1–10 (numbers) or the station's title (text).
+ * A setting's control: a row of choices (every string setting, on / off included), a switch for the
+ * boolean ones (`voucherShowUnavailable` shown / hidden; `voucherGuide`, `voucherAutoPickSingle` on / off),
+ * the seconds 1–10 (numbers) or the station's title (text).
  * Each has "ירושה" beside it; the title's is leaving it empty.
  */
 export type VoucherWorkControl =
@@ -117,6 +127,7 @@ export type VoucherWorkControl =
 
 const CHOICE_VALUES: Partial<Record<VoucherWorkKey, readonly string[]>> = {
   voucherRedeemFlow: VOUCHER_REDEEM_FLOWS,
+  voucherPickFilter: VOUCHER_PICK_FILTER_VALUES,
   voucherAutoApply: VOUCHER_AUTO_APPLY_VALUES,
   voucherShowEntitlement: VOUCHER_SHOW_ENTITLEMENT_VALUES,
   voucherBalanceCheck: VOUCHER_BALANCE_CHECK_MODES,
@@ -129,8 +140,11 @@ const CHOICE_VALUES: Partial<Record<VoucherWorkKey, readonly string[]>> = {
   voucherSoundReject: VOUCHER_SOUND_VALUES,
 };
 
+/** The settings that are JSON booleans (a switch with "ירושה"). */
+const SWITCH_KEYS: readonly VoucherWorkKey[] = ['voucherShowUnavailable', 'voucherGuide', 'voucherAutoPickSingle'];
+
 export function voucherWorkControl(key: VoucherWorkKey): VoucherWorkControl {
-  if (key === 'voucherShowUnavailable') return { kind: 'switch' };
+  if (SWITCH_KEYS.includes(key)) return { kind: 'switch' };
   if (key === 'voucherSuccessSeconds') return { kind: 'seconds', values: VOUCHER_SUCCESS_SECONDS_VALUES };
   if (key === 'voucherStationTitle') return { kind: 'text', max: VOUCHER_STATION_TITLE_MAX };
   if (isVoucherFastChoiceKey(key)) return { kind: 'choice', values: voucherFastChoiceValues(key) };
@@ -156,6 +170,12 @@ export function resolveVoucherWorkValue(key: VoucherWorkKey, own: unknown, inher
       return resolveVoucherRedeemFlow(own, inherited);
     case 'voucherShowUnavailable':
       return resolveVoucherShowUnavailable(own, inherited);
+    case 'voucherGuide':
+      return resolveVoucherGuide(own, inherited);
+    case 'voucherPickFilter':
+      return resolveVoucherPickFilter(own, inherited);
+    case 'voucherAutoPickSingle':
+      return resolveVoucherAutoPickSingle(own, inherited);
     case 'voucherAutoApply':
       return resolveVoucherAutoApply(own, inherited);
     case 'voucherShowEntitlement':
@@ -244,7 +264,7 @@ export function voucherWorkDependency(key: VoucherWorkKey, effective: VoucherWor
 /**
  * One phrase of a summary line or a group header's badge, as an i18n key: `summary.<key>.<value>`, and for
  * the seconds `summary.seconds` with `{n}`. `sounds` joins the approve and reject sounds: both / approve /
- * reject / none.
+ * reject / none. A boolean setting's value reads as `on` / `off`.
  */
 export interface VoucherWorkPhrase {
   key: VoucherWorkKey | 'sounds';
@@ -257,7 +277,10 @@ function soundsPhrase(effective: VoucherWorkValues): VoucherWorkPhrase {
   return { key: 'sounds', value: approve && reject ? 'both' : approve ? 'approve' : reject ? 'reject' : 'none' };
 }
 
-const phrase = (effective: VoucherWorkValues, key: VoucherWorkKey): VoucherWorkPhrase => ({ key, value: String(effective[key]) });
+const phrase = (effective: VoucherWorkValues, key: VoucherWorkKey): VoucherWorkPhrase => {
+  const v = effective[key];
+  return { key, value: typeof v === 'boolean' ? (v ? 'on' : 'off') : String(v) };
+};
 
 /**
  * A group's line in the summary, in plain words: what is in force at this level. A phrase that changes
@@ -271,6 +294,9 @@ export function voucherWorkSummary(group: VoucherWorkGroupId, effective: Voucher
     case 'redeem':
       return [
         p('voucherRedeemFlow'),
+        p('voucherGuide'),
+        p('voucherPickFilter'),
+        p('voucherAutoPickSingle'),
         p('voucherAutoApply'),
         p('voucherFastMode'),
         ...(effective.voucherFastMode === 'off' ? [] : [p('voucherFastAutoClose')]),

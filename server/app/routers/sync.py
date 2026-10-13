@@ -2451,13 +2451,16 @@ def get_settings_sync(
     # voucher fast mode with its station (`voucherFastMode` unset = "station", `voucherFastAutoClose`
     # "on", `voucherStationCamera` "tap", `voucherStationCameraFacing` "back", `voucherVibrate` "both",
     # `voucherSoundBoost` "on", `voucherStationCatalogSwitch` "manager", `voucherStationHeader` "logo",
-    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0): always sent
+    # `voucherStationTitle` "עמדת מימוש שוברים" — P:/specs/voucher-fast-mode.md §0), and the "בחר פריט
+    # לשובר" order screen (`voucherGuide` true, `voucherPickFilter` "eligible", `voucherAutoPickSingle`
+    # true — P:/specs/voucher-station-fast-flows.md §4): always sent
     # resolved (app/services/voucher_station_settings.py).
     from app.services.voucher_station_settings import (
         resolve_auto_apply,
         resolve_show_entitlement,
         resolve_station_paid_items,
         resolve_voucher_fast_mode,
+        resolve_voucher_pick,
         resolve_voucher_sounds,
         resolve_voucher_station,
         resolve_voucher_success,
@@ -2472,6 +2475,7 @@ def get_settings_sync(
     effective.update(resolve_voucher_success_dismiss(all_settings))
     effective.update(resolve_voucher_sounds(all_settings))
     effective.update(resolve_voucher_fast_mode(all_settings))
+    effective.update(resolve_voucher_pick(all_settings))
     # The sell-screen tools likewise always go out as real bools (unset -> shown),
     # so the till reads a value rather than deciding what a missing key means.
     effective.update(resolve_sell_screen(all_settings))
