@@ -3148,6 +3148,11 @@ export interface TillParameter {
   valueType: TillParameterValueType;
   /** Only for `enum`; null otherwise. */
   enumOptions?: string[] | null;
+  /**
+   * A built-in enum whose options are codes the till reads (`sellAllTab`: first / last / hidden):
+   * option → the Hebrew shown for it. null = the options are shown as they are.
+   */
+  enumLabels?: Record<string, string> | null;
   /** null = no default: a till with no value at any level does not get the key. */
   defaultValue?: TillParameterScalar | null;
   isActive: boolean;

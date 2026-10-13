@@ -29,6 +29,7 @@ import { ParameterFormDialog } from '@/components/dashboard/till-parameters/para
 import { ParameterValuesPanel } from '@/components/dashboard/till-parameters/parameter-values-panel';
 import {
   ParameterImageThumb,
+  enumOptionLabel,
   useFormatParameterValue,
 } from '@/components/dashboard/till-parameters/value-input';
 import { useTillParameterErrorText } from '@/components/dashboard/till-parameters/errors';
@@ -203,7 +204,9 @@ function TillParametersAdmin() {
                   <TableCell>
                     {p.widget === 'image' ? t('image') : t(`types.${p.valueType}`)}
                     {p.valueType === 'enum' && p.enumOptions?.length ? (
-                      <div className="text-muted-foreground text-xs">{p.enumOptions.join(' / ')}</div>
+                      <div className="text-muted-foreground text-xs">
+                        {p.enumOptions.map((o) => enumOptionLabel(o, p.enumLabels)).join(' / ')}
+                      </div>
                     ) : null}
                   </TableCell>
                   <TableCell dir="auto">
@@ -211,7 +214,7 @@ function TillParametersAdmin() {
                       p.widget === 'image' ? (
                         <ParameterImageThumb url={String(p.defaultValue)} alt={p.label} />
                       ) : (
-                        formatValue(p.defaultValue)
+                        formatValue(p.defaultValue, p.enumLabels)
                       )
                     ) : (
                       <span className="text-muted-foreground">{t('noDefault')}</span>

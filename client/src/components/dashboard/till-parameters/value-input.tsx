@@ -77,13 +77,18 @@ export function draftToValue(
   }
 }
 
-/** How a stored value reads in a table. */
+/** An enum option as shown: its Hebrew when the parameter's options are codes (`enumLabels`). */
+export function enumOptionLabel(option: string, enumLabels?: Record<string, string> | null): string {
+  return enumLabels?.[option] ?? option;
+}
+
+/** How a stored value reads in a table (an enum code as its Hebrew, given `enumLabels`). */
 export function useFormatParameterValue() {
   const tc = useTranslations('common');
-  return (value: TillParameterScalar | null | undefined): string => {
+  return (value: TillParameterScalar | null | undefined, enumLabels?: Record<string, string> | null): string => {
     if (value === null || value === undefined) return '—';
     if (typeof value === 'boolean') return value ? tc('yes') : tc('no');
-    return String(value);
+    return enumOptionLabel(String(value), enumLabels);
   };
 }
 
@@ -105,6 +110,7 @@ export function ParameterImageThumb({ url, alt }: { url: string; alt: string }) 
 export function ParameterValueInput({
   type,
   enumOptions,
+  enumLabels,
   imageKind,
   draft,
   onChange,
@@ -113,6 +119,8 @@ export function ParameterValueInput({
 }: {
   type: TillParameterValueType;
   enumOptions?: string[] | null;
+  /** Option → the Hebrew shown for it (a built-in whose options are codes); the value stays the code. */
+  enumLabels?: Record<string, string> | null;
   /** Set for an image parameter: its branding upload kind. */
   imageKind?: BrandingImageKind | 'media' | null;
   draft: ValueDraft;
@@ -152,7 +160,7 @@ export function ParameterValueInput({
   }
 
   if (type === 'enum') {
-    const items = (enumOptions ?? []).map((o) => ({ value: o, label: o }));
+    const items = (enumOptions ?? []).map((o) => ({ value: o, label: enumOptionLabel(o, enumLabels) }));
     return (
       <Select
         value={draft.text || null}

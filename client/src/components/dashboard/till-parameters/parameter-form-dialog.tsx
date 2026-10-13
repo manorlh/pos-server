@@ -243,6 +243,7 @@ function ParameterForm({
               <ParameterValueInput
                 type={valueType}
                 enumOptions={enumOptions}
+                enumLabels={parameter?.enumLabels}
                 imageKind={imageKind}
                 draft={defaultDraft}
                 onChange={setDefaultDraft}

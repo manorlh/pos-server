@@ -88,6 +88,7 @@ def _out(parameter: TillParameter, value_count: int = 0) -> TillParameterOut:
         description=parameter.description,
         value_type=parameter.value_type,
         enum_options=parameter.enum_options,
+        enum_labels=TP.enum_labels(parameter.key),
         default_value=parameter.default_value,
         is_active=bool(parameter.is_active),
         value_count=value_count,
