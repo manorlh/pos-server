@@ -12,7 +12,6 @@ Runs on the world of tests/test_shop_areas.py.
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from decimal import Decimal
 
 import pytest

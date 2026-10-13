@@ -38,7 +38,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 #: Rows one PDF may hold; more is a 413 (the export says so in Hebrew).
 MAX_ROWS = 20_000
@@ -445,7 +445,7 @@ def _wrap(font: _Font, text: str, size: float, width: float, max_lines: int) -> 
     if len(lines) > max_lines:
         lines = lines[:max_lines]
         lines[-1] = lines[-1] + "…"
-    return [_fit(font, l, size, width) for l in lines]
+    return [_fit(font, line_, size, width) for line_ in lines]
 
 
 def _fit(font: _Font, text: str, size: float, width: float) -> str:
@@ -565,7 +565,7 @@ def plan(report: Report, regular: _Font, bold: _Font) -> _Plan:
     header_h = max(text_h, logo_box[1] if logo_box else 0.0) + 8.0
 
     col_labels = [_wrap(bold, c.label, size, max(1.0, widths[i] - 2 * PAD), 2) or [""] for i, c in enumerate(report.columns)]
-    head_lines = max(len(l) for l in col_labels)
+    head_lines = max(len(labels) for labels in col_labels)
     col_head_h = head_lines * size * 1.25 + 7.0
     row_h = round(size * 1.9, 2)
     body_h = page_h - TOP - header_h - col_head_h - FOOTER_H - BOTTOM
@@ -584,12 +584,9 @@ class _Canvas:
     def __init__(self, page_h: float):
         self.page_h = page_h
         self.ops: List[str] = []
-        self._font: Optional[Tuple[str, float]] = None
-        self._gray: Optional[float] = None
 
     def rect(self, x: float, y: float, w: float, h: float, gray: float) -> None:
         self.ops.append(f"{gray:.3f} g {x:.2f} {self.page_h - y - h:.2f} {w:.2f} {h:.2f} re f")
-        self._gray = None
 
     def line(self, x1: float, y1: float, x2: float, y2: float, gray: float = 0.75, width: float = 0.5) -> None:
         self.ops.append(
@@ -605,8 +602,8 @@ class _Canvas:
         )
 
     def text_in(self, font: _Font, size: float, left: float, right: float, baseline: float, visual_text: str,
-                anchor: str, gray: float = 0.1) -> None:
-        w = font.width(visual_text, size)
+                anchor: str, gray: float = 0.1, width: Optional[float] = None) -> None:
+        w = font.width(visual_text, size) if width is None else width
         if anchor == "left":
             x = left
         elif anchor == "center":
@@ -668,9 +665,13 @@ def _draw_page(report: Report, p: _Plan, regular: _Font, bold: _Font, number: in
         baseline = y + p.row_h / 2 + p.size * 0.35
         for i, col in enumerate(report.columns):
             room = edges[i] - edges[i + 1] - 2 * PAD
-            text = _fit(regular, row[i], p.size, room)
+            text = row[i]
+            width = regular.width(text, p.size)  # measured once: order does not change a width
+            if width > room:
+                text = _fit(regular, text, p.size, room)
+                width = regular.width(text, p.size)
             c.text_in(regular, p.size, edges[i + 1] + PAD, edges[i] - PAD, baseline,
-                      text if col.numeric else visual(text), col.anchor)
+                      text if col.numeric else visual(text), col.anchor, width=width)
         y += p.row_h
     if not report.rows and number == 1:
         c.text_in(regular, p.size, left, right, y + p.row_h / 2 + p.size * 0.35, visual(NO_ROWS), "center", 0.4)
