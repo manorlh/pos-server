@@ -7,10 +7,11 @@ import { useTranslations } from 'next-intl';
 import { ChevronLeft, TabletSmartphone } from 'lucide-react';
 import { Card, IOS } from '@/components/dashboard/insights/ios';
 
-export function KioskInsightsLinkCard() {
+/** `query`: the insights page's period and scope (lib/insightsView.ts), carried over. */
+export function KioskInsightsLinkCard({ query = '' }: { query?: string }) {
   const t = useTranslations('kioskInsights.linkCard');
   return (
-    <Link href="/dashboard/insights/kiosks" className="mt-5 block rounded-[22px] active:opacity-70">
+    <Link href={`/dashboard/insights/kiosks${query ? `?${query}` : ''}`} className="mt-5 block rounded-[22px] active:opacity-70">
       <Card className="flex items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] text-white" style={{ backgroundColor: IOS.indigo }}>
           <TabletSmartphone className="h-5 w-5" aria-hidden />

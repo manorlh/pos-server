@@ -42,6 +42,16 @@ import {
   type KioskHealthRow,
   type PerKioskRow,
 } from './kioskInsights';
+import {
+  INSIGHTS_VIEW_PARAMS,
+  defaultCustomPeriod,
+  insightsPeriodParams,
+  insightsViewForNewTenant,
+  insightsViewQuery,
+  readInsightsView,
+  writeInsightsView,
+  type InsightsViewSpec,
+} from './insightsView';
 
 const kioskRow = (over: Partial<PerKioskRow> = {}): PerKioskRow => ({
   machineId: 'm1',
@@ -464,5 +474,92 @@ describe('battery (סוללה חלשה)', () => {
     assert.deepEqual(batteryHistoryRows(history, kiosks, devices, { shopId: 's1', search: '' }).map((r) => r.id), ['e2']);
     assert.deepEqual(batteryHistoryRows(history, kiosks, devices, { shopId: '', search: 'רויאל' }).map((r) => r.id), ['e2']);
     assert.deepEqual(batteryHistoryRows(null, kiosks, devices), []);
+  });
+});
+
+describe('insights view in the URL (lib/insightsView.ts)', () => {
+  const TODAY = '2026-10-13';
+  const ALL = '__all__';
+  const SPEC: InsightsViewSpec = {
+    allCompanies: ALL,
+    extras: { event: '', kiosk: '', deadDays: '21', byCategory: '1', anomalies: 'period' },
+    choices: { deadDays: ['14', '21', '30', '60'], byCategory: ['1', '0'], anomalies: ['period', 'today'] },
+  };
+  const read = (qs: string) => readInsightsView(new URLSearchParams(qs), SPEC, TODAY);
+
+  it('an empty URL is the default view: 28 days, all companies, every option at its default', () => {
+    const v = read('');
+    assert.equal(v.range, '28');
+    assert.deepEqual({ from: v.from, to: v.to }, defaultCustomPeriod(TODAY));
+    assert.deepEqual(defaultCustomPeriod(TODAY), { from: '2026-09-15', to: '2026-10-12' });
+    assert.deepEqual(v.scope, { companyId: ALL, shopId: '', areaId: '', machineId: '' });
+    assert.deepEqual(v.extras, SPEC.extras);
+    assert.equal(writeInsightsView(new URLSearchParams(), v, SPEC).toString(), '');
+    assert.deepEqual(insightsPeriodParams(v), { days: 28 });
+  });
+
+  it('round-trips a period, the own scope and the options; defaults stay out of the URL', () => {
+    const view = {
+      range: '7' as const,
+      from: '2026-09-15',
+      to: '2026-10-12',
+      scope: { companyId: 'c1', shopId: 's1', areaId: 'none', machineId: '' },
+      extras: { event: '', kiosk: 'k-1', deadDays: '60', byCategory: '0', anomalies: 'period' },
+    };
+    const qs = writeInsightsView(new URLSearchParams(), view, SPEC);
+    assert.equal(qs.get(INSIGHTS_VIEW_PARAMS.days), '7');
+    assert.equal(qs.has('from'), false);
+    assert.equal(qs.has('anomalies'), false);
+    assert.equal(qs.has('event'), false);
+    assert.deepEqual(read(qs.toString()), view);
+    assert.deepEqual(insightsPeriodParams(view), { days: 7 });
+  });
+
+  it('a custom range is from + to (ends today at the latest); a bad one falls back to days', () => {
+    const custom = read('from=2026-09-01&to=2026-09-30&days=7');
+    assert.equal(custom.range, 'custom');
+    assert.deepEqual(insightsPeriodParams(custom), { from: '2026-09-01', to: '2026-09-30' });
+    assert.equal(read('from=2026-10-01&to=2026-12-31').to, TODAY);
+    assert.equal(read('from=2026-09-30&to=2026-09-01&days=90').range, '90');
+    assert.equal(read('from=2026-02-31&to=2026-03-05').range, '28');
+    assert.equal(read('from=2026-09-01').range, '28');
+    assert.equal(read('days=5').range, '28');
+    const qs = writeInsightsView(new URLSearchParams('days=7'), { ...custom, from: '2026-09-02' }, SPEC);
+    assert.equal(qs.toString(), 'from=2026-09-02&to=2026-09-30');
+  });
+
+  it('never touches the dashboard scope or other keys, and reads malformed values as defaults', () => {
+    const base = new URLSearchParams('company=x&shop=y&machine=z&tab=2');
+    const v = read('company=x&shop=y&orgShop=s%3Bdrop&deadDays=45&byCategory=yes&anomalies=today&event=e1');
+    assert.equal(v.scope.companyId, ALL);
+    assert.equal(v.scope.shopId, '');
+    assert.equal(v.extras.deadDays, '21');
+    assert.equal(v.extras.byCategory, '1');
+    assert.equal(v.extras.anomalies, 'today');
+    assert.equal(v.extras.event, 'e1');
+    const out = writeInsightsView(base, { ...v, scope: { ...v.scope, companyId: 'c2' } }, SPEC);
+    assert.equal(out.get('company'), 'x');
+    assert.equal(out.get('shop'), 'y');
+    assert.equal(out.get('machine'), 'z');
+    assert.equal(out.get('tab'), '2');
+    assert.equal(out.get(INSIGHTS_VIEW_PARAMS.company), 'c2');
+    // "No company" reads back as all companies (the same request).
+    const none = writeInsightsView(new URLSearchParams(), { ...v, scope: { ...v.scope, companyId: '' } }, SPEC);
+    assert.equal(none.has(INSIGHTS_VIEW_PARAMS.company), false);
+  });
+
+  it('a new organization keeps only the period', () => {
+    const v = read('days=90&orgCompany=c1&orgShop=s1&kiosk=k1&deadDays=14');
+    const next = insightsViewForNewTenant(v, SPEC);
+    assert.equal(next.range, '90');
+    assert.deepEqual(next.scope, { companyId: ALL, shopId: '', areaId: '', machineId: '' });
+    assert.deepEqual(next.extras, SPEC.extras);
+    assert.equal(writeInsightsView(new URLSearchParams(), next, SPEC).toString(), 'days=90');
+  });
+
+  it('the way to the other insights page carries the period and the scope, not the options', () => {
+    const v = read('from=2026-09-01&to=2026-09-30&orgCompany=c1&orgShop=s1&kiosk=k1&event=e1&deadDays=14');
+    assert.equal(insightsViewQuery(v, ALL), 'from=2026-09-01&to=2026-09-30&orgCompany=c1&orgShop=s1');
+    assert.equal(insightsViewQuery(read('kiosk=k1'), ALL), '');
   });
 });

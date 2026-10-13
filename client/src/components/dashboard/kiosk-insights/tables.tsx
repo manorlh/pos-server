@@ -2,26 +2,29 @@
 
 /**
  * The lists of "ביצועי קיוסקים": the top items, upsell (by rule, product and moment), the
- * payments' failures, and the per-kiosk table (sortable; a row narrows the page to its kiosk).
+ * payments' failures, and the per-kiosk table (a report table: sortable, the reader's
+ * columns, a card per kiosk on a phone; a kiosk's name narrows the page to it).
  */
 
-import { useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { agorot } from '@/lib/insightsApi';
 import { formatQuantity } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
   durationText,
   pctText,
+  shekels,
   sortRows,
+  type KioskInsightsReport,
   type KioskPayments,
   type KioskTopItem,
   type KioskUpsell,
+  type PerKioskColumn,
   type PerKioskRow,
-  type SortDir,
 } from '@/lib/kioskInsights';
 import { CHART, Capsule, Card, Figure, IOS, Muted, RowDivider } from '@/components/dashboard/insights/ios';
+import { ReportTable, type ReportColumn, type ReportTableSpec } from '@/components/dashboard/report-framework';
 import { useKioskLabels } from './labels';
 
 const count = (n: number) => n.toLocaleString('he-IL');
@@ -263,95 +266,136 @@ export function PaymentsBlock({ payments }: { payments: KioskPayments }) {
 
 /* -------------------------------------------------------------- per kiosk */
 
-type Col = {
-  key: keyof PerKioskRow;
-  label: string;
-  render: (r: PerKioskRow) => ReactNode;
-  /** Less is better: the column's default sort is ascending. */
-  low?: boolean;
-};
+/** The report key of "ביצועי קיוסקים": the reader's columns, the company's export default. */
+export const KIOSK_INSIGHTS_REPORT = 'insights-kiosks';
 
-export function PerKioskTable({
-  rows,
+/** A row narrowed to: the iOS blue wash, as the page's selection everywhere. */
+const SELECTED = 'bg-[#007AFF14] dark:bg-[#0A84FF29]';
+
+type PerKioskColumnDef = ReportColumn<PerKioskRow> & { key: PerKioskColumn; screenHeader?: string };
+
+/**
+ * The per-kiosk table as a report table (P:\specs\reports-upgrade.md §5): one column list for
+ * the screen and the export. `exported` carries every column of the sheet (the CSV's
+ * `PER_KIOSK_COLUMNS`, in its order and with its headers, the headline as the totals);
+ * `screen` is the same table with the page's short headers, the columns the page never showed
+ * kept to the export, and the kiosk's name as the button that narrows the page to it.
+ * Sorted by revenue (most first) until the reader sorts it.
+ */
+export function usePerKioskTable({
+  data,
   selectedId,
   onSelect,
 }: {
-  rows: PerKioskRow[];
+  data: Pick<KioskInsightsReport, 'perKiosk' | 'headline'> | undefined;
   selectedId: string;
   onSelect: (machineId: string) => void;
-}) {
-  const t = useTranslations('kioskInsights.perKiosk');
-  const [sort, setSort] = useState<{ key: keyof PerKioskRow; dir: SortDir }>({ key: 'revenue', dir: 'desc' });
-  const cols: Col[] = [
-    { key: 'sessions', label: t('sessions'), render: (r) => count(r.sessions) },
-    { key: 'conversion', label: t('conversion'), render: (r) => pctText(r.conversion) },
-    { key: 'abandoned', label: t('abandoned'), render: (r) => count(r.abandoned), low: true },
-    { key: 'orders', label: t('orders'), render: (r) => count(r.orders) },
-    { key: 'revenue', label: t('revenue'), render: (r) => agorot(r.revenue) },
-    { key: 'avgBasket', label: t('avgBasket'), render: (r) => agorot(r.avgBasket) },
-    { key: 'itemsPerOrder', label: t('itemsPerOrder'), render: (r) => (r.itemsPerOrder !== null ? r.itemsPerOrder.toFixed(2) : '—') },
-    { key: 'medianOrderSec', label: t('medianOrder'), render: (r) => durationText(r.medianOrderSec), low: true },
-    { key: 'upsellRate', label: t('upsellRate'), render: (r) => pctText(r.upsellRate) },
-    { key: 'payFailureRate', label: t('payFailureRate'), render: (r) => pctText(r.payFailureRate), low: true },
-  ];
-  const sorted = sortRows(rows, sort.key, sort.dir);
-  const toggle = (key: keyof PerKioskRow, low?: boolean) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: low || key === 'name' ? 'asc' : 'desc' }));
-  const header = (key: keyof PerKioskRow, label: string, low?: boolean, start?: boolean) => {
-    const on = sort.key === key;
-    const Icon = !on ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown;
-    return (
-      <th key={String(key)} className={start ? TH : THE} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
-        <button
-          type="button"
-          onClick={() => toggle(key, low)}
-          className={cn('inline-flex items-center gap-1 whitespace-nowrap', on && 'font-semibold text-black dark:text-white')}
-          title={t('sortBy', { col: label })}
-        >
-          {label}
-          <Icon className="h-3 w-3 shrink-0" aria-hidden />
-        </button>
-      </th>
-    );
-  };
+}): { screen: ReportTableSpec<PerKioskRow>; exported: ReportTableSpec<PerKioskRow> } {
+  const t = useTranslations('kioskInsights');
+  const tp = useTranslations('kioskInsights.perKiosk');
+  const tc = useTranslations('common');
+  const perKiosk = data?.perKiosk;
+  const cur = data?.headline.current ?? null;
+  const rows = useMemo(() => sortRows(perKiosk ?? [], 'revenue', 'desc'), [perKiosk]);
 
-  if (rows.length === 0) return <Card><Muted>{t('empty')}</Muted></Card>;
-  return (
-    <Card className="p-0">
-      <div className="overflow-x-auto px-2 py-2">
-        <table className="w-full min-w-[880px] text-[14px]">
-          <thead>
-            <tr className="text-[12px] text-[#8E8E93]">
-              {header('name', t('name'), false, true)}
-              {cols.map((c) => header(c.key, c.label, c.low))}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((r) => (
-              <tr key={r.machineId} className={cn(TR, r.machineId === selectedId && 'bg-[#007AFF14] dark:bg-[#0A84FF29]')}>
-                <td className="px-2 py-2">
-                  <button
-                    type="button"
-                    onClick={() => onSelect(r.machineId === selectedId ? '' : r.machineId)}
-                    className="text-start"
-                    title={t('narrow')}
-                  >
-                    <span className="block font-medium text-[#007AFF] dark:text-[#0A84FF]">{r.name || r.machineName}</span>
-                    <span className="block text-[12px] text-[#8E8E93]">
-                      {[r.shopName, r.isKiosk ? null : t('notKiosk')].filter(Boolean).join(' · ')}
-                    </span>
-                  </button>
-                </td>
-                {cols.map((c) => (
-                  <td key={String(c.key)} className="px-2 py-2 text-end tabular-nums">
-                    {c.render(r)}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Card>
-  );
+  return useMemo(() => {
+    /** The headline's figure for a column: the table's totals row (as the sheet always had). */
+    const total = (key: PerKioskColumn) => {
+      if (!cur || key === 'name' || key === 'shopName') return undefined;
+      const v = cur[key] as number | null;
+      return key === 'revenue' || key === 'avgBasket' ? shekels(v) : v;
+    };
+    const defs: PerKioskColumnDef[] = [
+      {
+        key: 'name',
+        header: t('csv.col.name'),
+        screenHeader: tp('name'),
+        required: true,
+        width: 20,
+        value: (r) => r.name || r.machineName,
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => onSelect(r.machineId === selectedId ? '' : r.machineId)}
+            className="text-start"
+            title={tp('narrow')}
+          >
+            <span className="block font-medium text-[#007AFF] dark:text-[#0A84FF]">{r.name || r.machineName}</span>
+            <span className="block text-[12px] text-[#8E8E93]">
+              {[r.shopName, r.isKiosk ? null : tp('notKiosk')].filter(Boolean).join(' · ')}
+            </span>
+          </button>
+        ),
+      },
+      { key: 'shopName', header: t('csv.col.shopName'), width: 20, exportOnly: true, value: (r) => r.shopName },
+      { key: 'sessions', header: t('csv.col.sessions'), screenHeader: tp('sessions'), kind: 'number', value: (r) => r.sessions, cell: (r) => count(r.sessions) },
+      { key: 'paidSessions', header: t('csv.col.paidSessions'), kind: 'number', exportOnly: true, value: (r) => r.paidSessions },
+      { key: 'conversion', header: t('csv.col.conversion'), screenHeader: tp('conversion'), kind: 'percent', value: (r) => r.conversion },
+      {
+        key: 'abandoned',
+        header: t('csv.col.abandoned'),
+        screenHeader: tp('abandoned'),
+        kind: 'number',
+        firstSort: 'asc',
+        value: (r) => r.abandoned,
+        cell: (r) => count(r.abandoned),
+      },
+      { key: 'orders', header: t('csv.col.orders'), screenHeader: tp('orders'), kind: 'number', value: (r) => r.orders, cell: (r) => count(r.orders) },
+      { key: 'revenue', header: t('csv.col.revenue'), screenHeader: tp('revenue'), kind: 'money', value: (r) => shekels(r.revenue) },
+      { key: 'avgBasket', header: t('csv.col.avgBasket'), screenHeader: tp('avgBasket'), kind: 'money', value: (r) => shekels(r.avgBasket) },
+      {
+        key: 'itemsPerOrder',
+        header: t('csv.col.itemsPerOrder'),
+        screenHeader: tp('itemsPerOrder'),
+        kind: 'number',
+        value: (r) => r.itemsPerOrder,
+        cell: (r) => (r.itemsPerOrder !== null ? r.itemsPerOrder.toFixed(2) : '—'),
+        totalCell: cur && cur.itemsPerOrder !== null ? cur.itemsPerOrder.toFixed(2) : undefined,
+      },
+      {
+        key: 'medianOrderSec',
+        header: t('csv.col.medianOrderSec'),
+        screenHeader: tp('medianOrder'),
+        kind: 'number',
+        firstSort: 'asc',
+        value: (r) => r.medianOrderSec,
+        cell: (r) => durationText(r.medianOrderSec),
+        totalCell: cur ? durationText(cur.medianOrderSec) : undefined,
+      },
+      { key: 'upsellShown', header: t('csv.col.upsellShown'), kind: 'number', exportOnly: true, value: (r) => r.upsellShown },
+      { key: 'upsellAccepted', header: t('csv.col.upsellAccepted'), kind: 'number', exportOnly: true, value: (r) => r.upsellAccepted },
+      { key: 'upsellRate', header: t('csv.col.upsellRate'), screenHeader: tp('upsellRate'), kind: 'percent', value: (r) => r.upsellRate },
+      { key: 'payAttempts', header: t('csv.col.payAttempts'), kind: 'number', exportOnly: true, value: (r) => r.payAttempts },
+      { key: 'payFailures', header: t('csv.col.payFailures'), kind: 'number', exportOnly: true, value: (r) => r.payFailures },
+      {
+        key: 'payFailureRate',
+        header: t('csv.col.payFailureRate'),
+        screenHeader: tp('payFailureRate'),
+        kind: 'percent',
+        firstSort: 'asc',
+        value: (r) => r.payFailureRate,
+      },
+    ];
+    const base = {
+      id: 'main',
+      rows,
+      rowKey: (r: PerKioskRow) => r.machineId,
+      totalsLabel: cur ? tc('total') : undefined,
+      emptyText: tp('empty'),
+      rowClassName: (r: PerKioskRow) => (r.machineId === selectedId ? SELECTED : undefined),
+    };
+    const columns = (screen: boolean): ReportColumn<PerKioskRow>[] =>
+      defs.map(({ screenHeader, ...c }) => ({ ...c, header: screen ? (screenHeader ?? c.header) : c.header, total: total(c.key) }));
+    return {
+      exported: { ...base, title: t('sections.perKiosk'), columns: columns(false) },
+      screen: { ...base, columns: columns(true) },
+    };
+  }, [cur, onSelect, rows, selectedId, t, tc, tp]);
+}
+
+/** Every kiosk side by side: sortable, its columns the reader's, a card per kiosk on a phone. */
+export function PerKioskTable({ table }: { table: ReportTableSpec<PerKioskRow> }) {
+  const t = useTranslations('kioskInsights.perKiosk');
+  if (table.rows.length === 0) return <Card><Muted>{t('empty')}</Muted></Card>;
+  return <ReportTable table={table} reportKey={KIOSK_INSIGHTS_REPORT} />;
 }
