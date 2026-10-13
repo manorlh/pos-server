@@ -18,7 +18,9 @@ export type AlertCategory =
   | 'target_reached'
   | 'card_reconcile'
   // "בון לא הודפס" — a kitchen / bar ticket of any till or kiosk that did not print (pos-server app/services/bon_alerts.py).
-  | 'bon_unprinted';
+  | 'bon_unprinted'
+  // A payment reversed inside a table, and a closed table restored (P:/specs/table-restore-payments.md §3).
+  | 'payment_reversals';
 
 export const ALERT_CATEGORIES: AlertCategory[] = [
   'till_offline',
@@ -29,6 +31,7 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'target_reached',
   'card_reconcile',
   'bon_unprinted',
+  'payment_reversals',
 ];
 
 export interface PushConfig {

@@ -91,6 +91,11 @@ export const EXCEPTION_TYPES = [
   'drawer_open_near_variance',
   'drawer_open_no_reason',
   'drawer_open_denied',
+  // "שחזור שולחן עם התשלומים שלו" (pos-server app/services/table_restore.py): a payment reversed inside a
+  // table (details: tableNumber, tender, action, amount, tip, requestedBy, approvedBy, performedBy, the
+  // invoice and credit numbers, summary) and a closed table restored (details: restoredAs, restoredBy, …).
+  'payment_reversed',
+  'table_restored',
 ] as const;
 
 export type ExceptionType = (typeof EXCEPTION_TYPES)[number];

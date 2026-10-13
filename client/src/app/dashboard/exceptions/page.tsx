@@ -128,6 +128,9 @@ const TYPE_TONE: Record<ExceptionType, string> = {
   drawer_open_near_variance: 'bg-red-200 text-red-950 dark:bg-red-900 dark:text-red-100',
   drawer_open_no_reason: 'bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-200',
   drawer_open_denied: 'bg-slate-200 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
+  // A table's payments (table-restore-payments): the refunds' family.
+  payment_reversed: 'bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-100',
+  table_restored: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
 };
 
 function TypeBadge({ type }: { type: ExceptionType }) {
