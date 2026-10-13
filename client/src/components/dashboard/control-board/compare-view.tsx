@@ -13,8 +13,11 @@
  *   scope, the card brands and the open tables (the old compare board's).
  * * **Side by side** — two to four shops, points of sale, tills or cashiers (side-by-side.tsx).
  *
- * Every filter is in the URL (lib/periodCompare.ts) with the shared scope; Excel / PDF
- * through the reports' toolbar. Phone first, on the board's own tokens (light and dark).
+ * Every filter is in the URL (lib/periodCompare.ts) with the shared scope. Excel / PDF / print
+ * through the report framework's export bar (P:\specs\reports-upgrade.md §5): the figures with
+ * their change, the cashiers and the breakdown — or the figures side by side — as tables with
+ * export columns; the curve, the items (every one) and the vouchers as sheets of their own.
+ * Phone first, on the board's own tokens (light and dark).
  */
 
 import { useCallback, useMemo } from 'react';
@@ -35,6 +38,7 @@ import { formatCurrency, formatShortDate, formatShortDateTime } from '@/lib/form
 import { useScope } from '@/lib/scope';
 import { shiftIsoDay, type BoardParams } from '@/lib/controlBoard';
 import {
+  FIGURE_ORDER,
   PERIOD_KINDS,
   comparedRange,
   pollsLive,
@@ -42,6 +46,7 @@ import {
   comparisonSheets,
   curvePoints,
   defaultVs,
+  delta,
   monthEnd,
   monthStart,
   periodRange,
@@ -61,7 +66,11 @@ import type { ExcelSheet } from '@/lib/excelExport';
 import type { CashierSalesReport, OverviewReport, OverviewSales } from '@/lib/types';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Button } from '@/components/ui/button';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+import {
+  StandaloneExportBar,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 import { OpenTablesWidget } from '@/components/dashboard/insights/open-tables-widget';
 import { FilterBox, Segmented, type FilterOption } from './board-ui';
 import { ScopeBoxes, useDayNames } from './board-filters';
@@ -70,7 +79,7 @@ import { BoardItems } from './board-items';
 import { BoardVouchers } from './board-vouchers';
 import { CardBrandsCard, CompareChart, CompareKpis, CompareRowsCard, type CompareRow } from './compare-parts';
 import { EventPicker, useEventWhen } from './event-picker';
-import { SideBySide, useSideBySide } from './side-by-side';
+import { SideBySide, sideTableSpec, useSideBySide } from './side-by-side';
 
 const LIVE_MS = 60_000;
 const PAST_STALE_MS = 5 * 60_000;
@@ -420,23 +429,86 @@ export function CompareView({
     },
   };
   const exportTitle = comparing ? t('export.titleVs', { a: labelA, b: labelB as string }) : t('export.title', { a: labelA });
-  const getSheets = async (): Promise<ExcelSheet[]> => {
+  const sideTitle = t('export.sideTitle', { kind: t(`side.${params.side}`) });
+
+  /** A list of A against B (cashiers, the breakdown) as an export table. */
+  const vsTable = (id: string, title: string, head: string, rows: CompareRow[]): ReportTableSpec<CompareRow> => ({
+    id,
+    title: title.slice(0, 31),
+    sheetHeading: [exportTitle],
+    rows,
+    rowKey: (r) => r.id,
+    columns: [
+      { key: 'name', header: head, width: 22, required: true, value: (r) => r.name },
+      { key: 'a', header: `${words.net} ${labelA}`, kind: 'money', value: (r) => r.a },
+      ...(comparing ? [{ key: 'b', header: `${words.net} ${labelB}`, kind: 'money', value: (r: CompareRow) => r.b } as ReportColumn<CompareRow>] : []),
+    ],
+  });
+  /** The headline figures with their change (the summary sheet), a row per figure. */
+  const summaryTable: ReportTableSpec<keyof FiguresLike> = {
+    id: 'main',
+    title: words.summary,
+    sheetHeading: [exportTitle, comparing ? `${labelA} · ${labelB}` : labelA],
+    rows: current ? FIGURE_ORDER : [],
+    rowKey: (k) => k,
+    columns: [
+      { key: 'figure', header: words.figure, width: 22, required: true, value: (k) => words.figures[k] },
+      { key: 'a', header: labelA, kind: 'number', value: (k) => current?.[k] ?? null },
+      ...(comparing
+        ? ([
+            { key: 'b', header: labelB as string, kind: 'number', value: (k) => previous?.[k] ?? null },
+            {
+              key: 'change',
+              header: words.change,
+              kind: 'number',
+              value: (k) => (current && previous ? delta(current[k], previous[k]).abs : null),
+            },
+            {
+              key: 'changePct',
+              header: words.changePct,
+              kind: 'percent',
+              value: (k) => (current && previous ? delta(current[k], previous[k]).pct : null),
+            },
+          ] as ReportColumn<keyof FiguresLike>[])
+        : []),
+    ],
+  };
+  const sideEntities = (side.data?.entities ?? []).filter((e) => params.ids.includes(e.id));
+  const exportTables: ReportTableSpec<unknown>[] = periods
+    ? [
+        summaryTable as ReportTableSpec<unknown>,
+        ...(days && sellers.length ? [vsTable('sellers', t('sellers'), t('sellers'), sellers) as ReportTableSpec<unknown>] : []),
+        ...(days && parts.length
+          ? [
+              vsTable(
+                'parts',
+                t('breakdown', { level: t(`levels.${partsA.level}`) }),
+                t(`levels.${partsA.level}`),
+                parts,
+              ) as ReportTableSpec<unknown>,
+            ]
+          : []),
+      ]
+    : [sideTableSpec(sideEntities, t, (e) => e.name ?? e.id) as ReportTableSpec<unknown>];
+  /** The sheets that are not tables of the page: the curve, every item, the vouchers (or the side curve). */
+  const extraSheets = async (): Promise<ExcelSheet[]> => {
     if (!periods) {
       const r = side.data;
       if (!r) return [];
-      return sideBySideSheets(
+      const [, curve] = sideBySideSheets(
         {
-          title: t('export.sideTitle', { kind: t(`side.${params.side}`) }),
+          title: sideTitle,
           period: labelA,
           buckets: r.buckets,
-          entities: r.entities.map((e) => ({ name: e.name ?? e.id, figures: e.figures, series: e.series })),
+          entities: sideEntities.map((e) => ({ name: e.name ?? e.id, figures: e.figures, series: e.series })),
         },
         words,
       );
+      return [curve];
     }
     // Every item, not only the ten on screen.
     const full = await fetchPeriodCompare({ ...periodParams, items: 1000 });
-    const sheets = comparisonSheets(
+    const [, ...rest] = comparisonSheets(
       {
         title: exportTitle,
         labelA,
@@ -449,31 +521,7 @@ export function CompareView({
       },
       words,
     );
-    if (days && sellers.length) {
-      sheets.push({
-        name: t('sellers'),
-        heading: [exportTitle],
-        columns: [
-          { header: t('sellers'), width: 20 },
-          { header: `${words.net} ${labelA}`, kind: 'money' },
-          ...(comparing ? [{ header: `${words.net} ${labelB}`, kind: 'money' as const }] : []),
-        ],
-        rows: sellers.map((s) => (comparing ? [s.name, s.a, s.b] : [s.name, s.a])),
-      });
-    }
-    if (days && parts.length) {
-      sheets.push({
-        name: t('breakdown', { level: t(`levels.${partsA.level}`) }).slice(0, 31),
-        heading: [exportTitle],
-        columns: [
-          { header: t(`levels.${partsA.level}`), width: 22 },
-          { header: `${words.net} ${labelA}`, kind: 'money' },
-          ...(comparing ? [{ header: `${words.net} ${labelB}`, kind: 'money' as const }] : []),
-        ],
-        rows: parts.map((r) => (comparing ? [r.name, r.a, r.b] : [r.name, r.a])),
-      });
-    }
-    return sheets;
+    return rest;
   };
 
   const anchorValue = rangeA?.from ?? today;
@@ -625,12 +673,14 @@ export function CompareView({
                 {tEvent('fullCompare')}
               </Link>
             ) : null}
-            <ReportExportToolbar
-              title={periods ? exportTitle : t('export.sideTitle', { kind: t(`side.${params.side}`) })}
+            <StandaloneExportBar
+              reportKey="compare"
+              title={periods ? exportTitle : sideTitle}
+              tables={exportTables}
+              extraSheets={extraSheets}
               from={rangeA?.from ?? event?.startDate}
               to={rangeA?.to ?? event?.endDate}
               disabled={periods ? !report : !side.data}
-              getSheets={getSheets}
             />
           </div>
         </div>
