@@ -245,9 +245,10 @@ export interface RuleParam {
 }
 
 export interface ExceptionRule {
-  type: ExceptionType;
+  /** An exception type — or a kind detected elsewhere that has only the push switch (`pushOnly`). */
+  type: ExceptionType | string;
   available: boolean;
-  source: 'document' | 'shift' | 'till_event';
+  source: string;
   severity: string;
   defaultEnabled: boolean;
   params: RuleParam[];
@@ -258,6 +259,19 @@ export interface ExceptionRule {
   inheritedSources: Record<string, RuleLevel | null>;
   effectiveEnabled: boolean;
   effectiveParams: Record<string, number>;
+  /**
+   * "שלח התראה לטלפון" (pos-server P:/specs/push-more.md §0): the default, this level's own (null =
+   * inherits), what applies from above and where it was set, and here. Absent on an older server.
+   */
+  pushDefault?: boolean;
+  ownPush?: boolean | null;
+  inheritedPush?: boolean;
+  inheritedPushSource?: RuleLevel | null;
+  effectivePush?: boolean;
+  /** Detected elsewhere and always recorded: only the push switch applies. */
+  pushOnly?: boolean;
+  /** The phone-alert type it is sent as; null = none. "integrity" is the super admins' (no switch). */
+  pushCategory?: string | null;
 }
 
 export interface RulesResponse {
@@ -268,9 +282,11 @@ export interface RulesResponse {
 }
 
 export interface RuleInput {
-  type: ExceptionType;
+  type: ExceptionType | string;
   enabled: boolean | null;
   params: Record<string, number | null>;
+  /** "שלח התראה לטלפון" at this level; null = inherit. */
+  push?: boolean | null;
 }
 
 export async function fetchExceptionRules(level: RuleLevel, id: string | null): Promise<RulesResponse> {

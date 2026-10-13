@@ -10,6 +10,7 @@ import {
   canAcknowledgeAlerts,
   draftFromPrefs,
   historyTone,
+  minAmountApplies,
   prefsBody,
   prefsErrors,
   pushSupport,
@@ -77,7 +78,7 @@ describe('the preferences form', () => {
   it('offers "שלמות נתונים" only when the server lists it (a super admin), last', () => {
     const general = visibleCategories({ categories: [{ key: 'till_offline', label: '', hint: '', amount: false }] });
     assert.equal(general.includes('integrity'), false);
-    assert.deepEqual(general.slice(-3), ['z_shift', 'card_transmission', 'till_printer']);
+    for (const c of ['z_shift', 'card_transmission', 'till_printer'] as const) assert.ok(general.includes(c), c);
     const root = visibleCategories({ categories: [{ key: 'integrity', label: '', hint: '', amount: false }] });
     assert.equal(root[root.length - 1], 'integrity');
     assert.equal(visibleCategories(null).includes('integrity'), false);
@@ -92,6 +93,22 @@ describe('the preferences form', () => {
     assert.deepEqual(prefsBody(root).integrity, { companyIds: null });
     const manager = prefsBody(draftFromPrefs(prefs));
     assert.equal('integrity' in manager, false);
+  });
+
+  it('offers the push-more types, and the personal minimum only when a chosen type has an amount', () => {
+    const types = visibleCategories({ categories: [] });
+    for (const c of ['device_battery', 'discounts', 'cash_difference', 'high_tip', 'high_sale', 'after_hours',
+      'sensitive_actions', 'staff_actions', 'stock', 'slow_order'] as const) assert.ok(types.includes(c), c);
+    const config = {
+      categories: [
+        { key: 'large_void' as const, label: '', hint: '', amount: true },
+        { key: 'discounts' as const, label: '', hint: '', amount: true },
+        { key: 'till_offline' as const, label: '', hint: '', amount: false },
+      ],
+    };
+    assert.equal(minAmountApplies(config, ['till_offline']), false);
+    assert.equal(minAmountApplies(config, ['till_offline', 'discounts']), true);
+    assert.equal(minAmountApplies(null, ['large_void']), false);
   });
 
   it('toggles a value in a list', () => {

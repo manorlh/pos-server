@@ -4,7 +4,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ALERT_POLICY_TYPES, isAlertPolicyType, splitPolicyRules } from './alertPolicy';
+import { ALERT_POLICY_TYPES, isAlertPolicyType, offersPushSwitch, splitPolicyRules } from './alertPolicy';
 
 describe('the alert policy among the exception rules', () => {
   it('names the four kinds of the spec', () => {
@@ -25,6 +25,13 @@ describe('the alert policy among the exception rules', () => {
     const { policy, others } = splitPolicyRules(rules);
     assert.deepEqual(policy.map((r) => r.type), ['z_missing', 'shift_open_overdue', 'card_transmission_overdue', 'till_printer']);
     assert.deepEqual(others.map((r) => r.type), ['discount', 'refund']);
+  });
+
+  it('offers the push switch only for a kind sent as a phone alert, never for integrity', () => {
+    assert.equal(offersPushSwitch({ inheritedPush: false, pushCategory: 'discounts' }), true);
+    assert.equal(offersPushSwitch({ inheritedPush: true, pushCategory: null }), false);
+    assert.equal(offersPushSwitch({ inheritedPush: true, pushCategory: 'integrity' }), false);
+    assert.equal(offersPushSwitch({ pushCategory: 'discounts' }), false);
   });
 
   it('an older server without them: no policy section', () => {

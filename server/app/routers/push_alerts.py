@@ -323,19 +323,29 @@ def list_alerts(
     # Every push kind but a failed payment is wholly a push alert; a failed payment only when the
     # terminal failed (its details say) — those are the medium / high ones, read and judged apart
     # so a run of declined cards never pushes real alerts out of the page.
-    kinds = sorted({k for c in P.categories_for(current_user) for k in c.kinds} - {"failed_payment"})
+    # The kinds a level must switch on ("שלח התראה לטלפון", push-more §B — off by default) are alerts
+    # only where their rule says so: read apart and judged per row like the failed payments, so the
+    # log's every discount never fills the page.
+    every = {k for c in P.categories_for(current_user) for k in c.kinds} - {"failed_payment"}
+    gated = sorted(k for k in every if P.gated_kind(k))
+    kinds = sorted(every - set(gated))
     main = q.filter(ExceptionLogEntry.kind.in_(kinds))
     payments = q.filter(ExceptionLogEntry.kind == "failed_payment", ExceptionLogEntry.severity.in_(("medium", "high")))
+    switched = q.filter(ExceptionLogEntry.kind.in_(gated or ["__none__"]))
+    gate = P.GateCache(db)
     newest = ExceptionLogEntry.occurred_at.desc()
     candidates = main.order_by(newest).limit(limit).all() + [
         r for r in payments.order_by(newest).limit(max(limit, 200)).all() if P.category_of(r)
-    ]
+    ] + [r for r in switched.order_by(newest).limit(max(limit, 200)).all() if gate.allows(r)]
     candidates.sort(key=lambda r: L.aware(r.occurred_at), reverse=True)
     rows = candidates[:limit]
     open_payments = sum(
         1 for r in payments.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if P.category_of(r)
     )
-    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments
+    open_switched = sum(
+        1 for r in switched.filter(ExceptionLogEntry.acknowledged_at.is_(None)).limit(500).all() if gate.allows(r)
+    )
+    open_count = main.filter(ExceptionLogEntry.acknowledged_at.is_(None)).count() + open_payments + open_switched
     labels = _labels(db, rows)
     out = []
     for r in rows:

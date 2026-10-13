@@ -19,7 +19,7 @@ import { useTranslations } from 'next-intl';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
-import { splitPolicyRules } from '@/lib/alertPolicy';
+import { offersPushSwitch, splitPolicyRules } from '@/lib/alertPolicy';
 import {
   fetchExceptionRules,
   saveExceptionRules,
@@ -44,6 +44,8 @@ interface DraftRule {
   enabled: boolean | null;
   /** Text as typed; '' = inherit. */
   params: Record<string, string>;
+  /** "שלח התראה לטלפון" at this level; null = inherit. */
+  push: boolean | null;
 }
 type Draft = Record<string, DraftRule>;
 
@@ -55,6 +57,7 @@ function draftOf(data: RulesResponse): Draft {
       params: Object.fromEntries(
         r.params.map((p) => [p.key, r.ownParams[p.key] != null ? String(r.ownParams[p.key]) : '']),
       ),
+      push: r.ownPush ?? null,
     };
   }
   return out;
@@ -142,6 +145,7 @@ function RulesEditor({ data }: { data: RulesResponse }) {
           params: Object.fromEntries(
             Object.entries(d.params).map(([k, v]) => [k, v.trim() === '' ? null : Number(v)]),
           ),
+          push: d.push,
         };
       });
       return saveExceptionRules(data.level, data.id, rules);
@@ -193,20 +197,45 @@ function RulesEditor({ data }: { data: RulesResponse }) {
           <p className="text-muted-foreground mt-0.5 text-xs">{t(`desc.${rule.type}`)}</p>
         </div>
 
-        <div className="space-y-1">
-          <TriState
-            value={d.enabled}
-            disabled={disabled}
-            onChange={(v) => set(rule.type, { enabled: v })}
-            labels={[t('on'), t('off'), t('inherit')]}
-          />
-          {d.enabled === null ? (
-            <p className="text-muted-foreground text-xs">
-              {t('inheritNote', {
-                state: rule.inheritedEnabled ? t('on') : t('off'),
-                source: levelName(rule.inheritedSources.enabled),
-              })}
-            </p>
+        <div className="space-y-3">
+          {rule.pushOnly ? (
+            <p className="text-muted-foreground text-xs">{t('alwaysLogged')}</p>
+          ) : (
+            <div className="space-y-1">
+              <TriState
+                value={d.enabled}
+                disabled={disabled}
+                onChange={(v) => set(rule.type, { enabled: v })}
+                labels={[t('on'), t('off'), t('inherit')]}
+              />
+              {d.enabled === null ? (
+                <p className="text-muted-foreground text-xs">
+                  {t('inheritNote', {
+                    state: rule.inheritedEnabled ? t('on') : t('off'),
+                    source: levelName(rule.inheritedSources.enabled),
+                  })}
+                </p>
+              ) : null}
+            </div>
+          )}
+          {offersPushSwitch(rule) ? (
+            <div className="space-y-1">
+              <p className="text-xs font-medium">{t('push')}</p>
+              <TriState
+                value={d.push}
+                disabled={!data.canWrite || !rule.available}
+                onChange={(v) => set(rule.type, { push: v })}
+                labels={[t('on'), t('off'), t('inherit')]}
+              />
+              {d.push === null ? (
+                <p className="text-muted-foreground text-xs">
+                  {t('inheritNote', {
+                    state: rule.inheritedPush ? t('on') : t('off'),
+                    source: levelName(rule.inheritedPushSource),
+                  })}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
 

@@ -18,6 +18,11 @@ most specific level that sets one wins (`resolve_rules`), else the default here 
 same "till → area → shop → company" order as the till parameters
 (`app.services.till_parameters`), with the tenant above the company.
 
+**Phone alerts.** Each type also has "שלח התראה לטלפון" (`push`, P:/specs/push-more.md §0): the
+organization's gate of the phone alerts, set per level like the rest (stored in a level's `params`
+as `push`), on by default for the types that were always sent and off for the ones added later
+(`push_default`). A type detected elsewhere and always recorded has only this switch (`push_only`).
+
 **Idempotent.** Every exception has a `dedupe_key` (`<type>:<source id>`), unique in
 the table. A re-pushed document or a rescan finds the row and, while it is still
 `new`, refreshes its figures; it never creates a second one and never reopens one a
@@ -76,15 +81,25 @@ class RuleSpec:
     source: str
     #: False: listed so the dashboard can show it as planned, never detected yet.
     available: bool = True
+    #: "שלח התראה לטלפון" when no level sets it (push-more §0): on for the types the phone alerts
+    #: always sent, off for a type whose alert type came later ("להפעלה").
+    push_default: bool = True
+    #: Detected elsewhere and always recorded (a battery, the stock, training mode…): only the push
+    #: switch applies — `enabled` is not offered.
+    push_only: bool = False
 
+
+#: The level's own "שלח התראה לטלפון", kept in its `params` beside the thresholds.
+PUSH_KEY = "push"
 
 RULES: Tuple[RuleSpec, ...] = (
     # Any manual discount on a line or the whole sale. Both thresholds 0 = any discount;
     # a threshold set must be met (≥ X% of the price and ≥ ₪X).
-    RuleSpec("discount", True, (ParamSpec("minPercent", 0, 0, 100), ParamSpec("minAmount", 0)), "low", "document"),
+    RuleSpec("discount", True, (ParamSpec("minPercent", 0, 0, 100), ParamSpec("minAmount", 0)), "low", "document",
+             push_default=False),
     # OTH ("על חשבון הבית", till parameter `othEnabled`): a line given free, with its reason
     # and approver — one per line, at its list price. Not counted as a "discount" above.
-    RuleSpec("oth", True, (), "medium", "document"),
+    RuleSpec("oth", True, (), "medium", "document", push_default=False),
     # A credit note (זיכוי / החזר), ≥ ₪X.
     RuleSpec("refund", True, (ParamSpec("minAmount", 0),), "medium", "document"),
     # The drawer opened without a sale. Reported by the till (no drawer on the current
@@ -99,23 +114,24 @@ RULES: Tuple[RuleSpec, ...] = (
     RuleSpec("table_cancelled", True, (ParamSpec("minAmount", 0),), "high", "till_event"),
     # "הדפסה חוזרת" at a table — the bill or the kitchen tickets again — with the manager
     # who approved it (till event).
-    RuleSpec("reprint", True, (), "medium", "till_event"),
+    RuleSpec("reprint", True, (), "medium", "till_event", push_default=False),
     # An employee signed in at another till released by a manager's PIN, so they could
     # sign in at this one ("עובד מחובר בקופה אחת בלבד"; app/services/user_sessions.py
     # records it as a till event).
-    RuleSpec("user_session_release", True, (), "medium", "till_event"),
+    RuleSpec("user_session_release", True, (), "medium", "till_event", push_default=False),
     # "שינוי נוכחות ידני" (spec §28): a manager's correction or close of an employee's
     # attendance, or a clock-out a manager approved over open tables
     # (app/services/attendance.py records it, with the old and the new times).
-    RuleSpec("attendance_manual", True, (), "medium", "attendance"),
+    RuleSpec("attendance_manual", True, (), "medium", "attendance", push_default=False),
     # From the first line to payment, ≥ X minutes.
-    RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event"),
+    RuleSpec("long_order", True, (ParamSpec("minutes", 10, 1, 24 * 60, integer=True),), "low", "till_event",
+             push_default=False),
     # A tip above X% of what the sale collected.
-    RuleSpec("high_tip", True, (ParamSpec("percent", 15, 0, 1000),), "medium", "document"),
+    RuleSpec("high_tip", True, (ParamSpec("percent", 15, 0, 1000),), "medium", "document", push_default=False),
     # A sale of ≥ ₪X.
-    RuleSpec("high_amount", False, (ParamSpec("amount", 1000),), "low", "document"),
+    RuleSpec("high_amount", False, (ParamSpec("amount", 1000),), "low", "document", push_default=False),
     # Counted − expected at shift close, |difference| ≥ ₪X.
-    RuleSpec("cash_difference", True, (ParamSpec("amount", 20),), "high", "shift"),
+    RuleSpec("cash_difference", True, (ParamSpec("amount", 20),), "high", "shift", push_default=False),
     # A till Z closed with no connection to the cloud whose figures, document range, shifts
     # or number differ from what the cloud built from the documents on upload
     # ("Z שנסגר ללא חיבור — פער מול הענן", docs/SPEC_OFFLINE_TILL_Z.md §6.1).
@@ -123,16 +139,16 @@ RULES: Tuple[RuleSpec, ...] = (
     # The shop's Z production moved by force by a super admin, although the main till
     # holding it might still have shop Zs the cloud does not (SPEC_INDEPENDENT_TILL §8.10).
     # (A shop Z that cannot be filed as printed is an `offline_z_conflict`, like a till Z.)
-    RuleSpec("shop_z_producer_forced", True, (), "high", "z"),
+    RuleSpec("shop_z_producer_forced", True, (), "high", "z", push_default=False),
     # A super admin produced a shop Z past "חסימת Z כשיש משמרות פתוחות" without tills that had not
     # closed (app/services/z_shift_guard.py). Always recorded — the tenant's rules never switch it off.
-    RuleSpec("z_forced_open_shifts", True, (), "high", "z"),
+    RuleSpec("z_forced_open_shifts", True, (), "high", "z", push_default=False),
     # A super admin let a Z go ahead before a cloud card refund's credit note was issued ("זיכוי באשראי
     # מהענן — חובה לפני ה-Z הבא", app/services/cloud_refund_z_gate.py). Always recorded.
-    RuleSpec("z_forced_pending_cloud_refund", True, (), "high", "z"),
+    RuleSpec("z_forced_pending_cloud_refund", True, (), "high", "z", push_default=False),
     # A remote close let the till close keeping its held sales ("סגור בכל זאת — המכירות המושהות
     # יישמרו", app/services/held_sales_close.py). Always recorded.
-    RuleSpec("close_keep_held_sales", True, (), "medium", "z"),
+    RuleSpec("close_keep_held_sales", True, (), "medium", "z", push_default=False),
     # A shop Z the main till printed in local mode that does not verify against the cloud's
     # documents ("אי-התאמה בין Z מקומי לנתוני הענן — לבדיקת התמיכה", SPEC_INDEPENDENT_TILL
     # §8.12): every document its tills' manifests name has arrived, and the same computation
@@ -151,18 +167,18 @@ RULES: Tuple[RuleSpec, ...] = (
     # Support produced a dead till's Z from the cloud ("הפקת Z מהענן ע״י התמיכה",
     # docs/SPEC_OFFLINE_TILL_Z.md §4.6): who, when, why, the basis, the Z, the numbers the
     # device printed and never sent, the document counters' gaps, and what came later.
-    RuleSpec("support_z_produced", True, (), "high", "z"),
+    RuleSpec("support_z_produced", True, (), "high", "z", push_default=False),
     # Support ordered a reset of a till's data from the cloud — the only way there is
     # ("איפוס נתוני קופה (תמיכה)", docs/SPEC_OFFLINE_TILL_Z.md §4.7): who, when, why, what
     # the cloud saw before, and what the till did or why it refused.
-    RuleSpec("till_reset", True, (), "high", "z"),
+    RuleSpec("till_reset", True, (), "high", "z", push_default=False),
     # "תשלום לא מוכרע": a manager decided an unknown card from the cloud against what the terminal
     # said on a check — or with no check at all — on an explicit confirmation: who, when, the
     # verdict, the decision (app/services/card_attempt_commands.py).
-    RuleSpec("card_decision_override", True, (), "high", "document"),
+    RuleSpec("card_decision_override", True, (), "high", "document", push_default=False),
     # "הוחלפה קופה": a replacement device took over a till (§4.6.2) — the old and the new
     # device, who, when, why, and whether support produced its Z first.
-    RuleSpec("till_replaced", True, (), "medium", "z"),
+    RuleSpec("till_replaced", True, (), "medium", "z", push_default=False),
     # "העברת שרת מקומי" (app/services/local_server_switch.py): the shop's local server moved from
     # the cloud — who, when, from which till to which, what moved, forced or not, the old
     # server's shift closed, the shop Z released. Always recorded (high when forced).
@@ -184,7 +200,7 @@ RULES: Tuple[RuleSpec, ...] = (
     RuleSpec("z_transmission_failed", True, (), "high", "z"),
     # A remote Z close forced "even mid-sale": who forced it, and the basket the till
     # parked for it ("סגירת Z כפויה", §9; a till event).
-    RuleSpec("forced_z_close", True, (), "high", "till_event"),
+    RuleSpec("forced_z_close", True, (), "high", "till_event", push_default=False),
     # A self-order kiosk out of touch with the cloud for ≥ X minutes during its opening hours
     # ("קיוסק לא מחובר"; app/services/kiosk_offline.py records it, and when it came back).
     RuleSpec("kiosk_offline", True, (ParamSpec("offlineMinutes", 5, 1, 240, integer=True),), "high", "kiosk"),
@@ -220,10 +236,21 @@ RULES: Tuple[RuleSpec, ...] = (
         (ParamSpec("fromHour", 0, 0, 23, integer=True), ParamSpec("toHour", 6, 0, 24, integer=True)),
         "medium",
         "document",
+        push_default=False,
     ),
+    # Detected elsewhere and always recorded — only "שלח התראה לטלפון" applies (push-more §A, §B):
+    # a device's battery (app/services/battery_alerts.py — on: "סוללה חלשה" reaches the managers
+    # unless a level turns it off, or the till parameter `batteryPushLevel` narrows it), the stock
+    # (app/services/stock_alerts.py), training mode, the terminal-number check bypassed.
+    RuleSpec("device_battery", True, (), "low", "battery", push_only=True),
+    RuleSpec("stock_low", True, (), "low", "stock", push_default=False, push_only=True),
+    RuleSpec("stock_out", True, (), "medium", "stock", push_default=False, push_only=True),
+    RuleSpec("training_mode", True, (), "medium", "training", push_default=False, push_only=True),
+    RuleSpec("training_dropped", True, (), "high", "training", push_default=False, push_only=True),
+    RuleSpec("terminal_check_bypass", True, (), "high", "till_parameter", push_default=False, push_only=True),
     # Planned: the till has no manual re-pricing of a catalog item, and failed card
     # charges are not reported to the cloud.
-    RuleSpec("price_override", False, (), "medium", "till_event", available=False),
+    RuleSpec("price_override", False, (), "medium", "till_event", available=False, push_default=False),
     RuleSpec("card_failures", False, (ParamSpec("count", 3, 1, 100, integer=True),), "medium", "till_event", available=False),
 )
 
@@ -272,6 +299,8 @@ def clean_params(rule: RuleSpec, params: Any) -> Dict[str, float]:
     known = {p.key: p for p in rule.params}
     out: Dict[str, float] = {}
     for key, value in params.items():
+        if key == PUSH_KEY:
+            raise RuleValueError(f"{rule.type}: \"push\" is set on its own, not as a threshold")
         spec = known.get(key)
         if spec is None:
             raise RuleValueError(f"{rule.type}: unknown threshold {key!r}")
@@ -299,6 +328,9 @@ class EffectiveRule:
     params: Dict[str, float]
     #: Per field ("enabled" and each param key), the level whose value is used; None = default.
     sources: Dict[str, Optional[str]] = field(default_factory=dict)
+    #: "שלח התראה לטלפון" here (push-more §0), and the level that set it (None = the default).
+    push: bool = True
+    push_source: Optional[str] = None
 
 
 def _uuid(value: Any) -> Optional[uuid.UUID]:
@@ -332,6 +364,12 @@ def resolve_rules(rows: Iterable[ExceptionRuleValue], chain: Sequence[Scope]) ->
             if r.enabled is not None:
                 enabled, enabled_source = bool(r.enabled), r.scope_type
                 break
+        push, push_source = spec.push_default, None
+        for r in candidates:
+            own = r.params if isinstance(r.params, dict) else {}
+            if isinstance(own.get(PUSH_KEY), bool):
+                push, push_source = own[PUSH_KEY], r.scope_type
+                break
         params: Dict[str, float] = {}
         sources: Dict[str, Optional[str]] = {"enabled": enabled_source}
         for p in spec.params:
@@ -344,7 +382,8 @@ def resolve_rules(rows: Iterable[ExceptionRuleValue], chain: Sequence[Scope]) ->
             params[p.key] = value
             sources[p.key] = source
         out[spec.type] = EffectiveRule(
-            type=spec.type, enabled=enabled and spec.available, params=params, sources=sources
+            type=spec.type, enabled=enabled and spec.available, params=params, sources=sources, push=push,
+            push_source=push_source,
         )
     return out
 
@@ -395,6 +434,19 @@ def rules_on_chain(db: Session, chain: Sequence[Scope]) -> List[ExceptionRuleVal
 
 def rules_for_machine(db: Session, machine: POSMachine) -> Dict[str, EffectiveRule]:
     chain = chain_for_machine(db, machine)
+    return resolve_rules(rules_on_chain(db, chain), chain)
+
+
+def rules_where(db: Session, *, tenant_id=None, company_id=None, shop_id=None, area_id=None,
+                machine_id=None) -> Dict[str, EffectiveRule]:
+    """The effective rules where something happened: its till's when it has one, else its shop's / company's."""
+    if machine_id is not None:
+        machine = db.get(POSMachine, _uuid(machine_id))
+        if machine is not None:
+            return rules_for_machine(db, machine)
+    if company_id is None and shop_id is not None:
+        company_id = company_of_shop(db, shop_id)
+    chain = chain_for(tenant_id=tenant_id, company_id=company_id, shop_id=shop_id, area_id=area_id)
     return resolve_rules(rules_on_chain(db, chain), chain)
 
 

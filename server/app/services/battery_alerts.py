@@ -75,6 +75,13 @@ REASON_NO_BATTERY = "no_battery"
 REASON_MONITORING_OFF = "monitoring_off"
 #: How an open alert of a device no longer watched ends (no push, no "recovered").
 CLEAR_NOT_MONITORED = "not_monitored"
+#: "סוללה חלשה" on the managers' phones (P:/specs/push-more.md §A): every threshold (the default),
+#: only the critical one, or none. Beside the exception rule's own "שלח התראה לטלפון" (`device_battery`).
+PUSH_LEVEL_KEY = "batteryPushLevel"
+PUSH_ALL = "all"
+PUSH_CRITICAL = "critical"
+PUSH_OFF = "off"
+PUSH_LEVELS = (PUSH_ALL, PUSH_CRITICAL, PUSH_OFF)
 
 BATTERY_PARAMETER_SPECS = (
     dict(
@@ -111,6 +118,18 @@ BATTERY_PARAMETER_SPECS = (
         description=(
             "אוטומטי — רק במכשיר שיש בו סוללה. כבוי — לקופה קבועה בלי סוללה: בלי פס 'סוללה חלשה', "
             "בלי אזעקה ובלי התראות סוללה על המכשיר הזה. פעיל — תמיד"
+        ),
+    ),
+    dict(
+        key=PUSH_LEVEL_KEY,
+        label="סוללה חלשה — התראה לטלפון של המנהל",
+        value_type="enum",
+        enum_options=PUSH_LEVELS,
+        default_value=PUSH_ALL,
+        description=(
+            "all — בכל סף (ברירת מחדל). critical — רק בסף הקריטי (מסומן באדום). off — בלי התראה לטלפון. "
+            "\"המסופון קופה 2, סניף X: סוללה 10%\"; כשהמכשיר נטען השורה ביומן נסגרת, בלי התראה נוספת. "
+            "ניתן לקבוע לפי חברה, סניף, נקודת מכירה או מכשיר."
         ),
     ),
 )
@@ -215,6 +234,13 @@ def settings_of(db: Session, machine: POSMachine, params: Optional[Dict[str, Any
     params = _params_of(db, machine) if params is None else params
     sound = params.get(SOUND_KEY)
     return parse_thresholds(params.get(THRESHOLDS_KEY)), (sound is not False and str(sound).lower() not in ("false", "לא", "0"))
+
+
+def push_level_of(db: Session, machine: POSMachine, params: Optional[Dict[str, Any]] = None) -> str:
+    """`batteryPushLevel` of the device: all (the default) / critical / off."""
+    params = _params_of(db, machine) if params is None else params
+    value = str(params.get(PUSH_LEVEL_KEY) or PUSH_ALL).strip().lower()
+    return value if value in PUSH_LEVELS else PUSH_ALL
 
 
 def monitored(db: Session, machine: POSMachine, params: Optional[Dict[str, Any]] = None) -> bool:

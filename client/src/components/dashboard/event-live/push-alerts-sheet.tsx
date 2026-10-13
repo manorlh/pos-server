@@ -21,6 +21,7 @@ import { BellRing, Loader2, Smartphone, Trash2 } from 'lucide-react';
 import {
   INTEGRITY_CATEGORY,
   draftFromPrefs,
+  minAmountApplies,
   prefsBody,
   prefsErrors,
   pushSupport,
@@ -113,19 +114,6 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
             <span className="min-w-0">
               <span className="block font-medium">{labels[c]?.label ?? t(`type.${c}`)}</span>
               <span className="block text-xs text-muted-foreground">{labels[c]?.hint ?? ''}</span>
-              {c === 'large_void' && draft.categories.includes(c) ? (
-                <span className="mt-2 flex items-center gap-2 text-sm">
-                  {t('minAmount')}
-                  <Input
-                    inputMode="decimal"
-                    className="h-9 w-28"
-                    value={draft.minAmount}
-                    onChange={(e) => set({ minAmount: e.target.value })}
-                    aria-invalid={errors.includes('minAmount')}
-                  />
-                  ₪
-                </span>
-              ) : null}
               {c === INTEGRITY_CATEGORY && draft.categories.includes(c) && draft.integrityCompanyIds && options.data?.companies?.length ? (
                 <span className="mt-2 block space-y-1 text-sm">
                   <span className="block font-medium">{t('integrityCompanies')}</span>
@@ -153,6 +141,22 @@ function PreferencesForm({ initial, onSaved }: { initial: PrefsDraft; onSaved: (
           </label>
         ))}
         {errors.includes('categories') ? <p className="text-sm text-destructive">{t('errors.categories')}</p> : null}
+        {minAmountApplies(config.data, draft.categories) ? (
+          <div className="space-y-1 rounded-xl border p-3 text-sm">
+            <span className="flex items-center gap-2">
+              {t('minAmountPersonal')}
+              <Input
+                inputMode="decimal"
+                className="h-9 w-28"
+                value={draft.minAmount}
+                onChange={(e) => set({ minAmount: e.target.value })}
+                aria-invalid={errors.includes('minAmount')}
+              />
+              ₪
+            </span>
+            <span className="block text-xs text-muted-foreground">{t('minAmountPersonalHint')}</span>
+          </div>
+        ) : null}
       </fieldset>
 
       <fieldset className="space-y-2">

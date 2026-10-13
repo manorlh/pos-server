@@ -15,6 +15,14 @@ export function isAlertPolicyType(type: string): type is AlertPolicyType {
   return (ALERT_POLICY_TYPES as readonly string[]).includes(type);
 }
 
+/**
+ * Whether a rule offers "שלח התראה לטלפון" (P:/specs/push-more.md §0): it is sent as a phone-alert type,
+ * and not "שלמות נתונים" (the super admins', which no level switches off). An older server: never.
+ */
+export function offersPushSwitch(rule: { inheritedPush?: boolean; pushCategory?: string | null }): boolean {
+  return rule.inheritedPush !== undefined && !!rule.pushCategory && rule.pushCategory !== 'integrity';
+}
+
 /** The alert policy's rules (in its own order) and every other rule (in the server's order). */
 export function splitPolicyRules<T extends { type: string }>(rules: readonly T[]): { policy: T[]; others: T[] } {
   const policy = ALERT_POLICY_TYPES.flatMap((type) => rules.filter((r) => r.type === type));

@@ -28,6 +28,13 @@ What a user receives (`entry_matches`):
   dashboard sections "alerts" / "reports" / "exception_alerts" — a producer never;
 * narrowed to the chosen shops and / or events (an event = its tills inside its window).
 
+Two gates (P:/specs/push-more.md §0): the organization's — each kind's exception rule says
+"שלח התראה לטלפון" (`push`) where it happened, per tenant / company / shop / point of sale / till,
+and its amount floor (`minAmount` / `amount`) — then the user's own preferences above (types,
+places, their personal `min_amount` floor on top of the rule's, quiet hours). A kind with no rule
+is the user's alone. Urgent alerts (`integrity`, a critical battery) skip the rate limit and the
+digest; quiet hours still hold them, and they go one by one once the quiet hours end.
+
 `integrity` ("שלמות נתונים": a refused document, a numbering conflict, Z / shift totals that
 differ, offline Z gaps and conflicts) is apart: super admins only, from every organization,
 never by a tenant's rules (`integrity_recipients`); their own switch, companies and muted devices
@@ -104,11 +111,14 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("card_terminal", "מסוף אשראי לא עונה / נכשל",
              "המסוף לא ענה או החזיר שגיאה בעסקה, תקלת מסוף בקיוסק, שידור אשראי שנכשל ב-Z.",
              ("failed_payment", "kiosk_terminal", "terminal_mismatch", "card_unresolved", "z_transmission_failed")),
-    Category("large_void", "ביטול / זיכוי גדול", "זיכוי, ביטול עסקה או שורה, ביטול שולחן — מעל הסכום שבחרת.",
+    Category("large_void", "ביטול / זיכוי גדול",
+             "זיכוי, ביטול עסקה או שורה, ביטול שולחן — מעל הסכום של חוק החריגה ומעל הסכום שבחרת. עם העובד, המאשר והסיבה.",
              ("refund", "basket_cancel", "line_void", "table_cancelled", "over_credited"), amount=True),
-    Category("drawer_no_sale", "מגירה נפתחה ללא מכירה", "פתיחת מגירה ללא מכירה, אחרי סגירה, או ריבוי פתיחות ידניות.",
+    Category("drawer_no_sale", "מגירה נפתחה ללא מכירה",
+             "פתיחת מגירה ללא מכירה, אחרי סגירה, ריבוי פתיחות ידניות, ניסיון פתיחה שנחסם, הוצאת מזומן מעל הסף ופער בספירה.",
              ("drawer_open", "drawer_after_close", "drawer_manual_burst", "drawer_manual_over_max",
-              "drawer_open_near_variance", "drawer_open_no_reason")),
+              "drawer_open_near_variance", "drawer_open_no_reason", "drawer_open_denied", "cash_out_over_threshold",
+              "drawer_count_variance")),
     Category("till_low_sales", "קופה כמעט לא מוכרת", "קופה שמוכרת הרבה פחות מהקופות שלידה (חריגות בקופות).",
              ("till_low_sales",)),
     Category("target_reached", "יעד הושג", "יעד מכירות שהושג — של אירוע, של הסניף, של נקודת מכירה או של עובד.",
@@ -130,6 +140,28 @@ CATEGORIES: Tuple[Category, ...] = (
     Category("till_printer", "מדפסת קופה",
              "בקופה עם משמרת פתוחה: אין נייר, התחממות או שגיאת מדפסת יותר מכמה דקות.",
              ("till_printer",)),
+    # P:/specs/push-more.md §A: a device's battery (on: the rule's push switch is on by default).
+    Category("device_battery", "סוללה חלשה",
+             "מסופון, טאבלט, קיוסק או מסך מטבח עם סוללה שירדו מתחת לסף; הסף הקריטי באדום. נסגרת בטעינה.",
+             ("device_battery",)),
+    # §B: kinds the log always had; sent only where a level turns "שלח התראה לטלפון" on.
+    Category("discounts", "הנחות, מחירים ועל חשבון הבית", "הנחה ידנית, שינוי מחיר ועל חשבון הבית — מעל הסף של חוק החריגה.",
+             ("discount", "price_override", "oth"), amount=True),
+    Category("cash_difference", "הפרש בספירת קופה", "הפרש בספירת המזומן בסגירת משמרת, מעל הסכום של חוק החריגה.",
+             ("cash_difference",), amount=True),
+    Category("high_tip", "טיפ גבוה", "טיפ מעל האחוז שבחוק החריגה.", ("high_tip",)),
+    Category("high_sale", "עסקה גדולה", "עסקה מעל הסכום שבחוק החריגה.", ("high_amount",), amount=True),
+    Category("after_hours", "מכירה מחוץ לשעות", "מכירה בשעות שבחוק החריגה.", ("after_hours",)),
+    Category("sensitive_actions", "פעולות רגישות",
+             "הכרעת אשראי ידנית, עקיפת בדיקת מסוף, איפוס או החלפת קופה, Z בכפייה או מהתמיכה, מצב הדרכה.",
+             ("card_decision_override", "terminal_check_bypass", "till_reset", "till_replaced", "forced_z_close",
+              "support_z_produced", "z_forced_open_shifts", "z_forced_pending_cloud_refund", "shop_z_producer_forced",
+              "training_mode", "training_dropped")),
+    Category("staff_actions", "עובדים ונוכחות",
+             "שינוי נוכחות ידני, שחרור עובד מקופה אחרת, הדפסה חוזרת וסגירה עם מכירות מושהות.",
+             ("attendance_manual", "user_session_release", "reprint", "close_keep_held_sales")),
+    Category("stock", "מלאי", "מוצר שהמלאי שלו נמוך או אזל, לפי הספים של המלאי.", ("stock_low", "stock_out")),
+    Category("slow_order", "הזמנה ארוכה", "הזמנה שלקחה יותר מהדקות שבחוק החריגה.", ("long_order",)),
 )
 #: "שלמות נתונים" (manager-problems §1): the cloud and a till disagree about what was sold. Only a
 #: super admin receives it — from every organization, past the organizations' scoping (a super
@@ -150,6 +182,12 @@ CATEGORY_KEYS = tuple(c.key for c in CATEGORIES)
 #: started with (the data migration 3c9e5a7b1d24 adds them), off for one who had left some out; on
 #: for a new user (no preferences = every type).
 NEW_CATEGORY_KEYS = ("z_shift", "card_transmission", "till_printer")
+#: Added with push-more §A / §B, the same way (the data migration 8d4f2a6c1e93). Their kinds are
+#: sent only where the organization's rule says "שלח התראה לטלפון" (off by default but the battery).
+PUSH_MORE_CATEGORY_KEYS = (
+    "device_battery", "discounts", "cash_difference", "high_tip", "high_sale", "after_hours",
+    "sensitive_actions", "staff_actions", "stock", "slow_order",
+)
 _CATEGORY_OF_KIND: Dict[str, str] = {kind: c.key for c in (*CATEGORIES, INTEGRITY) for kind in c.kinds}
 
 DEFAULT_MIN_AMOUNT = Decimal("200.00")
@@ -485,12 +523,103 @@ def place_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntr
     return bool(events) and _event_covers(db, events, entry)
 
 
-def entry_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntry, owner: Any = None) -> bool:
+@dataclass(frozen=True)
+class OrgGate:
+    """The organization's word on one entry: sent at all, and the amount floor of its kind's rule."""
+
+    allowed: bool
+    floor: Decimal = Decimal("0")
+
+
+#: The threshold a kind's rule sets on its amount (the first of these its rule has).
+AMOUNT_PARAMS = ("minAmount", "amount")
+
+
+def org_gate(db: Session, entry: ExceptionLogEntry) -> OrgGate:
+    """
+    "שלח התראה לטלפון" of the entry's kind where it happened (push-more §0) — its till's rule, else its
+    shop's — and that rule's amount floor. "שלמות נתונים" is the super admins' alone: no company
+    switches it off. A kind with no rule: always (the user's preferences decide). A battery also
+    by its device's `batteryPushLevel` (all / critical / off).
+    """
+    from app.services import exceptions as EX
+
+    spec = EX.RULES_BY_TYPE.get(entry.kind)
+    if spec is None or category_of(entry) == INTEGRITY.key:
+        return OrgGate(True)
+    try:
+        rules = EX.rules_where(db, tenant_id=entry.tenant_id, company_id=entry.company_id, shop_id=entry.shop_id,
+                               area_id=entry.area_id, machine_id=entry.machine_id)
+    except Exception:  # noqa: BLE001 - a rule that cannot be read: the defaults
+        logger.exception("push: the rules of entry %s could not be read", entry.id)
+        return OrgGate(spec.push_default)
+    rule = rules.get(entry.kind)
+    if rule is None or not rule.push:
+        return OrgGate(False)
+    if entry.kind == "device_battery" and not _battery_level_allows(db, entry):
+        return OrgGate(False)
+    floor = next((rule.params[k] for k in AMOUNT_PARAMS if rule.params.get(k) is not None), 0)
+    return OrgGate(True, Decimal(str(floor or 0)))
+
+
+def gated_kind(kind: str) -> bool:
+    """A kind that is an alert only where a level turns its "שלח התראה לטלפון" on (off by default)."""
+    from app.services import exceptions as EX
+
+    spec = EX.RULES_BY_TYPE.get(kind)
+    return spec is not None and not spec.push_default
+
+
+class GateCache:
+    """`org_gate`'s push switch for many entries at once (the alerts feed): the rules per place, read once."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self._rules: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+
+    def allows(self, entry: ExceptionLogEntry) -> bool:
+        from app.services import exceptions as EX
+
+        key = (entry.tenant_id, entry.company_id, entry.shop_id, entry.area_id, entry.machine_id)
+        if key not in self._rules:
+            self._rules[key] = EX.rules_where(self.db, tenant_id=entry.tenant_id, company_id=entry.company_id,
+                                              shop_id=entry.shop_id, area_id=entry.area_id, machine_id=entry.machine_id)
+        rule = self._rules[key].get(entry.kind)
+        return rule is not None and rule.push
+
+
+def _battery_level_allows(db: Session, entry: ExceptionLogEntry) -> bool:
+    from app.models.pos_machine import POSMachine
+    from app.services import battery_alerts as BA
+
+    machine = db.get(POSMachine, entry.machine_id) if entry.machine_id else None
+    level = BA.push_level_of(db, machine) if machine is not None else BA.PUSH_ALL
+    if level == BA.PUSH_OFF:
+        return False
+    return level != BA.PUSH_CRITICAL or _battery_critical(entry)
+
+
+def _battery_critical(entry: ExceptionLogEntry) -> bool:
+    details = entry.details if isinstance(entry.details, dict) else {}
+    return entry.kind == "device_battery" and details.get("severity") == "critical"
+
+
+def is_urgent(entry: ExceptionLogEntry) -> bool:
+    """Past the shared rate limit and the digest (push-more §B2): "שלמות נתונים", a critical battery."""
+    return category_of(entry) == INTEGRITY.key or _battery_critical(entry)
+
+
+def entry_matches(db: Session, rule: ExceptionAlertRule, entry: ExceptionLogEntry, owner: Any = None,
+                  gate: Optional[OrgGate] = None) -> bool:
     category = category_of(entry)
     if category is None or category == INTEGRITY.key or category not in (rule.categories or []):
         return False  # "שלמות נתונים" never goes by a tenant's rules (`integrity_recipients`)
-    if CATEGORY_BY_KEY[category].amount and rule.min_amount is not None:
-        if entry.amount is None or abs(Decimal(str(entry.amount))) < Decimal(str(rule.min_amount)):
+    if CATEGORY_BY_KEY[category].amount:
+        # The rule's floor where it happened, and the user's own above it (push-more §B, §B2).
+        floor = gate.floor if gate is not None else Decimal("0")
+        if rule.min_amount is not None:
+            floor = max(floor, Decimal(str(rule.min_amount)))
+        if entry.amount is None or abs(Decimal(str(entry.amount))) < floor:
             return False
     if not place_matches(db, rule, entry):
         return False
@@ -601,6 +730,61 @@ def home_url(db: Session, user: Any) -> str:
 STATE_KINDS = frozenset({"till_offline", "kiosk_offline", "card_transmission_overdue", "till_printer"})
 
 
+#: Alert types whose message names the employee, the approver, the reason and the document.
+WHO_WHY_CATEGORIES = frozenset({
+    "large_void", "discounts", "cash_difference", "high_tip", "high_sale", "after_hours", "sensitive_actions",
+    "staff_actions", "slow_order", "drawer_no_sale",
+})
+
+
+def _looks_like_id(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def who_why(db: Session, entry: ExceptionLogEntry) -> List[str]:
+    """"עובד: דנה", "אישר: יוסי", "סיבה: …", "מסמך 1007" — what the entry knows of them."""
+    details = entry.details if isinstance(entry.details, dict) else {}
+    parts: List[str] = []
+    if entry.pos_user_name:
+        parts.append(f"עובד: {entry.pos_user_name}")
+    approver = details.get("approverName") or details.get("approvedByName")
+    raw = details.get("approvedBy") or details.get("forcedBy")
+    if not approver and raw:
+        if _looks_like_id(raw):
+            from app.services.exceptions import Detector
+
+            approver = Detector(db).approver_name(str(raw))
+        else:
+            approver = str(raw)
+    if approver and approver != entry.pos_user_name:
+        parts.append(f"אישר: {approver}")
+    reason = details.get("reasonText") or details.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        parts.append(f"סיבה: {' '.join(reason.split())[:60]}")
+    number = details.get("transactionNumber") or details.get("documentNumber")
+    if number and (not entry.summary or str(number) not in entry.summary):
+        parts.append(f"מסמך {number}")
+    return parts
+
+
+def _battery_line(db: Session, entry: ExceptionLogEntry, shop: Optional[str], till: Optional[str]) -> str:
+    """"המסופון קופה 2, סניף X: סוללה 10%" (push-more §A)."""
+    from app.models.pos_machine import POSMachine
+    from app.services import battery_alerts as BA
+
+    details = entry.details if isinstance(entry.details, dict) else {}
+    machine = db.get(POSMachine, entry.machine_id) if entry.machine_id else None
+    label = " ".join(p for p in (BA.device_label(db, machine) if machine is not None else "מכשיר", till) if p)
+    percent = details.get("percent") if details.get("percent") is not None else entry.value
+    where = f"{label}, {shop}" if shop else label
+    text = f"{where}: סוללה {int(Decimal(str(percent)))}%" if percent is not None else f"{where}: סוללה חלשה"
+    return text + (" (קריטי)" if _battery_critical(entry) else "")
+
+
 def _company_name(db: Session, company_id: Any) -> Optional[str]:
     from app.models.company import Company
 
@@ -633,6 +817,11 @@ def payload_for(db: Session, entry: ExceptionLogEntry, tzinfo, *, open_log: bool
         money = M.money(entry.amount) if entry.amount is not None and Decimal(str(entry.amount)) != 0 else None
         detail = f"{summary} ({money})" if summary and money else (summary or what)
         body = " · ".join(p for p in (_company_name(db, entry.company_id), shop, detail, local.strftime("%H:%M")) if p)
+    elif entry.kind == "device_battery":
+        body = " · ".join(p for p in (_battery_line(db, entry, shop, till), local.strftime("%H:%M")) if p)
+    elif category in WHO_WHY_CATEGORIES:
+        # Who did it, who approved, why, which document (push-more §B, §B2) — what the SMS says too.
+        body = " · ".join(p for p in (shop, summary or what, *who_why(db, entry), local.strftime("%H:%M")) if p)
     else:
         body = " · ".join(p for p in (shop, summary or what, local.strftime("%H:%M")) if p)
     details = entry.details if isinstance(entry.details, dict) else {}
@@ -871,10 +1060,13 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
         # Super admins only, from every organization (never by a tenant's rules).
         recipients = integrity_recipients(db, entry)
     else:
+        gate = org_gate(db, entry)
+        if not gate.allowed:
+            return out  # logged; the organization does not send this kind from there
         recipients = []
         for candidate in push_rules_for(db, entry):
             owner = db.get(User, candidate.owner_user_id)
-            if not entry_matches(db, candidate, entry, owner):
+            if not entry_matches(db, candidate, entry, owner, gate):
                 continue
             devices = devices_of(db, candidate.owner_user_id)
             if devices:
@@ -895,7 +1087,7 @@ def process_entry(db: Session, entry: ExceptionLogEntry, *, now: datetime, tzinf
             status, reason = ST_SUPPRESSED_STALE, "occurred_long_ago"
         elif E.in_quiet_hours(rule, now.astimezone(tzinfo)):
             status, reason = ST_SUPPRESSED_QUIET, f"{rule.quiet_from}-{rule.quiet_to}"
-        elif E.rate_limited(db, rule, now):
+        elif not is_urgent(entry) and E.rate_limited(db, rule, now):
             status, reason = ST_SUPPRESSED_RATE, f"{rule.rate_limit_minutes}m"
         out.extend(_deliver(
             db, rule=rule, kind=DISPATCH_ALERT, devices=devices,
@@ -910,8 +1102,17 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
     from app.services.exception_alerts import engine as E
 
     tzinfo = E.tz_for(db, rule.tenant_id)
-    if E.in_quiet_hours(rule, now.astimezone(tzinfo)) or E.rate_limited(db, rule, now):
+    if E.in_quiet_hours(rule, now.astimezone(tzinfo)):
         return 0
+    made_urgent = _flush_urgent(db, rule, now, tzinfo)
+    if not rule.digest_enabled:
+        # No digest: what was held back stays unsent (as before), closed so it is not looked at again.
+        for d in _held(db, rule):
+            d.digest_id = d.id
+        db.flush()
+        return made_urgent
+    if E.rate_limited(db, rule, now):
+        return made_urgent
     pending = (
         db.query(ExceptionAlertDispatch)
         .filter(
@@ -955,7 +1156,55 @@ def flush_rule(db: Session, rule: ExceptionAlertRule, now: datetime) -> int:
     for d in pending:
         d.digest_id = digest_id
     db.flush()
-    return len(made)
+    return len(made) + made_urgent
+
+
+def _held(db: Session, rule: ExceptionAlertRule) -> List[ExceptionAlertDispatch]:
+    return (
+        db.query(ExceptionAlertDispatch)
+        .filter(
+            ExceptionAlertDispatch.rule_id == rule.id,
+            ExceptionAlertDispatch.kind == DISPATCH_ALERT,
+            ExceptionAlertDispatch.status.in_(SUPPRESSED_STATUSES),
+            ExceptionAlertDispatch.digest_id.is_(None),
+        )
+        .order_by(ExceptionAlertDispatch.created_at, ExceptionAlertDispatch.id)
+        .all()
+    )
+
+
+def _flush_urgent(db: Session, rule: ExceptionAlertRule, now: datetime, tzinfo) -> int:
+    """
+    Urgent alerts the quiet hours held back (push-more §B2): each on its own, now — never folded into
+    a digest, never waiting for the rate limit. Their held rows are closed on the message sent.
+    """
+    from app.models.user import User
+
+    held = [d for d in _held(db, rule) if d.entry_id is not None]
+    entries = {e.id: e for e in db.query(ExceptionLogEntry).filter(
+        ExceptionLogEntry.id.in_(list({d.entry_id for d in held}))).all()} if held else {}
+    urgent = [d for d in held if entries.get(d.entry_id) is not None and is_urgent(entries[d.entry_id])]
+    if not urgent:
+        return 0
+    owner = db.get(User, rule.owner_user_id)
+    by_entry: Dict[Any, List[ExceptionAlertDispatch]] = {}
+    for d in urgent:
+        by_entry.setdefault(d.entry_id, []).append(d)
+    devices = {d.id: d for d in devices_of(db, rule.owner_user_id)}
+    made = 0
+    for entry_id, rows in by_entry.items():
+        entry = entries[entry_id]
+        targets = [devices[r.subscription_id] for r in rows if r.subscription_id in devices]
+        sent = _deliver(
+            db, rule=rule, kind=DISPATCH_ALERT, devices=targets,
+            payload=payload_for(db, entry, tzinfo, open_log=may_open_log(db, owner), fallback_url=home_url(db, owner)),
+            status=None, reason=None, dedupe_prefix=f"late:{entry.id}:{rule.id}", now=now, entry=entry,
+        )
+        for r in rows:
+            r.digest_id = sent[0].id if sent else r.id
+        made += len(sent)
+    db.flush()
+    return made
 
 
 def send_test(db: Session, user: Any, tenant_id: Any, *, now: Optional[datetime] = None) -> List[ExceptionAlertDispatch]:

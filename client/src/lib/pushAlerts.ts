@@ -23,6 +23,17 @@ export type AlertCategory =
   | 'z_shift'
   | 'card_transmission'
   | 'till_printer'
+  // P:/specs/push-more.md §A, §B: the battery, and kinds sent where a level turns "שלח התראה לטלפון" on.
+  | 'device_battery'
+  | 'discounts'
+  | 'cash_difference'
+  | 'high_tip'
+  | 'high_sale'
+  | 'after_hours'
+  | 'sensitive_actions'
+  | 'staff_actions'
+  | 'stock'
+  | 'slow_order'
   // "שלמות נתונים" (§1): a super admin's only — the server lists it to them alone.
   | 'integrity';
 
@@ -39,6 +50,16 @@ export const ALERT_CATEGORIES: AlertCategory[] = [
   'z_shift',
   'card_transmission',
   'till_printer',
+  'device_battery',
+  'discounts',
+  'cash_difference',
+  'high_tip',
+  'high_sale',
+  'after_hours',
+  'sensitive_actions',
+  'staff_actions',
+  'stock',
+  'slow_order',
 ];
 
 export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';
@@ -50,6 +71,16 @@ export const INTEGRITY_CATEGORY: AlertCategory = 'integrity';
 export function visibleCategories(config: Pick<PushConfig, 'categories'> | null | undefined): AlertCategory[] {
   const listed = new Set((config?.categories ?? []).map((c) => c.key));
   return listed.has(INTEGRITY_CATEGORY) ? [...ALERT_CATEGORIES, INTEGRITY_CATEGORY] : [...ALERT_CATEGORIES];
+}
+
+/**
+ * Whether the personal minimum (₪) applies to what is chosen: some chosen type carries an amount
+ * (the server's `amount` — a void, a discount, a cash difference, a large sale). It is a floor of
+ * the user's own above each kind's rule (push-more §B2).
+ */
+export function minAmountApplies(config: Pick<PushConfig, 'categories'> | null | undefined, chosen: AlertCategory[]): boolean {
+  const withAmount = new Set((config?.categories ?? []).filter((c) => c.amount).map((c) => c.key));
+  return chosen.some((c) => withAmount.has(c));
 }
 
 export interface PushConfig {
