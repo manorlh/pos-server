@@ -2822,6 +2822,10 @@ export interface CashierSalesRow {
   /** "שוברי הפקה": what production vouchers paid (absent from an older server: 0). */
   productionVoucherNet?: number;
   tips: number;
+  /** `tips` by the tip's tender (P:\specs\reports-upgrade.md §4.2; absent from an older server). */
+  tipsCash?: number;
+  tipsCard?: number;
+  tipsOther?: number;
 }
 
 export interface CashierSalesReport {
@@ -2859,6 +2863,43 @@ export interface TipsByCashierRow {
  * Distinct from the per-shop `TipsReport`, which answers "who is owed what"
  * under the shop's tip-distribution policy.
  */
+/** One local day, till or shift of `GET /reports/tips` (§4.2); each view sums to the report's totals. */
+export interface TipsSliceFigures {
+  tipsTotal: number;
+  tipsCash: number;
+  tipsCard: number;
+  tipsOther: number;
+  tippedDocumentCount: number;
+  salesNet: number;
+}
+
+export interface TipsByDayRow extends TipsSliceFigures {
+  day: string;
+}
+
+export interface TipsByMachineRow extends TipsSliceFigures {
+  machineId?: string | null;
+  machineName?: string | null;
+  posNumber?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+}
+
+export interface TipsByShiftRow extends TipsSliceFigures {
+  /** Null: documents with no shift. */
+  shiftId?: string | null;
+  businessDate?: string | null;
+  sequenceNumber?: number | null;
+  machineId?: string | null;
+  machineName?: string | null;
+  posNumber?: string | null;
+  shopId?: string | null;
+  shopName?: string | null;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  openedByName?: string | null;
+}
+
 export interface TipsRangeReport {
   window: ReportWindowOut;
   generatedAt: string;
@@ -2868,6 +2909,14 @@ export interface TipsRangeReport {
   tipsOther: number;
   byMethod: TipMethodRow[];
   byCashier: TipsByCashierRow[];
+  /** §4.2, absent from an older server. */
+  tippedDocumentCount?: number;
+  salesNet?: number;
+  byDay?: TipsByDayRow[];
+  byMachine?: TipsByMachineRow[];
+  /** Up to 5,000 rows; `byShiftTruncated` when cut. */
+  byShift?: TipsByShiftRow[];
+  byShiftTruncated?: boolean;
 }
 
 // ── Day summary (סיכום יומי) ────────────────────────────────────────────────
@@ -2935,6 +2984,9 @@ export interface DaySummaryContributor {
   cashSales: number;
   cardSales: number;
   tips: number;
+  /** `tips` split (§4.2; absent from an older server). */
+  cashTips?: number;
+  cardTips?: number;
   transactionsCount: number;
   expectedCash: number;
   actualCash: number | null;
@@ -3105,6 +3157,10 @@ export interface SalesByAreaRow {
   /** "שוברי הפקה". */
   productionVoucher?: Money;
   tips: Money;
+  /** `tips` by the tip's tender (§4.2; absent from an older server). */
+  tipsCash?: Money;
+  tipsCard?: Money;
+  tipsOther?: Money;
 }
 
 export type SalesByAreaTotals = Omit<SalesByAreaRow, 'areaId' | 'areaName' | 'archived'> &

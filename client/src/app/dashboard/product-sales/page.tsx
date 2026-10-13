@@ -6,343 +6,302 @@
  *
  * The totals come first and the per-product table second, on purpose: the first
  * question a manager asks is "what did we take", not "what did product #7 do".
+ *
+ * On the report framework (P:\specs\reports-upgrade.md §5): days, hours, area, cashier
+ * (`cashierId`, §4.1), department and a search in the URL, with the row cap and "meals as…".
+ * The endpoint has no department filter, so a department narrows the rows on the page (the
+ * department's products and its sub-departments') and the totals are then the shown rows'.
+ * No tips here: a tip belongs to no item (§2ה).
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { useQuery } from '@tanstack/react-query';
-import { BadgePercent, Coins, Package, RotateCcw, Wallet } from 'lucide-react';
-import { fetchProductSalesReport } from '@/lib/api';
-import { axiosErrorToToastMessage } from '@/lib/apiError';
+import { BadgePercent, Coins, Info, Package, RotateCcw, Wallet } from 'lucide-react';
+import { api, fetchProductSalesReport } from '@/lib/api';
 import { usePageScope } from '@/lib/scope';
-import { ScopeGate } from '@/components/dashboard/scope-gate';
 import { formatCurrency, formatQuantity } from '@/lib/format';
-import { WHOLE_DAY, daysBackIso, hourQueryParams, todayIso } from '@/lib/reportWindow';
-import type { ProductSalesReport } from '@/lib/types';
-import { ReportFilters, type ReportFiltersState } from '@/components/dashboard/report-filters';
+import { descendantIds } from '@/lib/categoryTree';
+import { fetchAllPages } from '@/lib/fetchAllPages';
+import { scopeApiParams, type ReportFilterSpec } from '@/lib/reportFilters';
+import type { ProductSalesReport, ProductSalesRow, ProductSalesTotals } from '@/lib/types';
 import { ReportStatCard } from '@/components/dashboard/report-stat-card';
-import {
-  ReportErrorState,
-  ReportTruncatedNotice,
-  ReportWindowSummary,
-} from '@/components/dashboard/report-window-summary';
+import { ReportTruncatedNotice, ReportWindowSummary } from '@/components/dashboard/report-window-summary';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { ReportExportToolbar } from '@/components/dashboard/report-export-toolbar';
+  ReportPage,
+  ReportTable,
+  reportQueryState,
+  useCategoryOptions,
+  useReportFilters,
+  type ReportColumn,
+  type ReportTableSpec,
+} from '@/components/dashboard/report-framework';
 
 const LIMIT_OPTIONS = [50, 100, 200, 500, 1000];
-const COLS = 9;
+
+const SPEC: ReportFilterSpec = {
+  filters: ['hours', 'area', 'cashier', 'category', 'search'],
+  clientFilters: ['category', 'search'],
+  // A meal as its components (burgers inside meals count as burgers) or as the meal.
+  extras: { limit: '200', meals: 'components' },
+};
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** The totals of the rows a department left. */
+function sumRows(rows: ProductSalesRow[]): ProductSalesTotals {
+  const sum = (pick: (r: ProductSalesRow) => number) => round2(rows.reduce((acc, r) => acc + (pick(r) ?? 0), 0));
+  return {
+    unitsSold: sum((r) => r.unitsSold),
+    unitsRefunded: sum((r) => r.unitsRefunded),
+    unitsNet: sum((r) => r.unitsNet),
+    gross: sum((r) => r.gross),
+    discounts: sum((r) => r.discounts),
+    refunds: sum((r) => r.refunds),
+    net: sum((r) => r.net),
+    productCount: rows.length,
+  };
+}
+
+/** The ids of a department's products, its sub-departments' included. */
+function useCategoryProductIds(categoryId: string) {
+  const { categories } = useCategoryOptions(Boolean(categoryId));
+  const ids = useMemo(
+    () => (categoryId && categories.length ? [categoryId, ...descendantIds(categories, categoryId)] : []),
+    [categories, categoryId],
+  );
+  return useQuery<Set<string>>({
+    queryKey: ['report-category-products', ids],
+    queryFn: async () => {
+      const rows = await fetchAllPages(async (page, pageSize) => {
+        const search = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+        for (const id of ids) search.append('categoryIds', id);
+        const { data } = await api.get<{ items: { id: string }[]; total: number }>(`/products?${search.toString()}`);
+        return { items: data.items ?? [], total: data.total ?? 0 };
+      });
+      return new Set(rows.map((p) => String(p.id)));
+    },
+    enabled: ids.length > 0,
+    staleTime: 5 * 60_000,
+  });
+}
 
 export default function ProductSalesReportPage() {
   const t = useTranslations('productSales');
-  const tc = useTranslations('common');
 
-  // `GET /reports/products` takes shopId and machineId; it has no company filter,
-  // so a company in scope is reported as inapplicable rather than quietly ignored.
-  const { resolution, effective } = usePageScope({
-    maxLevel: 'machine',
-    unsupported: ['company'],
-  });
-  const scopeShopId = effective.shopId;
-  const scopeMachineId = effective.machineId;
-
-  const [filters, setFilters] = useState<ReportFiltersState>({
-    from: daysBackIso(6),
-    to: todayIso(),
-    hours: WHOLE_DAY,
-  });
-  const [limit, setLimit] = useState(200);
-  // A meal as its components (burgers inside meals count as burgers) or as the meal.
-  const [meals, setMeals] = useState<'components' | 'meals'>('components');
-  const [applied, setApplied] = useState<{ filters: ReportFiltersState; limit: number; meals: 'components' | 'meals' } | null>(
-    null,
-  );
+  // shopId / machineId, or a company (§4.1: and its subsidiaries).
+  const { resolution, effective } = usePageScope({ maxLevel: 'machine' });
+  const filters = useReportFilters(SPEC);
 
   const params = useMemo(() => {
-    if (!applied) return null;
-    const f = applied.filters;
+    if (!filters.apiParams || !filters.applied) return null;
+    const ex = filters.applied.extras;
     return {
-      from: f.from,
-      to: f.to,
-      ...(scopeShopId ? { shopId: scopeShopId } : {}),
-      ...(scopeMachineId ? { machineId: scopeMachineId } : {}),
-      ...hourQueryParams(f.hours),
-      ...(f.areaId ? { areaId: f.areaId } : {}),
-      limit: applied.limit,
-      meals: applied.meals,
+      ...filters.apiParams,
+      ...scopeApiParams(effective),
+      limit: Number(ex.limit) || 200,
+      meals: ex.meals === 'meals' ? ('meals' as const) : ('components' as const),
     };
-  }, [applied, scopeMachineId, scopeShopId]);
+  }, [effective, filters.apiParams, filters.applied]);
 
-  const { data, isLoading, isFetching, isError, error } = useQuery<ProductSalesReport>({
+  const query = useQuery<ProductSalesReport>({
     queryKey: ['report-products', params],
     queryFn: () => fetchProductSalesReport(params!),
     enabled: params !== null,
   });
+  const data = query.data;
+
+  const categoryId = filters.applied?.values.categoryId ?? '';
+  const inCategory = useCategoryProductIds(categoryId);
+  const byCategory = Boolean(categoryId);
+
+  const rows = useMemo(() => {
+    const all = data?.rows ?? [];
+    if (!byCategory) return all;
+    const ids = inCategory.data;
+    return ids ? all.filter((r) => r.productId && ids.has(r.productId)) : [];
+  }, [byCategory, data, inCategory.data]);
+  const totals = useMemo(() => (data ? (byCategory ? sumRows(rows) : data.totals) : null), [byCategory, data, rows]);
+
+  const table = useMemo<ReportTableSpec<ProductSalesRow>>(() => {
+    const dashZero = (pick: (r: ProductSalesRow) => number, format: (n: number) => string) => (r: ProductSalesRow) =>
+      pick(r) ? format(pick(r)) : '—';
+    const columns: ReportColumn<ProductSalesRow>[] = [
+      { key: 'product', header: t('col.product'), required: true, width: 30, value: (r) => r.productName ?? t('unknownProduct'), className: 'font-medium' },
+      { key: 'sku', header: t('col.sku'), width: 14, value: (r) => r.sku ?? null, className: 'text-muted-foreground text-xs' },
+      {
+        key: 'unitsSold',
+        header: t('col.unitsSold'),
+        kind: 'number',
+        value: (r) => r.unitsSold,
+        total: totals?.unitsSold,
+        cell: (r) => (
+          <>
+            {formatQuantity(r.unitsSold)}
+            {r.unitsInMeals ? (
+              <span className="text-muted-foreground block text-[11px]">
+                {t('meals.inMeals', { n: formatQuantity(r.unitsInMeals) })}
+              </span>
+            ) : null}
+          </>
+        ),
+      },
+      {
+        key: 'unitsRefunded',
+        header: t('col.unitsRefunded'),
+        kind: 'number',
+        value: (r) => r.unitsRefunded,
+        total: totals?.unitsRefunded,
+        cell: dashZero((r) => r.unitsRefunded, formatQuantity),
+      },
+      { key: 'unitsNet', header: t('col.unitsNet'), kind: 'number', value: (r) => r.unitsNet, total: totals?.unitsNet, className: 'font-medium' },
+      { key: 'gross', header: t('col.gross'), kind: 'money', value: (r) => r.gross, total: totals?.gross },
+      {
+        key: 'discounts',
+        header: t('col.discounts'),
+        kind: 'money',
+        value: (r) => r.discounts,
+        total: totals?.discounts,
+        cell: dashZero((r) => r.discounts, formatCurrency),
+      },
+      {
+        key: 'refunds',
+        header: t('col.refunds'),
+        kind: 'money',
+        value: (r) => r.refunds,
+        total: totals?.refunds,
+        cell: dashZero((r) => r.refunds, formatCurrency),
+      },
+      { key: 'net', header: t('col.net'), kind: 'money', value: (r) => r.net, total: totals?.net, className: 'font-semibold' },
+    ];
+    return {
+      id: 'main',
+      title: t('title'),
+      columns,
+      rows,
+      rowKey: (r, i) => r.productId ?? `row-${i}`,
+      totalsLabel: data?.truncated && !byCategory ? t('footerTotalsTruncated') : t('footerTotals'),
+      emptyText: t('noRows'),
+    };
+  }, [byCategory, data?.truncated, rows, t, totals]);
+
+  const draftExtras = filters.draftExtras;
+  const limitItems = LIMIT_OPTIONS.map((n) => ({ value: String(n), label: String(n) }));
+  const mealItems = [
+    { value: 'components', label: t('meals.components') },
+    { value: 'meals', label: t('meals.meals') },
+  ];
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">{t('title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('subtitle')}</p>
-      </div>
-
-      <ScopeGate resolution={resolution}>
-        <ReportFilters
-          value={filters}
-          onChange={setFilters}
-          onRun={() => setApplied({ filters, limit, meals })}
-          isFetching={isFetching}
-          showArea
-          areaShopId={scopeShopId}
-        >
-          <div className="space-y-1">
-            <Label className="text-xs">{t('rowLimit')}</Label>
-            <Select
-              value={String(limit)}
-              onValueChange={(v) => setLimit(Number(v ?? 200))}
-              items={LIMIT_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
-            >
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LIMIT_OPTIONS.map((n) => (
-                  <SelectItem key={n} value={String(n)} label={String(n)}>
-                    {n}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">{t('meals.label')}</Label>
-            <Select
-              value={meals}
-              onValueChange={(v) => setMeals(v === 'meals' ? 'meals' : 'components')}
-              items={[
-                { value: 'components', label: t('meals.components') },
-                { value: 'meals', label: t('meals.meals') },
-              ]}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="components" label={t('meals.components')}>
-                  {t('meals.components')}
-                </SelectItem>
-                <SelectItem value="meals" label={t('meals.meals')}>
-                  {t('meals.meals')}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </ReportFilters>
-
-        {!applied ? (
-          <p className="text-muted-foreground py-12 text-center text-sm">{t('selectFilters')}</p>
-        ) : isLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-24 w-full" />
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-28 w-full" />
-              ))}
+    <ReportPage
+      reportKey="product-sales"
+      title={t('title')}
+      subtitle={t('subtitle')}
+      resolution={resolution}
+      filters={filters}
+      bar={{
+        shopId: effective.shopId,
+        children: (
+          <>
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs">{t('rowLimit')}</Label>
+              <Select value={draftExtras.limit} onValueChange={(v) => filters.setExtra('limit', String(v ?? '200'))} items={limitItems}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {limitItems.map((o) => (
+                    <SelectItem key={o.value} value={o.value} label={o.label}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <Skeleton className="h-64 w-full" />
-          </div>
-        ) : isError ? (
-          <ReportErrorState message={axiosErrorToToastMessage(error, tc('error'))} />
-        ) : data ? (
-          <div className="space-y-4">
-            <ReportExportToolbar
-              title={t('title')}
-              from={data.window.from}
-              to={data.window.to}
-              getSheets={() => ({
-                name: t('title'),
-                columns: [
-                  { header: t('col.product'), width: 30 },
-                  { header: t('col.sku'), width: 14 },
-                  { header: t('col.unitsSold'), kind: 'number' },
-                  { header: t('col.unitsRefunded'), kind: 'number' },
-                  { header: t('col.unitsNet'), kind: 'number' },
-                  { header: t('col.gross'), kind: 'money' },
-                  { header: t('col.discounts'), kind: 'money' },
-                  { header: t('col.refunds'), kind: 'money' },
-                  { header: t('col.net'), kind: 'money' },
-                ],
-                rows: data.rows.map((r) => [
-                  r.productName ?? t('unknownProduct'), r.sku ?? null, r.unitsSold, r.unitsRefunded,
-                  r.unitsNet, r.gross, r.discounts, r.refunds, r.net,
-                ]),
-                totals: [
-                  data.truncated ? t('footerTotalsTruncated') : t('footerTotals'), null,
-                  data.totals.unitsSold, data.totals.unitsRefunded, data.totals.unitsNet,
-                  data.totals.gross, data.totals.discounts, data.totals.refunds, data.totals.net,
-                ],
-              })}
+            <div className="min-w-0 space-y-1">
+              <Label className="text-xs">{t('meals.label')}</Label>
+              <Select
+                value={draftExtras.meals}
+                onValueChange={(v) => filters.setExtra('meals', v === 'meals' ? 'meals' : 'components')}
+                items={mealItems}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {mealItems.map((o) => (
+                    <SelectItem key={o.value} value={o.value} label={o.label}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        ),
+      }}
+      query={{
+        ...reportQueryState(query),
+        isLoading: query.isLoading || (byCategory && inCategory.isLoading),
+        isError: query.isError || inCategory.isError,
+        error: query.error ?? inCategory.error,
+      }}
+      prompt={t('selectFilters')}
+      export={data ? { tables: [table], from: data.window.from, to: data.window.to } : null}
+    >
+      {data && totals ? (
+        <>
+          <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
+
+          {/* Totals first — this is the answer to "what did we take". */}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <ReportStatCard
+              title={t('totals.net')}
+              value={formatCurrency(totals.net)}
+              subtitle={t('totals.netFormula')}
+              icon={Wallet}
+              emphasis
             />
-            <ReportWindowSummary window={data.window} generatedAt={data.generatedAt} />
-
-            {/* Totals first — this is the answer to "what did we take". */}
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <ReportStatCard
-                title={t('totals.net')}
-                value={formatCurrency(data.totals.net)}
-                subtitle={t('totals.netFormula')}
-                icon={Wallet}
-                emphasis
-              />
-              <ReportStatCard
-                title={t('totals.gross')}
-                value={formatCurrency(data.totals.gross)}
-                icon={Coins}
-              />
-              <ReportStatCard
-                title={t('totals.discounts')}
-                value={formatCurrency(data.totals.discounts)}
-                icon={BadgePercent}
-              />
-              <ReportStatCard
-                title={t('totals.refunds')}
-                value={formatCurrency(data.totals.refunds)}
-                subtitle={t('totals.refundsNote')}
-                icon={RotateCcw}
-              />
-              <ReportStatCard
-                title={t('totals.unitsNet')}
-                value={formatQuantity(data.totals.unitsNet)}
-                subtitle={t('totals.unitsBreakdown', {
-                  sold: formatQuantity(data.totals.unitsSold),
-                  refunded: formatQuantity(data.totals.unitsRefunded),
-                  products: data.totals.productCount,
-                })}
-                icon={Package}
-              />
-            </div>
-
-            {data.truncated ? (
-              <ReportTruncatedNotice
-                rowLimit={data.rowLimit}
-                visibleRows={data.rows.length}
-                totalCount={data.totals.productCount}
-              />
-            ) : null}
-
-            <div className="rounded-lg border bg-card overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('col.product')}</TableHead>
-                    <TableHead>{t('col.sku')}</TableHead>
-                    <TableHead className="text-end">{t('col.unitsSold')}</TableHead>
-                    <TableHead className="text-end">{t('col.unitsRefunded')}</TableHead>
-                    <TableHead className="text-end">{t('col.unitsNet')}</TableHead>
-                    <TableHead className="text-end">{t('col.gross')}</TableHead>
-                    <TableHead className="text-end">{t('col.discounts')}</TableHead>
-                    <TableHead className="text-end">{t('col.refunds')}</TableHead>
-                    <TableHead className="text-end">{t('col.net')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={COLS} className="text-muted-foreground py-10 text-center">
-                        {t('noRows')}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    data.rows.map((row, i) => (
-                      <TableRow key={row.productId ?? `row-${i}`}>
-                        <TableCell className="font-medium">
-                          {row.productName ?? t('unknownProduct')}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
-                          {row.sku ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {formatQuantity(row.unitsSold)}
-                          {row.unitsInMeals ? (
-                            <span className="text-muted-foreground block text-[11px]">
-                              {t('meals.inMeals', { n: formatQuantity(row.unitsInMeals) })}
-                            </span>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {row.unitsRefunded ? formatQuantity(row.unitsRefunded) : '—'}
-                        </TableCell>
-                        <TableCell className="text-end font-medium tabular-nums">
-                          {formatQuantity(row.unitsNet)}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {formatCurrency(row.gross)}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {row.discounts ? formatCurrency(row.discounts) : '—'}
-                        </TableCell>
-                        <TableCell className="text-end tabular-nums">
-                          {row.refunds ? formatCurrency(row.refunds) : '—'}
-                        </TableCell>
-                        <TableCell className="text-end font-semibold tabular-nums">
-                          {formatCurrency(row.net)}
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-                {data.rows.length > 0 ? (
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell className="font-semibold">
-                        {data.truncated ? t('footerTotalsTruncated') : t('footerTotals')}
-                      </TableCell>
-                      <TableCell />
-                      <TableCell className="text-end tabular-nums">
-                        {formatQuantity(data.totals.unitsSold)}
-                      </TableCell>
-                      <TableCell className="text-end tabular-nums">
-                        {formatQuantity(data.totals.unitsRefunded)}
-                      </TableCell>
-                      <TableCell className="text-end font-medium tabular-nums">
-                        {formatQuantity(data.totals.unitsNet)}
-                      </TableCell>
-                      <TableCell className="text-end tabular-nums">
-                        {formatCurrency(data.totals.gross)}
-                      </TableCell>
-                      <TableCell className="text-end tabular-nums">
-                        {formatCurrency(data.totals.discounts)}
-                      </TableCell>
-                      <TableCell className="text-end tabular-nums">
-                        {formatCurrency(data.totals.refunds)}
-                      </TableCell>
-                      <TableCell className="text-end font-bold tabular-nums">
-                        {formatCurrency(data.totals.net)}
-                      </TableCell>
-                    </TableRow>
-                  </TableFooter>
-                ) : null}
-              </Table>
-            </div>
+            <ReportStatCard title={t('totals.gross')} value={formatCurrency(totals.gross)} icon={Coins} />
+            <ReportStatCard title={t('totals.discounts')} value={formatCurrency(totals.discounts)} icon={BadgePercent} />
+            <ReportStatCard
+              title={t('totals.refunds')}
+              value={formatCurrency(totals.refunds)}
+              subtitle={t('totals.refundsNote')}
+              icon={RotateCcw}
+            />
+            <ReportStatCard
+              title={t('totals.unitsNet')}
+              value={formatQuantity(totals.unitsNet)}
+              subtitle={t('totals.unitsBreakdown', {
+                sold: formatQuantity(totals.unitsSold),
+                refunded: formatQuantity(totals.unitsRefunded),
+                products: totals.productCount,
+              })}
+              icon={Package}
+            />
           </div>
-        ) : null}
-      </ScopeGate>
-    </div>
+
+          {byCategory ? (
+            <p role="note" className="text-muted-foreground flex gap-2 text-xs">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              {data.truncated ? t('categoryNoteTruncated', { rowLimit: data.rowLimit }) : t('categoryNote')}
+            </p>
+          ) : null}
+
+          {data.truncated ? (
+            <ReportTruncatedNotice
+              rowLimit={data.rowLimit}
+              visibleRows={data.rows.length}
+              totalCount={data.totals.productCount}
+            />
+          ) : null}
+
+          <ReportTable table={table} />
+        </>
+      ) : null}
+    </ReportPage>
   );
 }

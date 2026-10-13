@@ -20,7 +20,8 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useScope } from '@/lib/scope';
 import { formatDateTime } from '@/lib/format';
-import { downloadExcel, safeFileName, type ExcelSheet } from '@/lib/excelExport';
+import { downloadExcel, type ExcelSheet } from '@/lib/excelExport';
+import { reportFileName } from '@/lib/reportExport';
 import { axiosErrorToToastMessage } from '@/lib/apiError';
 
 export interface ReportExportToolbarProps {
@@ -95,10 +96,12 @@ export function ReportExportToolbar({
     try {
       const sheets = await getSheets();
       const list = Array.isArray(sheets) ? sheets : [sheets];
-      await downloadExcel(
-        list.map((s, i) => ({ ...s, heading: i === 0 ? heading() : s.heading })),
-        [title, from, to].filter(Boolean).join('_'),
-      );
+      // The header lines on EVERY sheet (each sheet's own lines follow them), and a file
+      // name a person can read: "מכירות לפי מוצר — סניף X — 01.10–13.10.xlsx".
+      await downloadExcel(list, reportFileName(title, where, from, to), {
+        heading: heading(),
+        readableName: true,
+      });
     } catch (err) {
       // A list too long to export says so (the server's own words), never just "failed".
       toast.error(axiosErrorToToastMessage(err, t('excelFailed')));
@@ -112,7 +115,7 @@ export function ReportExportToolbar({
     document.documentElement.dataset.print = 'report';
     const previousTitle = document.title;
     // The browser offers the document title as the PDF's file name.
-    if (asPdf) document.title = safeFileName([title, from, to].filter(Boolean).join('_'));
+    if (asPdf) document.title = reportFileName(title, where, from, to);
     // Let React paint the fresh "generated at" before the dialog freezes the page.
     window.setTimeout(() => {
       window.print();
